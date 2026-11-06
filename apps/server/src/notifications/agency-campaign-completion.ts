@@ -32,11 +32,8 @@ export const AGENCY_UUID_RE =
  * ── Where the link points ────────────────────────────────────────────────────
  * An agency campaign lives at `/agency/campaigns/:id`, inside the console's
  * `AgencyLayout`, with its attempts at `/agency/campaigns/:id/attempts/:attemptId`.
- * The link names the campaign's tenant and account too,
- * `/t/:tenantId/a/:accountId/agency/campaigns/:id` (decision B26): a supervisor
- * who works in several accounts would otherwise open it in whichever one their
- * browser last had open, where the campaign does not exist. See
- * {@link agencyCampaignUrl}.
+ * It is scoped to the campaign's own tenant and account (B26, see
+ * {@link agencyCampaignUrl}).
  * Mailing an agency supervisor a link into the `/app` shell instead would be a
  * link that crosses shells, which is a bug even when the data it lands on is
  * correct — and an email is the worst place for one, because a link in an inbox

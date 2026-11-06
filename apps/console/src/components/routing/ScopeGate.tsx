@@ -6,7 +6,6 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { useUrlScope } from '../../contexts/UrlScopeContext';
-import type { UrlScope } from '../../utils/urlScope';
 
 /**
  * Keeps every signed-in page's URL scoped to the tenant and account on screen,
@@ -40,14 +39,11 @@ export function ScopeGate() {
 
   const decision = decide();
 
-  // Keyed on the ids, not the object, which `decide` rebuilds every render.
-  const enterTenant = decision.kind === 'enter' ? decision.scope.tenantId : null;
-  const enterAccount = decision.kind === 'enter' ? decision.scope.accountId : null;
+  // `enter` is only decided with both ids set.
+  const enter = decision.kind === 'enter';
   useLayoutEffect(() => {
-    if (enterTenant && enterAccount) {
-      go({ tenantId: enterTenant, accountId: enterAccount }, undefined, { replace: true });
-    }
-  }, [enterTenant, enterAccount, go]);
+    if (enter && tenantId && accountId) go({ tenantId, accountId }, undefined, { replace: true });
+  }, [enter, tenantId, accountId, go]);
 
   switch (decision.kind) {
     case 'render':
@@ -66,7 +62,7 @@ export function ScopeGate() {
   function decide():
     | { kind: 'render' }
     | { kind: 'wait' }
-    | { kind: 'enter'; scope: UrlScope }
+    | { kind: 'enter' }
     | { kind: 'denied'; what: 'tenant' | 'account' } {
     if (loading || !user || pendingEmailVerification) return { kind: 'render' };
     // `tenants` is written in the same update as `user`, so empty here is final.
@@ -88,7 +84,7 @@ export function ScopeGate() {
 
     if (accountResolution === 'loading') return { kind: 'wait' };
     if (tenantId && accountId && accountResolution !== 'error') {
-      return { kind: 'enter', scope: { tenantId, accountId } };
+      return { kind: 'enter' };
     }
     return { kind: 'render' };
   }

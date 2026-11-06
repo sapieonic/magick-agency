@@ -9,7 +9,8 @@
  * `useLocation().pathname` reads `/agency/campaigns`.
  *
  * Pure and dependency-free on purpose: `utils/returnPath` reads it to see through
- * the prefix, and the router, the tenant context and their tests all share it.
+ * the prefix (and says which pages stay unscoped, `isUnscopedPagePath`), and the
+ * router, the tenant context and their tests all share it.
  *
  * ── Why `/t/…/a/…` and not `/tenants/…/accounts/…` ──────────────────────────
  * `/tenants` and `/accounts` are API prefixes. nginx and the Vite dev proxy send
@@ -39,14 +40,19 @@ function decodeSegment(segment: string): string | null {
   }
 }
 
-/** The scope `path` carries, or `null` for an unscoped path. */
-export function parseUrlScope(path: string): UrlScope | null {
+/** The one match the exports below share: the scope and its literal prefix. */
+function matchScope(path: string): { scope: UrlScope; prefix: string } | null {
   const match = SCOPE_PREFIX.exec(path);
   if (!match) return null;
   const tenantId = decodeSegment(match[1]!);
   const accountId = decodeSegment(match[2]!);
   if (!tenantId || !accountId) return null;
-  return { tenantId, accountId };
+  return { scope: { tenantId, accountId }, prefix: match[0] };
+}
+
+/** The scope `path` carries, or `null` for an unscoped path. */
+export function parseUrlScope(path: string): UrlScope | null {
+  return matchScope(path)?.scope ?? null;
 }
 
 /** The prefix for a scope, with no trailing slash: `/t/<tenant>/a/<account>`. */
@@ -60,8 +66,7 @@ export function scopePrefix(scope: UrlScope): string {
  * byte.
  */
 export function scopePrefixOf(path: string): string {
-  const match = SCOPE_PREFIX.exec(path);
-  return match && parseUrlScope(path) ? match[0] : '';
+  return matchScope(path)?.prefix ?? '';
 }
 
 /**
@@ -87,16 +92,4 @@ export function withUrlScope(scope: UrlScope, path: string): string {
   if (bare === '/') return prefix;
   if (bare.startsWith('/?') || bare.startsWith('/#')) return `${prefix}${bare.slice(1)}`;
   return `${prefix}${bare}`;
-}
-
-/**
- * Paths that are never scoped: the two sign-in doors, the two invite landings and
- * email verification. Nobody has a tenant or an account there yet, and an invite
- * link names its tenant through its token. A scoped URL that resolves to one of
- * these (`navigate('/login')` from inside the app) is sent to the bare path.
- */
-const UNSCOPED_PAGE = /^\/(?:login|verify-email|join|agency\/login|agency\/join)(?:[/?#]|$)/i;
-
-export function isUnscopedPagePath(path: string): boolean {
-  return UNSCOPED_PAGE.test(stripUrlScope(path));
 }

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  isUnscopedPagePath,
   parseUrlScope,
   scopePrefix,
   scopePrefixOf,
@@ -165,47 +164,5 @@ describe('scopePrefixOf', () => {
     expect(scopePrefixOf('/t//a/y/dialer')).toBe('');
     expect(scopePrefixOf('/t/x%2Fy/a/acct-1')).toBe('');
     expect(scopePrefixOf('/t/%/a/acct-1')).toBe('');
-  });
-});
-
-describe('isUnscopedPagePath', () => {
-  it('is true for both sign-in doors', () => {
-    expect(isUnscopedPagePath('/login')).toBe(true);
-    expect(isUnscopedPagePath('/login?next=%2Fdialer')).toBe(true);
-    expect(isUnscopedPagePath('/agency/login')).toBe(true);
-  });
-
-  it('is true for both invite landings', () => {
-    expect(isUnscopedPagePath('/join/tok-1')).toBe(true);
-    expect(isUnscopedPagePath('/agency/join/tok-1')).toBe(true);
-  });
-
-  it('is true for email verification', () => {
-    expect(isUnscopedPagePath('/verify-email')).toBe(true);
-  });
-
-  it('reads through a scope prefix', () => {
-    expect(isUnscopedPagePath('/t/t-a/a/acct-1/login')).toBe(true);
-    expect(isUnscopedPagePath('/t/t-a/a/acct-1/agency/login')).toBe(true);
-    expect(isUnscopedPagePath('/t/t-a/a/acct-1/agency/join/tok-1')).toBe(true);
-    expect(isUnscopedPagePath('/t/t-a/a/acct-1/verify-email')).toBe(true);
-  });
-
-  it('is case-insensitive, as the routes are', () => {
-    expect(isUnscopedPagePath('/Login')).toBe(true);
-    expect(isUnscopedPagePath('/AGENCY/LOGIN')).toBe(true);
-  });
-
-  it('is false for a path that only shares a prefix with one', () => {
-    expect(isUnscopedPagePath('/loginish')).toBe(false);
-    expect(isUnscopedPagePath('/joined')).toBe(false);
-    expect(isUnscopedPagePath('/agency/loginx')).toBe(false);
-  });
-
-  it('is false for signed-in pages, scoped or not', () => {
-    expect(isUnscopedPagePath('/agency/campaigns')).toBe(false);
-    expect(isUnscopedPagePath('/t/t-a/a/acct-1/agency/campaigns')).toBe(false);
-    expect(isUnscopedPagePath('/')).toBe(false);
-    expect(isUnscopedPagePath('/t/t-a/a/acct-1')).toBe(false);
   });
 });

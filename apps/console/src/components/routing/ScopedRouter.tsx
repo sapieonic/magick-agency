@@ -1,7 +1,7 @@
 import { useLayoutEffect, type ReactNode } from 'react';
 import { Router } from 'react-router-dom';
 import { useUrlScope } from '../../contexts/UrlScopeContext';
-import { isUnscopedPagePath } from '../../utils/urlScope';
+import { isUnscopedPagePath } from '../../utils/returnPath';
 
 /**
  * The console's router: a `<Router>` over `UrlScopeProvider`'s history whose
@@ -20,17 +20,17 @@ import { isUnscopedPagePath } from '../../utils/urlScope';
  * `?next=` itself, so nothing about where the visitor was going is lost.
  */
 export function ScopedRouter({ children }: { children: ReactNode }) {
-  const { navigator, location, action, prefix, go } = useUrlScope();
+  const { history, location, action, prefix, go } = useUrlScope();
   const strayed = prefix !== '' && isUnscopedPagePath(location.pathname);
 
   useLayoutEffect(() => {
     if (strayed) go(null, undefined, { replace: true });
   }, [strayed, go]);
 
-  if (!navigator || strayed) return null;
+  if (!history || strayed) return null;
 
   return (
-    <Router basename={prefix || '/'} location={location} navigationType={action} navigator={navigator}>
+    <Router basename={prefix || '/'} location={location} navigationType={action} navigator={history}>
       {children}
     </Router>
   );

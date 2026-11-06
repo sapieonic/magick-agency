@@ -355,6 +355,24 @@ export function isLoginPath(pathname: string): boolean {
   return LOGIN_LOOP.test(stripUrlScope(pathname));
 }
 
+/** Where an emailed address is confirmed; like the doors, nobody has a tenant yet. */
+const VERIFY_EMAIL_PATH = /^\/verify-email(?:\/|$)/i;
+
+/**
+ * Pages that are never scoped to a tenant and account (B26): the two sign-in
+ * doors, the two invite landings ({@link isLoginPath}) and email verification.
+ * Nobody has a tenant or an account there yet, and an invite link names its tenant
+ * through its token. A scoped URL that resolves to one of these
+ * (`navigate('/login')` from inside the app) is sent to the bare path
+ * (`ScopedRouter`), and a tenant or account switch made on one does not reload
+ * (`TenantContext`).
+ */
+export function isUnscopedPagePath(path: string): boolean {
+  // The query and hash are not part of the page, and `isLoginPath` reads a bare pathname.
+  const pathname = stripUrlScope(path).split(/[?#]/, 1)[0]!;
+  return isLoginPath(pathname) || VERIFY_EMAIL_PATH.test(pathname);
+}
+
 /**
  * The sign-in URL that will come back to `path` afterwards — at whichever door
  * suits the destination. See {@link loginPathFor}.

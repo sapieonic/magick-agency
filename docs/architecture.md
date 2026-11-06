@@ -677,7 +677,7 @@ a rate-limit key and never an auth input.
   URL (an old bookmark, `/` after sign-in). `ScopeGate`, the layout route around every signed-in
   route, scopes an unscoped URL to the active account and refuses a link to a tenant or account the
   viewer cannot open rather than showing another one. Sign-in, invite and email-verification pages
-  stay unscoped (`isUnscopedPagePath` in `utils/urlScope.ts`). `/t` and `/a` because `/tenants` and
+  stay unscoped (`isUnscopedPagePath` in `utils/returnPath.ts`). `/t` and `/a` because `/tenants` and
   `/accounts` are API prefixes in nginx and the Vite proxy. PostHog sees the prefix as
   `/t/:tenant/a/:account` (`analytics/redact.ts`); the ids travel as its `tenant` and `account`
   groups.

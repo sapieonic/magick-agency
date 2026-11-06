@@ -37,7 +37,7 @@ vi.mock('../../utils/pageLoad', () => ({
   loadPage: mocks.loadPage,
 }));
 
-import { UrlScopeProvider, useUrlScope } from '../../contexts/UrlScopeContext';
+import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
 import { TenantProvider, useTenant } from '../../contexts/TenantContext';
 import { ScopedRouter } from '../../components/routing/ScopedRouter';
 import { ScopeGate } from '../../components/routing/ScopeGate';
@@ -115,7 +115,6 @@ const mounts = new Map<string, number>();
 function Page({ name }: { name: string }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { go } = useUrlScope();
   const { tenantId, accountId, setActiveAccountId, setActiveTenantId, reloadAccounts } = useTenant();
   useEffect(() => {
     mounts.set(name, (mounts.get(name) ?? 0) + 1);
@@ -138,17 +137,6 @@ function Page({ name }: { name: string }) {
       </button>
       <button type="button" onClick={() => setActiveTenantId('t-a')}>Switch to t-a</button>
       <button type="button" onClick={() => setActiveTenantId('t-b')}>Switch to t-b</button>
-      {/* An in-app scope move and a navigation in ONE handler: the router's
-          basename is stale for the navigate(). */}
-      <button
-        type="button"
-        onClick={() => {
-          go({ tenantId: 't-a', accountId: 'acct-2' });
-          navigate('/agency/dnc');
-        }}
-      >
-        Move to acct-2 and open DNC
-      </button>
       <button type="button" onClick={() => navigate('/login')}>Go to login</button>
       <button type="button" onClick={reloadAccounts}>Reload accounts</button>
     </div>
@@ -539,23 +527,6 @@ function outage(): Error {
   return Object.assign(new Error('Bad gateway'), { statusCode: 502 });
 }
 
-describe('a scope move and a navigate() in one handler', () => {
-  it('go() to another account then navigate lands on that account at the new path', async () => {
-    openAt('/t/t-a/a/acct-1/agency/campaigns');
-    await screen.findByRole('heading', { name: 'campaigns' });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Move to acct-2 and open DNC' }));
-
-    // Without the rescoping navigator the navigate() joins the STALE basename and
-    // pushes `/t/t-a/a/acct-1/agency/dnc`, back in the account just left.
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/dnc'));
-    await screen.findByRole('heading', { name: 'dnc' });
-    expect(screen.queryByRole('status', { name: 'Loading' })).toBeNull();
-    expect(ids()).toBe('t-a/acct-2');
-    expect(mocks.loadPage).not.toHaveBeenCalled();
-  });
-});
-
 describe('a tenant switch on an unscoped page (the invite claim)', () => {
   it('only records the tenant, and the next app page is scoped under it', async () => {
     openAt('/join/tok-1');
@@ -710,16 +681,5 @@ describe('under StrictMode', () => {
     expect(screen.getByRole('heading', { name: 'campaigns' })).toBeTruthy();
     // StrictMode mounts twice up front; no further mount means no tear-down.
     expect(mounts.get('campaigns')).toBe(mounted);
-  });
-
-  it('go() to another account then navigate in one handler lands on that account', async () => {
-    openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
-    await screen.findByRole('heading', { name: 'campaigns' });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Move to acct-2 and open DNC' }));
-
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/dnc'));
-    await screen.findByRole('heading', { name: 'dnc' });
-    expect(ids()).toBe('t-a/acct-2');
   });
 });

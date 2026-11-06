@@ -8,20 +8,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import {
-  UNSAFE_createBrowserHistory,
-  type Location,
-  type NavigationType,
-  type Navigator,
-  type To,
-} from 'react-router-dom';
-import {
-  parseUrlScope,
-  scopePrefixOf,
-  stripUrlScope,
-  withUrlScope,
-  type UrlScope,
-} from '../utils/urlScope';
+import { UNSAFE_createBrowserHistory, type Location, type NavigationType } from 'react-router-dom';
+import { currentPath } from '../utils/returnPath';
+import { parseUrlScope, scopePrefixOf, stripUrlScope, withUrlScope, type UrlScope } from '../utils/urlScope';
 
 type BrowserHistory = ReturnType<typeof UNSAFE_createBrowserHistory>;
 
@@ -36,28 +25,25 @@ type BrowserHistory = ReturnType<typeof UNSAFE_createBrowserHistory>;
  * the history here lets the providers read the URL while `ScopedRouter` stays a
  * thin `<Router>` over the same history.
  *
- * `go` is the one way to move between scopes. Inside a scope, plain
- * `navigate('/agency/…')` keeps the current one (the basename prefixes it), and
- * react-router cannot navigate outside its own basename at all — so the tenant and
- * account switchers, and the gate that pins an unscoped URL to the active account,
- * all come through here.
+ * `go` moves between scopes in place. Inside a scope, plain `navigate('/agency/…')`
+ * keeps the current one (the basename prefixes it), and react-router cannot
+ * navigate outside its own basename at all — so the gate that pins an unscoped URL
+ * to the active account, and the way out of a refused link, come through here. A
+ * tenant or account SWITCH does not: it is a full page load (`TenantContext`).
+ *
+ * The router joins `navigate()` to the basename it was rendered with, so a
+ * `navigate()` in the same handler as a `go()` to another scope lands back in the
+ * old one. Do one or the other; `go` takes the path.
  */
 export interface UrlScopeValue {
   /** The scope in the URL, or `null` on an unscoped page. */
   scope: UrlScope | null;
   /** `/t/<tenant>/a/<account>` as written in the URL, or `''`. */
   prefix: string;
-  /** The current URL without its scope prefix: pathname + search + hash. */
-  appPath: string;
   location: Location;
   action: NavigationType;
+  /** `null` outside a provider. `ScopedRouter` hands it to react-router as its navigator. */
   history: BrowserHistory | null;
-  /**
-   * What `ScopedRouter` hands react-router as its navigator: the history, with
-   * router navigations re-pointed at the scope the address bar holds NOW. See
-   * `rescope` in the provider.
-   */
-  navigator: Navigator | null;
   /**
    * Go to `path` (an app path, e.g. `/agency/campaigns`) under `scope`, or
    * unscoped when `scope` is `null`. Defaults to the current app path, so
@@ -75,11 +61,9 @@ const NO_LOCATION: Location = { pathname: '/', search: '', hash: '', state: null
 const UNSCOPED: UrlScopeValue = {
   scope: null,
   prefix: '',
-  appPath: '/',
   location: NO_LOCATION,
   action: 'POP' as NavigationType,
   history: null,
-  navigator: null,
   go: () => {},
 };
 
@@ -125,11 +109,10 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
     [scopeTenant, scopeAccount],
   );
   const prefix = scopePrefixOf(pathname);
-  const appPath = stripUrlScope(`${pathname}${location.search}${location.hash}`);
 
   const go = useCallback<UrlScopeValue['go']>(
     (target, path, options) => {
-      const current = `${history.location.pathname}${history.location.search}${history.location.hash}`;
+      const current = currentPath(history.location);
       const app = path ?? stripUrlScope(current);
       const next = target ? withUrlScope(target, app) : stripUrlScope(app);
       if (next === current) return;
@@ -139,58 +122,9 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
     [history],
   );
 
-  /**
-   * The prefix the router is RENDERED with — its basename — which lags the address
-   * bar until the history update re-renders it.
-   */
-  const renderedPrefixRef = useRef(prefix);
-  renderedPrefixRef.current = prefix;
-
-  /**
-   * Re-point a router navigation at the scope the address bar holds now.
-   *
-   * react-router joins every `navigate()` to the basename it was rendered with.
-   * Within one event handler that basename is stale if the handler has already
-   * moved the scope: `setActiveAccountId(b)` (which pushes `/t/x/a/b/…`) followed
-   * by `navigate('/station')` would push `/t/x/a/A/station` — back to the account
-   * just left, with state on the other one. (The soft phone's "Go to station" for
-   * a session in a sibling account does exactly this.) So a path under the
-   * rendered prefix is moved under the live one: the new account, or no prefix
-   * after a tenant switch has left the scope.
-   *
-   * Only when the two differ, and only for a path under the rendered prefix, so an
-   * ordinary navigation is untouched and a scoped `?next=` followed from an
-   * unscoped sign-in page (rendered prefix `''`) goes where it says.
-   */
-  const navigator = useMemo<Navigator>(() => {
-    const rescopePath = (path: string): string => {
-      const rendered = renderedPrefixRef.current;
-      const live = scopePrefixOf(history.location.pathname);
-      if (!rendered || rendered === live || !path.startsWith(rendered)) return path;
-      const rest = path.slice(rendered.length);
-      // `/t/x/a/yz` is not under `/t/x/a/y`.
-      if (rest && !/^[/?#]/.test(rest)) return path;
-      if (live) return `${live}${rest}`;
-      return rest.startsWith('/') ? rest : `/${rest}`;
-    };
-    const rescope = (to: To): To =>
-      typeof to === 'string'
-        ? rescopePath(to)
-        : to.pathname
-          ? { ...to, pathname: rescopePath(to.pathname) }
-          : to;
-    return {
-      createHref: (to) => history.createHref(to),
-      encodeLocation: (to) => history.encodeLocation(to),
-      go: (delta) => history.go(delta),
-      push: (to, state) => history.push(rescope(to), state),
-      replace: (to, state) => history.replace(rescope(to), state),
-    };
-  }, [history]);
-
   const value = useMemo<UrlScopeValue>(
-    () => ({ scope, prefix, appPath, location, action, history, navigator, go }),
-    [scope, prefix, appPath, location, action, history, navigator, go],
+    () => ({ scope, prefix, location, action, history, go }),
+    [scope, prefix, location, action, history, go],
   );
 
   return <UrlScopeContext.Provider value={value}>{children}</UrlScopeContext.Provider>;
