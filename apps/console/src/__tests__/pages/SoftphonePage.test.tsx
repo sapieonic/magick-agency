@@ -359,8 +359,12 @@ describe('/dialer/phone', () => {
       });
       // This account's id would be the 404 of a session that does not exist here.
       expect(mocks.switchToSoftphone).toHaveBeenCalledWith('sess-camp', 't-1', 'a-2');
-      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2');
-      expect(screen.getByTestId('where').textContent).toBe('/station?campaign=camp-9');
+      // The account switch reloads the console, so the station path goes WITH it…
+      expect(mocks.setActiveAccountId).toHaveBeenCalledTimes(1);
+      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2', { path: '/station?campaign=camp-9' });
+      // …and no in-app navigation follows it: under this account's scope it would
+      // open the station here, an account the campaign is not in.
+      expect(screen.queryByTestId('where')).toBeNull();
     });
 
     it('a refused switch leaves the console in this account, and says why', async () => {
@@ -374,12 +378,13 @@ describe('/dialer/phone', () => {
       expect(screen.getByTestId('softphone-switch-failure').textContent).toMatch(/turned off/);
     });
 
-    it('Go to station moves to that account first', async () => {
+    it('Go to station moves to that account, landing on its station', async () => {
       mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
       await mount();
       fireEvent.click(screen.getByRole('button', { name: 'Go to station in North Region' }));
-      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2');
-      expect(screen.getByTestId('where').textContent).toBe('/station?campaign=camp-9');
+      expect(mocks.setActiveAccountId).toHaveBeenCalledTimes(1);
+      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2', { path: '/station?campaign=camp-9' });
+      expect(screen.queryByTestId('where')).toBeNull();
       expect(mocks.switchToSoftphone).not.toHaveBeenCalled();
     });
 
@@ -451,7 +456,9 @@ describe('/dialer/phone', () => {
       const goThere = screen.getByRole('button', { name: 'Use the soft phone in North Region' });
       expect(document.activeElement).toBe(goThere);
       fireEvent.click(goThere);
-      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2');
+      // Lands on the soft phone in that account, not that account's home.
+      expect(mocks.setActiveAccountId).toHaveBeenCalledTimes(1);
+      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2', { path: '/dialer/phone' });
     });
 
     it('a call the server refuses to leave over (agent_on_live_call) says the same', async () => {

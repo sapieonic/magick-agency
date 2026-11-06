@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StrictMode, useEffect } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { Account, Membership, Tenant } from '../../types/auth';
 
 /**
@@ -10,6 +10,10 @@ import type { Account, Membership, Tenant } from '../../types/auth';
  * session (`useAuth`) and the accounts API mocked. Each test starts from a URL put
  * in place with `window.history.replaceState` before mount and reads the address
  * bar (`window.location`) afterwards — the address bar is what a copied link is.
+ *
+ * A tenant or account switch on an app page is a full page load (`utils/pageLoad`),
+ * which jsdom-style environments cannot perform: it is mocked, and the URL it was
+ * asked to load is what those tests read.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listMyAccounts: vi.fn(),
   logout: vi.fn(),
+  loadPage: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -28,7 +33,11 @@ vi.mock('../../api/accounts', () => ({
   listMyAccounts: mocks.listMyAccounts,
 }));
 
-import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
+vi.mock('../../utils/pageLoad', () => ({
+  loadPage: mocks.loadPage,
+}));
+
+import { UrlScopeProvider, useUrlScope } from '../../contexts/UrlScopeContext';
 import { TenantProvider, useTenant } from '../../contexts/TenantContext';
 import { ScopedRouter } from '../../components/routing/ScopedRouter';
 import { ScopeGate } from '../../components/routing/ScopeGate';
@@ -106,6 +115,7 @@ const mounts = new Map<string, number>();
 function Page({ name }: { name: string }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { go } = useUrlScope();
   const { tenantId, accountId, setActiveAccountId, setActiveTenantId, reloadAccounts } = useTenant();
   useEffect(() => {
     mounts.set(name, (mounts.get(name) ?? 0) + 1);
@@ -116,30 +126,57 @@ function Page({ name }: { name: string }) {
       <p data-testid="app-path">{location.pathname}</p>
       <p data-testid="ids">{`${tenantId}/${accountId}`}</p>
       <Link to="/agency/dnc">DNC link</Link>
+      <button type="button" onClick={() => setActiveAccountId('acct-1')}>Switch to acct-1</button>
       <button type="button" onClick={() => setActiveAccountId('acct-2')}>Switch to acct-2</button>
+      {/* A switch that names where it lands, as the soft phone's "Go to station"
+          does for a session in a sibling account. */}
+      <button type="button" onClick={() => setActiveAccountId('acct-1', { path: '/agency/dnc' })}>
+        Switch to acct-1 at DNC
+      </button>
+      <button type="button" onClick={() => setActiveAccountId('acct-2', { path: '/agency/dnc' })}>
+        Switch to acct-2 at DNC
+      </button>
+      <button type="button" onClick={() => setActiveTenantId('t-a')}>Switch to t-a</button>
       <button type="button" onClick={() => setActiveTenantId('t-b')}>Switch to t-b</button>
-      {/* A switch and a navigation in ONE handler, as the soft phone's "Go to
-          station" does for a session in a sibling account. */}
+      {/* An in-app scope move and a navigation in ONE handler: the router's
+          basename is stale for the navigate(). */}
       <button
         type="button"
         onClick={() => {
-          setActiveAccountId('acct-2');
+          go({ tenantId: 't-a', accountId: 'acct-2' });
           navigate('/agency/dnc');
         }}
       >
-        Switch to acct-2 and open DNC
+        Move to acct-2 and open DNC
       </button>
+      <button type="button" onClick={() => navigate('/login')}>Go to login</button>
+      <button type="button" onClick={reloadAccounts}>Reload accounts</button>
+    </div>
+  );
+}
+
+/**
+ * An invite landing (`/join/:token`, unscoped): a claim records the tenant it
+ * joined, then navigates into the app — what `useInviteClaim` does.
+ */
+function JoinStub() {
+  const { token } = useParams();
+  const navigate = useNavigate();
+  const { tenantId, setActiveTenantId } = useTenant();
+  return (
+    <div>
+      <h1>join page</h1>
+      <p data-testid="join-token">{token}</p>
+      <p data-testid="join-tenant">{tenantId}</p>
       <button
         type="button"
         onClick={() => {
           setActiveTenantId('t-b');
-          navigate('/agency/dnc');
+          navigate('/agency/dnc', { replace: true });
         }}
       >
-        Switch to t-b and open DNC
+        Claim t-b and open DNC
       </button>
-      <button type="button" onClick={() => navigate('/login')}>Go to login</button>
-      <button type="button" onClick={reloadAccounts}>Reload accounts</button>
     </div>
   );
 }
@@ -162,6 +199,7 @@ function TestApp({ strict = false }: { strict?: boolean }) {
           <Routes>
             <Route path="/login" element={<SignInPage name="login page" />} />
             <Route path="/agency/login" element={<SignInPage name="agency login page" />} />
+            <Route path="/join/:token" element={<JoinStub />} />
             <Route element={<ScopeGate />}>
               <Route path="/" element={<RequireAuth><Page name="home" /></RequireAuth>} />
               <Route path="/agency/campaigns" element={<RequireAuth><Page name="campaigns" /></RequireAuth>} />
@@ -183,6 +221,20 @@ function openAt(url: string, { strict = false }: { strict?: boolean } = {}) {
 
 const address = () => `${window.location.pathname}${window.location.search}`;
 const ids = () => screen.getByTestId('ids').textContent;
+
+/**
+ * The browser moving to `url` on its own — a back/forward entry, or another tab's
+ * link — as a POP the app did not push.
+ */
+function popTo(url: string) {
+  act(() => {
+    window.history.pushState(null, '', url);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+}
+
+/** What `setActiveTenantId` records as this browser's choice. */
+const storedTenant = () => JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as unknown;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -292,7 +344,7 @@ describe('inside a scope', () => {
     expect(ids()).toBe('t-a/acct-2');
   });
 
-  it('switching account pushes the new scope, keeping the app path; back restores the old one', async () => {
+  it('switching account loads the new account’s home, not the page the user was on', async () => {
     openAt('/t/t-a/a/acct-1/agency/campaigns');
     await screen.findByRole('heading', { name: 'campaigns' });
     expect(ids()).toBe('t-a/acct-1');
@@ -300,35 +352,86 @@ describe('inside a scope', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns'));
+    // A campaign of acct-1 is not one of acct-2's: the load is at its home.
+    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPage).toHaveBeenCalledWith('/t/t-a/a/acct-2');
+    // Nothing moves in place: the load replaces the document.
+    await act(async () => {});
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns');
+    expect(window.history.length).toBe(before);
+    expect(ids()).toBe('t-a/acct-1');
+    expect(screen.getByTestId('app-path').textContent).toBe('/agency/campaigns');
+  });
+
+  it('switching account with a path loads that path under the new account', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns');
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2 at DNC' }));
+
+    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPage).toHaveBeenCalledWith('/t/t-a/a/acct-2/agency/dnc');
+    await act(async () => {});
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns');
+    expect(ids()).toBe('t-a/acct-1');
+  });
+
+  it('choosing the account already open is not a switch: nothing loads, and a path is followed in place', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns');
+    await screen.findByRole('heading', { name: 'campaigns' });
+    const before = window.history.length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-1' }));
+    await act(async () => {});
+    expect(mocks.loadPage).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns');
+    expect(window.history.length).toBe(before);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-1 at DNC' }));
+
+    await screen.findByRole('heading', { name: 'dnc' });
+    expect(mocks.loadPage).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/dnc');
+    // Pushed, like any in-app move: back returns to the campaigns page.
     expect(window.history.length).toBe(before + 1);
+    expect(ids()).toBe('t-a/acct-1');
+  });
+
+  it('switching tenant records it and loads the root, which opens it at its home', async () => {
+    openAt('/t/t-a/a/acct-2/agency/campaigns');
+    await screen.findByRole('heading', { name: 'campaigns' });
+    const before = window.history.length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b' }));
+
+    expect(storedTenant()).toEqual({ tenantId: 't-b' });
+    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPage).toHaveBeenCalledWith('/');
+    // Nothing moves in place, and nothing overwrites the recorded choice before the load.
+    await act(async () => {});
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns');
+    expect(window.history.length).toBe(before);
     expect(ids()).toBe('t-a/acct-2');
-    expect(screen.getByTestId('app-path').textContent).toBe('/agency/campaigns');
-
-    act(() => window.history.back());
-
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns'));
-    await waitFor(() => expect(ids()).toBe('t-a/acct-1'));
-    expect(screen.getByRole('heading', { name: 'campaigns' })).toBeTruthy();
+    expect(storedTenant()).toEqual({ tenantId: 't-b' });
   });
 
-  it('switching tenant lands on the new tenant’s first account at the same app path', async () => {
+  it('choosing the tenant already open is not a switch', async () => {
     openAt('/t/t-a/a/acct-2/agency/campaigns');
     await screen.findByRole('heading', { name: 'campaigns' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-a' }));
+    await act(async () => {});
 
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-b/a/acct-b1/agency/campaigns'));
-    await screen.findByRole('heading', { name: 'campaigns' });
-    expect(ids()).toBe('t-b/acct-b1');
-    expect(screen.getByTestId('app-path').textContent).toBe('/agency/campaigns');
+    expect(mocks.loadPage).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns');
+    expect(ids()).toBe('t-a/acct-2');
   });
 
-  it('back after a tenant switch returns to the previous tenant and account', async () => {
+  it('a back/forward entry naming another tenant is adopted in place', async () => {
     openAt('/t/t-a/a/acct-2/agency/campaigns');
     await screen.findByRole('heading', { name: 'campaigns' });
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b' }));
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-b/a/acct-b1/agency/campaigns'));
+
+    popTo('/t/t-b/a/acct-b1/agency/campaigns');
     await waitFor(() => expect(ids()).toBe('t-b/acct-b1'));
 
     act(() => window.history.back());
@@ -336,6 +439,7 @@ describe('inside a scope', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns'));
     await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
     expect(screen.getByRole('heading', { name: 'campaigns' })).toBeTruthy();
+    expect(mocks.loadPage).not.toHaveBeenCalled();
   });
 
   it('reloading accounts after the open one went away re-points the URL at the replacement', async () => {
@@ -435,31 +539,36 @@ function outage(): Error {
   return Object.assign(new Error('Bad gateway'), { statusCode: 502 });
 }
 
-describe('a switch and a navigate() in one handler', () => {
-  it('an account switch then navigate lands on the new account at the new path', async () => {
+describe('a scope move and a navigate() in one handler', () => {
+  it('go() to another account then navigate lands on that account at the new path', async () => {
     openAt('/t/t-a/a/acct-1/agency/campaigns');
     await screen.findByRole('heading', { name: 'campaigns' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2 and open DNC' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move to acct-2 and open DNC' }));
 
-    // Before the fix the navigate() joined the STALE basename and pushed
-    // `/t/t-a/a/acct-1/agency/dnc`, with state on acct-2: the gate span forever.
+    // Without the rescoping navigator the navigate() joins the STALE basename and
+    // pushes `/t/t-a/a/acct-1/agency/dnc`, back in the account just left.
     await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/dnc'));
     await screen.findByRole('heading', { name: 'dnc' });
     expect(screen.queryByRole('status', { name: 'Loading' })).toBeNull();
     expect(ids()).toBe('t-a/acct-2');
+    expect(mocks.loadPage).not.toHaveBeenCalled();
   });
+});
 
-  it('a tenant switch then navigate lands on the new tenant’s first account at the new path', async () => {
-    openAt('/t/t-a/a/acct-1/agency/campaigns');
-    await screen.findByRole('heading', { name: 'campaigns' });
+describe('a tenant switch on an unscoped page (the invite claim)', () => {
+  it('only records the tenant, and the next app page is scoped under it', async () => {
+    openAt('/join/tok-1');
+    await screen.findByRole('heading', { name: 'join page' });
+    expect(screen.getByTestId('join-tenant').textContent).toBe('t-a');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b and open DNC' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Claim t-b and open DNC' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-b/a/acct-b1/agency/dnc'));
     await screen.findByRole('heading', { name: 'dnc' });
-    expect(screen.queryByRole('status', { name: 'Loading' })).toBeNull();
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-b/a/acct-b1/agency/dnc'));
     expect(ids()).toBe('t-b/acct-b1');
+    // No reload: the claim's own navigation carries the user into the app.
+    expect(mocks.loadPage).not.toHaveBeenCalled();
   });
 });
 
@@ -533,9 +642,10 @@ describe('back/forward between accounts', () => {
     await screen.findByRole('heading', { name: 'campaigns' });
     expect(mounts.get('campaigns')).toBe(1);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2' }));
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns'));
+    // A switch reloads, so an entry for another account arrives by POP.
+    popTo('/t/t-a/a/acct-2/agency/campaigns');
     await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns');
     expect(mounts.get('campaigns')).toBe(1);
 
     act(() => window.history.back());
@@ -547,6 +657,7 @@ describe('back/forward between accounts', () => {
     await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
 
     expect(mounts.get('campaigns')).toBe(1);
+    expect(mocks.loadPage).not.toHaveBeenCalled();
   });
 });
 
@@ -559,25 +670,53 @@ describe('under StrictMode', () => {
     expect(ids()).toBe('t-a/acct-1');
   });
 
-  it('an account switch moves the URL, and back restores the old account', async () => {
+  it('an account switch loads the new account’s home, once, and moves nothing in place', async () => {
     openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
     await screen.findByRole('heading', { name: 'campaigns' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2' }));
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns'));
+
+    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPage).toHaveBeenCalledWith('/t/t-a/a/acct-2');
+    await act(async () => {});
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns');
+    expect(ids()).toBe('t-a/acct-1');
+  });
+
+  it('a tenant switch records it and loads the root, once', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b' }));
+
+    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPage).toHaveBeenCalledWith('/');
+    await act(async () => {});
+    expect(storedTenant()).toEqual({ tenantId: 't-b' });
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns');
+  });
+
+  it('back/forward to another account is adopted without tearing the page down', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
+    await screen.findByRole('heading', { name: 'campaigns' });
+    const mounted = mounts.get('campaigns');
+
+    popTo('/t/t-a/a/acct-2/agency/campaigns');
     await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
 
     act(() => window.history.back());
     await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns'));
     await waitFor(() => expect(ids()).toBe('t-a/acct-1'));
     expect(screen.getByRole('heading', { name: 'campaigns' })).toBeTruthy();
+    // StrictMode mounts twice up front; no further mount means no tear-down.
+    expect(mounts.get('campaigns')).toBe(mounted);
   });
 
-  it('an account switch then navigate in one handler lands on the new account', async () => {
+  it('go() to another account then navigate in one handler lands on that account', async () => {
     openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
     await screen.findByRole('heading', { name: 'campaigns' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2 and open DNC' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move to acct-2 and open DNC' }));
 
     await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/dnc'));
     await screen.findByRole('heading', { name: 'dnc' });
