@@ -33,12 +33,19 @@ async function indexDef(name: string): Promise<string | undefined> {
 }
 
 /** The plan for `sql`, every plan type allowed, on analysed tables. */
-async function planOf(sql: string, params: unknown[]): Promise<string> {
+/**
+ * ANALYZE inside a rolled-back transaction, never bare: statistics outlive the rows, and a later
+ * file's plan test would otherwise plan on this file's bulk seed.
+ */
+async function planOf(sql: string, params: unknown[], analyze: string[] = []): Promise<string> {
   const client: PoolClient = await pool().connect();
   try {
+    await client.query('BEGIN');
+    for (const t of analyze) await client.query(`ANALYZE ${t}`);
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`, params);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
   } finally {
+    await client.query('ROLLBACK');
     client.release();
   }
 }
@@ -81,11 +88,10 @@ describe('0016 — customer history indexes', () => {
        SELECT $1, $2, $3, gen_random_uuid(), '+9170' || lpad((g % 1500)::text, 8, '0'), '+14155550100',
               'ended', now(), now(), now() - (g || ' minutes')::interval
          FROM generate_series(1, 6000) g`, [TENANT, ACCOUNT, session.id]);
-    await pool().query('ANALYZE agency_manual_calls');
     const plan = await planOf(DESTINATION_PROBE, [
       TENANT, '+917000000042', [ACCOUNT], '2026-11-06T10:00:00.123456Z', 'ffffffff-ffff-ffff-ffff-ffffffffffff', 51,
       null, null, null, null, null, null, false,
-    ]);
+    ], ['agency_manual_calls']);
     expect(plan).toMatch(new RegExp(`Limit\\n\\s+->\\s+Index (Only )?Scan using ${INDEX}`));
     expect(plan).toMatch(/Index Cond: .*destination_e164.*ROW\(created_at, id\) < ROW\(/);
     expect(plan).not.toMatch(/\bSort\b/);

@@ -931,7 +931,27 @@ suites did not run (no SDK where it was built or fixed; the mobile CI job is the
 there is no `apps/mobile` row for this run: the app's last recorded Dart run predates this feature
 (the contact-assignment branch, PR #33), and nothing of customer history's Dart side has run.
 
-COUNTS: filled in by the main session
+From inside each package: `pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
+`pnpm test:release` 10 pass; `pnpm build` clean; `contracts-literals --check` up to date (51
+vocabularies).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 8209 passed + 1 expected fail + 42 skipped (410 files) | rest lane 2025 passed + 9 expected fail + 1 skipped (204 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 571 (55 files) |
+| `apps/console` | 5494 (287 files) | — |
+| `apps/super-admin` | 446 (33 files) | — |
+| `packages/contracts` | 332 (10 files) | — |
+| `packages/web-ui` | 235 (20 files) | — |
+| `packages/domain` | 114 (8 files) | — |
+| `packages/observability` | 14 (3 files) | — |
+
+Two earlier full rest-lane runs of this work failed `insights-reads.test.ts`'s pace plan case:
+`customer-history.test.ts` ran a bare `ANALYZE` on its bulk seed, and the statistics outlived the
+rows into the later file's plan. Its plans (and the 0016 migration test's) now ANALYZE inside the
+plan's rolled-back transaction, as `insights-reads.test.ts` does; the run above is after that fix.
+One of those runs also failed `load/voicelink-media-ws-load.test.ts` once (seed 24301, 1 of 2
+alone; code this branch does not touch).
 
 After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
 `/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8

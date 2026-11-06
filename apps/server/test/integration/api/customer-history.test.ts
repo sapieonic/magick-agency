@@ -879,12 +879,24 @@ describe('the route table', () => {
 // ─── CH9: every read uses an index ─────────────────────────────────────────────
 
 /** The plan of `sql` as the repository runs it: every plan type allowed, on analysed tables. */
+/** The tables the plans read; ANALYZEd inside each plan's rolled-back transaction (see {@link planOf}). */
+const PLANNED_TABLES = 'agency_contacts, agency_call_attempts, agency_manual_calls, dnc_entries, agency_campaigns, '
+  + 'agency_calls, agency_ingest_jobs, agency_agent_sessions';
+
+/**
+ * The plan the repository gets on this file's analysed seed. Never a bare ANALYZE (the rule in
+ * `insights-reads.test.ts`): statistics outlive the rows, so a later file's plan test would plan
+ * on this file's bulk seed. ANALYZE runs inside the transaction and the ROLLBACK discards it.
+ */
 async function planOf(sql: string, params: unknown[]): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
+    await client.query('BEGIN');
+    await client.query(`ANALYZE ${PLANNED_TABLES}`);
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`, params);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
   } finally {
+    await client.query('ROLLBACK');
     client.release();
   }
 }
@@ -929,8 +941,6 @@ describe('every read uses its index (CH9)', () => {
     await q(`INSERT INTO agency_ingest_jobs (tenant_id, account_id, campaign_id, s3_key, file_name, phone_column, status)
              SELECT $1, $2, gen_random_uuid(), 'k/' || g, 'bulk-' || g || '.csv', 'phone', 'completed' FROM generate_series(1, 3000) g`,
       [floor.tenant, floor.account]);
-    await q(`ANALYZE agency_contacts, agency_call_attempts, agency_manual_calls, dnc_entries, agency_campaigns, agency_calls,
-             agency_ingest_jobs, agency_agent_sessions`);
   }, 120_000);
 
   const noFullScan = (plan: string) => expect(plan, plan).not.toMatch(BIG_TABLES);
