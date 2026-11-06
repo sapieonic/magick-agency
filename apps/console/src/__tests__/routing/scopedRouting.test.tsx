@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { StrictMode, useEffect } from 'react';
+import { StrictMode, memo, useEffect } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { Account, Membership, Tenant } from '../../types/auth';
@@ -37,7 +37,7 @@ vi.mock('../../utils/pageLoad', () => ({
   loadPage: mocks.loadPage,
 }));
 
-import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
+import { UrlScopeProvider, useUrlScope } from '../../contexts/UrlScopeContext';
 import { TenantProvider, useTenant } from '../../contexts/TenantContext';
 import { ScopedRouter } from '../../components/routing/ScopedRouter';
 import { ScopeGate } from '../../components/routing/ScopeGate';
@@ -646,6 +646,46 @@ describe('a retry opens the account the link names', () => {
     await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
     expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns');
     expect(screen.getByRole('heading', { name: 'campaigns' })).toBeTruthy();
+  });
+});
+
+describe('the URL scope context', () => {
+  // `TenantProvider` and the gates read it; only the router reads the location.
+  // A navigation inside one scope must not re-render what reads the scope alone.
+  it('re-renders its readers on a scope change, not on every navigation', () => {
+    let renders = 0;
+    const Reader = memo(function Reader() {
+      useUrlScope();
+      renders += 1;
+      return null;
+    });
+    function Mover() {
+      const { go } = useUrlScope();
+      return (
+        <>
+          <button type="button" onClick={() => go({ tenantId: 't-a', accountId: 'acct-1' }, '/agency/dnc')}>
+            same scope
+          </button>
+          <button type="button" onClick={() => go({ tenantId: 't-a', accountId: 'acct-2' })}>other scope</button>
+        </>
+      );
+    }
+    window.history.replaceState(null, '', '/t/t-a/a/acct-1/agency/campaigns');
+    render(
+      <UrlScopeProvider>
+        <Reader />
+        <Mover />
+      </UrlScopeProvider>,
+    );
+    const settled = renders;
+
+    fireEvent.click(screen.getByRole('button', { name: 'same scope' }));
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/dnc');
+    expect(renders).toBe(settled);
+
+    fireEvent.click(screen.getByRole('button', { name: 'other scope' }));
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/dnc');
+    expect(renders).toBe(settled + 1);
   });
 });
 
