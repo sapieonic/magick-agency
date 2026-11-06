@@ -1,7 +1,10 @@
 import { AGENCY_JOIN_PATH, JOIN_PATH } from '../utils/returnPath';
+import { scopePrefixOf } from '../utils/urlScope';
 
 /**
- * Take the single-use invite token out of anything on its way to PostHog.
+ * Take the single-use invite token out of anything on its way to PostHog — and,
+ * second and unrelated, put a fixed placeholder where a signed-in page's URL
+ * names its tenant and account ({@link SCOPE_PLACEHOLDER}).
  *
  * ── The defect this closes ─────────────────────────────────────────────────
  * `/agency/join/:token` — and, since every role started getting a token,
@@ -84,6 +87,85 @@ export function redactInviteToken(value: string): string {
 }
 
 /**
+ * What replaces a signed-in page's `/t/<tenantId>/a/<accountId>` prefix.
+ *
+ * ── Why the scope comes out of every URL ───────────────────────────────────
+ * Every signed-in page lives under that prefix (`utils/urlScope`, decision
+ * B26), and posthog-js copies the address into `$current_url`, `$pathname`,
+ * `$referrer`, `$initial_current_url` and every link's `href` in an
+ * autocapture. Left alone,
+ * one page becomes one path per tenant and account — no funnel or path report
+ * groups across customers any more — and the ids ride in URL properties that were
+ * never meant to carry them. They are not lost: the `tenant` and `account` groups
+ * and the `tenant_id`/`account_id` super properties (`identifyUser`) carry the
+ * same ids where PostHog segments on them. Like {@link REDACTED_TOKEN} it reads
+ * as route parameters, so `/t/:tenant/a/:account/agency/campaigns` is one path.
+ */
+export const SCOPE_PLACEHOLDER = '/t/:tenant/a/:account';
+
+/** The `scheme://host` in front of a full URL, so the scope test can see its path. */
+const URL_ORIGIN_RE = /^[a-z][a-z\d+.-]*:\/\/[^/?#\s]*/i;
+
+/** Each link target in an autocapture `$elements_chain`: `href="…"` and `attr__href="…"`. */
+const CHAIN_HREF_RE = /(href=")([^"]*)/g;
+
+/**
+ * Replace the scope prefix of a path or full URL with {@link SCOPE_PLACEHOLDER};
+ * anything else comes back unchanged, query and hash included.
+ *
+ * Keyed on the whole value — a path, or an origin and then a path — rather than
+ * matched anywhere like the token. The scope is only ever the START of a page's
+ * path, and the shape test is `utils/urlScope`'s own, so this and the router
+ * cannot disagree about what a scoped URL is.
+ */
+export function normaliseUrlScope(value: string): string {
+  const origin = URL_ORIGIN_RE.exec(value)?.[0] ?? '';
+  const path = value.slice(origin.length);
+  const prefix = scopePrefixOf(path);
+  return prefix ? `${origin}${SCOPE_PLACEHOLDER}${path.slice(prefix.length)}` : value;
+}
+
+/**
+ * A scope prefix percent-encoded inside a query value — the sign-in page's
+ * `?next=%2Ft%2F<tenant>%2Fa%2F<account>%2F…`, which is how `RequireAuth` carries
+ * a scoped deep link through sign-in. Ended by an encoded `/`, `?` or `#`, or by
+ * the end of the parameter.
+ */
+const ENCODED_SCOPE_RE = /%2Ft%2F[^%/?#&]+%2Fa%2F[^%/?#&]+(?=%2F|%3F|%23|[&#]|$)/gi;
+const ENCODED_SCOPE_PLACEHOLDER = encodeURIComponent(SCOPE_PLACEHOLDER);
+
+/**
+ * {@link SCOPE_PLACEHOLDER} for every percent-encoded scope prefix in `value`, so
+ * the sign-in page's `?next=` does not carry the ids the path itself no longer does.
+ */
+export function normaliseEncodedUrlScope(value: string): string {
+  return value.includes('%') ? value.replace(ENCODED_SCOPE_RE, ENCODED_SCOPE_PLACEHOLDER) : value;
+}
+
+/**
+ * Whether `value` could hold a scope prefix at all, plain or percent-encoded. Every
+ * capture runs every string property through {@link cleanString}, and almost none
+ * of them is a URL: one scan here spares them the origin, prefix and encoded
+ * passes below. Case-insensitive like the markers themselves.
+ */
+const MAY_HOLD_SCOPE_RE = /\/t\/|%2Ft%2F/i;
+
+/** One string on its way to PostHog: scope normalised, invite token redacted. */
+function cleanString(value: string): string {
+  let scoped = value;
+  if (MAY_HOLD_SCOPE_RE.test(value)) {
+    // An autocapture `$elements_chain` holds its URLs in `href="…"` attributes,
+    // each normalised in place; the chain as a whole is not a URL, so the
+    // whole-value pass is for every other string.
+    scoped = value.includes('href="')
+      ? value.replace(CHAIN_HREF_RE, (_match, open: string, url: string) => `${open}${normaliseUrlScope(url)}`)
+      : normaliseUrlScope(value);
+    scoped = normaliseEncodedUrlScope(scoped);
+  }
+  return redactInviteToken(scoped);
+}
+
+/**
  * How far into a property payload to look.
  *
  * Autocapture's `$elements` is an array of objects one level down, so a top-level
@@ -95,7 +177,7 @@ export function redactInviteToken(value: string): string {
 const MAX_DEPTH = 6;
 
 function redactValue(value: unknown, depth: number): unknown {
-  if (typeof value === 'string') return redactInviteToken(value);
+  if (typeof value === 'string') return cleanString(value);
   if (value === null || typeof value !== 'object' || depth >= MAX_DEPTH) return value;
 
   if (Array.isArray(value)) {
@@ -128,11 +210,12 @@ function redactValue(value: unknown, depth: number): unknown {
 }
 
 /**
- * Redact a whole property bag — event properties, `$set`, `$set_once`.
+ * Redact a whole property bag — event properties, `$set`, `$set_once` — and
+ * normalise the tenant/account scope in every URL in it ({@link SCOPE_PLACEHOLDER}).
  *
  * The input is never mutated, and the same object comes back when nothing
- * matched, so the overwhelmingly common capture (no invite token anywhere) costs
- * one walk and no allocation.
+ * matched, so a capture with no invite token and no scoped URL costs one walk
+ * and no allocation.
  */
 export function redactAnalyticsProperties<T extends Record<string, unknown>>(props: T): T {
   return redactValue(props, 0) as T;

@@ -1172,6 +1172,71 @@ The production image and compose file (`docker/`, see [`operations.md`](operatio
 the server publishes no port, Redis runs with AOF and `noeviction`, the image is
 `NODE_ENV=production` and migrates on start, the grace is 45 s.
 
+### Tenant/account-scoped console URLs 2026-11-05 (B26)
+
+Console links did not name a tenant or account, so a link sent to a colleague opened whichever
+account their browser last had open. Every signed-in console page is now served under
+`/t/:tenantId/a/:accountId/…` ([`decisions.md`](decisions.md) B26).
+
+- The prefix is the router's basename (`components/routing/ScopedRouter`, over the history
+  `contexts/UrlScopeContext` owns), so no route, link or `navigate()` changed. `TenantContext`
+  derives the active account from the URL whenever it names a listed account; `localStorage` is only
+  the fallback. A tenant or account switch reloads the console at the new account's home (2026-11-06,
+  below).
+  `components/routing/ScopeGate` re-points an unscoped URL (an old `/dialer` bookmark) at the
+  active account and refuses a link to a tenant or account the viewer cannot open ("You can’t
+  open this workspace / account", with Go to my workspace and Sign out). Sign-in, invite and
+  verification pages stay unscoped; a signed-out visitor keeps the scope through `?next=`.
+- PostHog receives the prefix as `/t/:tenant/a/:account`, in paths, URLs, autocapture hrefs and
+  the sign-in page's encoded `next`. The campaign-completion email links under the campaign's own
+  scope (unscoped when its account does not resolve).
+- A fresh-context review found four defects, all fixed and pinned by tests that fail on the
+  pre-fix code: an account switch followed by `navigate()` in one handler (the soft phone's
+  "Go to station" for a sibling account) hung on a spinner; Try again on a narrowed account list
+  never opened the linked account; Retry after an outage opened the first account instead of the
+  linked one; a cold load of a scoped sign-in URL rendered a blank page. Back/forward between
+  accounts no longer remounts the page. `appRouteTable.test.ts` pins every signed-in route inside
+  the gate.
+- 2026-11-06: a tenant or account switch no longer keeps the page the user was on (a record page
+  carried into an account it does not belong to showed its not-found state). Inside the app it is a
+  full page load: an account switch at `/t/<tenant>/a/<account>`, a tenant switch at the new
+  tenant's first account (`utils/pageLoad.ts`; refined in review, next bullet). The soft
+  phone's two cross-account moves name their destination (the station, the soft phone); the invite
+  claim, on an unscoped page, still only records the tenant it joined. The duplicate decision ID is
+  gone: the invite-claims ruling keeps B25 and the API-on-its-own-host decision is B27.
+- 2026-11-06, review of [sapieonic/magick-agency#48](https://github.com/sapieonic/magick-agency/pull/48),
+  each fix pinned by a test that fails on the code before it:
+  - Retry no longer re-points a refused link at the first account. It re-points only a URL
+    whose account was open and has since gone, and lands at the replacement's home, not on the old record's page.
+  - A link to a tenant or account the viewer cannot open falls back to the workspace this
+    browser last had, not the session's first tenant, and is never saved. "Go to my workspace" is a full load of `/`.
+  - A tenant switch resolves the new tenant's accounts first and loads its scope directly. It
+    no longer writes `localStorage` before the browser commits the load, so cancelling the station's leave-page prompt changes nothing.
+    A tenant with no account to open is switched to in place, at `/`.
+  - The tenant adoption re-runs when the session's tenants change, so `ScopeGate`'s wait for
+    it ends.
+  - `TenantProvider` requires `UrlScopeProvider`, so no test drives a switch path production
+    never takes.
+  - The scope and location contexts are split, so a navigation re-renders only the router.
+  - The URL prefix's shape moved to `packages/contracts` (`console-urls`) for the console and
+    the server's email link alike.
+  - PostHog redaction skips its scope passes for strings with no `/t/` or `%2Ft%2F`.
+- **Left open:** signing out and in as a different user keeps the first user's scoped `next`, which the second user may
+  be refused (the refusal offers a way out). The history comes from react-router's
+  `UNSAFE_createBrowserHistory`; the routing tests exercise it, so an upgrade that breaks it goes red.
+- Counts, 2026-11-06, after the review fixes:
+  - `apps/console`: 5383 (282 files), lint clean, build clean. (5375 after reload-on-switch and a
+    simplify pass; 5371, 281 files, on 2026-11-05.)
+  - `packages/contracts`: 299 (10 files).
+  - `apps/server`: lint clean; unit 8163 passed + 42 skipped (407 files).
+  - Server integration as CI runs it:
+    - `INTEGRATION_LANE=rest`: 1978 passed + 9 expected fail + 1 skipped (203 files + 1 skipped).
+    - `INTEGRATION_LANE=wall-clock`: 15 (3 files).
+  - Postgres 16 and Redis ran locally on 5436 and 6383. The test database must be UTF-8:
+    on `SQL_ASCII`, `softphone-policy-routes.test.ts`'s emoji note fails the length check.
+  - The Dart tests were not run (no Dart SDK here). The contract change adds a helper, not a wire
+    type or literal, and `contracts-literals --check` is unchanged.
+
 ### Pre-deploy checklist
 
 - [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
@@ -1198,7 +1263,7 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       them; a failure stops the container).
 - [ ] Firebase: agency's domain in the authorised domains, `FIREBASE_PROJECT_ID` set (no service
       account: tokens are verified against Google's public keys).
-- [ ] API on its own host only (B25, `DEPLOYMENT.md` 7.3): `web` built with `CONSOLE_API_BASE_URL`,
+- [ ] API on its own host only (B27, `DEPLOYMENT.md` 7.3): `web` built with `CONSOLE_API_BASE_URL`,
       every origin the console is served from in `CORS_ALLOWED_ORIGINS`, the preflight `curl` in 7.3
       names the app's origin, and the mobile app's link host is the console's name.
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,

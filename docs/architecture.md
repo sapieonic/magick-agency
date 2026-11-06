@@ -64,7 +64,7 @@ cycle (B12). Boundaries are described in [`seams.md`](seams.md).
                                  recording host)               Sarvam, PostHog
 ```
 
-\* CORS only with the API on its own host (`CORS_ALLOWED_ORIGINS`, decision B25).
+\* CORS only with the API on its own host (`CORS_ALLOWED_ORIGINS`, decision B27).
 
 ## Server composition
 
@@ -86,7 +86,7 @@ their key env var is set, and the subsystem behind them is then registered or sk
 **`AppContext`** (`app-context.ts`) is what every plugin and bootstrap receives: `config`, the pg
 `pool`, the ioredis client. `buildApp({ ctx: null })` builds a routing-only app for tests.
 
-**`buildApp`** (`app.ts`) registers, in order: CORS, only when `CORS_ALLOWED_ORIGINS` is set (B25;
+**`buildApp`** (`app.ts`) registers, in order: CORS, only when `CORS_ALLOWED_ORIGINS` is set (B27;
 `api/middleware/cors.ts`), and it must stay before the rate limiter, because its `OPTIONS *` route
 registered after the limiter would be charged to a bucket; the rate limiter (app scope, so every route is in a
 bucket) and the per-user bucket the session middleware charges; the error handler with the `22P02 → 400` backstop and the 5xx error mask (no driver text
@@ -462,7 +462,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   sweeps close what nobody owns. Both clients have it on the same routes and station frame: the
   console's `/dialer/phone` and the agent app's Phone tab ([`mobile.md`](mobile.md)).
 - **Completion notice** (`campaign-completion-notice.ts`). When a campaign finishes, mails holders
-  of `agency.supervise`.
+  of `agency.supervise`, linking to the campaign under its own tenant and account (B26).
 
 ## The voice engine
 
@@ -667,6 +667,21 @@ a rate-limit key and never an auth input.
   Brand pack `brands/magick-agency/` (B17); a branding guard test
   (`src/__tests__/branding/noParentBrand.test.ts`). In dev, Vite proxies every API prefix to `:3021`
   (`vite.config.ts`), and `devProxyPrefixes.test.ts` fails for any API segment the proxy misses.
+- **Console URLs carry the tenant and account** (decision B26). Signed-in pages live under
+  `/t/:tenantId/a/:accountId/…`, so a copied link opens the same tenant and account for whoever
+  receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;
+  `ScopedRouter` (`components/routing/`) is a `<Router>` over it whose basename is that prefix, so
+  routes, links and `navigate()` are written without it and `useLocation()` reads the app path.
+  `TenantContext` takes the active tenant and account from the URL; a switch reloads the console
+  at the new account's home, so nothing built for the old account carries over. The choice saved in `localStorage` is only the fallback for an unscoped
+  URL (an old bookmark, `/` after sign-in). `ScopeGate`, the layout route around every signed-in
+  route, scopes an unscoped URL to the active account and refuses a link to a tenant or account the
+  viewer cannot open rather than showing another one. Sign-in, invite and email-verification pages
+  stay unscoped (`isUnscopedPagePath` in `utils/returnPath.ts`). `/t` and `/a` because `/tenants` and
+  `/accounts` are API prefixes in nginx and the Vite proxy. PostHog sees the prefix as
+  `/t/:tenant/a/:account` (`analytics/redact.ts`); the ids travel as its `tenant` and `account`
+  groups. The prefix's shape is `packages/contracts` (`api/platform/console-urls.ts`), which the
+  server's campaign-completion link builds with too.
 - **Super-admin console** (`apps/super-admin`). Tenants (and their accounts), users, admins, phone
   numbers, feature flags, usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
   branding guard.

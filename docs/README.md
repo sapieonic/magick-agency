@@ -57,7 +57,7 @@ Details and next steps: [`status.md`](status.md).
 | [`intent-and-plan.md`](intent-and-plan.md) | What it is for, the settled product decisions, why it is built this way, the delivery phases, invariants, out of scope |
 | [`architecture.md`](architecture.md) | How it is built: packages, server composition and start/stop order, the public API layer and internal handler instance, identity, dialer runtime, voice engine, analysis, DNC, audit, UIs, observability, tests, CI |
 | [`modules.md`](modules.md) | Every module and file group, what it does, and which test files cover it |
-| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B24, rulings Q1–Q9 and later rulings, still open with owner |
+| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B27, rulings Q1–Q9 and later rulings, still open with owner |
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
 | [`mobile.md`](mobile.md) | The agent mobile app (`apps/mobile`, Flutter): V1 scope, the foreground rule and `device_away`, how it talks to the server and the station socket (`client=mobile`, `media=alaw8`), the app's structure, builds and releases, what is not verified |
 | [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |

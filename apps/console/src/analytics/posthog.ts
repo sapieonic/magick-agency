@@ -41,6 +41,10 @@ const isBrowser = (): boolean => typeof window !== 'undefined';
  * `$set`/`$set_once` too: person properties carry `$initial_current_url`, which
  * would otherwise pin the token to a profile permanently.
  *
+ * The same walk swaps the `/t/<tenantId>/a/<accountId>` prefix of every scoped
+ * page URL for `/t/:tenant/a/:account`, so a page is one path in PostHog rather
+ * than one per tenant and account (`SCOPE_PLACEHOLDER` in `redact.ts`).
+ *
  * ── The token is not the only thing on those pages ─────────────────────────
  * Both invite pages also render the invitee's address, the inviter's name
  * and the workspace's name, and autocapture — with `capture_dead_clicks`, so a
@@ -92,8 +96,9 @@ export function initAnalytics(): void {
       capture_dead_clicks: true,
       disable_session_recording: true,
       // Strips the single-use invite token out of every capture, autocapture
-      // included. See {@link redactBeforeSend} — this is a security control, not
-      // a tidiness one.
+      // included, and normalises the tenant/account scope in its URLs. See
+      // {@link redactBeforeSend} — the token is a security control, not a
+      // tidiness one.
       before_send: redactBeforeSend,
     });
 

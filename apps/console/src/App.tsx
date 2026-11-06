@@ -1,10 +1,11 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { TenantProvider } from './contexts/TenantContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
 import { GovernanceProvider } from './contexts/GovernanceContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { UrlScopeProvider } from './contexts/UrlScopeContext';
 import { ToastProvider } from '@magick-agency/web-ui/contexts/ToastContext';
 import RequireAuth from './components/auth/RequireAuth';
 import RequireCapability from './components/auth/RequireCapability';
@@ -13,6 +14,8 @@ import HomeRedirect from './components/auth/HomeRedirect';
 import { ProductSurface } from './analytics/ProductSurface';
 import { AppLayout } from './components/layout/AppLayout';
 import { AgentLanding } from './components/agency/AgentLanding';
+import { ScopedRouter } from './components/routing/ScopedRouter';
+import { ScopeGate } from './components/routing/ScopeGate';
 
 /*
  * Route table. Contents: the agency doors (`/agency/login`,
@@ -33,6 +36,18 @@ import { AgentLanding } from './components/agency/AgentLanding';
  * escalation, knowledge, schedules, contact lists, accounts, credits, API keys,
  * audit log, tenant settings, phone numbers) is out of scope; the catch-all
  * sends it to `/app`.
+ *
+ * ── Every signed-in page is scoped: `/t/:tenantId/a/:accountId/…` ───────────
+ * So a link copied from the address bar opens the same tenant and account for
+ * whoever it is sent to. The paths below are written WITHOUT that prefix: it is
+ * the router's basename (`ScopedRouter`), so `/agency/campaigns` here is served
+ * at `/t/<tenant>/a/<account>/agency/campaigns`, and every `<Link>` and
+ * `navigate()` in the app stays inside the scope it was clicked in. `ScopeGate`,
+ * the layout route around everything below the public pages, moves an unscoped
+ * URL (an old `/dialer` bookmark) under the active account's prefix and refuses a
+ * link to a tenant or account the viewer cannot open. The sign-in, invite and
+ * verification pages stay unscoped (`utils/urlScope`). See `TenantContext` for how
+ * the URL and the active tenant/account stay in step.
  */
 
 const AppHomeRedirect = lazy(() => import('./pages/AppHomeRedirect'));
@@ -76,10 +91,11 @@ export default function App() {
     <ThemeProvider>
     <ToastProvider>
     <AuthProvider>
+      <UrlScopeProvider>
       <TenantProvider>
         <FeatureFlagsProvider>
         <GovernanceProvider>
-          <BrowserRouter>
+          <ScopedRouter>
             <Suspense fallback={null}>
             <Routes>
               <Route path="/login" element={<AgencyLoginPage />} />
@@ -205,390 +221,399 @@ export default function App() {
               <Route path="/verify-email" element={<VerifyEmailPage />} />
 
               {/*
-                The app root, routed on ENTITLEMENT rather than fixed at `/app`
-                A pure-agency tenant used to sign in to an AI
-                dashboard of numbers it does not generate; now the default shell
-                follows what the tenant has. See `HomeRedirect` for the predicate,
-                for why `calls` cannot be part of it, and for why the decision is
-                made HERE rather than on `/app`'s index route — a redirect there
-                would bounce `AgencyLayout`'s deliberate "Team & settings"
-                exit straight back into `/agency` and put the platform zone out of
-                reach.
-
-                Declared explicitly rather than left to the catch-all below, and
-                wrapped in `RequireAuth` so a signed-out visitor typing the bare
-                domain gets `?next=/` and comes back through this decision after
-                signing in — which is the path that matters, because it is how
-                somebody arrives at the product in the morning. `LoginPage`
-                falls back to `/` too when it is opened with no `next` at all, so
-                that path reaches this decision rather than bypassing it — which
-                was the point of changing it.
-
-                The catch-all stays pointed at `/app`: an unrecognised URL is a
-                404 being swallowed, not somebody asking to be taken home, and
-                sending it through an entitlement decision would dress one up as
-                the other.
+                Everything below needs a sign-in and is served under the
+                tenant/account prefix. `ScopeGate` is pathless, so it adds no
+                segment of its own; see it for when it waits, re-points the URL or
+                refuses a link.
               */}
-              <Route path="/" element={<RequireAuth><HomeRedirect /></RequireAuth>} />
-
-              {/* Full-viewport, OUTSIDE AppLayout. An `agent` is level 5 and
-                  inherits no nav, and an escape route here is a hazard: clicking
-                  away drops the station socket and hangs up on a customer. */}
-              <Route
-                path="/station"
-                element={
-                  <RequireAuth>
-                    <RequireCapability capability="agency">
-                      <RequireFlag flag="agency_dialer_enabled">
-                        {/* Full-viewport and outside both shells, so the product
-                            dimension has no layout to come from — see
-                            `analytics/ProductSurface`. Inside the gates, so a
-                            refused reader never registers a surface. */}
-                        <ProductSurface product="agency">
-                          <AgentConsolePage />
-                        </ProductSurface>
-                      </RequireFlag>
-                    </RequireCapability>
-                  </RequireAuth>
-                }
-              />
-              {/*
-                `/dialer` — the agent's front door, and the URL they are given to
-                bookmark. Short and memorable on purpose: it is the one address an
-                agency hands to staff who never see the rest of the platform.
-
-                Full-viewport and OUTSIDE both shells, for the reason `/station`
-                is. `AppLayout`'s nav floors at `viewer` and `AgencyLayout`'s three
-                entries do too, so an `agent` (level 5) renders either shell's
-                chrome around nothing.
-
-                It resolves by PERSONA rather than serving one page: a supervisor
-                who opens it is asking for the dialer, and is sent to the campaigns
-                workspace instead of their own (usually empty) staffing list. See
-                `AgentHomePage`.
-
-                Gated identically to `/station` — the same capability and flag, both
-                default off — so this is invisible until the server grants the
-                capability and the server enables the flag. `RequireAuth` carries the
-                deep link through sign-in, which is what makes a bookmarked
-                `/dialer` survive the first sign-in of the day.
-              */}
-              <Route
-                path="/dialer"
-                element={
-                  <RequireAuth>
-                    <RequireCapability capability="agency">
-                      <RequireFlag flag="agency_dialer_enabled">
-                        {/* Full-viewport and outside both shells, so the product
-                            dimension has no layout to come from — see
-                            `analytics/ProductSurface`. Inside the gates, so a
-                            refused reader never registers a surface. */}
-                        <ProductSurface product="agency">
-                          <AgentHomePage />
-                        </ProductSurface>
-                      </RequireFlag>
-                    </RequireCapability>
-                  </RequireAuth>
-                }
-              />
-              {/*
-                `/dialer/performance` — the agent's own numbers.
-
-                Beside `/dialer` rather than under `/agency`, and gated
-                identically: same `RequireAuth`, same `agency` capability, same
-                `agency_dialer_enabled` flag, both entitlements default off. It is
-                full-viewport and OUTSIDE both shells for the reason `/dialer` is —
-                an `agent` is level 5 and inherits no navigation, so `AppLayout`'s
-                nav (floored at `viewer`) and `AgencyLayout`'s three entries would
-                each render chrome around nothing.
-
-                Nothing was added to `RequireCapability`'s hand-maintained union:
-                `agency` is already in it, and this route needs no new capability.
-
-                A supervisor who opens this is SERVED rather than bounced — they
-                cover shifts and have their own numbers — but nothing routes them
-                here. Their surface is the per-agent section on
-                `AgencyAnalyticsPage`, which reads the supervisor twins of these
-                same routes. See `AgentPerformancePage`.
-              */}
-              <Route
-                path="/dialer/performance"
-                element={
-                  <RequireAuth>
-                    <RequireCapability capability="agency">
-                      <RequireFlag flag="agency_dialer_enabled">
-                        {/* Full-viewport and outside both shells, so the product
-                            dimension has no layout to come from — see
-                            `analytics/ProductSurface`. Inside the gates, so a
-                            refused reader never registers a surface. */}
-                        <ProductSurface product="agency">
-                          <AgentPerformancePage />
-                        </ProductSurface>
-                      </RequireFlag>
-                    </RequireCapability>
-                  </RequireAuth>
-                }
-              />
-              {/*
-                `/dialer/attempts` — "My calls": one row per dial the agent placed,
-                across every campaign they have worked.
-
-                Beside `/dialer` and `/dialer/performance` rather than under
-                `/agency`, and gated identically: same `RequireAuth`, same `agency`
-                capability, same `agency_dialer_enabled` flag, both entitlements
-                default off. Full-viewport and OUTSIDE both shells for the reason
-                the other three are — an `agent` is level 5 and inherits no
-                navigation, so `AppLayout`'s nav (floored at `viewer`) and
-                `AgencyLayout`'s entries would each render chrome around nothing.
-
-                Nothing was added to `RequireCapability`'s hand-maintained union:
-                `agency` is already in it, and this route needs no new capability.
-                A second capability would be a second switch an operator has to
-                find for a page that is part of the same product.
-
-                This is the CROSS-campaign list, which is what makes it a separate
-                surface rather than a link into `/agency/campaigns/:id/attempts`:
-                that one is scoped by its URL and floored at `agency.supervise`, so
-                an agent cannot read even their own rows through it. The server serves
-                the pair — `my-attempts` for the caller, `agents/:userId/attempts`
-                for their supervisor — and the supervisor half is read by the
-                per-agent section on `AgencyAnalyticsPage`, through the same panel.
-
-                A supervisor who opens this is SERVED rather than bounced, and
-                nothing routes them here. See `AgentAttemptsPage`.
-              */}
-              <Route
-                path="/dialer/attempts"
-                element={
-                  <RequireAuth>
-                    <RequireCapability capability="agency">
-                      <RequireFlag flag="agency_dialer_enabled">
-                        {/* Full-viewport and outside both shells, so the product
-                            dimension has no layout to come from — see
-                            `analytics/ProductSurface`. Inside the gates, so a
-                            refused reader never registers a surface. */}
-                        <ProductSurface product="agency">
-                          <AgentAttemptsPage />
-                        </ProductSurface>
-                      </RequireFlag>
-                    </RequireCapability>
-                  </RequireAuth>
-                }
-              />
-              {/*
-                `/dialer/phone` — the soft phone (`docs/softphone.md` §7): an agent
-                dials a typed number from the browser, outside campaign pacing.
-
-                Full-viewport and OUTSIDE both shells for the reason `/station` is —
-                navigating away mid-call drops the socket and cuts the customer off —
-                and gated identically. `agency_softphone_enabled` (default off, SP4)
-                is the PAGE's to read, not a `RequireFlag` here: turned off while an
-                agent is on a call, a route gate would take the call (and the outcome
-                it owes) off their screen, so the page rehydrates an existing
-                soft-phone session into finish mode and is `CapabilityUnavailable`
-                otherwise, exactly as the gate was. The permission,
-                `agency.softphone.dial`, floors at `agent`, so the page checks it
-                itself rather than through a capability.
-              */}
-              <Route
-                path="/dialer/phone"
-                element={
-                  <RequireAuth>
-                    <RequireCapability capability="agency">
-                      <RequireFlag flag="agency_dialer_enabled">
-                        {/* Full-viewport and outside both shells, so the product
-                            dimension has no layout to come from — see
-                            `analytics/ProductSurface`. Inside the gates, so a
-                            refused reader never registers a surface. */}
-                        <ProductSurface product="agency">
-                          <SoftphonePage />
-                        </ProductSurface>
-                      </RequireFlag>
-                    </RequireCapability>
-                  </RequireAuth>
-                }
-              />
-              {/* The Agency workspace — its own shell, same auth tree.
-                  Gated once here rather than per-route: `AgencyLayout` renders
-                  nothing but agency surfaces, so a per-child gate would repeat
-                  the same two checks four times and give four chances to forget
-                  one. Both default off, so this is invisible until the server grants
-                  the capability and the server enables the flag. */}
-              <Route
-                path="/agency"
-                element={
-                  <RequireAuth>
-                    <RequireCapability capability="agency">
-                      <RequireFlag flag="agency_dialer_enabled">
-                        <AgencyLayout />
-                      </RequireFlag>
-                    </RequireCapability>
-                  </RequireAuth>
-                }
-              >
+              <Route element={<ScopeGate />}>
                 {/*
-                  Persona-routed rather than a fixed redirect to the campaign
-                  list: that list floors at `agency.campaigns.read` (`viewer`),
-                  so an `agent` opening the dialer's own workspace used to land on
-                  a 403. See `AgencyHomeRedirect`.
+                  The app root, routed on ENTITLEMENT rather than fixed at `/app`
+                  A pure-agency tenant used to sign in to an AI
+                  dashboard of numbers it does not generate; now the default shell
+                  follows what the tenant has. See `HomeRedirect` for the predicate,
+                  for why `calls` cannot be part of it, and for why the decision is
+                  made HERE rather than on `/app`'s index route — a redirect there
+                  would bounce `AgencyLayout`'s deliberate "Team & settings"
+                  exit straight back into `/agency` and put the platform zone out of
+                  reach.
+
+                  Declared explicitly rather than left to the catch-all below, and
+                  wrapped in `RequireAuth` so a signed-out visitor typing the bare
+                  domain gets `?next=/` and comes back through this decision after
+                  signing in — which is the path that matters, because it is how
+                  somebody arrives at the product in the morning. `LoginPage`
+                  falls back to `/` too when it is opened with no `next` at all, so
+                  that path reaches this decision rather than bypassing it — which
+                  was the point of changing it.
+
+                  The catch-all stays pointed at `/app`: an unrecognised URL is a
+                  404 being swallowed, not somebody asking to be taken home, and
+                  sending it through an entitlement decision would dress one up as
+                  the other.
                 */}
-                <Route index element={<AgencyHomeRedirect />} />
-                <Route path="campaigns" element={<AgencyCampaignsPage />} />
-                <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
-                {/*
-                  The detail page's two panels, Insights and Agents, each its own
-                  URL so a section survives a refresh, can be sent to a colleague
-                  and answers the back button. Both mount the same component —
-                  which reads the panel off the path via `campaignPanelFromPath` —
-                  because they share one campaign fetch, one stats poll and one
-                  header carrying the lifecycle controls.
+                <Route path="/" element={<RequireAuth><HomeRedirect /></RequireAuth>} />
 
-                  Insights replaced Overview and Performance (decision IN1). Their
-                  URLs, the bare campaign path and `…/performance`, redirect: to
-                  Insights for a supervisor, to Agents for a role that cannot read
-                  Insights (`CampaignLandingRedirect`), so no old link lands on a
-                  tab that 403s.
-
-                  `campaigns/new` is declared above and wins on rank (a static
-                  segment outranks `:id`), so nothing here shadows it.
-                */}
-                <Route path="campaigns/:id" element={<CampaignLandingRedirect />} />
-                <Route path="campaigns/:id/performance" element={<CampaignLandingRedirect />} />
-                <Route path="campaigns/:id/insights" element={<AgencyCampaignDetailPage />} />
-                <Route path="campaigns/:id/agents" element={<AgencyCampaignDetailPage />} />
-                <Route path="campaigns/:id/settings" element={<AgencyCampaignSettingsPage />} />
-                {/*
-                  `campaigns/:id/contacts` now shows the ROSTER — the
-                  contacts and where each one got to. It used to render an
-                  upload form whose own heading read "Add contacts", so the one
-                  URL in the product that named the contacts was the one place
-                  you could not see them.
-
-                  The upload has not gone away; it moved to `…/contacts/add`,
-                  reached from a button on the roster. Its component is
-                  unchanged, so the ingest flow, its column mapping and its
-                  rejected-rows export cannot have drifted in the move.
-
-                  `campaigns/:id/attempts` is the other half: one row per dial,
-                  including the dials that never reached an agent — which a CALL
-                  list cannot show at all.
-
-                  No extra guard. The layout above already requires the `agency`
-                  capability and the `agency_dialer_enabled` flag, and the server
-                  gates all three routes on `agency.supervise`.
-                */}
-                <Route path="campaigns/:id/contacts" element={<AgencyCampaignRosterPage />} />
-                <Route path="campaigns/:id/contacts/add" element={<AgencyCampaignContactsPage />} />
-                <Route path="campaigns/:id/contacts/:contactId" element={<AgencyContactDetailPage />} />
-                <Route path="campaigns/:id/attempts" element={<AgencyCampaignAttemptsPage />} />
-                {/*
-                  The agency's own call detail — the page whose absence sent
-                  attempt rows into `/app/calls/dialer/history/:id`, out of this
-                  shell and onto a `calls.dialer`-gated route (design).
-
-                  No extra guard: the parent already gates the whole subtree on
-                  the `agency` capability and the `agency_dialer_enabled` flag,
-                  and the server floors the endpoint at `agency.supervise`. React
-                  Router ranks the static `attempts` segment above this dynamic
-                  one, so the list route above is unaffected.
-
-                  The page renders `CampaignTabs` itself, the same way the four
-                  standalone campaign screens do — the bar is per-page, not part
-                  of the layout, so a page that does not mount it has none.
-                  `campaignPanelFromPath` cannot help here: it answers which
-                  PANEL of the detail page a path wants, so its range is
-                  `insights` | `agents` and never `attempts`.
-                */}
+                {/* Full-viewport, OUTSIDE AppLayout. An `agent` is level 5 and
+                    inherits no nav, and an escape route here is a hazard: clicking
+                    away drops the station socket and hangs up on a customer. */}
                 <Route
-                  path="campaigns/:id/attempts/:attemptId"
-                  element={<AgencyAttemptCallPage />}
+                  path="/station"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          {/* Full-viewport and outside both shells, so the product
+                              dimension has no layout to come from — see
+                              `analytics/ProductSurface`. Inside the gates, so a
+                              refused reader never registers a surface. */}
+                          <ProductSurface product="agency">
+                            <AgentConsolePage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
                 />
                 {/*
-                  The audit trail lives HERE, in the agency workspace, and not at
-                  `/app/audit-log`: a supervisor should not have to leave the
-                  campaign to ask what happened to it, and that page is a
-                  different shell, tenant-wide, with no campaign scoping.
+                  `/dialer` — the agent's front door, and the URL they are given to
+                  bookmark. Short and memorable on purpose: it is the one address an
+                  agency hands to staff who never see the rest of the platform.
 
-                  No extra guard. The layout above already requires the `agency`
-                  capability and the `agency_dialer_enabled` flag, and the server
-                  gates the route itself on `audit.read` — whose floor
-                  is `account_admin`, the same floor as `agency.supervise`,
-                  so the supervisor who controls a campaign can read its trail.
+                  Full-viewport and OUTSIDE both shells, for the reason `/station`
+                  is. `AppLayout`'s nav floors at `viewer` and `AgencyLayout`'s three
+                  entries do too, so an `agent` (level 5) renders either shell's
+                  chrome around nothing.
+
+                  It resolves by PERSONA rather than serving one page: a supervisor
+                  who opens it is asking for the dialer, and is sent to the campaigns
+                  workspace instead of their own (usually empty) staffing list. See
+                  `AgentHomePage`.
+
+                  Gated identically to `/station` — the same capability and flag, both
+                  default off — so this is invisible until the server grants the
+                  capability and the server enables the flag. `RequireAuth` carries the
+                  deep link through sign-in, which is what makes a bookmarked
+                  `/dialer` survive the first sign-in of the day.
                 */}
-                <Route path="campaigns/:id/activity" element={<AgencyCampaignActivityPage />} />
+                <Route
+                  path="/dialer"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          {/* Full-viewport and outside both shells, so the product
+                              dimension has no layout to come from — see
+                              `analytics/ProductSurface`. Inside the gates, so a
+                              refused reader never registers a surface. */}
+                          <ProductSurface product="agency">
+                            <AgentHomePage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
+                />
                 {/*
-                  Every campaign's numbers on one screen. No extra guard: the
-                  layout above already requires the `agency` capability and the
-                  `agency_dialer_enabled` flag, and the server gates both reads this
-                  page makes — the campaign list and each `/stats` — on
-                  `agency.campaigns.read`, which is also what the sidebar
-                  entry checks.
+                  `/dialer/performance` — the agent's own numbers.
+
+                  Beside `/dialer` rather than under `/agency`, and gated
+                  identically: same `RequireAuth`, same `agency` capability, same
+                  `agency_dialer_enabled` flag, both entitlements default off. It is
+                  full-viewport and OUTSIDE both shells for the reason `/dialer` is —
+                  an `agent` is level 5 and inherits no navigation, so `AppLayout`'s
+                  nav (floored at `viewer`) and `AgencyLayout`'s three entries would
+                  each render chrome around nothing.
+
+                  Nothing was added to `RequireCapability`'s hand-maintained union:
+                  `agency` is already in it, and this route needs no new capability.
+
+                  A supervisor who opens this is SERVED rather than bounced — they
+                  cover shifts and have their own numbers — but nothing routes them
+                  here. Their surface is the per-agent section on
+                  `AgencyAnalyticsPage`, which reads the supervisor twins of these
+                  same routes. See `AgentPerformancePage`.
                 */}
-                <Route path="analytics" element={<AgencyAnalyticsPage />} />
-                <Route path="dnc" element={<DncPage />} />
+                <Route
+                  path="/dialer/performance"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          {/* Full-viewport and outside both shells, so the product
+                              dimension has no layout to come from — see
+                              `analytics/ProductSurface`. Inside the gates, so a
+                              refused reader never registers a surface. */}
+                          <ProductSurface product="agency">
+                            <AgentPerformancePage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
+                />
                 {/*
-                  The soft phone's supervisor surfaces (`docs/softphone.md` §7):
-                  the account's soft-phone calls, one call's detail, and a
-                  campaign's Manual calls — each behind `agency_softphone_enabled`
-                  on top of the subtree's gates. The server floors the
-                  account-wide reads at `agency.supervise`, as the sidebar entry
-                  and the campaign tab do.
+                  `/dialer/attempts` — "My calls": one row per dial the agent placed,
+                  across every campaign they have worked.
+
+                  Beside `/dialer` and `/dialer/performance` rather than under
+                  `/agency`, and gated identically: same `RequireAuth`, same `agency`
+                  capability, same `agency_dialer_enabled` flag, both entitlements
+                  default off. Full-viewport and OUTSIDE both shells for the reason
+                  the other three are — an `agent` is level 5 and inherits no
+                  navigation, so `AppLayout`'s nav (floored at `viewer`) and
+                  `AgencyLayout`'s entries would each render chrome around nothing.
+
+                  Nothing was added to `RequireCapability`'s hand-maintained union:
+                  `agency` is already in it, and this route needs no new capability.
+                  A second capability would be a second switch an operator has to
+                  find for a page that is part of the same product.
+
+                  This is the CROSS-campaign list, which is what makes it a separate
+                  surface rather than a link into `/agency/campaigns/:id/attempts`:
+                  that one is scoped by its URL and floored at `agency.supervise`, so
+                  an agent cannot read even their own rows through it. The server serves
+                  the pair — `my-attempts` for the caller, `agents/:userId/attempts`
+                  for their supervisor — and the supervisor half is read by the
+                  per-agent section on `AgencyAnalyticsPage`, through the same panel.
+
+                  A supervisor who opens this is SERVED rather than bounced, and
+                  nothing routes them here. See `AgentAttemptsPage`.
                 */}
                 <Route
-                  path="softphone"
-                  element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallsPage /></RequireFlag>}
+                  path="/dialer/attempts"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          {/* Full-viewport and outside both shells, so the product
+                              dimension has no layout to come from — see
+                              `analytics/ProductSurface`. Inside the gates, so a
+                              refused reader never registers a surface. */}
+                          <ProductSurface product="agency">
+                            <AgentAttemptsPage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
                 />
+                {/*
+                  `/dialer/phone` — the soft phone (`docs/softphone.md` §7): an agent
+                  dials a typed number from the browser, outside campaign pacing.
+
+                  Full-viewport and OUTSIDE both shells for the reason `/station` is —
+                  navigating away mid-call drops the socket and cuts the customer off —
+                  and gated identically. `agency_softphone_enabled` (default off, SP4)
+                  is the PAGE's to read, not a `RequireFlag` here: turned off while an
+                  agent is on a call, a route gate would take the call (and the outcome
+                  it owes) off their screen, so the page rehydrates an existing
+                  soft-phone session into finish mode and is `CapabilityUnavailable`
+                  otherwise, exactly as the gate was. The permission,
+                  `agency.softphone.dial`, floors at `agent`, so the page checks it
+                  itself rather than through a capability.
+                */}
                 <Route
-                  path="softphone/calls/:callId"
-                  element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallDetailPage /></RequireFlag>}
+                  path="/dialer/phone"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          {/* Full-viewport and outside both shells, so the product
+                              dimension has no layout to come from — see
+                              `analytics/ProductSurface`. Inside the gates, so a
+                              refused reader never registers a surface. */}
+                          <ProductSurface product="agency">
+                            <SoftphonePage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
                 />
+                {/* The Agency workspace — its own shell, same auth tree.
+                    Gated once here rather than per-route: `AgencyLayout` renders
+                    nothing but agency surfaces, so a per-child gate would repeat
+                    the same two checks four times and give four chances to forget
+                    one. Both default off, so this is invisible until the server grants
+                    the capability and the server enables the flag. */}
                 <Route
-                  path="campaigns/:id/manual-calls"
-                  element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
-                />
+                  path="/agency"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          <AgencyLayout />
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
+                >
+                  {/*
+                    Persona-routed rather than a fixed redirect to the campaign
+                    list: that list floors at `agency.campaigns.read` (`viewer`),
+                    so an `agent` opening the dialer's own workspace used to land on
+                    a 403. See `AgencyHomeRedirect`.
+                  */}
+                  <Route index element={<AgencyHomeRedirect />} />
+                  <Route path="campaigns" element={<AgencyCampaignsPage />} />
+                  <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
+                  {/*
+                    The detail page's two panels, Insights and Agents, each its own
+                    URL so a section survives a refresh, can be sent to a colleague
+                    and answers the back button. Both mount the same component —
+                    which reads the panel off the path via `campaignPanelFromPath` —
+                    because they share one campaign fetch, one stats poll and one
+                    header carrying the lifecycle controls.
+
+                    Insights replaced Overview and Performance (decision IN1). Their
+                    URLs, the bare campaign path and `…/performance`, redirect: to
+                    Insights for a supervisor, to Agents for a role that cannot read
+                    Insights (`CampaignLandingRedirect`), so no old link lands on a
+                    tab that 403s.
+
+                    `campaigns/new` is declared above and wins on rank (a static
+                    segment outranks `:id`), so nothing here shadows it.
+                  */}
+                  <Route path="campaigns/:id" element={<CampaignLandingRedirect />} />
+                  <Route path="campaigns/:id/performance" element={<CampaignLandingRedirect />} />
+                  <Route path="campaigns/:id/insights" element={<AgencyCampaignDetailPage />} />
+                  <Route path="campaigns/:id/agents" element={<AgencyCampaignDetailPage />} />
+                  <Route path="campaigns/:id/settings" element={<AgencyCampaignSettingsPage />} />
+                  {/*
+                    `campaigns/:id/contacts` now shows the ROSTER — the
+                    contacts and where each one got to. It used to render an
+                    upload form whose own heading read "Add contacts", so the one
+                    URL in the product that named the contacts was the one place
+                    you could not see them.
+
+                    The upload has not gone away; it moved to `…/contacts/add`,
+                    reached from a button on the roster. Its component is
+                    unchanged, so the ingest flow, its column mapping and its
+                    rejected-rows export cannot have drifted in the move.
+
+                    `campaigns/:id/attempts` is the other half: one row per dial,
+                    including the dials that never reached an agent — which a CALL
+                    list cannot show at all.
+
+                    No extra guard. The layout above already requires the `agency`
+                    capability and the `agency_dialer_enabled` flag, and the server
+                    gates all three routes on `agency.supervise`.
+                  */}
+                  <Route path="campaigns/:id/contacts" element={<AgencyCampaignRosterPage />} />
+                  <Route path="campaigns/:id/contacts/add" element={<AgencyCampaignContactsPage />} />
+                  <Route path="campaigns/:id/contacts/:contactId" element={<AgencyContactDetailPage />} />
+                  <Route path="campaigns/:id/attempts" element={<AgencyCampaignAttemptsPage />} />
+                  {/*
+                    The agency's own call detail — the page whose absence sent
+                    attempt rows into `/app/calls/dialer/history/:id`, out of this
+                    shell and onto a `calls.dialer`-gated route (design).
+
+                    No extra guard: the parent already gates the whole subtree on
+                    the `agency` capability and the `agency_dialer_enabled` flag,
+                    and the server floors the endpoint at `agency.supervise`. React
+                    Router ranks the static `attempts` segment above this dynamic
+                    one, so the list route above is unaffected.
+
+                    The page renders `CampaignTabs` itself, the same way the four
+                    standalone campaign screens do — the bar is per-page, not part
+                    of the layout, so a page that does not mount it has none.
+                    `campaignPanelFromPath` cannot help here: it answers which
+                    PANEL of the detail page a path wants, so its range is
+                    `insights` | `agents` and never `attempts`.
+                  */}
+                  <Route
+                    path="campaigns/:id/attempts/:attemptId"
+                    element={<AgencyAttemptCallPage />}
+                  />
+                  {/*
+                    The audit trail lives HERE, in the agency workspace, and not at
+                    `/app/audit-log`: a supervisor should not have to leave the
+                    campaign to ask what happened to it, and that page is a
+                    different shell, tenant-wide, with no campaign scoping.
+
+                    No extra guard. The layout above already requires the `agency`
+                    capability and the `agency_dialer_enabled` flag, and the server
+                    gates the route itself on `audit.read` — whose floor
+                    is `account_admin`, the same floor as `agency.supervise`,
+                    so the supervisor who controls a campaign can read its trail.
+                  */}
+                  <Route path="campaigns/:id/activity" element={<AgencyCampaignActivityPage />} />
+                  {/*
+                    Every campaign's numbers on one screen. No extra guard: the
+                    layout above already requires the `agency` capability and the
+                    `agency_dialer_enabled` flag, and the server gates both reads this
+                    page makes — the campaign list and each `/stats` — on
+                    `agency.campaigns.read`, which is also what the sidebar
+                    entry checks.
+                  */}
+                  <Route path="analytics" element={<AgencyAnalyticsPage />} />
+                  <Route path="dnc" element={<DncPage />} />
+                  {/*
+                    The soft phone's supervisor surfaces (`docs/softphone.md` §7):
+                    the account's soft-phone calls, one call's detail, and a
+                    campaign's Manual calls — each behind `agency_softphone_enabled`
+                    on top of the subtree's gates. The server floors the
+                    account-wide reads at `agency.supervise`, as the sidebar entry
+                    and the campaign tab do.
+                  */}
+                  <Route
+                    path="softphone"
+                    element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallsPage /></RequireFlag>}
+                  />
+                  <Route
+                    path="softphone/calls/:callId"
+                    element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallDetailPage /></RequireFlag>}
+                  />
+                  <Route
+                    path="campaigns/:id/manual-calls"
+                    element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
+                  />
+                </Route>
+
+                {/*
+                  `AgentLanding` wraps the element rather than sitting on a child
+                  route, so it applies to every `/app/*` path an `agent` could
+                  reach — including the catch-all redirect at the bottom of this
+                  file, which is where a bare `/` lands them.
+
+                  It is a no-op for every role that has navigation of its own, which
+                  is every role above level 5. That scoping is load-bearing rather
+                  than incidental: a revision of the component gated on the agency
+                  PERSONA instead, which is also true of `viewer` and `operator`, and
+                  redirected both out of the product entirely — into a `/dialer` whose
+                  capability is off by default. See the component for the predicate
+                  and for why an agent must never render `AppLayout` at all.
+                */}
+                <Route path="/app" element={<RequireAuth><AgentLanding><AppLayout /></AgentLanding></RequireAuth>}>
+                  <Route index element={<AppHomeRedirect />} />
+                  <Route path="team" element={<TeamPage />} />
+                  {/* The tenant's accounts. Linked from the sidebars and search for
+                      `account.create` only; the route itself is ungated (the list is
+                      `account.read`, which the server enforces), and the page offers "New
+                      account" only to a tenant-wide `account.create` seat, as the server
+                      requires. */}
+                  <Route path="accounts" element={<AccountsPage />} />
+                  {/* Per-user notification subscriptions. No RequireCapability and no
+                      permission guard: the page is about the signed-in person and the server
+                      takes no subject on any of its routes, so there is nobody else it
+                      could expose. Gating it would lock people out of their own
+                      unsubscribe. */}
+                  <Route path="notifications" element={<NotificationSettingsPage />} />
+                  <Route path="call-summaries" element={<RequireCapability capability="agency.analytics"><RequireFlag flag="agency_call_analysis"><AnalysisProfilesPage /></RequireFlag></RequireCapability>} />
+                  {/* Settings → Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
+                  <Route path="softphone" element={<RequireCapability capability="agency"><RequireFlag flag="agency_softphone_enabled"><SoftphoneSettingsPage /></RequireFlag></RequireCapability>} />
+                </Route>
+
+                <Route path="*" element={<Navigate to="/app" replace />} />
               </Route>
-
-              {/*
-                `AgentLanding` wraps the element rather than sitting on a child
-                route, so it applies to every `/app/*` path an `agent` could
-                reach — including the catch-all redirect at the bottom of this
-                file, which is where a bare `/` lands them.
-
-                It is a no-op for every role that has navigation of its own, which
-                is every role above level 5. That scoping is load-bearing rather
-                than incidental: a revision of the component gated on the agency
-                PERSONA instead, which is also true of `viewer` and `operator`, and
-                redirected both out of the product entirely — into a `/dialer` whose
-                capability is off by default. See the component for the predicate
-                and for why an agent must never render `AppLayout` at all.
-              */}
-              <Route path="/app" element={<RequireAuth><AgentLanding><AppLayout /></AgentLanding></RequireAuth>}>
-                <Route index element={<AppHomeRedirect />} />
-                <Route path="team" element={<TeamPage />} />
-                {/* The tenant's accounts. Linked from the sidebars and search for
-                    `account.create` only; the route itself is ungated (the list is
-                    `account.read`, which the server enforces), and the page offers "New
-                    account" only to a tenant-wide `account.create` seat, as the server
-                    requires. */}
-                <Route path="accounts" element={<AccountsPage />} />
-                {/* Per-user notification subscriptions. No RequireCapability and no
-                    permission guard: the page is about the signed-in person and the server
-                    takes no subject on any of its routes, so there is nobody else it
-                    could expose. Gating it would lock people out of their own
-                    unsubscribe. */}
-                <Route path="notifications" element={<NotificationSettingsPage />} />
-                <Route path="call-summaries" element={<RequireCapability capability="agency.analytics"><RequireFlag flag="agency_call_analysis"><AnalysisProfilesPage /></RequireFlag></RequireCapability>} />
-                {/* Settings → Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
-                <Route path="softphone" element={<RequireCapability capability="agency"><RequireFlag flag="agency_softphone_enabled"><SoftphoneSettingsPage /></RequireFlag></RequireCapability>} />
-              </Route>
-
-              <Route path="*" element={<Navigate to="/app" replace />} />
             </Routes>
             </Suspense>
-          </BrowserRouter>
+          </ScopedRouter>
         </GovernanceProvider>
         </FeatureFlagsProvider>
       </TenantProvider>
+      </UrlScopeProvider>
     </AuthProvider>
     </ToastProvider>
     </ThemeProvider>
