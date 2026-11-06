@@ -1224,9 +1224,18 @@ account their browser last had open. Every signed-in console page is now served 
 - **Left open:** signing out and in as a different user keeps the first user's scoped `next`, which the second user may
   be refused (the refusal offers a way out). The history comes from react-router's
   `UNSAFE_createBrowserHistory`; the routing tests exercise it, so an upgrade that breaks it goes red.
-- Counts: `apps/console` 5375 (282 files) on 2026-11-06 after reload-on-switch and a simplify pass (5371, 281 files, on 2026-11-05), lint clean, build clean; `apps/server` lint
-  clean, unit 8163 passed + 42 skipped (407 files). Integration lanes and the Dart tests were not run
-  (no server SQL, route or contract changed).
+- Counts, 2026-11-06, after the review fixes:
+  - `apps/console`: 5383 (282 files), lint clean, build clean. (5375 after reload-on-switch and a
+    simplify pass; 5371, 281 files, on 2026-11-05.)
+  - `packages/contracts`: 299 (10 files).
+  - `apps/server`: lint clean; unit 8163 passed + 42 skipped (407 files).
+  - Server integration as CI runs it:
+    - `INTEGRATION_LANE=rest`: 1978 passed + 9 expected fail + 1 skipped (203 files + 1 skipped).
+    - `INTEGRATION_LANE=wall-clock`: 15 (3 files).
+  - Postgres 16 and Redis ran locally on 5436 and 6383. The test database must be UTF-8:
+    on `SQL_ASCII`, `softphone-policy-routes.test.ts`'s emoji note fails the length check.
+  - The Dart tests were not run (no Dart SDK here). The contract change adds a helper, not a wire
+    type or literal, and `contracts-literals --check` is unchanged.
 
 ### Pre-deploy checklist
 
