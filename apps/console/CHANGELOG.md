@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/sapieonic/magick-agency/compare/console-v0.11.0...console-v0.12.0) (2026-11-06)
+
+
+### Features
+
+* **console,server:** scope console URLs to their tenant and account ([#48](https://github.com/sapieonic/magick-agency/issues/48)) ([d29d2fa](https://github.com/sapieonic/magick-agency/commit/d29d2faf7d478425a7e0c392f1d0137a2417e935))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.11.0
+
 ## [0.11.0](https://github.com/sapieonic/magick-agency/compare/console-v0.10.0...console-v0.11.0) (2026-11-05)
 
 
