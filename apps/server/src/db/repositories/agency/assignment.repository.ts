@@ -366,6 +366,13 @@ export interface UnstaffReturn {
   skipped_live: number;
   /** Open contacts left with the agent because the campaign keeps them. */
   kept: number;
+  /**
+   * The agent held an open contact or one on a call here: CA6's audit row is written only
+   * then. False on a row that is here only for {@link released_caller_id}.
+   */
+  held: boolean;
+  /** The number dedicated to the agent on this campaign, released by the unstaff (DN7); else null. */
+  released_caller_id: string | null;
 }
 
 export class AgencyAssignmentRepository {
@@ -562,9 +569,13 @@ export class AgencyAssignmentRepository {
    * CA6: `userId` was unstaffed from `campaignIds` (the campaigns whose staffing row just
    * closed). On each campaign whose `on_unstaff` is `return_to_pool`, their `pending`
    * contacts lose their owner (history reason `unstaffed`, one batch per campaign); on
-   * `keep`, nothing moves. Contacts on a call are never moved. One statement over every
-   * campaign. Returns a row per campaign where the agent held an open contact (or one on a
-   * call), so the caller audits exactly those.
+   * `keep`, nothing moves. Contacts on a call are never moved. On EVERY campaign, whatever its
+   * `on_unstaff`, the number dedicated to the agent is released (DN7): a dedication follows
+   * the staffing, and `keep` keeps contacts, not numbers (their contacts then dial from the
+   * rotation). One statement over every campaign, so the release and the return happen
+   * together. Returns a row per campaign where the agent held an open contact (or one on a
+   * call), `held`, or had a number released, `released_caller_id`, so the caller audits
+   * exactly those.
    */
   async returnOnUnstaff(input: {
     tenantId: string;
@@ -598,13 +609,23 @@ export class AgencyAssignmentRepository {
          INSERT INTO agency_contact_assignment_events
            (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
          SELECT $1::uuid, u.campaign_id, u.id, $2::uuid, NULL, $4::uuid, 'unstaffed', u.batch_id FROM upd u
-         RETURNING campaign_id)
+         RETURNING campaign_id),
+       rel AS (
+         DELETE FROM agency_campaign_agent_caller_ids d
+          USING camp
+          WHERE d.campaign_id = camp.id AND d.user_id = $2::uuid
+         RETURNING d.campaign_id, d.caller_id)
        SELECT camp.id::text AS campaign_id, camp.account_id::text AS account_id, camp.on_unstaff,
               camp.batch_id::text AS batch_id,
               (SELECT count(*) FROM ins WHERE ins.campaign_id = camp.id)::int AS moved,
-              held.live AS skipped_live,
-              CASE WHEN camp.on_unstaff = 'keep' THEN held.open ELSE 0 END AS kept
-         FROM camp JOIN held ON held.campaign_id = camp.id
+              COALESCE(held.live, 0) AS skipped_live,
+              CASE WHEN camp.on_unstaff = 'keep' THEN COALESCE(held.open, 0) ELSE 0 END AS kept,
+              held.campaign_id IS NOT NULL AS held,
+              rel.caller_id AS released_caller_id
+         FROM camp
+         LEFT JOIN held ON held.campaign_id = camp.id
+         LEFT JOIN rel ON rel.campaign_id = camp.id
+        WHERE held.campaign_id IS NOT NULL OR rel.campaign_id IS NOT NULL
         ORDER BY camp.id`,
       [input.tenantId, input.userId, input.campaignIds, input.actorUserId],
     );

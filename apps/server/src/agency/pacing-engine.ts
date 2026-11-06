@@ -2,6 +2,7 @@ import type Redis from 'ioredis';
 import { createChildLogger } from '@magick-agency/observability';
 import { accountSettingsRepository } from '@magick-agency/db/repositories/account-settings.repository';
 import {
+  agencyAgentCallerIdRepository,
   agencyAgentSessionRepository,
   agencyAttemptRepository,
   agencyCampaignRepository,
@@ -69,7 +70,7 @@ import {
 import { safeEmit } from '../utils/safe-emit.js';
 import { LeaderLease, LEADER_RENEW_MS } from './pacing/leader-lease.js';
 import { InFlight } from './pacing/in-flight.js';
-import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { resolveCallerId, usableCallerIds, type DedicatedCallerIds } from './pacing/caller-id-pool.js';
 import { CampaignAnnouncer } from './pacing/campaign-announcer.js';
 import {
   getPacingInvalidationBus,
@@ -1964,6 +1965,25 @@ export class PacingEngine {
     const contacts = pairs.map((p) => p.contact);
     const sessions = pairs.map((p) => p.sessionId);
 
+    // The campaign's dedicated caller IDs (DN4): read ONCE per batch that has contacts, never
+    // on a tick that dials nothing and never per contact. Each contact's number is then its
+    // OWNER's dedicated one, else the rotation's (`resolveCallerId`, DN2). A failed read
+    // returns the whole batch undialled, as a halt does: dialling an owned contact from a
+    // rotation number would break the promise the dedication makes, and the next tick reads
+    // again.
+    let dedicated: DedicatedCallerIds;
+    try {
+      dedicated = await agencyAgentCallerIdRepository.mapForCampaign(campaign.id);
+    } catch (err) {
+      await this.abortRemainder(contacts, sessions);
+      log.error(
+        { err, campaignId: campaign.id, tenantId: campaign.tenant_id, abandoned: contacts.length },
+        'Could not read the campaign\'s dedicated caller IDs — returning the batch undialled',
+      );
+      return 0;
+    }
+    const usable = usableCallerIds(campaign);
+
     let dialed = 0;
 
     for (const [index, { sessionId, contact }] of pairs.entries()) {
@@ -2039,7 +2059,7 @@ export class PacingEngine {
       // pool cannot be answered for this contact and cannot be answered for the ones
       // claimed alongside it either, so the whole remainder is returned rather than
       // half of it being carried out by a throw.
-      const callerId = pickCallerId(usableCallerIds(campaign), dialed);
+      const callerId = resolveCallerId({ usable, dedicated, ownerUserId: contact.assigned_user_id, offset: dialed });
       if (!callerId) {
         await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         // Latched, like the top-of-tick guard: this branch is only reachable if the

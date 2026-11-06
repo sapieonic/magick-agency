@@ -63,6 +63,7 @@ import {
   type AgencyRedialResponse,
 } from '@magick-agency/contracts/agency';
 import {
+  agencyAgentCallerIdRepository,
   agencyAttemptRepository,
   agencyCampaignRepository,
   agencyContactRepository,
@@ -73,7 +74,7 @@ import type { AgencyDialer } from './agency-dialer.js';
 import type { ClearedDialCommand, DialDispatcher } from './dial-dispatcher.js';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
-import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { resolveCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
 import { RESERVING_MARKER } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import type { WrapupManager, WrapupRedialRefusal } from './wrapup-manager.js';
@@ -194,9 +195,16 @@ export async function startWrapupRedial(
   // ── 3. Where the call goes from: the station, then a caller ID ─────────────
   const ownerReplica = await deps.stations.ownerOf(sessionId);
   if (!ownerReplica) return refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.no_station });
-  // The same number the customer just spoke to us from, while it is still usable.
-  const pool = usableCallerIds(campaign);
-  const callerId = pool.includes(attempt.caller_id) ? attempt.caller_id : pickCallerId(pool, 0);
+  // The contact's owner's dedicated number when they have one (DN4); otherwise the number the
+  // customer just spoke to us from while it is still in the rotation (WR7: a number dedicated
+  // to someone else since is not reused for a contact that is not theirs), else the rotation.
+  const callerId = resolveCallerId({
+    usable: usableCallerIds(campaign),
+    dedicated: await agencyAgentCallerIdRepository.mapForCampaign(campaign.id),
+    ownerUserId: contact.assigned_user_id,
+    offset: 0,
+    sticky: attempt.caller_id,
+  });
   if (!callerId) return refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.no_caller_id });
 
   // ── 4. The pre-dial gates, last of the checks: the clearance they mint is short-lived

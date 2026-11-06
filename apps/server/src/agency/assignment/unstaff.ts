@@ -10,11 +10,18 @@
  * campaign. A campaign where they held nothing writes nothing (most campaigns never use
  * assignment, and an unstaff there is already audited as `agency_campaign_agent.unassigned`).
  *
+ * The same statement releases the number dedicated to the agent on each of those campaigns,
+ * whatever its `on_unstaff` (DN7): one `agency_campaign.agent_caller_id_cleared` row
+ * (`cause: 'unstaff'`) per campaign where one was released, under the campaign's account, with
+ * the same actor; nothing where none was set.
+ *
  * Never throws: it follows a staffing change that has already committed, and a failure
  * leaves contacts with a former agent (visible on the progress screen, reassignable), never
- * a wrong permission.
+ * a wrong permission. A dedication left behind by a failure is used only for contacts the
+ * former agent still owns (DN2), and a supervisor can clear it.
  */
 import { createChildLogger } from '@magick-agency/observability';
+import { AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS } from '@magick-agency/contracts/api/agency/agent-caller-id';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import type { AuditActorFields } from '../../audit/platform/audit-actor.js';
 import { agencyAssignmentRepository, type UnstaffReturn } from '../../db/repositories/agency.repository.js';
@@ -54,6 +61,26 @@ export async function returnContactsOnUnstaff(input: {
     return [];
   }
   for (const r of rows) {
+    if (r.released_caller_id !== null) {
+      platformAuditLogger.log({
+        tenant_id: input.tenantId,
+        account_id: r.account_id,
+        ...input.actor,
+        action: AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS.cleared,
+        resource_type: 'agency_campaign',
+        resource_id: r.campaign_id,
+        campaign_id: r.campaign_id,
+        details: {
+          campaign_id: r.campaign_id,
+          user_id: input.userId,
+          caller_id: r.released_caller_id,
+          cause: 'unstaff',
+          unstaff_cause: input.cause,
+          ...(input.details ?? {}),
+        },
+      });
+    }
+    if (!r.held) continue;
     platformAuditLogger.log({
       tenant_id: input.tenantId,
       account_id: r.account_id,
@@ -78,7 +105,8 @@ export async function returnContactsOnUnstaff(input: {
   if (rows.length > 0) {
     log.info(
       { tenantId: input.tenantId, userId: input.userId, cause: input.cause,
-        moved: rows.reduce((s, r) => s + r.moved, 0), campaigns: rows.length },
+        moved: rows.reduce((s, r) => s + r.moved, 0), campaigns: rows.length,
+        callerIdsReleased: rows.filter((r) => r.released_caller_id !== null).length },
       'Unstaffed agent\'s contacts handled per campaign on_unstaff',
     );
   }

@@ -49,6 +49,7 @@ import type {
   AgencyMyContactCallResponse,
 } from '@magick-agency/contracts/api/agency/assignment';
 import {
+  agencyAgentCallerIdRepository,
   agencyAgentRetryRepository,
   agencyAttemptRepository,
   agencyCampaignRepository,
@@ -66,7 +67,7 @@ import type { AgencyDialer } from './agency-dialer.js';
 import type { DialDispatcher } from './dial-dispatcher.js';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates } from './pre-dial-gates.js';
-import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { resolveCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
 import { queuedBreakReleaseOf, RESERVING_MARKER, returnReservedAgent } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import {
@@ -229,7 +230,14 @@ export async function startMyContactCall(
   // ── 4. Where the call goes from ───────────────────────────────────────────
   const ownerReplica = await deps.stations.ownerOf(sessionId);
   if (!ownerReplica) return refuse(503, 'no_station');
-  const callerId = pickCallerId(usableCallerIds(campaign), 0);
+  // The contact's owner's dedicated number, else the rotation (DN2): the same rule as pacing.
+  // The agent dials their own contact, so the owner is the agent.
+  const callerId = resolveCallerId({
+    usable: usableCallerIds(campaign),
+    dedicated: await agencyAgentCallerIdRepository.mapForCampaign(campaign.id),
+    ownerUserId: contact.assigned_user_id,
+    offset: 0,
+  });
   if (!callerId) return refuse(409, 'no_caller_id');
 
   // ── 5. The agent: available → reserved ─────────────────────────────────────

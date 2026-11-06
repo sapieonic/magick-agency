@@ -33,6 +33,7 @@ import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/ag
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import { breakMustWait, type BreakRegistry } from '@magick-agency/domain/break-manager';
 import {
+  agencyAgentCallerIdRepository,
   agencyAgentSessionRepository,
   agencyCampaignRepository,
   agencyContactRepository,
@@ -292,6 +293,7 @@ export class SoftphoneService {
       dnc: this.deps.dnc,
       findRosterMatches: (campaignId, phone) => agencyContactRepository.findForManualMatch(campaignId, phone),
       findInFlightInAccount: (phone) => agencyContactRepository.findInFlightForAccount(actor.tenantId, actor.accountId, phone),
+      findDedicatedCallerIds: (campaignId) => agencyAgentCallerIdRepository.mapForCampaign(campaignId),
     });
     if (!predial.ok) {
       // The session's unsettled call comes first in the order of refusals, but it was

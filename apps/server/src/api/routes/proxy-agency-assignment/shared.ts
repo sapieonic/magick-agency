@@ -8,6 +8,7 @@ import type {
   AgencyAgentRetryErrorCode,
   AgencyAssignmentErrorCode,
 } from '@magick-agency/contracts/api/agency/assignment';
+import type { AgencyAgentCallerIdErrorCode } from '@magick-agency/contracts/api/agency/agent-caller-id';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
@@ -22,7 +23,7 @@ import { settledValue } from '../helpers/settled.js';
 export function refuse(
   reply: FastifyReply,
   status: number,
-  code: AgencyAssignmentErrorCode | AgencyAgentRetryErrorCode,
+  code: AgencyAssignmentErrorCode | AgencyAgentRetryErrorCode | AgencyAgentCallerIdErrorCode,
   message: string,
   details?: Record<string, unknown>,
 ): FastifyReply {

@@ -120,6 +120,10 @@ Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `s3_key`, `file_name`, 
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `user_id`, `assigned_by`, `assigned_at`, `unassigned_at`, `created_at`, `updated_at`.
 
+**`agency_campaign_agent_caller_ids`** (0016). Dedicated caller IDs: one of a campaign's caller IDs given to an agent, so every dial to a contact they own on it goes out from that number (see below).
+
+Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `user_id`, `caller_id`, `set_by_user_id`, `set_at`.
+
 ### Settings, guard and flags
 
 **`account_settings`**. Per-account settings: `max_concurrent_calls`, `analyze_calls`, `allow_recording` (no row or NULL = off; the column comment saying NULL inherits true is superseded, see `docs/decisions.md` §4, 2026-10-10), `webrtc_max_duration_seconds` (NULL = process default; CHECK `> 0`), and the concurrency allocation mode and version.
@@ -222,6 +226,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_agency_manual_call_unsettled` (0005) | `agency_manual_calls` |
 | `uq_agency_softphone_settings_account` (0005) | `agency_softphone_settings` |
 | `uq_agency_attempt_redial_of` (0008) | `agency_call_attempts` |
+| `uq_agency_agent_caller_id_agent` (0016) | `agency_campaign_agent_caller_ids` |
+| `uq_agency_agent_caller_id_number` (0016) | `agency_campaign_agent_caller_ids` |
 
 ## Triggers and functions
 
@@ -763,6 +769,36 @@ otherwise it drops the live-number index and recreates `uq_agency_campaign_runni
 `test/integration/db/multiple-running-campaigns-migration.test.ts` (the unique index gone, the new
 index's definition and that the planner uses it for the probe, the refused down, down then up), the
 `uq_agency_campaign_running` case in `baseline.test.ts`, and the down → up suite.
+
+### 0016 — `migrations/0016_agent_caller_ids.sql`
+
+Dedicated caller ID per agent on a campaign (`docs/decisions.md`, "Dedicated caller ID per agent",
+DN1–DN10).
+
+- **`agency_campaign_agent_caller_ids`**: `tenant_id` (FK `tenants`, CASCADE), `account_id` (the
+  campaign's; no FK, as `agency_campaigns.account_id`), `campaign_id` (no FK, as
+  `agency_campaign_agents.campaign_id`), `user_id` (FK `users`, CASCADE), `caller_id VARCHAR(20)`,
+  `set_by_user_id` (FK `users`, SET NULL), `set_at`. `user_id` is FK'd, unlike
+  `agency_contacts.assigned_user_id`: 0009's reason (a user delete scanning a million-row roster)
+  does not apply to a table of one row per staffed agent per campaign, and the staffing row it
+  follows cascades the same way.
+- **`uq_agency_agent_caller_id_agent`** `(campaign_id, user_id)`: one number per agent on a
+  campaign; the PUT replaces an agent's number with an UPSERT on it, and the dial paths' map
+  read (`WHERE campaign_id = $1`) uses it. **`uq_agency_agent_caller_id_number`** `(campaign_id,
+  caller_id)`: one agent per number on a campaign; a set that trips it is `caller_id_taken`.
+  The same number may be dedicated on other campaigns.
+- **`ck_agency_agent_caller_id_trimmed`**: stored trimmed and non-empty, so it compares with
+  `usableCallerIds` (trimmed) as is.
+- **`idx_agency_agent_caller_ids_user`** `(user_id)`: the user cascade and the unstaff release
+  (DN7, a CTE of `returnOnUnstaff`, by agent across the campaigns whose staffing closed).
+- A stored number the campaign no longer has is kept but not used: every dial re-checks it
+  against the campaign's usable caller IDs (`resolveCallerId`).
+- **Locking.** A new, empty table: no existing table is altered.
+
+**Down** drops the table (every dedication is lost; contacts dial from the rotation again).
+**Tests**: `test/integration/db/agent-caller-ids-migration.test.ts` (both uniqueness rules and a
+number free on another campaign, the trimmed CHECK and the length, the cascades and SET NULL, the
+index definitions, down then up) and the down → up suite.
 
 ## Tests
 

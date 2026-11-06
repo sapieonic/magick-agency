@@ -39,6 +39,7 @@ const { repos, settings } = vi.hoisted(() => ({
       setState: vi.fn().mockResolvedValue(null),
     },
     session: { findLiveForCampaign: vi.fn().mockResolvedValue([]), setState: vi.fn().mockResolvedValue(null) },
+    callerIds: { mapForCampaign: vi.fn() },
   },
   settings: { getMaxConcurrentCalls: vi.fn().mockResolvedValue(10) },
 }));
@@ -47,6 +48,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
+  agencyAgentCallerIdRepository: repos.callerIds,
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
@@ -149,6 +151,7 @@ beforeEach(() => {
   repos.contact.claimDialable.mockResolvedValue([]);
   repos.contact.claimForAgents.mockResolvedValue([]);
   repos.attempt.create.mockImplementation(async (p: any) => ({ id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1 }));
+  repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
   settings.getMaxConcurrentCalls.mockResolvedValue(10);
   fallback.sweep.mockResolvedValue(0);
   fallback.unstaffed.mockResolvedValue(0);
@@ -220,6 +223,74 @@ describe('strict / preferred: an agent with nothing due is not reserved (CA3)', 
     expect(repos.contact.probeAgentQueues).toHaveBeenCalledWith('camp-1', ['u1', 'u2', 'u3'], expect.objectContaining({
       pool: { dueCap: 3 },
     }));
+  });
+});
+
+describe('dedicated caller IDs: the contact\'s owner decides the number (DN2, DN4)', () => {
+  const POOL = ['+14155550100', '+14155550101', '+14155550102'];
+
+  it('an owned contact dials from its owner\'s number, the rest from the rotation; the map is read once per batch', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'preferred', caller_ids: POOL });
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1', 'u2', 'u3']));
+    // u1 owns theirs (dedicated); u2's is a pool contact; u3 owns theirs (no dedication).
+    repos.contact.claimForAgents.mockResolvedValue([
+      { agentUserId: 'u1', contact: contact('c-of-u1', 'u1') },
+      { agentUserId: 'u2', contact: contact('c-pool', null) },
+      { agentUserId: 'u3', contact: contact('c-of-u3', 'u3') },
+    ]);
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101'], ['u9', '+14155550102']]));
+    const { e } = engine(makeStations(['s1', 's2', 's3']), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    const byContact = new Map(repos.attempt.create.mock.calls.map((c: any[]) => [c[0].contactId, c[0].callerId]));
+    expect(byContact.get('c-of-u1')).toBe('+14155550101');
+    // The rotation is the pool minus every dedicated number: one number left.
+    expect(byContact.get('c-pool')).toBe('+14155550100');
+    expect(byContact.get('c-of-u3')).toBe('+14155550100');
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(1);
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledWith('camp-1');
+  });
+
+  it('pool mode: an owned contact still goes out from its owner\'s number, whoever takes the call', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool', caller_ids: POOL });
+    // u2's contact, dialled to s1 (u1's session): pool mode ignores the owner when pairing.
+    repos.contact.claimDialable.mockResolvedValue([contact('c-of-u2', 'u2')]);
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101'], ['u2', '+14155550102']]));
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0]![0]).toMatchObject({ sessionId: 's1', contactId: 'c-of-u2', callerId: '+14155550102' });
+  });
+
+  it('a tick that claims nothing never reads the map', async () => {
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1']));
+    repos.contact.claimForAgents.mockResolvedValue([]);
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+    await e.tickOnce('camp-1');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(repos.callerIds.mapForCampaign).not.toHaveBeenCalled();
+  });
+
+  it('a failed read returns the whole batch undialled: agents back, contacts unclaimed, no attempt', async () => {
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1', 'u2']));
+    repos.contact.claimForAgents.mockResolvedValue([
+      { agentUserId: 'u1', contact: contact('c-of-u1', 'u1') },
+      { agentUserId: 'u2', contact: contact('c-of-u2', 'u2') },
+    ]);
+    repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    const { e, dispatch } = engine(makeStations(['s1', 's2']), agents);
+
+    await e.tickOnce('camp-1');
+
+    expect(repos.attempt.create).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(repos.contact.unclaimMany).toHaveBeenCalledWith(['c-of-u1', 'c-of-u2'], expect.any(Date));
+    expect(agents.set).toHaveBeenCalledWith('s1', 'available');
+    expect(agents.set).toHaveBeenCalledWith('s2', 'available');
   });
 });
 

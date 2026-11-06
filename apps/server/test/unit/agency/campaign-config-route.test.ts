@@ -54,12 +54,14 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
-const { campaigns, announcementRepo } = vi.hoisted(() => ({
-  campaigns: { create: vi.fn(), update: vi.fn(), findById: vi.fn() },
+const { campaigns, announcementRepo, callerIds } = vi.hoisted(() => ({
+  campaigns: { create: vi.fn(), update: vi.fn(), updateLocked: vi.fn(), findById: vi.fn() },
   announcementRepo: { findActiveByIdScoped: vi.fn() },
+  callerIds: { mapForCampaign: vi.fn() },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: campaigns,
+  agencyAgentCallerIdRepository: callerIds,
 }));
 vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
   announcementRepository: announcementRepo,
@@ -103,12 +105,21 @@ async function makeApp() {
   return app;
 }
 
+const TX_CLIENT = { query: vi.fn() };
+
 beforeEach(() => {
   vi.clearAllMocks();
   flags.isEnabled.mockResolvedValue(true);
   campaigns.findById.mockResolvedValue(CAMPAIGN_ROW);
+  callerIds.mapForCampaign.mockResolvedValue(new Map());
   campaigns.create.mockImplementation(async (i: any) => ({ ...CAMPAIGN_ROW, ...i }));
   campaigns.update.mockImplementation(async (_id: string, p: any) => ({ ...CAMPAIGN_ROW, ...p }));
+  // The locked write (a PATCH with caller_ids): the refusal asked of the stored row, then the
+  // same write `update` stands for here, so the assertions on `update` hold for both paths.
+  campaigns.updateLocked.mockImplementation(async (id: string, p: any, refuse: (row: any, client: unknown) => Promise<unknown>) => {
+    const refused = await refuse(await campaigns.findById(id), TX_CLIENT);
+    return refused !== null ? { refused } : { row: await campaigns.update(id, p) };
+  });
   announcementRepo.findActiveByIdScoped.mockResolvedValue({ id: 'ann-1', tenant_id: 't1', account_id: 'a1' });
 });
 
@@ -660,6 +671,75 @@ describe('PATCH /:id — caller_ids may not be emptied', () => {
 
     expect(res.statusCode).toBe(200);
     expect(campaigns.update).toHaveBeenCalledWith('camp-1', { name: 'Renamed' });
+  });
+});
+
+describe('PATCH /:id — a dedicated caller ID cannot be dropped (DN6)', () => {
+  const POOL = ['+14155550100', '+14155550101', '+14155550102'];
+  beforeEach(() => {
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, caller_ids: POOL });
+    callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101'], ['u2', '+14155550102']]));
+  });
+
+  it('refuses a caller_ids that drops a dedicated number: 409 caller_id_dedicated naming every one, nothing written', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { caller_ids: ['+14155550100'] },
+    });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict', code: 'caller_id_dedicated', message: expect.stringContaining('dedicated to agents'),
+      details: { caller_ids: ['+14155550101', '+14155550102'] },
+    });
+    // Read inside the locked write, on its client (DN6 under the campaign row's lock).
+    expect(callerIds.mapForCampaign).toHaveBeenCalledWith('camp-1', TX_CLIENT);
+    expect(campaigns.updateLocked).toHaveBeenCalledWith('camp-1', { caller_ids: ['+14155550100'] }, expect.any(Function));
+    expect(campaigns.update).not.toHaveBeenCalled();
+
+    const one = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { caller_ids: ['+14155550100', ' +14155550102 '] },
+    });
+    expect(one.statusCode).toBe(409);
+    expect(one.json().details).toEqual({ caller_ids: ['+14155550101'] });
+    expect(one.json().message).toBe('+14155550101 is dedicated to an agent on this campaign. Release it from the agent before removing it.');
+  });
+
+  it('accepts one that keeps every dedicated number (trimmed), drops an undedicated one, or adds', async () => {
+    const app = await makeApp();
+    for (const caller_ids of [[' +14155550101', '+14155550102 '], [...POOL, '+14155550199']]) {
+      const res = await app.inject({
+        method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS, payload: { caller_ids },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    expect(campaigns.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('a dedicated number the campaign no longer has (a direct write) does not block; no read without caller_ids', async () => {
+    callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+19999999999']]));
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS, payload: { caller_ids: ['+14155550100'] },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    callerIds.mapForCampaign.mockClear();
+    const renamed = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS, payload: { name: 'Renamed' },
+    });
+    expect(renamed.statusCode).toBe(200);
+    expect(callerIds.mapForCampaign).not.toHaveBeenCalled();
+    expect(campaigns.updateLocked).toHaveBeenCalledTimes(1);
+  });
+
+  it('a malformed caller_ids is still the 400 that names the field, before the dedication read', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS, payload: { caller_ids: [] },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(callerIds.mapForCampaign).not.toHaveBeenCalled();
   });
 });
 

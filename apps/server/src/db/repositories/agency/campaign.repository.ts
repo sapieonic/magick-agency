@@ -4,6 +4,8 @@
  * `campaign-retry.ts` and `campaign-stats.ts`; the methods here delegate.
  */
 import { getPool } from '@magick-agency/db';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
+import type { PoolClient } from 'pg';
 import { UUID_RE } from '../../../utils/uuid.js';
 import {
   AGENCY_CAMPAIGN_TERMINAL_STATUSES,
@@ -78,6 +80,20 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
 const CAMPAIGN_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   'retry_policy', 'disposition_catalog', 'context_display', 'break_reasons',
 ]);
+
+/** The UPDATE for a patch (its patchable columns only), or null when it names none. */
+function campaignUpdateStatement(id: string, patch: Record<string, unknown>): { text: string; values: unknown[] } | null {
+  const sets: string[] = [];
+  const values: unknown[] = [id];
+  for (const [k, v] of Object.entries(patch)) {
+    if (!CAMPAIGN_PATCHABLE_COLUMNS.has(k) || v === undefined) continue;
+    const json = CAMPAIGN_JSONB_COLUMNS.has(k);
+    values.push(json ? JSON.stringify(v) : v);
+    sets.push(`${k} = $${values.length}${json ? '::jsonb' : ''}`);
+  }
+  if (sets.length === 0) return null;
+  return { text: `UPDATE agency_campaigns SET ${sets.join(', ')}, updated_at = now() WHERE id = $1 RETURNING *`, values };
+}
 
 export class AgencyCampaignRepository {
   async findById(id: string): Promise<AgencyCampaignRecord | null> {
@@ -356,21 +372,41 @@ export class AgencyCampaignRepository {
    * leader's `running → completed` / `stopping → stopped` transitions.
    */
   async update(id: string, patch: Record<string, unknown>): Promise<AgencyCampaignRecord | null> {
-    const sets: string[] = [];
-    const values: unknown[] = [id];
-    for (const [k, v] of Object.entries(patch)) {
-      if (!CAMPAIGN_PATCHABLE_COLUMNS.has(k) || v === undefined) continue;
-      const json = CAMPAIGN_JSONB_COLUMNS.has(k);
-      values.push(json ? JSON.stringify(v) : v);
-      sets.push(`${k} = $${values.length}${json ? '::jsonb' : ''}`);
-    }
-    if (sets.length === 0) return this.findById(id);
-    const { rows } = await getPool().query<AgencyCampaignRecord>(
-      `UPDATE agency_campaigns SET ${sets.join(', ')}, updated_at = now() WHERE id = $1 RETURNING *`,
-      values,
-    );
+    const statement = campaignUpdateStatement(id, patch);
+    if (!statement) return this.findById(id);
+    const { rows } = await getPool().query<AgencyCampaignRecord>(statement.text, statement.values);
     announceCampaignChanged(rows[0]);
     return rows[0] ?? null;
+  }
+
+  /**
+   * {@link update} in one transaction that first locks the campaign row `FOR UPDATE` and asks
+   * `refuse(row as locked, client)`: a non-null answer is returned as `{ refused }` and nothing
+   * is written; otherwise the same UPDATE runs on that client (`{ row }`, null when the row is
+   * gone). For a check that must hold at the write against rows whose writers lock this
+   * campaign `FOR SHARE`: the campaign PATCH's dedicated caller ID guard (DN6), which a
+   * concurrent dedication PUT (`AgencyAgentCallerIdRepository.set`) either waits for or sees.
+   * Announced after the commit, as {@link update}.
+   */
+  async updateLocked<R>(
+    id: string,
+    patch: Record<string, unknown>,
+    refuse: (row: AgencyCampaignRecord, client: PoolClient) => Promise<R | null>,
+  ): Promise<{ row: AgencyCampaignRecord | null } | { refused: R }> {
+    const outcome = await withTransaction(async (client): Promise<{ row: AgencyCampaignRecord | null } | { refused: R }> => {
+      const locked = await client.query<AgencyCampaignRecord>(
+        'SELECT * FROM agency_campaigns WHERE id = $1 FOR UPDATE', [id]);
+      const row = locked.rows[0];
+      if (!row) return { row: null };
+      const refused = await refuse(row, client);
+      if (refused !== null) return { refused };
+      const statement = campaignUpdateStatement(id, patch);
+      if (!statement) return { row };
+      const { rows } = await client.query<AgencyCampaignRecord>(statement.text, statement.values);
+      return { row: rows[0] ?? null };
+    }, { pool: getPool() });
+    if ('row' in outcome) announceCampaignChanged(outcome.row);
+    return outcome;
   }
 
   /** Supervisor dashboard payload; see {@link campaignStats}. */

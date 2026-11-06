@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-05.
+"is it done". As of 2026-11-06.
 
 ## Summary
 
@@ -880,6 +880,53 @@ work is recorded (see the last bullet).
 - Counts: pending the first green run. No unit, integration, lint or `pnpm test:grafana` run of
   this work is recorded, so the case counts beside its test files in [`modules.md`](modules.md)
   are read from the source, not from a run, and nothing here claims a pass.
+
+### Dedicated caller ID per agent 2026-11-06 (DN1–DN10)
+
+ClickUp "Dedicated caller ID per agent allocation". A supervisor dedicates one of a campaign's
+caller IDs to an agent staffed on it, and every dial to a contact that agent owns on the campaign
+goes out from that number. Design and defaults: [`decisions.md`](decisions.md) §4, "Dedicated
+caller ID per agent". Server, db, contracts and console are built and merged on one branch; the
+review follow-ups below are in.
+
+- Migration `0016_agent_caller_ids.sql`: `agency_campaign_agent_caller_ids`, one number per agent
+  and one agent per number on a campaign (DN1). A row counts only while its agent is staffed on
+  the campaign and was set since that staffing began (`EFFECTIVE_DEDICATION_SQL`, every read), so
+  a row an unstaff left behind never dials, blocks or revives.
+- One rule for every dial path, `resolveCallerId` (`agency/pacing/caller-id-pool.ts`): the
+  contact owner's dedicated number while the campaign still has it, else the rotation (the usable
+  numbers minus the dedicated ones, or all of them when every one is dedicated). Pacing reads the
+  campaign's dedications once per dialling batch; the agent's own call, the wrap-up redial (WR7's
+  "same number" kept only while it is in the rotation) and the soft phone tagged to a campaign
+  read them per dial (DN2–DN4). The soft phone refuses a caller ID outside the campaign's set as
+  before, and dials a matched owned contact from the owner's number whatever in-set caller ID was
+  sent (the mobile app sends the campaign's first by default; the console's tagged default is
+  Automatic, sending none); the response's `caller_id` says which.
+- Supervisor routes `GET /campaigns/:id/agent-caller-ids`, `PUT` / `DELETE
+  /campaigns/:id/agents/:userId/caller-id` beside the contact-assignment routes, behind
+  `agency_contact_assignment_enabled`; audited `agency_campaign.agent_caller_id_set` /
+  `_cleared` (DN5, DN9, DN10). The PUT checks the staffing and the campaign's caller IDs inside
+  its transaction, under locks an unstaff and a campaign PATCH meet. The campaign PATCH refuses
+  to drop a dedicated number (`caller_id_dedicated`, DN6), checked under the campaign row's lock.
+  Unstaff releases the number on all three paths whatever `on_unstaff` says (DN7). The agent's My
+  contacts summary carries `caller_id`. The console's campaign Agents tab sets and releases the
+  numbers; the agent's My contacts panel names theirs.
+- Counts (2026-11-06, the merged branch after the review follow-ups, from inside each package):
+  `apps/server` unit 8200 passed + 42 skipped (409 files), rest lane 2016 passed + 9 expected fail
+  + 1 skipped (206 files + 1 skipped), wall-clock lane 15 (3 files); `packages/db` unit 428 (25
+  files), integration 573 (55 files); `apps/console` 5424 (284 files); `packages/contracts` 301
+  (11 files); `apps/super-admin` 446, `packages/web-ui` 235, `packages/domain` 61,
+  `packages/observability` 14; `pnpm lint` clean at the root; `pnpm test:grafana` 33 and
+  `pnpm test:release` 10 pass; console and server builds clean. One full run had a plan-shape
+  assertion fail in each of `db/attempt-indexes-migration.test.ts` and
+  `agency/insights-reads.test.ts` (both pass alone, 3 of 3, and in the full rerun these counts
+  come from); neither touches this change's code.
+- Not run: the mobile app's `agency_wire` `dart test` (no Dart toolchain on the build machine;
+  the summary fixture gained `caller_id`, which the Dart decoder ignores as an unknown key).
+- Follow-ups: the mobile app showing the agent's dedicated number; the mobile soft phone's
+  default for an unowned or unmatched number is still the campaign's `caller_ids[0]`, which may be
+  another agent's dedicated number, until the app omits `caller_id` by default and lets the server
+  pick from the rotation (an owned contact is already dialled from its owner's number).
 
 ## Test counts
 

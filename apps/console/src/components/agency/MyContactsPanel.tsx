@@ -7,6 +7,7 @@ import { callMyContact, retryMyContacts } from '../../api/agencyMyContacts';
 import { errorCode } from '../../utils/agencyErrors';
 import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
 import { CONTACT_BUCKET_LABELS } from '../../utils/agencyAssignmentCopy';
+import { myCallerIdLine } from '../../utils/agencyAgentCallerIdCopy';
 import {
   MY_CONTACT_FILTER_BUCKETS,
   agentRetryRefusal,
@@ -368,6 +369,11 @@ export function MyContactsPanel({
             <p className={styles.subtitle}>
               {campaignName ? `The contacts assigned to you on ${campaignName}.` : 'The contacts assigned to you.'}
             </p>
+            {/* A dedicated caller ID (DN1): every call to these contacts goes out
+                from it. Null is the campaign's shared rotation, which needs no line. */}
+            {summary?.caller_id ? (
+              <p className={styles.subtitle} data-testid="my-caller-id">{myCallerIdLine(summary.caller_id)}</p>
+            ) : null}
           </div>
           <button type="button" className={styles.close} onClick={onClose} aria-label="Close My contacts">
             <X size={16} />

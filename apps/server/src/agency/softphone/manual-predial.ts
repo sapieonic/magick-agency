@@ -13,11 +13,18 @@
  *     `invalid_number`.
  *  3. The caller ID, in the allowed set: tagged, the campaign's `caller_ids`
  *     (`usableCallerIds`, the pacing engine's definition); untagged, the account's
- *     assigned numbers (`findAvailableForAccount`). Absent: tagged, the pool's
- *     round-robin pick (`pickCallerId`, as pacing dials); untagged, the settings'
+ *     assigned numbers (`findAvailableForAccount`). Not allowed → `caller_id_not_allowed`
+ *     with the set. Tagged, when the number matches a contact of the tag (step 4's pick)
+ *     whose OWNER has a dedicated caller ID on it that is still usable, the call goes out
+ *     from that number whatever in-set number was requested (decision DN4). Absent: tagged,
+ *     the dial paths' one rule (`resolveCallerId`: the owner's dedicated number, else the
+ *     rotation's round-robin pick, as pacing dials); untagged, the settings'
  *     `default_caller_id` when it is still allowed, else the account's default
  *     number (the first of `findAvailableForAccount`, which orders `is_default`
- *     first). Not allowed → `caller_id_not_allowed` with the set.
+ *     first). Tagged, the roster match
+ *     is READ before this step (it names the owner), but its refusal is still answered
+ *     after this one, in step 4's place; a match that step 4 refuses (`in_flight`) names no
+ *     owner here.
  *  4. The roster guard: one live call per number across the ACCOUNT (decisions MC4),
  *     tagged or not. Tagged: the match on the tag (`findForManualMatch`): any match
  *     `in_flight` refuses `contact_in_flight`, no override; else the oldest `pending`
@@ -62,7 +69,13 @@ import type { AgencyCampaignRecord, AgencyContactRecord } from '../../db/models/
 import { normalizePhoneToE164 } from '../../utils/phone-normalizer.js';
 import { normalizeE164, type DncRegistry } from '../dnc-registry.js';
 import { callingWindowState, nextWindowOpen, resolveCallingWindow } from '../calling-hours.js';
-import { pickCallerId, usableCallerIds } from '../pacing/caller-id-pool.js';
+import {
+  dedicatedCallerIdOf,
+  NO_DEDICATED_CALLER_IDS,
+  resolveCallerId,
+  usableCallerIds,
+  type DedicatedCallerIds,
+} from '../pacing/caller-id-pool.js';
 import { trimmedNoteWithin } from '../contact-overrides.js';
 import type { SoftphoneRefusal } from './types.js';
 
@@ -108,6 +121,8 @@ export interface ManualPredialDeps {
    * tag's own match (step 4).
    */
   findInFlightInAccount: (phoneE164: string) => Promise<AgencyContactRecord | null>;
+  /** Tagged calls: the tag's dedicated caller IDs (`agency_campaign_agent_caller_ids`, DN4). */
+  findDedicatedCallerIds: (campaignId: string) => Promise<DedicatedCallerIds>;
 }
 
 type Refused = { ok: false; refusal: SoftphoneRefusal };
@@ -159,24 +174,40 @@ export function normalizeDialledNumber(to: unknown, defaultCountryCode: string):
   return normalizeE164(local);
 }
 
-/** Step 3: the allowed set and the caller ID the dial uses. */
+/**
+ * Step 3: the allowed set and the caller ID the dial uses (DN4). Tagged, the allowed set is
+ * always the tag's usable caller IDs: a requested number outside it is refused
+ * (`caller_id_not_allowed` with the set). When the matched contact's owner (`ownerUserId`)
+ * has a dedicated number still on the tag (`dedicated`), the call goes out from THAT number
+ * whatever in-set number was requested: both clients send the tag's first caller ID by default
+ * (the mobile app cannot be changed here), and the response's `caller_id` reports what was
+ * dialled. With nothing requested, the dial paths' rule (`resolveCallerId`): the owner's
+ * number, else the rotation's pick. Untagged: the account's numbers, the request or the
+ * settings' default, else the first.
+ */
 export function selectCallerId(input: {
   tag: AgencyCampaignRecord | null;
   accountNumbers: readonly string[];
   settingsDefault: string | null;
   requested: unknown;
+  dedicated?: DedicatedCallerIds;
+  ownerUserId?: string | null;
 }): { ok: true; callerId: string } | Refused {
-  const allowed = input.tag
-    ? usableCallerIds(input.tag)
-    : input.accountNumbers.filter((n) => typeof n === 'string' && n.trim().length > 0).map((n) => n.trim());
+  const dedicated = input.dedicated ?? NO_DEDICATED_CALLER_IDS;
+  const usable = input.tag ? usableCallerIds(input.tag) : null;
+  const allowed = usable
+    ?? input.accountNumbers.filter((n) => typeof n === 'string' && n.trim().length > 0).map((n) => n.trim());
   const refuse: Refused = { ok: false, refusal: { code: 'caller_id_not_allowed', allowed_codes: [...allowed] } };
   if (input.requested !== undefined && input.requested !== null && input.requested !== '') {
     if (typeof input.requested !== 'string') return refuse;
     const requested = input.requested.trim();
-    return allowed.includes(requested) ? { ok: true, callerId: requested } : refuse;
+    if (!allowed.includes(requested)) return refuse;
+    // In the set: the owner's dedicated number replaces it (DN4).
+    const own = usable ? dedicatedCallerIdOf(usable, dedicated, input.ownerUserId) : null;
+    return { ok: true, callerId: own ?? requested };
   }
-  if (input.tag) {
-    const picked = pickCallerId(allowed, 0);
+  if (usable) {
+    const picked = resolveCallerId({ usable, dedicated, ownerUserId: input.ownerUserId, offset: 0 });
     return picked ? { ok: true, callerId: picked } : refuse;
   }
   if (input.settingsDefault && allowed.includes(input.settingsDefault)) {
@@ -229,20 +260,34 @@ export async function runManualPredial(
   const destinationE164 = normalizeDialledNumber(input.to, input.defaultCountryCode);
   if (!destinationE164) return { ok: false, refusal: { code: 'invalid_number' } };
 
+  // Tagged: the roster match and the tag's dedicated caller IDs, read together. The match's
+  // owner decides step 3's caller ID (DN4); its refusal is answered in step 4's place.
+  let picked: ReturnType<typeof pickRosterContact> | null = null;
+  let dedicated: DedicatedCallerIds = NO_DEDICATED_CALLER_IDS;
+  if (input.tag) {
+    const [matches, map] = await Promise.all([
+      deps.findRosterMatches(input.tag.id, destinationE164),
+      deps.findDedicatedCallerIds(input.tag.id),
+    ]);
+    picked = pickRosterContact(input.tag.id, matches);
+    dedicated = map;
+  }
+
   // 3. The caller ID.
   const caller = selectCallerId({
     tag: input.tag,
     accountNumbers: input.accountNumbers,
     settingsDefault: input.settings.default_caller_id,
     requested: input.requestedCallerId,
+    dedicated,
+    ownerUserId: picked?.ok ? picked.contact?.assigned_user_id ?? null : null,
   });
   if (!caller.ok) return caller;
 
   // 4. The roster guard: the tag's match first (it names the tag's own live contact),
   // then the number live on ANY campaign of the account, tagged or not (MC4).
   let contact: AgencyContactRecord | null = null;
-  if (input.tag) {
-    const picked = pickRosterContact(input.tag.id, await deps.findRosterMatches(input.tag.id, destinationE164));
+  if (picked) {
     if (!picked.ok) return picked;
     contact = picked.contact;
   }

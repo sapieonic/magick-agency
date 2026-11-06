@@ -58,6 +58,7 @@ const SUMMARY: AgencyMyContactsSummary = {
   due_now: 0,
   queue: { due: false, reason: 'callbacks_later', next_due_at: '2026-11-03T15:00:00.000Z' },
   unassigned_open: 0,
+  caller_id: null,
   retry: { allowed: true, rounds: 2, cooldown_minutes: 30, eligible: 8 },
 };
 
@@ -124,6 +125,19 @@ describe('the list and the counts', () => {
     await screen.findByRole('button', { name: 'Load more' });
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(mocks.listMyContacts.mock.lastCall![0]).toMatchObject({ cursor: 'cur-2' }));
+  });
+
+  it('says which number the agent’s calls go from when they have a dedicated caller ID', async () => {
+    mocks.getMyContactsSummary.mockResolvedValue({ ...SUMMARY, caller_id: '+912200000001' });
+    renderPanel();
+    expect((await screen.findByTestId('my-caller-id')).textContent)
+      .toBe('Calls to your contacts on this campaign go from +91 22000 00001.');
+  });
+
+  it('says nothing about a caller ID on the shared rotation', async () => {
+    renderPanel();
+    await screen.findByTestId('my-row-c-due');
+    expect(screen.queryByTestId('my-caller-id')).toBeNull();
   });
 
   it('a search reads the list only: the counts do not depend on it', async () => {

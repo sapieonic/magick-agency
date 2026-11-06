@@ -1,0 +1,90 @@
+/* One staffed agent's caller ID, on its own line under their name in the
+   staffing list. The editor opens below it so the row's name and Remove
+   button never move while a supervisor picks a number. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-basis: 100%;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rotation,
+.muted {
+  color: var(--text-muted);
+}
+
+.muted {
+  margin: 0;
+  font-size: 13px;
+}
+
+.stale {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-left: 2px solid var(--warning);
+  padding-left: 6px;
+}
+
+.change,
+.cancel {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.picker {
+  min-width: 240px;
+  max-width: 100%;
+}
+
+.refusal {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-left: 2px solid var(--danger);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}

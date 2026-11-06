@@ -4,8 +4,9 @@ import { tenantContextMiddleware } from '../middleware/tenant-context.middleware
 import { registerAssignmentSupervisorRoutes } from './proxy-agency-assignment/supervisor.js';
 import { registerMyContactRoutes } from './proxy-agency-assignment/my-contacts.js';
 import { registerMyContactActionRoutes } from './proxy-agency-assignment/my-contact-actions.js';
+import { registerAgentCallerIdRoutes } from './proxy-agency-assignment/agent-caller-ids.js';
 
-export { registerAssignmentSupervisorRoutes, registerMyContactRoutes, registerMyContactActionRoutes };
+export { registerAssignmentSupervisorRoutes, registerMyContactRoutes, registerMyContactActionRoutes, registerAgentCallerIdRoutes };
 
 /**
  * Contact assignment, served at the console's paths under `/proxy/agency` (decision B16; the
@@ -15,7 +16,9 @@ export { registerAssignmentSupervisorRoutes, registerMyContactRoutes, registerMy
  * ownership probe (`fetchOwnedCoreCampaign`) on the supervisor's routes.
  *
  *  - Supervisor (`agency.supervise`): preview / commit an operation, progress per agent, a
- *    contact's owner history (`./proxy-agency-assignment/supervisor.ts`).
+ *    contact's owner history (`./proxy-agency-assignment/supervisor.ts`); the agents' dedicated
+ *    caller IDs (`./proxy-agency-assignment/agent-caller-ids.ts`, decisions DN1–DN10: list,
+ *    set, release; the table `agency_campaign_agent_caller_ids`).
  *  - Agent (`agency.contacts.own`, floored at `agent`): the caller's own contacts, summary
  *    and list (`./proxy-agency-assignment/my-contacts.ts`), and the actions on them: retry
  *    and the per-contact call (`./proxy-agency-assignment/my-contact-actions.ts`). Their subject is the caller,
@@ -33,4 +36,5 @@ export async function proxyAgencyAssignmentRoutes(app: FastifyInstance): Promise
   await registerAssignmentSupervisorRoutes(app);
   await registerMyContactRoutes(app);
   await registerMyContactActionRoutes(app);
+  await registerAgentCallerIdRoutes(app);
 }

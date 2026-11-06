@@ -71,6 +71,8 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
+  // No dedicated caller IDs (DN1): every contact dials from the rotation, the whole pool.
+  agencyAgentCallerIdRepository: { mapForCampaign: async () => new Map() },
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,

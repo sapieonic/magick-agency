@@ -65,6 +65,12 @@ export type {
   PacingMinuteRow,
 } from './agency/insights-pacing.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
+export {
+  AGENT_CALLER_ID_NUMBER_CONSTRAINT,
+  AgencyAgentCallerIdRepository,
+  agencyAgentCallerIdRepository,
+} from './agency/agent-caller-id.repository.js';
+export type { AgentCallerIdRow, AgentCallerIdSetOutcome } from './agency/agent-caller-id.repository.js';
 export { AgencyAssignmentRepository, agencyAssignmentRepository, planCtes } from './agency/assignment.repository.js';
 export type {
   AssignmentCampaignScope,

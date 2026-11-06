@@ -414,6 +414,12 @@ export interface AgencyMyContactsSummary {
   queue: AgencyQueueState;
   /** In strict mode, open contacts nobody owns (never dialled until a supervisor assigns them). */
   unassigned_open: number;
+  /**
+   * The caller's dedicated caller ID on this campaign (DN1): every dial to one of their contacts
+   * goes out from it. Null when they have none, or it is no longer one of the campaign's caller
+   * IDs (their contacts then use the campaign's rotation).
+   */
+  caller_id: string | null;
   retry: {
     /**
      * The agent may reopen contacts now: the campaign allows agent retry AND is `running` or

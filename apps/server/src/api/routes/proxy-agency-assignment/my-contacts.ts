@@ -18,7 +18,8 @@ import {
   type AgencyMyContactsSummary,
 } from '@magick-agency/contracts/api/agency/assignment';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAgentCallerIdRepository, agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
+import { dedicatedCallerIdOf, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
 import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
@@ -63,13 +64,18 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
 
     const now = new Date();
     // Independent reads, started together; a throw is rethrown in this order.
-    const [tallyRead, queueRead] = await Promise.allSettled([
+    const [tallyRead, queueRead, callerIdRead] = await Promise.allSettled([
       agencyAssignmentReadRepository.myTally(campaign, userId),
       readAgentQueueState(campaign, userId, now),
+      agencyAgentCallerIdRepository.findForAgent(campaign.id, userId),
     ]);
     const tally = settledValue(tallyRead);
     // The queue pacing and the station read (strict / preferred); pool mode has none of its own.
     const queue = settledValue(queueRead) ?? poolModeQueueState(campaign, tally.pool.next_open_at, now);
+    // The dial path's own rule (DN2): the stored number counts only while it is still one of
+    // the campaign's usable caller IDs; otherwise their contacts use the rotation.
+    const stored = settledValue(callerIdRead);
+    const callerId = stored === null ? null : dedicatedCallerIdOf(usableCallerIds(campaign), new Map([[userId, stored]]), userId);
     const body: AgencyMyContactsSummary = {
       campaign_id: campaign.id,
       assignment_mode: campaign.assignment_mode,
@@ -78,6 +84,7 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
       due_now: tally.own.due_now,
       queue,
       unassigned_open: campaign.assignment_mode === 'strict' ? tally.pool.open ?? 0 : 0,
+      caller_id: callerId,
       retry: {
         // Off on a finished campaign too: the retry route would refuse `campaign_not_running`.
         allowed: agentRetryOpen(campaign),

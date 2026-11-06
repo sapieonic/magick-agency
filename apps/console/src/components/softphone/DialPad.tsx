@@ -16,6 +16,17 @@ import styles from './SoftphoneView.module.css';
 export const RINGING_HANGUP_WARNING =
   'VoiceLink cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
 
+/** The tagged call's default "Call from" (DN4): the server picks the number. */
+export const AUTOMATIC_CALLER_ID_LABEL = 'Automatic';
+export const AUTOMATIC_CALLER_ID_HINT = 'Automatic: the contact’s agent number, else the campaign’s rotation.';
+
+/** The hint under "Call from" for a number picked by hand. */
+export function pickedCallerIdHint(campaignName: string | null): string {
+  return campaignName
+    ? `From ${campaignName}’s caller IDs, unless the contact has an agent number.`
+    : 'From the numbers assigned to your account';
+}
+
 const STATUS_LABEL = {
   dialing: 'Dialing',
   ringing: 'Ringing',
@@ -185,18 +196,21 @@ export function DialPad({
           id={callerSelectId}
           value={sp.callerId ?? ''}
           disabled={disabled || sp.callerIdOptions.length === 0}
-          onChange={(event) => sp.setCallerId(event.target.value)}
+          onChange={(event) => sp.setCallerId(event.target.value || null)}
           data-testid="caller-id"
         >
           {sp.callerIdOptions.length === 0 ? <option value="">No numbers available</option> : null}
+          {sp.callerIdAutomatic ? <option value="">{AUTOMATIC_CALLER_ID_LABEL}</option> : null}
           {sp.callerIdOptions.map((id) => (
             <option key={id} value={id}>
               {formatDialNumber(id)}
             </option>
           ))}
         </select>
-        <p className={styles.hint}>
-          {sp.campaign ? `From ${sp.campaign.campaign_name}’s caller IDs` : 'From the numbers assigned to your account'}
+        <p className={styles.hint} data-testid="caller-id-hint">
+          {sp.callerIdAutomatic && sp.callerId === null
+            ? AUTOMATIC_CALLER_ID_HINT
+            : pickedCallerIdHint(sp.campaign?.campaign_name ?? null)}
         </p>
       </div>
 

@@ -20,5 +20,6 @@ export * from './webrtc-call';
 export * from './attempt-call';
 export * from './softphone';
 export * from './assignment';
+export * from './agent-caller-id';
 export * from './insights';
 export * from './shared';
