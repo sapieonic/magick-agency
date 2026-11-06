@@ -923,7 +923,13 @@ caller ID per agent". Server, db, contracts and console.
 - Counts (2026-11-06, from inside each package): `apps/server` unit 8207 passed + 42 skipped (410 files), rest lane
   2022 passed + 9 expected fail + 1 skipped (206 files + 1 skipped), wall-clock lane 15 (3 files); `packages/db` unit 428 (25 files), integration 573 (55 files);
   `packages/contracts` 301 (11 files), `contracts-literals --check` up to date; `apps/console`
-  5424 (284 files); `pnpm lint` clean in `apps/server` and `packages/contracts`.
+  5434 (284 files); `apps/super-admin` 446, `packages/web-ui` 235, `packages/domain` 61,
+  `packages/observability` 14; `pnpm lint` clean at the root; `pnpm test:grafana` 33 and
+  `pnpm test:release` 10 pass; console and server builds clean. Under full-suite load a
+  plan-shape assertion (`agency/insights-reads.test.ts`, `db/attempt-indexes-migration.test.ts`)
+  and a media WebSocket load case (`load/voicelink-media-ws-load.test.ts`) have each failed once;
+  all three pass alone (3 of 3) and in the full rerun these counts come from, and none touches
+  this feature's code.
 - Not run: the mobile app's `agency_wire` `dart test` (no Dart toolchain on the build machine;
   the summary fixture gained `caller_id`, which the Dart decoder ignores as an unknown key).
 - Follow-ups ([`decisions.md`](decisions.md) §5): per-number concurrency (`phone_numbers.max_concurrent_calls`
@@ -933,20 +939,19 @@ caller ID per agent". Server, db, contracts and console.
 
 ## Test counts
 
-Latest run of `apps/server` and `packages/db`, 2026-11-06, the dedicated caller ID branch
-(DN1–DN10) after its review fixes, from inside each package (`pnpm lint` clean in `apps/server`).
-The other rows are from 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`)
-after the review fixes (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
-`pnpm test:release` 10 pass; `pnpm build` clean; integration on `05e988e`; unit, release, Grafana
-and build again after merging `main` (#36)):
+Latest run, 2026-11-06, the dedicated caller ID branch (DN1–DN10) after its review fixes, from
+inside each package: every row but `apps/mobile` (`pnpm lint` clean in 8 packages;
+`pnpm test:grafana` 33 and `pnpm test:release` 10 pass; console and server builds clean). The
+`apps/mobile` row is from 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`);
+it was not rerun (no Flutter toolchain on the build machine):
 
 | Package | Unit | Integration |
 |---|---|---|
 | `apps/server` | 8207 passed + 42 skipped (410 files) | rest lane 2022 passed + 9 expected fail + 1 skipped (206 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
 | `packages/db` | 428 (25 files) | 573 (55 files) |
-| `apps/console` | 5122 (270 files) | — |
-| `apps/super-admin` | 436 | — |
-| `packages/contracts` | 281, `contracts-literals --check` up to date | — |
+| `apps/console` | 5434 (284 files) | — |
+| `apps/super-admin` | 446 | — |
+| `packages/contracts` | 301, `contracts-literals --check` up to date | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
@@ -988,7 +993,7 @@ pass; details and the one file that fails only in the combined run: "Wrap-up red
 | `apps/server` | 7720 passed + 42 skipped (386 files) | rest lane 1602 passed + 9 expected fail; wall-clock lane 15 (177 files) |
 | `packages/db` | 427 | 519 (48 files) |
 | `apps/console` | 5015 (256 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 252 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -1006,7 +1011,7 @@ package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 a
 | `apps/server` | 7590 passed + 42 skipped (380 files) | 1545 passed + 10 expected fail + 1 failed (167 files) |
 | `packages/db` | 427 | 512 (47 files) |
 | `apps/console` | 4944 (252 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -1023,7 +1028,7 @@ clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` p
 | `apps/server` | 7430 passed + 42 skipped (360 files) | 1511 passed + 10 expected fail (161 files) |
 | `packages/db` | 427 | 506 (46 files) |
 | `apps/console` | 4917 (251 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -1043,7 +1048,7 @@ test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana
 | `apps/server` | 7170 passed + 4 expected fail (340 files) | 1476 passed + 10 expected fail (154 files) |
 | `packages/db` | 427 | 495 (44 files) |
 | `apps/console` | 4808 (245 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 94 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 55 | — |
