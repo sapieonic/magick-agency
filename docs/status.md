@@ -1207,7 +1207,7 @@ account their browser last had open. Every signed-in console page is now served 
 - **Left open:** signing out and in as a different user keeps the first user's scoped `next`, which the second user may
   be refused (the refusal offers a way out). The history comes from react-router's
   `UNSAFE_createBrowserHistory`; the routing tests exercise it, so an upgrade that breaks it goes red.
-- Counts, 2026-11-05: `apps/console` 5371 (281 files), lint clean, build clean; `apps/server` lint
+- Counts: `apps/console` 5377 (282 files) on 2026-11-06 after reload-on-switch (5371, 281 files, on 2026-11-05), lint clean, build clean; `apps/server` lint
   clean, unit 8163 passed + 42 skipped (407 files). Integration lanes and the Dart tests were not run
   (no server SQL, route or contract changed).
 

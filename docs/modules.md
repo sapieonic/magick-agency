@@ -1554,7 +1554,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
 | `apps/console/src/components/common/Logo.test.tsx` | 5 |
 | `apps/console/src/__tests__/routing/appRouteTable.test.ts` | 13 |
-| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 28 |
+| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 33 |
 
 ### `apps/console/src/components/softphone/`
 
@@ -1786,6 +1786,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/invitedTenant.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/keyboardTarget.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/permissions.test.ts` | 46 |
+| `apps/console/src/__tests__/utils/pageLoad.test.ts` | 1 |
 | `apps/console/src/__tests__/utils/phone.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/poll-backoff.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/returnPath.test.ts` | 81 |
