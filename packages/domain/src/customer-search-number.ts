@@ -68,7 +68,6 @@ export const SEARCH_COUNTRIES: readonly SearchCountry[] = [
 
 /** The closed set of refusals: the contract's `number_error` (wire codes, never respelled). */
 export const SEARCH_NUMBER_ERROR_CODES = CUSTOMER_SEARCH_NUMBER_ERRORS;
-export type SearchNumberErrorCode = CustomerSearchNumberError;
 
 export type SearchNumberResult =
   | {
@@ -80,7 +79,7 @@ export type SearchNumberResult =
     /** The country the number belongs to, when it is one the picker lists. */
     countryIso: string | null;
   }
-  | { ok: false; code: SearchNumberErrorCode; message: string };
+  | { ok: false; code: CustomerSearchNumberError; message: string };
 
 /** E.164's own bounds for a calling code the table does not list. */
 const UNKNOWN_MIN_DIGITS = 8;
@@ -94,7 +93,7 @@ const ALLOWED = /^[\d\s+\-().]+$/;
 const TRUNK_AFTER_COUNTRY_CODE = /^(\s*(?:\+|00)\s*\d{1,3})\s*\(\s*0\s*\)/;
 
 /** The country the picker defaults to: the one whose calling code is the platform default. */
-export function searchCountryForCallingCode(callingCode: string): SearchCountry | null {
+function searchCountryForCallingCode(callingCode: string): SearchCountry | null {
   const cc = callingCode.replace(/^\+/, '');
   return SEARCH_COUNTRIES.find((c) => c.callingCode === cc) ?? null;
 }
@@ -105,7 +104,7 @@ export function searchCountryByIso(iso: string): SearchCountry | null {
 }
 
 /** The message shown for a refusal. British English. */
-export function searchNumberErrorMessage(code: SearchNumberErrorCode, country: SearchCountry | null): string {
+export function searchNumberErrorMessage(code: CustomerSearchNumberError, country: SearchCountry | null): string {
   switch (code) {
     case 'empty':
       return 'Type a phone number to search.';
@@ -120,7 +119,7 @@ export function searchNumberErrorMessage(code: SearchNumberErrorCode, country: S
   }
 }
 
-function refuse(code: SearchNumberErrorCode, country: SearchCountry | null): SearchNumberResult {
+function refuse(code: CustomerSearchNumberError, country: SearchCountry | null): SearchNumberResult {
   return { ok: false, code, message: searchNumberErrorMessage(code, country) };
 }
 

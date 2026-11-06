@@ -21,8 +21,8 @@
  *    entries, and SQL aggregates over the number's calls (totals, the newest placed call, what
  *    is live, the filter options, how many timeline entries there are). No call row is shipped
  *    to build it.
- *  - **A timeline page**: one keyset statement per source (campaign calls, callbacks booked on
- *    them, soft-phone calls, callbacks booked on those, DNC marks, roster rows), each taking the
+ *  - **A timeline page**: one keyset statement per source (campaign calls, soft-phone calls,
+ *    callbacks booked on either, DNC marks, roster rows), each taking the
  *    cursor, every filter it can apply, and `LIMIT n + 1`; the service merges their heads and keeps
  *    the top `n` (`agency/customer-history/service.ts`). A page reads O(page) rows per source, plus
  *    the index entries of the number's own rows where the source has no index in timeline order
@@ -49,8 +49,10 @@
  * (`keysetAtSql`), so the timeline's keyset cursor never floors a timestamp (see
  * `packages/domain/src/keyset-cursor.ts`).
  */
+import type { QueryResultRow } from 'pg';
 import { getPool } from '@magick-agency/db';
 import { keysetAtSql } from '@magick-agency/domain/keyset-cursor';
+import { AGENCY_ATTEMPT_LIVE_STATES } from '../../models/agency.model.js';
 
 /** Who may be read: the tenant and the accounts the caller can see. */
 export interface CustomerHistoryScope {
@@ -245,8 +247,14 @@ export interface CustomerHistoryBookingRow {
  */
 export const CUSTOMER_HISTORY_MAX_CONTACT_ROWS = 2000;
 
-/** The live call states: dialled and not ended (`queued` has not been dialled). */
-const CUSTOMER_HISTORY_LIVE_STATES = ['dialing', 'ringing', 'answered', 'bridged'] as const;
+/**
+ * The live call states: dialled and not ended (`queued` has not been dialled). One list for both
+ * channels: a soft-phone call's state is an attempt state (`AgencyManualCallState`).
+ */
+const LIVE_STATES_SQL = AGENCY_ATTEMPT_LIVE_STATES
+  .filter((state) => state !== 'queued')
+  .map((state) => `'${state}'`)
+  .join(', ');
 
 /** Above every id gen_random_uuid() mints (a v4 id's 13th digit is `4`), and below none. */
 export const UUID_MAX = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
@@ -254,11 +262,13 @@ export const UUID_NIL = '00000000-0000-0000-0000-000000000000';
 
 const BOOKED = (alias: string) => `COALESCE(${alias}.dispositioned_at, ${alias}.ended_at, ${alias}.created_at)`;
 
+/** A roster row (alias `c`) carrying the number in a visible account. $1 tenant, $2 phone, $3 accounts. */
+const CONTACT_WHERE = 'c.tenant_id = $1::uuid AND c.phone_e164 = $2::text AND c.account_id = ANY($3::uuid[])';
+
 /** The number's roster rows in the visible accounts. $1 tenant, $2 phone, $3 accounts. */
 const CONTACTS_CTE = `
     ct AS MATERIALIZED (
-      SELECT c.id, c.campaign_id FROM agency_contacts c
-       WHERE c.tenant_id = $1::uuid AND c.phone_e164 = $2::text AND c.account_id = ANY($3::uuid[]))`;
+      SELECT c.id, c.campaign_id FROM agency_contacts c WHERE ${CONTACT_WHERE})`;
 
 /**
  * The number's soft-phone calls in the visible accounts: dialled to it, or logged to one of its
@@ -280,6 +290,11 @@ const ATTEMPTS_FROM = `
        AND a.tenant_id = $1::uuid
        AND a.account_id = ANY($3::uuid[])`;
 
+/** The number's soft-phone calls (alias `m`). Needs {@link MANUAL_CTE}. */
+const MANUAL_FROM = `
+      FROM agency_manual_calls m
+     WHERE m.id IN (SELECT id FROM mc)`;
+
 /**
  * A timeline source's keyset and shared filters. $4 cursor instant (`infinity` for the first
  * page), $5 cursor id (see `sourceBound` in the service: the cursor's own id for the cursor's
@@ -290,8 +305,12 @@ const ATTEMPTS_FROM = `
 const keyset = (at: string, id: string) => `(${at}, ${id}) < ($4::timestamptz, $5::uuid)`;
 const timeWindow = (at: string) =>
   `($7::timestamptz IS NULL OR ${at} >= $7::timestamptz) AND ($8::timestamptz IS NULL OR ${at} < $8::timestamptz)`;
+/** Campaign `g` is, or is a retry of, one of the root campaigns $9. */
+const inRoots = (g: string) => `COALESCE(${g}.root_campaign_id, ${g}.id) = ANY($9::uuid[])`;
 const rootOf = (campaignId: string) => `($9::uuid[] IS NULL OR EXISTS (
-         SELECT 1 FROM agency_campaigns g9 WHERE g9.id = ${campaignId} AND COALESCE(g9.root_campaign_id, g9.id) = ANY($9::uuid[])))`;
+         SELECT 1 FROM agency_campaigns g9 WHERE g9.id = ${campaignId} AND ${inRoots('g9')}))`;
+/** {@link rootOf} for a row whose campaign is joined as `g`. */
+const ROOT_OF_G = `($9::uuid[] IS NULL OR ${inRoots('g')})`;
 /**
  * The call-only filters: $10 outcomes, $11 disposition codes, $12 agents (NULL = any), $13
  * connected only. `agentIn` is the condition "the call's agent is in $12".
@@ -305,6 +324,30 @@ const ATTEMPT_AGENT_IN = `EXISTS (
          SELECT 1 FROM agency_agent_sessions s12 WHERE s12.id = a.reserved_agent_id AND s12.agent_user_id = ANY($12::uuid[]))`;
 const MANUAL_AGENT_IN = 'm.agent_user_id = ANY($12::uuid[])';
 
+/** One soft-phone index walk's filters and its own top `n` (both arms of `pageManualCalls`). */
+const MANUAL_WALK_TAIL = `
+           AND ${keyset('m.created_at', 'm.id')}
+           AND ${timeWindow('m.created_at')}
+           AND ${rootOf('m.campaign_id')}
+           AND ${callFilters('m', MANUAL_AGENT_IN)}
+         ORDER BY m.created_at DESC, m.id DESC
+         LIMIT $6::int`;
+
+/**
+ * One channel's arm of `pageCallbacks`: the calls (alias `x`, read `from`) with a callback booked,
+ * at their booking instant, after the cursor, top `n` of their own. `bookedBy`: who booked it.
+ */
+const callbackArm = (channel: 'campaign' | 'softphone', x: string, from: string, bookedBy: string) => `
+      (SELECT '${channel}' AS channel, ${x}.id, ${x}.account_id, ${x}.campaign_id, ${x}.callback_at,
+              ${bookedBy} AS booked_by_user_id, ${BOOKED(x)} AS booked, ${keysetAtSql(BOOKED(x))} AS at
+       ${from}
+         AND ${x}.callback_at IS NOT NULL
+         AND ${keyset(BOOKED(x), `${x}.id`)}
+         AND ${timeWindow(BOOKED(x))}
+         AND ${rootOf(`${x}.campaign_id`)}
+       ORDER BY ${BOOKED(x)} DESC, ${x}.id DESC
+       LIMIT $6::int)`;
+
 const CONTACT_COLUMNS = `c.id, c.root_contact_id, c.campaign_id, c.account_id, c.phone_e164, c.context, c.state,
            c.suppressed_reason, c.last_outcome, c.last_disposition, c.next_attempt_at,
            c.assigned_user_id, c.override_disposition, c.override_extra_attempts,
@@ -317,11 +360,20 @@ const MANUAL_COLUMNS = `m.id, m.account_id, m.agent_user_id, m.campaign_id, m.co
            m.ended_at, m.talk_seconds, m.dispositioned_by_user_id, m.dispositioned_at, m.created_at,
            ${keysetAtSql('m.created_at')} AS at`;
 
+const CAMPAIGN_COLUMNS = `g.id, g.account_id, g.name, g.status, COALESCE(g.root_campaign_id, g.id) AS root_id,
+           g.retry_generation, g.context_display, g.disposition_catalog`;
+
 /**
- * A DNC entry the caller may see: tenant-wide (no account, no campaign), on a visible account,
- * or on a campaign of a visible account. `g` is the entry's campaign (LEFT JOIN).
+ * The DNC entries covering the number that the caller may see: tenant-wide (no account, no
+ * campaign), on a visible account, or on a campaign of a visible account. `g` is the entry's
+ * campaign (LEFT JOIN). $1 tenant, $2 phone, $3 accounts.
  */
-const DNC_VISIBLE = `((d.account_id IS NULL AND d.campaign_id IS NULL)
+const DNC_FROM = `
+      FROM dnc_entries d
+      LEFT JOIN agency_campaigns g ON g.id = d.campaign_id AND g.tenant_id = $1::uuid
+     WHERE d.tenant_id = $1::uuid
+       AND d.phone_e164 = $2::text
+       AND ((d.account_id IS NULL AND d.campaign_id IS NULL)
         OR d.account_id = ANY($3::uuid[])
         OR (d.account_id IS NULL AND g.account_id = ANY($3::uuid[])))`;
 const DNC_COLUMNS = `d.id, d.account_id, d.campaign_id, COALESCE(d.account_id, g.account_id) AS effective_account_id,
@@ -352,9 +404,7 @@ export const CUSTOMER_HISTORY_SQL = {
              WHERE a.contact_id = c.id AND a.dialed_at IS NOT NULL
                AND a.tenant_id = $1::uuid AND a.account_id = ANY($3::uuid[]))::int AS placed
       FROM agency_contacts c
-     WHERE c.tenant_id = $1::uuid
-       AND c.phone_e164 = $2::text
-       AND c.account_id = ANY($3::uuid[])
+     WHERE ${CONTACT_WHERE}
      ORDER BY c.created_at DESC, c.id DESC
      LIMIT $4::int`,
 
@@ -365,8 +415,7 @@ export const CUSTOMER_HISTORY_SQL = {
       SELECT a.dialed_at, a.outcome, a.disposition_code, s.agent_user_id AS agent, a.callback_at
       ${ATTEMPTS_FROM}
       UNION ALL
-      SELECT m.dialed_at, m.outcome, m.disposition_code, m.agent_user_id, m.callback_at
-        FROM agency_manual_calls m WHERE m.id IN (SELECT id FROM mc))
+      SELECT m.dialed_at, m.outcome, m.disposition_code, m.agent_user_id, m.callback_at ${MANUAL_FROM})
     SELECT (SELECT count(*) FROM ct)::int AS contact_entries,
            count(*)::int AS call_entries,
            count(callback_at)::int AS callback_entries,
@@ -377,9 +426,23 @@ export const CUSTOMER_HISTORY_SQL = {
            COALESCE(array_agg(DISTINCT disposition_code::text) FILTER (WHERE disposition_code IS NOT NULL), '{}') AS disposition_codes,
            ARRAY(SELECT DISTINCT x::text FROM (
              SELECT campaign_id AS x FROM ct
-             UNION SELECT m.campaign_id FROM agency_manual_calls m
-                    WHERE m.id IN (SELECT id FROM mc) AND m.campaign_id IS NOT NULL) u) AS campaign_ids
+             UNION SELECT m.campaign_id ${MANUAL_FROM} AND m.campaign_id IS NOT NULL) u) AS campaign_ids
       FROM calls`,
+
+  /**
+   * How many timeline entries the caller can see (the export audit's `result_count`): roster rows,
+   * calls, the callbacks booked on them and DNC entries, counted only (the sum of `callStats`'s
+   * entry counts and the `dnc` rows). $1 tenant, $2 phone, $3 accounts.
+   */
+  entryCount: `
+    WITH ${CONTACTS_CTE},${MANUAL_CTE},
+    calls AS (
+      SELECT a.callback_at ${ATTEMPTS_FROM}
+      UNION ALL
+      SELECT m.callback_at ${MANUAL_FROM})
+    SELECT ((SELECT count(*) FROM ct)
+          + (SELECT count(*) + count(callback_at) FROM calls)
+          + (SELECT count(*) ${DNC_FROM}))::int AS entries`,
 
   /** The newest placed call to the number, either channel. $1 tenant, $2 phone, $3 accounts. */
   lastPlaced: `
@@ -389,7 +452,7 @@ export const CUSTOMER_HISTORY_SQL = {
       ${ATTEMPTS_FROM} AND a.dialed_at IS NOT NULL
       UNION ALL
       SELECT 'softphone', m.id, m.dialed_at, m.agent_user_id, m.outcome, m.disposition_code
-        FROM agency_manual_calls m WHERE m.id IN (SELECT id FROM mc) AND m.dialed_at IS NOT NULL) x
+      ${MANUAL_FROM} AND m.dialed_at IS NOT NULL) x
      ORDER BY x.dialed_at DESC, x.id DESC
      LIMIT 1`,
 
@@ -397,11 +460,10 @@ export const CUSTOMER_HISTORY_SQL = {
   liveCalls: `
     WITH ${CONTACTS_CTE},${MANUAL_CTE}
     SELECT 'campaign' AS channel, a.id, a.campaign_id, s.agent_user_id, COALESCE(a.dialed_at, a.created_at) AS started_at
-    ${ATTEMPTS_FROM} AND a.state IN ('${CUSTOMER_HISTORY_LIVE_STATES.join("', '")}')
+    ${ATTEMPTS_FROM} AND a.state IN (${LIVE_STATES_SQL})
     UNION ALL
     SELECT 'softphone', m.id, m.campaign_id, m.agent_user_id, COALESCE(m.dialed_at, m.created_at)
-      FROM agency_manual_calls m
-     WHERE m.id IN (SELECT id FROM mc) AND m.state IN ('${CUSTOMER_HISTORY_LIVE_STATES.join("', '")}')`,
+    ${MANUAL_FROM} AND m.state IN (${LIVE_STATES_SQL})`,
 
   /**
    * Who booked each contact's latest callback (campaign or soft phone): by contact id
@@ -425,12 +487,7 @@ export const CUSTOMER_HISTORY_SQL = {
 
   /** Every DNC entry covering the number that the caller may see: `idx_dnc_entries_tenant_phone`. $1 tenant, $2 phone, $3 accounts. */
   dnc: `
-    SELECT ${DNC_COLUMNS}
-      FROM dnc_entries d
-      LEFT JOIN agency_campaigns g ON g.id = d.campaign_id AND g.tenant_id = $1::uuid
-     WHERE d.tenant_id = $1::uuid
-       AND d.phone_e164 = $2::text
-       AND ${DNC_VISIBLE}
+    SELECT ${DNC_COLUMNS}${DNC_FROM}
      ORDER BY d.created_at DESC, d.id DESC`,
 
   // ─── Timeline pages: one keyset statement per source ────────────────────────
@@ -466,18 +523,16 @@ export const CUSTOMER_HISTORY_SQL = {
       LEFT JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id
      ORDER BY a.created_at DESC, a.id DESC`,
 
-  /** Callbacks booked on campaign attempts (`callback`), at their booking instant. $1–$9. */
-  pageAttemptCallbacks: `
-    WITH ${CONTACTS_CTE}
-    SELECT 'campaign' AS channel, a.id, a.account_id, a.campaign_id, a.callback_at,
-           COALESCE(a.dispositioned_by_user_id, s.agent_user_id) AS booked_by_user_id,
-           ${keysetAtSql(BOOKED('a'))} AS at
-    ${ATTEMPTS_FROM}
-       AND a.callback_at IS NOT NULL
-       AND ${keyset(BOOKED('a'), 'a.id')}
-       AND ${timeWindow(BOOKED('a'))}
-       AND ${rootOf('a.campaign_id')}
-     ORDER BY ${BOOKED('a')} DESC, a.id DESC
+  /**
+   * Callbacks booked on campaign attempts and on soft-phone calls (`callback`), at their booking
+   * instant: each channel's top `n`, then the top `n` of both. $1–$9.
+   */
+  pageCallbacks: `
+    WITH ${CONTACTS_CTE},${MANUAL_CTE}
+    SELECT x.channel, x.id, x.account_id, x.campaign_id, x.callback_at, x.booked_by_user_id, x.at
+      FROM (${callbackArm('campaign', 'a', ATTEMPTS_FROM, 'COALESCE(a.dispositioned_by_user_id, s.agent_user_id)')}
+      UNION ALL${callbackArm('softphone', 'm', MANUAL_FROM, 'COALESCE(m.dispositioned_by_user_id, m.agent_user_id)')}) x
+     ORDER BY x.booked DESC, x.id DESC
      LIMIT $6::int`,
 
   /**
@@ -491,55 +546,23 @@ export const CUSTOMER_HISTORY_SQL = {
       SELECT d.id, d.created_at FROM unnest($3::uuid[]) AS acc(id)
       CROSS JOIN LATERAL (
         SELECT m.id, m.created_at FROM agency_manual_calls m
-         WHERE m.tenant_id = $1::uuid AND m.account_id = acc.id AND m.destination_e164 = $2::text
-           AND ${keyset('m.created_at', 'm.id')}
-           AND ${timeWindow('m.created_at')}
-           AND ${rootOf('m.campaign_id')}
-           AND ${callFilters('m', MANUAL_AGENT_IN)}
-         ORDER BY m.created_at DESC, m.id DESC
-         LIMIT $6::int) d
+         WHERE m.tenant_id = $1::uuid AND m.account_id = acc.id AND m.destination_e164 = $2::text${MANUAL_WALK_TAIL}) d
       UNION
       SELECT l.id, l.created_at FROM ct
       CROSS JOIN LATERAL (
         SELECT m.id, m.created_at FROM agency_manual_calls m
-         WHERE m.contact_id = ct.id AND m.tenant_id = $1::uuid AND m.account_id = ANY($3::uuid[])
-           AND ${keyset('m.created_at', 'm.id')}
-           AND ${timeWindow('m.created_at')}
-           AND ${rootOf('m.campaign_id')}
-           AND ${callFilters('m', MANUAL_AGENT_IN)}
-         ORDER BY m.created_at DESC, m.id DESC
-         LIMIT $6::int) l)
+         WHERE m.contact_id = ct.id AND m.tenant_id = $1::uuid AND m.account_id = ANY($3::uuid[])${MANUAL_WALK_TAIL}) l)
     SELECT ${MANUAL_COLUMNS}
       FROM (SELECT p.id FROM picked p ORDER BY p.created_at DESC, p.id DESC LIMIT $6::int) heads
       JOIN agency_manual_calls m ON m.id = heads.id
      ORDER BY m.created_at DESC, m.id DESC`,
 
-  /** Callbacks booked on soft-phone calls (`callback`), at their booking instant. $1–$9. */
-  pageManualCallbacks: `
-    WITH ${CONTACTS_CTE},${MANUAL_CTE}
-    SELECT 'softphone' AS channel, m.id, m.account_id, m.campaign_id, m.callback_at,
-           COALESCE(m.dispositioned_by_user_id, m.agent_user_id) AS booked_by_user_id,
-           ${keysetAtSql(BOOKED('m'))} AS at
-      FROM agency_manual_calls m
-     WHERE m.id IN (SELECT id FROM mc)
-       AND m.callback_at IS NOT NULL
-       AND ${keyset(BOOKED('m'), 'm.id')}
-       AND ${timeWindow(BOOKED('m'))}
-       AND ${rootOf('m.campaign_id')}
-     ORDER BY ${BOOKED('m')} DESC, m.id DESC
-     LIMIT $6::int`,
-
   /** DNC marks (`dnc_mark`). $1–$9. */
   pageDnc: `
-    SELECT ${DNC_COLUMNS}
-      FROM dnc_entries d
-      LEFT JOIN agency_campaigns g ON g.id = d.campaign_id AND g.tenant_id = $1::uuid
-     WHERE d.tenant_id = $1::uuid
-       AND d.phone_e164 = $2::text
-       AND ${DNC_VISIBLE}
+    SELECT ${DNC_COLUMNS}${DNC_FROM}
        AND ${keyset('d.created_at', 'd.id')}
        AND ${timeWindow('d.created_at')}
-       AND ($9::uuid[] IS NULL OR COALESCE(g.root_campaign_id, g.id) = ANY($9::uuid[]))
+       AND ${ROOT_OF_G}
      ORDER BY d.created_at DESC, d.id DESC
      LIMIT $6::int`,
 
@@ -548,12 +571,10 @@ export const CUSTOMER_HISTORY_SQL = {
     SELECT ${CONTACT_COLUMNS}
       FROM agency_contacts c
       JOIN agency_campaigns g ON g.id = c.campaign_id
-     WHERE c.tenant_id = $1::uuid
-       AND c.phone_e164 = $2::text
-       AND c.account_id = ANY($3::uuid[])
+     WHERE ${CONTACT_WHERE}
        AND ${keyset('c.created_at', 'c.id')}
        AND ${timeWindow('c.created_at')}
-       AND ($9::uuid[] IS NULL OR COALESCE(g.root_campaign_id, g.id) = ANY($9::uuid[]))
+       AND ${ROOT_OF_G}
      ORDER BY c.created_at DESC, c.id DESC
      LIMIT $6::int`,
 
@@ -569,17 +590,31 @@ export const CUSTOMER_HISTORY_SQL = {
     placed AS MATERIALIZED (
       SELECT a.id, a.dialed_at ${ATTEMPTS_FROM} AND a.dialed_at IS NOT NULL
       UNION ALL
-      SELECT m.id, m.dialed_at FROM agency_manual_calls m WHERE m.id IN (SELECT id FROM mc) AND m.dialed_at IS NOT NULL)
+      SELECT m.id, m.dialed_at ${MANUAL_FROM} AND m.dialed_at IS NOT NULL)
     SELECT b.id::text AS id,
            (SELECT min(p.dialed_at) FROM placed p WHERE p.dialed_at > b.booked AND p.id <> b.id) AS next_dialed_at
       FROM unnest($4::uuid[], $5::timestamptz[]) AS b(id, booked)`,
 
   /** Campaigns by id (primary key). $1 tenant, $2 accounts, $3 ids. */
   campaigns: `
-    SELECT g.id, g.account_id, g.name, g.status, COALESCE(g.root_campaign_id, g.id) AS root_id,
-           g.retry_generation, g.context_display, g.disposition_catalog
+    SELECT ${CAMPAIGN_COLUMNS}
       FROM agency_campaigns g
      WHERE g.id = ANY($3::uuid[])
+       AND g.tenant_id = $1::uuid
+       AND g.account_id = ANY($2::uuid[])`,
+
+  /**
+   * Campaigns by id and the chain root of each visible one (CH7: the filter names roots), by
+   * primary key. $1 tenant, $2 accounts, $3 ids.
+   */
+  campaignsWithRoots: `
+    SELECT ${CAMPAIGN_COLUMNS}
+      FROM agency_campaigns g
+     WHERE g.id = ANY(ARRAY(
+             SELECT unnest($3::uuid[])
+             UNION
+             SELECT COALESCE(r.root_campaign_id, r.id) FROM agency_campaigns r
+              WHERE r.id = ANY($3::uuid[]) AND r.tenant_id = $1::uuid AND r.account_id = ANY($2::uuid[])))
        AND g.tenant_id = $1::uuid
        AND g.account_id = ANY($2::uuid[])`,
 
@@ -626,13 +661,28 @@ export interface CustomerHistoryPageQuery {
 const noIds = (ids: readonly string[]) => ids.length === 0;
 const orNull = (list: readonly string[] | null) => (list && list.length > 0 ? [...list] : null);
 
+/** `$1` tenant, `$2` phone, `$3` accounts: the summary statements. */
+const numberParams = (scope: CustomerHistoryScope, phone: string): unknown[] => [scope.tenantId, phone, scope.accountIds];
+
+/** `$1` tenant, `$2` accounts, `$3` the ids (deduplicated): the lookups by id. */
+const idParams = (scope: CustomerHistoryScope, ids: readonly string[]): unknown[] => [scope.tenantId, scope.accountIds, [...new Set(ids)]];
+
 function baseParams(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): unknown[] {
-  return [scope.tenantId, phone, scope.accountIds, q.cursorAt, q.cursorId, q.limit, q.from, q.to, orNull(q.campaignRoots)];
+  return [...numberParams(scope, phone), q.cursorAt, q.cursorId, q.limit, q.from, q.to, orNull(q.campaignRoots)];
 }
 
 function callParams(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): unknown[] {
   return [...baseParams(scope, phone, q), orNull(q.outcomes), orNull(q.dispositionCodes), orNull(q.agentUserIds), q.connectedOnly];
 }
+
+async function read<T extends QueryResultRow>(sql: string, params: unknown[]): Promise<T[]> {
+  return (await getPool().query<T>(sql, params)).rows;
+}
+
+const emptyCallStats = (): CustomerHistoryCallStatsRow => ({
+  contact_entries: 0, call_entries: 0, callback_entries: 0, calls: 0, connected: 0,
+  agent_ids: [], outcomes: [], disposition_codes: [], campaign_ids: [],
+});
 
 const attemptRow = (r: CustomerHistoryAttemptRow): CustomerHistoryAttemptRow => ({
   ...r,
@@ -640,98 +690,80 @@ const attemptRow = (r: CustomerHistoryAttemptRow): CustomerHistoryAttemptRow => 
   override_applied: Array.isArray(r.override_applied) ? r.override_applied : [],
 });
 
+const campaignRow = (r: CustomerHistoryCampaignRow): CustomerHistoryCampaignRow => ({ ...r, retry_generation: Number(r.retry_generation) });
+
+/**
+ * An empty visible-account set reads nothing and runs no statement, except where a DNC entry is
+ * read (a tenant-wide entry covers every account): the DNC reads and the entry count.
+ */
 export class AgencyCustomerHistoryRepository {
   // ─── The summary ──────────────────────────────────────────────────────────
 
   /** The summary's roster rows carrying `phone`, newest first, at most `cap`. */
   async summaryContacts(scope: CustomerHistoryScope, phone: string, cap: number): Promise<CustomerHistorySummaryContactRow[]> {
     if (noIds(scope.accountIds)) return [];
-    const { rows } = await getPool().query<CustomerHistorySummaryContactRow>(CUSTOMER_HISTORY_SQL.summaryContacts, [
-      scope.tenantId, phone, scope.accountIds, cap,
-    ]);
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.summaryContacts, [...numberParams(scope, phone), cap]);
   }
 
   async callStats(scope: CustomerHistoryScope, phone: string): Promise<CustomerHistoryCallStatsRow> {
-    const empty: CustomerHistoryCallStatsRow = {
-      contact_entries: 0, call_entries: 0, callback_entries: 0, calls: 0, connected: 0,
-      agent_ids: [], outcomes: [], disposition_codes: [], campaign_ids: [],
-    };
-    if (noIds(scope.accountIds)) return empty;
-    const { rows } = await getPool().query<CustomerHistoryCallStatsRow>(CUSTOMER_HISTORY_SQL.callStats, [
-      scope.tenantId, phone, scope.accountIds,
-    ]);
-    return rows[0] ?? empty;
+    if (noIds(scope.accountIds)) return emptyCallStats();
+    const [row] = await read<CustomerHistoryCallStatsRow>(CUSTOMER_HISTORY_SQL.callStats, numberParams(scope, phone));
+    return row ?? emptyCallStats();
+  }
+
+  /** How many timeline entries the caller can see; tenant-wide DNC entries even with no visible account. */
+  async entryCount(scope: CustomerHistoryScope, phone: string): Promise<number> {
+    const [row] = await read<{ entries: number }>(CUSTOMER_HISTORY_SQL.entryCount, numberParams(scope, phone));
+    return row?.entries ?? 0;
   }
 
   async lastPlaced(scope: CustomerHistoryScope, phone: string): Promise<CustomerHistoryLastPlacedRow | null> {
     if (noIds(scope.accountIds)) return null;
-    const { rows } = await getPool().query<CustomerHistoryLastPlacedRow>(CUSTOMER_HISTORY_SQL.lastPlaced, [
-      scope.tenantId, phone, scope.accountIds,
-    ]);
-    return rows[0] ?? null;
+    const [row] = await read<CustomerHistoryLastPlacedRow>(CUSTOMER_HISTORY_SQL.lastPlaced, numberParams(scope, phone));
+    return row ?? null;
   }
 
   async liveCalls(scope: CustomerHistoryScope, phone: string): Promise<CustomerHistoryLiveCallRow[]> {
     if (noIds(scope.accountIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryLiveCallRow>(CUSTOMER_HISTORY_SQL.liveCalls, [
-      scope.tenantId, phone, scope.accountIds,
-    ]);
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.liveCalls, numberParams(scope, phone));
   }
 
   async latestBookings(scope: CustomerHistoryScope, contactIds: readonly string[]): Promise<CustomerHistoryBookingRow[]> {
     if (noIds(scope.accountIds) || noIds(contactIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryBookingRow>(CUSTOMER_HISTORY_SQL.latestBookings, [
-      scope.tenantId, scope.accountIds, [...new Set(contactIds)],
-    ]);
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.latestBookings, idParams(scope, contactIds));
   }
 
   /** Every DNC entry covering the number the caller may see; tenant-wide ones even with no visible account. */
   async dncForNumber(scope: CustomerHistoryScope, phone: string): Promise<CustomerHistoryDncRow[]> {
-    const { rows } = await getPool().query<CustomerHistoryDncRow>(CUSTOMER_HISTORY_SQL.dnc, [
-      scope.tenantId, phone, scope.accountIds,
-    ]);
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.dnc, numberParams(scope, phone));
   }
 
   // ─── Timeline pages ───────────────────────────────────────────────────────
 
   async pageAttempts(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryAttemptRow[]> {
     if (noIds(scope.accountIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryAttemptRow>(CUSTOMER_HISTORY_SQL.pageAttempts, callParams(scope, phone, q));
-    return rows.map(attemptRow);
+    return (await read<CustomerHistoryAttemptRow>(CUSTOMER_HISTORY_SQL.pageAttempts, callParams(scope, phone, q))).map(attemptRow);
   }
 
-  async pageAttemptCallbacks(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryCallbackRow[]> {
+  /** Callbacks booked on either channel's calls. */
+  async pageCallbacks(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryCallbackRow[]> {
     if (noIds(scope.accountIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryCallbackRow>(CUSTOMER_HISTORY_SQL.pageAttemptCallbacks, baseParams(scope, phone, q));
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.pageCallbacks, baseParams(scope, phone, q));
   }
 
   async pageManualCalls(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryManualCallRow[]> {
     if (noIds(scope.accountIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryManualCallRow>(CUSTOMER_HISTORY_SQL.pageManualCalls, callParams(scope, phone, q));
-    return rows;
-  }
-
-  async pageManualCallbacks(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryCallbackRow[]> {
-    if (noIds(scope.accountIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryCallbackRow>(CUSTOMER_HISTORY_SQL.pageManualCallbacks, baseParams(scope, phone, q));
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.pageManualCalls, callParams(scope, phone, q));
   }
 
   /** DNC marks; tenant-wide ones even with no visible account. */
   async pageDnc(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryDncRow[]> {
-    const { rows } = await getPool().query<CustomerHistoryDncRow>(CUSTOMER_HISTORY_SQL.pageDnc, baseParams(scope, phone, q));
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.pageDnc, baseParams(scope, phone, q));
   }
 
   async pageContacts(scope: CustomerHistoryScope, phone: string, q: CustomerHistoryPageQuery): Promise<CustomerHistoryContactRow[]> {
     if (noIds(scope.accountIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryContactRow>(CUSTOMER_HISTORY_SQL.pageContacts, baseParams(scope, phone, q));
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.pageContacts, baseParams(scope, phone, q));
   }
 
   // ─── Enrichment ───────────────────────────────────────────────────────────
@@ -743,34 +775,31 @@ export class AgencyCustomerHistoryRepository {
     bookings: ReadonlyArray<{ id: string; at: string }>,
   ): Promise<Map<string, Date | null>> {
     if (noIds(scope.accountIds) || bookings.length === 0) return new Map();
-    const { rows } = await getPool().query<{ id: string; next_dialed_at: Date | null }>(CUSTOMER_HISTORY_SQL.callbackNext, [
-      scope.tenantId, phone, scope.accountIds, bookings.map((b) => b.id), bookings.map((b) => b.at),
+    const rows = await read<{ id: string; next_dialed_at: Date | null }>(CUSTOMER_HISTORY_SQL.callbackNext, [
+      ...numberParams(scope, phone), bookings.map((b) => b.id), bookings.map((b) => b.at),
     ]);
     return new Map(rows.map((r) => [r.id, r.next_dialed_at]));
   }
 
   async campaignsByIds(scope: CustomerHistoryScope, ids: readonly string[]): Promise<CustomerHistoryCampaignRow[]> {
     if (noIds(scope.accountIds) || noIds(ids)) return [];
-    const { rows } = await getPool().query<CustomerHistoryCampaignRow>(CUSTOMER_HISTORY_SQL.campaigns, [
-      scope.tenantId, scope.accountIds, [...new Set(ids)],
-    ]);
-    return rows.map((r) => ({ ...r, retry_generation: Number(r.retry_generation) }));
+    return (await read<CustomerHistoryCampaignRow>(CUSTOMER_HISTORY_SQL.campaigns, idParams(scope, ids))).map(campaignRow);
+  }
+
+  /** {@link campaignsByIds} plus the chain root of each campaign read. */
+  async campaignsWithRoots(scope: CustomerHistoryScope, ids: readonly string[]): Promise<CustomerHistoryCampaignRow[]> {
+    if (noIds(scope.accountIds) || noIds(ids)) return [];
+    return (await read<CustomerHistoryCampaignRow>(CUSTOMER_HISTORY_SQL.campaignsWithRoots, idParams(scope, ids))).map(campaignRow);
   }
 
   async mediaLegs(scope: CustomerHistoryScope, callIds: readonly string[]): Promise<CustomerHistoryMediaLegRow[]> {
     if (noIds(scope.accountIds) || noIds(callIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryMediaLegRow>(CUSTOMER_HISTORY_SQL.mediaLegs, [
-      scope.tenantId, scope.accountIds, [...new Set(callIds)],
-    ]);
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.mediaLegs, idParams(scope, callIds));
   }
 
   async uploads(scope: CustomerHistoryScope, campaignIds: readonly string[]): Promise<CustomerHistoryUploadRow[]> {
     if (noIds(scope.accountIds) || noIds(campaignIds)) return [];
-    const { rows } = await getPool().query<CustomerHistoryUploadRow>(CUSTOMER_HISTORY_SQL.uploads, [
-      scope.tenantId, scope.accountIds, [...new Set(campaignIds)],
-    ]);
-    return rows;
+    return read(CUSTOMER_HISTORY_SQL.uploads, idParams(scope, campaignIds));
   }
 }
 

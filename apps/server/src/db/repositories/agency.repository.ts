@@ -163,7 +163,6 @@ export {
 } from './agency/customer-history.repository.js';
 export type {
   CustomerHistoryAttemptRow,
-  CustomerHistoryBookingRow,
   CustomerHistoryCallbackRow,
   CustomerHistoryCallStatsRow,
   CustomerHistoryCampaignRow,
@@ -172,7 +171,6 @@ export type {
   CustomerHistoryLastPlacedRow,
   CustomerHistoryLiveCallRow,
   CustomerHistoryManualCallRow,
-  CustomerHistoryMediaLegRow,
   CustomerHistoryPageQuery,
   CustomerHistoryScope,
   CustomerHistorySummaryContactRow,

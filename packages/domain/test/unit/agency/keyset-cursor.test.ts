@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   decodeKeysetCursor,
   encodeKeysetCursor,
+  isRealCalendarInstant,
   keysetAtSql,
 } from '../../../src/keyset-cursor.js';
 
@@ -67,6 +68,12 @@ describe('keyset cursor', () => {
       const cursor = encodeKeysetCursor({ at, id: SAMPLE_ID });
       expect(decodeKeysetCursor(cursor)).toEqual({ at, id: SAMPLE_ID });
     }
+  });
+
+  it('isRealCalendarInstant is the same check on its own, for the other cursors that import it', () => {
+    expect(isRealCalendarInstant('2026-02-30T00:00:00.000000Z')).toBe(false);
+    expect(isRealCalendarInstant('0000-08-17T14:03:11.123456Z')).toBe(false);
+    expect(isRealCalendarInstant('2024-02-29T00:00:00.000000Z')).toBe(true);
   });
 
   it('renders the column in UTC, so two replicas cannot mint disagreeing cursors', () => {

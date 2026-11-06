@@ -50,6 +50,7 @@ import {
   CUSTOMER_HISTORY_SQL,
   UUID_MAX,
   type CustomerHistoryPageQuery,
+  type CustomerHistoryScope,
 } from '../../../src/db/repositories/agency.repository.js';
 
 const SEARCH_MAX = 40;
@@ -423,6 +424,8 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
   const repo = agencyCustomerHistoryRepository;
   const onlyA = () => ({ tenantId: floor.tenant, accountIds: [floor.account] });
   const both = () => ({ tenantId: floor.tenant, accountIds: [floor.account, accountB] });
+  /** A's 2 roster rows, 11 calls, 1 callback and 2 DNC entries (A's and the tenant-wide one). */
+  const ENTRIES_ONLY_A = 16;
   const firstPage = (over: Partial<CustomerHistoryPageQuery> = {}): CustomerHistoryPageQuery => ({
     cursorAt: 'infinity', cursorId: UUID_MAX, limit: 100, from: null, to: null, campaignRoots: null,
     outcomes: null, dispositionCodes: null, agentUserIds: null, connectedOnly: false, ...over,
@@ -441,6 +444,18 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
     const ab = await repo.callStats(both(), NUMBER);
     expect(ab).toMatchObject({ contact_entries: 3, call_entries: 14 });
     expect(ab.agent_ids).toContain(owner.id);
+  });
+
+  it('the export\'s entry count: the aggregates\' entry counts and the DNC rows, in one statement', async () => {
+    const apart = async (scope: CustomerHistoryScope) => {
+      const s = await repo.callStats(scope, NUMBER);
+      return s.contact_entries + s.call_entries + s.callback_entries + (await repo.dncForNumber(scope, NUMBER)).length;
+    };
+    const none = { tenantId: floor.tenant, accountIds: [] };
+    for (const scope of [onlyA(), both(), none]) expect(await repo.entryCount(scope, NUMBER)).toBe(await apart(scope));
+    expect(await repo.entryCount(onlyA(), NUMBER)).toBe(ENTRIES_ONLY_A);
+    // No visible account: the tenant-wide DNC entry only.
+    expect(await repo.entryCount(none, NUMBER)).toBe(1);
   });
 
   it('the newest placed call and the live calls', async () => {
@@ -481,7 +496,7 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
     expect(a).toHaveLength(9);
     expect(a).not.toContain(ids.bA1);
     expect((await repo.pageAttempts(both(), NUMBER, firstPage())).map((r) => r.id)).toContain(ids.bA1);
-    expect((await repo.pageAttemptCallbacks(onlyA(), NUMBER, firstPage())).map((r) => r.id)).toEqual([ids.a3]);
+    expect((await repo.pageCallbacks(onlyA(), NUMBER, firstPage())).map((r) => [r.channel, r.id])).toEqual([['campaign', ids.a3]]);
   });
 
   it('an attempt or a logged soft-phone call of another account on a visible contact is still not read (each statement binds the accounts itself)', async () => {
@@ -496,10 +511,13 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
       dialed_at: at(29 * DAY), ended_at: at(29 * DAY), settled_at: at(29 * DAY), created_at: at(29 * DAY) });
     try {
       expect((await repo.pageAttempts(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(stray);
-      expect((await repo.pageAttemptCallbacks(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(stray);
       expect((await repo.pageManualCalls(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(strayCall);
-      expect((await repo.pageManualCallbacks(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(strayCall);
+      // Both callback arms: the stray attempt's and the stray soft-phone call's.
+      const callbacks = (await repo.pageCallbacks(onlyA(), NUMBER, firstPage())).map((r) => r.id);
+      expect(callbacks).not.toContain(stray);
+      expect(callbacks).not.toContain(strayCall);
       expect(await repo.callStats(onlyA(), NUMBER)).toMatchObject({ call_entries: 11, callback_entries: 1, calls: 11 });
+      expect(await repo.entryCount(onlyA(), NUMBER)).toBe(ENTRIES_ONLY_A);
       expect((await repo.lastPlaced(onlyA(), NUMBER))?.id).toBe(ids.m1);
       expect(await repo.latestBookings(onlyA(), [ids.cA])).toEqual([]);
       const booking = [{ id: ids.a3, at: at(26 * DAY).toISOString().replace('Z', '000Z') }];
@@ -507,6 +525,7 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
       // Read with B visible, they are there: the rows are real, the scope is what hid them.
       expect((await repo.pageAttempts(both(), NUMBER, firstPage())).map((r) => r.id)).toContain(stray);
       expect((await repo.pageManualCalls(both(), NUMBER, firstPage())).map((r) => r.id)).toContain(strayCall);
+      expect((await repo.pageCallbacks(both(), NUMBER, firstPage())).map((r) => r.id)).toEqual(expect.arrayContaining([stray, strayCall]));
     } finally {
       await q('DELETE FROM agency_call_attempts WHERE id = $1', [stray]);
       await q('DELETE FROM agency_manual_calls WHERE id = $1', [strayCall]);
@@ -518,11 +537,13 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
     const ab = (await repo.pageManualCalls(both(), NUMBER, firstPage())).map((m) => m.id);
     expect(ab).toContain(ids.mB); // by destination
     expect(ab).toContain(ids.mB2); // by contact only
-    expect(await repo.pageManualCallbacks(onlyA(), NUMBER, firstPage())).toEqual([]);
+    const softphoneCallbacks = async (scope: CustomerHistoryScope) =>
+      (await repo.pageCallbacks(scope, NUMBER, firstPage())).filter((c) => c.channel === 'softphone').map((c) => c.id);
+    expect(await softphoneCallbacks(onlyA())).toEqual([]);
     await q(`UPDATE agency_manual_calls SET callback_at = now() WHERE id = ANY($1::uuid[])`, [[ids.mB, ids.mB2]]);
     try {
-      expect(await repo.pageManualCallbacks(onlyA(), NUMBER, firstPage())).toEqual([]);
-      expect((await repo.pageManualCallbacks(both(), NUMBER, firstPage())).map((m) => m.id).sort()).toEqual([ids.mB, ids.mB2].sort());
+      expect(await softphoneCallbacks(onlyA())).toEqual([]);
+      expect((await softphoneCallbacks(both())).sort()).toEqual([ids.mB, ids.mB2].sort());
     } finally {
       await q(`UPDATE agency_manual_calls SET callback_at = NULL WHERE id = ANY($1::uuid[])`, [[ids.mB, ids.mB2]]);
     }
@@ -542,6 +563,24 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
 
   it('campaigns by id', async () => {
     expect((await repo.campaignsByIds(onlyA(), [campaignB, floor.campaigns[0]!])).map((g) => g.id)).toEqual([floor.campaigns[0]]);
+  });
+
+  it('campaigns by id with their chain roots: a visible campaign\'s root; never the root of a campaign the caller cannot see', async () => {
+    const read = async (scope: CustomerHistoryScope, ids: string[]) => (await repo.campaignsWithRoots(scope, ids)).map((g) => g.id).sort();
+    expect(await read(onlyA(), [retryCampaign, campaignB])).toEqual([floor.campaigns[0]!, retryCampaign].sort());
+    expect(await read(both(), [retryCampaign, campaignB])).toEqual([floor.campaigns[0]!, retryCampaign, campaignB].sort());
+    // A retry in B of A's campaign (a row the dialer never writes): asked under A, neither is read.
+    const strayRetry = randomUUID();
+    await q(`INSERT INTO agency_campaigns
+             SELECT (jsonb_populate_record(c, jsonb_build_object('id', $2::uuid, 'account_id', $3::uuid, 'name', 'Stray retry',
+                     'root_campaign_id', $1::uuid, 'parent_campaign_id', $1::uuid, 'retry_generation', 1))).*
+               FROM agency_campaigns c WHERE c.id = $1`, [floor.campaigns[0], strayRetry, accountB]);
+    try {
+      expect(await read(onlyA(), [strayRetry])).toEqual([]);
+      expect(await read(both(), [strayRetry])).toEqual([floor.campaigns[0]!, strayRetry].sort());
+    } finally {
+      await q('DELETE FROM agency_campaigns WHERE id = $1', [strayRetry]);
+    }
   });
 
   it('media legs by id', async () => {
@@ -800,6 +839,18 @@ describe('audit (CH10) and export', () => {
     expect(rows).toEqual([{ details: expect.objectContaining({ value: '+14155552671', result_count: 0 }) }]);
   });
 
+  it('an export\'s filters are bounded on the audit row, a cut list marked rather than silently clipped', async () => {
+    const body = await search(owner);
+    const campaignIds = Array.from({ length: 51 }, () => randomUUID());
+    const exp = await post('export', owner, { search_id: body.search_id, filters: { campaign_ids: campaignIds } });
+    expect(exp.statusCode, exp.body).toBe(200);
+    await drainAudits();
+    const { rows } = await q(
+      `SELECT details FROM platform_audit_log WHERE resource_id = $1 AND action = 'agency_customer_history.exported'`, [body.search_id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].details.filters).toEqual({ campaign_ids: [...campaignIds.slice(0, 50), '…[1 more truncated]'] });
+  });
+
   it('the CSV: British English headers, the filename carries no number, cut at the cap with X-Export-Truncated', async () => {
     const body = await search(owner);
     const res = await post('export', owner, { search_id: body.search_id });
@@ -953,9 +1004,10 @@ describe('every read uses its index (CH9)', () => {
     noFullScan(plan);
   });
 
-  it('call aggregates, the newest placed call, live calls, the callback judgement: contacts, attempts and both soft-phone indexes', async () => {
+  it('call aggregates, the entry count, the newest placed call, live calls, the callback judgement: contacts, attempts and both soft-phone indexes', async () => {
     for (const [name, sql, params] of [
       ['callStats', CUSTOMER_HISTORY_SQL.callStats, [floor.tenant, NUMBER, accounts()]],
+      ['entryCount', CUSTOMER_HISTORY_SQL.entryCount, [floor.tenant, NUMBER, accounts()]],
       ['lastPlaced', CUSTOMER_HISTORY_SQL.lastPlaced, [floor.tenant, NUMBER, accounts()]],
       ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, [floor.tenant, NUMBER, accounts()]],
       ['callbackNext', CUSTOMER_HISTORY_SQL.callbackNext, [floor.tenant, NUMBER, accounts(), [ids.a3], [at(3 * DAY).toISOString()]]],
@@ -976,8 +1028,12 @@ describe('every read uses its index (CH9)', () => {
     noFullScan(plan);
   });
 
-  it('DNC (summary and page): idx_dnc_entries_tenant_phone, the mark\'s campaign by primary key', async () => {
-    for (const [sql, params] of [[CUSTOMER_HISTORY_SQL.dnc, [floor.tenant, NUMBER, accounts()]], [CUSTOMER_HISTORY_SQL.pageDnc, pageParams()]] as const) {
+  it('DNC (summary, page and the entry count): idx_dnc_entries_tenant_phone, the mark\'s campaign by primary key', async () => {
+    for (const [sql, params] of [
+      [CUSTOMER_HISTORY_SQL.dnc, [floor.tenant, NUMBER, accounts()]],
+      [CUSTOMER_HISTORY_SQL.pageDnc, pageParams()],
+      [CUSTOMER_HISTORY_SQL.entryCount, [floor.tenant, NUMBER, accounts()]],
+    ] as const) {
       const plan = await planOf(sql, [...params]);
       expect(plan).toContain('idx_dnc_entries_tenant_phone');
       noFullScan(plan);
@@ -985,7 +1041,7 @@ describe('every read uses its index (CH9)', () => {
   });
 
   it('timeline attempts and their callbacks: the number\'s contacts, then attempts by contact', async () => {
-    for (const [sql, params] of [[CUSTOMER_HISTORY_SQL.pageAttempts, callParams()], [CUSTOMER_HISTORY_SQL.pageAttemptCallbacks, pageParams()]] as const) {
+    for (const [sql, params] of [[CUSTOMER_HISTORY_SQL.pageAttempts, callParams()], [CUSTOMER_HISTORY_SQL.pageCallbacks, pageParams()]] as const) {
       const plan = await planOf(sql, [...params]);
       expect(plan).toContain('idx_agency_contacts_phone');
       expect(plan).toContain('uq_agency_attempt_number');
@@ -999,7 +1055,7 @@ describe('every read uses its index (CH9)', () => {
     expect(plan).toMatch(/Limit\n\s+->\s+Index (Only )?Scan using idx_agency_manual_calls_contact_history/);
     expect(plan).toMatch(/Index Cond: .*destination_e164.*ROW\(created_at, id\) < ROW\(/);
     noFullScan(plan);
-    const callbacks = await planOf(CUSTOMER_HISTORY_SQL.pageManualCallbacks, pageParams());
+    const callbacks = await planOf(CUSTOMER_HISTORY_SQL.pageCallbacks, pageParams());
     expect(callbacks).toContain('idx_agency_manual_calls_destination');
     expect(callbacks).toContain('idx_agency_manual_calls_contact_history');
     noFullScan(callbacks);
@@ -1011,9 +1067,12 @@ describe('every read uses its index (CH9)', () => {
     noFullScan(plan);
   });
 
-  it('campaigns, media legs by primary key; uploads by idx_agency_ingest_jobs_campaign', async () => {
+  it('campaigns (and with their roots), media legs by primary key; uploads by idx_agency_ingest_jobs_campaign', async () => {
     const campaigns = await planOf(CUSTOMER_HISTORY_SQL.campaigns, [floor.tenant, accounts(), [floor.campaigns[0], retryCampaign]]);
     expect(campaigns).toContain('agency_campaigns_pkey');
+    const withRoots = await planOf(CUSTOMER_HISTORY_SQL.campaignsWithRoots, [floor.tenant, accounts(), [retryCampaign, campaignB]]);
+    expect(withRoots).toContain('agency_campaigns_pkey');
+    noFullScan(withRoots);
     const legs = await planOf(CUSTOMER_HISTORY_SQL.mediaLegs, [floor.tenant, accounts(), [ids.leg1, ids.leg2]]);
     expect(legs).toContain('agency_calls_pkey');
     const uploads = await planOf(CUSTOMER_HISTORY_SQL.uploads, [floor.tenant, accounts(), [floor.campaigns[0], campaignB]]);

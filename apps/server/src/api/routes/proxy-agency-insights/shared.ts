@@ -3,12 +3,12 @@
  * Part of `proxy-agency-insights.routes.ts`.
  */
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { settledValue } from '../helpers/settled.js';
+import { dialerEnabled } from '../helpers/dialer-gate.js';
 
 export type CampaignParams = { Params: { id: string } };
 
@@ -18,17 +18,12 @@ export type CampaignParams = { Params: { id: string } };
  */
 export const CAMPAIGN_NOT_FOUND_BODY = { error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found' } as const;
 
-/** The internal handlers' `gate` refusal (`agency-campaigns/guards.ts`), byte for byte. */
-export const DIALER_DISABLED_BODY = {
-  error: 'Feature Not Enabled', code: 'feature_disabled', message: 'Agency dialer is not enabled for this account.',
-} as const;
-
 /**
  * The campaign an insights read is about, after `requirePermission('agency.supervise')`:
  *
- *  1. the dialer flag (`agency_dialer_enabled`) for the request's tenant and account, else the
- *     internal handlers' `403 feature_disabled`: the flag every other campaign read checks, and
- *     before the id so a tenant without the dialer learns nothing about ids;
+ *  1. the dialer flag (`dialerEnabled`, `../helpers/dialer-gate.ts`) for the request's tenant and
+ *     account, else the internal handlers' `403 feature_disabled`: the flag every other campaign
+ *     read checks, and before the id so a tenant without the dialer learns nothing about ids;
  *  2. the id is a UUID, else `404 campaign_not_found` (a malformed id never reaches a `uuid` cast);
  *  3. the ownership probe (`fetchOwnedCoreCampaign`: the internal handler's gate and
  *     `requireOwned`, tenant AND account), its refusal forwarded as-is, and the campaign row the
@@ -40,14 +35,7 @@ export async function insightsCampaign(
   request: FastifyRequest<CampaignParams>,
   reply: FastifyReply,
 ): Promise<AgencyCampaignRecord | null> {
-  const enabled = await getFeatureFlagService().isEnabled(FLAGS.agency_dialer_enabled, {
-    tenantId: request.tenantId!,
-    ...(request.accountId ? { accountId: request.accountId } : {}),
-  });
-  if (!enabled) {
-    await reply.code(403).send(DIALER_DISABLED_BODY);
-    return null;
-  }
+  if (!(await dialerEnabled(request, reply))) return null;
   const id = request.params.id;
   if (typeof id !== 'string' || !UUID_RE.test(id)) {
     await reply.code(404).send(CAMPAIGN_NOT_FOUND_BODY);

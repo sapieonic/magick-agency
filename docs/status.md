@@ -937,13 +937,13 @@ vocabularies).
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 8209 passed + 1 expected fail + 42 skipped (410 files) | rest lane 2025 passed + 9 expected fail + 1 skipped (204 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `apps/server` | 8209 passed + 1 expected fail + 42 skipped (410 files) | rest lane 2028 passed + 9 expected fail + 1 skipped (204 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
 | `packages/db` | 428 (25 files) | 571 (55 files) |
 | `apps/console` | 5494 (287 files) | — |
 | `apps/super-admin` | 446 (33 files) | — |
 | `packages/contracts` | 332 (10 files) | — |
 | `packages/web-ui` | 235 (20 files) | — |
-| `packages/domain` | 114 (8 files) | — |
+| `packages/domain` | 115 (8 files) | — |
 | `packages/observability` | 14 (3 files) | — |
 
 Two earlier full rest-lane runs of this work failed `insights-reads.test.ts`'s pace plan case:
@@ -952,6 +952,12 @@ rows into the later file's plan. Its plans (and the 0016 migration test's) now A
 plan's rolled-back transaction, as `insights-reads.test.ts` does; the run above is after that fix.
 One of those runs also failed `load/voicelink-media-ws-load.test.ts` once (seed 24301, 1 of 2
 alone; code this branch does not touch).
+
+The counts above are after the `/simplify` cleanup (named SQL fragments, one callbacks
+statement, a count-only export statement, the shared audit bounds and dialer gate). Its first rest
+run failed `softphone-policy-routes.test.ts`'s emoji note case only because a stand-in local
+Postgres had a `SQL_ASCII` database (byte lengths, not characters); recreated as UTF8, as the
+Docker image is, the lane above is green.
 
 After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
 `/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8

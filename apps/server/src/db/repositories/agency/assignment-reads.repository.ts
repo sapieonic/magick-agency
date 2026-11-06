@@ -303,12 +303,12 @@ export class AgencyAssignmentReadRepository {
  * `override_extra_attempts` and resets `override_retry_delay` / `override_calling_hours` once
  * used, so a grant with all three spent is over.
  */
-export function isOverrideUnspent(r: {
+export function isOverrideUnspent<R extends {
   override_disposition: string | null;
   override_extra_attempts: number;
   override_retry_delay: boolean;
   override_calling_hours: boolean;
-}): boolean {
+}>(r: R): r is R & { override_disposition: string } {
   return r.override_disposition !== null
     && (r.override_extra_attempts > 0 || r.override_retry_delay || r.override_calling_hours);
 }

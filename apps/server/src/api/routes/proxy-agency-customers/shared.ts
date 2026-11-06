@@ -10,13 +10,12 @@ import type {
   CustomerHistoryErrorResponse,
   CustomerSearchNumberError,
 } from '@magick-agency/contracts/api/agency/customer-history';
-import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import type { ChargeUserRateLimit } from '../../middleware/rate-limit.middleware.js';
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import type { CustomerSearchRecord, CustomerSearchStore } from '../../../agency/customer-history/search-store.js';
 import type { CustomerHistoryViewer } from '../../../agency/customer-history/visibility.js';
-import { DIALER_DISABLED_BODY } from '../proxy-agency-insights/shared.js';
+import { dialerEnabled } from '../helpers/dialer-gate.js';
 
 /** What every route of the family is given at registration. */
 export interface CustomerRoutesDeps {
@@ -55,14 +54,7 @@ export async function guardCustomerRoute(
   reply: FastifyReply,
   cap: ChargeUserRateLimit | null,
 ): Promise<boolean> {
-  const enabled = await getFeatureFlagService().isEnabled(FLAGS.agency_dialer_enabled, {
-    tenantId: request.tenantId!,
-    ...(request.accountId ? { accountId: request.accountId } : {}),
-  });
-  if (!enabled) {
-    await reply.code(403).send(DIALER_DISABLED_BODY);
-    return false;
-  }
+  if (!(await dialerEnabled(request, reply))) return false;
   if (cap) await cap(request as FastifyRequest & { user: UserRecord }, reply);
   return true;
 }

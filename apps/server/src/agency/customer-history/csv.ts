@@ -60,6 +60,17 @@ function notesCell(notes: string | null, hidden: boolean): string {
   return s(notes);
 }
 
+type CallEntry = Extract<CustomerTimelineEntry, { kind: 'campaign_call' | 'softphone_call' }>;
+
+/** A call's cells from "Campaign" on (see {@link CUSTOMER_HISTORY_CSV_HEADERS}); a call has no callback status. */
+function callCells(entry: CallEntry, campaignName: string | null | undefined, details: readonly string[]): string[] {
+  return [
+    s(campaignName), s(entry.agent?.name ?? entry.agent?.user_id), s(entry.outcome),
+    s(entry.disposition_code), s(entry.talk_seconds), notesCell(entry.notes, entry.notes_hidden),
+    s(entry.callback_at), '', RECORDING_LABELS[entry.recording], details.join('; '),
+  ];
+}
+
 /** One CSV row for one entry. `accountName` resolves an account id to its name. */
 function customerHistoryCsvRow(
   entry: CustomerTimelineEntry,
@@ -73,11 +84,7 @@ function customerHistoryCsvRow(
       if (entry.redial_number > 0) details.push(`Wrap-up redial ${entry.redial_number}`);
       if (entry.override_applied.length > 0) details.push(`Overrides: ${entry.override_applied.join(', ')}`);
       if (entry.override_note) details.push(`Override note: ${entry.override_note}`);
-      return [
-        ...base, entry.campaign.name, s(entry.agent?.name ?? entry.agent?.user_id), s(entry.outcome),
-        s(entry.disposition_code), s(entry.talk_seconds), notesCell(entry.notes, entry.notes_hidden),
-        s(entry.callback_at), '', RECORDING_LABELS[entry.recording], details.join('; '),
-      ];
+      return [...base, ...callCells(entry, entry.campaign.name, details)];
     }
     case 'softphone_call': {
       const details: string[] = [];
@@ -86,11 +93,7 @@ function customerHistoryCsvRow(
       }
       if (entry.dnc_override_note) details.push(`Called despite do-not-call: ${entry.dnc_override_note}`);
       if (entry.hours_override_note) details.push(`Called outside calling hours: ${entry.hours_override_note}`);
-      return [
-        ...base, s(entry.campaign?.name), s(entry.agent?.name ?? entry.agent?.user_id), s(entry.outcome),
-        s(entry.disposition_code), s(entry.talk_seconds), notesCell(entry.notes, entry.notes_hidden),
-        s(entry.callback_at), '', RECORDING_LABELS[entry.recording], details.join('; '),
-      ];
+      return [...base, ...callCells(entry, entry.campaign?.name, details)];
     }
     case 'callback':
       return [

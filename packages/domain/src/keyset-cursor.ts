@@ -72,8 +72,10 @@ const AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,6}Z$/;
  * Year zero needs its own line because it survives BOTH checks: JS is happy to
  * round-trip `0000-08-17`, and Postgres rejects it, because the proleptic
  * Gregorian calendar it implements has no year 0 — 1 BC is followed by 1 AD.
+ *
+ * Exported for the other keyset cursors (the customer-history timeline's), so the rule has one copy.
  */
-function isRealCalendarInstant(at: string): boolean {
+export function isRealCalendarInstant(at: string): boolean {
   // Seconds precision is enough: the fractional part is `\d{1,6}` and no
   // six-digit value can be out of range. Comparing the rendering back against
   // the input is what catches the roll-forward — March 2nd does not spell

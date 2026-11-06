@@ -13,13 +13,13 @@
  */
 import { hasPermission, ROLE_HIERARCHY, type MembershipRole } from '@magick-agency/contracts/rbac';
 
-export interface VisibilityMembership {
+interface VisibilityMembership {
   account_id: string | null;
   role: MembershipRole;
   status?: string;
 }
 
-export interface VisibleAccount {
+interface VisibleAccount {
   id: string;
   name: string | null;
   role: MembershipRole;
@@ -39,15 +39,18 @@ const higher = (a: MembershipRole | null, b: MembershipRole | null): MembershipR
   return ROLE_HIERARCHY[a] >= ROLE_HIERARCHY[b] ? a : b;
 };
 
+/** A membership that counts: active, or read without a status. */
+const isActive = (m: VisibilityMembership): boolean => m.status === undefined || m.status === 'active';
+
 /** Whether the memberships hold a tenant-level (all accounts) one. */
 export function isTenantWide(memberships: readonly VisibilityMembership[]): boolean {
-  return memberships.some((m) => m.account_id === null && (m.status === undefined || m.status === 'active'));
+  return memberships.some((m) => m.account_id === null && isActive(m));
 }
 
 /** The account ids the caller's account-scoped memberships name (when not tenant-wide). */
 export function membershipAccountIds(memberships: readonly VisibilityMembership[]): string[] {
   return [...new Set(memberships
-    .filter((m) => m.account_id !== null && (m.status === undefined || m.status === 'active'))
+    .filter((m) => m.account_id !== null && isActive(m))
     .map((m) => m.account_id as string))];
 }
 
@@ -62,7 +65,7 @@ export function buildViewer(
   memberships: readonly VisibilityMembership[],
   accounts: ReadonlyArray<{ id: string; name: string | null }>,
 ): CustomerHistoryViewer {
-  const active = memberships.filter((m) => m.status === undefined || m.status === 'active');
+  const active = memberships.filter(isActive);
   let tenantRole: MembershipRole | null = null;
   const byAccount = new Map<string, MembershipRole>();
   for (const m of active) {
@@ -81,7 +84,7 @@ export function buildViewer(
 }
 
 /** The caller's role for a row of `accountId`; a tenant-wide row (null) takes the highest role. */
-export function roleFor(viewer: CustomerHistoryViewer, accountId: string | null): MembershipRole | null {
+function roleFor(viewer: CustomerHistoryViewer, accountId: string | null): MembershipRole | null {
   if (accountId === null) return viewer.highestRole;
   return viewer.accounts.get(accountId)?.role ?? null;
 }

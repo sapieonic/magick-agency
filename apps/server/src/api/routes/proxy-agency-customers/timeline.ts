@@ -10,6 +10,7 @@ import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { customerTimelineRequestSchema, pageLimit, toTimelineFilter } from '../../../agency/customer-history/requests.js';
 import { decodeTimelineCursor } from '../../../agency/customer-history/cursor.js';
 import { loadTimelinePage, resolveViewer } from '../../../agency/customer-history/service.js';
+import { settledValue } from '../helpers/settled.js';
 import {
   guardCustomerRoute,
   INVALID_CURSOR_BODY,
@@ -26,13 +27,19 @@ export async function registerCustomerTimelineRoute(app: FastifyInstance, deps: 
     if (!(await guardCustomerRoute(request, reply, null))) return reply;
     const body = await parseBody(customerTimelineRequestSchema, request, reply);
     if (!body) return reply;
-    const record = await ownSearch(deps.store, body.search_id, request, reply);
+    const tenantId = request.tenantId!;
+    // The search and the viewer are read together, then answered in the sequential order: the
+    // search's 404 first, then the cursor's 400, then a viewer read that threw.
+    const [recordRead, viewerRead] = await Promise.allSettled([
+      ownSearch(deps.store, body.search_id, request, reply),
+      resolveViewer(request.user!.id, tenantId),
+    ]);
+    const record = settledValue(recordRead);
     if (!record) return reply;
     const cursor = body.cursor === undefined ? null : decodeTimelineCursor(body.cursor);
     if (body.cursor !== undefined && !cursor) return reply.code(400).send(INVALID_CURSOR_BODY);
 
-    const tenantId = request.tenantId!;
-    const viewer = await resolveViewer(request.user!.id, tenantId);
+    const viewer = settledValue(viewerRead);
     const page = await loadTimelinePage(viewer, tenantId, record.value, toTimelineFilter(body.filters), cursor, pageLimit(body.limit));
     noStore(reply);
     return reply.code(200).send(page);

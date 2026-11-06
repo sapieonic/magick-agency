@@ -11,6 +11,8 @@
  * `400 invalid_cursor` on null, never "page one again" (that would read as duplicate rows).
  */
 import { CUSTOMER_TIMELINE_KINDS } from '@magick-agency/contracts/api/agency/customer-history';
+import { isRealCalendarInstant } from '@magick-agency/domain/keyset-cursor';
+import { UUID_RE } from '../../utils/uuid.js';
 
 export interface TimelinePosition {
   /** `YYYY-MM-DDTHH:MM:SS.ffffffZ` (microseconds, UTC). */
@@ -20,19 +22,10 @@ export interface TimelinePosition {
 }
 
 const AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
-const KEY_RE = new RegExp(
-  `^(${CUSTOMER_TIMELINE_KINDS.join('|')}):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
-);
+/** `<kind>:<uuid>`, the UUID lower-case as minted (`UUID_RE`'s pattern without its `i` flag). */
+const KEY_RE = new RegExp(`^(${CUSTOMER_TIMELINE_KINDS.join('|')}):${UUID_RE.source.slice(1, -1)}$`);
 /** Longer than any cursor this server mints; a guard on what is decoded. */
 const MAX_CURSOR_LENGTH = 512;
-
-/** A real calendar instant (`2026-02-30` rolls over in JS and is refused by the comparison). */
-function isRealInstant(at: string): boolean {
-  const seconds = `${at.slice(0, 19)}Z`;
-  const parsed = new Date(seconds);
-  if (Number.isNaN(parsed.getTime()) || parsed.getUTCFullYear() < 1) return false;
-  return parsed.toISOString().slice(0, 19) === at.slice(0, 19);
-}
 
 export function encodeTimelineCursor(position: TimelinePosition): string {
   return Buffer.from(JSON.stringify({ at: position.at, key: position.key }), 'utf8').toString('base64url');
@@ -49,7 +42,7 @@ export function decodeTimelineCursor(raw: unknown): TimelinePosition | null {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const { at, key } = parsed as Record<string, unknown>;
-  if (typeof at !== 'string' || !AT_RE.test(at) || !isRealInstant(at)) return null;
+  if (typeof at !== 'string' || !AT_RE.test(at) || !isRealCalendarInstant(at)) return null;
   if (typeof key !== 'string' || !KEY_RE.test(key)) return null;
   return { at, key };
 }

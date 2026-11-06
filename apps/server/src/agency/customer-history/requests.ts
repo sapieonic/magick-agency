@@ -30,7 +30,7 @@ export const customerSearchRequestSchema = z.object({
   country: z.string().regex(/^[A-Za-z]{2}$/, 'country is an ISO 3166-1 alpha-2 code').optional(),
 });
 
-export const customerTimelineFiltersSchema = z.object({
+const customerTimelineFiltersSchema = z.object({
   campaign_ids: z.array(uuid).max(CUSTOMER_FILTER_LIST_MAX).optional(),
   from: instant.optional(),
   to: instant.optional(),
@@ -103,15 +103,4 @@ export function toTimelineFilter(filters: CustomerTimelineFilters | undefined): 
 /** The page size asked for, else the default. */
 export function pageLimit(limit: number | undefined): number {
   return limit ?? CUSTOMER_TIMELINE_PAGE_SIZE;
-}
-
-/** Bounded filters for the audit row: list values are clipped, as the spine export's are. */
-export function auditFilters(filters: CustomerTimelineFilters | undefined): Record<string, unknown> {
-  if (!filters) return {};
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(filters)) {
-    if (v === undefined) continue;
-    out[k] = Array.isArray(v) ? v.slice(0, 20).map((x) => String(x).slice(0, 60)) : v;
-  }
-  return out;
 }

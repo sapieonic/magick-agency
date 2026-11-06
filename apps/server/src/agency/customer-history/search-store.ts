@@ -32,8 +32,12 @@ export interface CustomerSearchStore {
 
 export const SEARCH_ID_RE = /^chs_[0-9a-f]{32}$/;
 
-function newSearchId(): string {
-  return `chs_${randomBytes(16).toString('hex')}`;
+/** A new search id and its record, expiring `ttlMinutes` after `nowMs`. */
+function minted(input: Omit<CustomerSearchRecord, 'expires_at'>, nowMs: number, ttlMinutes: number): { id: string; record: CustomerSearchRecord } {
+  return {
+    id: `chs_${randomBytes(16).toString('hex')}`,
+    record: { ...input, expires_at: new Date(nowMs + ttlMinutes * 60_000).toISOString() },
+  };
 }
 
 function owned(record: CustomerSearchRecord | null, tenantId: string, userId: string, nowMs: number): CustomerSearchRecord | null {
@@ -57,8 +61,7 @@ export function redisSearchStore(redis: Redis, keyPrefix: string, ttlMinutes: nu
   const key = (id: string) => `${keyPrefix}chs:${id}`;
   return {
     async save(input) {
-      const id = newSearchId();
-      const record: CustomerSearchRecord = { ...input, expires_at: new Date(now() + ttlMinutes * 60_000).toISOString() };
+      const { id, record } = minted(input, now(), ttlMinutes);
       await redis.set(key(id), JSON.stringify(record), 'EX', ttlMinutes * 60);
       return { id, record };
     },
@@ -76,8 +79,7 @@ export function memorySearchStore(ttlMinutes: number, now: () => number = Date.n
   const map = new Map<string, CustomerSearchRecord>();
   return {
     async save(input) {
-      const id = newSearchId();
-      const record: CustomerSearchRecord = { ...input, expires_at: new Date(now() + ttlMinutes * 60_000).toISOString() };
+      const { id, record } = minted(input, now(), ttlMinutes);
       map.set(id, record);
       while (map.size > MEMORY_MAX) map.delete(map.keys().next().value as string);
       return { id, record };

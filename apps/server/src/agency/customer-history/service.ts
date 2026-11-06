@@ -10,7 +10,6 @@ import type { CustomerHistorySummary, CustomerTimelineKind, CustomerTimelinePage
 import {
   agencyCustomerHistoryRepository,
   CUSTOMER_HISTORY_MAX_CONTACT_ROWS,
-  type CustomerHistoryCampaignRow,
   type CustomerHistoryPageQuery,
   type CustomerHistoryScope,
 } from '../../db/repositories/agency.repository.js';
@@ -50,15 +49,6 @@ export async function resolveViewer(userId: string, tenantId: string): Promise<C
 const scopeOf = (viewer: CustomerHistoryViewer, tenantId: string): CustomerHistoryScope =>
   ({ tenantId, accountIds: [...viewer.accounts.keys()] });
 
-/** Campaign rows by id, plus each one's chain root (CH7: the filter names roots). */
-async function campaignsWithRoots(scope: CustomerHistoryScope, ids: readonly string[]): Promise<Map<string, CustomerHistoryCampaignRow>> {
-  const campaigns = new Map<string, CustomerHistoryCampaignRow>();
-  for (const g of await repo.campaignsByIds(scope, ids)) campaigns.set(g.id, g);
-  const missingRoots = [...new Set([...campaigns.values()].map((g) => g.root_id))].filter((id) => !campaigns.has(id));
-  for (const g of await repo.campaignsByIds(scope, missingRoots)) campaigns.set(g.id, g);
-  return campaigns;
-}
-
 /**
  * The summary of `phone` (E.164) in the viewer's accounts, and how many timeline entries the
  * viewer can see (the audit's `result_count`). Read once, at search time.
@@ -80,7 +70,9 @@ export async function loadCustomerSummary(
   const contactsTruncated = contactRows.length > CUSTOMER_HISTORY_MAX_CONTACT_ROWS;
   const contacts = contactsTruncated ? contactRows.slice(0, CUSTOMER_HISTORY_MAX_CONTACT_ROWS) : contactRows;
 
-  const campaigns = await campaignsWithRoots(scope, summaryCampaignIds({ contacts, stats, liveCalls, dnc }));
+  // Each campaign with its chain root (CH7: the filter names roots).
+  const campaignRows = await repo.campaignsWithRoots(scope, summaryCampaignIds({ contacts, stats, liveCalls, dnc }));
+  const campaigns = new Map(campaignRows.map((g) => [g.id, g]));
   const awaiting = contactsAwaitingCallback(contacts, campaigns).map((c) => c.id);
   const uploadCampaigns = new Set<string>();
   for (const c of contacts) {
@@ -88,12 +80,17 @@ export async function loadCustomerSummary(
     const root = campaigns.get(c.campaign_id)?.root_id;
     if (root) uploadCampaigns.add(root);
   }
-  const [bookingRows, uploads] = await Promise.all([
+  const userIds = summaryUserIds({ contacts, stats, lastPlaced, liveCalls, dnc });
+  const [bookingRows, uploads, names] = await Promise.all([
     repo.latestBookings(scope, awaiting),
     repo.uploads(scope, [...uploadCampaigns]),
+    namesIn(userIds, tenantId),
   ]);
   const bookings = new Map(bookingRows.map((b) => [b.contact_id, b.booked_by_user_id]));
-  const names = await namesIn(summaryUserIds({ contacts, stats, lastPlaced, liveCalls, bookings, dnc }), tenantId);
+  // A callback's booker the summary names nowhere else (usually none) is looked up after.
+  const named = new Set(userIds);
+  const bookers = [...bookings.values()].filter((id): id is string => id !== null && !named.has(id));
+  for (const [id, name] of await namesIn(bookers, tenantId)) names.set(id, name);
 
   const summary = buildSummary({
     now, viewer, contacts, contactsTruncated, campaigns, stats, lastPlaced, liveCalls, bookings, dnc, uploads, names,
@@ -103,9 +100,7 @@ export async function loadCustomerSummary(
 
 /** How many timeline entries the viewer can see of `phone` (the export audit's `result_count`). */
 export async function countCustomerEntries(viewer: CustomerHistoryViewer, tenantId: string, phone: string): Promise<number> {
-  const scope = scopeOf(viewer, tenantId);
-  const [stats, dnc] = await Promise.all([repo.callStats(scope, phone), repo.dncForNumber(scope, phone)]);
-  return entryCount(stats, dnc.length);
+  return repo.entryCount(scopeOf(viewer, tenantId), phone);
 }
 
 /**
@@ -126,33 +121,21 @@ export async function loadTimelinePage(
   const scope = scopeOf(viewer, tenantId);
   const q = (kind: CustomerTimelineKind): CustomerHistoryPageQuery => {
     const bound = sourceBound(kind, cursor);
-    return {
-      cursorAt: bound.at,
-      cursorId: bound.id,
-      limit: limit + 1,
-      from: filter.from,
-      to: filter.to,
-      campaignRoots: filter.campaignRoots,
-      outcomes: filter.outcomes,
-      dispositionCodes: filter.dispositionCodes,
-      agentUserIds: filter.agentUserIds,
-      connectedOnly: filter.connectedOnly,
-    };
+    return { ...filter, cursorAt: bound.at, cursorId: bound.id, limit: limit + 1 };
   };
   const campaignCalls = filter.channel === null || filter.channel === 'campaign';
   const softphoneCalls = filter.channel === null || filter.channel === 'softphone';
   const others = !filter.callsOnly;
   const none = Promise.resolve([] as never[]);
 
-  const [attempts, manualCalls, attemptCallbacks, manualCallbacks, dnc, contacts] = await Promise.all([
+  const [attempts, manualCalls, callbacks, dnc, contacts] = await Promise.all([
     campaignCalls ? repo.pageAttempts(scope, phone, q('campaign_call')) : none,
     softphoneCalls ? repo.pageManualCalls(scope, phone, q('softphone_call')) : none,
-    others ? repo.pageAttemptCallbacks(scope, phone, q('callback')) : none,
-    others ? repo.pageManualCallbacks(scope, phone, q('callback')) : none,
+    others ? repo.pageCallbacks(scope, phone, q('callback')) : none,
     others ? repo.pageDnc(scope, phone, q('dnc_mark')) : none,
     others ? repo.pageContacts(scope, phone, q('roster_entry')) : none,
   ]);
-  const cut = cutPage({ attempts, manualCalls, callbacks: [...attemptCallbacks, ...manualCallbacks], dnc, contacts }, limit);
+  const cut = cutPage({ attempts, manualCalls, callbacks, dnc, contacts }, limit);
   const rows = cut.rows;
 
   const legIds = [...rows.attempts.map((a) => a.webrtc_call_id), ...rows.manualCalls.map((m) => m.webrtc_call_id)]

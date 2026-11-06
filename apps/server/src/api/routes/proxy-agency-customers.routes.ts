@@ -3,7 +3,7 @@ import type { AppContext } from '../../app-context.js';
 import { agencyConfigSchema } from '../../config/blocks/agency.js';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
-import { createUserRateLimit, type ChargeUserRateLimit } from '../middleware/rate-limit.middleware.js';
+import { createUserRateLimit } from '../middleware/rate-limit.middleware.js';
 import { memorySearchStore, redisSearchStore } from '../../agency/customer-history/search-store.js';
 import { registerCustomerSearchRoute } from './proxy-agency-customers/search.js';
 import { registerCustomerTimelineRoute } from './proxy-agency-customers/timeline.js';
@@ -52,25 +52,17 @@ function customerSearchRateLimitMessage(seconds: number): string {
 export async function proxyAgencyCustomersRoutes(app: FastifyInstance, opts: ProxyAgencyCustomersOptions): Promise<void> {
   const ctx = opts.ctx;
   const settings = ctx?.config.agency.customerHistory ?? agencyConfigSchema.parse({}).agency.customerHistory;
-  // The cap is built on the first charge, not at registration: the agent-reach suite registers
-  // this plugin on a bare Fastify (no rate limiter) only to enumerate its routes. On the real app
-  // `buildApp` registers the limiter first, and a request on an app without one throws (a masked
-  // 500), so the cap still cannot be silently missing. Built synchronously, so two first requests
-  // share one limiter.
-  let cap: ChargeUserRateLimit | null = null;
   const deps: CustomerRoutesDeps = {
     store: ctx
       ? redisSearchStore(ctx.redis, ctx.config.redis.keyPrefix, settings.searchTtlMinutes)
       : memorySearchStore(settings.searchTtlMinutes),
-    cap: (request, reply) => {
-      cap ??= createUserRateLimit(app, {
-        namespace: 'chs',
-        max: settings.searchesPerMinute,
-        timeWindow: '1 minute',
-        message: customerSearchRateLimitMessage,
-      });
-      return cap(request, reply);
-    },
+    // Built at registration, on the limiter `buildApp` registers first (it refuses without one).
+    cap: createUserRateLimit(app, {
+      namespace: 'chs',
+      max: settings.searchesPerMinute,
+      timeWindow: '1 minute',
+      message: customerSearchRateLimitMessage,
+    }),
     exportMaxRows: settings.exportMaxRows,
   };
 

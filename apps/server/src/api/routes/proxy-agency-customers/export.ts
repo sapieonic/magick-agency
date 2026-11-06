@@ -8,10 +8,12 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { auditFilters, customerExportRequestSchema, toTimelineFilter } from '../../../agency/customer-history/requests.js';
+import { customerExportRequestSchema, toTimelineFilter } from '../../../agency/customer-history/requests.js';
 import { countCustomerEntries, loadTimelinePage, resolveViewer } from '../../../agency/customer-history/service.js';
 import { customerHistoryCsv } from '../../../agency/customer-history/csv.js';
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
+import { boundedSelector } from '../helpers/audit-bounds.js';
+import { settledValue } from '../helpers/settled.js';
 import {
   auditCustomerHistory,
   guardCustomerRoute,
@@ -33,12 +35,18 @@ export async function registerCustomerExportRoute(app: FastifyInstance, deps: Cu
     if (!(await guardCustomerRoute(request, reply, deps.cap))) return reply;
     const body = await parseBody(customerExportRequestSchema, request, reply);
     if (!body) return reply;
-    const record = await ownSearch(deps.store, body.search_id, request, reply);
-    if (!record) return reply;
-
     const tenantId = request.tenantId!;
+    // The search and the viewer are read together, then answered in the sequential order: the
+    // search's 404 first, then a viewer read that threw.
+    const [recordRead, viewerRead] = await Promise.allSettled([
+      ownSearch(deps.store, body.search_id, request, reply),
+      resolveViewer(request.user!.id, tenantId),
+    ]);
+    const record = settledValue(recordRead);
+    if (!record) return reply;
+    const viewer = settledValue(viewerRead);
+
     const now = new Date();
-    const viewer = await resolveViewer(request.user!.id, tenantId);
     // One keyset page as large as the cap: each source reads at most `exportMaxRows + 1` rows.
     const [page, resultCount] = await Promise.all([
       loadTimelinePage(viewer, tenantId, record.value, toTimelineFilter(body.filters), null, deps.exportMaxRows, now),
@@ -53,7 +61,7 @@ export async function registerCustomerExportRoute(app: FastifyInstance, deps: Cu
       record,
       viewer,
       resultCount,
-      extra: { rows: rows.length, filters: auditFilters(body.filters), truncated },
+      extra: { rows: rows.length, filters: boundedSelector(body.filters ?? {}), truncated },
     });
 
     const csv = customerHistoryCsv(

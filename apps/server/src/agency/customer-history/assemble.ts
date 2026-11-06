@@ -36,6 +36,7 @@ import type {
   AgencyOverrideKind,
 } from '@magick-agency/contracts/agency';
 import type { DncSource } from '@magick-agency/contracts/api/agency/dnc';
+import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
 import { contextValueText, heroColumnsFor } from '@magick-agency/domain/context-hero';
 import type {
   CustomerHistoryAttemptRow,
@@ -57,7 +58,7 @@ import { compareTimeline, encodeTimelineCursor, toWireInstant, type TimelinePosi
 import { canOpenCallPage, canSeeCallNotes, canSeeDncDetail, type CustomerHistoryViewer } from './visibility.js';
 
 /** A callback is kept when the next call is placed by its time plus this (inclusive; insights IN4). */
-const CALLBACK_ON_TIME_MS = 15 * 60_000;
+const CALLBACK_ON_TIME_MS = AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES * 60_000;
 
 // ─── Small pieces ────────────────────────────────────────────────────────────
 
@@ -222,13 +223,21 @@ export function sourceBound(kind: CustomerTimelineKind, cursor: TimelinePosition
   return { at: cursor.at, id: kind < cursorKind ? UUID_MAX : UUID_NIL };
 }
 
-const positionsOf = (rows: TimelineSourceRows): TimelinePosition[] => [
-  ...rows.attempts.map((r) => ({ at: r.at, key: `campaign_call:${r.id}` })),
-  ...rows.manualCalls.map((r) => ({ at: r.at, key: `softphone_call:${r.id}` })),
-  ...rows.callbacks.map((r) => ({ at: r.at, key: `callback:${r.id}` })),
-  ...rows.dnc.map((r) => ({ at: r.at, key: `dnc_mark:${r.id}` })),
-  ...rows.contacts.map((r) => ({ at: r.at, key: `roster_entry:${r.id}` })),
-];
+/** An entry's `key`: `<kind>:<id>`. */
+const keyOf = (kind: CustomerTimelineKind, id: string): string => `${kind}:${id}`;
+
+/** The timeline kind of each source's rows. */
+const SOURCE_KINDS = {
+  attempts: 'campaign_call',
+  manualCalls: 'softphone_call',
+  callbacks: 'callback',
+  dnc: 'dnc_mark',
+  contacts: 'roster_entry',
+} as const satisfies Record<keyof TimelineSourceRows, CustomerTimelineKind>;
+
+const positionsOf = (rows: TimelineSourceRows): TimelinePosition[] =>
+  (Object.keys(SOURCE_KINDS) as Array<keyof TimelineSourceRows>)
+    .flatMap((source) => rows[source].map((r) => ({ at: r.at, key: keyOf(SOURCE_KINDS[source], r.id) })));
 
 /**
  * The page out of each source's head: the first `limit` entries of the merge, the rows behind
@@ -239,13 +248,15 @@ export function cutPage(rows: TimelineSourceRows, limit: number): { rows: Timeli
   const all = positionsOf(rows).sort(compareTimeline);
   const kept = all.slice(0, limit);
   const keys = new Set(kept.map((p) => p.key));
+  const keep = <R extends { id: string }>(source: keyof TimelineSourceRows, list: readonly R[]): R[] =>
+    list.filter((r) => keys.has(keyOf(SOURCE_KINDS[source], r.id)));
   return {
     rows: {
-      attempts: rows.attempts.filter((r) => keys.has(`campaign_call:${r.id}`)),
-      manualCalls: rows.manualCalls.filter((r) => keys.has(`softphone_call:${r.id}`)),
-      callbacks: rows.callbacks.filter((r) => keys.has(`callback:${r.id}`)),
-      dnc: rows.dnc.filter((r) => keys.has(`dnc_mark:${r.id}`)),
-      contacts: rows.contacts.filter((r) => keys.has(`roster_entry:${r.id}`)),
+      attempts: keep('attempts', rows.attempts),
+      manualCalls: keep('manualCalls', rows.manualCalls),
+      callbacks: keep('callbacks', rows.callbacks),
+      dnc: keep('dnc', rows.dnc),
+      contacts: keep('contacts', rows.contacts),
     },
     last: kept[kept.length - 1] ?? null,
     hasMore: all.length > limit,
@@ -299,7 +310,7 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
     if (!campaign) continue;
     const showNotes = canSeeCallNotes(viewer, a.account_id, a.agent_user_id);
     const hadNotes = (a.notes !== null && a.notes.length > 0) || (a.override_note !== null && a.override_note.length > 0);
-    const key = `campaign_call:${a.id}`;
+    const key = keyOf('campaign_call', a.id);
     items.push({
       at: a.at, key,
       entry: {
@@ -334,7 +345,7 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
     const fields = m.fields && typeof m.fields === 'object' && !Array.isArray(m.fields) ? m.fields : {};
     const hadNotes = (m.notes !== null && m.notes.length > 0) || Object.keys(fields).length > 0
       || m.dnc_override_note !== null || m.hours_override_note !== null;
-    const key = `softphone_call:${m.id}`;
+    const key = keyOf('softphone_call', m.id);
     items.push({
       at: m.at, key,
       entry: {
@@ -361,7 +372,7 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
   for (const c of data.callbacks) {
     const campaign = c.campaign_id ? campaigns.get(c.campaign_id) ?? null : null;
     const next = data.callbackNext.get(c.id) ?? null;
-    const key = `callback:${c.id}`;
+    const key = keyOf('callback', c.id);
     items.push({
       at: c.at, key,
       entry: {
@@ -377,7 +388,7 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
   }
 
   for (const d of data.dnc) {
-    const key = `dnc_mark:${d.id}`;
+    const key = keyOf('dnc_mark', d.id);
     items.push({
       at: d.at, key,
       entry: { key, kind: 'dnc_mark', at: toWireInstant(d.at), account_id: d.effective_account_id, entry: dncEntry(d, viewer, campaigns, names) },
@@ -387,7 +398,7 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
   for (const c of data.contacts) {
     const campaign = campaigns.get(c.campaign_id);
     if (!campaign) continue;
-    const key = `roster_entry:${c.id}`;
+    const key = keyOf('roster_entry', c.id);
     items.push({
       at: c.at, key,
       entry: {
@@ -430,25 +441,23 @@ export interface CustomerHistorySummaryData {
   names: ReadonlyMap<string, string | null>;
 }
 
-const byCreatedDesc = (a: CustomerHistoryContactRow, b: CustomerHistoryContactRow) =>
+/** `at DESC, id DESC`: newest first, as the repository reads rows. */
+const byAtIdDesc = (a: { at: string; id: string }, b: { at: string; id: string }) =>
   (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
-const isLiveContactState = (state: string) => state === 'in_flight' || state === 'connected';
-
-/** Every user id the summary names, for one name lookup. */
-export function summaryUserIds(data: Pick<CustomerHistorySummaryData, 'contacts' | 'stats' | 'lastPlaced' | 'liveCalls' | 'bookings' | 'dnc'>): string[] {
+/** Every user id the summary names except the callbacks' bookers, for one name lookup. */
+export function summaryUserIds(data: Pick<CustomerHistorySummaryData, 'contacts' | 'stats' | 'lastPlaced' | 'liveCalls' | 'dnc'>): string[] {
   const ids = new Set<string>();
   const add = (id: string | null | undefined) => { if (id) ids.add(id); };
   for (const c of data.contacts) add(c.assigned_user_id);
   for (const id of data.stats.agent_ids) add(id);
   add(data.lastPlaced?.agent_user_id);
   for (const l of data.liveCalls) add(l.agent_user_id);
-  for (const b of data.bookings.values()) add(b);
   for (const d of data.dnc) add(userIdOf(d.added_by));
   return [...ids];
 }
 
-/** The campaigns the summary names (their chain roots are read after them). */
+/** The campaigns the summary names (their chain roots are read with them). */
 export function summaryCampaignIds(data: Pick<CustomerHistorySummaryData, 'contacts' | 'stats' | 'liveCalls' | 'dnc'>): string[] {
   const ids = new Set<string>(data.stats.campaign_ids);
   for (const c of data.contacts) ids.add(c.campaign_id);
@@ -457,45 +466,40 @@ export function summaryCampaignIds(data: Pick<CustomerHistorySummaryData, 'conta
   return [...ids];
 }
 
-/** The contacts with an open callback (`buildSummary`'s rule), whose booking is looked up. */
+/**
+ * The contacts with an open callback, whose booking is looked up: waiting to be dialled, and its
+ * last call connected with a callback code of its campaign's catalog.
+ */
 export function contactsAwaitingCallback(
   contacts: readonly CustomerHistoryContactRow[],
   campaigns: ReadonlyMap<string, CustomerHistoryCampaignRow>,
 ): CustomerHistoryContactRow[] {
   return contacts.filter((c) => {
     const campaign = campaigns.get(c.campaign_id);
-    if (!campaign) return false;
-    const codes = callbackCodes(campaign.disposition_catalog as AgencyDisposition[] | null);
-    return c.state === 'pending'
-      && c.last_disposition !== null && codes.includes(c.last_disposition)
-      && c.last_outcome === 'connected'
-      && !isLiveContactState(c.state);
+    if (!campaign || c.state !== 'pending' || c.last_outcome !== 'connected' || c.last_disposition === null) return false;
+    return callbackCodes(campaign.disposition_catalog as AgencyDisposition[] | null).includes(c.last_disposition);
   });
 }
 
-export function buildSummary(data: CustomerHistorySummaryData): CustomerHistorySummary {
+/** CH7: one row per retry chain (`root_contact_id`), the newest chain first. `sorted` is newest first. */
+function chainContacts(sorted: readonly CustomerHistorySummaryContactRow[], data: CustomerHistorySummaryData): CustomerHistoryContact[] {
   const { viewer, names, campaigns } = data;
-
-  // CH7: one row per retry chain (`root_contact_id`).
+  // Each chain's rows stay newest first, and the chains are in the order of their newest rows.
   const chains = new Map<string, CustomerHistorySummaryContactRow[]>();
-  for (const c of data.contacts) {
+  for (const c of sorted) {
     if (!campaigns.has(c.campaign_id)) continue;
-    const list = chains.get(c.root_contact_id) ?? [];
-    list.push(c);
-    chains.set(c.root_contact_id, list);
+    const list = chains.get(c.root_contact_id);
+    if (list) list.push(c);
+    else chains.set(c.root_contact_id, [c]);
   }
-
-  const contacts: Array<CustomerHistoryContact & { _at: string; _id: string }> = [];
-  for (const [rootId, rows] of chains) {
-    const ordered = [...rows].sort(byCreatedDesc);
-    const newest = ordered[0]!;
-    const oldest = ordered[ordered.length - 1]!;
+  return [...chains].map(([rootId, rows]) => {
+    const newest = rows[0]!;
+    const oldest = rows[rows.length - 1]!;
     const campaign = campaigns.get(newest.campaign_id)!;
-    const chainCampaigns = [...new Map(ordered.map((r) => [r.campaign_id, campaigns.get(r.campaign_id)!])).values()]
+    const chainCampaigns = [...new Map(rows.map((r) => [r.campaign_id, campaigns.get(r.campaign_id)!])).values()]
       .sort((a, b) => a.retry_generation - b.retry_generation || (a.id < b.id ? -1 : 1))
       .map(campaignWire);
-    contacts.push({
-      _at: newest.at, _id: newest.id,
+    return {
       contact_id: newest.id,
       root_contact_id: rootId,
       account_id: newest.account_id,
@@ -505,18 +509,19 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
       campaigns: chainCampaigns,
       state: newest.state as AgencyContactState,
       suppressed_reason: newest.suppressed_reason,
-      attempt_count: ordered.reduce((n, r) => n + r.placed, 0),
+      attempt_count: rows.reduce((n, r) => n + r.placed, 0),
       fields: contactFields(newest.context, campaign, columnOrderFor(campaign, data.uploads)),
       assigned_to: userOf(newest.assigned_user_id, names),
       entered_at: oldest.created_at.toISOString(),
       upload_file_name: uploadFileName(oldest.campaign_id, oldest.created_at, data.uploads, data.now),
-    });
-  }
-  contacts.sort((a, b) => (a._at < b._at ? 1 : a._at > b._at ? -1 : a._id < b._id ? 1 : -1));
+    };
+  });
+}
 
-  // Open callbacks: a contact waiting on one (its last disposition is a callback code of its
-  // campaign's catalog, its last call connected) and not live; due at `next_attempt_at`.
-  const callbacks: CustomerHistoryOpenCallback[] = contactsAwaitingCallback([...data.contacts].sort(byCreatedDesc), campaigns)
+/** Open callbacks ({@link contactsAwaitingCallback}), soonest due first; due at `next_attempt_at`. */
+function openCallbacks(sorted: readonly CustomerHistorySummaryContactRow[], data: CustomerHistorySummaryData): CustomerHistoryOpenCallback[] {
+  const { names, campaigns } = data;
+  return contactsAwaitingCallback(sorted, campaigns)
     .map((c) => ({
       contact_id: c.id,
       campaign: campaignWire(campaigns.get(c.campaign_id)!),
@@ -526,13 +531,17 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
       disposition_code: c.last_disposition,
     }))
     .sort((a, b) => (a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : 0));
+}
 
-  // Open overrides: a grant that still grants something (the dialer's own rule, `isOverrideUnspent`);
-  // its follow-up is the contact's next dial while it waits for one.
+/**
+ * Open overrides: a grant that still grants something (the dialer's own rule, `isOverrideUnspent`);
+ * its follow-up is the contact's next dial while it waits for one.
+ */
+function openOverrides(sorted: readonly CustomerHistorySummaryContactRow[], campaigns: CustomerHistorySummaryData['campaigns']): CustomerHistoryOpenOverride[] {
   const overrides: CustomerHistoryOpenOverride[] = [];
-  for (const c of [...data.contacts].sort(byCreatedDesc)) {
+  for (const c of sorted) {
     const campaign = campaigns.get(c.campaign_id);
-    if (!campaign || !isOverrideUnspent(c) || c.override_disposition === null) continue;
+    if (!campaign || !isOverrideUnspent(c)) continue;
     overrides.push({
       contact_id: c.id,
       campaign: campaignWire(campaign),
@@ -544,15 +553,12 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
       calling_hours: c.override_calling_hours,
     });
   }
+  return overrides;
+}
 
-  const liveCalls: CustomerHistoryLiveCall[] = data.liveCalls
-    .map((l) => {
-      const campaign = l.campaign_id ? campaigns.get(l.campaign_id) ?? null : null;
-      return { channel: l.channel, campaign: campaign ? campaignWire(campaign) : null, agent: userOf(l.agent_user_id, names), started_at: l.started_at.toISOString() };
-    })
-    .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0));
-
-  // Filter options: root campaigns, agents, outcomes and codes seen in the history.
+/** Filter options: root campaigns, agents, outcomes and codes seen in the history. */
+function filterOptions(data: CustomerHistorySummaryData): CustomerHistorySummary['filter_options'] {
+  const { names, campaigns } = data;
   const rootIds = new Set<string>();
   for (const id of data.stats.campaign_ids) { const g = campaigns.get(id); if (g) rootIds.add(g.root_id); }
   for (const d of data.dnc) { const g = d.campaign_id ? campaigns.get(d.campaign_id) : undefined; if (g) rootIds.add(g.root_id); }
@@ -569,14 +575,28 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
   const agents = data.stats.agent_ids
     .map((id) => userOf(id, names)!)
     .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '') || (a.user_id < b.user_id ? -1 : 1));
+  return {
+    campaigns: rootCampaigns,
+    agents,
+    outcomes: [...data.stats.outcomes].sort() as AgencyAttemptOutcome[],
+    disposition_codes: [...data.stats.disposition_codes].sort(),
+  };
+}
 
-  const dnc = [...data.dnc]
-    .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : -1))
-    .map((d) => dncEntry(d, viewer, campaigns, names));
+export function buildSummary(data: CustomerHistorySummaryData): CustomerHistorySummary {
+  const { viewer, names, campaigns } = data;
+  const sorted = [...data.contacts].sort(byAtIdDesc);
+
+  const liveCalls: CustomerHistoryLiveCall[] = data.liveCalls
+    .map((l) => {
+      const campaign = l.campaign_id ? campaigns.get(l.campaign_id) ?? null : null;
+      return { channel: l.channel, campaign: campaign ? campaignWire(campaign) : null, agent: userOf(l.agent_user_id, names), started_at: l.started_at.toISOString() };
+    })
+    .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0));
 
   const last = data.lastPlaced;
   return {
-    contacts: contacts.map(({ _at, _id, ...c }) => { void _at; void _id; return c; }),
+    contacts: chainContacts(sorted, data),
     ...(data.contactsTruncated ? { contacts_truncated: true as const } : {}),
     totals: {
       calls: data.stats.calls,
@@ -591,14 +611,9 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
           }
         : null,
     },
-    dnc,
-    open: { callbacks, overrides, live_calls: liveCalls },
-    filter_options: {
-      campaigns: rootCampaigns,
-      agents,
-      outcomes: [...data.stats.outcomes].sort() as AgencyAttemptOutcome[],
-      disposition_codes: [...data.stats.disposition_codes].sort(),
-    },
+    dnc: [...data.dnc].sort(byAtIdDesc).map((d) => dncEntry(d, viewer, campaigns, names)),
+    open: { callbacks: openCallbacks(sorted, data), overrides: openOverrides(sorted, campaigns), live_calls: liveCalls },
+    filter_options: filterOptions(data),
   };
 }
 

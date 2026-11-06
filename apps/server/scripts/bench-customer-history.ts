@@ -35,8 +35,9 @@ import pg from 'pg';
 import { runner } from 'node-pg-migrate';
 import { MIGRATIONS_DIR } from '../../../packages/db/src/migrations-dir.js';
 
-const DB_URL = process.env['BENCH_DB_URL'] ?? 'postgresql://magick_agency:magick_agency_password@localhost:5436/magick_agency_test_bench';
-const SEED_URL = process.env['BENCH_SEED_URL'] ?? 'postgresql://magick_agency:magick_agency_password@localhost:5436/magick_agency_test_bench';
+const DEFAULT_URL = 'postgresql://magick_agency:magick_agency_password@localhost:5436/magick_agency_test_bench';
+const DB_URL = process.env['BENCH_DB_URL'] ?? DEFAULT_URL;
+const SEED_URL = process.env['BENCH_SEED_URL'] ?? DEFAULT_URL;
 const RESEED = process.env['BENCH_RESEED'] !== '0';
 const CONTACTS = Number(process.env['BENCH_CONTACTS'] ?? 1_000_000);
 const RUNS = Number(process.env['BENCH_RUNS'] ?? 20);
@@ -280,20 +281,21 @@ async function measure(): Promise<void> {
   const statements: Array<[string, string, unknown[]]> = [
     ['summaryContacts', CUSTOMER_HISTORY_SQL.summaryContacts, [ids.tenant, NUMBER, accounts, 2001]],
     ['callStats', CUSTOMER_HISTORY_SQL.callStats, [ids.tenant, NUMBER, accounts]],
+    ['entryCount', CUSTOMER_HISTORY_SQL.entryCount, [ids.tenant, NUMBER, accounts]],
     ['lastPlaced', CUSTOMER_HISTORY_SQL.lastPlaced, [ids.tenant, NUMBER, accounts]],
     ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, [ids.tenant, NUMBER, accounts]],
     ['latestBookings', CUSTOMER_HISTORY_SQL.latestBookings, [ids.tenant, accounts, contactIds]],
     ['dnc', CUSTOMER_HISTORY_SQL.dnc, [ids.tenant, NUMBER, accounts]],
     ['pageAttempts (first)', CUSTOMER_HISTORY_SQL.pageAttempts, calls('infinity')],
     ['pageAttempts (later)', CUSTOMER_HISTORY_SQL.pageAttempts, calls(laterAt)],
-    ['pageAttemptCallbacks', CUSTOMER_HISTORY_SQL.pageAttemptCallbacks, page('infinity')],
+    ['pageCallbacks', CUSTOMER_HISTORY_SQL.pageCallbacks, page('infinity')],
     ['pageManualCalls (first)', CUSTOMER_HISTORY_SQL.pageManualCalls, calls('infinity')],
     ['pageManualCalls (later)', CUSTOMER_HISTORY_SQL.pageManualCalls, calls(laterAt)],
-    ['pageManualCallbacks', CUSTOMER_HISTORY_SQL.pageManualCallbacks, page('infinity')],
     ['pageDnc', CUSTOMER_HISTORY_SQL.pageDnc, page('infinity')],
     ['pageContacts', CUSTOMER_HISTORY_SQL.pageContacts, page('infinity')],
     ['callbackNext', CUSTOMER_HISTORY_SQL.callbackNext, [ids.tenant, NUMBER, accounts, [contactIds[0]], ['2026-01-01T00:00:00.000000Z']]],
     ['campaigns', CUSTOMER_HISTORY_SQL.campaigns, [ids.tenant, accounts, campaignIds]],
+    ['campaignsWithRoots', CUSTOMER_HISTORY_SQL.campaignsWithRoots, [ids.tenant, accounts, campaignIds]],
     ['mediaLegs', CUSTOMER_HISTORY_SQL.mediaLegs, [ids.tenant, accounts, contactIds]],
     ['uploads', CUSTOMER_HISTORY_SQL.uploads, [ids.tenant, accounts, campaignIds]],
   ];
