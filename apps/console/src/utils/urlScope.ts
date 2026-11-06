@@ -12,23 +12,18 @@
  * the prefix (and says which pages stay unscoped, `isUnscopedPagePath`), and the
  * router, the tenant context and their tests all share it.
  *
- * ── Why `/t/…/a/…` and not `/tenants/…/accounts/…` ──────────────────────────
- * `/tenants` and `/accounts` are API prefixes. nginx and the Vite dev proxy send
- * them to the server (`docker/nginx.conf`, `API_PREFIXES` in `vite.config.ts`), so
- * a page URL starting with either would never reach the SPA.
+ * The shape itself — the markers, the encoding — is the contracts package's
+ * (`console-urls`), because the server builds the same URLs into the links it
+ * emails. Why `/t/…/a/…` and not `/tenants/…/accounts/…` is explained there.
  */
 
-export interface UrlScope {
-  tenantId: string;
-  accountId: string;
-}
+import {
+  CONSOLE_SCOPE_PREFIX_RE,
+  consoleScopePrefix,
+  type ConsoleUrlScope,
+} from '@magick-agency/contracts/api/platform/console-urls';
 
-/**
- * `/t/<tenant>/a/<account>` followed by a segment boundary. Case-insensitive on the
- * two markers because react-router's basename match is; the ids are taken as they
- * stand.
- */
-const SCOPE_PREFIX = /^\/t\/([^/?#]+)\/a\/([^/?#]+)(?=[/?#]|$)/i;
+export type UrlScope = ConsoleUrlScope;
 
 function decodeSegment(segment: string): string | null {
   try {
@@ -42,7 +37,7 @@ function decodeSegment(segment: string): string | null {
 
 /** The one match the exports below share: the scope and its literal prefix. */
 function matchScope(path: string): { scope: UrlScope; prefix: string } | null {
-  const match = SCOPE_PREFIX.exec(path);
+  const match = CONSOLE_SCOPE_PREFIX_RE.exec(path);
   if (!match) return null;
   const tenantId = decodeSegment(match[1]!);
   const accountId = decodeSegment(match[2]!);
@@ -57,7 +52,7 @@ export function parseUrlScope(path: string): UrlScope | null {
 
 /** The prefix for a scope, with no trailing slash: `/t/<tenant>/a/<account>`. */
 export function scopePrefix(scope: UrlScope): string {
-  return `/t/${encodeURIComponent(scope.tenantId)}/a/${encodeURIComponent(scope.accountId)}`;
+  return consoleScopePrefix(scope);
 }
 
 /**

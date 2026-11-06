@@ -5,6 +5,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { ROLE_HIERARCHY, PERMISSION_MATRIX } from '@magick-agency/contracts/rbac';
+import { consoleScopePrefix } from '@magick-agency/contracts/api/platform/console-urls';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import { notificationDeliveryRepository } from '../db/repositories/notification-delivery.repository.js';
 import { buildDedupeKey } from './engine/deliver.js';
@@ -387,7 +388,9 @@ export type AgencyCampaignLinkTarget = Pick<
  * reader's browser last had open, and a supervisor of several accounts would
  * follow "View campaign" to a campaign their screen says does not exist. A
  * reader who cannot open that account is told so by the console rather than
- * shown another one.
+ * shown another one. The prefix is `consoleScopePrefix` from the contracts
+ * package, the same builder the console's router parses against, so the two
+ * cannot drift apart.
  *
  * With no usable account id the link is left unscoped — `/agency/campaigns/:id`,
  * which the console still serves, under the reader's own active account — rather
@@ -411,7 +414,7 @@ export function agencyCampaignUrl(
   if (!tenantId || typeof accountId !== 'string' || !AGENCY_UUID_RE.test(accountId)) {
     return `${origin}${campaignPath}`;
   }
-  return `${origin}/t/${encodeURIComponent(tenantId)}/a/${encodeURIComponent(accountId)}${campaignPath}`;
+  return `${origin}${consoleScopePrefix({ tenantId, accountId })}${campaignPath}`;
 }
 
 /**
