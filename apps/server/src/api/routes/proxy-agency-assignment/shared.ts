@@ -70,6 +70,24 @@ export async function requireAssignmentEnabled(request: FastifyRequest, reply: F
 }
 
 /**
+ * The supervisor routes' guard, after `requirePermission`: the campaign id's shape (a malformed
+ * id is the not-found answer an unknown one gets, never a `22P02`) → the flag when `gated`
+ * (403 `assignment_disabled`) → ownership ({@link supervisedCampaign}). Null once it has replied.
+ */
+export async function guardSupervisedCampaign(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply,
+  opts: { gated: boolean },
+): Promise<AgencyCampaignRecord | null> {
+  if (!isUuid(request.params.id)) {
+    refuse(reply, 404, 'campaign_not_found', 'Campaign not found.');
+    return null;
+  }
+  if (opts.gated && !(await requireAssignmentEnabled(request, reply))) return null;
+  return supervisedCampaign(request, reply, request.params.id.toLowerCase());
+}
+
+/**
  * The supervisor's campaign: proved through the internal handler's ownership probe (tenant
  * AND account, the `agency_dialer_enabled` gate; its refusal is forwarded as-is, so a
  * campaign in another account and a missing one stay the same 404), then read for the

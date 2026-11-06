@@ -12,22 +12,22 @@ import type {
  * which number, the campaign's usable numbers, and whether the rotation is
  * sharing dedicated ones (`all_dedicated`).
  *
- * `enabled` must be the gate the caller renders on, `agency.supervise`: the
- * routes answer 403 otherwise, so with it false nothing is requested and `data`
- * stays `null`. The read and the release work whatever
- * `agency_contact_assignment_enabled` says; only `set` is refused with it off
- * (`assignment_disabled`), so a flag-off caller offers only `clear`.
+ * Render it only behind `agency.supervise`, the routes' gate. The read and the
+ * release work whatever `agency_contact_assignment_enabled` says; only `set` is
+ * refused with it off (`assignment_disabled`), so a flag-off caller offers only
+ * `clear`.
  *
  * `set` and `clear` reload on success and throw the `ApiError` on a refusal, for
  * the caller to word with `agentCallerIdRefusal`.
  */
 export interface AgentCallerIdsResource {
-  /** `null` until the first read succeeds (and always while disabled). */
+  /** `null` until the first read succeeds. */
   data: AgencyAgentCallerIds | null;
-  loading: boolean;
   error: string | null;
   /** Dedicated numbers by agent user id. */
   byUser: ReadonlyMap<string, AgencyAgentCallerId>;
+  /** Dedicated numbers by caller ID: who holds each one. */
+  byNumber: ReadonlyMap<string, AgencyAgentCallerId>;
   reload: () => Promise<void>;
   set: (userId: string, callerId: string) => Promise<void>;
   clear: (userId: string) => Promise<void>;
@@ -35,15 +35,15 @@ export interface AgentCallerIdsResource {
 
 const NO_DEDICATIONS: ReadonlyMap<string, AgencyAgentCallerId> = new Map();
 
-export function useAgentCallerIds(campaignId: string, enabled: boolean): AgentCallerIdsResource {
+export function useAgentCallerIds(campaignId: string): AgentCallerIdsResource {
   const { tenantId, accountId } = useTenant();
-  const ready = enabled && Boolean(campaignId && tenantId && accountId);
+  const ready = Boolean(campaignId && tenantId && accountId);
 
   const fetcher = useCallback(
     () => getAgentCallerIds(campaignId, tenantId!, accountId!),
     [campaignId, tenantId, accountId],
   );
-  const { data, loading, error, reload } = useAsyncResource<AgencyAgentCallerIds | null>(fetcher, {
+  const { data, error, reload } = useAsyncResource<AgencyAgentCallerIds | null>(fetcher, {
     initialData: null,
     errorMessage: 'Could not load the agents’ caller IDs.',
     enabled: ready,
@@ -51,6 +51,10 @@ export function useAgentCallerIds(campaignId: string, enabled: boolean): AgentCa
 
   const byUser = useMemo(
     () => (data ? new Map(data.dedicated.map((row) => [row.user_id, row])) : NO_DEDICATIONS),
+    [data],
+  );
+  const byNumber = useMemo(
+    () => (data ? new Map(data.dedicated.map((row) => [row.caller_id, row])) : NO_DEDICATIONS),
     [data],
   );
 
@@ -70,5 +74,5 @@ export function useAgentCallerIds(campaignId: string, enabled: boolean): AgentCa
     [campaignId, tenantId, accountId, reload],
   );
 
-  return { data, loading, error, byUser, reload, set, clear };
+  return { data, error, byUser, byNumber, reload, set, clear };
 }

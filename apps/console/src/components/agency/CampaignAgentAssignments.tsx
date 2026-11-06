@@ -128,7 +128,7 @@ function AssignmentPanel({
   // `agency.supervise`, the routes' gate), so a dedication made while it was on
   // can still be seen and released with it off. The PATCH refuses to drop a
   // dedicated number, and its copy sends the supervisor here either way.
-  const callerIds = useAgentCallerIds(campaignId, true);
+  const callerIds = useAgentCallerIds(campaignId);
   const reloadCallerIds = callerIds.reload;
   /** Flag off: anything to show at all (a failed read shows nothing new). */
   const hasDedications = (callerIds.data?.dedicated.length ?? 0) > 0;
@@ -191,9 +191,8 @@ function AssignmentPanel({
       try {
         await unassignAgent(campaignId, userId, tenantId, accountId);
         showToast('Removed from this campaign.', 'success');
-        await load();
         // Taking someone off the campaign releases their dedicated number.
-        await reloadCallerIds();
+        await Promise.all([load(), reloadCallerIds()]);
       } catch (err: unknown) {
         showErrorToast(err, 'Could not remove that person.');
       } finally {
@@ -229,26 +228,18 @@ function AssignmentPanel({
           {callerIds.error ? (
             <ErrorAlert message={callerIds.error} onRetry={() => void callerIds.reload()} />
           ) : null}
-          {callerIds.data?.all_dedicated ? (
-            <p className={styles.warning} role="status" data-testid="caller-ids-all-dedicated">
-              <AlertTriangle size={15} aria-hidden="true" />
-              <span>{ALL_DEDICATED_WARNING}</span>
-            </p>
-          ) : null}
         </>
       ) : hasDedications ? (
-        <>
-          <p className={styles.description} data-testid="caller-ids-flag-off">
-            Contact assignment is off, so no new caller IDs can be dedicated. Calls to these
-            agents’ contacts still go out from their numbers until you release them.
-          </p>
-          {callerIds.data?.all_dedicated ? (
-            <p className={styles.warning} role="status" data-testid="caller-ids-all-dedicated">
-              <AlertTriangle size={15} aria-hidden="true" />
-              <span>{ALL_DEDICATED_WARNING}</span>
-            </p>
-          ) : null}
-        </>
+        <p className={styles.description} data-testid="caller-ids-flag-off">
+          Contact assignment is off, so no new caller IDs can be dedicated. Calls to these
+          agents’ contacts still go out from their numbers until you release them.
+        </p>
+      ) : null}
+      {(assignmentEnabled || hasDedications) && callerIds.data?.all_dedicated ? (
+        <p className={styles.warning} role="status" data-testid="caller-ids-all-dedicated">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>{ALL_DEDICATED_WARNING}</span>
+        </p>
       ) : null}
 
       <div className={styles.assignRow}>

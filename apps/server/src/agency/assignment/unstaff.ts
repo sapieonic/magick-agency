@@ -24,10 +24,10 @@
  * deleted by the next unstaff's release.
  */
 import { createChildLogger } from '@magick-agency/observability';
-import { AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS } from '@magick-agency/contracts/api/agency/agent-caller-id';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import type { AuditActorFields } from '../../audit/platform/audit-actor.js';
 import { agencyAssignmentRepository, type UnstaffReturn } from '../../db/repositories/agency.repository.js';
+import { auditAgentCallerIdCleared } from '../agent-caller-id-audit.js';
 
 const log = createChildLogger({ component: 'agency-assignment-unstaff' });
 
@@ -65,23 +65,12 @@ export async function returnContactsOnUnstaff(input: {
   }
   for (const r of rows) {
     if (r.released_caller_id !== null) {
-      platformAuditLogger.log({
-        tenant_id: input.tenantId,
-        account_id: r.account_id,
-        ...input.actor,
-        action: AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS.cleared,
-        resource_type: 'agency_campaign',
-        resource_id: r.campaign_id,
-        campaign_id: r.campaign_id,
-        details: {
-          campaign_id: r.campaign_id,
-          user_id: input.userId,
-          caller_id: r.released_caller_id,
-          cause: 'unstaff',
-          unstaff_cause: input.cause,
-          ...(input.details ?? {}),
-        },
-      });
+      auditAgentCallerIdCleared(
+        { tenantId: input.tenantId, accountId: r.account_id, actor: input.actor, campaignId: r.campaign_id,
+          userId: input.userId, callerId: r.released_caller_id },
+        'unstaff',
+        { unstaff_cause: input.cause, ...(input.details ?? {}) },
+      );
     }
     if (!r.held) continue;
     platformAuditLogger.log({

@@ -228,13 +228,16 @@ export async function startMyContactCall(
   const spendCallingHours = gate.callingHoursOverridden === true;
 
   // ── 4. Where the call goes from ───────────────────────────────────────────
-  const ownerReplica = await deps.stations.ownerOf(sessionId);
+  const [ownerReplica, dedicated] = await Promise.all([
+    deps.stations.ownerOf(sessionId),
+    agencyAgentCallerIdRepository.mapForCampaign(campaign.id),
+  ]);
   if (!ownerReplica) return refuse(503, 'no_station');
   // The contact's owner's dedicated number, else the rotation (DN2): the same rule as pacing.
   // The agent dials their own contact, so the owner is the agent.
   const callerId = resolveCallerId({
     usable: usableCallerIds(campaign),
-    dedicated: await agencyAgentCallerIdRepository.mapForCampaign(campaign.id),
+    dedicated,
     ownerUserId: contact.assigned_user_id,
     offset: 0,
   });

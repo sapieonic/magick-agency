@@ -14,15 +14,10 @@
  *  3. The caller ID, in the allowed set: tagged, the campaign's `caller_ids`
  *     (`usableCallerIds`, the pacing engine's definition); untagged, the account's
  *     assigned numbers (`findAvailableForAccount`). Not allowed → `caller_id_not_allowed`
- *     with the set. Tagged, an in-set request goes through the dial paths' one rule
- *     (`resolveCallerId`, decision DN4): the OWNER of the matched contact (step 4's pick)
- *     has a dedicated caller ID still on the tag → that number, whatever was requested;
- *     else the requested number while it is in the rotation (never another agent's
- *     dedicated number); else the rotation's pick. Absent: tagged,
- *     the dial paths' one rule (`resolveCallerId`: the owner's dedicated number, else the
- *     rotation's round-robin pick, as pacing dials); untagged, the settings'
- *     `default_caller_id` when it is still allowed, else the account's default
- *     number (the first of `findAvailableForAccount`, which orders `is_default`
+ *     with the set. Tagged, the dial paths' one rule picks the number, the request (if any)
+ *     as its sticky (`resolveCallerId`, DN4; see `selectCallerId`). Untagged: the request,
+ *     else the settings' `default_caller_id` when it is still allowed, else the account's
+ *     default number (the first of `findAvailableForAccount`, which orders `is_default`
  *     first). Tagged, the roster match
  *     is READ before this step (it names the owner), but its refusal is still answered
  *     after this one, in step 4's place; a match that step 4 refuses (`in_flight`) names no
@@ -201,27 +196,17 @@ export function selectCallerId(input: {
   const allowed = usable
     ?? input.accountNumbers.filter((n) => typeof n === 'string' && n.trim().length > 0).map((n) => n.trim());
   const refuse: Refused = { ok: false, refusal: { code: 'caller_id_not_allowed', allowed_codes: [...allowed] } };
+  let requested: string | null = null;
   if (input.requested !== undefined && input.requested !== null && input.requested !== '') {
     if (typeof input.requested !== 'string') return refuse;
-    const requested = input.requested.trim();
+    requested = input.requested.trim();
     if (!allowed.includes(requested)) return refuse;
-    if (!usable) return { ok: true, callerId: requested };
-    // Tagged and in the set (DN4): the owner's dedicated number, else the requested number
-    // while it is in the rotation (never another agent's dedicated number), else the
-    // rotation's pick.
-    const picked = resolveCallerId({
-      usable,
-      dedicated,
-      ownerUserId: input.ownerUserId,
-      offset: 0,
-      sticky: requested,
-    });
-    return picked ? { ok: true, callerId: picked } : refuse;
   }
   if (usable) {
-    const picked = resolveCallerId({ usable, dedicated, ownerUserId: input.ownerUserId, offset: 0 });
+    const picked = resolveCallerId({ usable, dedicated, ownerUserId: input.ownerUserId, offset: 0, sticky: requested });
     return picked ? { ok: true, callerId: picked } : refuse;
   }
+  if (requested) return { ok: true, callerId: requested };
   if (input.settingsDefault && allowed.includes(input.settingsDefault)) {
     return { ok: true, callerId: input.settingsDefault };
   }

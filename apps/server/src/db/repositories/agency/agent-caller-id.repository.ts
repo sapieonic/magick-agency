@@ -172,7 +172,7 @@ export class AgencyAgentCallerIdRepository {
           await tx.rollback();
           return { ok: false, reason: 'not_staffed' } as const;
         }
-        const usable = campaign.rows[0] ? usableCallerIds(campaign.rows[0] as AgencyCampaignRecord) : [];
+        const usable = campaign.rows[0] ? usableCallerIds(campaign.rows[0]) : [];
         if (!usable.includes(input.callerId)) {
           await tx.rollback();
           return { ok: false, reason: 'not_in_campaign', caller_ids: usable } as const;

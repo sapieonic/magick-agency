@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { formatPhone } from '@magick-agency/web-ui/format';
@@ -10,7 +10,6 @@ import {
   agentCallerIdRefusal,
 } from '../../utils/agencyAgentCallerIdCopy';
 import type { AgentCallerIdsResource } from '../../hooks/useAgentCallerIds';
-import type { AgencyAgentCallerId } from '@magick-agency/contracts/api/agency/agent-caller-id';
 import styles from './AgentCallerIdControl.module.css';
 
 /**
@@ -71,7 +70,7 @@ export function AgentCallerIdControl({
   releaseOnly = false,
   onAgentUnstaffed,
 }: AgentCallerIdControlProps) {
-  const { data, error, byUser, set, clear, reload } = resource;
+  const { data, error, byUser, byNumber, set, clear, reload } = resource;
   const { showToast } = useToast();
   const current = byUser.get(userId) ?? null;
 
@@ -80,99 +79,59 @@ export function AgentCallerIdControl({
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
 
-  /** Who holds each dedicated number. */
-  const holders = useMemo(
-    () => new Map<string, AgencyAgentCallerId>((data?.dedicated ?? []).map((row) => [row.caller_id, row])),
-    [data],
-  );
-
   /**
-   * A refusal that means the lists are stale: read them again. An unstaffed
-   * agent's row goes with the staffing read, its in-place refusal with it, so a
-   * toast says why.
+   * Run a set or a release. A refusal that means the lists are stale reads them
+   * again. An unstaffed agent's row goes with the staffing read, its in-place
+   * refusal with it, so a toast says why.
    */
-  const refreshAfter = useCallback(
-    (err: unknown) => {
-      const code = errorCode(err) ?? '';
-      if (STALE_PICKER_CODES.has(code)) void reload();
-      if (code === 'agent_not_staffed' && onAgentUnstaffed) {
-        showToast(`${agentName} is no longer on this campaign.`, 'info');
-        void onAgentUnstaffed();
+  const run = useCallback(
+    async (action: () => Promise<void>, success: string, fallback: string) => {
+      setBusy(true);
+      setRefusal(null);
+      try {
+        await action();
+        showToast(success, 'success');
+        setEditing(false);
+      } catch (err: unknown) {
+        setRefusal(agentCallerIdRefusal(err, fallback));
+        const code = errorCode(err) ?? '';
+        if (STALE_PICKER_CODES.has(code)) void reload();
+        if (code === 'agent_not_staffed' && onAgentUnstaffed) {
+          showToast(`${agentName} is no longer on this campaign.`, 'info');
+          void onAgentUnstaffed();
+        }
+      } finally {
+        setBusy(false);
       }
     },
     [reload, onAgentUnstaffed, showToast, agentName],
   );
 
-  const open = useCallback(() => {
+  const onSet = () => {
+    if (!picked) return;
+    void run(
+      () => set(userId, picked),
+      `Calls to ${agentName}’s contacts now go from ${formatPhone(picked)}.`,
+      'Could not set that caller ID.',
+    );
+  };
+
+  const onClear = () =>
+    void run(
+      () => clear(userId),
+      `${agentName}’s contacts are back on the shared rotation.`,
+      'Could not clear that caller ID.',
+    );
+
+  const open = () => {
     setPicked(current && current.in_campaign ? current.caller_id : '');
     setRefusal(null);
     setEditing(true);
-  }, [current]);
+  };
 
-  const onSet = useCallback(async () => {
-    if (!picked) return;
-    setBusy(true);
-    setRefusal(null);
-    try {
-      await set(userId, picked);
-      showToast(`Calls to ${agentName}’s contacts now go from ${formatPhone(picked)}.`, 'success');
-      setEditing(false);
-    } catch (err: unknown) {
-      setRefusal(agentCallerIdRefusal(err, 'Could not set that caller ID.'));
-      refreshAfter(err);
-    } finally {
-      setBusy(false);
-    }
-  }, [picked, set, userId, agentName, showToast, refreshAfter]);
-
-  const onClear = useCallback(async () => {
-    setBusy(true);
-    setRefusal(null);
-    try {
-      await clear(userId);
-      showToast(`${agentName}’s contacts are back on the shared rotation.`, 'success');
-      setEditing(false);
-    } catch (err: unknown) {
-      setRefusal(agentCallerIdRefusal(err, 'Could not clear that caller ID.'));
-      refreshAfter(err);
-    } finally {
-      setBusy(false);
-    }
-  }, [clear, userId, agentName, showToast, refreshAfter]);
-
-  if (releaseOnly) {
-    // Nothing new on a flag-off row unless the agent holds a number: a pending
-    // or failed read, or no dedication, renders as the row did before.
-    if (!data || !current) return null;
-    return (
-      <div className={styles.wrap}>
-        <div className={styles.cell} data-testid={`caller-id-${userId}`}>
-          <span className={styles.label}>Caller ID</span>
-          <span className={styles.value}>{formatPhone(current.caller_id)}</span>
-          {!current.in_campaign ? (
-            <span className={styles.stale} data-testid={`caller-id-stale-${userId}`}>
-              <AlertTriangle size={13} aria-hidden="true" />
-              {STALE_CALLER_ID_FLAG}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className={styles.change}
-            onClick={() => void onClear()}
-            disabled={busy}
-            aria-label={`Use shared rotation for ${agentName}`}
-          >
-            Use shared rotation
-          </button>
-        </div>
-        {refusal ? (
-          <p className={styles.refusal} role="alert" data-testid={`caller-id-refusal-${userId}`}>
-            {refusal}
-          </p>
-        ) : null}
-      </div>
-    );
-  }
+  // Flag off: nothing new on the row unless the agent holds a number; a pending
+  // or failed read, or no dedication, renders as the row did before.
+  if (releaseOnly && !current) return null;
 
   if (!data) {
     // Unknown is not "Shared rotation": a failed or pending read says nothing
@@ -186,13 +145,19 @@ export function AgentCallerIdControl({
   }
 
   const optionLabel = (number: string): string => {
-    const holder = holders.get(number);
+    const holder = byNumber.get(number);
     if (holder && holder.user_id !== userId) {
       return `${formatPhone(number)} — dedicated to ${holder.agent_name ?? FORMER_MEMBER_LABEL}`;
     }
     if (holder) return `${formatPhone(number)} (current)`;
     return formatPhone(number);
   };
+
+  const refusalNote = refusal ? (
+    <p className={styles.refusal} role="alert" data-testid={`caller-id-refusal-${userId}`}>
+      {refusal}
+    </p>
+  ) : null;
 
   return (
     <div className={styles.wrap}>
@@ -207,7 +172,17 @@ export function AgentCallerIdControl({
             {STALE_CALLER_ID_FLAG}
           </span>
         ) : null}
-        {!editing ? (
+        {releaseOnly ? (
+          <button
+            type="button"
+            className={styles.change}
+            onClick={onClear}
+            disabled={busy}
+            aria-label={`Use shared rotation for ${agentName}`}
+          >
+            Use shared rotation
+          </button>
+        ) : !editing ? (
           <button
             type="button"
             className={styles.change}
@@ -218,8 +193,9 @@ export function AgentCallerIdControl({
           </button>
         ) : null}
       </div>
+      {releaseOnly ? refusalNote : null}
 
-      {editing ? (
+      {editing && !releaseOnly ? (
         <div className={styles.editor} role="group" aria-label={`Caller ID for ${agentName}`}>
           {data.caller_ids.length === 0 ? (
             <p className={styles.muted}>This campaign has no caller IDs to dedicate.</p>
@@ -233,7 +209,7 @@ export function AgentCallerIdControl({
             >
               <option value="">Choose a number…</option>
               {data.caller_ids.map((number) => {
-                const holder = holders.get(number);
+                const holder = byNumber.get(number);
                 return (
                   <option
                     key={number}
@@ -249,13 +225,13 @@ export function AgentCallerIdControl({
           <button
             type="button"
             className="btn-primary"
-            onClick={() => void onSet()}
+            onClick={onSet}
             disabled={busy || !picked || picked === current?.caller_id}
           >
             Dedicate
           </button>
           {current ? (
-            <button type="button" className="btn-secondary" onClick={() => void onClear()} disabled={busy}>
+            <button type="button" className="btn-secondary" onClick={onClear} disabled={busy}>
               Use shared rotation
             </button>
           ) : null}
@@ -270,11 +246,7 @@ export function AgentCallerIdControl({
           >
             Cancel
           </button>
-          {refusal ? (
-            <p className={styles.refusal} role="alert" data-testid={`caller-id-refusal-${userId}`}>
-              {refusal}
-            </p>
-          ) : null}
+          {refusalNote}
         </div>
       ) : null}
     </div>

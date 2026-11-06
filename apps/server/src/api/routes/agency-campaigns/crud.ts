@@ -24,6 +24,7 @@ import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
 import { campaignConfigChange, encodeConfigChange } from '../../../agency/campaign-config-audit.js';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
+import { sendRefusal } from '../helpers/refusal.js';
 // How many ids one `GET /summaries` may name; the staffing `my-*` routes split
 // longer lists into reads of at most this many.
 import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
@@ -104,14 +105,10 @@ export function droppedDedicatedCallerIds(
 
 /** The 409 `caller_id_dedicated`, naming the numbers the PATCH would drop. */
 export function replyCallerIdDedicated(reply: FastifyReply, dropped: readonly string[]): FastifyReply {
-  return reply.code(409).send({
-    error: 'Conflict',
-    code: AGENCY_CALLER_ID_DEDICATED_CODE,
-    message: dropped.length === 1
-      ? `${dropped[0]} is dedicated to an agent on this campaign. Release it from the agent before removing it.`
-      : `${dropped.join(', ')} are dedicated to agents on this campaign. Release them from the agents before removing them.`,
-    details: { caller_ids: [...dropped] },
-  });
+  return sendRefusal(reply, 409, AGENCY_CALLER_ID_DEDICATED_CODE, dropped.length === 1
+    ? `${dropped[0]} is dedicated to an agent on this campaign. Release it from the agent before removing it.`
+    : `${dropped.join(', ')} are dedicated to agents on this campaign. Release them from the agents before removing them.`,
+  { details: { caller_ids: [...dropped] } });
 }
 
 /**

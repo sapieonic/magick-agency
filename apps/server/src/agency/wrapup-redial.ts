@@ -193,14 +193,17 @@ export async function startWrapupRedial(
   }
 
   // ── 3. Where the call goes from: the station, then a caller ID ─────────────
-  const ownerReplica = await deps.stations.ownerOf(sessionId);
+  const [ownerReplica, dedicated] = await Promise.all([
+    deps.stations.ownerOf(sessionId),
+    agencyAgentCallerIdRepository.mapForCampaign(campaign.id),
+  ]);
   if (!ownerReplica) return refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.no_station });
   // The contact's owner's dedicated number when they have one (DN4); otherwise the number the
   // customer just spoke to us from while it is still in the rotation (WR7: a number dedicated
   // to someone else since is not reused for a contact that is not theirs), else the rotation.
   const callerId = resolveCallerId({
     usable: usableCallerIds(campaign),
-    dedicated: await agencyAgentCallerIdRepository.mapForCampaign(campaign.id),
+    dedicated,
     ownerUserId: contact.assigned_user_id,
     offset: 0,
     sticky: attempt.caller_id,

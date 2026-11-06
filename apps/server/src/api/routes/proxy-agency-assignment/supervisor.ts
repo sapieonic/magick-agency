@@ -24,7 +24,7 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { callbackCodes } from '../../../db/repositories/agency/assignment-sql.js';
-import { resolveAgentNames } from '../../../agency/agency-agent-identity.js';
+import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import {
   assignmentCommitSchema,
   parseAssignmentOperation,
@@ -32,7 +32,7 @@ import {
   zodDetails,
   type CanonicalAssignment,
 } from '../../../agency/assignment/operation.js';
-import { isUuid, refuse, requireAssignmentEnabled, supervisedCampaign } from './shared.js';
+import { guardSupervisedCampaign, isUuid, refuse } from './shared.js';
 
 const log = createChildLogger({ component: 'proxy-agency-assignment' });
 
@@ -42,15 +42,8 @@ const ABSENT_AFTER_MAX_MINUTES = 10_080;
 type CampaignParams = { Params: { id: string } };
 
 /** Permission → id shape → flag → ownership. Null once it has replied. */
-async function guardCampaign(request: FastifyRequest<CampaignParams>, reply: FastifyReply): Promise<AgencyCampaignRecord | null> {
-  // A malformed id is the not-found answer an unknown one gets, never a `22P02`.
-  if (!isUuid(request.params.id)) {
-    refuse(reply, 404, 'campaign_not_found', 'Campaign not found.');
-    return null;
-  }
-  if (!(await requireAssignmentEnabled(request, reply))) return null;
-  return supervisedCampaign(request, reply, request.params.id.toLowerCase());
-}
+const guardCampaign = (request: FastifyRequest<CampaignParams>, reply: FastifyReply) =>
+  guardSupervisedCampaign(request, reply, { gated: true });
 
 function scopeOf(campaign: AgencyCampaignRecord): AssignmentCampaignScope {
   return { campaignId: campaign.id, tenantId: campaign.tenant_id, callbackCodes: callbackCodes(campaign.disposition_catalog) };
@@ -157,15 +150,7 @@ export async function registerAssignmentSupervisorRoutes(app: FastifyInstance): 
     ]);
     const staffed = new Set(staffing.map((s) => s.user_id));
     const ids = [...new Set([...staffing.map((s) => s.user_id), ...[...raw.owners.keys()].sort()])];
-    let names = new Map<string, string | null>();
-    if (ids.length > 0) {
-      try {
-        names = await resolveAgentNames(ids, campaign.tenant_id);
-      } catch (err) {
-        log.warn({ tenantId: campaign.tenant_id, err: err instanceof Error ? err.message : String(err) },
-          'assignment progress: agent name resolution failed; emitting agent_name: null');
-      }
-    }
+    const names = await agentNamesOrNone(ids, campaign.tenant_id, 'assignment progress');
     const now = Date.now();
     const agents: AgencyAssignmentProgressRow[] = ids.map((id) => {
       const t = raw.owners.get(id);

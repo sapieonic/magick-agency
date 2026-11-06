@@ -49,7 +49,7 @@ export function pickCallerId(pool: readonly string[], offset: number): string | 
  * Trimmed as well as filtered, because a padded entry is what the route now
  * stores trimmed but older rows may not be.
  */
-export function usableCallerIds(campaign: AgencyCampaignRecord): string[] {
+export function usableCallerIds(campaign: Pick<AgencyCampaignRecord, 'caller_ids'>): string[] {
   const pool = campaign.caller_ids;
   if (!Array.isArray(pool)) return [];
   return pool

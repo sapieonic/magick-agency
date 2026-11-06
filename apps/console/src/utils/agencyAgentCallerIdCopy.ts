@@ -4,7 +4,7 @@ import {
   AGENCY_CALLER_ID_DEDICATED_CODE,
   type AgencyAgentCallerIdErrorCode,
 } from '@magick-agency/contracts/api/agency/agent-caller-id';
-import { errorBody, errorCode } from './agencyErrors';
+import { errorCode, errorDetails } from './agencyErrors';
 import { joinAnd } from './agencyCampaignConfigForm';
 
 /**
@@ -31,17 +31,6 @@ export const ALL_DEDICATED_WARNING =
 export const STALE_CALLER_ID_FLAG =
   'No longer one of this campaign’s caller IDs, so their calls use the shared rotation.';
 
-/**
- * A refusal's `details` (`AgencyAgentCallerIdErrorResponse`, and the campaign
- * PATCH's `caller_id_dedicated`), or `null` when it carries none.
- */
-function refusalDetails(err: unknown): Record<string, unknown> | null {
-  const details = (errorBody(err) as { details?: unknown } | null)?.details;
-  return details && typeof details === 'object' && !Array.isArray(details)
-    ? (details as Record<string, unknown>)
-    : null;
-}
-
 /** Refusals of the dedicated caller ID routes, in the console's words. */
 export const AGENT_CALLER_ID_REFUSAL_COPY: Record<AgencyAgentCallerIdErrorCode, string> = {
   assignment_disabled: 'Contact assignment is turned off for this account.',
@@ -61,7 +50,7 @@ export const AGENT_CALLER_ID_REFUSAL_COPY: Record<AgencyAgentCallerIdErrorCode, 
 export function agentCallerIdRefusal(err: unknown, fallback: string): string {
   const code = errorCode(err);
   if (code === 'caller_id_taken') {
-    const holder = refusalDetails(err)?.['agent_name'];
+    const holder = errorDetails(err)?.['agent_name'];
     if (typeof holder === 'string' && holder.trim().length > 0) {
       return `That number is already dedicated to ${holder.trim()}. Pick another, or clear theirs first.`;
     }
@@ -79,7 +68,7 @@ export function agentCallerIdRefusal(err: unknown, fallback: string): string {
  */
 export function dedicatedCallerIdsOf(err: unknown): string[] | null {
   if (errorCode(err) !== AGENCY_CALLER_ID_DEDICATED_CODE) return null;
-  const listed = refusalDetails(err)?.['caller_ids'];
+  const listed = errorDetails(err)?.['caller_ids'];
   return Array.isArray(listed) ? listed.filter((n): n is string => typeof n === 'string') : [];
 }
 

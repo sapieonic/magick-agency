@@ -21,7 +21,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { agencyAgentCallerIdRepository, agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
-import { dedicatedCallerIdOf, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
+import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
 import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
@@ -76,7 +76,7 @@ export function summaryCallerId(
   }
   const stored = read.value;
   if (stored === null) return null;
-  return dedicatedCallerIdOf(usableCallerIds(campaign as AgencyCampaignRecord), new Map([[userId, stored]]), userId);
+  return usableCallerIds(campaign).includes(stored) ? stored : null;
 }
 
 export async function registerMyContactRoutes(app: FastifyInstance): Promise<void> {

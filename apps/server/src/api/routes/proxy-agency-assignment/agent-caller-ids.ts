@@ -16,25 +16,21 @@
  * `agency_campaign.agent_caller_id_set` / `_cleared` (`cause: 'supervisor'`), ids and the number
  * only (DN10). Part of `proxy-agency-assignment.routes.ts`.
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import {
-  AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS,
-  type AgencyAgentCallerId,
-  type AgencyAgentCallerIds,
-} from '@magick-agency/contracts/api/agency/agent-caller-id';
+import type { AgencyAgentCallerId, AgencyAgentCallerIds } from '@magick-agency/contracts/api/agency/agent-caller-id';
 import { createChildLogger } from '@magick-agency/observability';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
+import { auditAgentCallerIdCleared, auditAgentCallerIdSet } from '../../../agency/agent-caller-id-audit.js';
 import {
   agencyAgentCallerIdRepository,
   type AgentCallerIdRow,
 } from '../../../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
-import { resolveAgentNames } from '../../../agency/agency-agent-identity.js';
+import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { rotationCallerIds, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
-import { isUuid, refuse, requireAssignmentEnabled, supervisedCampaign } from './shared.js';
+import { guardSupervisedCampaign, isUuid, refuse } from './shared.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent-caller-ids' });
 
@@ -100,7 +96,7 @@ export function agentCallerIdsBody(
   rows: readonly AgentCallerIdRow[],
   names: ReadonlyMap<string, string | null>,
 ): AgencyAgentCallerIds {
-  const usable = usableCallerIds(campaign as AgencyCampaignRecord);
+  const usable = usableCallerIds(campaign);
   const dedicated = rows
     .map((r) => agentCallerIdOf(r, usable, names.get(r.user_id) ?? null))
     .sort((a, b) => {
@@ -127,41 +123,16 @@ export function agentCallerIdsBody(
 type CampaignParams = { Params: { id: string } };
 type AgentParams = { Params: { id: string; userId: string } };
 
-/**
- * Id shape → flag (when `gated`) → ownership, as the other supervisor routes. Only setting a
- * number is gated (DN9); the read and the release are not. Null once it has replied.
- */
-async function guardCampaign(
-  request: FastifyRequest<CampaignParams>,
-  reply: FastifyReply,
-  opts: { gated: boolean },
-): Promise<AgencyCampaignRecord | null> {
-  if (!isUuid(request.params.id)) {
-    refuse(reply, 404, 'campaign_not_found', AGENT_CALLER_ID_MESSAGES.campaign_not_found);
-    return null;
-  }
-  if (opts.gated && !(await requireAssignmentEnabled(request, reply))) return null;
-  return supervisedCampaign(request, reply, request.params.id.toLowerCase());
-}
-
 /** Names for `ids`; a failed lookup degrades to nulls (the read still answers). */
-async function namesFor(ids: readonly string[], tenantId: string): Promise<Map<string, string | null>> {
-  if (ids.length === 0) return new Map();
-  try {
-    return await resolveAgentNames(ids, tenantId);
-  } catch (err) {
-    log.warn({ tenantId, err: err instanceof Error ? err.message : String(err) },
-      'agent caller IDs: agent name resolution failed; emitting agent_name: null');
-    return new Map();
-  }
-}
+const namesFor = (ids: Iterable<string | null>, tenantId: string) =>
+  agentNamesOrNone(ids, tenantId, 'agent caller IDs');
 
 export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise<void> {
   /** GET /campaigns/:id/agent-caller-ids — every dedicated number and the rotation. Not flag-gated (DN9). */
   app.get<CampaignParams>('/campaigns/:id/agent-caller-ids', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const campaign = await guardCampaign(request, reply, { gated: false });
+    const campaign = await guardSupervisedCampaign(request, reply, { gated: false });
     if (!campaign) return reply;
     const rows = await agencyAgentCallerIdRepository.listForCampaign(campaign.tenant_id, campaign.id);
     const names = await namesFor(rows.map((r) => r.user_id), campaign.tenant_id);
@@ -178,7 +149,7 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
   app.put<AgentParams>('/campaigns/:id/agents/:userId/caller-id', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const campaign = await guardCampaign(request, reply, { gated: true });
+    const campaign = await guardSupervisedCampaign(request, reply, { gated: true });
     if (!campaign) return reply;
     const body = parseSetAgentCallerIdBody(request.body);
     if (!body.ok) return refuse(reply, 400, 'caller_id_invalid', AGENT_CALLER_ID_MESSAGES.caller_id_invalid, body.details);
@@ -214,21 +185,11 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
     }
     if (outcome.changed) {
       log.info({ tenantId: campaign.tenant_id, campaignId: campaign.id, userId: agentId }, 'Caller ID dedicated to an agent');
-      platformAuditLogger.log({
-        tenant_id: campaign.tenant_id,
-        account_id: campaign.account_id,
-        ...requestAuditActor(request),
-        action: AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS.set,
-        resource_type: 'agency_campaign',
-        resource_id: campaign.id,
-        campaign_id: campaign.id,
-        details: {
-          campaign_id: campaign.id,
-          user_id: agentId,
-          caller_id: outcome.row.caller_id,
-          previous_caller_id: outcome.previous_caller_id,
-        },
-      });
+      auditAgentCallerIdSet(
+        { tenantId: campaign.tenant_id, accountId: campaign.account_id, actor: requestAuditActor(request),
+          campaignId: campaign.id, userId: agentId, callerId: outcome.row.caller_id },
+        outcome.previous_caller_id,
+      );
     }
     const name = (await namesFor([agentId], campaign.tenant_id)).get(agentId) ?? null;
     return reply.code(200).send(agentCallerIdOf(outcome.row, outcome.caller_ids, name));
@@ -241,7 +202,7 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
   app.delete<AgentParams>('/campaigns/:id/agents/:userId/caller-id', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const campaign = await guardCampaign(request, reply, { gated: false });
+    const campaign = await guardSupervisedCampaign(request, reply, { gated: false });
     if (!campaign) return reply;
     const userId = request.params.userId;
     // Nothing can be dedicated to a malformed id: nothing to release.
@@ -250,16 +211,11 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
     const released = await agencyAgentCallerIdRepository.clear(campaign.id, agentId);
     if (released !== null) {
       log.info({ tenantId: campaign.tenant_id, campaignId: campaign.id, userId: agentId }, 'Agent\'s dedicated caller ID released');
-      platformAuditLogger.log({
-        tenant_id: campaign.tenant_id,
-        account_id: campaign.account_id,
-        ...requestAuditActor(request),
-        action: AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS.cleared,
-        resource_type: 'agency_campaign',
-        resource_id: campaign.id,
-        campaign_id: campaign.id,
-        details: { campaign_id: campaign.id, user_id: agentId, caller_id: released, cause: 'supervisor' },
-      });
+      auditAgentCallerIdCleared(
+        { tenantId: campaign.tenant_id, accountId: campaign.account_id, actor: requestAuditActor(request),
+          campaignId: campaign.id, userId: agentId, callerId: released },
+        'supervisor',
+      );
     }
     return reply.code(204).send();
   });

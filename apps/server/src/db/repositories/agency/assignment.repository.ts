@@ -623,7 +623,8 @@ export class AgencyAssignmentRepository {
           WHERE d.campaign_id = camp.id AND d.user_id = $2::uuid
             AND NOT EXISTS (
               SELECT 1 FROM agency_campaign_agents s
-               WHERE s.campaign_id = d.campaign_id AND s.user_id = d.user_id AND s.unassigned_at IS NULL)
+               WHERE s.tenant_id = $1::uuid AND s.campaign_id = d.campaign_id AND s.user_id = d.user_id
+                 AND s.unassigned_at IS NULL)
          RETURNING d.campaign_id, d.caller_id, d.set_at),
        rel AS (
          SELECT r.campaign_id, r.caller_id FROM rel_all r
