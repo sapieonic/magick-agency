@@ -21,7 +21,18 @@ vi.mock('../../api/accounts', () => ({
 }));
 
 import { TenantProvider, useTenant } from '../../contexts/TenantContext';
+import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
 import { ApiError } from '../../api/client';
+
+/**
+ * Where these tests run: a sign-in page, which is unscoped. `TenantProvider` needs
+ * the real URL history (`UrlScopeProvider`), and these tests drive its state
+ * machinery — the selection, the account resolution, the in-place switch — which
+ * is what a switch does on an unscoped page (an invite claim picks the tenant it
+ * joined). A switch on an app page is a full page load, and that, with the URL
+ * scope, is `routing/scopedRouting.test.tsx`'s.
+ */
+const UNSCOPED_PAGE = '/login';
 
 /**
  * The refusal the server actually sends for a role below `account.read`'s
@@ -82,12 +93,17 @@ function setupAuth(tenants: Tenant[], memberships: Membership[] = [], accounts: 
 }
 
 function wrapper({ children }: { children: ReactNode }) {
-  return <TenantProvider>{children}</TenantProvider>;
+  return (
+    <UrlScopeProvider>
+      <TenantProvider>{children}</TenantProvider>
+    </UrlScopeProvider>
+  );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  window.history.replaceState(null, '', UNSCOPED_PAGE);
 });
 
 // ─── hook guard ──────────────────────────────────────────────────────────────
@@ -98,6 +114,17 @@ describe('useTenant', () => {
     expect(() => renderHook(() => useTenant())).toThrow(
       'useTenant must be used within TenantProvider',
     );
+  });
+
+  // Without the real history a switch has no page to load, and a provider that
+  // fell back to switching in place would test a path production never takes.
+  it('refuses to run outside UrlScopeProvider', () => {
+    setupAuth([]);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => render(<TenantProvider>{null}</TenantProvider>)).toThrow(
+      'useUrlHistory must be used within UrlScopeProvider',
+    );
+    vi.mocked(console.error).mockRestore();
   });
 });
 
@@ -609,7 +636,7 @@ describe('context value identity', () => {
     function Host() {
       const [, setN] = useState(0);
       bump = () => setN((n) => n + 1);
-      return <TenantProvider><Consumer /></TenantProvider>;
+      return <UrlScopeProvider><TenantProvider><Consumer /></TenantProvider></UrlScopeProvider>;
     }
 
     render(<Host />);

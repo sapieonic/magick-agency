@@ -221,7 +221,7 @@ function popTo(url: string) {
   });
 }
 
-/** What `setActiveTenantId` records as this browser's choice. */
+/** This browser's recorded selection (`TenantContext`'s persist effect). */
 const storedTenant = () => JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as unknown;
 
 beforeEach(() => {
@@ -385,22 +385,39 @@ describe('inside a scope', () => {
     expect(ids()).toBe('t-a/acct-1');
   });
 
-  it('switching tenant records it and loads the root, which opens it at its home', async () => {
+  it('switching tenant loads its first account’s home, scoped, and records nothing before that page does', async () => {
     openAt('/t/t-a/a/acct-2/agency/campaigns');
     await screen.findByRole('heading', { name: 'campaigns' });
     const before = window.history.length;
+    expect(storedTenant()).toEqual({ tenantId: 't-a', accountId: 'acct-2' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b' }));
 
-    expect(storedTenant()).toEqual({ tenantId: 't-b' });
-    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
-    expect(mocks.loadPage).toHaveBeenCalledWith('/');
-    // Nothing moves in place, and nothing overwrites the recorded choice before the load.
+    await waitFor(() => expect(mocks.loadPage).toHaveBeenCalledTimes(1));
+    expect(mocks.loadPage).toHaveBeenCalledWith('/t/t-b/a/acct-b1');
+    // Nothing moves in place, and this browser's selection is still this page's:
+    // a load the browser cancels (the station's leave-page prompt) must leave it.
     await act(async () => {});
     expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns');
     expect(window.history.length).toBe(before);
     expect(ids()).toBe('t-a/acct-2');
-    expect(storedTenant()).toEqual({ tenantId: 't-b' });
+    expect(storedTenant()).toEqual({ tenantId: 't-a', accountId: 'acct-2' });
+  });
+
+  it('switching to a tenant with no account to open switches in place, at the unscoped root', async () => {
+    mocks.listAccounts.mockImplementation(async (tenantId: string) =>
+      tenantId === 't-b' ? [] : (ACCOUNTS[tenantId] ?? []),
+    );
+    openAt('/t/t-a/a/acct-2/agency/campaigns');
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b' }));
+
+    // No scope to load, so the tenant opens here, where the layouts say why.
+    await screen.findByRole('heading', { name: 'home' });
+    await waitFor(() => expect(ids()).toBe('t-b/null'));
+    expect(window.location.pathname).toBe('/');
+    expect(mocks.loadPage).not.toHaveBeenCalled();
   });
 
   it('choosing the tenant already open is not a switch', async () => {
@@ -430,7 +447,7 @@ describe('inside a scope', () => {
     expect(mocks.loadPage).not.toHaveBeenCalled();
   });
 
-  it('reloading accounts after the open one went away re-points the URL at the replacement', async () => {
+  it('reloading accounts after the open one went away re-points the URL at the replacement’s home', async () => {
     openAt('/t/t-a/a/acct-2/agency/campaigns');
     await screen.findByRole('heading', { name: 'campaigns' });
     expect(ids()).toBe('t-a/acct-2');
@@ -441,8 +458,10 @@ describe('inside a scope', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Reload accounts' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns'));
-    await waitFor(() => expect(ids()).toBe('t-a/acct-1'));
+    // Its home, not the page the user was on: that page's record was acct-2's.
+    await screen.findByRole('heading', { name: 'home' });
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1');
+    expect(ids()).toBe('t-a/acct-1');
     // Replaced: back must not return to a link to an account that no longer exists.
     expect(window.history.length).toBe(before);
     expect(screen.queryByText('You can’t open this account')).toBeNull();
@@ -473,23 +492,70 @@ describe('a scope this person cannot open', () => {
     expect(mocks.listMyAccounts).not.toHaveBeenCalledWith('t-zzz');
   });
 
-  it('"Go to my workspace" lands in a scope the person can open', async () => {
+  it('falls back to this browser’s own workspace underneath, and never records the fallback', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ tenantId: 't-b', accountId: 'acct-b2' }));
+    openAt('/t/t-zzz/a/acct-1/agency/campaigns');
+
+    await screen.findByText('You can’t open this workspace');
+    // The stored tenant, not the session's first one.
+    await waitFor(() => expect(mocks.listAccounts).toHaveBeenCalledWith('t-b'));
+    expect(mocks.listAccounts).not.toHaveBeenCalledWith('t-a');
+    await act(async () => {});
+    expect(storedTenant()).toEqual({ tenantId: 't-b', accountId: 'acct-b2' });
+  });
+
+  it('"Go to my workspace" loads the unscoped root, which opens the stored workspace', async () => {
     openAt('/t/t-zzz/a/acct-1/agency/campaigns');
     await screen.findByText('You can’t open this workspace');
 
     fireEvent.click(screen.getByRole('button', { name: 'Go to my workspace' }));
 
-    await screen.findByRole('heading', { name: 'home' });
-    expect(window.location.pathname).toBe('/t/t-a/a/acct-1');
-    expect(ids()).toBe('t-a/acct-1');
+    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPage).toHaveBeenCalledWith('/');
   });
 
-  it('an account not in the tenant is refused', async () => {
+  it('an account not in the tenant is refused, and the fallback underneath is not recorded', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ tenantId: 't-b', accountId: 'acct-b2' }));
     openAt('/t/t-a/a/acct-zzz/agency/campaigns');
 
     await screen.findByText('You can’t open this account');
     expect(screen.queryByRole('heading', { name: 'campaigns' })).toBeNull();
     expect(window.location.pathname).toBe('/t/t-a/a/acct-zzz/agency/campaigns');
+    await act(async () => {});
+    expect(storedTenant()).toEqual({ tenantId: 't-b', accountId: 'acct-b2' });
+  });
+
+  it('a retry after an outage still refuses it, rather than re-pointing the link at the first account', async () => {
+    mocks.listAccounts.mockRejectedValue(outage());
+    mocks.listMyAccounts.mockRejectedValue(outage());
+    openAt('/t/t-a/a/acct-zzz/agency/campaigns');
+    // Resolution 'error': the gate renders the page, which owns the retry.
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    mocks.listAccounts.mockImplementation(async (tenantId: string) => ACCOUNTS[tenantId] ?? []);
+    fireEvent.click(screen.getByRole('button', { name: 'Reload accounts' }));
+
+    await screen.findByText('You can’t open this account');
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-zzz/agency/campaigns');
+    expect(screen.queryByRole('heading', { name: 'campaigns' })).toBeNull();
+  });
+
+  it('opens once the session grows to include the tenant (an invite claimed elsewhere)', async () => {
+    mocks.useAuth.mockReturnValue({
+      ...mocks.useAuth(),
+      tenants: [tenant('t-a')],
+      memberships: [membership('m-a', 't-a')],
+    });
+    const { rerender } = openAt('/t/t-b/a/acct-b1/agency/campaigns');
+    await screen.findByText('You can’t open this workspace');
+
+    signIn();
+    rerender(<TestApp />);
+
+    // Before the fix the context never adopted t-b: the gate waited, forever.
+    await screen.findByRole('heading', { name: 'campaigns' });
+    expect(ids()).toBe('t-b/acct-b1');
+    expect(window.location.pathname).toBe('/t/t-b/a/acct-b1/agency/campaigns');
   });
 });
 
@@ -654,16 +720,17 @@ describe('under StrictMode', () => {
     expect(ids()).toBe('t-a/acct-1');
   });
 
-  it('a tenant switch records it and loads the root, once', async () => {
+  it('a tenant switch loads the new tenant’s scope, once', async () => {
     openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
     await screen.findByRole('heading', { name: 'campaigns' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b' }));
 
-    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
-    expect(mocks.loadPage).toHaveBeenCalledWith('/');
+    await waitFor(() => expect(mocks.loadPage).toHaveBeenCalledTimes(1));
+    expect(mocks.loadPage).toHaveBeenCalledWith('/t/t-b/a/acct-b1');
     await act(async () => {});
-    expect(storedTenant()).toEqual({ tenantId: 't-b' });
+    expect(mocks.loadPage).toHaveBeenCalledTimes(1);
+    expect(storedTenant()).toEqual({ tenantId: 't-a', accountId: 'acct-1' });
     expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns');
   });
 

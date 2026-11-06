@@ -40,8 +40,6 @@ export interface UrlScopeValue {
   scope: UrlScope | null;
   /** `/t/<tenant>/a/<account>` as written in the URL, or `''`. */
   prefix: string;
-  location: Location;
-  action: NavigationType;
   /** `null` outside a provider. `ScopedRouter` hands it to react-router as its navigator. */
   history: BrowserHistory | null;
   /**
@@ -52,22 +50,33 @@ export interface UrlScopeValue {
   go: (scope: UrlScope | null, path?: string, options?: { replace?: boolean }) => void;
 }
 
-const NO_LOCATION: Location = { pathname: '/', search: '', hash: '', state: null, key: 'default' };
+/** The current location, which only the router needs: it changes on every navigation. */
+export interface UrlLocationValue {
+  location: Location;
+  action: NavigationType;
+}
 
 /**
- * Outside a provider (unit tests that render a context or a page on its own) there
- * is no URL to scope, and moving between scopes is a no-op.
+ * Outside a provider (unit tests that render a page or a guard on its own) there
+ * is no URL to scope, and moving between scopes is a no-op. Only readers fall back
+ * to this: `TenantProvider`, whose switches load pages, requires the provider
+ * (`useUrlHistory`).
  */
 const UNSCOPED: UrlScopeValue = {
   scope: null,
   prefix: '',
-  location: NO_LOCATION,
-  action: 'POP' as NavigationType,
   history: null,
   go: () => {},
 };
 
+/**
+ * Two contexts, split by how often they change. The scope value changes only when
+ * the URL's tenant or account does, so `TenantProvider` and the gates that read it
+ * do not re-render on every in-app navigation; the location changes on every one,
+ * and only `ScopedRouter` reads it.
+ */
 const UrlScopeContext = createContext<UrlScopeValue>(UNSCOPED);
+const UrlLocationContext = createContext<UrlLocationValue | null>(null);
 
 export function UrlScopeProvider({ children }: { children: ReactNode }) {
   const historyRef = useRef<BrowserHistory | null>(null);
@@ -78,7 +87,7 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
   }
   const history = historyRef.current;
 
-  const [state, setState] = useState<{ action: NavigationType; location: Location }>(() => ({
+  const [state, setState] = useState<UrlLocationValue>(() => ({
     action: history.action,
     location: history.location,
   }));
@@ -97,8 +106,7 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
     return unlisten;
   }, [history]);
 
-  const { location, action } = state;
-  const pathname = location.pathname;
+  const pathname = state.location.pathname;
   const parsed = parseUrlScope(pathname);
   const scopeTenant = parsed?.tenantId ?? null;
   const scopeAccount = parsed?.accountId ?? null;
@@ -122,14 +130,35 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
     [history],
   );
 
-  const value = useMemo<UrlScopeValue>(
-    () => ({ scope, prefix, location, action, history, go }),
-    [scope, prefix, location, action, history, go],
-  );
+  const value = useMemo<UrlScopeValue>(() => ({ scope, prefix, history, go }), [scope, prefix, history, go]);
 
-  return <UrlScopeContext.Provider value={value}>{children}</UrlScopeContext.Provider>;
+  return (
+    <UrlScopeContext.Provider value={value}>
+      <UrlLocationContext.Provider value={state}>{children}</UrlLocationContext.Provider>
+    </UrlScopeContext.Provider>
+  );
 }
 
+/** The URL's scope and the way between scopes; unscoped outside a provider. */
 export function useUrlScope(): UrlScopeValue {
   return useContext(UrlScopeContext);
+}
+
+/**
+ * {@link useUrlScope} for a caller that must have the real history, and so must
+ * sit under the provider: `TenantProvider`, whose switches load pages. Throwing
+ * rather than falling back keeps a test that forgets the provider from quietly
+ * exercising a switch production never makes.
+ */
+export function useUrlHistory(): UrlScopeValue & { history: BrowserHistory } {
+  const value = useContext(UrlScopeContext);
+  if (!value.history) throw new Error('useUrlHistory must be used within UrlScopeProvider');
+  return value as UrlScopeValue & { history: BrowserHistory };
+}
+
+/** The current location and how it was reached; for `ScopedRouter`. */
+export function useUrlLocation(): UrlLocationValue {
+  const value = useContext(UrlLocationContext);
+  if (!value) throw new Error('useUrlLocation must be used within UrlScopeProvider');
+  return value;
 }

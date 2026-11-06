@@ -6,6 +6,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { useUrlScope } from '../../contexts/UrlScopeContext';
+import { loadPage } from '../../utils/pageLoad';
 
 /**
  * Keeps every signed-in page's URL scoped to the tenant and account on screen,
@@ -94,14 +95,14 @@ export function ScopeGate() {
  * A shared link to a tenant or account the signed-in person cannot open.
  *
  * Full-viewport, outside both shells, so it carries its own way out: back to their
- * own workspace (the unscoped root, which `ScopeGate` then scopes to the account
- * they can open), or sign out — the link may simply have been meant for another
- * of their sign-ins.
+ * own workspace, or sign out — the link may simply have been meant for another of
+ * their sign-ins. "Their own workspace" is a full load of the unscoped root, which
+ * opens the tenant and account this browser last had (the refused link is never
+ * persisted, `TenantContext`), the same way a switch loads a fresh page.
  */
 function ScopeUnavailable({ what }: { what: 'tenant' | 'account' }) {
   const { logout } = useAuth();
   const { accountResolution, reloadAccounts } = useTenant();
-  const { go } = useUrlScope();
   // A narrowed account list (`'degraded'`) may simply be missing the account, so
   // that case is offered a retry rather than told it has no access.
   const mayBeShort = what === 'account' && accountResolution === 'degraded';
@@ -123,7 +124,7 @@ function ScopeUnavailable({ what }: { what: 'tenant' | 'account' }) {
                 Try again
               </button>
             ) : null}
-            <button type="button" onClick={() => go(null, '/')}>
+            <button type="button" onClick={() => loadPage('/')}>
               Go to my workspace
             </button>
             <button type="button" onClick={() => void logout()}>
