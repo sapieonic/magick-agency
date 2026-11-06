@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-02.
+are as of 2026-11-06.
 
 ## What Magick Agency is
 
@@ -32,7 +32,9 @@ on binary A-law, WebSocket and carrier bounds, sized ceilings, a continuous anal
 cheaper pacing) leaves server 7430 unit / 1511 integration + 10 expected fail; phase B (media and
 analysis worker processes over IPC) is next. Contact assignment (2026-11-03, behind a flag: supervisors
 assign contacts, agents work their own queue, agent retry and outcome overrides, decisions
-CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; console 5136; app 1392.
+CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; console 5136; app 1392. Customer history
+(2026-11-06: one number searched across the tenant's campaigns, CH1–CH12) leaves server 8206 unit /
+1998 rest-lane integration + 9 expected fail; console 5457; the app's Dart side not yet run.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)

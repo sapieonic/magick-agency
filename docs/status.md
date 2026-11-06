@@ -905,20 +905,20 @@ asked, the build's own calls CH6–CH12.
 
 ## Test counts
 
-Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
-review fixes, from inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33
-and `pnpm test:release` 10 pass; `pnpm build` clean). Integration on `05e988e`; unit, release,
-Grafana and build again after merging `main` (#36):
+Latest run, 2026-11-06, the customer-history branch (`001c3b6`), from inside each package
+(`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass;
+`pnpm build` clean). The agent app's Dart suites did not run (no SDK where it was built; the
+mobile CI job is their first run):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 8036 passed + 42 skipped (404 files) | rest lane 1916 passed + 9 expected fail + 1 skipped (198 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 562 (53 files) |
-| `apps/console` | 5122 (270 files) | — |
-| `apps/super-admin` | 436 | — |
-| `packages/contracts` | 281, `contracts-literals --check` up to date | — |
+| `apps/server` | 8206 passed + 1 expected fail + 42 skipped (410 files) | rest lane 1998 passed + 9 expected fail + 1 skipped (204 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 571 (55 files) |
+| `apps/console` | 5457 (287 files) | — |
+| `apps/super-admin` | 446 | — |
+| `packages/contracts` | 329, `contracts-literals --check` up to date | — |
 | `packages/web-ui` | 235 | — |
-| `packages/domain` | 61 | — |
+| `packages/domain` | 109 | — |
 | `packages/observability` | 14 | — |
 | `apps/mobile` | `flutter test` 1404, `agency_wire` 399, `flutter analyze` and `dart analyze` (`agency_wire`) clean, Flutter 3.47.7 | — |
 
