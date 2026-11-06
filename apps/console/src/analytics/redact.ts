@@ -142,12 +142,27 @@ export function normaliseEncodedUrlScope(value: string): string {
   return value.includes('%') ? value.replace(ENCODED_SCOPE_RE, ENCODED_SCOPE_PLACEHOLDER) : value;
 }
 
+/**
+ * Whether `value` could hold a scope prefix at all, plain or percent-encoded. Every
+ * capture runs every string property through {@link cleanString}, and almost none
+ * of them is a URL: one scan here spares them the origin, prefix and encoded
+ * passes below. Case-insensitive like the markers themselves.
+ */
+const MAY_HOLD_SCOPE_RE = /\/t\/|%2Ft%2F/i;
+
 /** One string on its way to PostHog: scope normalised, invite token redacted. */
 function cleanString(value: string): string {
-  const scoped = value.includes('href="')
-    ? value.replace(CHAIN_HREF_RE, (_match, open: string, url: string) => `${open}${normaliseUrlScope(url)}`)
-    : value;
-  return redactInviteToken(normaliseEncodedUrlScope(normaliseUrlScope(scoped)));
+  let scoped = value;
+  if (MAY_HOLD_SCOPE_RE.test(value)) {
+    // An autocapture `$elements_chain` holds its URLs in `href="…"` attributes,
+    // each normalised in place; the chain as a whole is not a URL, so the
+    // whole-value pass is for every other string.
+    scoped = value.includes('href="')
+      ? value.replace(CHAIN_HREF_RE, (_match, open: string, url: string) => `${open}${normaliseUrlScope(url)}`)
+      : normaliseUrlScope(value);
+    scoped = normaliseEncodedUrlScope(scoped);
+  }
+  return redactInviteToken(scoped);
 }
 
 /**

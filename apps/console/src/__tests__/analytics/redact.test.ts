@@ -175,6 +175,23 @@ describe('normaliseUrlScope', () => {
     expect(JSON.stringify(out)).not.toContain(ACCOUNT);
   });
 
+  // The bag's cheap pre-check (`MAY_HOLD_SCOPE_RE`) must not skip what the router
+  // matches: its markers are case-insensitive, and an encoded scope has no `/t/`.
+  it('normalises upper-case markers and a scope that is only percent-encoded', () => {
+    const upper = SCOPE.replace('/t/', '/T/').replace('/a/', '/A/');
+    const out = redactAnalyticsProperties({
+      $pathname: `${upper}/agency`,
+      $elements_chain: `a:href="${upper}/dialer"`,
+      next: `/login?next=${encodeURIComponent(upper).toUpperCase()}`,
+    });
+
+    expect(out).toEqual({
+      $pathname: '/t/:tenant/a/:account/agency',
+      $elements_chain: 'a:href="/t/:tenant/a/:account/dialer"',
+      next: `/login?next=${encodeURIComponent('/t/:tenant/a/:account')}`,
+    });
+  });
+
   it('still redacts a join link, scoped or not', () => {
     const TOKEN = 'Xk8sQ2vLp7NmR4tYwZ1aB3cD5eF6gH9jK0lM2nO4pQ6';
     const out = redactAnalyticsProperties({
