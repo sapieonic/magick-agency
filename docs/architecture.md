@@ -152,6 +152,11 @@ See [`seams.md`](seams.md).
 A request goes: app-wide limiter → session (Firebase) → tenant context → RBAC → public handler →
 `callCore` → internal handler → repository.
 
+A few families read repositories directly, with no internal handler hop, because their reads
+span what one internal call covers: insights, contact assignment, staffing, DNC, and customer
+history (`proxy-agency-customers`, `docs/customer-history.md`), which searches one number across
+every account the caller belongs to (CH2) where every internal handler is single-account.
+
 ## Identity and tenancy
 
 - **Firebase.** `auth/firebase.ts` initialises `firebase-admin` with only the project id

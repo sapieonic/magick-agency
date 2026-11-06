@@ -23,6 +23,13 @@ abstract final class Routes {
   static const calls = '/calls';
   static const me = '/me';
 
+  /// Customer history, children of [calls] (the Calls tab's search action).
+  /// The number searched is never in these paths, nor in a query: it lives
+  /// in `customerHistoryControllerProvider` (CH6). The results page with no
+  /// search in memory offers to search.
+  static const customerSearch = '/calls/customer';
+  static const customerHistory = '/calls/customer/results';
+
   static const preflightPattern = '/preflight/:campaignId';
   static String preflight(String campaignId) => '/preflight/$campaignId';
 

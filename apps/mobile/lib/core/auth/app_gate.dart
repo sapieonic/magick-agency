@@ -642,7 +642,8 @@ class AppGateNotifier extends Notifier<AppGate> {
       _holdingInvite = false;
       _forget();
       state = GateSignedOut(notice: notice);
-      await store.clearLastAccount();
+      // The next person on this phone sees neither the account nor the numbers searched.
+      await Future.wait([store.clearLastAccount(), store.clearRecentSearches()]);
       try {
         await auth.signOut();
       } on AuthFailure catch (e) {

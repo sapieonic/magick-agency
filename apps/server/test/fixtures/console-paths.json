@@ -2500,6 +2500,27 @@
       "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
     },
     {
+      "method": "POST",
+      "path": "/proxy/agency/customers/search",
+      "source": "apps/console/src/api/customerHistory.ts",
+      "status": "served",
+      "reason": "customer history: search one number, served by the public API layer at the console path (contracts api/agency/customer-history.ts, docs/customer-history.md)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/customers/timeline",
+      "source": "apps/console/src/api/customerHistory.ts",
+      "status": "served",
+      "reason": "customer history: a page of one search's timeline, served by the public API layer at the console path (contracts api/agency/customer-history.ts, docs/customer-history.md)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/customers/export",
+      "source": "apps/console/src/api/customerHistory.ts",
+      "status": "served",
+      "reason": "customer history: one search's timeline as CSV, served by the public API layer at the console path (contracts api/agency/customer-history.ts, docs/customer-history.md)"
+    },
+    {
       "method": "GET",
       "path": "/proxy/agency/campaigns/:id/insights/uploads",
       "source": "apps/console/src/api/agencyInsights.ts",

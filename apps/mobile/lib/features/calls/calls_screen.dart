@@ -4,9 +4,12 @@ import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../app/routes.dart';
 import '../../app/theme/tokens.dart';
 import '../../ui/primitives.dart';
+import '../customers/customer_history_copy.dart' show CustomerHistoryCopy;
 import '../performance/agent_workspace.dart';
 import '../performance/campaign_names.dart';
 import 'calls_controller.dart';
@@ -77,6 +80,17 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
             _CountLine(view: view),
           ],
         ),
+        actions: [
+          // Customer history: every interaction with one number, across the
+          // campaigns and the soft phone (the number goes in the screen's box,
+          // never in the route).
+          IconButton(
+            key: const Key('customer-search-open'),
+            tooltip: CustomerHistoryCopy.openSearch,
+            icon: const Icon(Icons.manage_search),
+            onPressed: () => unawaited(context.push<void>(Routes.customerSearch)),
+          ),
+        ],
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

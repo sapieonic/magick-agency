@@ -191,7 +191,55 @@ final Map<String, Map<String, Decoder>> decoders = {
     'uplink_probe_response': (j) => j['received_bytes']! as int,
     'error_not_staffed': ErrorBody.fromJson,
   },
+  'customer-history.json': {
+    'search_request': (j) => CustomerSearchRequest(
+      by: CustomerSearchBy.fromWire(j['by']! as String),
+      value: j['value']! as String,
+      country: j['country'] as String?,
+    ),
+    'search_response': CustomerSearchResponse.fromJson,
+    'entry_softphone_call': CustomerTimelineEntry.fromJson,
+    'entry_callback': CustomerTimelineEntry.fromJson,
+    'entry_campaign_call': CustomerTimelineEntry.fromJson,
+    'entry_dnc_mark': CustomerTimelineEntry.fromJson,
+    'entry_roster_entry': CustomerTimelineEntry.fromJson,
+    'search_response_empty': CustomerSearchResponse.fromJson,
+    'timeline_request': decodeTimelineRequest,
+    'timeline_page_last': CustomerTimelinePage.fromJson,
+    'error_invalid_number': CustomerHistoryRefusal.fromJson,
+    'error_search_expired': CustomerHistoryRefusal.fromJson,
+  },
 };
+
+/// The fixture files that are not wire samples: the vocabularies (their own
+/// suite, `literals_test.dart`) and the search box's number table (its own
+/// suite, `customer_search_number_test.dart`).
+const notSamples = {'literals.json', 'customer-search-numbers.json'};
+
+/// `timeline_request` rebuilt through the Dart request type, so its
+/// `toJson()` is checked against the fixture.
+CustomerTimelineRequest decodeTimelineRequest(Map<String, Object?> j) {
+  final f = j['filters'] as Map<String, Object?>?;
+  List<String>? strings(Object? v) => (v as List<Object?>?)?.cast<String>();
+  DateTime? time(Object? v) => v == null ? null : DateTime.parse(v as String);
+  return CustomerTimelineRequest(
+    searchId: j['search_id']! as String,
+    filters: f == null
+        ? null
+        : CustomerTimelineFilters(
+            campaignIds: strings(f['campaign_ids']),
+            from: time(f['from']),
+            to: time(f['to']),
+            outcomes: strings(f['outcomes'])?.map(AttemptOutcome.fromWire).toList(),
+            dispositionCodes: strings(f['disposition_codes']),
+            agentUserIds: strings(f['agent_user_ids']),
+            connectedOnly: f['connected_only'] as bool?,
+            channel: f['channel'] == null ? null : CustomerTimelineChannel.fromWire(f['channel']! as String),
+          ),
+    cursor: j['cursor'] as String?,
+    limit: j['limit'] as int?,
+  );
+}
 
 /// The request bodies, whose `toJson()` must reproduce the fixture exactly.
 Map<String, Object?>? encoded(Object o) => switch (o) {
@@ -211,6 +259,8 @@ Map<String, Object?>? encoded(Object o) => switch (o) {
   final ManualCallDncRequest r => r.toJson(),
   final AgentRetryRequest r => r.toJson(),
   final MyContactCallRequest r => r.toJson(),
+  final CustomerSearchRequest r => r.toJson(),
+  final CustomerTimelineRequest r => r.toJson(),
   _ => null,
 };
 
@@ -296,8 +346,49 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   final InviteUnavailable i => [i.status],
   final InviteClaimRefusal r => [r.status],
   final NotificationPreferencesResponse n => n.events.expand((e) => [e.cadence, e.frequency, e.defaultFrequency]),
+  final CustomerSearchRequest r => [r.by],
+  final CustomerTimelineRequest r => [r.filters?.channel, ...?r.filters?.outcomes],
+  final CustomerSearchResponse r => customerSearchEnums(r),
+  final CustomerTimelineEntry e => customerEntryEnums(e),
+  final CustomerTimelinePage p => p.entries.expand(customerEntryEnums),
+  final CustomerHistoryRefusal r => [r.code, r.numberError],
   _ => const [],
 };
+
+/// A customer search answer's closed-vocabulary fields, its timeline included.
+Iterable<WireEnum?> customerSearchEnums(CustomerSearchResponse r) {
+  final s = r.summary;
+  return <WireEnum?>[
+    r.key.by,
+    for (final c in s.contacts) ...<WireEnum?>[c.state, c.campaign.status, ...c.campaigns.map((x) => x.status)],
+    s.totals.lastContacted?.channel,
+    s.totals.lastContacted?.outcome,
+    ...s.dnc.map((d) => d.scope),
+    ...s.open.callbacks.map((c) => c.campaign.status),
+    ...s.open.overrides.map((o) => o.campaign.status),
+    for (final l in s.open.liveCalls) ...<WireEnum?>[l.channel, l.campaign?.status],
+    ...s.filterOptions.outcomes,
+    ...r.timeline.entries.expand(customerEntryEnums),
+  ];
+}
+
+/// One timeline entry's closed-vocabulary fields, its kind first.
+Iterable<WireEnum?> customerEntryEnums(CustomerTimelineEntry e) {
+  final List<WireEnum?> fields = switch (e) {
+    final CustomerTimelineCampaignCall c => <WireEnum?>[
+      c.campaign.status,
+      c.outcome,
+      c.recording,
+      ...c.overrideApplied,
+    ],
+    final CustomerTimelineSoftphoneCall c => <WireEnum?>[c.campaign?.status, c.outcome, c.recording],
+    final CustomerTimelineCallback c => <WireEnum?>[c.source.channel, c.campaign?.status, c.status],
+    final CustomerTimelineDncMark d => <WireEnum?>[d.entry.scope],
+    final CustomerTimelineRosterEntry r => <WireEnum?>[r.campaign.status],
+    CustomerTimelineUnknownEntry() => <WireEnum?>[],
+  };
+  return <WireEnum?>[e.kind, ...fields];
+}
 
 /// A manual call's closed-vocabulary fields, its contact and priors included.
 Iterable<WireEnum?> manualCallEnums(ManualCall c) => [
@@ -314,12 +405,12 @@ void main() {
     expect(agentFixturesDir().existsSync(), isTrue);
   });
 
-  test('every fixture file in the directory is registered here (literals.json has its own suite)', () {
+  test('every fixture file in the directory is registered here (the non-sample files have their own suites)', () {
     final files = {
       for (final f in agentFixturesDir().listSync().whereType<File>())
         if (f.path.endsWith('.json')) f.uri.pathSegments.last,
     };
-    expect(files, {...decoders.keys, 'literals.json'});
+    expect(files, {...decoders.keys, ...notSamples});
   });
 
   for (final MapEntry(key: file, value: byName) in decoders.entries) {

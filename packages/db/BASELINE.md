@@ -764,6 +764,22 @@ otherwise it drops the live-number index and recreates `uq_agency_campaign_runni
 index's definition and that the planner uses it for the probe, the refused down, down then up), the
 `uq_agency_campaign_running` case in `baseline.test.ts`, and the down → up suite.
 
+### 0016 — `migrations/0016_customer_history_indexes.sql`
+
+Customer history: one number searched across the tenant's campaigns (`docs/customer-history.md`,
+CH9).
+
+- **`idx_agency_manual_calls_destination`** `(tenant_id, account_id, destination_e164,
+  created_at DESC, id DESC)`: every soft-phone call to one number in the accounts the caller can
+  see, logged to a campaign or not (an untagged call has no contact, only `destination_e164`),
+  newest first with no sort. `destination_e164` is already normalised to E.164 at pre-dial, the
+  form the search produces.
+- **Locking.** Plain `CREATE INDEX` (SHARE on `agency_manual_calls`, one scan); one transaction, at
+  container start.
+
+**Down** drops the index. **Tests**: `test/integration/db/customer-history-indexes-migration.test.ts`
+(definition, the planner using it for the history's read, down then up) and the down → up suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

@@ -1,0 +1,417 @@
+{
+  "_comment": "One table for the customer-history search box: packages/domain (console preview and server) and the agent app (agency_wire) both run every case. Regenerate deliberately; review every changed row.",
+  "countries": [
+    {
+      "iso": "IN",
+      "name": "India",
+      "callingCode": "91",
+      "minNationalLength": 10,
+      "maxNationalLength": 10,
+      "numberLabel": "Indian mobile number",
+      "groups": {
+        "10": [
+          5,
+          5
+        ]
+      }
+    },
+    {
+      "iso": "AE",
+      "name": "United Arab Emirates",
+      "callingCode": "971",
+      "minNationalLength": 8,
+      "maxNationalLength": 9,
+      "numberLabel": "UAE number",
+      "groups": {
+        "8": [
+          1,
+          3,
+          4
+        ],
+        "9": [
+          2,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "iso": "AU",
+      "name": "Australia",
+      "callingCode": "61",
+      "minNationalLength": 9,
+      "maxNationalLength": 9,
+      "numberLabel": "Australian number",
+      "groups": {
+        "9": [
+          3,
+          3,
+          3
+        ]
+      }
+    },
+    {
+      "iso": "BD",
+      "name": "Bangladesh",
+      "callingCode": "880",
+      "minNationalLength": 10,
+      "maxNationalLength": 10,
+      "numberLabel": "Bangladeshi number",
+      "groups": {
+        "10": [
+          4,
+          6
+        ]
+      }
+    },
+    {
+      "iso": "GB",
+      "name": "United Kingdom",
+      "callingCode": "44",
+      "minNationalLength": 9,
+      "maxNationalLength": 10,
+      "numberLabel": "UK number",
+      "groups": {
+        "9": [
+          3,
+          3,
+          3
+        ],
+        "10": [
+          2,
+          4,
+          4
+        ]
+      }
+    },
+    {
+      "iso": "LK",
+      "name": "Sri Lanka",
+      "callingCode": "94",
+      "minNationalLength": 9,
+      "maxNationalLength": 9,
+      "numberLabel": "Sri Lankan number",
+      "groups": {
+        "9": [
+          2,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "iso": "NP",
+      "name": "Nepal",
+      "callingCode": "977",
+      "minNationalLength": 8,
+      "maxNationalLength": 10,
+      "numberLabel": "Nepali number",
+      "groups": {
+        "10": [
+          3,
+          7
+        ]
+      }
+    },
+    {
+      "iso": "SA",
+      "name": "Saudi Arabia",
+      "callingCode": "966",
+      "minNationalLength": 9,
+      "maxNationalLength": 9,
+      "numberLabel": "Saudi number",
+      "groups": {
+        "9": [
+          2,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "iso": "SG",
+      "name": "Singapore",
+      "callingCode": "65",
+      "minNationalLength": 8,
+      "maxNationalLength": 8,
+      "numberLabel": "Singapore number",
+      "groups": {
+        "8": [
+          4,
+          4
+        ]
+      }
+    },
+    {
+      "iso": "US",
+      "name": "United States / Canada",
+      "callingCode": "1",
+      "minNationalLength": 10,
+      "maxNationalLength": 10,
+      "numberLabel": "US or Canadian number",
+      "groups": {
+        "10": [
+          3,
+          3,
+          4
+        ]
+      }
+    }
+  ],
+  "cases": [
+    {
+      "input": "98765 43210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "9876543210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "098765-43210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "+91 98765 43210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "+919876543210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "0091 98765 43210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "91 9876543210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "919876543210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "  (98765) 43210  ",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "98765.43210",
+      "country": "IN",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "+44 (0)20 7946 0018",
+      "country": "IN",
+      "e164": "+442079460018",
+      "formatted": "+44 20 7946 0018",
+      "countryIso": "GB"
+    },
+    {
+      "input": "+44 (0) 20 7946 0018",
+      "country": "GB",
+      "e164": "+442079460018",
+      "formatted": "+44 20 7946 0018",
+      "countryIso": "GB"
+    },
+    {
+      "input": "0044 (0)20 7946 0018",
+      "country": "IN",
+      "e164": "+442079460018",
+      "formatted": "+44 20 7946 0018",
+      "countryIso": "GB"
+    },
+    {
+      "input": "020 7946 0018",
+      "country": "GB",
+      "e164": "+442079460018",
+      "formatted": "+44 20 7946 0018",
+      "countryIso": "GB"
+    },
+    {
+      "input": "+1 (415) 555-2671",
+      "country": "IN",
+      "e164": "+14155552671",
+      "formatted": "+1 415 555 2671",
+      "countryIso": "US"
+    },
+    {
+      "input": "415 555 2671",
+      "country": "US",
+      "e164": "+14155552671",
+      "formatted": "+1 415 555 2671",
+      "countryIso": "US"
+    },
+    {
+      "input": "+919876543210",
+      "country": "GB",
+      "e164": "+919876543210",
+      "formatted": "+91 98765 43210",
+      "countryIso": "IN"
+    },
+    {
+      "input": "9198765432",
+      "country": "IN",
+      "e164": "+919198765432",
+      "formatted": "+91 91987 65432",
+      "countryIso": "IN"
+    },
+    {
+      "input": "",
+      "country": "IN",
+      "error": "empty",
+      "message": "Type a phone number to search."
+    },
+    {
+      "input": "   ",
+      "country": "IN",
+      "error": "empty",
+      "message": "Type a phone number to search."
+    },
+    {
+      "input": "43210",
+      "country": "IN",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "876543210",
+      "country": "IN",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "+91 98765",
+      "country": "IN",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "0",
+      "country": "IN",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "98765 432100",
+      "country": "IN",
+      "error": "invalid_for_country",
+      "message": "This doesn't look like a valid Indian mobile number. Check the digits, or pick another country."
+    },
+    {
+      "input": "+91 98765 432101",
+      "country": "IN",
+      "error": "invalid_for_country",
+      "message": "This doesn't look like a valid Indian mobile number. Check the digits, or pick another country."
+    },
+    {
+      "input": "+91 09876543210",
+      "country": "IN",
+      "error": "invalid_for_country",
+      "message": "This doesn't look like a valid Indian mobile number. Check the digits, or pick another country."
+    },
+    {
+      "input": "+44 020 7946 0018",
+      "country": "IN",
+      "error": "invalid_for_country",
+      "message": "This doesn't look like a valid UK number. Check the digits, or pick another country."
+    },
+    {
+      "input": "98765abc10",
+      "country": "IN",
+      "error": "invalid_characters",
+      "message": "Only digits, spaces, +, dashes and brackets are allowed."
+    },
+    {
+      "input": "98765#43210",
+      "country": "IN",
+      "error": "invalid_characters",
+      "message": "Only digits, spaces, +, dashes and brackets are allowed."
+    },
+    {
+      "input": "98+76543210",
+      "country": "IN",
+      "error": "invalid_characters",
+      "message": "Only digits, spaces, +, dashes and brackets are allowed."
+    },
+    {
+      "input": "call 9876543210",
+      "country": "IN",
+      "error": "invalid_characters",
+      "message": "Only digits, spaces, +, dashes and brackets are allowed."
+    },
+    {
+      "input": "9.18765E+11",
+      "country": "IN",
+      "error": "spreadsheet_number",
+      "message": "This looks like a number Excel shortened. Copy it from the cell as text."
+    },
+    {
+      "input": "9.18765e11",
+      "country": "IN",
+      "error": "spreadsheet_number",
+      "message": "This looks like a number Excel shortened. Copy it from the cell as text."
+    },
+    {
+      "input": "9.18765 E+11",
+      "country": "IN",
+      "error": "spreadsheet_number",
+      "message": "This looks like a number Excel shortened. Copy it from the cell as text."
+    },
+    {
+      "input": "+999 1234 5678",
+      "country": "IN",
+      "e164": "+99912345678",
+      "formatted": "+99912345678",
+      "countryIso": null
+    },
+    {
+      "input": "+999 1234",
+      "country": "IN",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "+999 1234 5678 9012 3",
+      "country": "IN",
+      "error": "invalid_for_country",
+      "message": "This doesn't look like a valid phone number. Check the digits, or pick another country."
+    },
+    {
+      "input": "20 7946 001",
+      "country": "GB",
+      "e164": "+44207946001",
+      "formatted": "+44 207 946 001",
+      "countryIso": "GB"
+    }
+  ]
+}

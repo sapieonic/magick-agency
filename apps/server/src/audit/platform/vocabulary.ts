@@ -172,6 +172,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_manual_call.dispositioned', label: 'Soft-phone call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'agency_softphone_settings.updated', label: 'Soft-phone settings changed', group: 'Calls', product: 'agency' },
+  { value: 'agency_customer_history.searched', label: 'Customer history searched', group: 'Calls', product: 'agency' },
+  { value: 'agency_customer_history.exported', label: 'Customer history exported', group: 'Calls', product: 'agency' },
 
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
@@ -219,6 +221,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_contact', label: 'Contact' },
   { value: 'agency_manual_call', label: 'Soft-phone call' },
   { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
+  { value: 'customer_history', label: 'Customer history search' },
   { value: 'dnc_entry', label: 'Do-not-call entry' },
   // "Invitation", not "Membership": the rows filed under it are about the token
   // and its life (sent, accepted), and on every refusal path there is no

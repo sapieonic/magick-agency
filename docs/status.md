@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-05.
+"is it done". As of 2026-11-06.
 
 ## Summary
 
@@ -881,6 +881,28 @@ work is recorded (see the last bullet).
   this work is recorded, so the case counts beside its test files in [`modules.md`](modules.md)
   are read from the source, not from a run, and nothing here claims a pass.
 
+### Customer history 2026-11-06 (CH1–CH12, [`customer-history.md`](customer-history.md))
+
+ClickUp "Customer history: search one phone number and see every interaction across the tenant's
+campaigns". Built on the server, the console and the agent app; Manas's decisions CH1–CH5 as
+asked, the build's own calls CH6–CH12.
+
+- **Number rule** (CH4, CH5): `packages/domain/src/customer-search-number.ts`, run by the
+  console's preview and the server's search, with a Dart port in `agency_wire`; one table
+  (`fixtures/agent/customer-search-numbers.json`) holds all three. Full numbers only.
+- **Server**: `POST /proxy/agency/customers/{search,timeline,export}` (`proxy-agency-customers`),
+  permission `agency.customer_history.read` (agent floor), every read bound to the caller's
+  accounts in SQL and on an index (migration `0016` adds the soft-phone destination index), a
+  30-minute search id so the number never reaches a URL, audit rows for every search and export,
+  a per-user cap (30 a minute). The export is CSV.
+- **Console**: a "Search a number" box in the agency top bar and on the agent surfaces, the page
+  at `/agency/customers` and `/dialer/customers`.
+- **Agent app**: the search and the page from My calls. **Not yet run under Dart or Flutter**
+  (the SDK could not be installed where it was built); the mobile CI job is the first run.
+- **Found, not fixed** (CH12 e): the roster ingest keeps a bracketed trunk `(0)` that the search
+  and the soft phone drop, so `+44 (0)20 …` typed in a roster is not found; pinned `it.fails`.
+- **Not shown** (CH12 a): DNC removals (a hard delete whose audit row carries no number).
+
 ## Test counts
 
 Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
@@ -1142,6 +1164,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
+| Customer history | Ratify CH6–CH11 (`decisions.md` §4), in particular the 30-a-minute cap and the 30-minute search id. Decide whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on) |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
 
 ## Deployment invariants

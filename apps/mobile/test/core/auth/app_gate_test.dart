@@ -347,8 +347,9 @@ void main() {
   });
 
   group('sign-out', () {
-    test('explicit sign-out clears scope, the remembered account and Firebase', () async {
+    test('explicit sign-out clears scope, the remembered account, recent searches and Firebase', () async {
       signedIn();
+      h.store.values[SessionStore.recentSearchesKey] = '[{"e164":"+919876543210","display":"+91 98765 43210"}]';
       final c = h.container();
       await startGate(c);
       await c.read(appGateProvider.notifier).signOut();
@@ -356,6 +357,7 @@ void main() {
       expect(c.read(requestScopeProvider).isSet, isFalse);
       expect(c.read(readyAccountProvider), isNull);
       expect(await SessionStore(h.store).readLastAccount(), isNull);
+      expect(h.store.values.containsKey(SessionStore.recentSearchesKey), isFalse);
       expect(h.auth.signOuts, 1);
       expect(h.auth.currentUser, isNull);
     });

@@ -130,6 +130,12 @@ handler writes `total` only when the request carries `?include_total=1`; the dia
 too: `AgencyContactWaiting` / `AGENCY_CONTACT_WAITING` (`?waiting=`), `AgencyListFlag` (`1` / `0`),
 and the new keys on `AgencyAttemptFilters` / `AgencyContactFilters` (docs/insights.md, WS F).
 
+Customer history (`customer-history.ts`, docs/customer-history.md) is console-side only: the
+public API layer reads it directly (no internal handler hop), so every type there
+(`CustomerSearchRequest`, `CustomerSearchResponse`, `CustomerTimelineEntry`, …) has no dialer
+counterpart. It reuses the dialer vocabularies `AgencyAttemptOutcome`, `AgencyCampaignStatus`,
+`AgencyContactState` and `AgencyDncEntryScope` by import rather than redeclaring them.
+
 ## 5. Request fields the server sets itself
 
 - `agent_user_id` on `AgencyCreateSessionRequest` and `AgencyActorFields` is filled by the public API

@@ -102,6 +102,13 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // outcome catalog, the call fields, recording, the summary profile, the default
   // caller ID. Account-wide, never campaign-scoped.
   'agency_softphone_settings.updated',
+  // ── Customer history (docs/customer-history.md CH10) ─────────────────────────
+  // One row per search and per export of one number's history, zero results included.
+  // `resource_id` is the search id; `details` carry the E.164 searched, the result count, the
+  // accounts the caller could see and their role (an export adds rows, filters, truncated).
+  // Tenant-wide reads, never campaign-scoped.
+  'agency_customer_history.searched',
+  'agency_customer_history.exported',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -142,6 +149,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   // settings row (`resource_id` is absent: one row per account, named by it).
   'agency_manual_call',
   'agency_softphone_settings',
+  // One customer-history search (`resource_id`: its `search_id`, `chs_` + 32 hex).
+  'customer_history',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

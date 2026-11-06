@@ -1,0 +1,543 @@
+{
+  "search_request": {
+    "by": "phone",
+    "value": "098765-43210",
+    "country": "IN"
+  },
+  "search_response": {
+    "search_id": "chs_6f1c2b9e4d8a4f0fa1b2c3d4e5f60718",
+    "expires_at": "2026-11-06T10:30:00.000Z",
+    "key": {
+      "by": "phone",
+      "value": "+919876543210",
+      "display": "+91 98765 43210"
+    },
+    "summary": {
+      "contacts": [
+        {
+          "contact_id": "5b9d6c0e-2f43-4c1e-9a77-0c2d4e6f8a10",
+          "root_contact_id": "3a8c5b0d-1e32-4b0d-8966-fb1c3d5e7f90",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "account_name": "Collections North",
+          "phone_e164": "+919876543210",
+          "campaign": {
+            "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+            "name": "October dues (retry 1)",
+            "status": "running",
+            "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+            "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "retry_generation": 1
+          },
+          "campaigns": [
+            {
+              "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "name": "October dues",
+              "status": "completed",
+              "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+              "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "retry_generation": 0
+            },
+            {
+              "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+              "name": "October dues (retry 1)",
+              "status": "running",
+              "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+              "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "retry_generation": 1
+            }
+          ],
+          "state": "pending",
+          "suppressed_reason": null,
+          "attempt_count": 3,
+          "fields": [
+            {
+              "column": "Name",
+              "value": "Asha Rao"
+            },
+            {
+              "column": "Loan No",
+              "value": "LN-0042"
+            }
+          ],
+          "assigned_to": {
+            "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "name": "Priya Nair"
+          },
+          "entered_at": "2026-10-01T09:00:00.000Z",
+          "upload_file_name": "october-dues.csv"
+        },
+        {
+          "contact_id": "9e8d7c6b-5a49-4382-a716-05f4e3d2c1b0",
+          "root_contact_id": "9e8d7c6b-5a49-4382-a716-05f4e3d2c1b0",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "account_name": "Collections North",
+          "phone_e164": "+919876543210",
+          "campaign": {
+            "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "name": "October dues",
+            "status": "completed",
+            "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+            "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "retry_generation": 0
+          },
+          "campaigns": [
+            {
+              "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "name": "October dues",
+              "status": "completed",
+              "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+              "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "retry_generation": 0
+            }
+          ],
+          "state": "suppressed",
+          "suppressed_reason": "dnc",
+          "attempt_count": 1,
+          "fields": [
+            {
+              "column": "Name",
+              "value": "Ravi Rao"
+            }
+          ],
+          "assigned_to": null,
+          "entered_at": "2026-10-01T09:00:00.000Z",
+          "upload_file_name": null
+        }
+      ],
+      "totals": {
+        "calls": 4,
+        "connected": 2,
+        "last_contacted": {
+          "at": "2026-11-05T11:20:00.000Z",
+          "channel": "softphone",
+          "agent": {
+            "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "name": "Priya Nair"
+          },
+          "outcome": "connected",
+          "disposition_code": "ptp"
+        }
+      },
+      "dnc": [
+        {
+          "id": "c0ffee00-1234-4567-89ab-cdef01234567",
+          "scope": "campaign",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "account_name": "Collections North",
+          "campaign": {
+            "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "name": "October dues"
+          },
+          "source": "agent",
+          "reason": "Asked not to be called",
+          "added_by": "Priya Nair",
+          "created_at": "2026-10-03T10:00:00.000Z"
+        }
+      ],
+      "open": {
+        "callbacks": [
+          {
+            "contact_id": "5b9d6c0e-2f43-4c1e-9a77-0c2d4e6f8a10",
+            "campaign": {
+              "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+              "name": "October dues (retry 1)",
+              "status": "running",
+              "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+              "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "retry_generation": 1
+            },
+            "due_at": "2026-11-07T05:30:00.000Z",
+            "owner": {
+              "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "name": "Priya Nair"
+            },
+            "booked_by": {
+              "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+              "name": "Priya Nair"
+            },
+            "disposition_code": "callback"
+          }
+        ],
+        "overrides": [
+          {
+            "contact_id": "5b9d6c0e-2f43-4c1e-9a77-0c2d4e6f8a10",
+            "campaign": {
+              "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+              "name": "October dues (retry 1)",
+              "status": "running",
+              "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+              "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "retry_generation": 1
+            },
+            "disposition_code": "ptp",
+            "granted_at": "2026-11-04T08:00:00.000Z",
+            "extra_attempts": 2,
+            "retry_delay": true,
+            "calling_hours": false
+          }
+        ],
+        "live_calls": [
+          {
+            "channel": "campaign",
+            "campaign": {
+              "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+              "name": "October dues (retry 1)",
+              "status": "running",
+              "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+              "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "retry_generation": 1
+            },
+            "agent": null,
+            "started_at": "2026-11-06T09:59:30.000Z"
+          }
+        ]
+      },
+      "filter_options": {
+        "campaigns": [
+          {
+            "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "name": "October dues"
+          }
+        ],
+        "agents": [
+          {
+            "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "name": "Priya Nair"
+          }
+        ],
+        "outcomes": [
+          "connected",
+          "no_answer"
+        ],
+        "disposition_codes": [
+          "callback",
+          "ptp"
+        ]
+      }
+    },
+    "timeline": {
+      "entries": [
+        {
+          "key": "softphone_call:d4c3b2a1-0f9e-4d8c-b7a6-958473625140",
+          "kind": "softphone_call",
+          "at": "2026-11-05T11:20:00.000Z",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "manual_call_id": "d4c3b2a1-0f9e-4d8c-b7a6-958473625140",
+          "campaign": null,
+          "contact_id": null,
+          "agent": {
+            "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "name": "Priya Nair"
+          },
+          "outcome": "connected",
+          "disposition_code": "ptp",
+          "talk_seconds": 184,
+          "notes": "Will pay on Friday",
+          "notes_hidden": false,
+          "fields": {
+            "promised_amount": 2500,
+            "channel": "UPI"
+          },
+          "dnc_override_note": null,
+          "hours_override_note": null,
+          "callback_at": null,
+          "recording": "available",
+          "call_page": {
+            "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+            "manual_call_id": "d4c3b2a1-0f9e-4d8c-b7a6-958473625140"
+          }
+        },
+        {
+          "key": "callback:0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9",
+          "kind": "callback",
+          "at": "2026-11-04T08:00:00.000Z",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "source": {
+            "channel": "campaign",
+            "id": "0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9"
+          },
+          "campaign": {
+            "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+            "name": "October dues (retry 1)",
+            "status": "running",
+            "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+            "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "retry_generation": 1
+          },
+          "due_at": "2026-11-07T05:30:00.000Z",
+          "booked_by": {
+            "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "name": "Priya Nair"
+          },
+          "status": "upcoming",
+          "dialled_at": null
+        },
+        {
+          "key": "campaign_call:0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9",
+          "kind": "campaign_call",
+          "at": "2026-11-04T07:56:00.000Z",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "attempt_id": "0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9",
+          "contact_id": "5b9d6c0e-2f43-4c1e-9a77-0c2d4e6f8a10",
+          "campaign": {
+            "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+            "name": "October dues (retry 1)",
+            "status": "running",
+            "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+            "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "retry_generation": 1
+          },
+          "attempt_number": 2,
+          "agent": {
+            "user_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+            "name": "Karan Shah"
+          },
+          "outcome": "connected",
+          "disposition_code": "callback",
+          "talk_seconds": 95,
+          "notes": null,
+          "notes_hidden": true,
+          "callback_at": "2026-11-07T05:30:00.000Z",
+          "redial_of_attempt_id": "1b2c3d4e-5f60-4172-83a4-b5c6d7e8f901",
+          "chain_attempt_id": "1b2c3d4e-5f60-4172-83a4-b5c6d7e8f901",
+          "redial_number": 1,
+          "override_applied": [
+            "extra_attempts"
+          ],
+          "override_note": "Customer asked to be called after salary day",
+          "recording": "expired",
+          "call_page": null
+        },
+        {
+          "key": "dnc_mark:c0ffee00-1234-4567-89ab-cdef01234567",
+          "kind": "dnc_mark",
+          "at": "2026-10-03T10:00:00.000Z",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "entry": {
+            "id": "c0ffee00-1234-4567-89ab-cdef01234567",
+            "scope": "campaign",
+            "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+            "account_name": "Collections North",
+            "campaign": {
+              "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+              "name": "October dues"
+            },
+            "source": "agent",
+            "reason": null,
+            "added_by": null,
+            "created_at": "2026-10-03T10:00:00.000Z"
+          }
+        },
+        {
+          "key": "roster_entry:9e8d7c6b-5a49-4382-a716-05f4e3d2c1b0",
+          "kind": "roster_entry",
+          "at": "2026-10-01T09:00:00.000Z",
+          "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+          "contact_id": "9e8d7c6b-5a49-4382-a716-05f4e3d2c1b0",
+          "campaign": {
+            "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "name": "October dues",
+            "status": "completed",
+            "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+            "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+            "retry_generation": 0
+          },
+          "upload_file_name": "october-dues.csv"
+        }
+      ],
+      "next_cursor": "eyJhdCI6IjIwMjYtMTAtMDFUMDk6MDA6MDAuMDAwMDAwWiIsImtleSI6InJvc3Rlcl9lbnRyeTo5ZThkN2M2Yi01YTQ5LTQzODItYTcxNi0wNWY0ZTNkMmMxYjAifQ"
+    }
+  },
+  "entry_softphone_call": {
+    "key": "softphone_call:d4c3b2a1-0f9e-4d8c-b7a6-958473625140",
+    "kind": "softphone_call",
+    "at": "2026-11-05T11:20:00.000Z",
+    "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+    "manual_call_id": "d4c3b2a1-0f9e-4d8c-b7a6-958473625140",
+    "campaign": null,
+    "contact_id": null,
+    "agent": {
+      "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "Priya Nair"
+    },
+    "outcome": "connected",
+    "disposition_code": "ptp",
+    "talk_seconds": 184,
+    "notes": "Will pay on Friday",
+    "notes_hidden": false,
+    "fields": {
+      "promised_amount": 2500,
+      "channel": "UPI"
+    },
+    "dnc_override_note": null,
+    "hours_override_note": null,
+    "callback_at": null,
+    "recording": "available",
+    "call_page": {
+      "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+      "manual_call_id": "d4c3b2a1-0f9e-4d8c-b7a6-958473625140"
+    }
+  },
+  "entry_callback": {
+    "key": "callback:0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9",
+    "kind": "callback",
+    "at": "2026-11-04T08:00:00.000Z",
+    "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+    "source": {
+      "channel": "campaign",
+      "id": "0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9"
+    },
+    "campaign": {
+      "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+      "name": "October dues (retry 1)",
+      "status": "running",
+      "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+      "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "retry_generation": 1
+    },
+    "due_at": "2026-11-07T05:30:00.000Z",
+    "booked_by": {
+      "user_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "Priya Nair"
+    },
+    "status": "upcoming",
+    "dialled_at": null
+  },
+  "entry_campaign_call": {
+    "key": "campaign_call:0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9",
+    "kind": "campaign_call",
+    "at": "2026-11-04T07:56:00.000Z",
+    "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+    "attempt_id": "0a1b2c3d-4e5f-4061-8293-a4b5c6d7e8f9",
+    "contact_id": "5b9d6c0e-2f43-4c1e-9a77-0c2d4e6f8a10",
+    "campaign": {
+      "id": "7c1e9a2b-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+      "name": "October dues (retry 1)",
+      "status": "running",
+      "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+      "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "retry_generation": 1
+    },
+    "attempt_number": 2,
+    "agent": {
+      "user_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+      "name": "Karan Shah"
+    },
+    "outcome": "connected",
+    "disposition_code": "callback",
+    "talk_seconds": 95,
+    "notes": null,
+    "notes_hidden": true,
+    "callback_at": "2026-11-07T05:30:00.000Z",
+    "redial_of_attempt_id": "1b2c3d4e-5f60-4172-83a4-b5c6d7e8f901",
+    "chain_attempt_id": "1b2c3d4e-5f60-4172-83a4-b5c6d7e8f901",
+    "redial_number": 1,
+    "override_applied": [
+      "extra_attempts"
+    ],
+    "override_note": "Customer asked to be called after salary day",
+    "recording": "expired",
+    "call_page": null
+  },
+  "entry_dnc_mark": {
+    "key": "dnc_mark:c0ffee00-1234-4567-89ab-cdef01234567",
+    "kind": "dnc_mark",
+    "at": "2026-10-03T10:00:00.000Z",
+    "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+    "entry": {
+      "id": "c0ffee00-1234-4567-89ab-cdef01234567",
+      "scope": "campaign",
+      "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+      "account_name": "Collections North",
+      "campaign": {
+        "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+        "name": "October dues"
+      },
+      "source": "agent",
+      "reason": null,
+      "added_by": null,
+      "created_at": "2026-10-03T10:00:00.000Z"
+    }
+  },
+  "entry_roster_entry": {
+    "key": "roster_entry:9e8d7c6b-5a49-4382-a716-05f4e3d2c1b0",
+    "kind": "roster_entry",
+    "at": "2026-10-01T09:00:00.000Z",
+    "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+    "contact_id": "9e8d7c6b-5a49-4382-a716-05f4e3d2c1b0",
+    "campaign": {
+      "id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "name": "October dues",
+      "status": "completed",
+      "account_id": "0f4e3d2c-1b0a-4987-8654-3210fedcba98",
+      "root_id": "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c",
+      "retry_generation": 0
+    },
+    "upload_file_name": "october-dues.csv"
+  },
+  "search_response_empty": {
+    "search_id": "chs_00112233445566778899aabbccddeeff",
+    "expires_at": "2026-11-06T10:30:00.000Z",
+    "key": {
+      "by": "phone",
+      "value": "+14155552671",
+      "display": "+1 415 555 2671"
+    },
+    "summary": {
+      "contacts": [],
+      "totals": {
+        "calls": 0,
+        "connected": 0,
+        "last_contacted": null
+      },
+      "dnc": [],
+      "open": {
+        "callbacks": [],
+        "overrides": [],
+        "live_calls": []
+      },
+      "filter_options": {
+        "campaigns": [],
+        "agents": [],
+        "outcomes": [],
+        "disposition_codes": []
+      }
+    },
+    "timeline": {
+      "entries": [],
+      "next_cursor": null
+    }
+  },
+  "timeline_request": {
+    "search_id": "chs_6f1c2b9e4d8a4f0fa1b2c3d4e5f60718",
+    "filters": {
+      "campaign_ids": [
+        "6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c"
+      ],
+      "from": "2026-10-01T00:00:00.000Z",
+      "to": "2026-11-07T00:00:00.000Z",
+      "outcomes": [
+        "connected"
+      ],
+      "connected_only": true,
+      "channel": "campaign"
+    },
+    "cursor": "eyJhdCI6IjIwMjYtMTAtMDFUMDk6MDA6MDAuMDAwMDAwWiIsImtleSI6InJvc3Rlcl9lbnRyeTo5ZThkN2M2Yi01YTQ5LTQzODItYTcxNi0wNWY0ZTNkMmMxYjAifQ",
+    "limit": 50
+  },
+  "timeline_page_last": {
+    "entries": [],
+    "next_cursor": null
+  },
+  "error_invalid_number": {
+    "error": "Bad Request",
+    "code": "invalid_number",
+    "message": "Enter the full number. Searching by the last few digits isn't supported.",
+    "number_error": "too_short"
+  },
+  "error_search_expired": {
+    "error": "Not Found",
+    "code": "search_expired",
+    "message": "This search has expired. Search the number again."
+  }
+}

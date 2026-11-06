@@ -354,6 +354,19 @@ Files: `activity.ts`, `allocation.ts`, `cache.ts`, `health.ts`, `range.ts`, `rea
 | `apps/server/test/integration/api/agency-insights-drilldowns.test.ts` | 57 |
 | `apps/server/test/integration/api/agency-connect-rate.test.ts` | 2 |
 
+### `apps/server/src/agency/customer-history/`
+
+Customer history (docs/customer-history.md, CH1–CH12): one number searched across every campaign and the soft phone in the accounts the caller can see. `visibility.ts` (the visible accounts from every active membership, tenant-level first; the caller's role per account; CH8's notes, call-page and DNC rules), `requests.ts` (the three bodies, the number through `parseSearchNumber`, the refusal bodies), `cursor.ts` (the opaque `{ at, key }` keyset cursor at microsecond precision), `assemble.ts` (the summary, the five timeline kinds, callback status, recording state, the retry-chain grouping, filters and the cut at the cursor), `csv.ts` (the export's columns, formula-guarded cells), `search-store.ts` (the `chs_` search id in Redis, an in-memory map without a context), `service.ts` (search, page, export over the repository). The reads are `db/repositories/agency/customer-history.repository.ts` (`CUSTOMER_HISTORY_SQL`, each statement bound to the visible accounts); the routes `api/routes/proxy-agency-customers.routes.ts` with `proxy-agency-customers/` (search, timeline, export; audit and the per-user `chs:` cap).
+
+Files: `assemble.ts`, `csv.ts`, `cursor.ts`, `requests.ts`, `search-store.ts`, `service.ts`, `visibility.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/agency/customer-history/assemble.test.ts` | 18 |
+| `apps/server/test/unit/agency/customer-history/cursor-and-requests.test.ts` | 8 |
+| `apps/server/test/unit/agency/customer-history/search-number-agreement.test.ts` | 16 + 1 expected fail (the ingest keeps a bracketed trunk `(0)`, CH12 e) |
+| `apps/server/test/integration/api/customer-history.test.ts` | 20 |
+
 ### `apps/server/src/ai/`
 
 The AI client layer every AI request goes through: `createAiClient` (a builder per provider, typed over `AiProvider`) and the clients for `openai_compatible` and `azure_openai` (one Chat Completions mapping, `openai-chat.ts`) and `gemini` (native SDK, Files API, per-family thinking and sampling).
@@ -1263,7 +1276,7 @@ files in `packages/db/migrations/`, `0001_baseline.sql` to
 `db/insights-foundation-migration.test.ts`; 0012, the insights rollup and its dirty-marking
 triggers, by `db/insights-rollup-migration.test.ts`; 0013, the pacing history, by
 `db/insights-pacing-history-migration.test.ts`; 0014, the rollup's connect-rate measures and carrier
-errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`).
+errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`; 0016, the customer-history soft-phone destination index (CH9), by `db/customer-history-indexes-migration.test.ts`).
 
 | Test file | Cases |
 |---|---|
@@ -1274,6 +1287,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/contact-assignment-migration.test.ts` | 15 |
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
 | `packages/db/test/integration/db/multiple-running-campaigns-migration.test.ts` | 5 |
+| `packages/db/test/integration/db/customer-history-indexes-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
 | `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
@@ -1307,13 +1321,14 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 
 ### `packages/domain/src/`
 
-Pure dialer rules: abandonment predicate, break manager, keyset cursor, rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement; the station liveness numbers, per client kind: `stationHeartbeatGraceMs`, `MOBILE_STATION_*`).
+Pure dialer rules: abandonment predicate, break manager, the customer-history search box's number rule (`customer-search-number.ts`: the raw text and the picked country to one E.164 or a refusal with its message; the console's preview and the server's search both run it, and the agent app's Dart port runs the same table, `packages/contracts/fixtures/agent/customer-search-numbers.json`), keyset cursor, rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement; the station liveness numbers, per client kind: `stationHeartbeatGraceMs`, `MOBILE_STATION_*`).
 
-Files: `abandonment-predicate.ts`, `break-manager.ts`, `index.ts`, `keyset-cursor.ts`, `rates.ts`, `retry-campaign-bounds.ts`, `retry-summary.ts`, `success-disposition.ts`, `timers.ts`
+Files: `abandonment-predicate.ts`, `break-manager.ts`, `customer-search-number.ts`, `index.ts`, `keyset-cursor.ts`, `rates.ts`, `retry-campaign-bounds.ts`, `retry-summary.ts`, `success-disposition.ts`, `timers.ts`
 
 | Test file | Cases |
 |---|---|
 | `packages/domain/test/unit/agency/break-manager.test.ts` | 23 |
+| `packages/domain/test/unit/agency/customer-search-number.test.ts` | 48 |
 | `packages/domain/test/unit/agency/elapsed-seconds.test.ts` | 3 |
 | `packages/domain/test/unit/agency/keyset-cursor.test.ts` | 9 |
 | `packages/domain/test/unit/agency/retry-campaign-bounds.test.ts` | 4 |
@@ -1569,6 +1584,20 @@ Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeCol
 | `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | 43 |
 
 `SoftphoneView.test.tsx` drives the view through `useSoftphone` with a fake station socket (`__tests__/helpers/fakeSocket.ts`, `__tests__/helpers/softphone.ts`): Ready, refusals and overrides, the call from `manual_call` frames, the outcome window, finish mode, keys on a focused select, the ringback, mute and reconnect. `SoftphoneCallsList` is tested through `SoftphoneSupervisor.test.tsx` and `AgentAttemptsPage.softphone.test.tsx` (`pages/`).
+
+### `apps/console/src/components/agency/customers/`
+
+Customer history (docs/customer-history.md §5). `CustomerSearchBox` is the box: country picker, the two helper lines, the live preview and the refusal from `packages/domain`'s `parseSearchNumber` (the server's rule), recent searches (`utils/customerSearchRecent.ts`, last five on this device, cleared by Clear and at sign-out). `CustomerSearchPopover` opens it from the agency top bar (`AgencyLayout`); agents reach the same page at `/dialer/customers` from `AgentNav`. The page is `pages/agency/CustomerHistoryPage.tsx` (`/agency/customers`, and `AgentCustomerHistoryPage`): no number in its URL, only `{ searchId }` in history state and the answer in `utils/customerHistoryStore.ts`. `CustomerHistorySummary` (contacts per campaign chain, totals, DNC at every level, open items), `CustomerTimelineFiltersBar`, `CustomerTimeline` (one row per kind, Load more) and `CustomerCallLink` (the existing call page, switching account scope when the call is in another account; none without `call_page`). Copy in `utils/customerHistoryCopy.ts`; client `api/customerHistory.ts`.
+
+Files: `CustomerCallLink.tsx`, `CustomerHistory.module.css`, `CustomerHistorySummary.tsx`, `CustomerSearchBox.module.css`, `CustomerSearchBox.tsx`, `CustomerSearchPopover.module.css`, `CustomerSearchPopover.tsx`, `CustomerTimeline.tsx`, `CustomerTimelineFiltersBar.tsx`
+
+| Test file | Cases |
+|---|---|
+| `apps/console/src/__tests__/api/customerHistory.test.ts` | 7 |
+| `apps/console/src/__tests__/components/CustomerSearchBox.test.tsx` | 20 |
+| `apps/console/src/__tests__/components/CustomerSearchPopover.test.tsx` | 8 |
+| `apps/console/src/__tests__/pages/CustomerHistoryPage.test.tsx` | 27 |
+| `apps/console/src/__tests__/utils/customerSearchRecent.test.ts` | 7 |
 
 ### `apps/console/src/contexts/`
 
@@ -2111,6 +2140,19 @@ Files: `my_contacts_api.dart`, `my_contacts_controller.dart`, `my_contacts_copy.
 | `apps/mobile/test/features/contacts/my_contacts_controller_test.dart` | ~31 |
 | `apps/mobile/test/features/contacts/my_contacts_copy_test.dart` | ~8 |
 | `apps/mobile/test/features/contacts/my_contacts_screen_test.dart` | ~16 |
+### `apps/mobile/lib/features/customers/`
+
+Customer history in the agent app (docs/customer-history.md §5): the search icon on My calls opens the search screen (country picker, helper text, preview and refusals from `agency_wire`'s port of the number rule, recent searches in `KeyValueStore`, cleared at sign-out), then the history screen (summary, channel and connected-only filters, the timeline with Load more; never a call page). Routes `/calls/customer` and `/calls/customer/results`; the number lives only in the controller, never in a path. The routes (`customer_history_api.dart`), the controller (generation counter, dropped on an account or user change), copy, recent searches and the two screens. Test helper: `support.dart`. Not yet run under Flutter (see "Not verified yet").
+
+Files: `customer_history_api.dart`, `customer_history_controller.dart`, `customer_history_copy.dart`, `customer_history_screen.dart`, `customer_search_screen.dart`, `recent_searches.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/features/customers/customer_history_controller_test.dart` | ~12 |
+| `apps/mobile/test/features/customers/customer_history_screens_test.dart` | ~13 |
+| `apps/mobile/packages/agency_wire/test/customer_history_test.dart` | ~15 |
+| `apps/mobile/packages/agency_wire/test/customer_search_number_test.dart` | ~8 (one runs every row of the shared table) |
+
 ### `apps/mobile/lib/features/` (`preflight/`, `station/`)
 
 Pre-flight (pure grading apart from the device measurements) and the station screens: one

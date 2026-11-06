@@ -383,6 +383,30 @@ zero capacity until a super admin allocates it (AA4).
 | AA5 | Audit | A tenant admin's create writes `account.created` to `platform_audit_log`, filed under the new account (`account_id`, `resource_type` `account`), so its own trail opens with its creation; a super admin's writes `create_account` to `super_admin_audit_log` | **default, pending Manas** |
 | AA6 | Account order | `GET /accounts`, `/accounts/mine`, the session settings map and the super-admin list are oldest first (`created_at`, then `id`). The console selects the first account when it has no saved choice, so the tenant's original account stays where a fresh sign-in lands; newest first would move every such sign-in into whatever account was created last | **default, pending Manas** |
 
+Customer history, 2026-11-06 (ClickUp "Customer history: search one phone number and see every
+interaction across the tenant's campaigns"). One phone number searched across every campaign and
+the soft phone in the accounts the caller can see, with its owners, DNC status, open items and one
+timeline. Manas's five decisions on the task are CH1–CH5; CH6–CH12 are the build's own calls. The
+full table, the API and the v2 key-column design are in [`customer-history.md`](customer-history.md).
+Migration `0016_customer_history_indexes.sql`; wire `packages/contracts/src/api/agency/customer-history.ts`;
+number rule `packages/domain/src/customer-search-number.ts`; permission `agency.customer_history.read`
+(floored at `agent`).
+
+| ID | Decision | Status |
+|---|---|---|
+| CH1 | Everyone can search: `agency.customer_history.read` floored at `agent` | **Decided** (Manas) |
+| CH2 | Scoped by account inside the query; a tenant-level member sees every account; other accounts' rows are left out, never counted | **Decided** (Manas) |
+| CH3 | v1 by phone only; the request is `{ by, value }` and the page does not assume a phone key (v2 design in `customer-history.md` §6) | **Decided** (Manas) |
+| CH4 | Full numbers only; never a suffix search | **Decided** (Manas) |
+| CH5 | The box explains the input (country picker, helper text, live preview, refusals that say what to do); one rule for preview and server, one shared test table | **Decided** (Manas) |
+| CH6 | The number never in a URL: `POST` with the number in the body, a 30-minute `search_id` bound to the user for paging and export | Built |
+| CH7 | A retry chain is one contact row; household lines stay separate rows | Built |
+| CH8 | Notes and call fields need `agency.campaigns.read` (or the caller's own call); the call page needs `agency.supervise`; DNC who/why need `agency.dnc.read` | Built |
+| CH9 | Every read on an index (0016 adds the soft-phone destination index); asserted with `EXPLAIN` | Built |
+| CH10 | Every search and export audited (`agency_customer_history.searched` / `.exported`, with the E.164 and result count) | Built |
+| CH11 | 30 searches and exports a minute per user (`AGENCY_CUSTOMER_SEARCH_PER_MINUTE`) | Built, default pending ratification |
+| CH12 | DNC removals are not shown (hard delete, the audit row has no number); the upload file is inferred from the import window; no contact is ever "removed from roster" (B15); the ingest keeps a bracketed trunk `(0)` the search drops, so such a row is not found (pinned `it.fails`) | Built; removals and the ingest trunk need Manas |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |

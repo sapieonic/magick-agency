@@ -28,6 +28,22 @@ describe('parseConfig', () => {
     expect(rollup({ AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE: 'many' })).toBeNull();
   });
 
+  it('agency.customerHistory: 30 a minute, 30 minutes, 10,000 rows by default, read from the env, bounded', () => {
+    const history = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? result.config.agency.customerHistory : null;
+    };
+    expect(history({})).toEqual({ searchesPerMinute: 30, searchTtlMinutes: 30, exportMaxRows: 10_000 });
+    expect(history({
+      AGENCY_CUSTOMER_SEARCH_PER_MINUTE: '5',
+      AGENCY_CUSTOMER_SEARCH_TTL_MINUTES: '10',
+      AGENCY_CUSTOMER_EXPORT_MAX_ROWS: '500',
+    })).toEqual({ searchesPerMinute: 5, searchTtlMinutes: 10, exportMaxRows: 500 });
+    expect(history({ AGENCY_CUSTOMER_SEARCH_PER_MINUTE: '0' })).toBeNull();
+    expect(history({ AGENCY_CUSTOMER_SEARCH_TTL_MINUTES: '100000' })).toBeNull();
+    expect(history({ AGENCY_CUSTOMER_EXPORT_MAX_ROWS: 'all' })).toBeNull();
+  });
+
   it('reports every missing required value', () => {
     const result = parseConfig({});
     expect(result.ok).toBe(false);

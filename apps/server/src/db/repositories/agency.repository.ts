@@ -65,6 +65,7 @@ export type {
   PacingMinuteRow,
 } from './agency/insights-pacing.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
+export { callbackCodes } from './agency/assignment-sql.js';
 export { AgencyAssignmentRepository, agencyAssignmentRepository, planCtes } from './agency/assignment.repository.js';
 export type {
   AssignmentCampaignScope,
@@ -151,3 +152,19 @@ export type {
   InsightsCallbackClass,
   InsightsCallbackTiming,
 } from './agency/insights-range-reads.js';
+export {
+  AgencyCustomerHistoryRepository,
+  agencyCustomerHistoryRepository,
+  CUSTOMER_HISTORY_MAX_CONTACT_ROWS,
+  CUSTOMER_HISTORY_SQL,
+} from './agency/customer-history.repository.js';
+export type {
+  CustomerHistoryAttemptRow,
+  CustomerHistoryCampaignRow,
+  CustomerHistoryContactRow,
+  CustomerHistoryDncRow,
+  CustomerHistoryManualCallRow,
+  CustomerHistoryMediaLegRow,
+  CustomerHistoryScope,
+  CustomerHistoryUploadRow,
+} from './agency/customer-history.repository.js';
