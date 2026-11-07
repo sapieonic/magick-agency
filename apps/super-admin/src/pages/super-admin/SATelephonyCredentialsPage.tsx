@@ -598,6 +598,22 @@ function SyncSummary({ outcome }: { outcome: SyncOutcome }) {
             </dd>
           </div>
         )}
+        {r.campaigns_holding_retired.length > 0 && (
+          <div className={styles.detailItem} data-testid="sync-campaigns-holding-retired">
+            <dt>Campaigns still naming retired numbers</dt>
+            <dd>
+              <p>These campaigns no longer dial from the numbers below. Tell the tenant to replace them in each campaign’s settings.</p>
+              <ul className={styles.syncReasons}>
+                {r.campaigns_holding_retired.map((c) => (
+                  <li key={`holding-${c.campaign_id}`}>
+                    {`${c.campaign_name} (${c.account_name}, ${c.status}): `}
+                    <span className={styles.mono}>{c.retired_caller_ids.join(', ')}</span>
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        )}
         {r.conflicts.length > 0 && (
           <div className={styles.detailItem}>
             <dt>Conflicts</dt>

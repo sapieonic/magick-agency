@@ -421,10 +421,12 @@ export interface AgencyCampaign {
    * The tenant's own carrier account the campaign dials on (decisions B18–B22), or
    * `null` for the service's own account. Required, and must be `active`, for a carrier
    * dialled on the tenant's account (`AgencyCarrier.telephony_credential_id` non-null);
-   * must be `null` otherwise. With one, every `caller_ids` entry must be an active
-   * number synced from that account. Refusals: 400 (shape, pairing, caller IDs), 404
-   * `telephony_credential_not_found`, 409 `telephony_credential_not_active`; start and
-   * resume answer that 409 too once the account stops being active. A PATCH that moves
+   * must be `null` otherwise. With one, every `caller_ids` entry a write ADDS must be an
+   * active number synced from that account (on the same account, numbers already stored
+   * may stay: the dial skips one no longer active, PL13). Refusals: 400 (shape, pairing,
+   * caller IDs), 404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`;
+   * start and resume answer that 409 too once the account stops being active, and 409
+   * `campaign_caller_ids_unavailable` when none of the caller IDs is dialable. A PATCH that moves
    * the campaign to the service's carrier sends `telephony_credential_id: null` with it.
    */
   telephony_credential_id?: string | null;

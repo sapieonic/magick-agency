@@ -66,7 +66,8 @@ import type { AgencyDialer } from './agency-dialer.js';
 import type { DialDispatcher } from './dial-dispatcher.js';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates } from './pre-dial-gates.js';
-import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { pickCallerId } from './pacing/caller-id-pool.js';
+import { dialableCallerIds } from './campaign-dialability.js';
 import { queuedBreakReleaseOf, RESERVING_MARKER, returnReservedAgent } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import {
@@ -229,7 +230,8 @@ export async function startMyContactCall(
   // ── 4. Where the call goes from ───────────────────────────────────────────
   const ownerReplica = await deps.stations.ownerOf(sessionId);
   if (!ownerReplica) return refuse(503, 'no_station');
-  const callerId = pickCallerId(usableCallerIds(campaign), 0);
+  // Only a number still dialable on the campaign's carrier account (PL13).
+  const callerId = pickCallerId(await dialableCallerIds(campaign), 0);
   if (!callerId) return refuse(409, 'no_caller_id');
 
   // ── 5. The agent: available → reserved ─────────────────────────────────────

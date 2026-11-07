@@ -49,7 +49,7 @@ export interface TenantLookup {
 }
 
 /** The phone inventory write the number sync makes (`phoneNumberRepository`). */
-export type NumberSyncRepo = Pick<PhoneNumberRepository, 'syncForCredential'>;
+export type NumberSyncRepo = Pick<PhoneNumberRepository, 'syncForCredential' | 'findCampaignsHoldingInactiveNumbers'>;
 
 export type ServiceResult<T> =
   | { ok: true; value: T }
@@ -415,6 +415,9 @@ export class TelephonyCredentialService {
     if (!written) {
       return fail('credential_not_active', 'The credential stopped being active while the carrier was answering; nothing was changed');
     }
+    // After the write, so a number this sync retired is counted: those campaigns' dials
+    // skip it (PL13), and the operator is told which to raise with the tenant.
+    const holding = await numbersRepo.findCampaignsHoldingInactiveNumbers(id);
     return {
       ok: true,
       value: {
@@ -428,6 +431,14 @@ export class TelephonyCredentialService {
           skipped: list.skipped,
           conflicts: written.conflicts,
           active_numbers: written.active,
+          campaigns_holding_retired: holding.map((c) => ({
+            campaign_id: c.campaign_id,
+            campaign_name: c.campaign_name,
+            account_id: c.account_id,
+            account_name: c.account_name,
+            status: c.status,
+            retired_caller_ids: c.caller_ids,
+          })),
         },
       },
     };

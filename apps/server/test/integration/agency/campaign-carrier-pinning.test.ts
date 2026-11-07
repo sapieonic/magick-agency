@@ -42,6 +42,7 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 const { agencyCampaignRoutes } = await import('../../../src/api/routes/agency-campaigns.routes.js');
 const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
 const { agencyCampaignRepository } = await import('../../../src/db/repositories/agency.repository.js');
+const { invalidateDialableCallerIds } = await import('../../../src/agency/campaign-dialability.js');
 type AgencyCampaignRouteDeps = import('../../../src/api/routes/agency-campaigns.routes.js').AgencyCampaignRouteDeps;
 
 const TENANT = DEFAULTS.tenantId;
@@ -287,6 +288,28 @@ describe('start and resume on a pinned campaign', () => {
     await setStatus(credA, 'disabled');
     expect((await post(campaign.id, 'pause')).statusCode).toBe(200);
     expect((await post(campaign.id, 'stop')).statusCode).toBe(200);
+  });
+
+  it('start and resume are refused while none of the caller IDs is still on the carrier account (PL13)', async () => {
+    const campaign = await plivoCampaign();
+    await insertAgencyContact(campaign.id);
+    // A sync retires both stored numbers.
+    await phoneNumberRepository.syncForCredential(credA, [{ phone_number: '+14155550005', label: null }], null);
+    const refused = await post(campaign.id, 'start');
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({ code: 'campaign_caller_ids_unavailable' });
+    expect(refused.json().message).not.toMatch(/plivo|voicelink/i);
+
+    const paused = await plivoCampaign({ status: 'paused', paused_at: new Date(), pause_reason: 'supervisor' });
+    const resume = await post(paused.id, 'resume');
+    expect(resume.statusCode).toBe(409);
+    expect(resume.json()).toMatchObject({ code: 'campaign_caller_ids_unavailable' });
+
+    // One number back on the account: it starts, and dials from that one only.
+    await phoneNumberRepository.syncForCredential(credA, [{ phone_number: MINE[0]!, label: null }], null);
+    invalidateDialableCallerIds();
+    const started = await post(campaign.id, 'start');
+    expect(started.statusCode, started.body).toBe(200);
   });
 
   it('a service-carrier campaign starts without any credential read', async () => {

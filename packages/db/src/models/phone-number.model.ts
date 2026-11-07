@@ -61,6 +61,21 @@ export type NumberSyncConflictReason =
   /** This credential's, but a super-admin deleted it: a sync does not bring it back. */
   | 'deleted';
 
+/**
+ * A live campaign on a tenant credential that still names one of the credential's numbers
+ * that is no longer `active` (retired or deleted) as a caller ID. Such a number is never
+ * dialled (PL13); the campaign is listed so the operator can tell the tenant.
+ */
+export interface CampaignHoldingInactiveNumbers {
+  campaign_id: string;
+  campaign_name: string;
+  account_id: string;
+  account_name: string;
+  status: string;
+  /** The campaign's caller IDs that are this credential's numbers and not active, sorted. */
+  caller_ids: string[];
+}
+
 export interface NumberSyncResult {
   /** Numbers inserted into the inventory. */
   added: string[];

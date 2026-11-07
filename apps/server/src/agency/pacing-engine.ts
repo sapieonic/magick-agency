@@ -70,6 +70,7 @@ import { safeEmit } from '../utils/safe-emit.js';
 import { LeaderLease, LEADER_RENEW_MS } from './pacing/leader-lease.js';
 import { InFlight } from './pacing/in-flight.js';
 import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { dialableCallerIds } from './campaign-dialability.js';
 import { CampaignAnnouncer } from './pacing/campaign-announcer.js';
 import {
   getPacingInvalidationBus,
@@ -1375,6 +1376,21 @@ export class PacingEngine {
         idle = 'no_caller_ids';
         return;
       }
+      // The pool the dials rotate (PL13): on a tenant's own carrier account, only the
+      // stored numbers still active on it and available to the account. A service-account
+      // campaign's is `usableCallerIds`, unread. Before reserving, so a failed read here
+      // has nothing to unwind.
+      const dialPool = campaign.status === 'running' ? await dialableCallerIds(campaign) : [];
+      if (campaign.status === 'running' && dialPool.length === 0) {
+        // Same shape as the empty pool: nothing to dial until a number comes back (a sync,
+        // which the safety tick picks up) or the supervisor edits the pool. The health
+        // strip names it (`no_dialable_caller_ids`).
+        this.recordIdle(campaign.id, campaign.tenant_id, 'no_caller_ids');
+        this.noteMisconfigured(campaign, 'has no caller ID still available on its carrier account — every tick will dial nothing until one is');
+        quiescent = true;
+        idle = 'no_caller_ids';
+        return;
+      }
       // Reached only when the pool is genuinely usable, so this cannot wipe the
       // latch out from under a campaign that is still broken.
       this.clearStuck(campaign);
@@ -1410,7 +1426,7 @@ export class PacingEngine {
           // up in that window. Reserving and dialing past this point would place
           // calls without a lease.
           if (!this.mayDial(campaignId)) return;
-          const dialed = await this.dialUpTo(campaign, plan, hold);
+          const dialed = await this.dialUpTo(campaign, plan, hold, dialPool);
           if (dialed > 0) return; // did work; completion is only checked on an idle tick
         } else if (plan.idle === 'nothing_due' || plan.idle === 'no_contacts') {
           // Agents are available and nothing is due for them: time passing makes contacts
@@ -1898,7 +1914,7 @@ export class PacingEngine {
    * reaper. Reserving first means a lost CAS costs one Redis call and touches
    * nothing durable.
    */
-  private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan, hold: DialHold): Promise<number> {
+  private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan, hold: DialHold, dialPool: readonly string[]): Promise<number> {
     // ── 1. Reserve agents first, strictly before the dial and now also
     //       strictly before the claim. The agent is committed before the carrier
     //       is contacted, which is what makes an answered call with no agent
@@ -2039,7 +2055,7 @@ export class PacingEngine {
       // pool cannot be answered for this contact and cannot be answered for the ones
       // claimed alongside it either, so the whole remainder is returned rather than
       // half of it being carried out by a throw.
-      const callerId = pickCallerId(usableCallerIds(campaign), dialed);
+      const callerId = pickCallerId(dialPool, dialed);
       if (!callerId) {
         await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         // Latched, like the top-of-tick guard: this branch is only reachable if the

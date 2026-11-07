@@ -13,6 +13,7 @@ import { getTelephonyCredentialService } from '../../telephony/credentials/index
 import type { ServiceResult, TelephonyCredentialService } from '../../telephony/credentials/credential-service.js';
 import { credentialSpecs } from '../../telephony/credentials/credential-specs.js';
 import { safeIssues } from '../../telephony/credentials/safe-issues.js';
+import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
 
 /*
  * Super-admin management of per-tenant carrier credentials (decisions B18–B22). The
@@ -214,6 +215,8 @@ export async function superAdminTelephonyCredentialRoutes(
     if (!p.success) return reply.code(404).send({ error: 'not_found', message: 'Credential not found' });
     const r = await service().syncNumbers(p.data.id, request.superAdmin!.id);
     if (!r.ok) return sendFailure(reply, r);
+    // A number retired or reactivated is dialled (or not) from the next dial (PL13).
+    invalidateDialableCallerIds();
     const { credential, sync } = r.value;
     log.info({
       credentialId: credential.id, listed: sync.listed, added: sync.added.length, reactivated: sync.reactivated.length,

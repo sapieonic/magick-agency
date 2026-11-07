@@ -13,6 +13,7 @@ import {
   assignPhoneNumberSchema,
 } from '../validators/phone-number.validator.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
+import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { findCredentialSpec } from '../../telephony/credentials/credential-specs.js';
 
@@ -222,6 +223,8 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
       return reply.code(500).send({ error: 'Internal', message: 'Failed to retire phone number' });
     }
 
+    // Campaigns naming it stop dialling from it now, not when the cached read lapses (PL13).
+    invalidateDialableCallerIds();
     log.info({ phoneNumberId: id }, 'Phone number retired');
     void recordSuperAdminAudit({
       admin_id: request.superAdmin!.id,
@@ -288,6 +291,7 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
       return reply.code(500).send({ error: 'Internal', message: 'Failed to delete phone number' });
     }
 
+    invalidateDialableCallerIds();
     log.info({ phoneNumberId: id }, 'Phone number soft-deleted');
     void recordSuperAdminAudit({
       admin_id: request.superAdmin!.id,
@@ -384,6 +388,7 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
       return reply.code(404).send({ error: 'Not Found', message: 'Assignment not found' });
     }
 
+    invalidateDialableCallerIds();
     log.info({ phoneNumberId: id, tenantId }, 'Phone number unassigned from tenant');
     void recordSuperAdminAudit({
       admin_id: request.superAdmin!.id,

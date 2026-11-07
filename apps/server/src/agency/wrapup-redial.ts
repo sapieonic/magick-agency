@@ -73,7 +73,8 @@ import type { AgencyDialer } from './agency-dialer.js';
 import type { ClearedDialCommand, DialDispatcher } from './dial-dispatcher.js';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
-import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { pickCallerId } from './pacing/caller-id-pool.js';
+import { dialableCallerIds } from './campaign-dialability.js';
 import { RESERVING_MARKER } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import type { WrapupManager, WrapupRedialRefusal } from './wrapup-manager.js';
@@ -195,7 +196,8 @@ export async function startWrapupRedial(
   const ownerReplica = await deps.stations.ownerOf(sessionId);
   if (!ownerReplica) return refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.no_station });
   // The same number the customer just spoke to us from, while it is still usable.
-  const pool = usableCallerIds(campaign);
+  // Only numbers still dialable on the campaign's carrier account (PL13).
+  const pool = await dialableCallerIds(campaign);
   const callerId = pool.includes(attempt.caller_id) ? attempt.caller_id : pickCallerId(pool, 0);
   if (!callerId) return refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.no_caller_id });
 

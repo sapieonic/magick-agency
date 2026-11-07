@@ -16,6 +16,7 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { campaignOf, ownedCampaign } from './guards.js';
 import { campaignCredentialStartRefusal } from '../../../agency/campaign-carrier.js';
+import { campaignDialabilityStartRefusal } from '../../../agency/campaign-dialability.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
@@ -167,6 +168,13 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
         return reply.code(refusal.status).send({
           error: refusal.status === 404 ? 'Not Found' : 'Conflict', code: refusal.code, message: refusal.message,
         });
+      }
+      // And only while the account can dial on it: a caller ID still available on it
+      // (PL13). A campaign that would run and place nothing is refused while a
+      // supervisor is here to read why.
+      const dialability = await campaignDialabilityStartRefusal(campaign);
+      if (dialability) {
+        return reply.code(dialability.status).send({ error: 'Conflict', code: dialability.code, message: dialability.message });
       }
     }
 

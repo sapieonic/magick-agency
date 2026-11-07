@@ -548,9 +548,13 @@ every account the caller belongs to (CH2) where every internal handler is single
     credential it is pinned to (`telephony_credential_id`); `agency/campaign-carrier.ts` checks at
     create, PATCH and retry that the carrier is an active provider, the credential is this
     tenant's and `active` (404 `telephony_credential_not_found`, 409
-    `telephony_credential_not_active`) and every caller ID is one of the credential's active synced
-    numbers. Start and resume answer 409 `telephony_credential_not_active` while it is not
-    `active`. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
+    `telephony_credential_not_active`) and every caller ID the write adds is one of the
+    credential's active synced numbers (on the same account, a stored number since retired may
+    stay). Start and resume answer 409 `telephony_credential_not_active` while it is not
+    `active`, and 409 `campaign_caller_ids_unavailable` while none of its caller IDs is still on
+    the account. At the dial `agency/campaign-dialability.ts` narrows the pool to the stored
+    numbers still active on the credential and available to the account (PL13; cached 15 s,
+    cleared by a sync, retire, delete or unassign); a service-account campaign is not read. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
     carrier plus the tenant's active credentials). A soft-phone call takes its tag's carrier
     account, or untagged the account of the chosen caller ID's number.
   - *Numbers.* `TelephonyCredentialService.syncNumbers` (super-admin "Sync numbers", `POST
@@ -558,7 +562,9 @@ every account the caller belongs to (CH2) where every internal handler is single
     Plivo's fixed API host and writes them to `phone_numbers` pinned to the credential
     (`telephony_credential_id`, migration 0018), assigned to the tenant untagged; numbers gone
     from the account are retired. `findAvailableForAccount` offers a synced number only while its
-    credential is `active` (PL4, PL5).
+    credential is `active` (PL4, PL5). The sync answer lists the live campaigns still naming the
+    credential's retired numbers (`campaigns_holding_retired`), for the operator to raise with the
+    tenant.
   - *Dial.* The bridge inserts the call row pinning the credential, in a statement that re-checks
     it is `active` (`EXISTS … FOR SHARE`), resolves the adapter with
     `getForCredentialId(provider, id, 'dial', tenantId)`, and asks `PlivoAdapter.initiateCall`.

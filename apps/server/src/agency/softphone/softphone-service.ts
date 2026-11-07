@@ -57,6 +57,7 @@ import { manualDispositionDecision, prepareManualDisposition, resolveManualCatal
 import type { ManualDialer } from './manual-dialer.js';
 import { onSoftphoneBreak, setAvailableGuarded } from './session-guard.js';
 import { UUID_RE } from '../../utils/uuid.js';
+import { withDialableCallerIds } from '../campaign-dialability.js';
 import type { SoftphoneActor, SoftphoneRefusal, SoftphoneResult } from './types.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
@@ -264,6 +265,9 @@ export class SoftphoneService {
     if (req.campaignId) {
       tag = await this.taggable(req.campaignId, actor);
       if (!tag) return refuse({ code: 'campaign_not_taggable' });
+      // A tagged call dials from the campaign's pool: only the numbers still dialable on
+      // its carrier account (PL13).
+      tag = await withDialableCallerIds(tag);
     }
 
     const settings = await agencySoftphoneSettingsRepository.get(actor.tenantId, actor.accountId);

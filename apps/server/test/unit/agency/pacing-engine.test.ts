@@ -55,6 +55,14 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
 }));
+// PL13: which of a pinned campaign's stored caller IDs are still active on its carrier
+// account. A service-account campaign never reads it.
+const { phoneAssignments } = vi.hoisted(() => ({
+  phoneAssignments: { findCredentialNumbersForAccount: vi.fn() },
+}));
+vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () => ({
+  tenantPhoneAssignmentRepository: phoneAssignments,
+}));
 
 // The supervise pass re-reads `agency_dialer_enabled` per campaign, so leadership
 // is now conditional on it. Mocked ON by default — every test below is about the
@@ -71,6 +79,7 @@ const { audit } = vi.hoisted(() => ({ audit: { log: vi.fn() } }));
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: audit }));
 
 import { PacingEngine } from '../../../src/agency/pacing-engine.js';
+import { invalidateDialableCallerIds } from '../../../src/agency/campaign-dialability.js';
 
 /** Every contact returned to the pool this test, one at a time or as a batch. */
 function returnedContactIds(): string[] {
@@ -164,6 +173,60 @@ beforeEach(() => {
   settings.getMaxConcurrentCalls.mockResolvedValue(5);
   repos.session.findLiveForCampaign.mockResolvedValue([]);
   flags.isEnabled.mockResolvedValue(true);
+  invalidateDialableCallerIds();
+});
+
+describe('PacingEngine and caller IDs no longer on the carrier account (PL13)', () => {
+  const CRED = '11111111-1111-4111-8111-111111111111';
+  const PINNED = { ...CAMPAIGN, telephony_provider: 'plivo', telephony_credential_id: CRED };
+
+  it('a service-account campaign rotates its stored pool exactly as before, with no read', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null });
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(CAMPAIGN.caller_ids).toContain(repos.attempt.create.mock.calls[0]![0].callerId);
+    expect(phoneAssignments.findCredentialNumbersForAccount).not.toHaveBeenCalled();
+  });
+
+  it('a pinned campaign dials only from the stored numbers still active on its carrier account', async () => {
+    repos.campaign.findById.mockResolvedValue(PINNED);
+    phoneAssignments.findCredentialNumbersForAccount.mockResolvedValue(['+14155550101']);
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1'), contact('c2')]);
+    const { e, dispatch } = engine(makeStations(['s1', 's2']), makeAgents({ s1: 'available', s2: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(repos.attempt.create.mock.calls.map((c: any[]) => c[0].callerId)).toEqual(['+14155550101', '+14155550101']);
+    expect(phoneAssignments.findCredentialNumbersForAccount).toHaveBeenCalledWith('t1', 'a1', CRED, CAMPAIGN.caller_ids);
+  });
+
+  it('a pinned campaign with none left dials nothing, reserves nothing, and says so once', async () => {
+    repos.campaign.findById.mockResolvedValue(PINNED);
+    phoneAssignments.findCredentialNumbersForAccount.mockResolvedValue([]);
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const stations = makeStations(['s1']);
+    const agents = makeAgents({ s1: 'available' });
+    const { e, dispatch } = engine(stations, agents);
+
+    await e.tickOnce('camp-1');
+    await e.tickOnce('camp-1');
+
+    expect(agents.reserve).not.toHaveBeenCalled();
+    expect(repos.contact.claimDialable).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(stations.broadcast).toHaveBeenCalledTimes(1);
+    expect((stations.broadcast.mock.calls[0]![1] as any).dialing).toBe(false);
+    // The read is cached between ticks: one read for the two.
+    expect(phoneAssignments.findCredentialNumbersForAccount).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('PacingEngine tick arithmetic', () => {

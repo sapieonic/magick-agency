@@ -151,6 +151,23 @@ export interface TelephonyCredentialNumberSync {
   conflicts: Array<{ phone_number: string; reason: TelephonyNumberSyncConflictReason }>;
   /** The credential's active numbers after the sync: what its campaigns may use as caller IDs. */
   active_numbers: number;
+  /**
+   * Live campaigns (draft, running, paused, stopping) on this credential whose caller IDs
+   * still name one of its numbers that is no longer active. Such a number is never
+   * dialled (decision PL13), so the operator can tell the tenant to replace it.
+   */
+  campaigns_holding_retired: TelephonyCredentialSyncCampaign[];
+}
+
+/** A campaign still naming retired numbers of the synced credential (`campaigns_holding_retired`). */
+export interface TelephonyCredentialSyncCampaign {
+  campaign_id: string;
+  campaign_name: string;
+  account_id: string;
+  account_name: string;
+  status: string;
+  /** Its caller IDs that are the credential's numbers and not active, sorted. */
+  retired_caller_ids: string[];
 }
 
 export interface TelephonyCredentialSyncNumbersResponse {

@@ -197,6 +197,10 @@ describe('Sync numbers', () => {
           { phone_number: '+14155550107', reason: 'deleted' },
         ],
         active_numbers: 4,
+        campaigns_holding_retired: [{
+          campaign_id: 'camp-1', campaign_name: 'Collections', account_id: 'acct-1', account_name: 'North',
+          status: 'running', retired_caller_ids: ['+14155550199'],
+        }],
       },
     });
     await openRow();
@@ -214,6 +218,10 @@ describe('Sync numbers', () => {
     expect(result.textContent).toContain('14155550108: transferred to another account (a subaccount); never taken into this one');
     expect(result.textContent).toContain('+14155550106: already in the inventory on another carrier account');
     expect(result.textContent).toContain('+14155550107: deleted from the inventory; a sync does not bring it back');
+    // The campaigns that still name a retired number, so the operator can tell the tenant (PL13).
+    const holding = screen.getByTestId('sync-campaigns-holding-retired');
+    expect(holding.textContent).toContain('Tell the tenant to replace them');
+    expect(holding.textContent).toContain('Collections (North, running): +14155550199');
   });
 
   it.each([

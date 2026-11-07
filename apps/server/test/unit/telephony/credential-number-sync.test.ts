@@ -189,6 +189,7 @@ let rows: Map<string, TelephonyCredentialRecord>;
 let secrets: TelephonyCredentialSecretRecord[];
 let fetchPages: ReturnType<typeof carrier>;
 let syncForCredential: ReturnType<typeof vi.fn>;
+let findCampaignsHoldingInactiveNumbers: ReturnType<typeof vi.fn>;
 let svc: TelephonyCredentialService;
 
 /** Just enough of the repository for create and resolve. */
@@ -219,7 +220,7 @@ function service(sealer: CredentialSealer | null = new CredentialSealer(new EnvK
     repo: repo(), sealer, tenants: { findById: async (id) => (id === TENANT ? { id } : null) },
     // create's check is the first call; every later one is the number list.
     fetchImpl: async (url, init) => (url.endsWith('/Number/') || url.includes('/Number/?') ? fetchPages.fetchImpl(url, init) : { status: 200 }),
-    numbers: { syncForCredential: syncForCredential as never },
+    numbers: { syncForCredential: syncForCredential as never, findCampaignsHoldingInactiveNumbers: findCampaignsHoldingInactiveNumbers as never },
   });
 }
 
@@ -239,6 +240,7 @@ beforeEach(() => {
   secrets = [];
   fetchPages = carrier([page([num('14155550100'), num('14155550101'), num('14155550102', { voice_enabled: false })])]);
   syncForCredential = vi.fn().mockResolvedValue(WRITTEN);
+  findCampaignsHoldingInactiveNumbers = vi.fn().mockResolvedValue([]);
   svc = service();
 });
 
@@ -257,10 +259,29 @@ describe('TelephonyCredentialService.syncNumbers', () => {
           listed: 3, added: ['+14155550100'], reactivated: [], unchanged: [], retired: ['+14155550199'],
           skipped: [{ number: '14155550102', reason: 'not_voice' }],
           conflicts: [{ phone_number: '+14155550101', reason: 'registered_elsewhere' }], active_numbers: 1,
+          campaigns_holding_retired: [],
         },
       },
     });
     expect(JSON.stringify(r)).not.toContain(TOKEN);
+  });
+
+  it('names the live campaigns still holding the credential\'s retired numbers, read after the write (PL13)', async () => {
+    const id = await credential();
+    findCampaignsHoldingInactiveNumbers.mockImplementation(async () => {
+      // Read after the sync wrote, so a number it just retired is counted.
+      expect(syncForCredential).toHaveBeenCalled();
+      return [{
+        campaign_id: 'c-1', campaign_name: 'Collections', account_id: 'a-1', account_name: 'North',
+        status: 'running', caller_ids: ['+14155550199'],
+      }];
+    });
+    const r = await svc.syncNumbers(id, ADMIN);
+    expect(findCampaignsHoldingInactiveNumbers).toHaveBeenCalledWith(id);
+    expect(r.ok && r.value.sync.campaigns_holding_retired).toEqual([{
+      campaign_id: 'c-1', campaign_name: 'Collections', account_id: 'a-1', account_name: 'North',
+      status: 'running', retired_caller_ids: ['+14155550199'],
+    }]);
   });
 
   it.each(['disabled', 'invalid', 'revoked'] as const)('a %s credential is refused before the carrier is asked', async (status) => {

@@ -227,3 +227,36 @@ describe('tenantPhoneAssignmentRepository.findCredentialNumbersForAccount (integ
     expect(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(otherTenant, account, cred, asked)).toEqual([]);
   });
 });
+
+describe('phoneNumberRepository.findCampaignsHoldingInactiveNumbers (integration)', () => {
+  async function campaign(name: string, credentialId: string, callerIds: string[], status = 'running'): Promise<string> {
+    const { rows } = await getTestPool().query<{ id: string }>(
+      `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids, telephony_provider, telephony_credential_id, status)
+       VALUES ($1, $2, $3, $4, 'plivo', $5, $6) RETURNING id`,
+      [tenant, account, name, callerIds, credentialId, status]);
+    return rows[0]!.id;
+  }
+
+  it('lists the live campaigns on the credential still naming one of its numbers that is no longer active', async () => {
+    const cred = await insertCredential();
+    const otherCred = await insertCredential();
+    await phoneNumberRepository.syncForCredential(cred, listed('+14155550001', '+14155550002', '+14155550003'), admin);
+    await phoneNumberRepository.syncForCredential(otherCred, listed('+14155550004'), admin);
+    // A later sync no longer lists 2 and 3: retired.
+    await phoneNumberRepository.syncForCredential(cred, listed('+14155550001'), admin);
+    await phoneNumberRepository.syncForCredential(otherCred, [], admin);
+
+    const holding = await campaign('Holding', cred, ['+14155550003', '+14155550001', '+14155550002']);
+    await campaign('Clean', cred, ['+14155550001']);
+    await campaign('Finished', cred, ['+14155550002'], 'completed');
+    // Another credential's retired number is not this credential's business.
+    await campaign('Elsewhere', otherCred, ['+14155550004']);
+
+    expect(await phoneNumberRepository.findCampaignsHoldingInactiveNumbers(cred)).toEqual([
+      expect.objectContaining({
+        campaign_id: holding, campaign_name: 'Holding', account_id: account, status: 'running',
+        caller_ids: ['+14155550002', '+14155550003'],
+      }),
+    ]);
+  });
+});

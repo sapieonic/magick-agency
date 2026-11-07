@@ -6,6 +6,7 @@ import type {
   UpdatePhoneNumberInput,
   SyncedNumberInput,
   NumberSyncResult,
+  CampaignHoldingInactiveNumbers,
 } from '../models/phone-number.model.js';
 
 export class PhoneNumberRepository {
@@ -195,6 +196,32 @@ export class PhoneNumberRepository {
       result.conflicts.sort((a, b) => a.phone_number.localeCompare(b.phone_number));
       return result;
     }, { pool: getPool() });
+  }
+
+  /**
+   * The live campaigns (draft, running, paused, stopping) pinned to `credentialId` whose
+   * caller IDs still name one of its numbers that is not `active` (a sync or a
+   * super-admin retired it, or it was deleted). The dial skips such a number (PL13); this
+   * is the list an operator tells the tenant about. Ordered by account, then campaign.
+   */
+  async findCampaignsHoldingInactiveNumbers(credentialId: string): Promise<CampaignHoldingInactiveNumbers[]> {
+    const pool = getPool();
+    const result = await pool.query<CampaignHoldingInactiveNumbers>(
+      `WITH inactive AS (
+         SELECT phone_number FROM phone_numbers
+          WHERE telephony_credential_id = $1::uuid AND status <> 'active'
+       )
+       SELECT c.id AS campaign_id, c.name AS campaign_name, c.account_id, a.name AS account_name, c.status,
+              ARRAY(SELECT n FROM unnest(c.caller_ids) AS n WHERE n IN (SELECT phone_number FROM inactive) ORDER BY n) AS caller_ids
+         FROM agency_campaigns c
+         JOIN accounts a ON a.id = c.account_id
+        WHERE c.telephony_credential_id = $1::uuid
+          AND c.status IN ('draft', 'running', 'paused', 'stopping')
+          AND c.caller_ids && ARRAY(SELECT phone_number::text FROM inactive)
+        ORDER BY a.name, c.name, c.id`,
+      [credentialId],
+    );
+    return result.rows;
   }
 
   // There is no `findPlatformOwned`: its one use was refusing to register a
