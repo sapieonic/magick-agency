@@ -3,7 +3,7 @@
 Every decision that shapes Magick Agency, by ID, in one place. Read it when you need to know
 whether something is settled, why the code is built the way it is, or what is still waiting on
 someone. Source comments cite entries here by ID ("decision B8", "Q6 (Manas, 2026-10-09)"), so
-IDs are never renumbered or reused. As of 2026-11-06.
+IDs are never renumbered or reused. As of 2026-11-07.
 
 Status words: **settled** (a founding product decision, not reopened here); **default, pending
 Manas** (built with the recommended option, not yet ratified); **open** (no default yet; a launch
@@ -412,6 +412,25 @@ permission `agency.customer_history.read` (floored at `agent`).
 | CH13 | The CSV export is the console's only in v1: the agent app has no file-sharing plugin, and adding one is a dependency change not made while the app could not be built | **default, pending Manas** |
 | CH14 | The history covers a number's newest 2,000 roster rows (summary, totals, timeline, export and audit count alike), chosen by an index walk per visible account that stops at the cap, so a placeholder on 200,000 rows costs what 2,000 do; past it the clients say "This number is on more than 2,000 roster rows. This history covers the 2,000 most recent." Soft-phone calls dialled to the number are all still included | **default, pending Manas** |
 
+Plivo on tenants' own accounts, 2026-11-07 (steps 3 and 4 of B18–B22; [`status.md`](status.md),
+"Plivo, on tenants' own accounts"). The build's own calls, made where B18–B22 left a choice; none
+has run against a real Plivo account yet (step 5). How a call flows: [`architecture.md`](architecture.md),
+"The voice engine"; enabling it and what the pauses mean: [`operations.md`](operations.md),
+"Enabling Plivo for a tenant".
+
+| ID | Decision | Status |
+|---|---|---|
+| PL1 | A 403 on create-call is a plain refusal of that dial (Plivo's answer for a destination its geo permissions do not allow), not an auth failure: the call ends `telephony_init_failed` and nothing is paused. Only a 401 says the credential is refused. To confirm on a real account in step 5 | **default, pending Manas** |
+| PL2 | A dial the carrier refuses with 401 pauses the campaign on the first one, pause reason `carrier_auth` (migration 0018), audited `agency_campaign.auto_paused` with that reason; the contact goes back at once, uncharged. The credential's status is not changed: a super-admin rotates or verifies it, then a supervisor resumes | **default, pending Manas** |
+| PL3 | A dial refused because the pinned credential cannot dial (disabled, invalid, revoked or unopenable since the campaign started; `telephony_credential_unavailable`, before the carrier) pauses the campaign on the first one, pause reason `carrier_account_unavailable` (migration 0019), audited the same way; the contact goes back at once, uncharged. Start and resume answer 409 `telephony_credential_not_active` while the credential is not `active`. A soft-phone dial refused this way answers `dial_failed` and pauses nothing | **default, pending Manas** |
+| PL4 | A number synced from a tenant credential is offered as a caller ID (campaign caller IDs, the soft phone's list and defaults, the console's number list, the super-admin's routed-number count) only while that credential is `active`. The number row is untouched, so re-enabling the credential offers it again. A campaign pinned to a credential may use only that credential's active synced numbers | **default, pending Manas** |
+| PL5 | Number sync is a super-admin action on an `active` credential (`POST /super-admin/telephony-credentials/:id/sync-numbers`, audited). Synced numbers are pinned to the credential and assigned to its tenant untagged, so every account of the tenant may use them; a number already registered elsewhere is reported as a conflict, never taken over; a number gone from the carrier account is retired, never deleted. A tenant-credential carrier's numbers cannot be added by hand, and a synced number is assignable only to its credential's tenant | **default, pending Manas** |
+| PL6 | Plivo recordings are fetched from `media.plivo.com` only, matched exactly, with HTTP Basic on the first request only; `api.plivo.com` is deliberately excluded (a forged `recording_url` there would turn a credentialed GET into a read of account data). For every carrier a redirect hop carries nothing but `Range`. A refused access is `404 recording_unavailable` on playback and a non-retryable analysis failure; a keyring fault is retried | **default, pending Manas** |
+| PL7 | New calls a second are limited per Plivo account, default 2 (Plivo's account default, `PLIVO_CALLS_PER_SECOND`), in a fixed one-second window in Redis that every process shares. A dial waits up to `PLIVO_DIAL_RATE_MAX_WAIT_MS` (5 s) for a slot, then is refused unsent (`carrier_rate_limited`); Plivo's own 429 is the same refusal. It is back-pressure: the contact goes back at once, uncharged. A create-call that times out may have placed the call: never retried, its contact deferred 15 min as VoiceLink's | **default, pending Manas** |
+| PL8 | A teardown before the answer cancels the dial by its `request_uuid`; after the answer it hangs up by the `call_uuid`. Neither is ever sent with an empty or malformed id (an empty hangup id would address every call on the account) | **default, pending Manas** |
+| PL9 | A Plivo callback is accepted only with both the purpose-bound token in its URL and a V3 signature from the account the call was placed on (the current token, or the previous one inside the 24 h rotation grace), over the URL rebuilt from `PLIVO_WEBHOOK_BASE_URL`'s origin and the request's path and query, never a `Host` header. A refused answer callback is answered with hangup XML. With media workers a callback runs in the worker its `w` names; a forward that fails or misses its 10 s deadline is hangup XML (answer) or 503, never a 200 for a post that was not processed | **default, pending Manas** |
+| PL10 | The console offers a campaign carrier choice only when the tenant has more than one carrier account, named by its alias plus the account's label, never a vendor name; with one, it uses that one. An untagged soft-phone call dials on the carrier account of the chosen caller ID's number; a tagged one on its campaign's | **default, pending Manas** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
@@ -437,5 +456,6 @@ permission `agency.customer_history.read` (floored at `agent`).
 | AA1 (tenant-wide seat), AA2, AA3, AA5, AA6 | Account creation defaults | Built, pending ratification (§4, "Account creation"): a tenant admin needs a tenant-wide seat; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first. AA4 (zero call capacity until a super admin allocates) is decided | Manas (ratify) |
 | CH6–CH11, CH12 b–d, CH13, CH14 | Customer history defaults | Built, pending ratification (§4, "Customer history"): the 30-minute search id, the retry-chain grouping, what each role is shown, the audit coverage, 30 searches a minute per user, the inferred upload file, export in the console only, the history bounded to a number's newest 2,000 roster rows | Manas (ratify) |
 | CH12 a, CH12 e | Customer history: what the schema cannot show | (a) Must DNC removals appear in a number's history? They would need the number kept on removal, today deliberately not recorded. (e) Should the roster ingest drop a bracketed trunk `(0)` as the soft phone and the search do? It changes what existing rosters dedupe on | Manas |
+| PL1–PL10 | Plivo on tenants' own accounts | Built, pending ratification (§4, "Plivo on tenants' own accounts"), and unproven on a real Plivo account until step 5: the 403 reading (PL1), the two automatic pauses, the caller-ID and sync rules, the recording host, the calls-per-second default | Manas (ratify) |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |
