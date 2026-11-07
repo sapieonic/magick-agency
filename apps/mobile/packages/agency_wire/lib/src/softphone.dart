@@ -1902,6 +1902,10 @@ enum SoftphoneErrorCode implements WireEnum {
   /// 409 (contact assignment): the tagged campaign is `strict` and the
   /// number's contact belongs to another agent. Nothing was dialled.
   contactAssignedElsewhere('contact_assigned_elsewhere'),
+
+  /// 409: the caller ID's carrier account cannot place calls (no longer active,
+  /// or its credentials refused). Nothing was dialled; retrying cannot help.
+  carrierAccountUnavailable('carrier_account_unavailable'),
   unknown('');
 
   const SoftphoneErrorCode(this.wire);

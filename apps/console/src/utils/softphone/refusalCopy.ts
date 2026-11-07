@@ -38,6 +38,10 @@ export const SOFTPHONE_REFUSAL_COPY: Record<AgencySoftphoneErrorCode, string> = 
   fields_invalid: 'Some call details need fixing. The fields are marked in Call details.',
   settings_invalid: 'Some settings need fixing.',
   contact_assigned_elsewhere: 'This number belongs to another agent on this campaign.',
+  // Not retryable: the carrier account needs fixing, which only support can do (PL15).
+  carrier_account_unavailable:
+    'This caller ID’s carrier account can’t place calls: it needs attention, so nothing was dialled. '
+    + 'Contact support, or pick a caller ID on another carrier.',
 };
 
 /**

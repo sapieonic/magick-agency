@@ -59,6 +59,7 @@ export type SoftphoneRefusal =
   | { code: 'concurrency_limit' }
   | { code: 'station_unavailable' }
   | { code: 'dial_failed' }
+  | { code: 'carrier_account_unavailable' }
   | { code: 'call_not_found' }
   | { code: 'call_settled'; call: AgencyManualCall }
   | {
@@ -100,6 +101,7 @@ export function softphoneRefusalMessage(refusal: SoftphoneRefusal): string {
     case 'concurrency_limit': return 'All lines are busy. Try again shortly.';
     case 'station_unavailable': return 'Your station is not connected.';
     case 'dial_failed': return 'That could not be done just now. Nothing was dialled or changed; try again.';
+    case 'carrier_account_unavailable': return 'The carrier account this caller ID is on cannot place calls: it needs attention. Nothing was dialled. Contact support, or use another caller ID.';
     case 'call_not_found': return 'Call not found.';
     case 'call_settled': return 'This call\'s outcome is already saved or has lapsed.';
     case 'disposition_invalid': return 'That outcome cannot be saved as submitted.';

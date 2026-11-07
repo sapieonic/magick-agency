@@ -407,7 +407,7 @@ export type AgencySoftphoneErrorCode =
   | 'manual_call_live'
   /** 409. A dial while the session's last call awaits its outcome: one unsettled call per session. */
   | 'outcome_pending'
-  /** 429. The account, provider or global concurrency guard refused the dial. */
+  /** 429. The account, provider or global concurrency guard refused the dial, or the carrier account's calls-per-second limit gave it no slot. Nothing was dialled; retry in a moment. */
   | 'concurrency_limit'
   /** 409. The session has no attached station socket to dial the agent leg on. */
   | 'station_unavailable'
@@ -424,7 +424,9 @@ export type AgencySoftphoneErrorCode =
   /** 400. `PUT /settings` body is invalid (catalog, call fields, profile or caller ID). `details` per path. */
   | 'settings_invalid'
   /** 409. Contact assignment: the tagged campaign is `strict` and the number's contact belongs to another agent. A supervisor is not refused. */
-  | 'contact_assigned_elsewhere';
+  | 'contact_assigned_elsewhere'
+  /** 409. The carrier account the caller ID's number is on cannot place calls: it is no longer active (disabled, invalid, revoked) or the carrier refused its credentials. Nothing was dialled, and retrying cannot help until support has fixed the account; another caller ID may. */
+  | 'carrier_account_unavailable';
 
 /** Runtime list of {@link AgencySoftphoneErrorCode}, in declaration order. */
 export const AGENCY_SOFTPHONE_ERROR_CODES = [
@@ -453,6 +455,7 @@ export const AGENCY_SOFTPHONE_ERROR_CODES = [
   'fields_invalid',
   'settings_invalid',
   'contact_assigned_elsewhere',
+  'carrier_account_unavailable',
 ] as const satisfies readonly AgencySoftphoneErrorCode[];
 
 const _allSoftphoneCodesListed: AllListed<

@@ -281,7 +281,8 @@
       "disposition_invalid",
       "fields_invalid",
       "settings_invalid",
-      "contact_assigned_elsewhere"
+      "contact_assigned_elsewhere",
+      "carrier_account_unavailable"
     ]
   },
   "manual_call_states": {

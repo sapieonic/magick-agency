@@ -49,6 +49,10 @@ const Map<SoftphoneErrorCode, String> softphoneRefusalCopy = {
   SoftphoneErrorCode.settingsInvalid: 'Some settings need fixing.',
   // Contact assignment: a strict campaign's contact that is another agent's.
   SoftphoneErrorCode.contactAssignedElsewhere: 'This number belongs to another agent on this campaign.',
+  // Not retryable: the carrier account needs fixing, which only support can do.
+  SoftphoneErrorCode.carrierAccountUnavailable:
+      'This caller ID’s carrier account can’t place calls: it needs attention, so nothing was dialled. '
+      'Contact support, or pick a caller ID on another carrier.',
 };
 
 /// What the refused request was doing, where one code means different things.

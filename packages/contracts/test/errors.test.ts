@@ -172,6 +172,7 @@ describe('soft-phone codes', () => {
       'fields_invalid',
       'settings_invalid',
       'contact_assigned_elsewhere',
+      'carrier_account_unavailable',
     ]);
     expectUnique(AGENCY_SOFTPHONE_ERROR_CODES);
   });

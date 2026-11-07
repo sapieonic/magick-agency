@@ -169,10 +169,12 @@ Owned by `AgencyRuntime`. One call at a time per session.
    synced from a tenant's Plivo account dials on that account; the service's own numbers on the
    service's carrier). `ringing` is
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
-   (`concurrency_limit`, a dead socket, or `dial_failed` for a refusal the soft phone does not
-   name, such as a carrier account that cannot dial (`telephony_credential_unavailable`,
-   `carrier_auth_rejected`) or a calls-per-second limit (`carrier_rate_limited`), which pause
-   nothing here, and for any failure inside the bridge before the carrier is asked: the row INSERT, the
+   (`429 concurrency_limit` for a busy line or a calls-per-second limit, `carrier_rate_limited`:
+   retry in a moment; `409 carrier_account_unavailable` for a carrier account that cannot dial,
+   `telephony_credential_unavailable` or `carrier_auth_rejected`: not retryable, the agent is told
+   to contact support or use another caller ID, and nothing is paused here; a dead socket; or
+   `dial_failed` for a refusal the soft phone does not name, and for any failure inside the bridge
+   before the carrier is asked: the row INSERT, the
    carrier tokens, the carrier request's inputs such as the webhook base or the provider's
    adapter, which the bridge tears down with no `ended`) or the carrier refuses outright is
    ended `failed` and **unplaced**: `dialed_at` (stamped by
