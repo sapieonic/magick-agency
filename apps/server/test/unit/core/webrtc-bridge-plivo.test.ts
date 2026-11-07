@@ -154,6 +154,8 @@ const hooks = { onCallFinalized: vi.fn().mockResolvedValue(undefined), onRecordi
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Back to the original implementation: a test's unconsumed `…Once` must not leak into the next.
+  registry.getForCredentialId.mockReset();
   lifecycle = [];
   resetBridgeAnalysisHooks();
   setBridgeAnalysisHooks(hooks);
