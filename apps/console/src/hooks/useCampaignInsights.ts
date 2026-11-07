@@ -8,7 +8,6 @@ import {
   getInsightsReadiness,
   getInsightsSummary,
   getInsightsTrends,
-  getInsightsUploads,
 } from '../api/agencyInsights';
 import { useVisibleInterval } from './useVisibleInterval';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
@@ -22,17 +21,18 @@ import type {
   AgencyInsightsReadiness,
   AgencyInsightsSummary,
   AgencyInsightsTrends,
-  AgencyInsightsUploads,
 } from '../types/agency-insights';
 
 /**
- * The Insights tab's data, in two halves that refresh on different rules.
+ * The data behind the campaign's analytic tabs (Overview, Calls, Agents,
+ * Callbacks and Health; IN13), in two halves that refresh on different rules.
  *
  * ── As of now: polled ───────────────────────────────────────────────────────
  * `summary` and `allocation` are positions, and they poll every 10 s while the
  * campaign is moving (`insightsShouldPoll`: running, stopping, or paused with
  * calls still finishing), visible tabs only and one tick at a time
- * (`useVisibleInterval`). `readiness` is read for a draft only; `uploads` once.
+ * (`useVisibleInterval`). `readiness` is read for a draft only. (The upload
+ * history moved to the Settings tab with IN13 and is read there, once.)
  * None of these is ever polled on a draft or a finished campaign.
  *
  * ── Over a range: never polled ──────────────────────────────────────────────
@@ -51,7 +51,6 @@ export interface InsightsLive {
   summary: AsyncResource<AgencyInsightsSummary | null>;
   allocation: AsyncResource<AgencyInsightsAllocation | null>;
   readiness: AsyncResource<AgencyInsightsReadiness | null>;
-  uploads: AsyncResource<AgencyInsightsUploads | null>;
   /** The as-of-now reads are polling. */
   polling: boolean;
   /** When the summary last answered. */
@@ -78,10 +77,6 @@ export function useInsightsLive(campaignId: string | undefined): InsightsLive {
     () => getInsightsReadiness(campaignId as string, tenantId ?? undefined, accountId ?? undefined),
     [campaignId, tenantId, accountId],
   );
-  const fetchUploads = useCallback(
-    () => getInsightsUploads(campaignId as string, tenantId ?? undefined, accountId ?? undefined),
-    [campaignId, tenantId, accountId],
-  );
 
   const summary = useAsyncResource<AgencyInsightsSummary | null>(fetchSummary, {
     initialData: null,
@@ -100,17 +95,12 @@ export function useInsightsLive(campaignId: string | undefined): InsightsLive {
     enabled: ready && isDraft,
     errorMessage: 'Could not load the launch checklist.',
   });
-  const uploads = useAsyncResource<AgencyInsightsUploads | null>(fetchUploads, {
-    initialData: null,
-    enabled: ready,
-    errorMessage: 'Could not load the upload history.',
-  });
 
   const polling = insightsShouldPoll(summary.data);
 
   // Read through refs so the interval and the return handler never call a stale reload.
-  const live = useRef({ summary, allocation, readiness, uploads });
-  live.current = { summary, allocation, readiness, uploads };
+  const live = useRef({ summary, allocation, readiness });
+  live.current = { summary, allocation, readiness };
 
   const tick = useCallback(
     () => Promise.all([live.current.summary.reload(), live.current.allocation.reload()]).then(() => undefined),
@@ -121,25 +111,36 @@ export function useInsightsLive(campaignId: string | undefined): InsightsLive {
   useRefetchOnReturn(() => (ready ? tick() : undefined));
 
   const refresh = useCallback(async () => {
-    const { summary: s, allocation: a, readiness: r, uploads: u } = live.current;
-    await Promise.all([s.reload(), a.reload(), r.reload(), u.reload()]);
+    const { summary: s, allocation: a, readiness: r } = live.current;
+    await Promise.all([s.reload(), a.reload(), r.reload()]);
   }, []);
 
-  return { summary, allocation, readiness, uploads, polling, lastUpdatedAt, refresh };
+  return { summary, allocation, readiness, polling, lastUpdatedAt, refresh };
 }
 
 export interface InsightsRangeData {
   activity: AsyncResource<AgencyInsightsActivity | null>;
   trends: AsyncResource<AgencyInsightsTrends | null>;
   health: AsyncResource<AgencyInsightsHealth | null>;
-  /** Any of the three is still loading (or has not started). */
+  /** Any of the reads asked for is still loading (or has not started). */
   loading: boolean;
 }
+
+/** Which of the three range reads a view shows. */
+export interface InsightsRangeNeeds {
+  activity: boolean;
+  trends: boolean;
+  health: boolean;
+}
+
+const ALL_RANGE_READS: InsightsRangeNeeds = { activity: true, trends: true, health: true };
 
 /**
  * The three range reads. `active` is false until the page has painted; a range
  * with an `error` (a custom range that cannot be sent) fetches nothing.
- * `refreshToken` is bumped by Refresh and never by the poll.
+ * `refreshToken` is bumped by Refresh and never by the poll. `needs` leaves out
+ * a read no view on screen has asked for (the trends are the Calls tab's alone),
+ * so an Overview visit never pays for them.
  */
 export function useInsightsRange(
   campaignId: string | undefined,
@@ -147,6 +148,7 @@ export function useInsightsRange(
   bucket: AgencyInsightsBucket,
   active: boolean,
   refreshToken: number,
+  needs: InsightsRangeNeeds = ALL_RANGE_READS,
 ): InsightsRangeData {
   const { tenantId, accountId } = useTenant();
   const enabled = Boolean(active && campaignId && tenantId && accountId && range && !range.error);
@@ -179,21 +181,22 @@ export function useInsightsRange(
 
   const activity = useAsyncResource<AgencyInsightsActivity | null>(fetchActivity, {
     initialData: null,
-    enabled,
+    enabled: enabled && needs.activity,
     errorMessage: 'Could not load calls and outcomes.',
   });
   const trends = useAsyncResource<AgencyInsightsTrends | null>(fetchTrends, {
     initialData: null,
-    enabled,
+    enabled: enabled && needs.trends,
     errorMessage: 'Could not load the trends.',
   });
   const health = useAsyncResource<AgencyInsightsHealth | null>(fetchHealth, {
     initialData: null,
-    enabled,
+    enabled: enabled && needs.health,
     errorMessage: 'Could not load health and compliance.',
   });
 
-  return { activity, trends, health, loading: activity.loading || trends.loading || health.loading };
+  const loading = (needs.activity && activity.loading) || (needs.trends && trends.loading) || (needs.health && health.loading);
+  return { activity, trends, health, loading };
 }
 
 /**

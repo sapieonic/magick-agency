@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { Printer, RefreshCw } from 'lucide-react';
 import type { AsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -21,6 +21,10 @@ import {
   type InsightsRangeChoice,
 } from '../../../../utils/agency/insights/range';
 import type { AgencyInsightsBucket } from '../../../../types/agency-insights';
+import type { CampaignPanelId } from '../../../../utils/agencyCampaignTabs';
+import type { InsightsRangeNeeds } from '../../../../hooks/useCampaignInsights';
+import { campaignAttention } from '../../../../utils/agency/insights/overview';
+import { AttentionPanel, OverviewKpis, OverviewTeasers } from './OverviewSection';
 import { InsightsHeadline } from './InsightsHeadline';
 import { RosterSection } from './RosterSection';
 import { AllocationSection } from './AllocationSection';
@@ -28,8 +32,7 @@ import { CallbacksSection, CallsSection, OverridesSection, type RangeSectionCont
 import { AgentsSection } from './AgentsSection';
 import { TrendsSection } from './TrendsSection';
 import { HealthSection, RecordingSection } from './HealthSection';
-import { UploadsSection } from './UploadsSection';
-import { CampaignMeta, CampaignSettingsPanel } from './CampaignFacts';
+import { CampaignMeta } from './CampaignFacts';
 import { Panel, SectionBody } from './InsightsParts';
 import styles from './Insights.module.css';
 
@@ -42,15 +45,51 @@ interface InsightsPanelProps {
   refreshToken: number;
   /** The shell's view of the status: a lifecycle action there re-reads the summary here. */
   shellStatus: string;
+  /** Which tab is on screen (decision IN13): each shows its own sections over the same reads. */
+  view: CampaignPanelId;
+  /** The overdue callbacks as of now, for the Callbacks tab's badge; null until known. */
+  onCallbacksOverdue?: (count: number | null) => void;
+}
+
+/** The range reads each tab shows. */
+const VIEW_NEEDS: Record<CampaignPanelId, InsightsRangeNeeds> = {
+  overview: { activity: true, trends: false, health: true },
+  calls: { activity: true, trends: true, health: false },
+  agents: { activity: true, trends: false, health: false },
+  callbacks: { activity: true, trends: false, health: false },
+  health: { activity: false, trends: false, health: true },
+};
+
+/**
+ * The reads asked for by any tab opened so far. Sticky, so going back to a tab
+ * shows what it showed instead of loading again: switching tabs never drops a
+ * read, only a range change or Refresh reloads one. The price: a read stays on
+ * after its tab is left, so a range change on Overview also reloads the trends
+ * once Calls has been opened. One extra read, against a reload on every switch.
+ */
+function useStickyNeeds(view: CampaignPanelId): InsightsRangeNeeds {
+  const [needs, setNeeds] = useState<InsightsRangeNeeds>(() => VIEW_NEEDS[view]);
+  const wanted = VIEW_NEEDS[view];
+  const missing = (wanted.activity && !needs.activity) || (wanted.trends && !needs.trends) || (wanted.health && !needs.health);
+  if (missing) {
+    // Adjusting state during render: React re-renders at once, before paint.
+    const next = { activity: needs.activity || wanted.activity, trends: needs.trends || wanted.trends, health: needs.health || wanted.health };
+    setNeeds(next);
+    return next;
+  }
+  return needs;
 }
 
 /**
- * The campaign's Insights tab (decision IN1): one analytic surface in every
- * status. The as-of-now reads paint first; the range reads load after that
+ * The campaign's analytic tabs (decisions IN1, IN13): one analytic surface in
+ * every status, shown a question at a time — Overview, Calls, Agents (below the
+ * floor and the staffing), Callbacks and Health. Mounted once for all five, so
+ * the reads and the range survive moving between them. The as-of-now reads paint first; the range reads load after that
  * paint (`useAfterFirstPaint`) and only reload on a range change or Refresh.
  * See `useCampaignInsights` for the refresh rules and `range.ts` for the range.
  */
-export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, shellStatus }: InsightsPanelProps) {
+export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, shellStatus, view, onCallbacksOverdue }: InsightsPanelProps) {
+  const { search } = useLocation();
   const { tenantId, accountId } = useTenant();
   const live = useInsightsLive(campaignId);
   const summary = live.summary.data;
@@ -92,7 +131,8 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   const [printRequested, setPrintRequested] = useState(false);
   const active = useAfterFirstPaint(summary !== null, printRequested);
   const [rangeToken, setRangeToken] = useState(0);
-  const rangeData = useInsightsRange(campaignId, range, bucket, active, rangeToken);
+  const needs = useStickyNeeds(view);
+  const rangeData = useInsightsRange(campaignId, range, bucket, active, rangeToken, needs);
 
   /**
    * What a screen reader is told after a Refresh. The visible stamp is NOT a
@@ -134,6 +174,12 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
 
   // ── Names ──────────────────────────────────────────────────────────────
   const allocation = live.allocation.data;
+
+  // The Callbacks tab's badge, as of now (the allocation is polled).
+  const overdueNow = allocation ? allocation.totals.callbacks_overdue : null;
+  useEffect(() => {
+    onCallbacksOverdue?.(overdueNow);
+  }, [overdueNow, onCallbacksOverdue]);
   const activity = rangeData.activity.data;
   const names = useMemo(() => {
     const map = new Map<string, string>();
@@ -166,10 +212,25 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   const today = zoneDay(zone, now);
   /** A custom range that cannot be sent leaves the range sections saying so, not loading forever. */
   const blocked = range?.error ? 'Choose a valid range to see these figures.' : null;
-  const freshness = blocked ? null : rangeFreshness(activity, zone);
+  // What the Overview's range figures show: nothing while the range is invalid.
+  const shownActivity = blocked ? null : activity;
+  const shownHealth = blocked ? null : rangeData.health.data;
+  // A read that failed with nothing to show: the Overview says so once, and its
+  // figures say "unavailable" rather than wait forever (the tabs use RangePanel).
+  const failed = {
+    activity: !blocked && activity === null && rangeData.activity.error !== null,
+    health: !blocked && shownHealth === null && rangeData.health.error !== null,
+    allocation: allocation === null && live.allocation.error !== null,
+  };
+  const overviewError = blocked
+    ? null
+    : rangeData.activity.error ?? rangeData.health.error ?? (failed.allocation ? live.allocation.error : null);
+  // The freshness of the read this tab shows (Health shows no activity).
+  const freshness = blocked ? null : rangeFreshness(view === 'health' ? shownHealth : activity, zone);
 
   return (
-    <section className={styles.root} aria-label="Campaign insights" data-testid="insights-panel">
+    <section className={styles.root} aria-label="Campaign insights" data-testid="insights-panel" data-view={view}>
+      {view === 'agents' ? <h2 className={styles.viewTitle}>Performance</h2> : null}
       <div className={styles.toolbar}>
         <div className={styles.rangeGroup}>
           <div className={styles.segmented} role="group" aria-label="Time range">
@@ -234,89 +295,108 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
         </div>
       </div>
       <p className={styles.rangeNote}>
-        {`Times in ${zone}${range?.zoneFallback ? ' (the campaign’s time zone is not recognised)' : ''} · roster and allocation are as of now; calls, agents, trends and health follow the range (${served.label}).`}
+        {`Times in ${zone}${range?.zoneFallback ? ' (the campaign’s time zone is not recognised)' : ''} · figures marked “now” are live; the rest follow the range (${served.label}).`}
       </p>
       {range?.error ? <p className={styles.rangeError} role="alert">{range.error}</p> : null}
       {freshness ? <p className={styles.rangeNote} data-testid="insights-freshness">{freshness}</p> : null}
 
-      <CampaignMeta summary={summary} />
+      {view === 'overview' ? (
+        <>
+          {overviewError ? (
+            <p className={styles.sectionError} role="alert" data-testid="overview-error">{`${overviewError} Refresh to try again.`}</p>
+          ) : null}
+          <CampaignMeta summary={summary} />
+          <InsightsHeadline
+            summary={summary}
+            readiness={live.readiness}
+            now={now}
+            canRetry={canRetry}
+            onRetry={onRetry}
+            staffedAgents={staffedAgents}
+          />
+          <OverviewKpis
+            ctx={ctx}
+            summary={summary}
+            allocation={allocation}
+            activity={shownActivity}
+            health={shownHealth}
+            failed={failed}
+          />
+          <div className={styles.overviewGrid}>
+            <AttentionPanel
+              attention={campaignAttention({ summary, allocation, health: shownHealth })}
+              campaignId={campaignId}
+              search={search}
+              loading={(allocation === null && !failed.allocation) || (!blocked && shownHealth === null && !failed.health)}
+            />
+            <RosterSection campaignId={campaignId} campaignName={summary.name} roster={summary.roster} />
+          </div>
+          <OverviewTeasers
+            campaignId={campaignId}
+            search={search}
+            activity={shownActivity}
+            allocation={allocation}
+            health={shownHealth}
+            failed={failed}
+          />
+        </>
+      ) : null}
 
-      <InsightsHeadline
-        summary={summary}
-        readiness={live.readiness}
-        now={now}
-        canRetry={canRetry}
-        onRetry={onRetry}
-        staffedAgents={staffedAgents}
-      />
+      {view === 'calls' ? (
+        <>
+          <RangePanel id="calls" title="Calls and outcomes" resource={rangeData.activity} blocked={blocked}>
+            {(data) => <CallsSection ctx={ctx} activity={data} />}
+          </RangePanel>
+          <RangePanel blocked={blocked} id="trends" title="Trends" resource={rangeData.trends}>
+            {(data) => (
+              <TrendsSection
+                ctx={ctx}
+                trends={data}
+                bucket={bucket}
+                bucketOptions={bucketOptions}
+                onBucketChange={setChosenBucket}
+                timezone={zone}
+                ceilingPct={summary.settings.abandonment_ceiling_pct}
+              />
+            )}
+          </RangePanel>
+        </>
+      ) : null}
 
-      <div className={styles.grid2}>
-        <RosterSection campaignId={campaignId} campaignName={summary.name} roster={summary.roster} />
-        <RangePanel id="calls" title="Calls and outcomes" resource={rangeData.activity} blocked={blocked}>
-          {(data) => <CallsSection ctx={ctx} activity={data} />}
-        </RangePanel>
-      </div>
+      {view === 'agents' ? (
+        <>
+          <RangePanel blocked={blocked} id="agents" title="Agents" resource={rangeData.activity}>
+            {(data) => <AgentsSection ctx={ctx} activity={data} />}
+          </RangePanel>
+          {allocation ? (
+            <AllocationSection campaignId={campaignId} campaignName={summary.name} allocation={allocation} timezone={zone} />
+          ) : (
+            <Panel id="allocation" title="Allocation by agent" sub="As of now">
+              <SectionBody resource={live.allocation}>{() => null}</SectionBody>
+            </Panel>
+          )}
+          <RangePanel blocked={blocked} id="overrides" title="Overrides" resource={rangeData.activity}>
+            {(data) => <OverridesSection ctx={ctx} activity={data} settings={summary.settings} />}
+          </RangePanel>
+        </>
+      ) : null}
 
-      {allocation ? (
-        <AllocationSection campaignId={campaignId} campaignName={summary.name} allocation={allocation} timezone={zone} />
-      ) : (
-        <Panel id="allocation" title="Allocation by agent" sub="As of now">
-          <SectionBody resource={live.allocation}>{() => null}</SectionBody>
-        </Panel>
-      )}
-
-      <div className={styles.grid2}>
+      {view === 'callbacks' ? (
         <RangePanel blocked={blocked} id="callbacks" title="Callbacks" resource={rangeData.activity}>
           {(data) => <CallbacksSection ctx={ctx} activity={data} />}
         </RangePanel>
-        <RangePanel blocked={blocked} id="overrides" title="Overrides" resource={rangeData.activity}>
-          {(data) => <OverridesSection ctx={ctx} activity={data} settings={summary.settings} />}
-        </RangePanel>
-      </div>
+      ) : null}
 
-      <RangePanel blocked={blocked} id="agents" title="Agents" resource={rangeData.activity}>
-        {(data) => <AgentsSection ctx={ctx} activity={data} />}
-      </RangePanel>
-
-      <RangePanel blocked={blocked} id="trends" title="Trends" resource={rangeData.trends}>
-        {(data) => (
-          <TrendsSection
-            ctx={ctx}
-            trends={data}
-            bucket={bucket}
-            bucketOptions={bucketOptions}
-            onBucketChange={setChosenBucket}
-            timezone={zone}
-            ceilingPct={summary.settings.abandonment_ceiling_pct}
-          />
-        )}
-      </RangePanel>
-
-      <RangePanel blocked={blocked} id="health" title="Health and compliance" resource={rangeData.health}>
-        {(data) => <HealthSection ctx={ctx} health={data} timezone={zone} />}
-      </RangePanel>
-
-      <div className={styles.grid2}>
-        <RangePanel blocked={blocked} id="recording" title="Recording and analysis" resource={rangeData.health}>
-          {(data) => <RecordingSection ctx={ctx} health={data} settings={summary.settings} />}
-        </RangePanel>
-        <CampaignSettingsPanel summary={summary} />
-      </div>
-
-      {live.uploads.data ? (
-        <UploadsSection
-          campaignId={campaignId}
-          campaignName={summary.name}
-          uploads={live.uploads.data}
-          timezone={zone}
-          tenantId={tenantId}
-          accountId={accountId}
-        />
-      ) : (
-        <Panel id="uploads" title="Upload history">
-          <SectionBody resource={live.uploads}>{() => null}</SectionBody>
-        </Panel>
-      )}
+      {view === 'health' ? (
+        <>
+          <RangePanel blocked={blocked} id="health" title="Health and compliance" resource={rangeData.health}>
+            {(data) => <HealthSection ctx={ctx} health={data} timezone={zone} />}
+          </RangePanel>
+          <RangePanel blocked={blocked} id="recording" title="Recording and analysis" resource={rangeData.health}>
+            {(data) => <RecordingSection ctx={ctx} health={data} settings={summary.settings} />}
+          </RangePanel>
+        </>
+      ) : null}
     </section>
   );
 }

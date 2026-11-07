@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   isCapabilityEnabled: vi.fn(),
   useCallAnalysisProfiles: vi.fn(),
+  getInsightsSummary: vi.fn(),
+  getInsightsUploads: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -59,6 +61,11 @@ vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
 }));
+// The lifecycle and upload history under the form (IN13).
+vi.mock('../../api/agencyInsights', () => ({
+  getInsightsSummary: mocks.getInsightsSummary,
+  getInsightsUploads: mocks.getInsightsUploads,
+}));
 
 function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   return {
@@ -93,6 +100,7 @@ function renderPage() {
 }
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
+import * as insightsSamples from '../helpers/insights';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -103,6 +111,8 @@ beforeEach(() => {
   });
   mocks.getAgencyCampaign.mockResolvedValue(campaign());
   mocks.updateAgencyCampaign.mockImplementation(async (_id, body) => campaign(body));
+  mocks.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
+  mocks.getInsightsUploads.mockResolvedValue(insightsSamples.uploads());
   // Governance fails OPEN, so the default posture here is every capability on —
   // matching a tenant whose map simply doesn't mention these keys.
   mocks.isCapabilityEnabled.mockReturnValue(true);
@@ -362,6 +372,25 @@ describe('campaign settings — editing a live campaign', () => {
 
     await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByText(/calls placed from now on/i)).toBeNull();
+  });
+});
+
+describe('campaign settings — lifecycle and uploads', () => {
+  it('shows a supervisor how the campaign was run and loaded, under the form', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    expect(await screen.findByTestId('insights-transitions')).toBeTruthy();
+    expect(await screen.findByTestId('insights-uploads')).toBeTruthy();
+    expect(mocks.getInsightsSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads neither for a role below `agency.supervise`, whose reads would 403', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'viewer' });
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    expect(screen.queryByTestId('campaign-history')).toBeNull();
+    expect(mocks.getInsightsSummary).not.toHaveBeenCalled();
+    expect(mocks.getInsightsUploads).not.toHaveBeenCalled();
   });
 });
 
@@ -805,6 +834,6 @@ describe('the campaign section bar', () => {
     expect(tab.getAttribute('aria-current')).toBe('page');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
-    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
   });
 });

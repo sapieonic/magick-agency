@@ -4,7 +4,8 @@ import { activity, allocation, health, readiness, summary, trends, uploads } fro
 import type { InsightsResolvedRange } from '../../utils/agency/insights/range';
 
 /**
- * The Insights tab's refresh rules, with fake timers:
+ * The campaign's insights reads and their refresh rules (shared by the Overview,
+ * Calls, Agents, Callbacks and Health tabs, IN13), with fake timers:
  *
  *  - `summary` and `allocation` poll every 10 s while running or stopping, or
  *    paused with calls still finishing; never on a draft or a final state.
@@ -71,8 +72,8 @@ describe('useInsightsLive — what polls', () => {
     await tick(10_000);
     expect(api.getInsightsSummary).toHaveBeenCalledTimes(2);
     expect(api.getInsightsAllocation).toHaveBeenCalledTimes(2);
-    // Uploads is read once; it is not part of the poll.
-    expect(api.getInsightsUploads).toHaveBeenCalledTimes(1);
+    // The upload history is the Settings tab's own read (IN13), never this hook's.
+    expect(api.getInsightsUploads).not.toHaveBeenCalled();
   });
 
   it('polls a paused campaign while calls finish, and stops once they have', async () => {
@@ -138,7 +139,6 @@ describe('useInsightsLive — what polls', () => {
     });
     expect(api.getInsightsSummary).toHaveBeenCalledTimes(2);
     expect(api.getInsightsAllocation).toHaveBeenCalledTimes(2);
-    expect(api.getInsightsUploads).toHaveBeenCalledTimes(2);
     expect(result.current.lastUpdatedAt?.toISOString()).toBe('2026-11-04T10:20:00.000Z');
   });
 });

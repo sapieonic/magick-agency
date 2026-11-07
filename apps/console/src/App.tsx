@@ -436,26 +436,33 @@ export default function App() {
                 <Route path="campaigns" element={<AgencyCampaignsPage />} />
                 <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
                 {/*
-                  The detail page's two panels, Insights and Agents, each its own
-                  URL so a section survives a refresh, can be sent to a colleague
-                  and answers the back button. Both mount the same component —
+                  The detail page's five panels (Overview, Calls, Agents,
+                  Callbacks, Health), each its own URL so a section survives a
+                  refresh, can be sent to a colleague and answers the back
+                  button. All mount the same component —
                   which reads the panel off the path via `campaignPanelFromPath` —
                   because they share one campaign fetch, one stats poll and one
                   header carrying the lifecycle controls.
 
-                  Insights replaced Overview and Performance (decision IN1). Their
-                  URLs, the bare campaign path and `…/performance`, redirect: to
-                  Insights for a supervisor, to Agents for a role that cannot read
-                  Insights (`CampaignLandingRedirect`), so no old link lands on a
-                  tab that 403s.
+                  Insights replaced Overview and Performance (decision IN1), and was
+                  then split into Overview, Calls, Callbacks and Health beside
+                  Agents (IN13). The retired URLs, the bare campaign path,
+                  `…/performance` and `…/insights`, redirect: to Overview for a
+                  supervisor, to Agents for a role that cannot read it
+                  (`CampaignLandingRedirect`), so no old link lands on a tab that
+                  403s.
 
                   `campaigns/new` is declared above and wins on rank (a static
                   segment outranks `:id`), so nothing here shadows it.
                 */}
                 <Route path="campaigns/:id" element={<CampaignLandingRedirect />} />
                 <Route path="campaigns/:id/performance" element={<CampaignLandingRedirect />} />
-                <Route path="campaigns/:id/insights" element={<AgencyCampaignDetailPage />} />
+                <Route path="campaigns/:id/insights" element={<CampaignLandingRedirect />} />
+                <Route path="campaigns/:id/overview" element={<AgencyCampaignDetailPage />} />
+                <Route path="campaigns/:id/calls" element={<AgencyCampaignDetailPage />} />
                 <Route path="campaigns/:id/agents" element={<AgencyCampaignDetailPage />} />
+                <Route path="campaigns/:id/callbacks" element={<AgencyCampaignDetailPage />} />
+                <Route path="campaigns/:id/health" element={<AgencyCampaignDetailPage />} />
                 <Route path="campaigns/:id/settings" element={<AgencyCampaignSettingsPage />} />
                 {/*
                   `campaigns/:id/contacts` now shows the ROSTER — the
@@ -496,8 +503,8 @@ export default function App() {
                   standalone campaign screens do — the bar is per-page, not part
                   of the layout, so a page that does not mount it has none.
                   `campaignPanelFromPath` cannot help here: it answers which
-                  PANEL of the detail page a path wants, so its range is
-                  `insights` | `agents` and never `attempts`.
+                  PANEL of the detail page a path wants, so its range is the
+                  detail page's own tabs and never `attempts`.
                 */}
                 <Route
                   path="campaigns/:id/attempts/:attemptId"

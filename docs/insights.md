@@ -1,6 +1,6 @@
 # Campaign insights
 
-The Insights tab: one page per campaign that tells a supervisor or tenant owner the campaign's
+The Insights tabs (Overview, Calls, Agents, Callbacks, Health since IN13): the pages per campaign that tell a supervisor or tenant owner the campaign's
 whole health in every status. ClickUp ticket "Campaign insights page"; the data mapping and the
 eight decisions (IN1–IN8 below) were signed off by Manas on 2026-11-04. The wire contract is
 `packages/contracts/src/api/agency/insights.ts`; read its header first.
@@ -9,7 +9,7 @@ eight decisions (IN1–IN8 below) were signed off by Manas on 2026-11-04. The wi
 
 | ID | Ruling |
 |---|---|
-| IN1 | Insights is a tab of the campaign shell at `/agency/campaigns/:id/insights` and replaces Overview and Performance; their URLs redirect to it. Agents, Contacts, Call attempts, Activity and Settings stay. |
+| IN1 | Insights is a tab of the campaign shell at `/agency/campaigns/:id/insights` and replaces Overview and Performance; their URLs redirect to it. Agents, Contacts, Call attempts, Activity and Settings stay. Split into five tabs by IN13. |
 | IN2 | Pacing history that was Prometheus-only (idle reasons, calling-hours deferrals, concurrency hits) is persisted per campaign per minute. |
 | IN3 | No target date in v1; "pace vs needed pace" is dropped. |
 | IN4 | A callback is kept on time when the follow-up dial is by `callback_at` + 15 min (inclusive; an early dial counts as on time), late when after that, missed when never dialled and the contact has closed (any state but pending, in flight or in wrap-up) whatever `callback_at` says, or `callback_at` has passed, or the campaign has ended. |
@@ -21,6 +21,14 @@ eight decisions (IN1–IN8 below) were signed off by Manas on 2026-11-04. The wi
 IN9–IN12 (the waiting buckets, the connect rate, whose an allocation dial is, what "Lifetime" serves)
 are the build's own calls where the mapping left a definition open, recorded in
 [`decisions.md`](decisions.md) §4 as defaults pending Manas.
+
+IN13 (Manas, 2026-11-07) split the one long Insights scroll into a tab per question: **Overview**
+(status headline, six figures marked "now" or the range, "Needs your attention", the roster, and a
+card per detail tab), **Calls** (outcomes, dispositions, trends), **Agents** (the floor and staffing,
+then the leaderboard, allocation and overrides), **Callbacks** and **Health** (compliance, stalls,
+caller IDs, recording). They are one `InsightsPanel` with a `view`, so the five tabs share one set
+of reads; each tab loads only the range reads it shows. Lifecycle and upload history moved to
+Settings. `…/insights` redirects to Overview. Detail in [`decisions.md`](decisions.md) §4.
 
 ## Shape
 

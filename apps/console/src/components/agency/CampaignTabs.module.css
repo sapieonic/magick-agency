@@ -73,6 +73,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Something on the tab is wrong now (overdue callbacks): a warning, not a head count. */
+.badgeAlert {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
 @media (max-width: 680px) {
   .tabs {
     margin: 14px 0 16px;

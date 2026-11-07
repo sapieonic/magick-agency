@@ -4,12 +4,12 @@ import { useTenant } from '../../../contexts/TenantContext';
 import { campaignLandingPath } from '../../../utils/agencyCampaignTabs';
 
 /**
- * `/agency/campaigns/:id` and the retired `…/performance` (decision IN1).
+ * `/agency/campaigns/:id` and the retired `…/performance` (decision IN1) and
+ * `…/insights` (decision IN13).
  *
- * Overview and Performance are gone; Insights replaced both. A supervisor lands
- * on Insights. A viewer or operator cannot read Insights (`agency.supervise`), so
- * they land on the Agents panel, the one campaign section every reader can open,
- * rather than on a tab whose every read would 403.
+ * A supervisor lands on Overview. A viewer or operator cannot read it
+ * (`agency.supervise`), so they land on the Agents panel, the one campaign
+ * section every reader can open, rather than on a tab whose every read would 403.
  *
  * The query string travels (a link shared as `…/campaigns/:id?range=today`
  * keeps its range). `role` is `undefined` while the tenant context resolves a
