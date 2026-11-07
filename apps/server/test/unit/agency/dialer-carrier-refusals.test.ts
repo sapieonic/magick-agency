@@ -217,6 +217,19 @@ describe('a carrier refusal that placed nothing', () => {
     expectUncharged();
   });
 
+  it('a keyring fault (a master key missing on this server) pauses nothing and holds the contact a minute, uncounted by the breaker (PL3 addendum)', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    const noted = vi.spyOn(breaker, 'noteRefusal');
+    const before = Date.now();
+    // As the bridge rethrows it: the registry's error, not a WebRtcCallError.
+    await dialWith(Object.assign(new Error('Telephony credential cred-1 could not be resolved: secret could not be opened'), {
+      credentialUnavailable: true, keyringFault: true, credentialKind: 'unopenable',
+    }), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+    expect(noted).not.toHaveBeenCalled();
+    expect((repos.contact.unclaim.mock.calls[0]![1] as Date).getTime()).toBeGreaterThanOrEqual(before + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS);
+  });
+
   it('a credential that is no longer active pauses the campaign `carrier_account_unavailable`, audits it, and returns the contact at once, uncharged', async () => {
     await dialWith(refusal('telephony_credential_unavailable', new Error('Telephony credential cred-1 could not be resolved: disabled')));
     expect(repos.campaign.pauseForCarrierAccount).toHaveBeenCalledWith('camp-1', 'carrier_account_unavailable');

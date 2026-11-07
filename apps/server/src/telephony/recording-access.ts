@@ -11,6 +11,7 @@
 // (`getRecordingAccessResolver`) reaches the config and the credential service lazily.
 import {
   CredentialUnavailableError,
+  isKeyringFaultKind,
   type CredentialUnavailableKind,
   type ResolvedCredential,
 } from './credentials/credential-service.js';
@@ -77,8 +78,7 @@ export class RecordingAccessRefusedError extends Error {
    * an operator fixes in the environment.
    */
   get permanent(): boolean {
-    return !(this.reason === 'credential_unavailable'
-      && (this.credentialKind === 'store_unconfigured' || this.credentialKind === 'unopenable'));
+    return !(this.reason === 'credential_unavailable' && isKeyringFaultKind(this.credentialKind));
   }
 }
 

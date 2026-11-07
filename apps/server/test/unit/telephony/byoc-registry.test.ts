@@ -75,6 +75,22 @@ describe('TelephonyProviderRegistry.getForCredentialId', () => {
     expect(c.resolve).not.toHaveBeenCalled();
   });
 
+  it('says whether the refusal is a keyring fault (the credential fine, the server`s key missing) or the credential`s own', async () => {
+    const run = async (kind: 'unopenable' | 'store_unconfigured' | 'status' | 'shredded' | 'not_found') => {
+      const c = creds(() => { throw new CredentialUnavailableError('cred-1', kind, kind); });
+      return registry(c, new Map([['plivo', () => fakeAdapter('a')]])).getForCredentialId('plivo', 'cred-1', 'dial', 't1').catch((e: unknown) => e);
+    };
+    for (const kind of ['unopenable', 'store_unconfigured'] as const) {
+      expect(await run(kind)).toMatchObject({ credentialUnavailable: true, keyringFault: true, credentialKind: kind });
+    }
+    for (const kind of ['status', 'shredded', 'not_found'] as const) {
+      expect(await run(kind)).toMatchObject({ credentialUnavailable: true, keyringFault: false, credentialKind: kind });
+    }
+    // No credential store on this mount at all: a keyring fault too.
+    expect(await registry(null).getForCredentialId('plivo', 'cred-1', 'dial', 't1').catch((e: unknown) => e))
+      .toMatchObject({ keyringFault: true, credentialKind: 'store_unconfigured' });
+  });
+
   it('refuses a credential of another tenant without opening its secret', async () => {
     const c = creds(() => resolved({ tenantId: 't2' }));
     const factory = vi.fn(() => fakeAdapter('a'));

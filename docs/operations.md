@@ -539,10 +539,12 @@ resumes the campaign by itself:
   until a super-admin rotates the credential's secret to the current token, or verifies it once
   Plivo accepts it again; both bring it back to `active`. Then a supervisor resumes the campaign.
 - `carrier_account_unavailable`: the pinned credential is no longer `active`: disabled, marked
-  invalid, revoked, or its secret cannot be opened (a keyring key missing,
-  `agy-credential-keyring-missing-keys`). Resume answers 409 `telephony_credential_not_active` until
-  a super-admin re-enables or fixes the credential (or restores the key), or the campaign is moved
-  to another carrier account in its settings.
+  invalid or revoked. Resume answers 409 `telephony_credential_not_active` until a super-admin
+  re-enables or fixes the credential, or the campaign is moved to another carrier account in its
+  settings. A keyring fault (no keyring configured, or a secret whose master key is missing,
+  `agy-credential-keyring-missing-keys`) pauses nothing: the credential is fine, so each dial on it
+  fails as the platform's own failure (the contact is retried a minute later, the soft phone says
+  to try again) until the key is restored. Restore the key; nothing needs resuming.
 - `carrier_refusing_calls`: the carrier refused five of the campaign's dials in a row with none
   placed in between (PL11): a 4xx other than 401 and 429 (a 403 for a destination the account's
   geo permissions do not enable, an account out of credit, a caller ID it rejects), or a dial not

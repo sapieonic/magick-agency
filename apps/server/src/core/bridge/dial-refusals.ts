@@ -119,12 +119,21 @@ export interface UnplacedRefusal {
 /**
  * The tenant credential the dial names cannot dial: `TelephonyCredentialNotActiveError`
  * from the call row's insert (`code: 'telephony_credential_not_active'`), or
- * `ByocCredentialUnavailableError` from the registry (`credentialUnavailable: true`).
+ * `ByocCredentialUnavailableError` from the registry (`credentialUnavailable: true`) for
+ * the credential itself (disabled, invalid, revoked, not found, shredded, no current secret).
+ *
+ * Not a keyring fault (`keyringFault: true`: no keyring on this server, or a secret that
+ * would not open because its master key is missing). The credential is fine: a deploy that
+ * dropped a key would otherwise pause every running campaign on a tenant's account with a
+ * message saying the account is inactive. Such a dial is a bridge failure (torn down as
+ * unplaced, the original error rethrown): the paced dialler holds the contact a minute and
+ * pauses nothing, the breaker does not count it, the soft phone answers the retryable
+ * `dial_failed` (PL3's addendum).
  */
 export function isCredentialUnavailable(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
-  const e = err as { credentialUnavailable?: unknown; code?: unknown };
-  return e.credentialUnavailable === true || e.code === 'telephony_credential_not_active';
+  const e = err as { credentialUnavailable?: unknown; keyringFault?: unknown; code?: unknown };
+  return (e.credentialUnavailable === true && e.keyringFault !== true) || e.code === 'telephony_credential_not_active';
 }
 
 export const CREDENTIAL_UNAVAILABLE: UnplacedRefusal = {

@@ -594,8 +594,9 @@ export class AgencyDialer {
       const reason: AgencyReleaseReason = refusal.kind === 'station_unavailable' ? 'reservation_expired' : 'failed';
       // The campaign's carrier account cannot dial: the carrier refused its credential
       // (HTTP 401, `carrier_auth`), or the credential is no longer active (disabled,
-      // invalid, revoked or unopenable since the campaign started, refused before the
-      // carrier: `carrier_account_unavailable`). Every further dial on it would be refused
+      // invalid or revoked since the campaign started, refused before the carrier:
+      // `carrier_account_unavailable`). A keyring fault (a master key missing) is not one:
+      // the bridge rethrows it as its own failure (`other`), held a minute, nothing paused. Every further dial on it would be refused
       // too, so the campaign is paused before this attempt is settled. Nothing was placed
       // and the contact did nothing wrong: it goes back at once, uncharged, and waits for
       // the resume.

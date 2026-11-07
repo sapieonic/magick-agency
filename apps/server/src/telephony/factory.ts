@@ -8,7 +8,9 @@ import { VoicelinkAdapter } from './voicelink/voicelink.adapter.js';
 import { createPlivoAdapter } from './plivo/plivo.adapter.js';
 import {
   CredentialUnavailableError,
+  isKeyringFaultKind,
   type CredentialPeek,
+  type CredentialUnavailableKind,
   type ResolvedCredential,
   type ResolvePurpose,
 } from './credentials/credential-service.js';
@@ -25,9 +27,23 @@ import {
 export class ByocCredentialUnavailableError extends Error {
   /** Read by the bridge, which may not import this module's classes (`isCredentialUnavailable`). */
   readonly credentialUnavailable = true;
-  constructor(readonly credentialId: string, readonly reason?: string) {
+  /**
+   * True when the cause is this server's keyring, not the credential (`isKeyringFaultKind`:
+   * no keyring, or a secret that would not open): the credential is fine and serves again
+   * once an operator restores the key, so the dial path reads it as a failure of its own,
+   * never as an account that cannot dial. Read by the bridge as a flag, like
+   * {@link credentialUnavailable}.
+   */
+  readonly keyringFault: boolean;
+  constructor(
+    readonly credentialId: string,
+    readonly reason?: string,
+    /** The credential service's cause, when it gave one. */
+    readonly credentialKind?: CredentialUnavailableKind,
+  ) {
     super(`Telephony credential ${credentialId} could not be resolved${reason ? `: ${reason}` : ''}`);
     this.name = 'ByocCredentialUnavailableError';
+    this.keyringFault = isKeyringFaultKind(credentialKind);
   }
 }
 
@@ -194,7 +210,7 @@ export class TelephonyProviderRegistry {
     // A pinned id that cannot be resolved is NOT the service's own account —
     // substituting it would issue the hangup against the wrong carrier and report
     // the wrong cause.
-    if (!this.credentials) throw new ByocCredentialUnavailableError(credentialId, 'no credential store');
+    if (!this.credentials) throw new ByocCredentialUnavailableError(credentialId, 'no credential store', 'store_unconfigured');
     const credentials = this.credentials();
     const peeked = await this.unavailableAsByoc(credentialId, () => credentials.peek(credentialId, purpose));
     if (peeked.tenantId !== tenantId) {
@@ -254,7 +270,7 @@ export class TelephonyProviderRegistry {
     } catch (err) {
       if (!(err instanceof CredentialUnavailableError)) throw err;
       this.dropByoc(credentialId);
-      throw new ByocCredentialUnavailableError(credentialId, err.reason);
+      throw new ByocCredentialUnavailableError(credentialId, err.reason, err.kind);
     }
   }
 

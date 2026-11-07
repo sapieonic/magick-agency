@@ -6,6 +6,7 @@ import {
   CARRIER_ACCOUNT_PAUSES,
   classifyDialRefusal,
   dialNotSentReason,
+  isCredentialUnavailable,
 } from '../../../src/core/bridge/dial-refusals.js';
 import { WebRtcCallError, type WebRtcRejectReason } from '../../../src/core/bridge/bridge-types.js';
 import {
@@ -71,5 +72,18 @@ describe('dialNotSentReason', () => {
     expect(dialNotSentReason(new CarrierDialNotSentError('plivo', 'destination', 'bad number'))).toBeNull();
     expect(dialNotSentReason(rejection('telephony_init_failed', new CarrierDialNotSentError('plivo', 'network', 'dns'))))
       .toBeNull();
+  });
+});
+
+describe('isCredentialUnavailable (PL3 and its addendum)', () => {
+  it('is the credential that cannot dial, not a keyring fault on this server', () => {
+    const byoc = (keyringFault: boolean) => Object.assign(new Error('x'), { credentialUnavailable: true, keyringFault });
+    expect(isCredentialUnavailable(byoc(false))).toBe(true);
+    expect(isCredentialUnavailable(Object.assign(new Error('x'), { credentialUnavailable: true }))).toBe(true);
+    expect(isCredentialUnavailable(Object.assign(new Error('x'), { code: 'telephony_credential_not_active' }))).toBe(true);
+    // A missing master key or no keyring: the credential is fine, the server is not.
+    expect(isCredentialUnavailable(byoc(true))).toBe(false);
+    expect(isCredentialUnavailable(new Error('boom'))).toBe(false);
+    expect(isCredentialUnavailable(null)).toBe(false);
   });
 });

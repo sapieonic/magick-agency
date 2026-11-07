@@ -127,6 +127,18 @@ export interface CredentialPeek {
 export type CredentialUnavailableKind =
   | 'store_unconfigured' | 'not_found' | 'shredded' | 'status' | 'no_current_secret' | 'unopenable';
 
+/**
+ * Whether `kind` is a fault in this server's keyring rather than in the credential: no
+ * keyring configured (`store_unconfigured`), or a secret that would not open (`unopenable`:
+ * its master key missing from the keyring). An operator fixes it in the environment, and the
+ * credential serves again unchanged; every other kind needs the credential or the data
+ * changed. The one reading of this distinction (the recording fetch's `permanent`, the dial
+ * path's refusal, `ByocCredentialUnavailableError.keyringFault`).
+ */
+export function isKeyringFaultKind(kind: CredentialUnavailableKind | undefined): boolean {
+  return kind === 'store_unconfigured' || kind === 'unopenable';
+}
+
 /** Thrown by `resolve` and `peek` when a credential cannot serve the purpose. Carries no secret. */
 export class CredentialUnavailableError extends Error {
   constructor(readonly credentialId: string, readonly kind: CredentialUnavailableKind, readonly reason: string) {

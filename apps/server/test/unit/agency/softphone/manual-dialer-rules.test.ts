@@ -73,6 +73,14 @@ describe('manualDialFailureFor — what a dial the bridge refused before the car
     expect(manualDialFailureFor(refused('carrier_auth_rejected', 502))).toBe('carrier_account_unavailable');
   });
 
+  it('a keyring fault is the platform`s temporary failure (dial_failed), not an unavailable carrier account (PL3 addendum)', () => {
+    // The bridge rethrows it as it came from the registry: not a WebRtcCallError.
+    const keyring = Object.assign(new Error('Telephony credential cred-1 could not be resolved: no credential keyring is configured'), {
+      credentialUnavailable: true, keyringFault: true, credentialKind: 'store_unconfigured',
+    });
+    expect(manualDialFailureFor(keyring)).toBe('dial_failed');
+  });
+
   it('a dial not sent for the carrier`s configuration is the carrier account`s; for the number or the network, dial_failed', async () => {
     const { CarrierDialNotSentError } = await import('../../../../src/telephony/carrier-errors.js');
     const notSent = (reason: 'configuration' | 'destination' | 'network') =>

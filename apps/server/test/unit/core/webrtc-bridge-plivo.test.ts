@@ -99,7 +99,7 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
 }));
 
 import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
-import { dialWasSent } from '../../../src/core/bridge/dial-refusals.js';
+import { classifyDialRefusal, dialWasSent } from '../../../src/core/bridge/dial-refusals.js';
 import { normalizePlivoCallback, plivoCallEvent } from '../../../src/telephony/plivo/plivo.webhook.js';
 import {
   CarrierAuthRejectedError, CarrierDialAbortedError, CarrierDialNotSentError, CarrierRateLimitedError,
@@ -232,6 +232,23 @@ describe('a Plivo dial places the leg on the call`s own credential', () => {
     expect(registry.get).not.toHaveBeenCalled();
     expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(0);
     expect(mockRepo.update).toHaveBeenCalledWith(CALL_ID, expect.objectContaining({ status: 'failed', error_code: 'TELEPHONY_CREDENTIAL_UNAVAILABLE' }));
+    expect(mgr.getSession(CALL_ID)).toBeUndefined();
+  });
+
+  it('a keyring fault (the credential fine, this server`s key missing) is a bridge failure, never the account: not `telephony_credential_unavailable`', async () => {
+    const keyring = Object.assign(new Error('Telephony credential cred-1 could not be resolved: secret could not be opened'), {
+      name: 'ByocCredentialUnavailableError', credentialUnavailable: true, keyringFault: true, credentialKind: 'unopenable',
+    });
+    registry.getForCredentialId.mockRejectedValueOnce(keyring);
+    const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
+    mgr.onLifecycle((e) => lifecycle.push(e));
+    const err = await mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any }).catch((e) => e);
+    // The original error, as for any failure before the carrier: callers read it as `other`.
+    expect(err).toBe(keyring);
+    expect(classifyDialRefusal(err)).toEqual({ kind: 'other' });
+    expect(plivoAdapter.initiateCall).not.toHaveBeenCalled();
+    expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(0);
+    expect(mockRepo.update).not.toHaveBeenCalledWith(CALL_ID, expect.objectContaining({ error_code: 'TELEPHONY_CREDENTIAL_UNAVAILABLE' }));
     expect(mgr.getSession(CALL_ID)).toBeUndefined();
   });
 

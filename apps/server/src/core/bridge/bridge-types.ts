@@ -23,8 +23,10 @@ export type WebRtcRejectReason =
   // ends the call with an `ended`). None emits `ended`.
   //
   // The tenant carrier credential the dial names cannot dial: not `active` at the call
-  // row's insert, or not resolvable for `dial` (disabled, revoked, unopenable, another
-  // tenant's or provider's). Never falls back to the service's own account (B20).
+  // row's insert, or not resolvable for `dial` (disabled, revoked, shredded, another
+  // tenant's or provider's). Never falls back to the service's own account (B20). Not a
+  // keyring fault (no keyring, a secret that would not open): that is a bridge failure,
+  // the credential being fine (`isCredentialUnavailable`).
   | 'telephony_credential_unavailable'
   // A calls-per-second limit gave the dial no slot: our own per-account gate, or the
   // carrier's 429. Nothing was placed; retryable, and says nothing about the contact.
