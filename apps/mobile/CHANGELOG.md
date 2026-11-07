@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.5.0...mobile-v0.6.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,mobile:** customer history, one number across the tenant's campaigns ([#50](https://github.com/sapieonic/magick-agency/issues/50)) ([d1c9f78](https://github.com/sapieonic/magick-agency/commit/d1c9f786476a8f287248126ff98c93a9458aab9e))
+
 ## [0.5.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.4.0...mobile-v0.5.0) (2026-11-05)
 
 
