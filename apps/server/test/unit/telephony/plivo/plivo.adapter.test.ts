@@ -11,6 +11,8 @@ vi.mock('@magick-agency/observability', () => {
     logger: { info: record, warn: record, error: record, debug: record },
   };
 });
+const refusals = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/voice', () => ({ trackCarrierDialRefusal: refusals.track }));
 
 import {
   PlivoAdapter,
@@ -77,7 +79,7 @@ const dial = (over: Partial<OutboundCallRequest> = {}): OutboundCallRequest => (
 
 const created = { status: 201, body: JSON.stringify({ message: 'call fired', request_uuid: REQUEST_UUID, api_id: 'a1' }) };
 
-beforeEach(() => { logs.lines.length = 0; });
+beforeEach(() => { logs.lines.length = 0; refusals.track.mockReset(); });
 
 describe('plivoNumber', () => {
   it.each([
@@ -235,6 +237,35 @@ describe('PlivoAdapter.initiateCall', () => {
     for (const secret of [TOKEN, Buffer.from(`${AUTH_ID}:${TOKEN}`).toString('base64'), 'answer-tok', 'status-tok']) {
       expect(text).not.toContain(secret);
     }
+  });
+});
+
+describe('PlivoAdapter.initiateCall: carrier_dial_refusals_total', () => {
+  const timeout = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+
+  it.each([
+    ['a 401', 'auth_rejected', [{ status: 401 }]],
+    ['a 429', 'rate_limited', [{ status: 429 }]],
+    ['a 403', 'refused', [{ status: 403, body: 'geo' }]],
+    ['a 5xx', 'refused', [{ status: 503, body: 'down' }]],
+    ['a 2xx with no request_uuid', 'outcome_unknown', [{ status: 201, body: '{}' }]],
+    ['a timeout', 'outcome_unknown', [timeout()]],
+  ] as const)('%s counts once as %s', async (_what, kind, responses) => {
+    await adapter(fakeFetch([...responses]).impl).initiateCall(dial()).catch(() => undefined);
+    expect(refusals.track.mock.calls).toEqual([['plivo', kind]]);
+  });
+
+  it('the calls-per-second gate refusing counts as rate_limited', async () => {
+    const full: PlivoDialRateLimiter = { tryAcquire: vi.fn(async () => ({ admitted: false as const, retryAfterMs: 900 })) };
+    await adapter(fakeFetch([created]).impl, { rateLimiter: full, dialRateMaxWaitMs: 500 }).initiateCall(dial()).catch(() => undefined);
+    expect(refusals.track.mock.calls).toEqual([['plivo', 'rate_limited']]);
+  });
+
+  it('a placed call, a refusal before the gate and a network error do not count', async () => {
+    await adapter(fakeFetch([created]).impl).initiateCall(dial());
+    await adapter(fakeFetch([created]).impl).initiateCall(dial({ to: 'sip:x@y' })).catch(() => undefined);
+    await adapter(fakeFetch([new TypeError('fetch failed')]).impl).initiateCall(dial()).catch(() => undefined);
+    expect(refusals.track).not.toHaveBeenCalled();
   });
 });
 

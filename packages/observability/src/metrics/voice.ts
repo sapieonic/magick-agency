@@ -217,3 +217,62 @@ export function primeChildExits(role: 'media' | 'analysis'): void {
 export function trackChildExit(role: 'media' | 'analysis', expected: boolean): void {
   safeEmit('child-exit', () => clusterChildExitsTotal.inc({ role, expected: expected ? 'true' : 'false' }));
 }
+
+// ── Tenant carrier credentials (decisions B19–B20) ─────────────────────────────
+// Written by the voice bootstrap's credential housekeeping (`apps/server/src/bootstrap/voice.ts`),
+// which runs in the main process only: a keyring check and a sweep at boot, then hourly. No
+// credential, tenant or key ids as labels: the logs name them; these say how many, and whether.
+
+// Absent until the first keyring check has answered (no `initial`): a check that throws leaves
+// the last value standing rather than reporting a healthy 0 it never read.
+const telephonyCredentialMissingKeyIds = gauge(meter, 'telephony_credential_missing_key_ids', {
+  description: 'Master key ids that stored carrier credential secrets are sealed under and the keyring (TELEPHONY_CREDENTIAL_KEYS) does not hold, at the last keyring check (0 = healthy)',
+});
+const telephonyCredentialSweepsTotal = counter<'result'>(meter, 'telephony_credential_sweeps_total', {
+  description: 'Carrier credential sweeps (shred revoked credentials whose calls have ended, drop secret versions past the rotation grace), by result (ok, failed)',
+});
+const telephonyCredentialsShreddedTotal = counter(meter, 'telephony_credentials_shredded_total', {
+  description: 'Revoked carrier credentials whose secrets a sweep shredded',
+});
+
+/** Publish one keyring check: how many stored key ids the keyring cannot open. */
+export function trackTelephonyCredentialMissingKeyIds(count: number): void {
+  safeEmit('telephony-credential-keyring', () => telephonyCredentialMissingKeyIds.set(count));
+}
+
+/**
+ * Record both sweep result series at zero, once the housekeeping starts. A counter series
+ * otherwise appears with its first failure as its first sample, which `increase()` cannot see.
+ */
+export function primeTelephonyCredentialSweeps(): void {
+  safeEmit('telephony-credential-sweep', () => {
+    telephonyCredentialSweepsTotal.inc({ result: 'ok' }, 0);
+    telephonyCredentialSweepsTotal.inc({ result: 'failed' }, 0);
+  });
+}
+
+/** Record one credential sweep: `ok` with how many credentials it shredded, or `failed`. */
+export function trackTelephonyCredentialSweep(result: 'ok' | 'failed', shredded = 0): void {
+  safeEmit('telephony-credential-sweep', () => {
+    telephonyCredentialSweepsTotal.inc({ result });
+    if (shredded > 0) telephonyCredentialsShreddedTotal.inc(shredded);
+  });
+}
+
+// ── Carrier dial refusals ─────────────────────────────────────────────────────
+// A dial the carrier adapter gave up on once its own pre-send checks had passed:
+// `auth_rejected` (the carrier refused the credential, 401), `rate_limited` (the account's
+// calls-per-second gate gave no slot in time, or the carrier answered 429), `outcome_unknown`
+// (a timeout, or a 2xx with no readable call id: the call may be placed), `refused` (any other
+// non-2xx). `provider` and `kind` are closed, code-owned sets; no tenant, credential or call ids.
+const carrierDialRefusalsTotal = counter<'provider' | 'kind'>(meter, 'carrier_dial_refusals_total', {
+  description: 'Carrier dials refused or left with an unknown outcome, by provider and kind (auth_rejected, rate_limited, outcome_unknown, refused)',
+});
+
+/** Record one carrier dial refusal. Guarded: it runs on the dial path. */
+export function trackCarrierDialRefusal(
+  provider: string,
+  kind: 'auth_rejected' | 'rate_limited' | 'outcome_unknown' | 'refused',
+): void {
+  safeEmit('carrier-dial-refusal', () => carrierDialRefusalsTotal.inc({ provider, kind }));
+}

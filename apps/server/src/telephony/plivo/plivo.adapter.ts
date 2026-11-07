@@ -16,6 +16,7 @@
 // auth token is held as a `Secret` and revealed only into the Authorization header and
 // the HMAC; it is never logged, nor is a URL carrying a token.
 import { createChildLogger } from '@magick-agency/observability';
+import { trackCarrierDialRefusal } from '@magick-agency/observability/metrics/voice';
 import type {
   AnnouncementResponseParams,
   AnswerResponseOptions,
@@ -38,6 +39,7 @@ import {
   CarrierRateLimitedError,
   CarrierRequestTimeoutError,
   isAbortTimeout,
+  isDialOutcomeUnknown,
 } from '../carrier-errors.js';
 import { redactUrlTail } from '../voicelink/voicelink.adapter.js';
 import { acquirePlivoDialSlot, getPlivoDialRateLimiter, type PlivoDialRateLimiter } from './plivo-dial-rate.js';
@@ -46,6 +48,12 @@ import { inferPlivoCallbackKind, normalizePlivoCallback, plivoCallEvent } from '
 import { PLIVO_STREAM_CONTENT_TYPE, PLIVO_STREAM_SAMPLE_RATE } from './plivo.media.js';
 
 const log = createChildLogger({ component: 'plivo-adapter' });
+
+/** Count a create-call that did not place a known call (`carrier_dial_refusals_total`), and hand back its error to throw. */
+function dialRefused<E>(kind: 'auth_rejected' | 'rate_limited' | 'outcome_unknown' | 'refused', err: E): E {
+  trackCarrierDialRefusal('plivo', kind);
+  return err;
+}
 
 /** The env settings every Plivo adapter shares (`config.telephony.plivo`). */
 export interface PlivoSettings {
@@ -270,6 +278,10 @@ export class PlivoAdapter implements TelephonyProvider {
    *    permissions do not allow): a plain refusal.
    *  - A timeout, or a 2xx whose body has no readable `request_uuid`: the call may have
    *    been placed (`dialOutcomeUnknown`); never retried here.
+   *
+   * Each of these but a placed call (and the gate's refusal) counts once in
+   * `carrier_dial_refusals_total{provider="plivo"}`, by kind. A refusal before the gate (a
+   * malformed number or URL: our data, not the carrier) and a network error do not.
    */
   async initiateCall(req: OutboundCallRequest): Promise<InitiateCallResult> {
     const to = plivoNumber(req.to, 'to');
@@ -286,7 +298,7 @@ export class PlivoAdapter implements TelephonyProvider {
     });
     if (!gate.admitted) {
       log.warn({ callId: req.callId, waitedMs: gate.waitedMs }, 'Plivo dial not sent: no calls-per-second slot in time');
-      throw new CarrierRateLimitedError('plivo', 'local_gate', gate.waitedMs);
+      throw dialRefused('rate_limited', new CarrierRateLimitedError('plivo', 'local_gate', gate.waitedMs));
     }
 
     const body = {
@@ -314,11 +326,17 @@ export class PlivoAdapter implements TelephonyProvider {
       'Initiating Plivo call',
     );
 
-    const { status, text } = await this.send('POST', 'Call/', 'Plivo create call', body, { timeoutMeansMaybePlaced: true });
-    if (status === 401) throw new CarrierAuthRejectedError('plivo', status);
-    if (status === 429) throw new CarrierRateLimitedError('plivo', 'carrier', 0);
+    let answer: { status: number; text: string };
+    try {
+      answer = await this.send('POST', 'Call/', 'Plivo create call', body, { timeoutMeansMaybePlaced: true });
+    } catch (err) {
+      throw isDialOutcomeUnknown(err) ? dialRefused('outcome_unknown', err) : err;
+    }
+    const { status, text } = answer;
+    if (status === 401) throw dialRefused('auth_rejected', new CarrierAuthRejectedError('plivo', status));
+    if (status === 429) throw dialRefused('rate_limited', new CarrierRateLimitedError('plivo', 'carrier', 0));
     if (status < 200 || status >= 300) {
-      throw new Error(`Plivo create call error ${status}: ${text.slice(0, 300)}`);
+      throw dialRefused('refused', new Error(`Plivo create call error ${status}: ${text.slice(0, 300)}`));
     }
     let requestUuid: unknown;
     try {
@@ -330,9 +348,9 @@ export class PlivoAdapter implements TelephonyProvider {
       requestUuid = undefined;
     }
     if (typeof requestUuid !== 'string' || !PLIVO_ID.test(requestUuid)) {
-      throw new CarrierDialOutcomeUnknownError(
+      throw dialRefused('outcome_unknown', new CarrierDialOutcomeUnknownError(
         `Plivo create call answered ${status} without a readable request_uuid; the call may be placed`,
-      );
+      ));
     }
     log.info({ callId: req.callId, requestUuid }, 'Plivo call dispatched');
     return { providerCallId: '', providerRequestId: requestUuid };

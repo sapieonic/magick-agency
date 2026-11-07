@@ -607,7 +607,7 @@ Files: `firebase-identity.ts`, `firebase.ts`, `session-email.ts`, `session-paylo
 
 ### `apps/server/src/bootstrap/`
 
-Background work per module area (`platform`, `voice`, `agency`, `analysis`), each returning a stop function; the singletons for the voice engine and dialer runtime.
+Background work per module area (`platform`, `voice`, `agency`, `analysis`), each returning a stop function; the singletons for the voice engine and dialer runtime. `voice.ts` also runs the carrier credentials' housekeeping (`startCredentialHousekeeping`: keyring check and sweep at boot and hourly, with their metrics).
 
 Files: `agency.ts`, `analysis.ts`, `platform.ts`, `voice.ts`
 
@@ -615,6 +615,7 @@ Files: `agency.ts`, `analysis.ts`, `platform.ts`, `voice.ts`
 |---|---|
 | `apps/server/test/unit/bootstrap/agency-reaper-wiring.test.ts` | 4 |
 | `apps/server/test/unit/bootstrap/platform.test.ts` | 4 |
+| `apps/server/test/unit/bootstrap/voice-credential-housekeeping.test.ts` | 6 |
 
 ### `apps/server/src/cache/`
 

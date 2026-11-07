@@ -179,7 +179,7 @@ production.
 | `MAILJET_API_KEY`, `MAILJET_API_SECRET` | Invite and completion mail | `MAILJET_FROM_EMAIL` default `noreply@sapionic.ai`, `MAILJET_FROM_NAME` default `Sapionic` |
 | `CONSOLE_BASE_URL` | Invite links | e.g. `https://<console host>` |
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. Caller IDs are per campaign (`caller_ids`), not env. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
-| `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one). Back it up separately from the database: losing it makes every stored credential unopenable |
+| `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one, and `telephony_credential_missing_key_ids` pages through `agy-credential-keyring-missing-keys`). Back it up separately from the database: losing it makes every stored credential unopenable |
 | `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
 | `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; 8 analysis slots (`DIALER_ANALYSIS_CONCURRENCY`; sizing below), a 512 MiB recording memory budget, a sweep every 60 s. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
@@ -553,7 +553,7 @@ per process, per export interval), which keep their own histogram and are not to
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page. The insights rules first: a stale or holed Insights page costs no
+warn (Slack) and never page, and for the carrier credential rules. The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -674,6 +674,37 @@ supervisors to run no more campaigns at once than the account has lines, pausing
 can wait; nothing is broken. Otherwise file it with the campaign and account ids and what the logs
 show. A burst of withheld slots with live calls on the campaign is the share rule working, not
 this alert.
+
+### `agy-credential-keyring-missing-keys`
+
+This one pages. **Means:** `telephony_credential_missing_key_ids` is above 0: stored tenant
+carrier credential secrets (B19) are sealed under master key ids that `TELEPHONY_CREDENTIAL_KEYS`
+does not hold, so they cannot be opened. Every call on an affected credential fails closed, and so
+do the hangups and webhook checks of its calls already in flight; nothing falls back to the
+service's VoiceLink account (B20), whose own calls are unaffected. The main process sets the gauge
+at boot and after each hourly sweep (`startCredentialHousekeeping`, `apps/server/src/bootstrap/voice.ts`).
+
+**Check:** the boot ERROR "Telephony credential secrets are sealed under keys missing from
+TELEPHONY_CREDENTIAL_KEYS", whose `kekIds` names the missing ids, against the deploy's
+`TELEPHONY_CREDENTIAL_KEYS`. A keyring unset altogether reads every stored key id as missing.
+
+**Do:** restore the missing `id:key` entries from the keyring backup (kept apart from the
+database) and restart; the gauge reads 0 from the next boot. A key that is truly lost never opens
+its secrets again: a super-admin rotates each affected credential's secret, which reseals it under
+`TELEPHONY_CREDENTIAL_ACTIVE_KEY`.
+
+### `agy-credential-sweep-failing`
+
+**Means:** 2+ failed credential sweeps in 3 hours (`telephony_credential_sweeps_total{result="failed"}`;
+the sweep runs at boot and hourly). The sweep shreds revoked credentials once every call pinned to
+them is terminal and ended more than 2 h ago, and drops secret versions past the 24 h rotation
+grace. Nothing dials on a revoked credential either way; the cost is sealed secrets kept past the
+retention B20 promises.
+
+**Check:** the WARN "Telephony credential sweep failed" for the error. It is almost always
+Postgres or its pool; a lock wait on a credential row being revoked or rotated clears on its own.
+
+**Do:** fix Postgres. The sweep is idempotent: the next hourly pass, or a restart, catches up.
 
 ## Releases and versioning
 
