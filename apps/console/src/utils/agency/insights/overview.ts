@@ -22,16 +22,18 @@ import { IDLE_REASON_LABELS } from './copy';
  *
  * ── What it reads ───────────────────────────────────────────────────────────
  * Only as-of-now positions and the health read's own "now" figures: overdue
- * callbacks and staffing from the allocation (polled), abandonment over the
- * guardrail's rolling 24 hours, and a stall still open. Range totals (dials,
+ * callbacks and staffing from the allocation (polled), and abandonment over the
+ * guardrail's rolling 24 hours. Range totals (dials,
  * successes) are never a reason to act, so the range picker cannot make an item
  * appear or vanish — except the carrier failures and missing recordings, which
  * are counted over the range and say so.
  *
  * ── What it leaves to others ────────────────────────────────────────────────
  * The campaign's status (paused, stopping, the launch checklist) is the
- * headline's, and a blocker that stops dialling is the health strip's above the
- * tabs. Neither is repeated here.
+ * headline's, and a blocker that stops dialling now — a stall, by any reason —
+ * is the health strip's above the tabs, read as of now on every tab. Neither is
+ * repeated here: the health read's stall episodes cover the range, so a stall
+ * going on now is missing from them whenever the range ends in the past.
  */
 
 export type AttentionTone = 'danger' | 'warning' | 'info';
@@ -121,25 +123,12 @@ export function campaignAttention({ summary, allocation, health }: AttentionInpu
     // Too few answered calls to measure is neither a pass nor a problem: say nothing.
   }
 
-  // ── A stall still going on ─────────────────────────────────────────────
-  if (health && summary.status === 'running') {
-    const open = health.stalls.episodes.find((e) => e.ended_at === null);
-    if (open) {
-      items.push({
-        id: 'stall',
-        tone: 'warning',
-        title: `Not dialling: ${IDLE_REASON_LABELS[open.reason].toLowerCase()}`,
-        body: `For ${durationWords(open.minutes * 60)} so far.`,
-        tab: 'health',
-        action: 'Health',
-      });
-    }
-  }
-
   // ── Nobody on the floor ─────────────────────────────────────────────────
   if (allocation && live) {
     const { staffed, online } = staffing(allocation);
-    if (online === 0) {
+    // Only while it runs: a paused campaign dials nothing until it is resumed,
+    // agents or none, so an empty floor at the end of a shift is not a problem.
+    if (online === 0 && summary.status === 'running') {
       items.push({
         id: 'no-agents',
         tone: 'warning',

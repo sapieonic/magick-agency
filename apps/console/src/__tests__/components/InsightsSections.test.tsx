@@ -259,12 +259,12 @@ describe('overrides', () => {
 });
 
 describe('agents', () => {
-  it('reads time in states, occupancy and rates, and links the name to the Agents tab', () => {
+  it('reads time in states, occupancy and rates, and names the agent without a link to the tab it is on', () => {
     show(<AgentsSection ctx={ctx} activity={activity()} />);
     const table = screen.getByTestId('agents-table');
-    const priya = within(table).getByRole('link', { name: 'Priya Nair' });
-    expect(priya.getAttribute('href')).toBe('/agency/campaigns/camp-1/agents');
-    const row = priya.closest('tr') as HTMLElement;
+    // The table is on the Agents tab: a link there would only drop the range (IN13).
+    expect(within(table).queryByRole('link', { name: 'Priya Nair' })).toBeNull();
+    const row = within(table).getByText('Priya Nair').closest('tr') as HTMLElement;
     expect(row.textContent).toContain('60%'); // occupancy (10,000 + 2,000) / 20,000
     expect(row.textContent).toContain('32.4%'); // connect rate 220 human connects / (700 dials - 20 redials)
     expect(hrefOf(row, '700 dials')).toBe(`/agency/campaigns/camp-1/attempts?agent_user_id=usr_priya&${RANGE_QS}`);

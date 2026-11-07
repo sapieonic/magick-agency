@@ -31,7 +31,9 @@ import type {
  * `summary` and `allocation` are positions, and they poll every 10 s while the
  * campaign is moving (`insightsShouldPoll`: running, stopping, or paused with
  * calls still finishing), visible tabs only and one tick at a time
- * (`useVisibleInterval`). `readiness` is read for a draft only. (The upload
+ * (`useVisibleInterval`), and only while the tab on screen wants it (`poll`:
+ * the Agents tab has the floor's own stats poll, so there they are read once and
+ * on Refresh). `readiness` is read for a draft only. (The upload
  * history moved to the Settings tab with IN13 and is read there, once.)
  * None of these is ever polled on a draft or a finished campaign.
  *
@@ -59,7 +61,7 @@ export interface InsightsLive {
   refresh: () => Promise<void>;
 }
 
-export function useInsightsLive(campaignId: string | undefined): InsightsLive {
+export function useInsightsLive(campaignId: string | undefined, poll = true): InsightsLive {
   const { tenantId, accountId } = useTenant();
   const ready = Boolean(campaignId && tenantId && accountId);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
@@ -96,7 +98,7 @@ export function useInsightsLive(campaignId: string | undefined): InsightsLive {
     errorMessage: 'Could not load the launch checklist.',
   });
 
-  const polling = insightsShouldPoll(summary.data);
+  const polling = poll && insightsShouldPoll(summary.data);
 
   // Read through refs so the interval and the return handler never call a stale reload.
   const live = useRef({ summary, allocation, readiness });
@@ -107,6 +109,12 @@ export function useInsightsLive(campaignId: string | undefined): InsightsLive {
     [],
   );
   useVisibleInterval(tick, INSIGHTS_REFRESH_MS, polling);
+  // Back on a tab that polls after one that did not: catch up now, not in 10 s.
+  const polledBefore = useRef(poll);
+  useEffect(() => {
+    if (poll && !polledBefore.current && ready) void tick();
+    polledBefore.current = poll;
+  }, [poll, ready, tick]);
   // A tab that comes back from the background catches up at once, polled or not.
   useRefetchOnReturn(() => (ready ? tick() : undefined));
 

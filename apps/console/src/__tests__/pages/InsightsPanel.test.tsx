@@ -143,10 +143,28 @@ describe('Insights — first paint', () => {
     expect((await screen.findByTestId('overview-error')).textContent).toBe('The health read failed. Refresh to try again.');
     expect(within(screen.getByTestId('overview-kpi-abandonment')).getByText('—')).toBeTruthy();
     expect(screen.getByTestId('teaser-health').textContent).toContain('Could not load.');
-    // The attention list has stopped waiting: it judges what it has.
+    // The attention list has stopped waiting, and says the health checks did not run rather than give an all-clear.
     await waitFor(() => expect(screen.queryByText('Checking…')).toBeNull());
+    expect(screen.getByTestId('attention-skipped').textContent).toContain('did not run: the read failed.');
     // A read that answered still shows.
     expect(within(screen.getByTestId('overview-kpi-dials')).queryByText('—')).toBeNull();
+  });
+
+  it('says a range that cannot be sent is why the Overview has no range figures, and never gives an all-clear', async () => {
+    const empty = allocation();
+    empty.totals.callbacks_overdue = 0;
+    api.getInsightsAllocation.mockResolvedValue(empty);
+    api.getInsightsSummary.mockResolvedValue(summary('completed'));
+    renderPanel('?from=2026-11-03&to=2026-11-01');
+    await screen.findByTestId('overview-kpis');
+    for (const id of ['dials', 'connect', 'successes', 'abandonment']) {
+      expect(within(screen.getByTestId(`overview-kpi-${id}`)).getByText('—')).toBeTruthy();
+    }
+    expect(screen.getByTestId('teaser-calls').textContent).toContain('Choose a valid range to see these figures.');
+    expect(screen.getByTestId('teaser-health').textContent).toContain('Choose a valid range to see these figures.');
+    expect((await screen.findByTestId('attention-skipped')).textContent).toContain('did not run: choose a valid range.');
+    expect(screen.queryByText('Nothing needs you right now.')).toBeNull();
+    expect(api.getInsightsHealth).not.toHaveBeenCalled();
   });
 
   it('opens the tab an attention item names, keeping the range', async () => {
@@ -275,6 +293,8 @@ describe('Insights — the range', () => {
     expect(await screen.findByText(/figures marked “now” are live; the rest follow the range \(Yesterday\)/)).toBeTruthy();
     expect(screen.getByTestId('overview-kpi-reached').textContent).toContain('Reached · now');
     expect(await screen.findByText('Dials · Yesterday')).toBeTruthy();
+    expect(screen.getByText('Connect rate · Yesterday')).toBeTruthy();
+    expect(screen.getByText('Successes · Yesterday')).toBeTruthy();
     expect(screen.getByText(/Times in Asia\/Kolkata/)).toBeTruthy();
   });
 });
@@ -329,5 +349,31 @@ describe('Insights — Refresh and Print', () => {
     answerHealth(health());
     await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('button', { name: 'Print' })).toBeTruthy();
+  });
+
+  it('prints the whole report, every tab, while the screen keeps showing only this one', async () => {
+    let printed: string[] = [];
+    Object.assign(window, {
+      print: vi.fn(() => {
+        printed = [...document.querySelectorAll('[data-print-view]')].map((el) => el.getAttribute('data-print-view') ?? '');
+        // Each tab's sections are there, in the print-only wrapper.
+        for (const id of ['insights-calls', 'insights-trends', 'insights-agents', 'insights-allocation', 'insights-callbacks', 'insights-health', 'insights-recording']) {
+          expect(screen.getByTestId(id).closest('[data-print-view]')).toBeTruthy();
+        }
+      }),
+    });
+    renderPanel();
+    await screen.findByTestId('overview-kpis');
+    expect(api.getInsightsTrends).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+    await waitFor(() => expect(window.print).toHaveBeenCalledTimes(1));
+    expect(printed).toEqual(['calls', 'agents', 'callbacks', 'health']);
+    // The trends are the Calls tab's, read for the printout.
+    expect(api.getInsightsTrends).toHaveBeenCalledTimes(1);
+    // Overview itself is on screen, not wrapped.
+    expect(screen.getByTestId('overview-kpis').closest('[data-print-view]')).toBeNull();
+    // After printing, the other tabs are gone from the page again.
+    await waitFor(() => expect(document.querySelector('[data-print-view]')).toBeNull());
   });
 });

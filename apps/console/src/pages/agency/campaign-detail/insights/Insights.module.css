@@ -747,6 +747,25 @@
   color: var(--success);
 }
 
+.attentionSkipped {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.attentionSkipped svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
+.attentionList + .attentionSkipped {
+  margin-top: 12px;
+}
+
 .attentionClear {
   padding-top: 12px;
   border-top: 1px solid var(--border-light);
@@ -798,7 +817,17 @@
 
 /* ── Print ─────────────────────────────────────────────────────────────── */
 
+/* The other tabs' sections, rendered only while printing: the whole report on paper, this tab on screen. */
+.printOnly {
+  display: none;
+}
+
 @media print {
+  .printOnly {
+    display: block;
+    break-before: page;
+  }
+
   /* The breadcrumb trail above the page is navigation too. */
   :global(nav[aria-label='Breadcrumb']) {
     display: none !important;

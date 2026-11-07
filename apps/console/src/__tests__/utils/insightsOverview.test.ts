@@ -36,10 +36,11 @@ describe('needs your attention', () => {
     expect(ids({ summary: summary('running'), allocation: none, health: null })).not.toContain('callbacks-overdue');
   });
 
-  it('warns when nobody assigned is on the floor of a campaign that can dial, and only then', () => {
+  it('warns when nobody assigned is on the floor of a running campaign, and only then', () => {
     const offline = allocation({ agents: [allocationRow({ state: 'offline' })] });
     expect(ids({ summary: summary('running'), allocation: offline, health: null })).toContain('no-agents');
-    expect(ids({ summary: summary('paused'), allocation: offline, health: null })).toContain('no-agents');
+    // Paused dials nothing until it is resumed, agents or none: an empty floor is not the problem.
+    expect(ids({ summary: summary('paused'), allocation: offline, health: null })).not.toContain('no-agents');
     // A finished campaign needs nobody.
     expect(ids({ summary: summary('completed'), allocation: offline, health: null })).not.toContain('no-agents');
     // Someone on the floor.
@@ -76,18 +77,16 @@ describe('needs your attention', () => {
     expect(clear.join(' ')).not.toMatch(/abandonment/);
   });
 
-  it('names a stall that is still going on a running campaign', () => {
+  it('leaves a stall going on now to the health strip, which reads it as of now on every tab', () => {
+    // The health read's episodes cover the range: one open now is missing from a past range.
     const open = health({
       stalls: {
         ...health().stalls,
         episodes: [{ reason: 'no_agents', started_at: '2026-11-04T10:00:00.000Z', ended_at: null, minutes: 12 }],
       },
     });
-    const item = campaignAttention({ summary: summary('running'), allocation: null, health: open }).items.find((i) => i.id === 'stall');
-    expect(item?.title).toBe('Not dialling: no agents free');
-    expect(item?.body).toBe('For 12m so far.');
-    // A closed episode is history, not something to act on.
-    expect(ids({ summary: summary('running'), allocation: null, health: health() })).not.toContain('stall');
+    const { items } = campaignAttention({ summary: summary('running'), allocation: null, health: open });
+    expect(items.map((i) => i.title).join(' ')).not.toMatch(/Not dialling/);
   });
 
   it('counts carrier failures and missing recordings over the range, and says so when clear', () => {

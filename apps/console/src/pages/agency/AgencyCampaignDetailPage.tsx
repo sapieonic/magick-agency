@@ -367,7 +367,7 @@ export function AgencyCampaignDetailPage() {
         */
         liveAgentCount={stats?.agents ? stats.agents.length : null}
         campaignStatus={campaign.status}
-        alerts={callbacksOverdue ? { callbacks: { count: callbacksOverdue, label: `${callbacksOverdue} overdue` } } : undefined}
+        callbacksOverdue={callbacksOverdue}
       />
 
       {/*

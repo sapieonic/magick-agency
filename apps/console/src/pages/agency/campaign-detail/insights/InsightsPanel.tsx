@@ -21,7 +21,7 @@ import {
   type InsightsRangeChoice,
 } from '../../../../utils/agency/insights/range';
 import type { AgencyInsightsBucket } from '../../../../types/agency-insights';
-import type { CampaignPanelId } from '../../../../utils/agencyCampaignTabs';
+import { CAMPAIGN_TABS, type CampaignPanelId } from '../../../../utils/agencyCampaignTabs';
 import type { InsightsRangeNeeds } from '../../../../hooks/useCampaignInsights';
 import { campaignAttention } from '../../../../utils/agency/insights/overview';
 import { AttentionPanel, OverviewKpis, OverviewTeasers } from './OverviewSection';
@@ -60,6 +60,8 @@ const VIEW_NEEDS: Record<CampaignPanelId, InsightsRangeNeeds> = {
   health: { activity: false, trends: false, health: true },
 };
 
+const ALL_VIEWS_NEEDS: InsightsRangeNeeds = { activity: true, trends: true, health: true };
+
 /**
  * The reads asked for by any tab opened so far. Sticky, so going back to a tab
  * shows what it showed instead of loading again: switching tabs never drops a
@@ -67,9 +69,10 @@ const VIEW_NEEDS: Record<CampaignPanelId, InsightsRangeNeeds> = {
  * after its tab is left, so a range change on Overview also reloads the trends
  * once Calls has been opened. One extra read, against a reload on every switch.
  */
-function useStickyNeeds(view: CampaignPanelId): InsightsRangeNeeds {
+function useStickyNeeds(view: CampaignPanelId, printing: boolean): InsightsRangeNeeds {
   const [needs, setNeeds] = useState<InsightsRangeNeeds>(() => VIEW_NEEDS[view]);
-  const wanted = VIEW_NEEDS[view];
+  // Print is the whole report, every tab, so it asks for every read.
+  const wanted = printing ? ALL_VIEWS_NEEDS : VIEW_NEEDS[view];
   const missing = (wanted.activity && !needs.activity) || (wanted.trends && !needs.trends) || (wanted.health && !needs.health);
   if (missing) {
     // Adjusting state during render: React re-renders at once, before paint.
@@ -91,7 +94,8 @@ function useStickyNeeds(view: CampaignPanelId): InsightsRangeNeeds {
 export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, shellStatus, view, onCallbacksOverdue }: InsightsPanelProps) {
   const { search } = useLocation();
   const { tenantId, accountId } = useTenant();
-  const live = useInsightsLive(campaignId);
+  // The Agents tab has the floor's own stats poll: the insights reads are read once there.
+  const live = useInsightsLive(campaignId, view !== 'agents');
   const summary = live.summary.data;
   const timezone = summary?.settings.timezone ?? null;
 
@@ -131,7 +135,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   const [printRequested, setPrintRequested] = useState(false);
   const active = useAfterFirstPaint(summary !== null, printRequested);
   const [rangeToken, setRangeToken] = useState(0);
-  const needs = useStickyNeeds(view);
+  const needs = useStickyNeeds(view, printRequested);
   const rangeData = useInsightsRange(campaignId, range, bucket, active, rangeToken, needs);
 
   /**
@@ -215,16 +219,33 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   // What the Overview's range figures show: nothing while the range is invalid.
   const shownActivity = blocked ? null : activity;
   const shownHealth = blocked ? null : rangeData.health.data;
-  // A read that failed with nothing to show: the Overview says so once, and its
-  // figures say "unavailable" rather than wait forever (the tabs use RangePanel).
-  const failed = {
-    activity: !blocked && activity === null && rangeData.activity.error !== null,
-    health: !blocked && shownHealth === null && rangeData.health.error !== null,
-    allocation: allocation === null && live.allocation.error !== null,
+  // Why a read has nothing to show (an invalid range, or a failed read): the
+  // Overview's figures and cards say so rather than wait for ever. The detail
+  // tabs say the same through RangePanel.
+  const COULD_NOT_LOAD = 'Could not load. Refresh to try again.';
+  const unavailable = {
+    activity: blocked ?? (activity === null && rangeData.activity.error !== null ? COULD_NOT_LOAD : null),
+    health: blocked ?? (rangeData.health.data === null && rangeData.health.error !== null ? COULD_NOT_LOAD : null),
+    allocation: allocation === null && live.allocation.error !== null ? COULD_NOT_LOAD : null,
   };
   const overviewError = blocked
     ? null
-    : rangeData.activity.error ?? rangeData.health.error ?? (failed.allocation ? live.allocation.error : null);
+    : rangeData.activity.error ?? rangeData.health.error ?? (unavailable.allocation ? live.allocation.error : null);
+  /**
+   * A tab's sections: on screen for the tab shown. While printing, every other
+   * tab's sections render too, print-only, so the printout is the whole report
+   * and the screen does not change under the "Preparing…" button.
+   */
+  const section = (v: CampaignPanelId, render: () => ReactNode) => {
+    if (v === view) return render();
+    if (!printRequested) return null;
+    return (
+      <div className={styles.printOnly} data-print-view={v}>
+        <h2 className={styles.viewTitle}>{CAMPAIGN_TABS.find((t) => t.id === v)!.label}</h2>
+        {render()}
+      </div>
+    );
+  };
   // The freshness of the read this tab shows (Health shows no activity).
   const freshness = blocked ? null : rangeFreshness(view === 'health' ? shownHealth : activity, zone);
 
@@ -300,7 +321,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
       {range?.error ? <p className={styles.rangeError} role="alert">{range.error}</p> : null}
       {freshness ? <p className={styles.rangeNote} data-testid="insights-freshness">{freshness}</p> : null}
 
-      {view === 'overview' ? (
+      {section('overview', () => (
         <>
           {overviewError ? (
             <p className={styles.sectionError} role="alert" data-testid="overview-error">{`${overviewError} Refresh to try again.`}</p>
@@ -320,14 +341,15 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             allocation={allocation}
             activity={shownActivity}
             health={shownHealth}
-            failed={failed}
+            unavailable={unavailable}
           />
           <div className={styles.overviewGrid}>
             <AttentionPanel
               attention={campaignAttention({ summary, allocation, health: shownHealth })}
               campaignId={campaignId}
               search={search}
-              loading={(allocation === null && !failed.allocation) || (!blocked && shownHealth === null && !failed.health)}
+              loading={(allocation === null && !unavailable.allocation) || (shownHealth === null && !unavailable.health)}
+              healthUnavailable={blocked ? 'choose a valid range.' : unavailable.health ? 'the read failed. Refresh to try again.' : null}
             />
             <RosterSection campaignId={campaignId} campaignName={summary.name} roster={summary.roster} />
           </div>
@@ -337,12 +359,12 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             activity={shownActivity}
             allocation={allocation}
             health={shownHealth}
-            failed={failed}
+            unavailable={unavailable}
           />
         </>
-      ) : null}
+      ))}
 
-      {view === 'calls' ? (
+      {section('calls', () => (
         <>
           <RangePanel id="calls" title="Calls and outcomes" resource={rangeData.activity} blocked={blocked}>
             {(data) => <CallsSection ctx={ctx} activity={data} />}
@@ -361,9 +383,9 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             )}
           </RangePanel>
         </>
-      ) : null}
+      ))}
 
-      {view === 'agents' ? (
+      {section('agents', () => (
         <>
           <RangePanel blocked={blocked} id="agents" title="Agents" resource={rangeData.activity}>
             {(data) => <AgentsSection ctx={ctx} activity={data} />}
@@ -379,15 +401,15 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             {(data) => <OverridesSection ctx={ctx} activity={data} settings={summary.settings} />}
           </RangePanel>
         </>
-      ) : null}
+      ))}
 
-      {view === 'callbacks' ? (
+      {section('callbacks', () => (
         <RangePanel blocked={blocked} id="callbacks" title="Callbacks" resource={rangeData.activity}>
           {(data) => <CallbacksSection ctx={ctx} activity={data} />}
         </RangePanel>
-      ) : null}
+      ))}
 
-      {view === 'health' ? (
+      {section('health', () => (
         <>
           <RangePanel blocked={blocked} id="health" title="Health and compliance" resource={rangeData.health}>
             {(data) => <HealthSection ctx={ctx} health={data} timezone={zone} />}
@@ -396,7 +418,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             {(data) => <RecordingSection ctx={ctx} health={data} settings={summary.settings} />}
           </RangePanel>
         </>
-      ) : null}
+      ))}
     </section>
   );
 }

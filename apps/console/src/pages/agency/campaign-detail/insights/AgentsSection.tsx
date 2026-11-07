@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import type { AgencyInsightsActivity, AgencyInsightsAgentActivityRow } from '../../../../types/agency-insights';
 import { formatCount, pct } from '../../../../utils/format/number';
 import { durationWords } from '../../../../utils/format/duration';
@@ -11,7 +10,7 @@ import {
   rateValue,
   successRate,
 } from '../../../../utils/agency/insights/rates';
-import { agentLink, attemptsLink, type InsightsAttemptsFilter } from '../../../../utils/agency/insights/links';
+import { attemptsLink, type InsightsAttemptsFilter } from '../../../../utils/agency/insights/links';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import { CountLink, CsvButton, InsightsTable, Panel, tableCsv, type InsightsColumn } from './InsightsParts';
 import type { RangeSectionContext } from './ActivitySections';
@@ -73,9 +72,8 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
       render: (row) => (
         <>
           {ranked ? <span className={styles.muted}>{`${rank.get(row.agent_user_id)}. `}</span> : null}
-          {row.agent_user_id === null
-            ? agentLabel(row, ctx)
-            : <Link to={agentLink(campaignId, row.agent_user_id)}>{agentLabel(row, ctx)}</Link>}
+          {/* Plain text: this table is on the Agents tab, so a link to that tab would only drop the range (IN13). */}
+          {agentLabel(row, ctx)}
         </>
       ),
       csv: (row) => agentLabel(row, ctx),

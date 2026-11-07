@@ -1,4 +1,9 @@
+import { useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
+import { getInsightsAllocation } from '../../api/agencyInsights';
+import { useTenant } from '../../contexts/TenantContext';
+import { hasPermission } from '../../utils/permissions';
 import { campaignTabHref, isCampaignPanel, visibleCampaignTabs, type CampaignTabId } from '../../utils/agencyCampaignTabs';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
@@ -60,11 +65,12 @@ export interface CampaignTabsProps {
    */
   campaignStatus?: string;
   /**
-   * Something on a tab that is wrong right now, as a count (the Callbacks tab's
-   * overdue callbacks). Rendered only for a positive count, in the danger tone:
-   * unlike the floor count this one is a warning, not a "someone is there".
+   * The callbacks overdue now, for the Callbacks tab's badge, from a host that
+   * already polls it (the detail page; null until it knows). Left out, the bar
+   * reads it once itself, so the badge is on every campaign screen and leaving
+   * the detail page never makes the warning look resolved.
    */
-  alerts?: Partial<Record<CampaignTabId, { count: number; label: string }>>;
+  callbacksOverdue?: number | null;
 }
 
 export function CampaignTabs({
@@ -73,8 +79,9 @@ export function CampaignTabs({
   role,
   liveAgentCount,
   campaignStatus,
-  alerts,
+  callbacksOverdue,
 }: CampaignTabsProps) {
+  const overdue = useCallbacksOverdue(campaignId, role, callbacksOverdue);
   // The range rides between panels (`campaignTabHref`); a standalone screen's
   // query string is its own filters, never a range, so it rides nowhere.
   const { search } = useLocation();
@@ -90,8 +97,12 @@ export function CampaignTabs({
       {tabs.map((tab) => {
         const isActive = tab.id === active;
         const showCount = tab.id === 'agents' && typeof liveAgentCount === 'number' && liveAgentCount > 0;
-        const alert = alerts?.[tab.id];
-        const showAlert = alert !== undefined && alert.count > 0;
+        // Rendered only for a positive count, in the danger tone: unlike the
+        // floor count this one is a warning, not a "someone is there".
+        const alert = tab.id === 'callbacks' && overdue !== null && overdue > 0
+          ? { count: overdue, label: `${overdue} overdue` }
+          : null;
+        const showAlert = alert !== null;
         return (
           /*
             A plain `Link`, deliberately not a `NavLink`. NavLink derives
@@ -140,3 +151,21 @@ export function CampaignTabs({
 }
 
 export default CampaignTabs;
+
+/**
+ * The overdue callbacks for the badge: the host's count when it has one, else
+ * one read of the allocation here (not polled: a standalone screen is a short
+ * visit, and the detail page polls it). Supervisors only — the Callbacks tab is
+ * theirs, and the read 403s below them.
+ */
+function useCallbacksOverdue(campaignId: string, role: Role | undefined, known: number | null | undefined): number | null {
+  const { tenantId, accountId } = useTenant();
+  const read = known === undefined && hasPermission(role, 'agency.supervise') && Boolean(tenantId && accountId);
+  const fetchAllocation = useCallback(
+    () => getInsightsAllocation(campaignId, tenantId ?? undefined, accountId ?? undefined),
+    [campaignId, tenantId, accountId],
+  );
+  const allocation = useAsyncResource(fetchAllocation, { initialData: null, enabled: read });
+  if (known !== undefined) return known;
+  return read ? allocation.data?.totals.callbacks_overdue ?? null : null;
+}

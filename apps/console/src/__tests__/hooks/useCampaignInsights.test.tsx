@@ -76,6 +76,25 @@ describe('useInsightsLive — what polls', () => {
     expect(api.getInsightsUploads).not.toHaveBeenCalled();
   });
 
+  it('reads once and does not poll on a tab that asks it not to, and catches up on returning to one that does', async () => {
+    api.getInsightsSummary.mockResolvedValue(summary('running'));
+    const { result, rerender } = renderHook(({ poll }) => useInsightsLive('camp-1', poll), { initialProps: { poll: false } });
+    await flush();
+    expect(result.current.polling).toBe(false);
+    expect(api.getInsightsSummary).toHaveBeenCalledTimes(1);
+    await tick(30_000);
+    expect(api.getInsightsSummary).toHaveBeenCalledTimes(1);
+    expect(api.getInsightsAllocation).toHaveBeenCalledTimes(1);
+
+    // Back on a polling tab: read at once, then every 10 s.
+    rerender({ poll: true });
+    await flush();
+    expect(api.getInsightsSummary).toHaveBeenCalledTimes(2);
+    expect(result.current.polling).toBe(true);
+    await tick(10_000);
+    expect(api.getInsightsSummary).toHaveBeenCalledTimes(3);
+  });
+
   it('polls a paused campaign while calls finish, and stops once they have', async () => {
     api.getInsightsSummary.mockResolvedValue(summary('paused'));
     const { result } = renderHook(() => useInsightsLive('camp-1'));

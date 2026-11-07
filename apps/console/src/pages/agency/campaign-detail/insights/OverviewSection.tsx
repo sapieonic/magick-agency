@@ -34,11 +34,15 @@ import styles from './Insights.module.css';
  * and the roster sit beside these; every detail table lives on its own tab.
  */
 
-/** Which reads failed with nothing to show, so a figure says so instead of waiting. */
-export interface OverviewFailures {
-  activity: boolean;
-  health: boolean;
-  allocation: boolean;
+/**
+ * Why a read has nothing to show — an invalid range, or a read that failed — or
+ * null while it is fine or still loading. A figure says "—" and a card says why,
+ * rather than waiting for a read that is not coming.
+ */
+export interface OverviewUnavailable {
+  activity: string | null;
+  health: string | null;
+  allocation: string | null;
 }
 
 /**
@@ -51,14 +55,14 @@ export function OverviewKpis({
   allocation,
   activity,
   health,
-  failed,
+  unavailable,
 }: {
   ctx: RangeSectionContext;
   summary: AgencyInsightsSummary;
   allocation: AgencyInsightsAllocation | null;
   activity: AgencyInsightsActivity | null;
   health: AgencyInsightsHealth | null;
-  failed: OverviewFailures;
+  unavailable: OverviewUnavailable;
 }) {
   const { campaignId, range, rangeLabel } = ctx;
   const roster = summary.roster;
@@ -69,7 +73,7 @@ export function OverviewKpis({
   const abandonment = health ? rateFigure(abandonmentRate(health.abandonment.rolling_24h)) : null;
   const overdue = allocation?.totals.callbacks_overdue ?? null;
   // Waiting, or a read that failed: the error itself is said once, above.
-  const pending = (read: keyof OverviewFailures) => (failed[read] ? '—' : '…');
+  const pending = (read: keyof OverviewUnavailable) => (unavailable[read] ? '—' : '…');
 
   return (
     <div className={styles.kpis} data-testid="overview-kpis">
@@ -88,14 +92,14 @@ export function OverviewKpis({
         testId="overview-kpi-dials"
       />
       <Kpi
-        label="Connect rate"
+        label={`Connect rate · ${rangeLabel}`}
         value={connect ? connect.value : pending('activity')}
         withheld={!connect || connect.withheld}
         sub={calls ? `${formatCount(calls.connected)} connected calls` : undefined}
         testId="overview-kpi-connect"
       />
       <Kpi
-        label="Successes"
+        label={`Successes · ${rangeLabel}`}
         value={calls ? formatCount(calls.successes) : pending('activity')}
         withheld={!calls}
         sub={calls && success ? `${success.value} of ${formatCount(calls.conversations)} conversations` : undefined}
@@ -131,21 +135,32 @@ export function AttentionPanel({
   campaignId,
   search,
   loading,
+  healthUnavailable,
 }: {
   attention: Attention;
   campaignId: string;
   search: string;
   /** The health or allocation read is still out: the list may grow. */
   loading: boolean;
+  /** The health checks could not run (an invalid range, a failed read): never an all-clear. */
+  healthUnavailable: string | null;
 }) {
   const { items, clear } = attention;
+  const skipped = healthUnavailable ? (
+    <p className={styles.attentionSkipped} data-testid="attention-skipped">
+      <AlertTriangle size={14} aria-hidden="true" />
+      {`The health checks (abandonment, carrier failures, recordings) did not run: ${healthUnavailable}`}
+    </p>
+  ) : null;
   return (
     <Panel
       id="attention"
       title="Needs your attention"
       sub={items.length === 0 ? undefined : `${plural(items.length, 'item')}, most urgent first`}
     >
-      {items.length === 0 ? (
+      {items.length === 0 && skipped ? (
+        skipped
+      ) : items.length === 0 ? (
         <p className={styles.attentionNone} data-testid="attention-none">
           <CheckCircle2 size={16} aria-hidden="true" />
           {loading ? 'Checking…' : 'Nothing needs you right now.'}
@@ -169,6 +184,7 @@ export function AttentionPanel({
           })}
         </ul>
       )}
+      {items.length > 0 ? skipped : null}
       {clear.length > 0 ? (
         <p className={styles.attentionClear} data-testid="attention-clear">
           <CheckCircle2 size={14} aria-hidden="true" />
@@ -179,14 +195,14 @@ export function AttentionPanel({
   );
 }
 
-function TeaserCard({ title, teaser, failed, to, testId }: { title: string; teaser: TabTeaser | null; failed: boolean; to: string; testId: string }) {
+function TeaserCard({ title, teaser, unavailable, to, testId }: { title: string; teaser: TabTeaser | null; unavailable: string | null; to: string; testId: string }) {
   return (
     <Link to={to} className={styles.teaser} data-testid={testId}>
       <span className={styles.teaserHead}>
         <span className={styles.panelTitle}>{title}</span>
         <ArrowRight size={15} aria-hidden="true" />
       </span>
-      <span className={styles.teaserLine}>{teaser ? teaser.line1 : failed ? 'Could not load. Refresh to try again.' : 'Loading…'}</span>
+      <span className={styles.teaserLine}>{teaser ? teaser.line1 : unavailable ?? 'Loading…'}</span>
       {teaser?.line2 ? <span className={styles.teaserLine2}>{teaser.line2}</span> : null}
     </Link>
   );
@@ -199,20 +215,20 @@ export function OverviewTeasers({
   activity,
   allocation,
   health,
-  failed,
+  unavailable,
 }: {
   campaignId: string;
   search: string;
   activity: AgencyInsightsActivity | null;
   allocation: AgencyInsightsAllocation | null;
   health: AgencyInsightsHealth | null;
-  failed: OverviewFailures;
+  unavailable: OverviewUnavailable;
 }) {
   return (
     <nav className={styles.teasers} aria-label="More on this campaign">
-      <TeaserCard title="Calls" teaser={activity ? callsTeaser(activity) : null} failed={failed.activity} to={campaignTabHref('calls', campaignId, search)} testId="teaser-calls" />
-      <TeaserCard title="Agents" teaser={activity || allocation ? agentsTeaser(activity, allocation) : null} failed={failed.activity && failed.allocation} to={campaignTabHref('agents', campaignId, search)} testId="teaser-agents" />
-      <TeaserCard title="Health" teaser={health ? healthTeaser(health) : null} failed={failed.health} to={campaignTabHref('health', campaignId, search)} testId="teaser-health" />
+      <TeaserCard title="Calls" teaser={activity ? callsTeaser(activity) : null} unavailable={unavailable.activity} to={campaignTabHref('calls', campaignId, search)} testId="teaser-calls" />
+      <TeaserCard title="Agents" teaser={activity || allocation ? agentsTeaser(activity, allocation) : null} unavailable={unavailable.allocation && unavailable.activity} to={campaignTabHref('agents', campaignId, search)} testId="teaser-agents" />
+      <TeaserCard title="Health" teaser={health ? healthTeaser(health) : null} unavailable={unavailable.health} to={campaignTabHref('health', campaignId, search)} testId="teaser-health" />
     </nav>
   );
 }

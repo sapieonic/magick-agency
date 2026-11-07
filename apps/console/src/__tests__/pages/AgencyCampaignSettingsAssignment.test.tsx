@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
+vi.mock('../../api/agencyInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
+  getInsightsAllocation: () => new Promise(() => {}),
+}));
 vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: () => true, map: {}, loading: false, refresh: vi.fn() }),
 }));

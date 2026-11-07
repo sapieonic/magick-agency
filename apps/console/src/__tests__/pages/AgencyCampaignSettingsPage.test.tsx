@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   useCallAnalysisProfiles: vi.fn(),
   getInsightsSummary: vi.fn(),
   getInsightsUploads: vi.fn(),
+  getInsightsAllocation: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -61,10 +62,11 @@ vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
 }));
-// The lifecycle and upload history under the form (IN13).
+// The lifecycle and upload history under the form (IN13), and the tab bar's overdue-callbacks badge.
 vi.mock('../../api/agencyInsights', () => ({
   getInsightsSummary: mocks.getInsightsSummary,
   getInsightsUploads: mocks.getInsightsUploads,
+  getInsightsAllocation: mocks.getInsightsAllocation,
 }));
 
 function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
@@ -113,6 +115,7 @@ beforeEach(() => {
   mocks.updateAgencyCampaign.mockImplementation(async (_id, body) => campaign(body));
   mocks.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
   mocks.getInsightsUploads.mockResolvedValue(insightsSamples.uploads());
+  mocks.getInsightsAllocation.mockResolvedValue(insightsSamples.allocation());
   // Governance fails OPEN, so the default posture here is every capability on —
   // matching a tenant whose map simply doesn't mention these keys.
   mocks.isCapabilityEnabled.mockReturnValue(true);
@@ -391,6 +394,16 @@ describe('campaign settings — lifecycle and uploads', () => {
     expect(screen.queryByTestId('campaign-history')).toBeNull();
     expect(mocks.getInsightsSummary).not.toHaveBeenCalled();
     expect(mocks.getInsightsUploads).not.toHaveBeenCalled();
+    expect(mocks.getInsightsAllocation).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Callbacks tab’s overdue badge off the detail page, read once here', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    // The fixture has 2 overdue: leaving the detail page must not make the warning look resolved.
+    const badge = await screen.findByTestId('campaign-tab-callbacks-alert');
+    expect(badge.textContent).toBe('2, 2 overdue');
+    expect(mocks.getInsightsAllocation).toHaveBeenCalledTimes(1);
   });
 });
 
