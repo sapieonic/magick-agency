@@ -1,7 +1,6 @@
 import type Redis from 'ioredis';
 import { createChildLogger } from '@magick-agency/observability';
-import { WebRtcCallError } from '../core/webrtc-bridge-manager.js';
-import { carrierDialNotSentReason, isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import { classifyDialRefusal } from '../core/bridge/dial-refusals.js';
 
 const log = createChildLogger({ component: 'agency-carrier-refusal-breaker' });
 
@@ -36,13 +35,13 @@ export const CARRIER_REFUSAL_BREAKER_THRESHOLD = 5;
 export const CARRIER_REFUSAL_BREAKER_TTL_SECONDS = 15 * 60;
 
 /**
- * Whether a dial's rejection counts toward the breaker (see the module note). Read off the
- * bridge's {@link WebRtcCallError} code, and the adapter's error in its `cause` chain.
+ * Whether a dial's rejection counts toward the breaker (see the module note), read off the
+ * bridge's rejection by `classifyDialRefusal`.
  */
 export function countsTowardBreaker(err: unknown): boolean {
-  if (!(err instanceof WebRtcCallError)) return false;
-  if (err.code === 'telephony_init_failed') return !isDialOutcomeUnknown(err);
-  if (err.code === 'carrier_dial_not_sent') return carrierDialNotSentReason(err) === 'configuration';
+  const refusal = classifyDialRefusal(err);
+  if (refusal.kind === 'carrier_refused') return !refusal.outcomeUnknown;
+  if (refusal.kind === 'not_sent') return refusal.reason === 'configuration';
   return false;
 }
 

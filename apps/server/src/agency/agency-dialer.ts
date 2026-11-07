@@ -1,6 +1,5 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import { WebRtcCallError } from '../core/webrtc-bridge-manager.js';
 import {
   DIAL_OUTCOME_UNKNOWN_ERROR_CODE,
   DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS,
@@ -36,12 +35,12 @@ import type {
   AgencyAbandonReason,
 } from '@magick-agency/contracts/agency';
 import type { WrapupManager } from './wrapup-manager.js';
-import { isCampaignSession, type AgencyCampaignRecord, type CarrierAccountPauseReason } from '../db/models/agency.model.js';
+import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
 import { CarrierRefusalBreaker, countsTowardBreaker } from './carrier-refusal-breaker.js';
-import { carrierDialNotSentReason } from '../telephony/carrier-errors.js';
+import { classifyDialRefusal } from '../core/bridge/dial-refusals.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -86,8 +85,8 @@ export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
  * How long a contact waits after its dial failed in the bridge before the carrier was asked
  * (the bridge rejected with no `ended`: the call row INSERT, the carrier tokens, the carrier
  * request's own inputs). Default, pending Manas (`docs/decisions.md`, "Dial failed before the
- * carrier"). Not an admission refusal ({@link CAPACITY_REFUSALS}): that is back-pressure, not
- * a fault, and its contact goes back at once.
+ * carrier"). Not an admission refusal (`capacity`, `classifyDialRefusal`): that is
+ * back-pressure, not a fault, and its contact goes back at once.
  *
  * Without it the contact went back dialable at once, uncharged, and a failure that repeats
  * (a missing webhook base, a database refusing the INSERT) redialled the same contact on
@@ -103,33 +102,6 @@ export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
  * clears. A minute: well past the pacing tick, short beside every retry the policy sets.
  */
 export const PRE_CARRIER_FAILURE_REDIAL_DELAY_MS = 60_000;
-
-/**
- * The bridge's admission refusals: a concurrency slot was not available. Nothing failed, so
- * the contact goes back dialable at once, as before {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS}
- * existed: pacing caps its dials by the account limit, so the refusal is bounded by the next
- * tick's capacity, not a loop, and holding the contact a minute would only stall a floor that
- * frees capacity within seconds (`integration/load/concurrency-cap.test.ts`).
- */
-const CAPACITY_REFUSALS: ReadonlySet<string> = new Set([
-  'global_concurrency_limit',
-  'account_concurrency_limit',
-  'provider_concurrency_limit',
-  'provider_concurrency_unavailable',
-  // A calls-per-second limit (our per-account gate, or the carrier's 429) gave the dial no
-  // slot: nothing was placed and it says nothing about the contact. Back-pressure too: the
-  // gate bounds the rate, so the next tick's dial is the retry.
-  'carrier_rate_limited',
-]);
-
-/**
- * The dial refusals that say the campaign's carrier account cannot dial, and the pause
- * reason each writes (`carrier-account-pause.ts`).
- */
-const CARRIER_ACCOUNT_PAUSES: ReadonlyMap<string, CarrierAccountPauseReason> = new Map([
-  ['carrier_auth_rejected', 'carrier_auth'],
-  ['telephony_credential_unavailable', 'carrier_account_unavailable'],
-]);
 
 /**
  * How long a `released` the agent never saw is kept for them to collect on
@@ -598,10 +570,8 @@ export class AgencyDialer {
         log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed after its end was settled — the ended arm settles its contact');
         return;
       }
-      const reason: AgencyReleaseReason =
-        err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
-          ? 'reservation_expired'
-          : 'failed';
+      const refusal = classifyDialRefusal(err);
+      const reason: AgencyReleaseReason = refusal.kind === 'station_unavailable' ? 'reservation_expired' : 'failed';
       // The campaign's carrier account cannot dial: the carrier refused its credential
       // (HTTP 401, `carrier_auth`), or the credential is no longer active (disabled,
       // invalid, revoked or unopenable since the campaign started, refused before the
@@ -609,18 +579,19 @@ export class AgencyDialer {
       // too, so the campaign is paused before this attempt is settled. Nothing was placed
       // and the contact did nothing wrong: it goes back at once, uncharged, and waits for
       // the resume.
-      const carrierPause = err instanceof WebRtcCallError ? CARRIER_ACCOUNT_PAUSES.get(err.code) : undefined;
-      if (carrierPause) await pauseCampaignForCarrierAccount(cmd.campaign, carrierPause);
-      // A dial not sent for the carrier's configuration that tripped the breaker: the campaign
-      // is paused, so its contact goes back at once like any carrier-account pause's.
-      const capacityRefused = err instanceof WebRtcCallError
-        && (CAPACITY_REFUSALS.has(err.code) || carrierPause !== undefined || refusalStreakTripped);
+      if (refusal.kind === 'carrier_account') await pauseCampaignForCarrierAccount(cmd.campaign, refusal.pause);
+      // An admission or calls-per-second refusal is back-pressure: pacing caps its dials by
+      // the account limit, so it is bounded by the next tick's capacity, not a loop, and
+      // holding the contact a minute would only stall a floor that frees capacity within
+      // seconds (`integration/load/concurrency-cap.test.ts`). A dial not sent for the
+      // carrier's configuration that tripped the breaker: the campaign is paused, so its
+      // contact goes back at once like any carrier-account pause's.
+      const capacityRefused =
+        refusal.kind === 'capacity' || refusal.kind === 'carrier_account' || refusalStreakTripped;
       // The carrier cannot dial this contact's number at all (it passed our E.164 gate but
       // not the carrier's own check): terminal for the contact, as the pre-dial gate's
       // `phone_invalid` is, never a minute's hold that repeats for as long as the campaign runs.
-      const invalidDestination = err instanceof WebRtcCallError
-        && err.code === 'carrier_dial_not_sent'
-        && carrierDialNotSentReason(err) === 'destination';
+      const invalidDestination = refusal.kind === 'not_sent' && refusal.reason === 'destination';
       log.warn({ err, attemptId, outcomeUnknown, invalidDestination }, 'Agency dial failed');
       await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused, invalidDestination);
       return;

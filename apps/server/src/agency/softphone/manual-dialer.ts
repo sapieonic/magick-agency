@@ -45,7 +45,8 @@ import type {
   AgencyPriorAttempt,
 } from '@magick-agency/contracts/agency';
 import { WebRtcCallError } from '../../core/webrtc-bridge-manager.js';
-import { carrierDialNotSentReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isDialOutcomeUnknown } from '../../telephony/carrier-errors.js';
+import { DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isDialOutcomeUnknown } from '../../telephony/carrier-errors.js';
+import { classifyDialRefusal } from '../../core/bridge/dial-refusals.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../../core/webrtc-bridge-manager.js';
 import {
   agencyAttemptRepository,
@@ -62,45 +63,34 @@ import { applyNoOutcomeSettlement, noOutcomeSettlementFor } from './manual-settl
 const log = createChildLogger({ component: 'agency-softphone' });
 
 /**
- * Bridge refusals that mean "no line free, try again in a moment" (`concurrency_limit`):
- * the concurrency guards, and the carrier account's calls-per-second limit
- * (`carrier_rate_limited`: nothing was placed; back-pressure, PL7).
- */
-const CONCURRENCY_REFUSALS = new Set([
-  'global_concurrency_limit',
-  'account_concurrency_limit',
-  'provider_concurrency_limit',
-  'provider_concurrency_unavailable',
-  'carrier_rate_limited',
-]);
-
-/**
- * Bridge refusals that mean the caller ID's carrier account cannot dial
- * (`carrier_account_unavailable`): the credential is no longer active
- * (`telephony_credential_unavailable`, PL3) or the carrier refused it (401,
- * `carrier_auth_rejected`, PL2). Retrying cannot help until it is fixed, so these are not
- * the retryable `dial_failed`.
- */
-const CARRIER_ACCOUNT_REFUSALS = new Set(['telephony_credential_unavailable', 'carrier_auth_rejected']);
-
-/**
- * What a dial the bridge rejected before the carrier placed anything answers the agent.
- * Anything this does not name is the platform's (`dial_failed`, 503, retry): not a missing
- * station, which would tell them to check a connection that is fine.
+ * What a dial the bridge rejected before the carrier placed anything answers the agent
+ * (`classifyDialRefusal`). Anything this does not name is the platform's (`dial_failed`,
+ * 503, retry): not a missing station, which would tell them to check a connection that is
+ * fine.
  */
 export function manualDialFailureFor(err: unknown): ManualDialFailure {
-  if (!(err instanceof WebRtcCallError)) return 'dial_failed';
-  if (err.code === 'station_socket_unavailable') return 'station_unavailable';
-  if (CONCURRENCY_REFUSALS.has(err.code)) return 'concurrency_limit';
-  if (CARRIER_ACCOUNT_REFUSALS.has(err.code)) return 'carrier_account_unavailable';
-  // A dial the carrier adapter would not send for the carrier's configuration (no webhook
-  // base, a caller ID the carrier cannot take): every retry would be refused the same way,
-  // as for an account that cannot dial. Not sent for the contact's number or the network:
-  // the platform's `dial_failed`.
-  if (err.code === 'carrier_dial_not_sent' && carrierDialNotSentReason(err) === 'configuration') {
-    return 'carrier_account_unavailable';
+  const refusal = classifyDialRefusal(err);
+  switch (refusal.kind) {
+    case 'station_unavailable':
+      return 'station_unavailable';
+    // "No line free, try again in a moment": the concurrency guards, and the carrier
+    // account's calls-per-second limit (nothing was placed; back-pressure, PL7).
+    case 'capacity':
+      return 'concurrency_limit';
+    // The caller ID's carrier account cannot dial: the credential is no longer active (PL3)
+    // or the carrier refused it (401, PL2). Retrying cannot help until it is fixed, so these
+    // are not the retryable `dial_failed`.
+    case 'carrier_account':
+      return 'carrier_account_unavailable';
+    // A dial the carrier adapter would not send for the carrier's configuration (no webhook
+    // base, a caller ID the carrier cannot take): every retry would be refused the same way,
+    // as for an account that cannot dial. Not sent for the contact's number or the network:
+    // the platform's `dial_failed`.
+    case 'not_sent':
+      return refusal.reason === 'configuration' ? 'carrier_account_unavailable' : 'dial_failed';
+    default:
+      return 'dial_failed';
   }
-  return 'dial_failed';
 }
 
 /** Bridge outcomes that are not a hang-up by either party: the call was ended FOR them. */

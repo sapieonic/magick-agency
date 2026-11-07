@@ -8,9 +8,87 @@
  * Errors are recognised by the flags their classes carry rather than `instanceof`: the
  * bridge's suites mock the modules that define them (the call repository, the provider
  * registry), so the classes are not importable there.
+ *
+ * The callers' side of the same vocabulary is here too ({@link classifyDialRefusal}): what a
+ * bridge rejection means to the paced dialler, the soft phone and the refusal breaker.
  */
-import { carrierDialNotSentReason, isCarrierAuthRejected, isCarrierRateLimited } from '../../telephony/carrier-errors.js';
+import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency';
+import {
+  carrierDialNotSentReason,
+  isCarrierAuthRejected,
+  isCarrierRateLimited,
+  isDialOutcomeUnknown,
+  type CarrierDialNotSentReason,
+} from '../../telephony/carrier-errors.js';
 import { WebRtcCallError, type WebRtcRejectReason } from './bridge-types.js';
+
+/**
+ * The bridge's admission refusals: no concurrency slot, or no calls-per-second slot (our
+ * per-account gate, or the carrier's 429). Nothing was placed and nothing failed: it is
+ * back-pressure, says nothing about the contact, and the next attempt is the retry.
+ */
+export const CAPACITY_REFUSAL_CODES: ReadonlySet<WebRtcRejectReason> = new Set<WebRtcRejectReason>([
+  'global_concurrency_limit',
+  'account_concurrency_limit',
+  'provider_concurrency_limit',
+  'provider_concurrency_unavailable',
+  'carrier_rate_limited',
+]);
+
+/**
+ * The refusals that say the carrier account the dial names cannot dial, and the campaign
+ * pause each writes (`agency/carrier-account-pause.ts`): the carrier refused the credential
+ * (HTTP 401, `carrier_auth`), or the credential is no longer active
+ * (`carrier_account_unavailable`). Every further dial on it would be refused the same way.
+ */
+export const CARRIER_ACCOUNT_PAUSES: ReadonlyMap<WebRtcRejectReason, CarrierAccountPauseReason> = new Map<
+  WebRtcRejectReason,
+  CarrierAccountPauseReason
+>([
+  ['carrier_auth_rejected', 'carrier_auth'],
+  ['telephony_credential_unavailable', 'carrier_account_unavailable'],
+]);
+
+/**
+ * Why the adapter would not send the dial, for a bridge rejection `carrier_dial_not_sent`
+ * (read through its `cause`), or null for any other error.
+ */
+export function dialNotSentReason(err: unknown): CarrierDialNotSentReason | null {
+  if (!(err instanceof WebRtcCallError) || err.code !== 'carrier_dial_not_sent') return null;
+  return carrierDialNotSentReason(err);
+}
+
+/**
+ * What a dial's rejection means to the callers of the bridge:
+ *  - `station_unavailable`: the agent's socket was not open at dial time;
+ *  - `capacity`: an admission refusal ({@link CAPACITY_REFUSAL_CODES});
+ *  - `carrier_account`: the carrier account cannot dial, with the pause it writes
+ *    ({@link CARRIER_ACCOUNT_PAUSES});
+ *  - `not_sent`: the adapter would not send the dial, and why;
+ *  - `carrier_refused`: the carrier refused the dial (`telephony_init_failed`), with whether
+ *    it may have been placed after all (`outcomeUnknown`);
+ *  - `other`: anything else (a bridge failure before the carrier, or not a bridge rejection).
+ */
+export type DialRefusal =
+  | { kind: 'station_unavailable' }
+  | { kind: 'capacity' }
+  | { kind: 'carrier_account'; pause: CarrierAccountPauseReason }
+  | { kind: 'not_sent'; reason: CarrierDialNotSentReason }
+  | { kind: 'carrier_refused'; outcomeUnknown: boolean }
+  | { kind: 'other' };
+
+/** Classify a dial's rejection ({@link DialRefusal}); the one reading every caller shares. */
+export function classifyDialRefusal(err: unknown): DialRefusal {
+  if (!(err instanceof WebRtcCallError)) return { kind: 'other' };
+  if (err.code === 'station_socket_unavailable') return { kind: 'station_unavailable' };
+  if (CAPACITY_REFUSAL_CODES.has(err.code)) return { kind: 'capacity' };
+  const pause = CARRIER_ACCOUNT_PAUSES.get(err.code);
+  if (pause) return { kind: 'carrier_account', pause };
+  if (err.code === 'telephony_init_failed') return { kind: 'carrier_refused', outcomeUnknown: isDialOutcomeUnknown(err) };
+  const notSent = dialNotSentReason(err);
+  if (notSent) return { kind: 'not_sent', reason: notSent };
+  return { kind: 'other' };
+}
 
 /** How an unplaced refusal is recorded on the call row and reported to the caller. */
 export interface UnplacedRefusal {
