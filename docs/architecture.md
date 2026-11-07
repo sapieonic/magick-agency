@@ -626,7 +626,10 @@ every account the caller belongs to (CH2) where every internal handler is single
     `<Record>` when the call records (its `callbackUrl` the recording callback), then a
     bidirectional μ-law `<Stream keepCallAlive>` to the stream URL kept on the session. A bad token
     or signature, an unknown call or one tearing down gets the hangup XML.
-  - *Media.* Plivo opens `/api/v1/webrtc-call/:id/pstn-stream` (the provider token in the URL),
+  - *Media.* Plivo opens `/api/v1/webrtc-call/:id/pstn-stream` (the provider token in the URL;
+    under the same path prefix as the callbacks when the webhook base is
+    `<prefix>/api/v1/webhooks/<carrier>`, `buildCarrierUrls`, so a proxy that strips a prefix
+    for the callbacks does so for the stream too),
     negotiates with `start` (`audio/x-mulaw`, 8000), sends `media` frames and takes `playAudio`
     frames. No browser leg speaks μ-law, so every Plivo call transcodes (`MulawTranscoder`,
     μ-law 8 kHz ⇄ PCM16 16 kHz, `utils/audio-fir.ts`).

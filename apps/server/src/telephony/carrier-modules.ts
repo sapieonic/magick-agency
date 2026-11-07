@@ -17,13 +17,10 @@ export function findCarrierModule(provider: string): CarrierModule | undefined {
 }
 
 /**
- * Whether a hang-up stops a call on this carrier ringing ({@link CarrierModule.cancelsRinging}).
- * Fails closed, like `canCancelRinging`: no provider (the leg is not placed yet) or a name no
- * carrier answers to reads as unable, so the agent is warned rather than misled.
+ * Whether a hang-up stops a call on this carrier ringing ({@link CarrierModule.cancelsRinging}),
+ * from the codec-free declaration every module reads (`carrier-ringing.ts`).
  */
-export function carrierCancelsRinging(provider: string | null | undefined): boolean {
-  return provider ? MODULES.get(provider)?.cancelsRinging === true : false;
-}
+export { carrierCancelsRinging } from './carrier-ringing.js';
 
 /** Every registered carrier name. */
 export function carrierModuleNames(): string[] {

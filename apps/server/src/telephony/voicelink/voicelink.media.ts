@@ -6,6 +6,7 @@ import { classifyVoicelinkOutcome, normalizeVoicelinkWebhook } from './voicelink
 import type { VoicelinkWebhookBody } from './voicelink.types.js';
 import { VoicelinkTranscoder } from '../../utils/audio-fir.js';
 import { pcmToAlaw } from '../../utils/audio.js';
+import { declaredCancelsRinging } from '../carrier-ringing.js';
 
 export const voicelinkMedia: CarrierMediaProtocol = {
   formatLabel: 'A-law 8kHz',
@@ -73,7 +74,7 @@ export const voicelinkCarrier: CarrierModule = {
   answeredHangup: 'close_media',
   // `add_lead` carries the `websocket_url` VoiceLink dials out to; there is no answer XML.
   mediaUrlInDialRequest: true,
-  // No hangup endpoint either for a leg still ringing: it rings on (SP3).
-  cancelsRinging: false,
+  // No hangup endpoint either for a leg still ringing: it rings on (SP3), `carrier-ringing.ts`.
+  cancelsRinging: declaredCancelsRinging('voicelink'),
   lifecycle: voicelinkLifecycle,
 };

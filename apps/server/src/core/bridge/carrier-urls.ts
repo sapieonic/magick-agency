@@ -40,6 +40,25 @@ export function carrierCallbackUrl(base: string, route: CarrierCallbackRoute, ca
   return `${normalizeWebhookBase(base)}/${route}/${callId}${query}`;
 }
 
+/** The server's own path of every carrier's webhook namespace, after any prefix a proxy adds. */
+const WEBHOOK_NAMESPACE_PATH = /\/api\/v1\/webhooks\/[^/]+$/;
+
+/**
+ * The PSTN media stream's URL for a call: `wss://` on the base's host, the stream route, the
+ * token and the hint. A base whose path is `<prefix>/api/v1/webhooks/<carrier>` keeps
+ * `<prefix>` before the stream route, as the callbacks keep it: a reverse proxy that serves
+ * the API under a prefix (and strips it) does the same for the stream's socket. A base laid
+ * out any other way has no prefix to take, and the stream route sits at the host's root, as
+ * before (VoiceLink's documented base, `https://<host>/api/v1/webhooks/voicelink`, builds the
+ * same URL either way).
+ */
+function streamUrlFor(base: string, callId: string, providerToken: string, hint: string): string {
+  const url = new URL(base);
+  const path = url.pathname.replace(/\/+$/, '');
+  const prefix = WEBHOOK_NAMESPACE_PATH.test(path) ? path.replace(WEBHOOK_NAMESPACE_PATH, '') : '';
+  return `wss://${url.host}${prefix}/api/v1/webrtc-call/${callId}/pstn-stream?token=${providerToken}${hint}`;
+}
+
 export interface CarrierUrls {
   /** The media stream URL for the dial request; set only when the carrier takes it there. */
   mediaStreamUrl: string | undefined;
@@ -63,9 +82,7 @@ export function buildCarrierUrls(input: {
   routeHint?: string | null;
 }): CarrierUrls {
   const hint = input.routeHint ? `&${CARRIER_ROUTE_HINT_PARAM}=${encodeURIComponent(input.routeHint)}` : '';
-  const streamUrl = input.providerToken
-    ? `wss://${new URL(input.base).host}/api/v1/webrtc-call/${input.callId}/pstn-stream?token=${input.providerToken}${hint}`
-    : undefined;
+  const streamUrl = input.providerToken ? streamUrlFor(input.base, input.callId, input.providerToken, hint) : undefined;
   // A provider with no carrier module gets untokenized callbacks (and no hint: nothing
   // routes them but their call id).
   const callback = (route: CarrierCallbackRoute): string => carrierCallbackUrl(

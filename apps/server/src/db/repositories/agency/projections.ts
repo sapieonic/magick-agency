@@ -15,7 +15,9 @@ import {
   type AgencyContactState,
   type AgencyManualCall,
 } from '@magick-agency/contracts/agency';
-import { carrierCancelsRinging } from '../../../telephony/carrier-modules.js';
+// The codec-free declaration, not `carrier-modules.js`: that loads every carrier's media
+// codec (and the tables it builds at load) into the repository's import graph.
+import { carrierCancelsRinging } from '../../../telephony/carrier-ringing.js';
 
 /**
  * Does this row have enough CONNECTS behind it to quote a rate whose denominator is

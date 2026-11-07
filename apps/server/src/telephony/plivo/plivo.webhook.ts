@@ -190,7 +190,9 @@ export function plivoCallEvent(n: NormalizedPlivoCallback, callId: string): Call
 /**
  * The callback a {@link plivoCallEvent} event was made from, read back off its metadata
  * (the bridge is handed the event, not the params). Never throws: a field the event does
- * not carry is '' or absent, as in {@link normalizePlivoCallback}.
+ * not carry is '' or absent, as in {@link normalizePlivoCallback}. No `recordingId`: only a
+ * status or answer callback becomes an event, and neither carries one (a recording callback
+ * goes to the bridge as its URL, `handleCarrierRecording`).
  */
 export function plivoCallbackFromEvent(event: CallEvent): NormalizedPlivoCallback {
   const m = (event.metadata ?? {}) as Record<string, unknown>;
@@ -209,7 +211,6 @@ export function plivoCallbackFromEvent(event: CallEvent): NormalizedPlivoCallbac
     ...(text(m['answeredAt']) ? { answeredAt: text(m['answeredAt']) } : {}),
     ...(text(m['endedAt']) ? { endedAt: text(m['endedAt']) } : {}),
     ...(text(m['recordingUrl']) ? { recordingUrl: text(m['recordingUrl']) } : {}),
-    ...(text(m['recordingId']) ? { recordingId: text(m['recordingId']) } : {}),
     wasAnswered: m['wasAnswered'] === true,
   };
 }

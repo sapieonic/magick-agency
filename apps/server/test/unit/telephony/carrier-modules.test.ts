@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { carrierCancelsRinging, carrierModuleNames, findCarrierModule } from '../../../src/telephony/carrier-modules.js';
+import { carrierRingingDeclarations } from '../../../src/telephony/carrier-ringing.js';
 import { byocProviderNames } from '../../../src/telephony/factory.js';
 import { findCredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
 import { decodeMulaw, encodeAlaw, encodeMulaw } from '../../../src/utils/audio.js';
@@ -47,6 +48,13 @@ describe('carrier-module registry', () => {
       expect(m.media.formatLabel.length).toBeGreaterThan(0);
       expect([null, 'alaw8']).toContain(m.media.wireFormat);
       expect(typeof m.cancelsRinging).toBe('boolean');
+    }
+  });
+
+  it('the codec-free ringing declaration covers exactly the registered modules, and each module reads its own', () => {
+    expect(carrierRingingDeclarations().sort()).toEqual(carrierModuleNames().sort());
+    for (const name of carrierModuleNames()) {
+      expect(findCarrierModule(name)!.cancelsRinging).toBe(carrierCancelsRinging(name));
     }
   });
 
