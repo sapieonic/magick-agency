@@ -52,6 +52,8 @@ import {
   agencyContactRepository,
   agencyManualCallRepository,
 } from '../../db/repositories/agency.repository.js';
+// The pure row → wire projection the station panel's history uses too (from its leaf, as there).
+import { projectPriorAttempt } from '../../db/repositories/agency/projections.js';
 import type { AgencyManualCallRecord } from '../../db/models/agency.model.js';
 import { DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
 import type { StationRegistry } from '../station-registry.js';
@@ -229,16 +231,7 @@ export class ManualDialer {
         contact.root_contact_id ?? contact.id,
         manualCallId, // an attempt id it can never be: excludes nothing
       );
-      return rows.map((r) => ({
-        attempt_number: r.attempt_number,
-        outcome: r.outcome,
-        disposition_code: r.disposition_code,
-        notes: r.notes,
-        ended_at: r.ended_at ? r.ended_at.toISOString() : null,
-        campaign_id: r.campaign_id,
-        campaign_name: r.campaign_name,
-        dialed_at: r.dialed_at ? r.dialed_at.toISOString() : null,
-      }));
+      return rows.map(projectPriorAttempt);
     } catch (err) {
       log.warn({ err, contactId }, 'Could not load prior attempts for a soft-phone call');
       return [];

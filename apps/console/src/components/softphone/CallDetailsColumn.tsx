@@ -3,7 +3,7 @@ import { CallFieldsForm } from './CallFieldsForm';
 import { resolveContextFields } from '../../utils/agencyContext';
 import { attemptOutcomeLabel } from '../../types/agency-spine';
 import { formatDayMonth } from '../../utils/format/date';
-import { dispositionLabel } from '../../utils/agencySpineCopy';
+import { autoDispositionLabel, dispositionLabel } from '../../utils/agencySpineCopy';
 import type { SoftphoneState } from '../../hooks/useSoftphone';
 import type { AgencyManualCallContact } from '../../types/softphone';
 import type { AgencyContextDisplay, AgencyDisposition } from '../../types/agency';
@@ -150,7 +150,9 @@ function ContactCard({
   const lastWhen = last?.ended_at ?? last?.dialed_at ?? null;
   const lastLine = last
     ? `Last campaign call: ${lastWhen ? `${formatDayMonth(new Date(lastWhen))}, ` : ''}${
-        dispositionLabel(last.disposition_code, last.campaign_id === campaignId ? catalog : undefined) ?? attemptOutcomeLabel(last.outcome)
+        dispositionLabel(last.disposition_code, last.campaign_id === campaignId ? catalog : undefined)
+          ?? autoDispositionLabel(last.auto_disposition_code, last.campaign_id === campaignId ? catalog : undefined)
+          ?? attemptOutcomeLabel(last.outcome)
       }.`
     : 'No earlier campaign calls.';
 

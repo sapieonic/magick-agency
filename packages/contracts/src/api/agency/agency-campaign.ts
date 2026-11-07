@@ -11,7 +11,13 @@
 import type * as Core from '../../agency';
 import type { AgencyAgentState, AgencyContextDisplay, AgencyDisposition } from './agency';
 import type { AgencyRetrySelector } from './agency-spine';
-import type { AgencyAssignmentMode, AgencyCallbackFallback, AgencyOnUnstaff } from '../../agency';
+import type {
+  AgencyAssignmentMode,
+  AgencyCallbackFallback,
+  AgencyAutoDispositionOutcome,
+  AgencyOnUnstaff,
+  AgencyOutcomeDispositions,
+} from '../../agency';
 // Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
 import type {
   AgencyAgentLiveState,
@@ -35,8 +41,11 @@ export type {
   AgencyStallCode,
 };
 // The campaign config defaults the server applies and the console previews, one
-// declaration for both (`../../agency/campaign-defaults.ts`).
+// declaration for both (`../../agency/campaign-defaults.ts`), and the outcomes a campaign
+// may map to an automatic disposition (`../../agency/outcome-dispositions.ts`).
+export type { AgencyAutoDispositionOutcome, AgencyOutcomeDispositions };
 export {
+  AGENCY_AUTO_DISPOSITION_OUTCOMES,
   AGENCY_DEFAULT_DISPOSITION_CATALOG,
   AGENCY_DEFAULT_DISPOSITION_RETRY,
   AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES,
@@ -421,6 +430,15 @@ export interface AgencyCampaign {
   sip_connection_id?: string | null;
   disposition_catalog?: AgencyDispositionEntry[];
   retry_policy?: AgencyRetryPolicy;
+  /**
+   * Automatic outcomes for unanswered calls (decisions OD1–OD8): outcome → a code of
+   * `disposition_catalog` the dialer stamps on an attempt that ends with that outcome
+   * (`auto_disposition_code`). A label only: `retry_policy` still decides when the
+   * contact is dialled again. `{}` (the column default) maps nothing. The code must name
+   * an entry that neither suppresses nor is terminal; a catalog change that breaks a
+   * mapping is refused.
+   */
+  outcome_dispositions?: AgencyOutcomeDispositions;
   calling_window_start?: string | null;
   calling_window_end?: string | null;
   /** ISO-8601: 1 = Monday … 7 = Sunday. `0` is not a valid day. */

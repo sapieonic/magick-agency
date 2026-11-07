@@ -128,6 +128,23 @@ export async function insertAgencyContacts(
   return out;
 }
 
+/**
+ * The `DialCommand` the dialer settles an attempt with (`settleContact`,
+ * `holdOutcomeUnknownContact`), built from the campaign and contact rows as they stand now.
+ * `extra` adds or overrides fields (a wrap-up redial's `redial`).
+ */
+export async function dialCommandFor(d: {
+  campaignId: string; contactId: string; attemptId: string; sessionId: string; attemptNumber: number;
+}, extra: Record<string, unknown> = {}): Promise<never> {
+  const { rows: [c] } = await getTestPool().query('SELECT * FROM agency_campaigns WHERE id = $1', [d.campaignId]);
+  const { rows: [k] } = await getTestPool().query('SELECT * FROM agency_contacts WHERE id = $1', [d.contactId]);
+  return {
+    attemptId: d.attemptId, campaignId: c.id, contactId: d.contactId, sessionId: d.sessionId, ownerReplica: 'r1',
+    tenantId: c.tenant_id, accountId: c.account_id, callerId: '+919000000001', attemptNumber: d.attemptNumber,
+    campaign: c, contact: k, ...extra,
+  } as never;
+}
+
 export async function insertAgentSession(campaignId: string, overrides: Record<string, unknown> = {}) {
   return insertRow('agency_agent_sessions', {
     id: randomUUID(),

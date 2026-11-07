@@ -31,7 +31,7 @@ function attempt(patch: Partial<AgencyCallAttemptRecord> = {}): AgencyCallAttemp
     tenant_id: 't1', account_id: 'a1', attempt_number: 1,
     webrtc_call_id: 'call-1', caller_id: '+14155550100',
     reserved_agent_id: 'sess-1', state: 'ended', outcome: 'connected',
-    disposition_code: null, notes: null, callback_at: null,
+    disposition_code: null, auto_disposition_code: null, notes: null, callback_at: null,
     dispositioned_by_user_id: null, dispositioned_at: null, dispositioned_on_behalf: false,
     dialed_at: new Date(), answered_at: new Date(), bridged_at: new Date(),
     ended_at: new Date(), talk_seconds: 42, wrapup_seconds: 30,

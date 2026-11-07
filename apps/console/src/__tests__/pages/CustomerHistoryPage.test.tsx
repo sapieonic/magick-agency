@@ -248,6 +248,23 @@ describe('the timeline', () => {
     );
   });
 
+  it('shows a campaign call’s automatic outcome, tagged as automatic (OD1–OD8)', () => {
+    const answer = customerHistoryFixture().search_response;
+    const call = answer.timeline.entries[2]!;
+    if (call.kind === 'campaign_call') {
+      call.outcome = 'busy';
+      call.disposition_code = null;
+      call.auto_disposition_code = 'retry_later';
+    }
+    renderPage(answer);
+    const auto = within(entries()[2]!).getByTestId('customer-auto-disposition');
+    expect(auto.textContent).toBe('Outcome code: retry_later (automatic)');
+    expect(auto.getAttribute('title')).toMatch(/^Filed automatically: /);
+    expect(auto.getAttribute('title')).not.toMatch(/No one wrote/i);
+    // None on a call without one.
+    expect(within(entries()[0]!).queryByTestId('customer-auto-disposition')).toBeNull();
+  });
+
   it('links a wrap-up redial to its chain: names the first call and sets the redial in under it', () => {
     const answer = customerHistoryFixture().search_response;
     const redial = answer.timeline.entries[2] as CustomerTimelineCampaignCall;

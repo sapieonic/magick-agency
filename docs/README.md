@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-06.
+are as of 2026-11-07.
 
 ## What Magick Agency is
 
@@ -40,6 +40,9 @@ A dedicated caller ID per agent (2026-11-06, behind the contact-assignment flag:
 a staffed agent one of the campaign's caller IDs and every dial to a contact they own goes out from
 it, decisions DN1–DN10) leaves server 8207 unit / 2037 integration + 9 expected fail; db 428 / 573;
 console 5434.
+Automatic outcomes for unanswered calls (2026-11-07: a campaign maps no answer, busy, failed,
+invalid number and abandoned to one of its outcomes, filed on the call as a label only, OD1–OD8)
+leaves server 8318 unit / 2146 integration + 9 expected fail; db 428 / 586; console 5644.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)

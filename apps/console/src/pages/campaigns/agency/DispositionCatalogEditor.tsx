@@ -23,7 +23,12 @@ import styles from './CampaignBehaviourSection.module.css';
 
 interface DispositionCatalogEditorProps {
   dispositions: AgencyDispositionEntry[];
-  onChange: (next: AgencyDispositionEntry[]) => void;
+  /**
+   * The entries after an edit, and the edit itself — what a caller following a row
+   * through it needs (the campaign forms' automatic-outcome mapping,
+   * `followCatalogEdit`).
+   */
+  onChange: (next: AgencyDispositionEntry[], edit: CatalogEdit) => void;
   errors: ConfigFieldErrors;
   /**
    * Offer each outcome's "Allows override" group (contact assignment). Off by
@@ -54,7 +59,7 @@ export function DispositionCatalogEditor({
   const edit = (action: CatalogEdit) => {
     const next = editCatalog({ dispositions, autoCodeRows: autoCodeRows.current }, action);
     autoCodeRows.current = next.autoCodeRows;
-    if (next.dispositions !== dispositions) onChange(next.dispositions);
+    if (next.dispositions !== dispositions) onChange(next.dispositions, action);
   };
 
   /*

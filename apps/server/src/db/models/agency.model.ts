@@ -26,6 +26,7 @@ import type {
   AgencyAssignmentMode,
   AgencyCallbackFallback,
   AgencyOnUnstaff,
+  AgencyOutcomeDispositions,
   AgencyOverrideKind,
 } from '@magick-agency/contracts/agency';
 
@@ -101,6 +102,11 @@ export interface AgencyCampaignRecord {
   agent_retry_cooldown_minutes: number;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
+  /**
+   * Automatic outcomes for unanswered calls (0019, OD1–OD8): outcome → a catalog code the
+   * dialer stamps on the attempt as `auto_disposition_code`. A label only. `{}` maps nothing.
+   */
+  outcome_dispositions: AgencyOutcomeDispositions;
   /** Operator-configured break codes. Empty ⇒ `DEFAULT_BREAK_REASONS`. */
   break_reasons: AgencyBreakReason[];
   context_display: AgencyContextDisplay;
@@ -280,6 +286,7 @@ export type AgencyCampaignConfigColumns = Pick<
   | 'agent_retry_cooldown_minutes'
   | 'retry_policy'
   | 'disposition_catalog'
+  | 'outcome_dispositions'
   | 'context_display'
   | 'break_reasons'
   | 'record_calls'
@@ -449,6 +456,8 @@ export interface AgencyCallAttemptRecord {
   state: AgencyAttemptState;
   outcome: AgencyAttemptOutcome | null;
   disposition_code: string | null;
+  /** The campaign's automatic outcome for an unanswered attempt (migration 0019, OD1–OD8); not a write-up. */
+  auto_disposition_code: string | null;
   notes: string | null;
   callback_at: Date | null;
   /**

@@ -166,19 +166,19 @@ describe('the panel reads the CHAIN, not the contact row', () => {
       .toHaveBeenCalledWith('contact-child', 'att-1');
   });
 
-  it('carries campaign_id, campaign_name and dialed_at onto every prior attempt', async () => {
+  it('carries campaign_id, campaign_name, dialed_at and the automatic outcome onto every prior attempt', async () => {
     // "Attempt 2" means nothing once attempts come from two campaigns, and
     // `attempt_number` RESETS in each retry campaign, so it is no longer a
     // global ordering. `dialed_at` is the fallback time for a row whose `ended_at`
     // is null because it never ended.
     repos.attempt.findPriorForContactLineage.mockResolvedValueOnce([
       {
-        attempt_number: 1, outcome: 'no_answer', disposition_code: null, notes: null,
+        attempt_number: 1, outcome: 'no_answer', disposition_code: null, auto_disposition_code: 'call_later', notes: null,
         ended_at: new Date('2026-08-20T10:00:00Z'), dialed_at: new Date('2026-08-20T09:59:00Z'),
         campaign_id: 'camp-parent', campaign_name: 'Q3 Winback',
       },
       {
-        attempt_number: 2, outcome: null, disposition_code: 'voicemail', notes: 'left message',
+        attempt_number: 2, outcome: null, disposition_code: 'voicemail', auto_disposition_code: null, notes: 'left message',
         ended_at: null, dialed_at: null,
         campaign_id: 'camp-parent', campaign_name: 'Q3 Winback',
       },
@@ -187,14 +187,15 @@ describe('the panel reads the CHAIN, not the contact row', () => {
     const ws = await dial();
 
     const priors = ws.sent.find((f) => f.event === 'reserved')!.attempt.prior_attempts;
+    // The automatic outcome (OD1–OD8) rides beside the recorded code, null when there is none.
     expect(priors).toEqual([
       {
-        attempt_number: 1, outcome: 'no_answer', disposition_code: null, notes: null,
+        attempt_number: 1, outcome: 'no_answer', disposition_code: null, auto_disposition_code: 'call_later', notes: null,
         ended_at: '2026-08-20T10:00:00.000Z', dialed_at: '2026-08-20T09:59:00.000Z',
         campaign_id: 'camp-parent', campaign_name: 'Q3 Winback',
       },
       {
-        attempt_number: 2, outcome: null, disposition_code: 'voicemail', notes: 'left message',
+        attempt_number: 2, outcome: null, disposition_code: 'voicemail', auto_disposition_code: null, notes: 'left message',
         ended_at: null, dialed_at: null,
         campaign_id: 'camp-parent', campaign_name: 'Q3 Winback',
       },

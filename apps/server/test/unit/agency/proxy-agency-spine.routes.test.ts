@@ -157,6 +157,21 @@ describe('the agent is named, not just identified', () => {
     await app.close();
   });
 
+  it('passes the automatic outcome through the enrichment beside the person-recorded code', async () => {
+    // The enrichment spreads each row, so a field the handler adds reaches the console without
+    // a list here (OD1–OD8). Pinned so a later "whitelist the row" refactor cannot drop it.
+    const auto = {
+      ...NO_AGENT, id: 'attempt-auto', outcome: 'no_answer', disposition_code: null,
+      auto_disposition_code: 'no_answer_followup',
+    };
+    mocks.proxyToCore.mockResolvedValue(page([auto, { ...WITH_AGENT, auto_disposition_code: null }]));
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts` });
+    expect(res.json().rows[0]).toMatchObject({ auto_disposition_code: 'no_answer_followup', disposition_code: null });
+    expect(res.json().rows[1]).toHaveProperty('auto_disposition_code', null);
+    await app.close();
+  });
+
   it('emits agent_name: null — never an absent key — for an attempt with no agent', async () => {
     mocks.proxyToCore.mockResolvedValue(page([NO_AGENT]));
     const app = await buildApp();
@@ -427,6 +442,23 @@ describe('the CSV exports', () => {
     expect(lines[1]).toContain('attempt-1');
     expect(lines[2]).toContain('attempt-2');
     await app.close();
+  });
+
+  it('exports the automatic outcome in its own last column, blank when there is none', () => {
+    // Appended, so a consumer reading by position keeps every earlier column; and its own
+    // column, so `disposition_code` stays what a person recorded (OD4).
+    expect(ATTEMPT_CSV_COLUMNS.at(-1)).toBe('auto_disposition_code');
+    const at = (name: (typeof ATTEMPT_CSV_COLUMNS)[number]) => ATTEMPT_CSV_COLUMNS.indexOf(name);
+    const auto = {
+      ...ATTEMPT, outcome: 'no_answer', disposition_code: null, notes: null,
+      auto_disposition_code: 'no_answer_followup',
+    };
+    const autoCells = attemptCsvRow(auto as never).trimEnd().split(',');
+    expect(autoCells[at('auto_disposition_code')]).toBe('no_answer_followup');
+    expect(autoCells[at('disposition_code')]).toBe('');
+    const plainCells = attemptCsvRow(ATTEMPT as never).trimEnd().split(',');
+    expect(plainCells[at('auto_disposition_code')]).toBe('');
+    expect(plainCells[at('disposition_code')]).toBe('not_interested');
   });
 
   it('an abandoned attempt exports with empty agent and recording cells, not omitted', async () => {

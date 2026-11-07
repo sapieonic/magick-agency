@@ -121,6 +121,9 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
   // retry allowance. Inherited like every other way the parent dials.
   'assignment_mode', 'on_unstaff', 'callback_owner_grace_minutes', 'callback_fallback',
   'allow_agent_retry', 'agent_retry_rounds', 'agent_retry_cooldown_minutes',
+  // Automatic outcomes for unanswered calls (0019): they name codes of the catalog the
+  // child inherits beside them.
+  'outcome_dispositions',
 ] as const;
 
 /**

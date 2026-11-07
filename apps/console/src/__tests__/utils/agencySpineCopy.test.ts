@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTO_DISPOSITION_HINT,
   ROSTER_DESCRIPTION,
+  autoDispositionLabel,
   dispositionLabel,
   recordingDisabledNote,
 } from '../../utils/agencySpineCopy';
@@ -42,6 +44,8 @@ describe('dispositionLabel', () => {
     expect(dispositionLabel('not_interested', catalog)).toBe('not_interested');
     expect(dispositionLabel('ptp', undefined)).toBe('ptp');
     expect(dispositionLabel('ptp', [])).toBe('ptp');
+    // An entry whose label is still being typed (the campaign builder) reads as its code.
+    expect(dispositionLabel('ptp', [{ code: 'ptp', label: '' }])).toBe('ptp');
   });
 
   it('reports a genuinely absent disposition as absent', () => {
@@ -151,5 +155,31 @@ describe('ROSTER_DESCRIPTION', () => {
     expect(ROSTER_DESCRIPTION).not.toMatch(/skipped/i);
     // The honest half stays: the roster includes contacts nothing will dial.
     expect(ROSTER_DESCRIPTION).toMatch(/dial again/);
+  });
+});
+
+describe('autoDispositionLabel — an automatic outcome, tagged as one', () => {
+  it('names the code from the catalog and tags it automatic', () => {
+    expect(autoDispositionLabel('voicemail', catalog)).toBe('Voicemail (automatic)');
+  });
+
+  it('falls back to the code without a catalog, or for a code the catalog no longer holds', () => {
+    expect(autoDispositionLabel('retry_later')).toBe('retry_later (automatic)');
+    expect(autoDispositionLabel('retired', catalog)).toBe('retired (automatic)');
+  });
+
+  it('is null when there is none, so a view renders nothing rather than "(automatic)"', () => {
+    expect(autoDispositionLabel(null, catalog)).toBeNull();
+    expect(autoDispositionLabel(undefined, catalog)).toBeNull();
+    expect(autoDispositionLabel('', catalog)).toBeNull();
+  });
+
+  it('says on hover what filed it, and nothing about a write-up', () => {
+    expect(AUTO_DISPOSITION_HINT).toBe(
+      'Filed automatically: the call ended without anyone speaking to the customer, and the '
+      + 'campaign’s settings for unanswered calls name this outcome.',
+    );
+    // It also sits under a person's write-up, where "no one wrote it up" would be false.
+    expect(AUTO_DISPOSITION_HINT).not.toMatch(/wrote|written/i);
   });
 });

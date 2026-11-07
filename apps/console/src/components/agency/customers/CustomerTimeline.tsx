@@ -16,6 +16,7 @@ import {
   overrideAppliedLabel,
 } from '../../../utils/customerHistoryCopy';
 import { actorName } from '../../../utils/agency/insights/copy';
+import { AUTO_DISPOSITION_HINT, autoDispositionLabel } from '../../../utils/agencySpineCopy';
 import { CustomerCallLink } from './CustomerCallLink';
 import styles from './CustomerHistory.module.css';
 
@@ -31,6 +32,12 @@ function CallFacts({ entry }: { entry: CustomerTimelineCampaignCall | CustomerTi
       <li>{actorName(entry.agent, 'No agent')}</li>
       <li>{attemptOutcomeLabel(entry.outcome)}</li>
       {entry.disposition_code && <li>Outcome code: {entry.disposition_code}</li>}
+      {/* Filed by the campaign's unanswered-call mapping, not a person (campaign calls only). */}
+      {entry.kind === 'campaign_call' && entry.auto_disposition_code && (
+        <li title={AUTO_DISPOSITION_HINT} data-testid="customer-auto-disposition">
+          Outcome code: {autoDispositionLabel(entry.auto_disposition_code)}
+        </li>
+      )}
       {entry.talk_seconds != null && entry.talk_seconds > 0 && <li>Talk time {durationWords(entry.talk_seconds)}</li>}
       <li data-testid="customer-recording">{RECORDING_LABELS[entry.recording]}</li>
     </ul>

@@ -1,4 +1,9 @@
-import type { AgencyDispositionEntry, AgencyRetryRule } from '../../../types/agency-campaign';
+import {
+  AGENCY_AUTO_DISPOSITION_OUTCOMES,
+  type AgencyDispositionEntry,
+  type AgencyOutcomeDispositions,
+  type AgencyRetryRule,
+} from '../../../types/agency-campaign';
 import {
   AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX,
   AGENCY_AGENT_RETRY_ROUNDS_MAX,
@@ -9,10 +14,12 @@ import {
   AGENCY_ON_UNSTAFF_VALUES,
   AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX,
 } from '@magick-agency/contracts/agency';
+import { autoDispositionRefusal } from '@magick-agency/domain/auto-disposition';
 import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
 import type { AssignmentConfigState, CampaignConfigState } from './configConstants';
 import { reservedDispositionCodeMessage } from '../systemDisposition';
 import { ceilingFieldError } from '../abandonmentCeiling';
+import { dispositionLabel } from '../../agencySpineCopy';
 
 /*
   The campaign builder's validation: the client half of the rules the API
@@ -108,6 +115,55 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
 
   Object.assign(errors, validateAssignment(state.assignment));
 
+  Object.assign(errors, validateOutcomeDispositions(state.outcomeDispositions, state.dispositions));
+
+  return errors;
+}
+
+/** Why an automatic outcome may not stop or end the contact, after the entry's label. */
+const AUTO_OUTCOME_IS_A_LABEL =
+  'An automatic outcome is only a label and never changes what happens to the contact, so pick '
+  + 'an outcome that doesn’t stop or end it.';
+
+/**
+ * The automatic outcomes for unanswered calls (decisions OD1–OD8), keyed
+ * `outcome_dispositions.<outcome>` as the server keys them. Each mapped code must
+ * name an entry of the catalog being saved (the form's, not the stored one: the two
+ * go in one PATCH), and that entry may neither suppress nor end the contact — an
+ * automatic outcome is only a label and never changes what happens to the contact,
+ * so an outcome claiming to stop or end it would be false on every call it is
+ * filed on. (The message does not say the contact "is dialled again": an invalid
+ * number is always suppressed, and a contact's last attempt ends it.)
+ *
+ * Only the known outcomes are read. A key the form does not know is never sent
+ * (`outcomeDispositionsPayload`), so it has no row to carry a finding and is not
+ * one; an empty code is "no automatic outcome", which is never an error.
+ *
+ * The rule is the shared `autoDispositionRefusal` (`@magick-agency/domain`), the one
+ * the server enforces: the first entry with the code is the one read, and a
+ * duplicate code is already the catalog's own finding.
+ */
+export function validateOutcomeDispositions(
+  mapping: AgencyOutcomeDispositions,
+  catalog: readonly AgencyDispositionEntry[],
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const outcome of AGENCY_AUTO_DISPOSITION_OUTCOMES) {
+    const code = mapping[outcome];
+    if (code === undefined || code === '') continue;
+    const refusal = autoDispositionRefusal(catalog, code);
+    if (refusal === null) continue;
+    const at = `outcome_dispositions.${outcome}`;
+    if (refusal === 'missing') {
+      errors[at] =
+        `‘${code}’ is no longer one of this campaign’s outcomes. Pick another, or choose “No automatic outcome”.`;
+    } else {
+      const label = dispositionLabel(code, catalog);
+      errors[at] = refusal === 'suppress'
+        ? `“${label}” stops calling the contact. ${AUTO_OUTCOME_IS_A_LABEL}`
+        : `“${label}” ends the contact. ${AUTO_OUTCOME_IS_A_LABEL}`;
+    }
+  }
   return errors;
 }
 

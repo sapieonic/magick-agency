@@ -46,6 +46,7 @@ const PARENT = {
   assignment_mode: 'strict', on_unstaff: 'keep', callback_owner_grace_minutes: 45, callback_fallback: 'wait',
   allow_agent_retry: true, agent_retry_rounds: 2, agent_retry_cooldown_minutes: 20,
   retry_policy: {}, disposition_catalog: [], context_display: {}, break_reasons: [],
+  outcome_dispositions: { busy: 'retry_later' },
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
   abandonment_ceiling_pct: 3,
   status: 'completed', contacts_total: 4000,
@@ -64,6 +65,7 @@ const CONFIG: AgencyCampaignConfigColumns = {
   agent_retry_cooldown_minutes: PARENT.agent_retry_cooldown_minutes,
   retry_policy: PARENT.retry_policy, disposition_catalog: PARENT.disposition_catalog,
   context_display: PARENT.context_display, break_reasons: PARENT.break_reasons,
+  outcome_dispositions: PARENT.outcome_dispositions,
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
   abandonment_ceiling_pct: 3,
 };

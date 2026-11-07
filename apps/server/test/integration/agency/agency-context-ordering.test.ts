@@ -459,6 +459,8 @@ describe('agency context-panel ordering (integration)', () => {
 
     const prior = await insertAgencyAttempt(campaign.id, contact.id, {
       attempt_number: 1, state: 'ended', outcome: 'no_answer', notes: 'rang out',
+      // The campaign's automatic outcome (OD1–OD8), as the dialer stamps it on settle.
+      auto_disposition_code: 'call_later',
     });
     await getTestPool().query(`UPDATE agency_call_attempts SET ended_at = now() WHERE id = $1`, [prior.id]);
 
@@ -489,7 +491,10 @@ describe('agency context-panel ordering (integration)', () => {
     const reserved = socket.frames.find((f) => f.event === 'reserved');
     const priors = (reserved!.attempt as { prior_attempts: unknown[] }).prior_attempts;
     expect(priors).toHaveLength(1);
-    expect(priors[0]).toMatchObject({ attempt_number: 1, outcome: 'no_answer', notes: 'rang out' });
+    expect(priors[0]).toMatchObject({
+      attempt_number: 1, outcome: 'no_answer', notes: 'rang out',
+      disposition_code: null, auto_disposition_code: 'call_later',
+    });
     dialer.stop();
   });
 

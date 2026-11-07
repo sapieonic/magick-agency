@@ -322,6 +322,8 @@ export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
         agent: userOf(a.agent_user_id, names),
         outcome: a.outcome as AgencyAttemptOutcome | null,
         disposition_code: a.disposition_code,
+        // Not gated like the notes: a catalog code the campaign chose, as `disposition_code` is.
+        auto_disposition_code: a.auto_disposition_code,
         talk_seconds: a.talk_seconds,
         notes: showNotes ? a.notes : null,
         notes_hidden: !showNotes && hadNotes,

@@ -9,7 +9,6 @@ import { resolveContextFields } from '../../utils/agencyContext';
 import {
   agentCellCopy,
   contactSummaryLine,
-  dispositionLabel,
   formatSpineTimestamp,
   formatTalkTime,
   recordingCellCopy,
@@ -32,8 +31,8 @@ import { listManualCalls } from '../../api/softphone';
 import { manualCallOutcome } from '../../utils/softphone/callLabels';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { usePermission } from '../../hooks/usePermission';
-import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
 import styles from './AgencyContactDetailPage.module.css';
+import { AttemptDispositionCell } from '../../components/agency/AttemptDispositionCell';
 
 /**
  * One contact's history is short in the ordinary case — the retry budget is
@@ -407,24 +406,12 @@ export function AgencyContactDetailPage() {
                       <td className={agent.muted ? styles.mutedCell : undefined}>{agent.text}</td>
                       <td>{attemptOutcomeLabel(attempt.outcome)}</td>
                       <td>
-                        {isSystemDispositionCode(attempt.disposition_code) ? (
-                          /* Written by the system, not the agent: styled as such, with what wrote it. */
-                          <span
-                            className={styles.mutedCell}
-                            title={SYSTEM_DISPOSITION_HINTS[attempt.disposition_code]}
-                            data-system-disposition=""
-                          >
-                            {dispositionLabel(attempt.disposition_code, campaign?.disposition_catalog)}
-                          </span>
-                        ) : (
-                          dispositionLabel(attempt.disposition_code, campaign?.disposition_catalog)
-                            ?? <span className={styles.mutedCell}>—</span>
-                        )}
-                        {attempt.dispositioned_on_behalf && (
-                          <span className={styles.onBehalf} title="Filed by someone other than the agent on the call">
-                            on behalf
-                          </span>
-                        )}
+                        <AttemptDispositionCell
+                          attempt={attempt}
+                          catalog={campaign?.disposition_catalog}
+                          placeholder="—"
+                          testIdPrefix="contact-attempt"
+                        />
                       </td>
                       <td className={styles.numeric}>{formatTalkTime(attempt.talk_seconds)}</td>
                       <td className={styles.notes}>

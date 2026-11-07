@@ -606,3 +606,50 @@ describe('filters in the URL', () => {
     });
   });
 });
+
+describe('an automatic outcome (decisions OD1–OD8)', () => {
+  const CATALOG = [
+    { code: 'not_interested', label: 'Not interested' },
+    { code: 'retry_later', label: 'Retry later' },
+  ];
+  const BUSY_AUTO: AgencyAttempt = {
+    ...ABANDONED, id: 'attempt-busy-auto', contact_id: 'contact-5', outcome: 'busy',
+    answered_at: null, auto_disposition_code: 'retry_later',
+  };
+
+  beforeEach(() => {
+    mocks.getAgencyCampaign.mockResolvedValue({
+      id: 'camp-1', name: 'Q3 Renewals', status: 'stopped', disposition_catalog: CATALOG,
+    });
+  });
+
+  it('shows it in place of the dash, by its label and tagged automatic', async () => {
+    mocks.getCampaignAttempts.mockResolvedValue(page([BUSY_AUTO]));
+    renderPage();
+    const auto = await screen.findByTestId(`attempt-auto-disposition-${BUSY_AUTO.id}`);
+    expect(auto.textContent).toBe('Retry later (automatic)');
+    expect(auto.getAttribute('data-auto-disposition')).toBe('primary');
+    // The whole Disposition cell: not also the "nobody wrote it up" dash beside it.
+    expect(auto.closest('td')?.textContent).toBe('Retry later (automatic)');
+  });
+
+  it('keeps a write-up as the disposition and the automatic one secondary', async () => {
+    const both: AgencyAttempt = { ...BRIDGED, auto_disposition_code: 'retry_later' };
+    mocks.getCampaignAttempts.mockResolvedValue(page([both]));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${both.id}`);
+    await within(row).findByText('Not interested');
+    const auto = screen.getByTestId(`attempt-auto-disposition-${both.id}`);
+    expect(auto.textContent).toBe('Retry later (automatic)');
+    expect(auto.getAttribute('data-auto-disposition')).toBe('secondary');
+  });
+
+  it('shows the dash and no tag on a row without one', async () => {
+    mocks.getCampaignAttempts.mockResolvedValue(page([ABANDONED]));
+    renderPage();
+    const row = await screen.findByTestId(`attempt-row-${ABANDONED.id}`);
+    // The Disposition column (When, Number, Try, Agent, Outcome, Disposition, …).
+    expect(row.querySelectorAll('td')[5]?.textContent).toBe('—');
+    expect(screen.queryByTestId(`attempt-auto-disposition-${ABANDONED.id}`)).toBeNull();
+  });
+});

@@ -186,6 +186,8 @@ export interface SpineAttemptRow {
   state: string;
   outcome: string | null;
   disposition_code: string | null;
+  /** The campaign's automatic outcome (OD1–OD8); absent from a handler that predates it. */
+  auto_disposition_code?: string | null;
   notes: string | null;
   callback_at: string | null;
   dispositioned_by_user_id: string | null;
@@ -388,6 +390,10 @@ export const ATTEMPT_CSV_COLUMNS = [
   'talk_seconds',
   'wrapup_seconds',
   'recording_call_id',
+  // The campaign's automatic outcome for an unanswered attempt (OD1–OD8), appended so a
+  // consumer reading by position keeps its columns. Its own column, never merged into
+  // `disposition_code`: that one stays what a person recorded.
+  'auto_disposition_code',
 ] as const;
 
 export const CONTACT_CSV_COLUMNS = [
@@ -432,7 +438,7 @@ export function attemptCsvRow(row: SpineAttemptRow): string {
     cell(row.dispositioned_on_behalf), cell(row.notes), cell(row.callback_at),
     cell(row.created_at), cell(row.dialed_at), cell(row.answered_at), cell(row.bridged_at),
     cell(row.ended_at), cell(row.talk_seconds), cell(row.wrapup_seconds),
-    cell(row.webrtc_call_id),
+    cell(row.webrtc_call_id), cell(row.auto_disposition_code),
   ]);
 }
 

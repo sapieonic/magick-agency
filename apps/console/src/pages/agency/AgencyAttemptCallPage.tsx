@@ -29,6 +29,7 @@ import {
 import { ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
 import {
   agentCellCopy,
+  AUTO_DISPOSITION_HINT,
   dispositionLabel,
   formatSpineTimestamp,
   formatTalkTime,
@@ -228,6 +229,26 @@ function agencyDispositionCard(
         ? { hint: SYSTEM_DISPOSITION_HINTS[attempt.disposition_code!] }
         : resolved ? { hint: `Filed as “${attempt.disposition_code}”` } : {}),
     },
+  ];
+
+  /*
+    The automatic outcome (`auto_disposition_code`, decisions OD1–OD8): what the
+    campaign's unanswered-call mapping filed when the call ended without anyone
+    speaking to the customer. Its own fact, never the "Written up as" one — nobody
+    wrote it up — named so the heading says who filed it, with the code on hover.
+  */
+  if (attempt.auto_disposition_code) {
+    const autoLabel = dispositionLabel(attempt.auto_disposition_code, catalog);
+    facts.push({
+      label: 'Automatic outcome',
+      value: autoLabel,
+      hint: autoLabel !== attempt.auto_disposition_code
+        ? `${AUTO_DISPOSITION_HINT} Filed as “${attempt.auto_disposition_code}”.`
+        : AUTO_DISPOSITION_HINT,
+    });
+  }
+
+  facts.push(
     {
       label: 'Filed',
       value: attempt.dispositioned_at
@@ -238,7 +259,7 @@ function agencyDispositionCard(
         ? { hint: 'Filed by someone other than the agent on the call' }
         : {}),
     },
-  ];
+  );
 
   // Only when one was actually asked for: an absent callback is the ordinary case
   // and a permanent "--" row for it is noise on every other attempt.

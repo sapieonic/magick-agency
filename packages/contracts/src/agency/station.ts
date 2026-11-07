@@ -390,6 +390,8 @@ export interface AgencyPriorAttempt {
   attempt_number: number;
   outcome: AgencyAttemptOutcome | null;
   disposition_code: string | null;
+  /** As `AgencyAttemptRow.auto_disposition_code` (`agency/spine.ts`). */
+  auto_disposition_code?: string | null;
   notes: string | null;
   /** ISO-8601. */
   ended_at: string | null;

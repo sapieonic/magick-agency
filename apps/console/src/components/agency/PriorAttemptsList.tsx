@@ -6,6 +6,7 @@ import {
 } from '../../utils/agencyPriorAttempts';
 import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
 import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
+import { AutoDisposition } from './AutoDisposition';
 import styles from './AgentStation.module.css';
 
 /*
@@ -126,6 +127,7 @@ export function PriorAttemptsList({
                     key={`${group.campaignId}:${prior.attempt_number}`}
                     className={styles.priorItem}
                   >
+                    {!prior.disposition_code && prior.auto_disposition_code ? null : (
                     <span
                       className={styles.priorOutcome}
                       /*
@@ -157,6 +159,21 @@ export function PriorAttemptsList({
                         priorCatalog(group.isCurrent),
                       )}
                     </span>
+                    )}
+                    {/*
+                      An attempt nobody wrote up but the campaign's unanswered-call
+                      mapping filed (`auto_disposition_code`) shows THAT outcome,
+                      tagged automatic, in place of "No disposition": it is what the
+                      campaign wants done with the contact, and the agent is reading
+                      this to know what happened last time. Beside a write-up it is
+                      secondary — the write-up is the disposition.
+                    */}
+                    <AutoDisposition
+                      code={prior.auto_disposition_code}
+                      catalog={priorCatalog(group.isCurrent)}
+                      secondary={!!prior.disposition_code}
+                      testId={`prior-auto-disposition-${group.campaignId}-${prior.attempt_number}`}
+                    />
                     {prior.notes ? (
                       <span className={styles.priorNote}>{prior.notes}</span>
                     ) : null}

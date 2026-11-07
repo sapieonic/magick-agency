@@ -257,8 +257,10 @@ beforeAll(async () => {
     redial_of_attempt_id: ids.a1, redial_number: 1,
     dialed_at: at(DAY + 300_000), ended_at: at(DAY + 360_000), created_at: at(DAY + 300_000) });
   // Six attempts sharing one instant to the microsecond.
+  // The first carries the campaign's automatic outcome for an unanswered call (OD1–OD8).
   for (const [i, id] of ids.shared.entries()) {
     await attempt({ id, campaign_id: C0, contact_id: ids.cA, attempt_number: 10 + i, outcome: 'no_answer',
+      ...(i === 0 ? { auto_disposition_code: 'callback' } : {}),
       dialed_at: at(5 * DAY), ended_at: at(5 * DAY), created_at: at(5 * DAY) });
   }
   await q(`INSERT INTO agency_calls (id, tenant_id, account_id, caller_id, destination_phone, recording_url)
@@ -747,6 +749,10 @@ describe('the timeline (§4)', () => {
       agent: { user_id: agent(1).id }, call_page: { account_id: floor.account, campaign_id: floor.campaigns[0], attempt_id: ids.a1 } });
     expect(byKey.get(`campaign_call:${ids.a2}`)).toMatchObject({ recording: 'expired', redial_of_attempt_id: ids.a1, chain_attempt_id: ids.a1, redial_number: 1 });
     expect(byKey.get(`campaign_call:${ids.a3}`)).toMatchObject({ recording: 'no_call' });
+    // The automatic outcome (OD1–OD8) beside the recorded code; null, never absent, without one.
+    expect(byKey.get(`campaign_call:${ids.shared[0]}`)).toMatchObject({ outcome: 'no_answer', disposition_code: null, auto_disposition_code: 'callback' });
+    expect(byKey.get(`campaign_call:${ids.shared[1]}`)).toHaveProperty('auto_disposition_code', null);
+    expect(byKey.get(`campaign_call:${ids.a1}`)).toMatchObject({ disposition_code: 'ptp', auto_disposition_code: null });
     // Purged, but never asked for a recording: not "expired".
     expect(byKey.get(`softphone_call:${ids.m1}`)).toMatchObject({ campaign: null, contact_id: null, notes: 'M1 mine', recording: 'not_recorded' });
     // The next call placed after the booking is the untagged soft-phone call, days before the
@@ -855,6 +861,8 @@ describe('what each caller is shown (CH8)', () => {
     expect(byKey.get(`softphone_call:${ids.m2}`)).toMatchObject({ notes: null, notes_hidden: true, fields: null, call_page: null });
     expect(byKey.get(`softphone_call:${ids.m1}`)).toMatchObject({ notes: 'M1 mine', notes_hidden: false, fields: { amount: 10 }, call_page: null });
     expect(byKey.get(`campaign_call:${ids.a3}`)).toMatchObject({ notes: 'A3 notes', notes_hidden: false, call_page: null });
+    // Not gated like the notes: a catalog code, as `disposition_code` is.
+    expect(byKey.get(`campaign_call:${ids.shared[0]}`)).toMatchObject({ auto_disposition_code: 'callback', call_page: null });
     expect(byKey.get(`dnc_mark:${ids.dncA}`)).toMatchObject({ entry: { reason: null, added_by: null } });
     expect(JSON.stringify(body)).not.toContain('A1 notes');
     expect(JSON.stringify(body)).not.toContain('M2 notes');

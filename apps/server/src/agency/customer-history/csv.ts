@@ -81,6 +81,9 @@ function customerHistoryCsvRow(
   switch (entry.kind) {
     case 'campaign_call': {
       const details: string[] = [`Attempt ${entry.attempt_number}`];
+      // In "Details", not a column of its own: the file's columns are shared by every entry kind
+      // and read by position, and only a campaign call can carry one (OD1–OD8).
+      if (entry.auto_disposition_code) details.push(`Automatic outcome: ${entry.auto_disposition_code}`);
       if (entry.redial_number > 0) details.push(`Wrap-up redial ${entry.redial_number}`);
       if (entry.override_applied.length > 0) details.push(`Overrides: ${entry.override_applied.join(', ')}`);
       if (entry.override_note) details.push(`Override note: ${entry.override_note}`);

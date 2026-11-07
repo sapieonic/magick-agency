@@ -35,7 +35,9 @@ vi.mock('@magick-agency/db/connection', async (importOriginal) => ({
   getPool: () => getTestPool(),
 }));
 
-const { insertAgencyCampaign, insertAgencyContact, insertSoftphoneSession, insertManualCall } = await import('./agency-factories.js');
+const {
+  insertAgencyCampaign, insertAgencyContact, insertAgencyAttempt, insertSoftphoneSession, insertManualCall,
+} = await import('./agency-factories.js');
 const { ManualDialer } = await import('../../../src/agency/softphone/manual-dialer.js');
 const { AgencyReaper } = await import('../../../src/agency/reaper.js');
 const { WebRtcCallError } = await import('../../../src/core/webrtc-bridge-manager.js');
@@ -478,5 +480,27 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     const p = await contactRow(placed.contact.id as string);
     expect(p).toMatchObject({ state: 'pending', our_fault_attempts: 1, last_outcome: 'orphaned' });
     expect(p.next_attempt_at.getTime()).toBe(longAgo.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+  });
+
+  // ── the matched contact's history (not a close path; the live call's wire row) ──
+
+  it('the matched contact\'s prior attempts carry the automatic outcome, as the station panel\'s do', async () => {
+    // OD1–OD8: the same projection as the campaign panel (`projectPriorAttempt`), read here
+    // through the soft phone's own path so the two cannot drift.
+    const { campaign, contact, call } = await claimedCall();
+    const labelled = await insertAgencyAttempt(campaign.id as string, contact.id as string, {
+      attempt_number: 1, state: 'ended', outcome: 'busy', auto_disposition_code: 'call_later',
+      ended_at: new Date(Date.now() - MIN),
+    });
+    await insertAgencyAttempt(campaign.id as string, contact.id as string, {
+      attempt_number: 2, state: 'ended', outcome: 'connected', disposition_code: 'sale', ended_at: new Date(),
+    });
+    const priors = await dialer.priorsFor(contact.id as string, call.id as string);
+    expect(priors).toHaveLength(2);
+    expect(priors[0]).toMatchObject({ attempt_number: 2, disposition_code: 'sale', auto_disposition_code: null });
+    expect(priors[1]).toMatchObject({
+      attempt_number: 1, outcome: 'busy', disposition_code: null, auto_disposition_code: 'call_later',
+      campaign_id: campaign.id, ended_at: (labelled.ended_at as Date).toISOString(),
+    });
   });
 });

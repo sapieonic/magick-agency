@@ -164,7 +164,7 @@ function createInsertPairs(): Array<{ column: string; expr: string }> {
   const colsOpen = repoSource.indexOf('(', at);
   const colsClose = matchParen(repoSource, colsOpen);
   // The column list is the shared `CAMPAIGN_INSERT_COLUMNS_SQL` constant (create()
-  // and retryFromCampaign bind the same twenty-eight), interpolated: resolve it from the
+  // and retryFromCampaign bind the same twenty-nine), interpolated: resolve it from the
   // source so the pairing below is still against the real text.
   const columns = splitTopLevel(
     repoSource.slice(colsOpen + 1, colsClose).replace('${CAMPAIGN_INSERT_COLUMNS_SQL}', insertColumnsConstant()),
@@ -189,7 +189,7 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
     // deliberately hard-coded and deliberately annoying to change: it is the only
     // thing standing between a silently-stale parser and a whole file of
     // assertions that pass over an empty set.
-    expect(pairs).toHaveLength(28);
+    expect(pairs).toHaveLength(29);
     expect(types['calling_window_start']).toBe('time');
     expect(types['calling_window_end']).toBe('time');
     expect(types['calling_days']).toBe('smallint[]');
@@ -204,6 +204,8 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
     expect(types['allow_agent_retry']).toBe('boolean');
     expect(types['agent_retry_rounds']).toBe('smallint');
     expect(types['agent_retry_cooldown_minutes']).toBe('integer');
+    // From 0019: the automatic-outcome map, beside an explicit `::jsonb` in the INSERT.
+    expect(types['outcome_dispositions']).toBe('jsonb');
     for (const { column } of pairs) {
       expect(types[column], `no declared type found for ${column}`).toBeTruthy();
     }

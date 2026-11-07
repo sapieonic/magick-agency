@@ -14,6 +14,7 @@ import {
   type AgencyContactRow,
   type AgencyContactState,
   type AgencyManualCall,
+  type AgencyPriorAttempt,
 } from '@magick-agency/contracts/agency';
 
 /**
@@ -76,6 +77,8 @@ export function projectAttemptRow(row: AgencyCallAttemptRecord & {
     state: row.state,
     outcome: row.outcome,
     disposition_code: row.disposition_code,
+    // The campaign's automatic outcome (OD1–OD8): beside `disposition_code`, never folded into it.
+    auto_disposition_code: row.auto_disposition_code,
     // Included deliberately — see the privacy note on `AgencyAttemptRow`.
     notes: row.notes,
     callback_at: iso(row.callback_at),
@@ -93,6 +96,32 @@ export function projectAttemptRow(row: AgencyCallAttemptRecord & {
     redial_of_attempt_id: row.redial_of_attempt_id,
     redial_number: row.redial_number,
     created_at: iso(row.created_at) ?? '',
+  };
+}
+
+/**
+ * A `findPriorForContactLineage` row → the wire `AgencyPriorAttempt`: the history on the
+ * station's call panel (`agency-dialer.ts`) and on a soft-phone call's matched contact
+ * (`manual-dialer.ts`). One projection for both, so a field added to one panel reaches the other.
+ */
+export function projectPriorAttempt(
+  row: Pick<AgencyCallAttemptRecord,
+    'attempt_number' | 'outcome' | 'disposition_code' | 'auto_disposition_code' | 'notes' | 'ended_at' | 'dialed_at'
+  > & { campaign_id: string; campaign_name: string },
+): AgencyPriorAttempt {
+  return {
+    attempt_number: row.attempt_number,
+    outcome: row.outcome,
+    disposition_code: row.disposition_code,
+    auto_disposition_code: row.auto_disposition_code,
+    notes: row.notes,
+    ended_at: iso(row.ended_at),
+    campaign_id: row.campaign_id,
+    campaign_name: row.campaign_name,
+    // Distinct from `ended_at`: an attempt reaped mid-flight has no end, and
+    // `attempt_number` is no longer a global ordering (it resets per retry
+    // campaign), so without this such a row would carry no time at all.
+    dialed_at: iso(row.dialed_at),
   };
 }
 

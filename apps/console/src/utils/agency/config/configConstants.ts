@@ -4,6 +4,7 @@ import {
   AGENCY_OUR_FAULT_REDIAL_BOUND,
   AGENCY_OUR_FAULT_RETRY_DEFAULT,
   type AgencyDispositionEntry,
+  type AgencyOutcomeDispositions,
   type AgencyRetryOutcome,
   type AgencyRetryPolicy,
   type AgencyRetryRule,
@@ -14,6 +15,7 @@ import {
   type AgencyCallbackFallback,
   type AgencyOnUnstaff,
 } from '@magick-agency/contracts/agency';
+import { autoDispositionRefusal } from '@magick-agency/domain/auto-disposition';
 
 /*
   The campaign builder's vocabulary: the built-in outcomes and their flags, the
@@ -366,6 +368,13 @@ export interface CampaignConfigState {
   abandonmentCeilingStoredPct: number | null;
   /** Contact assignment (0009): how contacts reach agents, and the agent's own retry. */
   assignment: AssignmentConfigState;
+  /**
+   * Automatic outcomes for unanswered calls (`outcome_dispositions`, decisions OD1–OD8):
+   * outcome → a catalog code filed on an attempt that ends with that outcome. A label
+   * only; the retry policy still decides when the contact is dialled again. An absent
+   * key maps nothing. Sent whole on every save (a PATCH replaces the stored map).
+   */
+  outcomeDispositions: AgencyOutcomeDispositions;
 }
 
 /**
@@ -424,3 +433,58 @@ export const DEFAULT_DISPOSITION_RETRY: Readonly<AgencyRetryRule> = AGENCY_DEFAU
  * Frozen, so every form copies it through {@link cloneDisposition}.
  */
 export const DEFAULT_DISPOSITIONS: readonly AgencyDispositionEntry[] = AGENCY_DEFAULT_DISPOSITION_CATALOG;
+
+/*
+  ── Automatic outcomes for unanswered calls (decisions OD1–OD8) ─────────────
+  The copy for `OutcomeDispositionMap`, the editor under the retries table.
+*/
+
+/**
+ * The lead under the editor's heading. It says the half that is easy to get wrong:
+ * the mapping names the outcome, and the retries above still decide whether and when
+ * the contact is dialled again (the mapped entry's own retry or callback time is not
+ * applied). "Whether" because not every unanswered call is dialled again: an invalid
+ * number is always suppressed, and a contact's last attempt ends it.
+ */
+export const OUTCOME_DISPOSITIONS_LEAD =
+  'When a call ends without anyone answering, the outcome you pick here is filed on it ' +
+  'automatically, so agents can see what to do next. The retries above still decide whether and ' +
+  'when the contact is dialled again — the outcome’s own retry or callback time is not used.';
+
+/**
+ * How the carrier's reports land on the rows. A switched-off handset arrives as
+ * `busy`, so "switched off" can only be mapped through Busy. A call the customer
+ * declines is NOT always busy: it arrives as `busy` or `no_answer` depending on what
+ * the carrier reports (a rejection the carrier signals as SIP 487 is classified
+ * `no_answer`), so the note names both rather than promising one.
+ */
+export const OUTCOME_DISPOSITIONS_SWITCHED_OFF_NOTE =
+  'A phone that is switched off is reported by the carrier as “Busy”. A declined call arrives ' +
+  'as “Busy” or “No answer”, depending on what the carrier reports.';
+
+/** Shown instead of the selects while the campaign has no outcomes to pick from. */
+export const OUTCOME_DISPOSITIONS_EMPTY_CATALOG =
+  'Add an outcome above first — an unanswered call can only be filed under one of this ' +
+  'campaign’s own outcomes.';
+
+/** The select's first option, and what an unmapped outcome reads as. */
+export const NO_AUTOMATIC_OUTCOME = 'No automatic outcome';
+
+/**
+ * Whether `code` may be offered as an automatic outcome against `catalog` (OD3): it is
+ * not empty, and the shared rule (`autoDispositionRefusal`, the one the server
+ * enforces) accepts it — the first entry with the code neither stops calling the
+ * contact nor ends it. An automatic outcome is only a label and never changes what
+ * happens to the contact (the retry policy and the attempt limit still decide that),
+ * so an entry that claims to stop or end it would misdescribe the contact on every
+ * call it is filed on.
+ *
+ * The empty-code check is the editor's own: a row without a code is the catalog's
+ * finding, shown on that row, and is never offered.
+ */
+export function isAutoDispositionEligible(
+  catalog: readonly AgencyDispositionEntry[],
+  code: string,
+): boolean {
+  return code.trim().length > 0 && autoDispositionRefusal(catalog, code) === null;
+}

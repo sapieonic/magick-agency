@@ -1,13 +1,17 @@
-import type {
-  AgencyCampaign,
-  AgencyDispositionEntry,
-  AgencyRetryOutcome,
-  AgencyRetryRule,
+import {
+  AGENCY_AUTO_DISPOSITION_OUTCOMES,
+  type AgencyAutoDispositionOutcome,
+  type AgencyCampaign,
+  type AgencyDispositionEntry,
+  type AgencyOutcomeDispositions,
+  type AgencyRetryOutcome,
+  type AgencyRetryRule,
 } from '../types/agency-campaign';
 import { hhmm } from './format/weekdays';
 import type { AgencyDispositionOverride } from '@magick-agency/contracts/agency';
 import { ASSIGNMENT_MODE_COPY } from './agencyAssignmentCopy';
 import { DEFAULT_ABANDONMENT_CEILING_PCT } from './agency/abandonmentCeiling';
+import { dispositionLabel } from './agencySpineCopy';
 import {
   type AssignmentConfigState,
   type CampaignConfigState,
@@ -192,6 +196,7 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   abandonmentCeilingPct: DEFAULT_ABANDONMENT_CEILING_PCT,
   abandonmentCeilingStoredPct: null,
   assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
+  outcomeDispositions: {},
 };
 
 /**
@@ -372,6 +377,7 @@ export function emptyCampaignConfig(): CampaignConfigState {
     retryPolicy: { ...EMPTY_CAMPAIGN_CONFIG.retryPolicy },
     window: { ...EMPTY_CAMPAIGN_CONFIG.window, days: [...EMPTY_CAMPAIGN_CONFIG.window.days] },
     assignment: { ...EMPTY_CAMPAIGN_CONFIG.assignment },
+    outcomeDispositions: { ...EMPTY_CAMPAIGN_CONFIG.outcomeDispositions },
   };
 }
 
@@ -404,6 +410,8 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     abandonmentCeilingPct: campaign.abandonment_ceiling_pct ?? EMPTY_CAMPAIGN_CONFIG.abandonmentCeilingPct,
     abandonmentCeilingStoredPct: campaign.abandonment_ceiling_pct ?? null,
     assignment: assignmentFromCampaign(campaign),
+    // Absent on a campaign read from a server that predates the setting: maps nothing.
+    outcomeDispositions: { ...(campaign.outcome_dispositions ?? {}) },
   };
 }
 
@@ -462,6 +470,117 @@ export function resetAssignmentConfig(state: CampaignConfigState): CampaignConfi
     assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
     dispositions: state.dispositions.map((entry) => withoutOverride(cloneDisposition(entry))),
   };
+}
+
+/**
+ * Which catalog row each mapped outcome follows, by position: the identity
+ * {@link followCatalogEdit} keeps a mapping on while that row's code is edited.
+ * Positions, as {@link CatalogEditState.autoCodeRows} are, kept in step through
+ * removals and moves.
+ */
+export type MappedRows = Readonly<Partial<Record<AgencyAutoDispositionOutcome, number>>>;
+
+/** The automatic-outcome mapping, and the row each mapped outcome follows. */
+export interface MappingFollowState {
+  mapping: AgencyOutcomeDispositions;
+  rows: MappedRows;
+}
+
+/** Where row `row` is after `edit`, or `null` when the edit removed it. */
+function rowAfterEdit(row: number, edit: CatalogEdit): number | null {
+  if (edit.type === 'remove') {
+    if (row === edit.index) return null;
+    return row > edit.index ? row - 1 : row;
+  }
+  if (edit.type === 'move') {
+    const target = edit.index + edit.delta;
+    if (row === edit.index) return target;
+    if (row === target) return edit.index;
+  }
+  return row;
+}
+
+/**
+ * The automatic-outcome mapping after one catalog edit ({@link editCatalog}'s
+ * `previous` → `next` through `edit`): each mapped outcome follows its ROW, so a
+ * row's code edited by hand (`setCode`), or by its label while the row follows it
+ * (`rename`), carries the mapping with it, keystroke by keystroke.
+ *
+ * The row is the identity, not the code, so the mapping follows through every
+ * intermediate value: an emptied code (select-all and retype: the mapping is `''`
+ * for that moment and takes the new code on the next keystroke) and a code that
+ * briefly equals another row's (backspacing `abc` through `ab` while another row is
+ * `ab`). A mapped outcome follows the row it followed last while that row still
+ * holds the mapped code, and otherwise the first row with it (a mapping just loaded
+ * or picked in the editor), as every catalog lookup reads a code.
+ *
+ * A REMOVED row is not followed: the mapping keeps naming its code, and
+ * `validateConfig` puts the finding on the mapping's row rather than the mapping
+ * being dropped without a word. A save still reports an empty, duplicate or missing
+ * code where it always did; an empty mapped code is sent as nothing mapped
+ * ({@link outcomeDispositionsPayload}), and the empty code is the catalog's finding.
+ *
+ * Returns the SAME mapping object when no mapped code changed.
+ */
+export function followCatalogEdit(
+  previous: readonly AgencyDispositionEntry[],
+  edit: CatalogEdit,
+  next: readonly AgencyDispositionEntry[],
+  { mapping, rows }: MappingFollowState,
+): MappingFollowState {
+  const nextRows: Partial<Record<AgencyAutoDispositionOutcome, number>> = {};
+  const followed: AgencyOutcomeDispositions = { ...mapping };
+  let changed = false;
+  for (const outcome of AGENCY_AUTO_DISPOSITION_OUTCOMES) {
+    const code = mapping[outcome];
+    if (code === undefined) continue;
+    const held = rows[outcome];
+    const row = held !== undefined && previous[held]?.code === code
+      ? held
+      : code === '' ? -1 : previous.findIndex((entry) => entry.code === code);
+    if (row === -1) continue;
+    const after = rowAfterEdit(row, edit);
+    const entry = after === null ? undefined : next[after];
+    if (after === null || !entry) continue;
+    nextRows[outcome] = after;
+    if (entry.code !== code) {
+      followed[outcome] = entry.code;
+      changed = true;
+    }
+  }
+  return { mapping: changed ? followed : mapping, rows: nextRows };
+}
+
+/**
+ * The `outcome_dispositions` a save sends: the known outcomes only, each with a
+ * non-empty code. `{}` when nothing is mapped — sent rather than omitted, because a
+ * PATCH replaces the stored map and `{}` is how the last mapping is cleared.
+ */
+export function outcomeDispositionsPayload(mapping: AgencyOutcomeDispositions): AgencyOutcomeDispositions {
+  const out: AgencyOutcomeDispositions = {};
+  for (const outcome of AGENCY_AUTO_DISPOSITION_OUTCOMES) {
+    const code = mapping[outcome];
+    if (code) out[outcome] = code;
+  }
+  return out;
+}
+
+/**
+ * The mapping in one line, for the builder's summary rail: `Busy → Retry later;
+ * No answer → Callback`, in the editor's row order, or `None`. A code the catalog no
+ * longer holds is shown as the code.
+ */
+export function outcomeDispositionsSummary(
+  mapping: AgencyOutcomeDispositions,
+  catalog: readonly AgencyDispositionEntry[],
+): string {
+  const parts: string[] = [];
+  for (const outcome of AGENCY_AUTO_DISPOSITION_OUTCOMES) {
+    const code = mapping[outcome];
+    if (!code) continue;
+    parts.push(`${OUTCOME_LABELS[outcome]} → ${dispositionLabel(code, catalog)}`);
+  }
+  return parts.length > 0 ? parts.join('; ') : 'None';
 }
 
 /**
@@ -606,5 +725,8 @@ export function buildConfigPayload(
     // campaign's activity with its old and new value (`agency_campaign.config_changed`).
     // `abandonmentCeilingStoredPct` is the form's own bookkeeping and is not sent.
     abandonment_ceiling_pct: state.abandonmentCeilingPct,
+    // Sent on every save, whatever the assignment scope: it is not an assignment
+    // setting, and the whole map is sent because a PATCH replaces it.
+    outcome_dispositions: outcomeDispositionsPayload(state.outcomeDispositions),
   };
 }
