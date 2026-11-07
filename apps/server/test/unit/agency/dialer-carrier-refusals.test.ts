@@ -88,8 +88,9 @@ function fakeWs() {
 function fakeBridge() {
   return {
     onLifecycle() { return () => { /* noop */ }; },
-    createBridgedCall: vi.fn(async (_p: any) => ({ id: 'call-1' } as any)),
-    createUnboundBridgedCall: vi.fn(async (_p: any) => ({ id: 'call-1' } as any)),
+    // A placed dial: the record names the carrier's handle on the leg (Plivo's request_uuid).
+    createBridgedCall: vi.fn(async (_p: any) => ({ id: 'call-1', provider_call_id: null, provider_request_id: 'req-1' } as any)),
+    createUnboundBridgedCall: vi.fn(async (_p: any) => ({ id: 'call-1', provider_call_id: null, provider_request_id: 'req-1' } as any)),
     bindBorrowedBrowserLeg: vi.fn(() => true),
   };
 }
@@ -115,9 +116,10 @@ function makeCmd(): DialCommand {
   };
 }
 
-async function dialWith(rejection?: unknown, breaker?: CarrierRefusalBreaker, campaign: any = CAMPAIGN) {
+async function dialWith(rejection?: unknown, breaker?: CarrierRefusalBreaker, campaign: any = CAMPAIGN, resolved?: unknown) {
   const bridge = fakeBridge();
   if (rejection) bridge.createBridgedCall.mockRejectedValue(rejection);
+  if (resolved) bridge.createBridgedCall.mockResolvedValue(resolved as any);
   const stations = new StationRegistry(null, '', 'r1');
   const agents = new AgentStateMachine(null, '');
   vi.spyOn(agents, 'transition').mockResolvedValue(true);
@@ -271,6 +273,19 @@ describe('the carrier refusal breaker', () => {
     await dialWith(undefined, breaker);
     for (let i = 1; i < CARRIER_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(carrierRefused(), breaker);
     expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+  });
+
+  it('a dial torn down before it was sent (resolved with no carrier handle) does not break the streak; it is still correlated', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    const placed = vi.spyOn(breaker, 'notePlaced');
+    for (let i = 1; i < CARRIER_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(carrierRefused(), breaker);
+    // The teardown aborted the dial at the calls-per-second gate: the bridge resolves with
+    // the row as inserted, no call id and no request id.
+    await dialWith(undefined, breaker, CAMPAIGN, { id: 'call-2', provider_call_id: null, provider_request_id: null });
+    expect(placed).not.toHaveBeenCalled();
+    expect(repos.attempt.attachWebrtcCall).toHaveBeenCalledWith('att-1', 'call-2');
+    await dialWith(carrierRefused(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).toHaveBeenCalledWith('camp-1', 'carrier_refusing_calls');
   });
 
   it('a dial not sent for the carrier`s configuration counts, uncharged; the one that trips it returns its contact at once', async () => {

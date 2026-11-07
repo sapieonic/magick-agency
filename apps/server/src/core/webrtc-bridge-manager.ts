@@ -475,8 +475,12 @@ export class WebRtcBridgeManager {
    *
    * The caller keeps ownership throughout: closing the socket, and deciding when a
    * shift is over, are the caller's business and never the bridge's. Returns the
-   * persisted call record (no token). Throws {@link WebRtcCallError} on a closed
-   * socket, exhausted capacity, or a provider rejection.
+   * persisted call record (no token), with the carrier's handles on the leg it placed
+   * (`provider_call_id` / `provider_request_id`); a call torn down before its dial was sent
+   * (while the bridge prepared it, or while it waited for a calls-per-second slot) resolves
+   * with neither, its `ended` already emitted (`dialWasSent`, `bridge/dial-refusals.ts`).
+   * Throws {@link WebRtcCallError} on a closed socket, exhausted capacity, or a provider
+   * rejection.
    */
   async createBridgedCall(params: WebRtcBridgedCallParams): Promise<WebRtcCallRecord> {
     // Pre-flight: dialing a customer with a dead agent socket manufactures exactly
@@ -923,9 +927,13 @@ export class WebRtcBridgeManager {
     //
     // The dial request id (Plivo's `request_uuid`) is written with it: the only handle on
     // the call before the carrier names it.
-    await webrtcCallRepository.update(record.id, {
+    const placedIds = {
       provider_call_id: session.carrierCallId ?? session.providerCallId,
-      ...(session.providerRequestId ? { provider_request_id: session.providerRequestId } : {}),
+      provider_request_id: session.providerRequestId,
+    };
+    await webrtcCallRepository.update(record.id, {
+      provider_call_id: placedIds.provider_call_id,
+      ...(placedIds.provider_request_id ? { provider_request_id: placedIds.provider_request_id } : {}),
     })
       .catch((err: unknown) => log.error(
         { err, callId: record.id, providerCallId: session.providerCallId },
@@ -933,7 +941,10 @@ export class WebRtcBridgeManager {
       ));
 
     trackWebrtcCallInitiated(record);
-    return { record, session };
+    // The record answers with the carrier's handles on the leg the dial placed, which is how
+    // a caller tells a placed dial from one a teardown stopped before it was sent (both
+    // resolve; that one's record carries neither id, {@link dialWasSent}).
+    return { record: { ...record, ...placedIds }, session };
   }
 
   // ─── Browser leg ───────────────────────────────────────────────────────────

@@ -99,6 +99,7 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
 }));
 
 import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
+import { dialWasSent } from '../../../src/core/bridge/dial-refusals.js';
 import { normalizePlivoCallback, plivoCallEvent } from '../../../src/telephony/plivo/plivo.webhook.js';
 import {
   CarrierAuthRejectedError, CarrierDialAbortedError, CarrierDialNotSentError, CarrierRateLimitedError,
@@ -440,8 +441,11 @@ describe('a Plivo teardown reaches the carrier by the right id, and never an emp
     expect(seen?.aborted).toBe(false);
     await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
     expect(seen?.aborted).toBe(true);
-    // The dial resolves as for a teardown just before it: no error, nothing to hang up.
-    await expect(placing).resolves.toMatchObject({ id: CALL_ID });
+    // The dial resolves as for a teardown just before it: no error, nothing to hang up, and
+    // no carrier handle on the record, so a caller does not take it for a placed call.
+    const record = await placing;
+    expect(record).toMatchObject({ id: CALL_ID, provider_call_id: null });
+    expect(dialWasSent(record)).toBe(false);
     expect(plivoAdapter.cancelDialRequest).not.toHaveBeenCalled();
     expect(plivoAdapter.endCall).not.toHaveBeenCalled();
     expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(1);
@@ -454,7 +458,12 @@ describe('a Plivo teardown reaches the carrier by the right id, and never an emp
       seen = req.signal;
       return { providerCallId: '', providerRequestId: 'req-1' };
     });
-    const mgr = await dial();
+    const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
+    mgr.onLifecycle((e) => lifecycle.push(e));
+    const record = await mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any });
+    // The record names the leg the dial placed.
+    expect(record).toMatchObject({ id: CALL_ID, provider_call_id: null, provider_request_id: 'req-1' });
+    expect(dialWasSent(record)).toBe(true);
     await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
     expect(seen?.aborted).toBe(false);
     expect(plivoAdapter.cancelDialRequest).toHaveBeenCalledWith('req-1');

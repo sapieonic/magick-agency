@@ -95,6 +95,18 @@ export function classifyDialRefusal(err: unknown): DialRefusal {
   return { kind: 'other' };
 }
 
+/**
+ * Whether a dial the bridge resolved (`createBridgedCall`, `createUnboundBridgedCall`) was
+ * sent to the carrier: the record names the leg it placed (a call id, or the dial request
+ * id that cancels it). A teardown that ran before the dial was sent (while the bridge
+ * prepared it, or while it waited at the calls-per-second gate) resolves too, with neither:
+ * nothing reached the carrier, so nothing a caller does for a placed call (the refusal
+ * breaker's reset, PL11) applies to it.
+ */
+export function dialWasSent(record: { provider_call_id?: string | null; provider_request_id?: string | null }): boolean {
+  return Boolean(record.provider_call_id || record.provider_request_id);
+}
+
 /** How an unplaced refusal is recorded on the call row and reported to the caller. */
 export interface UnplacedRefusal {
   code: WebRtcRejectReason;

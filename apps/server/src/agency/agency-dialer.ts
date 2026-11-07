@@ -40,7 +40,7 @@ import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
 import { CarrierRefusalBreaker, countsTowardBreaker } from './carrier-refusal-breaker.js';
-import { classifyDialRefusal } from '../core/bridge/dial-refusals.js';
+import { classifyDialRefusal, dialWasSent } from '../core/bridge/dial-refusals.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -626,7 +626,13 @@ export class AgencyDialer {
     // awaited: the reset is off the dial path. Its Redis DEL is queued on the connection
     // before this returns, so a later refusal's INCR still lands after it. `notePlaced`
     // never throws; the catch only makes an unhandled rejection impossible.
-    if (cmd.campaign.telephony_credential_id) {
+    //
+    // Only a dial that was sent: a teardown while the dial waited for a calls-per-second
+    // slot (or before it) resolves too, with no carrier handle (`dialWasSent`). Nothing
+    // reached the carrier, so it says nothing about the account and must not end a streak.
+    // Its `ended` arm has settled the attempt already; the attach below still correlates
+    // the row with its (terminal) call.
+    if (cmd.campaign.telephony_credential_id && dialWasSent(record)) {
       void this.refusalBreaker.notePlaced(cmd.campaignId).catch((err) =>
         log.warn({ err, campaignId: cmd.campaignId }, 'Carrier refusal streak not reset — it lapses with its TTL'));
     }
