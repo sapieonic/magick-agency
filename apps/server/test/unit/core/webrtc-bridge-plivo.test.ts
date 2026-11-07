@@ -313,14 +313,18 @@ describe('a Plivo teardown reaches the carrier by the right id, and never an emp
     expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1');
   });
 
-  it('before the answer, the request gone and no call id yet: nothing more is sent (the answer callback is the backstop)', async () => {
+  it('before the answer, the request gone and no call id yet: nothing more is sent until a callback names the call', async () => {
     plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
     const mgr = await dial();
     await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
     expect(plivoAdapter.endCall).not.toHaveBeenCalled();
-    expect(logSpy.warn.mock.calls.some((c: any[]) => String(c[1]).includes('answered with a hangup'))).toBe(true);
-    // The answer callback for that call now finds nothing to bridge.
+    expect(logSpy.warn.mock.calls.some((c: any[]) => String(c[1]).includes('its next ring or answer callback names it'))).toBe(true);
+    // The answer callback for that call finds nothing to bridge (the route answers with a
+    // hangup), and the leg it names is hung up by that id, on the call's own credential.
+    mockRepo.findById.mockResolvedValue(endedRow());
     expect(await mgr.answerCarrierCall(CALL_ID, plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1' }), 'plivo')).toBeNull();
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1'));
+    expect(registry.getForCredentialId).toHaveBeenLastCalledWith('plivo', 'cred-1', 'call_control', 'tenant-a');
   });
 
   it('after the answer: hangs up by Plivo`s call id from the answer callback, and cancels nothing', async () => {
@@ -369,6 +373,124 @@ describe('a Plivo teardown reaches the carrier by the right id, and never an emp
     await placing;
     expect(plivoAdapter.cancelDialRequest).toHaveBeenCalledWith('req-race');
     expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+  });
+});
+
+/** The call's row once it has ended here: what a callback with no live session reads. */
+function endedRow(over: Record<string, unknown> = {}) {
+  return {
+    id: CALL_ID, tenant_id: 'tenant-a', account_id: 'a1', provider: 'plivo', status: 'canceled',
+    telephony_credential_id: 'cred-1', provider_call_id: null, provider_request_id: 'req-1', recording_url: null,
+    ...over,
+  };
+}
+
+/** Let background work (the stray-leg hangup runs off the callback's path) finish. */
+const settle = () => new Promise((r) => setTimeout(r, 20));
+
+describe('a leg the carrier is still connecting for a call that has ended here is hung up by the id its callback names', () => {
+  it('the agent dismissed after the request left the queue (cancel 404, no call id): the late ring hangs it up, once', async () => {
+    plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    mockRepo.findById.mockResolvedValue(endedRow());
+
+    const ring = plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' });
+    await mgr.handleCarrierStatus(CALL_ID, ring, 'plivo');
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1'));
+    expect(registry.getForCredentialId).toHaveBeenLastCalledWith('plivo', 'cred-1', 'call_control', 'tenant-a');
+    // A retried ring, and then the answer, send nothing more.
+    await mgr.handleCarrierStatus(CALL_ID, ring, 'plivo');
+    expect(await mgr.answerCarrierCall(CALL_ID, plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1' }), 'plivo')).toBeNull();
+    await settle();
+    expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1);
+    // Nothing on the row is resurrected by the progress event.
+    expect(mockRepo.update).not.toHaveBeenCalledWith(CALL_ID, expect.objectContaining({ status: 'ringing' }));
+  });
+
+  it('a ring that arrives while the cancel is still out: one hangup by the call id, not two', async () => {
+    let answerCancel!: (v: 'not_found') => void;
+    plivoAdapter.cancelDialRequest.mockImplementationOnce(() => new Promise((r) => { answerCancel = r; }));
+    const mgr = await dial();
+    const ending = mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    await vi.waitFor(() => expect(plivoAdapter.cancelDialRequest).toHaveBeenCalled());
+    // The session is tearing down: the ring is ignored for the call, but its leg is hung up.
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1'));
+    answerCancel('not_found');
+    await ending;
+    await settle();
+    expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('never after the carrier reported the call`s terminal, and never with an empty id', async () => {
+    plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    mockRepo.findById.mockResolvedValue(endedRow());
+    // A ring with no CallUUID names nothing to hang up.
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', RequestUUID: 'req-1' }), 'plivo');
+    await settle();
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    // The carrier's terminal, then a stale ring delivered after it: nothing is sent.
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'no-answer', CallUUID: 'uuid-1', HangupCauseName: 'No Answer' }), 'plivo');
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+    await settle();
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+  });
+
+  it('a call whose credential cannot be resolved for call control: nothing is sent, said at ERROR', async () => {
+    plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    mockRepo.findById.mockResolvedValue(endedRow());
+    registry.getForCredentialId.mockRejectedValueOnce(new Error('credential unavailable'));
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1' }), 'plivo');
+    await settle();
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    expect(logSpy.error.mock.calls.some((c: any[]) => String(c[1]).includes('may reach the customer'))).toBe(true);
+  });
+
+  it('a carrier with no hangup API (VoiceLink, `close_media`): a late progress event sends nothing, as before', async () => {
+    const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
+    mockRepo.findById.mockResolvedValue(endedRow({ provider: 'voicelink', telephony_credential_id: null }));
+    for (const eventType of ['ringing', 'answer'] as const) {
+      await mgr.handleCarrierStatus(CALL_ID, {
+        providerCallId: 'vl-1', callId: CALL_ID, provider: 'voicelink', eventType, timestamp: new Date(), metadata: {},
+      } as any, 'voicelink');
+    }
+    await settle();
+    expect(registry.get).not.toHaveBeenCalled();
+    expect(registry.getForCredentialId).not.toHaveBeenCalled();
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+  });
+});
+
+describe('a cancel that fails is not the end of the teardown', () => {
+  it.each([
+    ['a 5xx', new Error('Plivo cancel request error 503: upstream')],
+    ['a network error', Object.assign(new TypeError('fetch failed'), { cause: new Error('ECONNRESET') })],
+    ['a timeout', Object.assign(new Error('Plivo cancel request timed out'), { name: 'CarrierRequestTimeoutError' })],
+  ])('%s with the call already named: hangs up by the call id', async (_n, failure) => {
+    plivoAdapter.cancelDialRequest.mockRejectedValueOnce(failure);
+    const mgr = await dial();
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    expect(plivoAdapter.cancelDialRequest).toHaveBeenCalledWith('req-1');
+    expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1');
+    expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1);
+    expect(mgr.getSession(CALL_ID)).toBeUndefined();
+  });
+
+  it('a failed cancel with no call id yet: the late ring hangs it up', async () => {
+    plivoAdapter.cancelDialRequest.mockRejectedValueOnce(new Error('Plivo cancel request error 500: boom'));
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    mockRepo.findById.mockResolvedValue(endedRow());
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1' }), 'plivo');
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1'));
   });
 });
 

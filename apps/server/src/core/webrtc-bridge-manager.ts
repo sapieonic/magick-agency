@@ -208,8 +208,21 @@ const DEFAULT_WEBRTC_MAX_DURATION_SECONDS = 1800;
  * `account_settings.max_concurrent_calls` is enforced on one atomic Redis
  * counter. Media bridging and the call lifecycle live here.
  */
+/** How many calls {@link WebRtcBridgeManager}'s carrier-leg memo remembers; the oldest is forgotten first. */
+const CARRIER_LEGS_SETTLED_MAX = 10_000;
+
 export class WebRtcBridgeManager {
   private readonly sessions = new Map<string, WebRtcBridgeSession>();
+  /**
+   * Calls whose carrier leg needs nothing more sent from this process: the carrier has
+   * reported the call's terminal (`terminal`), or a hangup or cancel for it has gone out
+   * (`hung_up`). It makes the hangup of a stray leg ({@link hangupStrayCarrierLeg}) at
+   * most once per call, and never after the carrier said the call ended. Process-local
+   * and bounded ({@link CARRIER_LEGS_SETTLED_MAX}, oldest first): a call it no longer
+   * remembers, or one another process saw end, costs at most one more hangup by id,
+   * which the carrier answers "already gone".
+   */
+  private readonly carrierLegsSettled = new Map<string, 'terminal' | 'hung_up'>();
   private readonly telephonyRegistry: TelephonyProviderRegistry;
   private readonly webhookUrls = new WebhookUrlBuilder();
   private readonly keyPrefix: string;
@@ -1681,6 +1694,16 @@ export class WebRtcBridgeManager {
     // already tore down, or carrier confirming our hangup). Persist final data
     // (recording URL, real carrier id, terminal outcome) idempotently and return.
     if (!session) {
+      // Progress for a call that is no longer here: the carrier is still connecting a leg
+      // nobody will take (a dismissal whose cancel came too late, a teardown that had no
+      // handle to send). The event names the call: hang it up by that id.
+      if (event.eventType === 'ringing' || event.eventType === 'answer') {
+        this.inBackground(
+          this.hangupStrayCarrierLeg(callId, provider, facts.carrierCallId, event.eventType, 'no live session'),
+          callId, 'Error hanging up a carrier leg with no live session',
+        );
+        return;
+      }
       await this.persistLateCarrierTerminal(callId, event, facts, provider);
       return;
     }
@@ -1724,6 +1747,13 @@ export class WebRtcBridgeManager {
         { callId, provider, eventType: event.eventType, endHandled: session.endHandled, ending: session.ending },
         'Carrier progress event for a call already tearing down — ignoring so it cannot resurrect the row or emit a phantom answer',
       );
+      // Ignored for the call, but the leg it reports is real: the teardown's own hangup may
+      // have had no call id to send (a cancel the carrier no longer held), and this event
+      // names it. At most once with that teardown's hangup (the memo).
+      this.inBackground(
+        this.hangupStrayCarrierLeg(callId, provider, facts.carrierCallId || session.carrierCallId || '', event.eventType, 'tearing down'),
+        callId, 'Error hanging up the carrier leg of a call tearing down',
+      );
       return;
     }
 
@@ -1748,6 +1778,7 @@ export class WebRtcBridgeManager {
         return;
       case 'hangup':
       case 'error': {
+        this.noteCarrierLegSettled(callId, 'terminal');
         // A second terminal while the first one's teardown is still in flight
         // (`endHandled` is claimed ~100 lines before `sessions.delete`, across the
         // terminal write). VoiceLink posts `call.ended` and then `call.completed`, and
@@ -1807,7 +1838,77 @@ export class WebRtcBridgeManager {
     provider: string,
   ): Promise<void> {
     if (event.eventType !== 'hangup' && event.eventType !== 'error') return;
+    this.noteCarrierLegSettled(callId, 'terminal');
     await this.persistLateCarrierData(callId, provider, facts, 'terminal');
+  }
+
+  /** Remember that `callId`'s carrier leg needs nothing more sent ({@link carrierLegsSettled}). */
+  private noteCarrierLegSettled(callId: string, how: 'terminal' | 'hung_up'): void {
+    if (this.carrierLegsSettled.has(callId)) return;
+    if (this.carrierLegsSettled.size >= CARRIER_LEGS_SETTLED_MAX) {
+      this.carrierLegsSettled.delete(this.carrierLegsSettled.keys().next().value!);
+    }
+    this.carrierLegsSettled.set(callId, how);
+  }
+
+  /**
+   * Claim the one hangup of `callId`'s carrier leg: false when the carrier has reported
+   * its terminal or a hangup or cancel has already gone out. Synchronous, so two paths
+   * racing to hang one leg up (the teardown and a late progress event) send one request.
+   */
+  private claimCarrierLegHangup(callId: string): boolean {
+    if (this.carrierLegsSettled.has(callId)) return false;
+    this.noteCarrierLegSettled(callId, 'hung_up');
+    return true;
+  }
+
+  /**
+   * Hang up a carrier leg that is still being connected for a call that has ended here,
+   * or is ending: the carrier reported progress (`ringing`, `answer`) for a call with no
+   * live session, or one tearing down. That leg reaches a customer nobody will take: a
+   * dial the agent dismissed after the carrier had stopped holding its request (the
+   * cancel answered "not found") but before the carrier named the call, so the teardown
+   * had no id to hang up by. The event names it now.
+   *
+   * Sent, through the carrier's own adapter on the account the call was placed on (its
+   * pinned credential resolved for `call_control`, {@link carrierCallbackAdapter}), only:
+   *  - for a carrier whose adapter hangs a call up by its id (`answeredHangup: 'rest'`); a
+   *    carrier whose only lever is closing our media socket has nothing to send here;
+   *  - with a non-empty call id (an empty one may address every call on the account);
+   *  - at most once per call, and never once the carrier has reported the call's terminal
+   *    ({@link claimCarrierLegHangup}).
+   * Never throws.
+   */
+  private async hangupStrayCarrierLeg(
+    callId: string,
+    provider: string,
+    carrierCallId: string,
+    eventType: string,
+    why: 'no live session' | 'tearing down',
+  ): Promise<void> {
+    if (findCarrierModule(provider)?.answeredHangup !== 'rest') return;
+    if (!carrierCallId) {
+      log.warn({ callId, provider, eventType, why }, 'Carrier progress for a call that has ended here names no call id — nothing can be hung up');
+      return;
+    }
+    if (!this.claimCarrierLegHangup(callId)) return;
+    const adapter = await this.carrierCallbackAdapter(callId, provider);
+    if (!adapter) {
+      log.error(
+        { callId, provider, carrierCallId, eventType, why },
+        'Cannot resolve the carrier account to hang up a leg still connecting for a call that has ended — it may reach the customer',
+      );
+      return;
+    }
+    try {
+      await adapter.endCall(carrierCallId);
+      log.warn(
+        { callId, provider, carrierCallId, eventType, why },
+        'Carrier was still connecting a call that has ended here — hung its leg up by the call id',
+      );
+    } catch (err) {
+      log.error({ err, callId, provider, carrierCallId, eventType, why }, 'Hanging up a carrier leg still connecting for a call that has ended failed');
+    }
   }
 
   /**
@@ -1918,12 +2019,24 @@ export class WebRtcBridgeManager {
    */
   async answerCarrierCall(callId: string, event: CallEvent, provider: string): Promise<CarrierAnswerPlan | null> {
     const session = this.sessions.get(callId);
+    // The answer for a call that has ended here (or is ending) is answered with a hangup,
+    // and its leg is hung up by the id the answer names too (`hangupStrayCarrierLeg`): the
+    // answer XML is one lever, the REST hangup the one the carrier always honours.
+    const stray = (why: 'no live session' | 'tearing down'): void => {
+      const carrierCallId = findCarrierModule(provider)?.lifecycle?.readEvent(event).carrierCallId ?? '';
+      this.inBackground(
+        this.hangupStrayCarrierLeg(callId, provider, carrierCallId, 'answer', why),
+        callId, 'Error hanging up the carrier leg of an answer for a call that has ended',
+      );
+    };
     if (!session || session.provider !== provider) {
       log.warn({ callId, provider }, 'Answer callback for a call with no live session here — answering with a hangup');
+      if (!session) stray('no live session');
       return null;
     }
     if (session.isTearingDown) {
       log.warn({ callId, provider, endHandled: session.endHandled }, 'Answer callback for a call already tearing down — answering with a hangup');
+      stray('tearing down');
       return null;
     }
     if (!session.answerStreamUrl) {
@@ -2056,10 +2169,13 @@ export class WebRtcBridgeManager {
    * disconnects every call on the account):
    *  - before the answer, with a dial request id (Plivo's `request_uuid`) and an adapter
    *    that cancels by it: the dial is cancelled by that id. If the carrier no longer
-   *    holds the request (`not_found`: it has connected, or is ringing past the queue)
-   *    and the carrier has named the call, the call is hung up by its id. If it has not,
-   *    nothing more can be sent: the answer callback for a call that is no longer here is
-   *    answered with a hangup, which is the backstop;
+   *    holds the request (`not_found`: it has connected, or is ringing past the queue),
+   *    or the cancel itself failed (a 5xx, a network error, a timeout: it says nothing
+   *    about the leg), and the carrier has named the call (read again after the cancel:
+   *    a ring callback may have named it meanwhile), the call is hung up by its id. If it
+   *    has not, nothing more can be sent now: the carrier's next ring or answer callback
+   *    names the call and hangs it up ({@link hangupStrayCarrierLeg}), and an answer
+   *    callback is answered with a hangup besides;
    *  - otherwise the carrier's call id (`carrierCallId`, learned from its callbacks or
    *    stream), else the dial-time id (`providerCallId`), through `endCall`;
    *  - with neither, nothing is sent.
@@ -2102,20 +2218,38 @@ export class WebRtcBridgeManager {
         );
       }
 
-      const carrierCallId = session.carrierCallId || session.providerCallId || null;
+      let carrierCallId = session.carrierCallId || session.providerCallId || null;
       if (session.answeredAt === null && session.providerRequestId && hangupAdapter.cancelDialRequest) {
-        const cancelled = await hangupAdapter.cancelDialRequest(session.providerRequestId);
-        if (cancelled === 'canceled') return;
+        let cancelled: 'canceled' | 'not_found' | 'failed';
+        try {
+          cancelled = await hangupAdapter.cancelDialRequest(session.providerRequestId);
+        } catch (err) {
+          // A 5xx, a network error or a timeout says nothing about the leg: it may still
+          // be ringing. Go on to the hangup by the call id, as for `not_found`.
+          log.warn(
+            { err, callId, correlationId: session.correlationId, provider: session.provider, providerRequestId: session.providerRequestId },
+            'Cancelling the dial request failed — hanging up by the call id if the carrier has named it',
+          );
+          cancelled = 'failed';
+        }
+        if (cancelled === 'canceled') {
+          this.noteCarrierLegSettled(callId, 'hung_up');
+          return;
+        }
+        // The carrier may have named the call while the cancel was out (its ring callback).
+        carrierCallId = session.carrierCallId || session.providerCallId || null;
         if (!carrierCallId) {
           log.warn(
-            { callId, correlationId: session.correlationId, provider: session.provider, providerRequestId: session.providerRequestId },
-            'Carrier no longer holds the dial request and has not named the call — '
-            + 'if it connects, its answer callback is answered with a hangup',
+            { callId, correlationId: session.correlationId, provider: session.provider, providerRequestId: session.providerRequestId, cancelled },
+            'Carrier no longer holds the dial request (or the cancel failed) and has not named the call — '
+            + 'its next ring or answer callback names it and is hung up then',
           );
           return;
         }
       }
       if (!carrierCallId) return;
+      // A late progress event may already have hung this leg up (or the carrier ended it).
+      if (!this.claimCarrierLegHangup(callId)) return;
       await hangupAdapter.endCall(carrierCallId);
     } catch (err) {
       log.warn({ err, callId }, 'Error hanging up provider leg (already ended?)');

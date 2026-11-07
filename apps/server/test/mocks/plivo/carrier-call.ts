@@ -47,6 +47,12 @@ export type CallbackTarget = 'answer' | 'ring' | 'hangup' | 'recording';
 export type PlivoCallStep =
   /** `ring_url`: `CallStatus=ringing`. */
   | { do: 'ring'; sign?: SignMode }
+  /**
+   * Plivo takes the call out of its queue and hands it to the network, posting nothing:
+   * from here a cancel by request id answers 404, and only the call id (named on the
+   * next callback) can hang it up.
+   */
+  | { do: 'dequeue' }
   /** `answer_url`: `CallStatus=in-progress`; the reply is kept and its `<Stream>` / `<Record>` parsed. */
   | { do: 'answer'; sign?: SignMode }
   /** `hangup_url`: a terminal `CallStatus` (default `completed`). */
@@ -151,6 +157,10 @@ export class PlivoCall {
   ended = false;
   /** Our REST cancel (`DELETE …/Request/{request_uuid}/`) reached this call. */
   canceledByApi = false;
+  /** Out of Plivo's queue (a `dequeue` step): a cancel by request id is 404 from here. */
+  dequeued = false;
+  /** Every cancel by request id that reached this call, with the status it was answered. */
+  readonly cancelAttempts: number[] = [];
   /** Our REST hangup (`DELETE …/Call/{call_uuid}/`) reached this call. */
   hungUpByApi = false;
 
@@ -298,6 +308,9 @@ export class PlivoCall {
       case 'ring':
         this.named = true;
         await this.callback('ring', { ...this.baseParams(), CallStatus: 'ringing', Event: 'Ring' }, step.sign);
+        return;
+      case 'dequeue':
+        this.dequeued = true;
         return;
       case 'answer': {
         this.named = true;

@@ -9,10 +9,12 @@
  *  - `GET  /v1/Account/{id}/Number/?limit&offset` the number sync: one page of `numbers`
  *  - `POST /v1/Account/{id}/Call/`               201 `{message, request_uuid, api_id}`, and
  *    the call is placed: a {@link PlivoCall} runs the script `scriptFor` chooses
- *  - `DELETE /v1/Account/{id}/Request/{uuid}/`   204 while the dial has not been answered,
- *    404 otherwise; Plivo then posts the `cancel` hangup callback
+ *  - `DELETE /v1/Account/{id}/Request/{uuid}/`   204 while the dial is still queued (not
+ *    answered, not ended, no `dequeue` step yet), 404 otherwise; Plivo then posts the
+ *    `cancel` hangup callback
  *  - `DELETE /v1/Account/{id}/Call/{uuid}/`      204 for a live call it has named, 404
- *    otherwise; the stream is closed and the `completed` hangup callback posted
+ *    otherwise; the stream is closed and the hangup callback posted (`completed` for an
+ *    answered call, `cancel` for one still ringing)
  * A wrong auth id or token is 401. Every request is recorded (route, auth, body, the status
  * it was answered with, the fault applied).
  *
@@ -380,10 +382,12 @@ export class MockPlivoCarrier {
 
   private handleCancel(requestUuid: string, send: (s: number, p: unknown) => void): void {
     const call = this.callOrder.find((c) => c.requestUuid === requestUuid);
-    if (!call || call.answered || call.ended) {
+    if (!call || call.answered || call.ended || call.dequeued) {
+      call?.cancelAttempts.push(404);
       send(404, { api_id: randomUUID(), error: 'not found' });
       return;
     }
+    call.cancelAttempts.push(204);
     call.canceledByApi = true;
     call.ended = true;
     send(204, null);
@@ -400,6 +404,8 @@ export class MockPlivoCarrier {
     call.ended = true;
     send(204, null);
     call.closeMedia();
-    if (this.opts.hangupCallbackOnApi !== false) this.runs.push(call.postHangup('completed', { source: 'API Request' }));
+    if (this.opts.hangupCallbackOnApi !== false) {
+      this.runs.push(call.postHangup(call.answered ? 'completed' : 'cancel', { source: 'API Request' }));
+    }
   }
 }

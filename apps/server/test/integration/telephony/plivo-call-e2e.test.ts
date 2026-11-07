@@ -12,6 +12,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *      id, the carrier's call id and the credential; the recording callback persists the URL;
  *  (b) the agent dismisses while it rings → REST `DELETE Request/{request_uuid}`, never a
  *      call hangup; a late answer is answered with the hangup XML;
+ *  (h) the agent dismisses after Plivo took the dial out of its queue but before it named
+ *      the call: the cancel is 404 and there is no call id; the late ring callback names
+ *      the call and it is hung up by that id (`DELETE Call/{call_uuid}`), once;
+ *  (i) the cancel fails (a 5xx) after the ring named the call: hung up by the call id;
  *  (c) a callback signed with no, a forged, or ANOTHER tenant's Plivo token is refused and
  *      changes nothing; a valid one after them still works;
  *  (d) a dial Plivo refuses 401 pauses the campaign `carrier_auth`, audited, and marks the
@@ -189,6 +193,70 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     expect(row).toMatchObject({ provider_request_id: call.requestUuid, telephony_credential_id: r.credentialId });
     expect(row.answered_at).toBeNull();
     expect(row.status).not.toBe('completed');
+    expect(r.bridge.getActiveCount()).toBe(0);
+  }, 60_000);
+
+  it('(h) dismissed after Plivo dequeued the request, before it named the call: the late ring is hung up by its call id', async () => {
+    const r = rig!;
+    r.carrier.setScript(() => ({
+      name: 'dismissed after the dequeue, before the ring',
+      steps: [
+        { do: 'dequeue' },
+        { do: 'waitFor', until: (c) => c.cancelAttempts.length > 0, what: 'our REST cancel', timeoutMs: 20_000 },
+        // Ringing now: Plivo names the call on this callback, after our teardown.
+        { do: 'ring' },
+        { do: 'waitFor', until: (c) => c.hungUpByApi, what: 'our REST hangup by the call id', timeoutMs: 20_000 },
+        { do: 'waitFor', until: (c) => c.callbacks.some((cb) => cb.to === 'hangup'), what: 'the hangup callback' },
+        // A late answer (and a retried ring) after that send nothing more.
+        { do: 'post', to: 'answer', params: { CallStatus: 'in-progress' } },
+        { do: 'ring' },
+      ],
+    }));
+    const { campaignId } = await plivoCampaign(r);
+    station = await joinAgent(r, campaignId);
+    const { call, attemptId, callId } = await placed(r, campaignId);
+    await waitFor('the request id persisted', async () => (await callRow(callId))?.provider_request_id === call.requestUuid);
+
+    expect(await getAgencyRuntime()!.dialer.hangupAttempt(attemptId)).toBe(true);
+    await r.carrier.settled();
+
+    expect(call.errors).toEqual([]);
+    expect(r.carrier.requestsTo('cancel_request').map((q) => [q.id, q.status])).toEqual([[call.requestUuid, 404]]);
+    expect(r.carrier.requestsTo('hangup_call').map((q) => [q.id, q.status])).toEqual([[call.callUuid, 204]]);
+    expect(call.statusesFor('ring')).toEqual([200, 200]);
+    expect(call.statusesFor('hangup')).toEqual([200]);
+    expect(call.callbacks.find((c) => c.to === 'answer')!.body).toBe(PLIVO_HANGUP_XML);
+    const row = await terminalRow(callId);
+    expect(row.answered_at).toBeNull();
+    expect(row.status).not.toBe('completed');
+    expect(r.carrier.offHost).toEqual([]);
+    expect(r.bridge.getActiveCount()).toBe(0);
+  }, 60_000);
+
+  it('(i) the cancel fails (5xx) after the ring named the call: hung up by the call id', async () => {
+    const r = rig!;
+    r.carrier.injectFault('cancel_request', { kind: 'status', status: 500 });
+    r.carrier.setScript(() => ({
+      name: 'ringing, the cancel fails',
+      steps: [
+        { do: 'ring' },
+        { do: 'waitFor', until: (c) => c.hungUpByApi, what: 'our REST hangup by the call id', timeoutMs: 20_000 },
+        { do: 'waitFor', until: (c) => c.callbacks.some((cb) => cb.to === 'hangup'), what: 'the hangup callback' },
+      ],
+    }));
+    const { campaignId } = await plivoCampaign(r);
+    station = await joinAgent(r, campaignId);
+    const { call, attemptId, callId } = await placed(r, campaignId);
+    await waitFor('ringing', async () => (await callRow(callId))?.status === 'ringing');
+
+    expect(await getAgencyRuntime()!.dialer.hangupAttempt(attemptId)).toBe(true);
+    await r.carrier.settled();
+
+    expect(call.errors).toEqual([]);
+    expect(r.carrier.requestsTo('cancel_request').map((q) => [q.id, q.status])).toEqual([[call.requestUuid, 500]]);
+    expect(r.carrier.requestsTo('hangup_call').map((q) => [q.id, q.status])).toEqual([[call.callUuid, 204]]);
+    const row = await terminalRow(callId);
+    expect(row.answered_at).toBeNull();
     expect(r.bridge.getActiveCount()).toBe(0);
   }, 60_000);
 
