@@ -231,7 +231,7 @@ async function credential(): Promise<string> {
 }
 
 const WRITTEN: NumberSyncResult = {
-  added: ['+14155550100'], reactivated: [], unchanged: [], retired: ['+14155550199'],
+  added: ['+14155550100'], reactivated: [], taken_over: [], unchanged: [], retired: ['+14155550199'],
   conflicts: [{ phone_number: '+14155550101', reason: 'registered_elsewhere' }], active: 1,
 };
 
@@ -256,7 +256,7 @@ describe('TelephonyCredentialService.syncNumbers', () => {
       value: {
         credential: expect.objectContaining({ id, status: 'active' }),
         sync: {
-          listed: 3, added: ['+14155550100'], reactivated: [], unchanged: [], retired: ['+14155550199'],
+          listed: 3, added: ['+14155550100'], reactivated: [], taken_over: [], unchanged: [], retired: ['+14155550199'],
           skipped: [{ number: '14155550102', reason: 'not_voice' }],
           conflicts: [{ phone_number: '+14155550101', reason: 'registered_elsewhere' }], active_numbers: 1,
           campaigns_holding_retired: [],
@@ -264,6 +264,14 @@ describe('TelephonyCredentialService.syncNumbers', () => {
       },
     });
     expect(JSON.stringify(r)).not.toContain(TOKEN);
+  });
+
+  it('answers the numbers the write took over from a revoked registration of the same carrier account (PL5 addendum)', async () => {
+    const id = await credential();
+    // The account was registered before, that registration revoked: +14155550101 was pinned to it.
+    syncForCredential.mockResolvedValue({ ...WRITTEN, taken_over: ['+14155550101'], conflicts: [], active: 2 });
+    const r = await svc.syncNumbers(id, ADMIN);
+    expect(r.ok && r.value.sync).toMatchObject({ taken_over: ['+14155550101'], conflicts: [], active_numbers: 2 });
   });
 
   it('names the live campaigns still holding the credential\'s retired numbers, read after the write (PL13)', async () => {

@@ -80,7 +80,13 @@ export class PhoneNumberRepository {
    *    dial from it (B20: a credential serves every account of its tenant);
    *  - a listed number already pinned to this credential is reactivated if it was
    *    retired, and assigned to the tenant if it is not (a `deleted` one is left alone);
-   *  - a listed number already in the inventory on ANOTHER credential, or on the
+   *  - a listed number pinned to a REVOKED credential of the same tenant, provider and
+   *    carrier account (`account_ref`, Plivo's auth ID) is taken over: re-pinned to this
+   *    credential and made `active` (`taken_over`). That is the same account registered
+   *    again after its old registration was revoked; without it the account's numbers could
+   *    never be synced again. A `deleted` one is left alone;
+   *  - a listed number already in the inventory on any other credential (another tenant's,
+   *    another account's, or one disabled or invalid rather than revoked), or on the
    *    service's own account (NULL), is refused as a conflict, never taken over;
    *  - this credential's numbers the account no longer lists are retired, never deleted:
    *    calls and campaigns name them, and the carrier may list them again.
@@ -99,8 +105,8 @@ export class PhoneNumberRepository {
     adminId: string | null,
   ): Promise<NumberSyncResult | null> {
     return withTransaction(async (client, tx) => {
-      const cred = await client.query<{ tenant_id: string; provider_id: string }>(
-        `SELECT c.tenant_id, p.id AS provider_id
+      const cred = await client.query<{ tenant_id: string; provider: string; account_ref: string; provider_id: string }>(
+        `SELECT c.tenant_id, c.provider, c.account_ref, p.id AS provider_id
            FROM telephony_credentials c
            JOIN telephony_providers p ON p.name = c.provider
           WHERE c.id = $1 AND c.status = 'active'
@@ -115,24 +121,41 @@ export class PhoneNumberRepository {
       const numbers = [...new Set(listed.map((n) => n.phone_number))];
       const labels = new Map(listed.map((n) => [n.phone_number, n.label]));
 
-      const existing = await client.query<{ id: string; phone_number: string; status: PhoneNumberRecord['status']; telephony_credential_id: string | null }>(
-        `SELECT id, phone_number, status, telephony_credential_id
-           FROM phone_numbers
-          WHERE phone_number = ANY($1::varchar[]) OR telephony_credential_id = $2::uuid
-            FOR UPDATE`,
+      // With the credential each number is pinned to, to tell a revoked registration of
+      // this same carrier account (taken over) from anyone else's (a conflict). Revoked is
+      // terminal, so the owner's row needs no lock.
+      const existing = await client.query<{
+        id: string; phone_number: string; status: PhoneNumberRecord['status']; telephony_credential_id: string | null;
+        provider_id: string; owner_status: string | null; owner_tenant_id: string | null; owner_provider: string | null; owner_account_ref: string | null;
+      }>(
+        `SELECT pn.id, pn.phone_number, pn.status, pn.telephony_credential_id, pn.provider_id,
+                oc.status AS owner_status, oc.tenant_id AS owner_tenant_id,
+                oc.provider AS owner_provider, oc.account_ref AS owner_account_ref
+           FROM phone_numbers pn
+           LEFT JOIN telephony_credentials oc ON oc.id = pn.telephony_credential_id
+          WHERE pn.phone_number = ANY($1::varchar[]) OR pn.telephony_credential_id = $2::uuid
+            FOR UPDATE OF pn`,
         [numbers, credentialId],
       );
+      /** Pinned to a revoked registration of this same carrier account, of this tenant. */
+      const sameAccountRevoked = (r: (typeof existing.rows)[number]): boolean =>
+        r.owner_status === 'revoked' && r.owner_tenant_id === row.tenant_id && r.owner_provider === row.provider
+        && r.owner_account_ref === row.account_ref && r.provider_id === row.provider_id;
       const byNumber = new Map(existing.rows.map((r) => [r.phone_number, r]));
       const listedSet = new Set(numbers);
 
-      const result: NumberSyncResult = { added: [], reactivated: [], unchanged: [], retired: [], conflicts: [], active: 0 };
+      const result: NumberSyncResult = { added: [], reactivated: [], taken_over: [], unchanged: [], retired: [], conflicts: [], active: 0 };
       const toInsert: string[] = [];
       const toReactivate: string[] = [];
+      const toTakeOver: string[] = [];
       for (const number of numbers) {
         const found = byNumber.get(number);
         if (!found) toInsert.push(number);
-        else if (found.telephony_credential_id !== credentialId) result.conflicts.push({ phone_number: number, reason: 'registered_elsewhere' });
-        else if (found.status === 'deleted') result.conflicts.push({ phone_number: number, reason: 'deleted' });
+        else if (found.telephony_credential_id !== credentialId) {
+          if (!sameAccountRevoked(found)) result.conflicts.push({ phone_number: number, reason: 'registered_elsewhere' });
+          else if (found.status === 'deleted') result.conflicts.push({ phone_number: number, reason: 'deleted' });
+          else toTakeOver.push(found.id);
+        } else if (found.status === 'deleted') result.conflicts.push({ phone_number: number, reason: 'deleted' });
         else if (found.status === 'retired') toReactivate.push(found.id);
         else result.unchanged.push(number);
       }
@@ -168,6 +191,24 @@ export class PhoneNumberRepository {
         );
         result.reactivated.push(...back.rows.map((r) => r.phone_number));
       }
+      if (toTakeOver.length > 0) {
+        // The same conditions as `sameAccountRevoked`, in the write itself. Calls and their
+        // recordings stay on the old credential (`agency_calls.telephony_credential_id` is
+        // pinned at dial time and never moved); only the number changes hands.
+        const moved = await client.query<{ phone_number: string }>(
+          `UPDATE phone_numbers pn
+              SET telephony_credential_id = $2::uuid, status = 'active'
+             FROM telephony_credentials oc
+            WHERE pn.id = ANY($1::uuid[])
+              AND oc.id = pn.telephony_credential_id
+              AND oc.status = 'revoked' AND oc.tenant_id = $3::uuid
+              AND oc.provider = $4::varchar AND oc.account_ref = $5::varchar
+              AND pn.provider_id = $6::uuid AND pn.status <> 'deleted'
+            RETURNING pn.phone_number`,
+          [toTakeOver, credentialId, row.tenant_id, row.provider, row.account_ref, row.provider_id],
+        );
+        result.taken_over.push(...moved.rows.map((r) => r.phone_number));
+      }
       if (toRetire.length > 0) {
         const gone = await client.query<{ phone_number: string }>(
           `UPDATE phone_numbers SET status = 'retired'
@@ -193,7 +234,7 @@ export class PhoneNumberRepository {
         [credentialId],
       );
       result.active = count.rows[0]!.n;
-      for (const list of [result.added, result.reactivated, result.unchanged, result.retired]) list.sort();
+      for (const list of [result.added, result.reactivated, result.taken_over, result.unchanged, result.retired]) list.sort();
       result.conflicts.sort((a, b) => a.phone_number.localeCompare(b.phone_number));
       return result;
     }, { pool: getPool() });

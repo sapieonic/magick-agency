@@ -30,7 +30,7 @@ const ROW = {
 };
 
 const SYNC = {
-  listed: 4, added: ['+14155550001'], reactivated: [], unchanged: ['+14155550002'], retired: ['+14155550009'],
+  listed: 4, added: ['+14155550001'], reactivated: [], taken_over: [], unchanged: ['+14155550002'], retired: ['+14155550009'],
   skipped: [{ number: '14155550003', reason: 'not_voice' }],
   conflicts: [{ phone_number: '+14155550005', reason: 'registered_elsewhere' }], active_numbers: 2,
 };

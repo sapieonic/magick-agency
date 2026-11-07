@@ -578,6 +578,7 @@ function SyncSummary({ outcome }: { outcome: SyncOutcome }) {
   const lists: Array<[string, string[]]> = [
     ['Added', r.added],
     ['Reactivated', r.reactivated],
+    ['Taken over from a revoked credential of this account', r.taken_over],
     ['Retired', r.retired],
   ];
   return (
@@ -585,6 +586,7 @@ function SyncSummary({ outcome }: { outcome: SyncOutcome }) {
       <p className={styles.syncHeadline}>
         {`Synced. ${r.active_numbers} active ${r.active_numbers === 1 ? 'number' : 'numbers'} on this account `
           + `(the carrier listed ${r.listed}): ${r.added.length} added, ${r.reactivated.length} reactivated, `
+          + `${r.taken_over.length > 0 ? `${r.taken_over.length} taken over, ` : ''}`
           + `${r.retired.length} retired, ${r.unchanged.length} unchanged.`}
       </p>
       <dl className={styles.syncLists}>

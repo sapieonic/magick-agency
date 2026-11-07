@@ -187,6 +187,7 @@ describe('Sync numbers', () => {
         listed: 7,
         added: ['+14155550101', '+14155550102'],
         reactivated: ['+14155550103'],
+        taken_over: ['+14155550110'],
         unchanged: ['+14155550104'],
         retired: ['+14155550199'],
         skipped: [
@@ -210,8 +211,10 @@ describe('Sync numbers', () => {
 
     const result = await screen.findByTestId('sync-result');
     expect(result.textContent).toContain(
-      'Synced. 4 active numbers on this account (the carrier listed 7): 2 added, 1 reactivated, 1 retired, 1 unchanged.',
+      'Synced. 4 active numbers on this account (the carrier listed 7): 2 added, 1 reactivated, 1 taken over, 1 retired, 1 unchanged.',
     );
+    // A number moved from a revoked registration of the same account, listed by name.
+    expect(result.textContent).toContain('Taken over from a revoked credential of this account+14155550110');
     expect(result.textContent).toContain('+14155550101, +14155550102');
     expect(result.textContent).toContain('+14155550199');
     expect(result.textContent).toContain('14155550105: cannot carry voice calls');

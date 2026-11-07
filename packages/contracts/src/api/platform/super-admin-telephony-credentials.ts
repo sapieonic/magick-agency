@@ -132,9 +132,13 @@ export type TelephonyNumberSyncSkipReason =
 
 /** Why a listed voice number was not taken into this credential's inventory. */
 export type TelephonyNumberSyncConflictReason =
-  /** Already in the inventory on another credential, or on the service's own account. Never taken over. */
+  /**
+   * Already in the inventory on another credential, or on the service's own account. Never
+   * taken over, except from a revoked registration of the same carrier account of the same
+   * tenant (`taken_over`).
+   */
   | 'registered_elsewhere'
-  /** This credential's number, deleted by a super-admin: a sync does not bring it back. */
+  /** This credential's number (or such a revoked registration's), deleted by a super-admin: a sync does not bring it back. */
   | 'deleted';
 
 /** What one sync did. Numbers are E.164 (`+…`); `skipped` echoes the carrier's spelling. */
@@ -144,6 +148,12 @@ export interface TelephonyCredentialNumberSync {
   added: string[];
   /** The credential's numbers that had been retired and are on the account again. */
   reactivated: string[];
+  /**
+   * Numbers that were pinned to a REVOKED credential of the same tenant and carrier account
+   * (the account registered again): now this credential's, and active. Calls placed on the
+   * old credential, and their recordings, stay on it.
+   */
+  taken_over: string[];
   unchanged: string[];
   /** The credential's numbers no longer on the account: retired, never deleted. */
   retired: string[];

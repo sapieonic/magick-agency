@@ -455,6 +455,7 @@ export class TelephonyCredentialService {
           listed: list.listed,
           added: written.added,
           reactivated: written.reactivated,
+          taken_over: written.taken_over,
           unchanged: written.unchanged,
           retired: written.retired,
           skipped: list.skipped,

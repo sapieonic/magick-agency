@@ -56,9 +56,15 @@ export interface SyncedNumberInput {
 
 /** Why a listed number was not taken into the credential's inventory. */
 export type NumberSyncConflictReason =
-  /** Already in the inventory on another credential, or on the service's own account. */
+  /**
+   * Already in the inventory on another credential (other than a revoked registration of
+   * the same carrier account, which a sync takes over), or on the service's own account.
+   */
   | 'registered_elsewhere'
-  /** This credential's, but a super-admin deleted it: a sync does not bring it back. */
+  /**
+   * This credential's (or a revoked registration's of the same account), but a super-admin
+   * deleted it: a sync does not bring it back.
+   */
   | 'deleted';
 
 /**
@@ -81,6 +87,11 @@ export interface NumberSyncResult {
   added: string[];
   /** This credential's numbers that were retired and are on the account again. */
   reactivated: string[];
+  /**
+   * Numbers that were pinned to a revoked credential of the same tenant and carrier account
+   * (the account registered again), now pinned to this one and `active`.
+   */
+  taken_over: string[];
   /** This credential's numbers already active. */
   unchanged: string[];
   /** This credential's numbers no longer on the account, now `retired` (never deleted). */

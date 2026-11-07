@@ -206,7 +206,8 @@ export async function superAdminTelephonyCredentialRoutes(
 
   /**
    * POST /super-admin/telephony-credentials/:id/sync-numbers — the carrier account's voice
-   * numbers become the tenant's numbers on this carrier (added, reactivated, retired);
+   * numbers become the tenant's numbers on this carrier (added, reactivated, taken over from a
+   * revoked registration of the same account, retired);
    * refused unless the credential is active. Audited with the counts and the numbers
    * changed (numbers are not secret).
    */
@@ -220,11 +221,11 @@ export async function superAdminTelephonyCredentialRoutes(
     const { credential, sync } = r.value;
     log.info({
       credentialId: credential.id, listed: sync.listed, added: sync.added.length, reactivated: sync.reactivated.length,
-      retired: sync.retired.length, conflicts: sync.conflicts.length, active: sync.active_numbers,
+      takenOver: sync.taken_over.length, retired: sync.retired.length, conflicts: sync.conflicts.length, active: sync.active_numbers,
     }, 'Telephony credential numbers synced');
     audit(request, 'sync_telephony_credential_numbers', credential, {
       listed: sync.listed, active_numbers: sync.active_numbers,
-      added: sync.added, reactivated: sync.reactivated, retired: sync.retired, conflicts: sync.conflicts,
+      added: sync.added, reactivated: sync.reactivated, taken_over: sync.taken_over, retired: sync.retired, conflicts: sync.conflicts,
     });
     // `TelephonyCredentialSyncNumbersResponse`; the row's Dates serialise to its ISO strings.
     const body: Omit<TelephonyCredentialSyncNumbersResponse, 'credential'> & { credential: TelephonyCredentialRecord } = { credential, sync };

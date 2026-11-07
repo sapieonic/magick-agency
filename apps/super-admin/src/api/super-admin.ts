@@ -546,7 +546,8 @@ export async function revokeTelephonyCredential(id: string): Promise<TelephonyCr
 
 /**
  * Read the carrier account's numbers and make its voice numbers the tenant's: added,
- * reactivated, retired (never deleted), and the conflicts left alone. Only an `active`
+ * reactivated, taken over from a revoked credential of the same account, retired (never
+ * deleted), and the conflicts left alone. Only an `active`
  * credential syncs (409 `credential_not_active`).
  */
 export async function syncTelephonyCredentialNumbers(id: string): Promise<TelephonyCredentialSyncNumbersResponse> {

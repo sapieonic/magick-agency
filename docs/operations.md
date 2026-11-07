@@ -510,9 +510,12 @@ Then per tenant:
    nothing, PL1).
 2. **Sync numbers.** "Sync numbers" on the credential copies the account's numbers into the number
    inventory, pinned to the credential and assigned to the tenant for every account. The summary
-   says what was added, reactivated, retired, unchanged or skipped, and any conflict (a number
-   already registered elsewhere is never taken over). Run it again after numbers change on the
-   Plivo account. Plivo numbers cannot be added by hand: "Add number" on the phone numbers page
+   says what was added, reactivated, taken over, retired, unchanged or skipped, and any conflict (a
+   number already registered elsewhere is never taken over, except from a revoked credential of
+   the same tenant and the same Plivo account: re-adding an account after revoking its credential
+   moves its numbers to the new one, PL5). Run it again after numbers change on the Plivo account.
+   Calls placed on the revoked credential keep it, so their recordings are fetched with it until it
+   is shredded (no call within the post-call hold), after which they cannot be played. Plivo numbers cannot be added by hand: "Add number" on the phone numbers page
    does not offer a carrier that takes tenant credentials (`takes_tenant_credentials` on
    `GET /super-admin/telephony-providers`) and points here instead. The super-admin console names
    carriers "Alias (Vendor)", e.g. "Pravah (Plivo)" (PL16).
