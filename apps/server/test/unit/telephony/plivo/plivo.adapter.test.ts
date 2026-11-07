@@ -18,6 +18,7 @@ import {
   PlivoAdapter,
   PLIVO_HANGUP_XML,
   createPlivoAdapter,
+  setPlivoTransportForTests,
   plivoNumber,
   renderPlivoAnswerXml,
   DEFAULT_PLIVO_SETTINGS,
@@ -448,6 +449,26 @@ describe('createPlivoAdapter (the BYOC factory)', () => {
     const a = createPlivoAdapter(credential, config);
     expect(JSON.stringify(a)).not.toContain(TOKEN);
     expect(JSON.stringify(a)).not.toContain('old-token');
+  });
+
+  it('sends through the test transport when one is set (the host in the URL stays Plivo`s fixed one), and through `fetch` again once cleared', async () => {
+    const f = fakeFetch([created]);
+    setPlivoTransportForTests(f.impl);
+    try {
+      await createPlivoAdapter(credential, config).cancelDialRequest(REQUEST_UUID).catch(() => undefined);
+    } finally {
+      setPlivoTransportForTests(null);
+    }
+    expect(f.sent[0]!.url).toBe(`https://api.plivo.com/v1/Account/${AUTH_ID}/Request/${REQUEST_UUID}/`);
+    const g = fakeFetch([created]);
+    const stub = vi.spyOn(globalThis, 'fetch').mockImplementation(g.impl as never);
+    try {
+      await createPlivoAdapter(credential, config).cancelDialRequest(REQUEST_UUID).catch(() => undefined);
+    } finally {
+      stub.mockRestore();
+    }
+    expect(f.sent).toHaveLength(1);
+    expect(g.sent).toHaveLength(1);
   });
 
   it('refuses a credential with no auth token or a malformed Auth ID', () => {

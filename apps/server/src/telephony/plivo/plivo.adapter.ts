@@ -471,6 +471,19 @@ export class PlivoAdapter implements TelephonyProvider {
   }
 }
 
+/**
+ * The transport adapters built by {@link createPlivoAdapter} send their requests through.
+ * Null (production): the global `fetch`. Only a test sets it, to the mock carrier
+ * (`test/mocks/plivo`), which serves Plivo's own paths: every URL is still built on the
+ * fixed `PLIVO_API_BASE`, so this moves no host and no configuration can reach it.
+ */
+let transport: PlivoFetch | null = null;
+
+/** Tests only: route new Plivo adapters' requests through `fetchImpl` (null restores `fetch`). */
+export function setPlivoTransportForTests(fetchImpl: PlivoFetch | null): void {
+  transport = fetchImpl;
+}
+
 /** The BYOC factory: a Plivo adapter on the credential's account, with the env settings. */
 export function createPlivoAdapter(credential: ResolvedCredential, config: AppConfig): PlivoAdapter {
   const token = credential.secret.reveal()['auth_token'];
@@ -485,5 +498,6 @@ export function createPlivoAdapter(credential: ResolvedCredential, config: AppCo
     authId: credential.accountRef,
     authToken: new Secret(token),
     previousAuthTokens: previous,
+    ...(transport ? { fetchImpl: transport } : {}),
   });
 }
