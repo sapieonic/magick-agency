@@ -331,9 +331,11 @@ describe('DNC — bulk add', () => {
     fireEvent.click(screen.getByRole('button', { name: /add to do not call/i }));
 
     // Re-uploading a regulator list is the expected case; 88 duplicates is the
-    // answer, not 88 errors.
-    expect(await screen.findByText(/already listed/i)).toBeTruthy();
-    expect(screen.getByText('88')).toBeTruthy();
+    // answer, not 88 errors. Wait for the summary itself: the page guide also says
+    // "already listed", so waiting on that text alone can resolve before the add
+    // has answered.
+    const duplicates = await screen.findByText('88');
+    expect(duplicates.parentElement?.textContent).toMatch(/88 already listed/i);
   });
 });
 

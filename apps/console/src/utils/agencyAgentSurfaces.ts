@@ -36,7 +36,7 @@
  * same agent. Reaching the chooser is what Leave is for.
  */
 
-export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts' | 'phone';
+export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts' | 'phone' | 'customers';
 
 export interface AgentSurface {
   id: AgentSurfaceId;
@@ -76,10 +76,25 @@ export const AGENT_SURFACES: readonly AgentSurface[] = [
  */
 export const SOFTPHONE_SURFACE: AgentSurface = { id: 'phone', to: '/dialer/phone', label: 'Soft phone' };
 
-/** The agent's screens for this account: the three, plus the soft phone when it is on for them. */
-export function agentSurfacesFor(options: { softphone: boolean }): readonly AgentSurface[] {
-  if (!options.softphone) return AGENT_SURFACES;
-  return [AGENT_SURFACES[0]!, SOFTPHONE_SURFACE, ...AGENT_SURFACES.slice(1)];
+/**
+ * Customer history (`docs/customer-history.md`): search one number and see every
+ * call to it. Every agent may search (CH1, `agency.customer_history.read` floors at
+ * `agent`), and the agency shell's top-bar box is out of an agent's reach, so the
+ * page is served here too. Kept out of {@link AGENT_SURFACES} for the soft phone's
+ * reasons: it is gated by a permission, and it is a tool, not a "My …" history.
+ * Last, after the agent's own screens.
+ */
+export const CUSTOMERS_SURFACE: AgentSurface = { id: 'customers', to: '/dialer/customers', label: 'Search a number' };
+
+/**
+ * The agent's screens for this account: the three, plus the soft phone when it is on
+ * for them, plus customer history when they may search.
+ */
+export function agentSurfacesFor(options: { softphone: boolean; customers?: boolean }): readonly AgentSurface[] {
+  const base = options.softphone
+    ? [AGENT_SURFACES[0]!, SOFTPHONE_SURFACE, ...AGENT_SURFACES.slice(1)]
+    : AGENT_SURFACES;
+  return options.customers ? [...base, CUSTOMERS_SURFACE] : base;
 }
 
 /** The surface at a path, or `null`. Exact match — none of these has children. */

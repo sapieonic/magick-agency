@@ -1,3 +1,9 @@
+import {
+  contextValueText,
+  heroColumnsFor,
+  isBlankContextValue,
+  MAX_HERO_FIELDS,
+} from '@magick-agency/domain/context-hero';
 import type { AgencyContextDisplay } from '../types/agency';
 
 /**
@@ -21,9 +27,6 @@ import type { AgencyContextDisplay } from '../types/agency';
  * file and put the thing that matters in column 3.
  */
 
-/** A value that is present but carries no information. */
-const PLACEHOLDER_VALUES = new Set(['-', '--', 'n/a', 'na', 'null', 'none', '']);
-
 export interface ResolvedContextField {
   /** Original header text, unchanged, as uploaded. */
   label: string;
@@ -42,51 +45,25 @@ export interface ResolvedContext {
   empty: ResolvedContextField[];
 }
 
-/** Hero fields are capped — the contract says "keep it to ~4; the console may cap it". */
-export const MAX_HERO_FIELDS = 4;
+/** Hero fields are capped: the contract says "keep it to ~4; the console may cap it". */
+export { MAX_HERO_FIELDS };
 
 /**
- * Heuristic hero selection, used ONLY when the operator configured no `hero`.
- * At most one per bucket, in bucket order, skipping empty values.
+ * Which columns are heroes is the ONE rule in `@magick-agency/domain/context-hero` (customer
+ * history reads it too): the configured `hero` columns, else a heuristic guess (at most one per
+ * bucket: a name, an amount, an identifier, a place; skipping empty values), never a hidden one.
+ * The panel turns off the rule's last stage (the first columns with a value): it lists every
+ * column under the heroes, so with nothing configured or guessed it pins nothing.
  *
- * The UI must present this as a guess ("auto-selected"), never as configuration —
- * showing a heuristic's output as if it were the operator's choice is how an
- * agent comes to trust the wrong four fields.
+ * The UI must present a guess as a guess ("auto-selected"), never as configuration: showing a
+ * heuristic's output as if it were the operator's choice is how an agent comes to trust the
+ * wrong four fields.
  */
-const HERO_HEURISTICS: Array<{ bucket: string; pattern: RegExp }> = [
-  { bucket: 'name', pattern: /^(full[\s_-]?)?name$|customer|contact|first.?name|client/i },
-  { bucket: 'money', pattern: /amount|balance|due|outstanding|premium|emi|total/i },
-  { bucket: 'identity', pattern: /policy|account|loan|invoice|order|ticket|ref/i },
-  { bucket: 'place', pattern: /city|branch|region|zone|state/i },
-];
-
-function isEmptyValue(raw: string): boolean {
-  return PLACEHOLDER_VALUES.has(raw.trim().toLowerCase());
-}
-
-/**
- * Stringify a JSONB value for display. `context` is `Record<string, unknown>`
- * because it is operator-uploaded file content — a nested object or an array is
- * unusual but not impossible, and must render as readable text rather than
- * `[object Object]`.
- */
-function toDisplayString(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
 export function resolveContextFields(
   context: Record<string, unknown>,
   display: AgencyContextDisplay | undefined,
   options: { maxHero?: number } = {},
 ): ResolvedContext {
-  const maxHero = options.maxHero ?? MAX_HERO_FIELDS;
   const originalOrder = Object.keys(context);
 
   // Case-insensitive matching, because the operator picks these names from a
@@ -94,10 +71,13 @@ export function resolveContextFields(
   const hiddenKeys = new Set((display?.hidden ?? []).map((k) => k.trim().toLowerCase()));
   const isHidden = (key: string): boolean => hiddenKeys.has(key.trim().toLowerCase());
 
-  const field = (key: string): ResolvedContextField => {
-    const value = toDisplayString(context[key]);
-    return { label: key, value, isEmpty: isEmptyValue(value) };
-  };
+  // `context` is operator-uploaded JSONB: a nested object or an array is unusual
+  // but not impossible, and renders as readable text, never `[object Object]`.
+  const field = (key: string): ResolvedContextField => ({
+    label: key,
+    value: contextValueText(context[key]) ?? '',
+    isEmpty: isBlankContextValue(context[key]),
+  });
 
   const resolveNames = (names: string[] | undefined): string[] => {
     if (!names) return [];
@@ -107,20 +87,17 @@ export function resolveContextFields(
         (key) => key.trim().toLowerCase() === name.trim().toLowerCase(),
       );
       // A configured name that is not in this contact's columns is skipped
-      // rather than rendered blank: campaigns outlive file formats, and a
-      // stale hero entry must not become an empty pinned field.
+      // rather than rendered blank: campaigns outlive file formats.
       if (match !== undefined && !isHidden(match) && !out.includes(match)) out.push(match);
     }
     return out;
   };
 
-  // Rule 4 applies at every stage, so `hidden` is filtered inside resolveNames
-  // as well as below — a column in both `hero` and `hidden` is hidden.
-  let heroKeys = resolveNames(display?.hero).slice(0, maxHero);
-
-  if (heroKeys.length === 0) {
-    heroKeys = pickHeuristicHeroes(originalOrder, context, isHidden, maxHero);
-  }
+  // Rule 4 applies at every stage, so a column in both `hero` and `hidden` is hidden.
+  const heroKeys = heroColumnsFor(context, display, null, {
+    max: options.maxHero ?? MAX_HERO_FIELDS,
+    fallbackToFirstColumns: false,
+  });
 
   const heroSet = new Set(heroKeys);
   const orderedKeys = resolveNames(display?.order).filter((key) => !heroSet.has(key));
@@ -141,27 +118,6 @@ export function resolveContextFields(
     fields: rest.filter((f) => !f.isEmpty),
     empty: rest.filter((f) => f.isEmpty),
   };
-}
-
-function pickHeuristicHeroes(
-  keys: string[],
-  context: Record<string, unknown>,
-  isHidden: (key: string) => boolean,
-  maxHero: number,
-): string[] {
-  const picked: string[] = [];
-  for (const { pattern } of HERO_HEURISTICS) {
-    if (picked.length >= maxHero) break;
-    const match = keys.find(
-      (key) =>
-        !picked.includes(key) &&
-        !isHidden(key) &&
-        pattern.test(key) &&
-        !isEmptyValue(toDisplayString(context[key])),
-    );
-    if (match) picked.push(match);
-  }
-  return picked;
 }
 
 /** True when the operator configured heroes; false when they were guessed. */

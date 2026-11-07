@@ -80,6 +80,13 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // where an unstaffed agent held contacts (moved to the pool, or `kept: true`).
   'agency_contacts.assigned',
   'agency_contacts.unassigned_on_unstaff',
+  // ── Dedicated caller IDs (decision DN10) ──────────────────────────────────────────
+  // A supervisor dedicated one of the campaign's caller IDs to an agent (`details`:
+  // campaign_id, user_id, caller_id, previous_caller_id), or the dedication was released
+  // (`details`: campaign_id, user_id, caller_id, cause: `supervisor` | `unstaff`). Ids and the
+  // number only.
+  'agency_campaign.agent_caller_id_set',
+  'agency_campaign.agent_caller_id_cleared',
   // ── Contact assignment: the agent's own contacts (decision CA12) ─────────────────────
   // An agent reopened their not-reached contacts into their queue (one row per request that
   // reopened any; `details`: campaign, counts). And an agent dialled one of their contacts
@@ -102,6 +109,13 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // outcome catalog, the call fields, recording, the summary profile, the default
   // caller ID. Account-wide, never campaign-scoped.
   'agency_softphone_settings.updated',
+  // ── Customer history (docs/customer-history.md CH10) ─────────────────────────
+  // One row per search and per export of one number's history, zero results included.
+  // `resource_id` is the search id; `details` carry the E.164 searched, the result count, the
+  // accounts the caller could see and their role (an export adds rows, filters, truncated).
+  // Tenant-wide reads, never campaign-scoped.
+  'agency_customer_history.searched',
+  'agency_customer_history.exported',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -142,6 +156,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   // settings row (`resource_id` is absent: one row per account, named by it).
   'agency_manual_call',
   'agency_softphone_settings',
+  // One customer-history search (`resource_id`: its `search_id`, `chs_` + 32 hex).
+  'customer_history',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

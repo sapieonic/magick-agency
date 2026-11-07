@@ -44,7 +44,7 @@ decoder packages and the absence of ffmpeg.
 ### What nginx serves
 
 The two UIs can't share an origin, because both own `/` and call the API on their own origin
-(`VITE_API_BASE_URL` empty; the console's can point at a separate API host instead, B25 and
+(`VITE_API_BASE_URL` empty; the console's can point at a separate API host instead, B27 and
 "API on its own host" below). So each one gets its own server block:
 
 - **:8080, console and carrier.** The SPA, plus a proxy for the console's API prefixes (the dev
@@ -110,7 +110,7 @@ this wrong are silent:
 - **:8080 reachable without going through the terminator:** a client chooses its own
   `request.ip` by sending `X-Forwarded-For`.
 
-**API on its own host (B25).** The terminator may send a second name (`api.example.com`) to
+**API on its own host (B27).** The terminator may send a second name (`api.example.com`) to
 the same :8080 block. The console, built with `CONSOLE_API_BASE_URL`, then calls that name
 cross-origin and the server answers CORS for the origins in `CORS_ALLOWED_ORIGINS`. The chain and
 the hop count are unchanged. The super-admin keeps calling its own origin: :8081 is the only block
@@ -196,7 +196,8 @@ production.
 | `TRUST_PROXY_HOPS` | `1` (min 1) | Number of reverse proxies in front (Q9) |
 | `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
 | `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`, `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` | `15000` (1000–600000), `200` (1–5000) | The insights rollup job (`docs/insights.md`): how often a pass recomputes the dirty 15-minute buckets, and how many a batch claims. The page's range sections lag the attempts by about one interval; `agency_insights_rollup_dirty_buckets` and `_oldest_dirty_seconds` say how far |
-| `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B25); the web image is then built with `CONSOLE_API_BASE_URL` |
+| `AGENCY_CUSTOMER_SEARCH_PER_MINUTE`, `AGENCY_CUSTOMER_SEARCH_TTL_MINUTES`, `AGENCY_CUSTOMER_EXPORT_MAX_ROWS` | `30` (1–10000), `30` (1–1440), `10000` (1–100000) | Customer history (`docs/customer-history.md`): searches and exports a minute per user (CH11, its own bucket besides `RATE_LIMIT_USER_MAX`), how long a search id serves its timeline and export, and the export's row cap (`X-Export-Truncated: true` past it). Timeline pages and `GET /proxy/agency/customers/options` are not charged to the per-minute cap |
+| `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B27); the web image is then built with `CONSOLE_API_BASE_URL` |
 | `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
@@ -360,6 +361,18 @@ Raise `max_connections` before raising `MEDIA_WORKERS`, `ANALYSIS_WORKERS` or a 
 (`:primary`, `:media0`, …): a worker pinned near 1 needs another core. It also shows child
 exits (`agy-cluster-child-crash` warns on any), IPC requests and handoffs. `/readyz?detail=1`
 gives the same per-process view on the host.
+
+### Customer history at scale
+
+`apps/server/scripts/bench-customer-history.ts` measures the customer-history search and a later
+timeline page through the real service on a seeded 1,000,000-contact tenant, and prints
+`EXPLAIN (ANALYZE, BUFFERS)` of every statement with nothing disabled. It is opt-in and never part
+of CI: it runs only against `localhost:5436/magick_agency_test_bench` (it drops that database's
+schema when it seeds) and refuses any other name or port. How to run it, its settings
+(`BENCH_DB_URL`, `BENCH_SEED_URL`, `BENCH_RESEED`, `BENCH_CONTACTS`, `BENCH_RUNS`,
+`BENCH_PLANS_FILE`) and the figures of 2026-11-06 are in
+[`customer-history.md`](customer-history.md) §4. Rerun it after a change to
+`customer-history.repository.ts` or to the indexes it reads.
 
 ## Deployment invariants
 

@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-05.
+"is it done". As of 2026-11-06.
 
 ## Summary
 
@@ -881,24 +881,166 @@ work is recorded (see the last bullet).
   this work is recorded, so the case counts beside its test files in [`modules.md`](modules.md)
   are read from the source, not from a run, and nothing here claims a pass.
 
+### Customer history 2026-11-06 (CH1–CH13, [`customer-history.md`](customer-history.md))
+
+ClickUp "Customer history: search one phone number and see every interaction across the tenant's
+campaigns". Built on the server, the console and the agent app (`001c3b6`), then reviewed and fixed
+the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–CH13.
+
+- **Number rule** (CH4, CH5): `packages/domain/src/customer-search-number.ts`, run by the
+  console's preview and the server's search, with a Dart port in `agency_wire`; one table
+  (`fixtures/agent/customer-search-numbers.json`) holds all three. Full numbers only; validity is
+  judged on length, not on a mobile prefix.
+- **Server**: `POST /proxy/agency/customers/{search,timeline,export}` and
+  `GET /proxy/agency/customers/options` (the picker's default calling code) in
+  `proxy-agency-customers`, permission `agency.customer_history.read` (agent floor), every read
+  bound to the caller's accounts in SQL and on an index (migration `0016` adds the soft-phone
+  destination index, `0017` the roster index), a 30-minute search id so the number never reaches a URL, audit rows for every
+  successful search and export, a per-user cap (30 a minute) whose 429 carries the friendly
+  message. Each timeline page is one keyset query per source; the summary is built once from
+  aggregates; the export is one page as large as its cap.
+- **PR #50 review fixes**: the history covers a number's newest 2,000 roster rows everywhere
+  (CH14, migration `0017`: a per-account index walk that stops at the cap, so a placeholder on
+  200,000 rows no longer makes every search, page and export read all of them); a callback entry
+  is paged on its call's `created_at`, so a re-booking between pages no longer skips or repeats it;
+  the booker's name comes with the booking (one round trip fewer per search); the export's count is
+  the search's own (`callStats` and the DNC reads), its separate count statement gone. Only accounts
+  with the agency dialer on are read (the flag is a data boundary, CH2); a platform default calling
+  code that is not one of the listed countries is its own picker entry and follows the roster
+  ingest's rule (no longer India); the console re-reads the default after a failed read; the
+  hero-field rule has one copy (`packages/domain/src/context-hero.ts`), the contact panel's
+  differences expressed as options.
+- **Review fixes** (same day): campaign DNC marks scoped through their campaign's account (an
+  account-B viewer saw account A's mark before); hero fields by the contact panel's rule
+  (`packages/domain/src/context-hero.ts`); the upload file of a tenant-level uploader found; only
+  unspent overrides, with their follow-up; "Recording expired" only when a recording was asked for;
+  queued attempts no longer live; real keyset paging; the roster-row cap reported
+  (`contacts_truncated`); unknown countries and non-JSON bodies refused with the family's code; the
+  console's and the app's behaviour as in `customer-history.md` §5.
+- **Measured** (spec §6): on a 1,000,020-contact tenant with the number on 20 campaigns and 580
+  calls, a search (summary and first page) takes 15.1 ms median / 17.6 ms p95 for a tenant-level
+  owner and 6.3 / 10.2 ms for an account-scoped supervisor; a later page 4–5 ms; no full scan in
+  any plan (`customer-history.md` §4, `apps/server/scripts/bench-customer-history.ts`).
+- **Console**: a "Search a number" box in the agency top bar, and a "Search a number" entry in the
+  agent navigation; the page at `/agency/customers` and `/dialer/customers`.
+- **Agent app**: the search and the page from My calls, with every console filter (the channel and
+  connected-only on the page, the rest in a sheet) and a copy button; no CSV export (CH13). First
+  run under Dart and Flutter by the mobile CI job on PR #50 (`flutter analyze`, `flutter test`,
+  `agency_wire` `dart test` 493, the Android build), green; the review fixes after it are checked by
+  the job's next run.
+- **Found, not fixed** (CH12 e): the roster ingest keeps a bracketed trunk `(0)` that the search
+  and the soft phone drop, so `+44 (0)20 …` typed in a roster is not found; pinned `it.fails`.
+- **Not shown** (CH12 a): DNC removals (a hard delete whose audit row carries no number).
+- **Inferred, not stored** (CH12 b): the upload file a contact came from is the campaign's import
+  whose run window covers the contact's creation; no column links them.
+- **Never "Removed from roster"** (CH12 c): roster replace does not remove contacts (B15, no
+  supersede), so the history never shows a row as removed.
+
+### Dedicated caller ID per agent 2026-11-06 (DN1–DN10)
+
+ClickUp "Dedicated caller ID per agent allocation". A supervisor dedicates one of a campaign's
+caller IDs to an agent staffed on it, and every dial to a contact that agent owns on the campaign
+goes out from that number. Design and defaults: [`decisions.md`](decisions.md) §4, "Dedicated
+caller ID per agent". Server, db, contracts and console.
+
+- Migration `0018_agent_caller_ids.sql`: `agency_campaign_agent_caller_ids`, one number per agent
+  and one agent per number on a campaign (DN1). A row counts only while its agent is staffed on
+  the campaign and was set since that staffing began (`EFFECTIVE_DEDICATION_SQL`, every read), so
+  a row an unstaff left behind never dials, blocks or revives.
+- One rule for every dial path, `resolveCallerId` (`agency/pacing/caller-id-pool.ts`): the
+  contact owner's dedicated number while the campaign still has it, else the rotation (the usable
+  numbers minus the dedicated ones, or all of them when every one is dedicated). Every dial path
+  reads the campaign's dedications from one per-campaign cache (`DedicatedCallerIdCache`, 2 s TTL,
+  invalidated by `dedications_changed`, which the PUT, the DELETE and every unstaff publish; read
+  through in a media worker). Pacing reads them once per dialling batch, before it reserves an
+  agent or claims a contact (a failed read dials nothing, records the idle reason
+  `dedications_unavailable` and logs, throttled per campaign, once a minute while it keeps
+  failing); the agent's own call and the wrap-up redial (WR7's "same number" kept only while it is
+  in the rotation) ask its `callerIdForContact`, and the soft phone tagged to a campaign feeds its
+  map to `selectCallerId` (DN2–DN4).
+- The soft phone tagged to a campaign refuses a caller ID outside the campaign's set as before.
+  An in-set request goes through the same rule as the redial's previous number: the matched
+  contact owner's dedicated number whatever was requested, else the requested number while it is
+  in the rotation, else the rotation's pick, so another agent's dedicated number never goes out
+  for a contact that is not theirs (the mobile app sends the campaign's first caller ID by
+  default; the console's tagged default is Automatic, sending none). The response's `caller_id`
+  says which number was dialled.
+- Supervisor routes `GET /campaigns/:id/agent-caller-ids`, `PUT` / `DELETE
+  /campaigns/:id/agents/:userId/caller-id` beside the contact-assignment routes; audited
+  `agency_campaign.agent_caller_id_set` / `_cleared` (DN5, DN10). Only the PUT is behind
+  `agency_contact_assignment_enabled` (403 `assignment_disabled`); the list and the release work
+  with the flag off, so a dedication made while it was on can be seen and released (DN9). The PUT
+  checks the staffing and the campaign's caller IDs inside its transaction, under locks an
+  unstaff and a campaign PATCH meet. The campaign PATCH refuses to drop a dedicated number
+  (`caller_id_dedicated`, DN6), checked under the campaign row's lock.
+- Unstaff releases the number on all three paths whatever `on_unstaff` says (DN7), except on a
+  campaign the agent has been staffed on again by the time the release runs; it audits only a
+  number that was effective on the staffing that closed, and deletes an older stale row silently.
+- The agent's My contacts summary carries `caller_id` (null when the read fails, with a warning,
+  rather than failing the summary). The console's campaign Agents tab sets and releases the
+  numbers; the agent's My contacts panel names theirs.
+- Counts (2026-11-06, from inside each package): `apps/server` unit 8207 passed + 42 skipped (410 files), rest lane
+  2022 passed + 9 expected fail + 1 skipped (206 files + 1 skipped), wall-clock lane 15 (3 files); `packages/db` unit 428 (25 files), integration 573 (55 files);
+  `packages/contracts` 301 (11 files), `contracts-literals --check` up to date; `apps/console`
+  5434 (284 files); `apps/super-admin` 446, `packages/web-ui` 235, `packages/domain` 61,
+  `packages/observability` 14; `pnpm lint` clean at the root; `pnpm test:grafana` 33 and
+  `pnpm test:release` 10 pass; console and server builds clean. Under full-suite load a
+  plan-shape assertion (`agency/insights-reads.test.ts`, `db/attempt-indexes-migration.test.ts`)
+  and a media WebSocket load case (`load/voicelink-media-ws-load.test.ts`) have each failed once;
+  all three pass alone (3 of 3) and in the full rerun these counts come from, and none touches
+  this feature's code.
+- Not run: the mobile app's `agency_wire` `dart test` (no Dart toolchain on the build machine;
+  the summary fixture gained `caller_id`, which the Dart decoder ignores as an unknown key).
+- Follow-ups ([`decisions.md`](decisions.md) §5): per-number concurrency (`phone_numbers.max_concurrent_calls`
+  is enforced on no dial path, and a dedication concentrates traffic on one number); the mobile
+  app omitting `caller_id` by default (its `caller_ids[0]` default is now kept only while it is in
+  the rotation) and showing the agent's dedicated number.
+
 ## Test counts
 
-Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
-review fixes, from inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33
-and `pnpm test:release` 10 pass; `pnpm build` clean). Integration on `05e988e`; unit, release,
-Grafana and build again after merging `main` (#36):
+Latest run, 2026-11-06, the customer-history branch after its PR #50 review fixes. The agent app's
+Dart suites cannot run where it was built (no SDK), so there is no `apps/mobile` row for this run.
+The mobile CI job on PR #50 ran them before the review fixes, green (`flutter analyze`,
+`flutter test`, `agency_wire` `dart test` 493, `agent_audio` 124, the Android build); the review
+fixes' Dart changes are checked by its next run.
+
+From inside each package: `pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
+`pnpm test:release` 10 pass; `pnpm build` clean; `contracts-literals --check` up to date (51
+vocabularies).
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 8036 passed + 42 skipped (404 files) | rest lane 1916 passed + 9 expected fail + 1 skipped (198 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 562 (53 files) |
-| `apps/console` | 5122 (270 files) | — |
-| `apps/super-admin` | 436 | — |
-| `packages/contracts` | 281, `contracts-literals --check` up to date | — |
-| `packages/web-ui` | 235 | — |
-| `packages/domain` | 61 | — |
-| `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1404, `agency_wire` 399, `flutter analyze` and `dart analyze` (`agency_wire`) clean, Flutter 3.47.7 | — |
+| `apps/server` | 8231 passed + 1 expected fail + 42 skipped (412 files) | rest lane 2036 passed + 9 expected fail + 1 skipped (205 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 574 (56 files) |
+| `apps/console` | 5500 (287 files) | — |
+| `apps/super-admin` | 446 (33 files) | — |
+| `packages/contracts` | 332 (10 files) | — |
+| `packages/web-ui` | 235 (20 files) | — |
+| `packages/domain` | 137 (8 files) | — |
+| `packages/observability` | 14 (3 files) | — |
+
+Two earlier full rest-lane runs of this work failed `insights-reads.test.ts`'s pace plan case:
+`customer-history.test.ts` ran a bare `ANALYZE` on its bulk seed, and the statistics outlived the
+rows into the later file's plan. Its plans (and the 0016 migration test's) now ANALYZE inside the
+plan's rolled-back transaction, as `insights-reads.test.ts` does; the run above is after that fix.
+One of those runs also failed `load/voicelink-media-ws-load.test.ts` once (seed 24301, 1 of 2
+alone; code this branch does not touch).
+
+The counts above are after the `/simplify` cleanup (named SQL fragments, one callbacks
+statement, a count-only export statement, the shared audit bounds and dialer gate). Its first rest
+run failed `softphone-policy-routes.test.ts`'s emoji note case only because a stand-in local
+Postgres had a `SQL_ASCII` database (byte lengths, not characters); recreated as UTF8, as the
+Docker image is, the lane above is green.
+
+The counts above are after the PR #50 review fixes. Two plan tests outside this feature tied on
+the test database's near-empty tables and followed whatever rows earlier files left (the file
+order changed with the new files): 0003's `countLive` plan (0005's `idx_agency_attempts_account_live`
+carries the same predicate; the test now drops it inside its rolled-back transaction) and
+`insights-reads.test.ts`'s pace (its contacts side now ANALYZEd inside the rolled-back
+transaction too). The CH14 placeholder seeds (200,000 rows, rolled back) are followed by a
+`VACUUM`, so their dead pages do not size a later file's tables. One run failed
+`local-cache-invalidation.test.ts` and `agent-transition-ordering.test.ts` (Redis and timing;
+green alone and in the full rerun) and one `load/voicelink-media-ws-load.test.ts` (seed 24301).
 
 After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
 `/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8
@@ -936,7 +1078,7 @@ pass; details and the one file that fails only in the combined run: "Wrap-up red
 | `apps/server` | 7720 passed + 42 skipped (386 files) | rest lane 1602 passed + 9 expected fail; wall-clock lane 15 (177 files) |
 | `packages/db` | 427 | 519 (48 files) |
 | `apps/console` | 5015 (256 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 252 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -954,7 +1096,7 @@ package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 a
 | `apps/server` | 7590 passed + 42 skipped (380 files) | 1545 passed + 10 expected fail + 1 failed (167 files) |
 | `packages/db` | 427 | 512 (47 files) |
 | `apps/console` | 4944 (252 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -971,7 +1113,7 @@ clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` p
 | `apps/server` | 7430 passed + 42 skipped (360 files) | 1511 passed + 10 expected fail (161 files) |
 | `packages/db` | 427 | 506 (46 files) |
 | `apps/console` | 4917 (251 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -991,7 +1133,7 @@ test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana
 | `apps/server` | 7170 passed + 4 expected fail (340 files) | 1476 passed + 10 expected fail (154 files) |
 | `packages/db` | 427 | 495 (44 files) |
 | `apps/console` | 4808 (245 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 94 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 55 | — |
@@ -1142,6 +1284,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
+| Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
 
 ## Deployment invariants
@@ -1172,6 +1315,71 @@ The production image and compose file (`docker/`, see [`operations.md`](operatio
 the server publishes no port, Redis runs with AOF and `noeviction`, the image is
 `NODE_ENV=production` and migrates on start, the grace is 45 s.
 
+### Tenant/account-scoped console URLs 2026-11-05 (B26)
+
+Console links did not name a tenant or account, so a link sent to a colleague opened whichever
+account their browser last had open. Every signed-in console page is now served under
+`/t/:tenantId/a/:accountId/…` ([`decisions.md`](decisions.md) B26).
+
+- The prefix is the router's basename (`components/routing/ScopedRouter`, over the history
+  `contexts/UrlScopeContext` owns), so no route, link or `navigate()` changed. `TenantContext`
+  derives the active account from the URL whenever it names a listed account; `localStorage` is only
+  the fallback. A tenant or account switch reloads the console at the new account's home (2026-11-06,
+  below).
+  `components/routing/ScopeGate` re-points an unscoped URL (an old `/dialer` bookmark) at the
+  active account and refuses a link to a tenant or account the viewer cannot open ("You can’t
+  open this workspace / account", with Go to my workspace and Sign out). Sign-in, invite and
+  verification pages stay unscoped; a signed-out visitor keeps the scope through `?next=`.
+- PostHog receives the prefix as `/t/:tenant/a/:account`, in paths, URLs, autocapture hrefs and
+  the sign-in page's encoded `next`. The campaign-completion email links under the campaign's own
+  scope (unscoped when its account does not resolve).
+- A fresh-context review found four defects, all fixed and pinned by tests that fail on the
+  pre-fix code: an account switch followed by `navigate()` in one handler (the soft phone's
+  "Go to station" for a sibling account) hung on a spinner; Try again on a narrowed account list
+  never opened the linked account; Retry after an outage opened the first account instead of the
+  linked one; a cold load of a scoped sign-in URL rendered a blank page. Back/forward between
+  accounts no longer remounts the page. `appRouteTable.test.ts` pins every signed-in route inside
+  the gate.
+- 2026-11-06: a tenant or account switch no longer keeps the page the user was on (a record page
+  carried into an account it does not belong to showed its not-found state). Inside the app it is a
+  full page load: an account switch at `/t/<tenant>/a/<account>`, a tenant switch at the new
+  tenant's first account (`utils/pageLoad.ts`; refined in review, next bullet). The soft
+  phone's two cross-account moves name their destination (the station, the soft phone); the invite
+  claim, on an unscoped page, still only records the tenant it joined. The duplicate decision ID is
+  gone: the invite-claims ruling keeps B25 and the API-on-its-own-host decision is B27.
+- 2026-11-06, review of [sapieonic/magick-agency#48](https://github.com/sapieonic/magick-agency/pull/48),
+  each fix pinned by a test that fails on the code before it:
+  - Retry no longer re-points a refused link at the first account. It re-points only a URL
+    whose account was open and has since gone, and lands at the replacement's home, not on the old record's page.
+  - A link to a tenant or account the viewer cannot open falls back to the workspace this
+    browser last had, not the session's first tenant, and is never saved. "Go to my workspace" is a full load of `/`.
+  - A tenant switch resolves the new tenant's accounts first and loads its scope directly. It
+    no longer writes `localStorage` before the browser commits the load, so cancelling the station's leave-page prompt changes nothing.
+    A tenant with no account to open is switched to in place, at `/`.
+  - The tenant adoption re-runs when the session's tenants change, so `ScopeGate`'s wait for
+    it ends.
+  - `TenantProvider` requires `UrlScopeProvider`, so no test drives a switch path production
+    never takes.
+  - The scope and location contexts are split, so a navigation re-renders only the router.
+  - The URL prefix's shape moved to `packages/contracts` (`console-urls`) for the console and
+    the server's email link alike.
+  - PostHog redaction skips its scope passes for strings with no `/t/` or `%2Ft%2F`.
+- **Left open:** signing out and in as a different user keeps the first user's scoped `next`, which the second user may
+  be refused (the refusal offers a way out). The history comes from react-router's
+  `UNSAFE_createBrowserHistory`; the routing tests exercise it, so an upgrade that breaks it goes red.
+- Counts, 2026-11-06, after the review fixes:
+  - `apps/console`: 5383 (282 files), lint clean, build clean. (5375 after reload-on-switch and a
+    simplify pass; 5371, 281 files, on 2026-11-05.)
+  - `packages/contracts`: 299 (10 files).
+  - `apps/server`: lint clean; unit 8163 passed + 42 skipped (407 files).
+  - Server integration as CI runs it:
+    - `INTEGRATION_LANE=rest`: 1978 passed + 9 expected fail + 1 skipped (203 files + 1 skipped).
+    - `INTEGRATION_LANE=wall-clock`: 15 (3 files).
+  - Postgres 16 and Redis ran locally on 5436 and 6383. The test database must be UTF-8:
+    on `SQL_ASCII`, `softphone-policy-routes.test.ts`'s emoji note fails the length check.
+  - The Dart tests were not run (no Dart SDK here). The contract change adds a helper, not a wire
+    type or literal, and `contracts-literals --check` is unchanged.
+
 ### Pre-deploy checklist
 
 - [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
@@ -1198,7 +1406,7 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       them; a failure stops the container).
 - [ ] Firebase: agency's domain in the authorised domains, `FIREBASE_PROJECT_ID` set (no service
       account: tokens are verified against Google's public keys).
-- [ ] API on its own host only (B25, `DEPLOYMENT.md` 7.3): `web` built with `CONSOLE_API_BASE_URL`,
+- [ ] API on its own host only (B27, `DEPLOYMENT.md` 7.3): `web` built with `CONSOLE_API_BASE_URL`,
       every origin the console is served from in `CORS_ALLOWED_ORIGINS`, the preflight `curl` in 7.3
       names the app's origin, and the mobile app's link host is the console's name.
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,

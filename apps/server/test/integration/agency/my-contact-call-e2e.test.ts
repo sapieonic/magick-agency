@@ -367,4 +367,38 @@ describe('an agent dials one of their own contacts — real app, real runtime, f
     expect(twice.statusCode, twice.body).toBe(409);
     expect(twice.json()).toMatchObject({ code: 'outside_calling_hours', details: { next_open_at: expect.any(String) } });
   }, 60_000);
+
+  it('3. the agent\'s own call goes out from their dedicated caller ID (DN4)', async () => {
+    await reset();
+    const campaign = await insertAgencyCampaign({
+      tenant_id: tenant, account_id: account, status: 'running',
+      wrapup_seconds: 0, wrapup_auto_return: true, disposition_catalog: CATALOG,
+      caller_ids: ['+918041000001', '+918041000002', '+918041000003'],
+    });
+    // A callback for tomorrow holding a retry-delay override: not due, so pacing never takes it.
+    const own = await insertAgencyContact(campaign.id, {
+      tenant_id: tenant, account_id: account, phone_e164: '+919812350004',
+      state: 'pending', attempt_count: 1, last_outcome: 'connected', last_disposition: 'callback',
+      next_attempt_at: new Date(Date.now() + 86_400_000),
+      assigned_user_id: agent.id, assigned_at: new Date(),
+      override_disposition: 'callback', override_retry_delay: true, override_granted_at: new Date(),
+    });
+    const { sessionId, frames } = await station(campaign.id);
+    // After the staffing `station` writes: a dedication counts only while its agent is staffed
+    // and was set since (DN1).
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agent_caller_ids (tenant_id, account_id, campaign_id, user_id, caller_id) VALUES ($1, $2, $3, $4, $5)`,
+      [tenant, account, campaign.id, agent.id, '+918041000003'],
+    );
+
+    const res = await post(`/proxy/agency/my-contacts/${own.id}/call`, agent, { campaign_id: campaign.id, session_id: sessionId });
+    expect(res.statusCode, res.body).toBe(200);
+    const attemptId = res.json().attempt_id as string;
+    expect((await agencyAttemptRepository.findById(attemptId))?.caller_id).toBe('+918041000003');
+
+    await waitFor('reserved', () => frames.find((f) => f['event'] === 'reserved' && f['attempt'].attempt_id === attemptId));
+    ringOut(await legOf(attemptId));
+    await waitFor('ended', async () => (await agencyAttemptRepository.findById(attemptId))?.state === 'ended');
+    await waitFor('available', async () => (await runtime.agents.get(sessionId))?.state === 'available');
+  }, 60_000);
 });

@@ -8,6 +8,7 @@ import type {
   AgencyAgentRetryErrorCode,
   AgencyAssignmentErrorCode,
 } from '@magick-agency/contracts/api/agency/assignment';
+import type { AgencyAgentCallerIdErrorCode } from '@magick-agency/contracts/api/agency/agent-caller-id';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
@@ -22,7 +23,7 @@ import { settledValue } from '../helpers/settled.js';
 export function refuse(
   reply: FastifyReply,
   status: number,
-  code: AgencyAssignmentErrorCode | AgencyAgentRetryErrorCode,
+  code: AgencyAssignmentErrorCode | AgencyAgentRetryErrorCode | AgencyAgentCallerIdErrorCode,
   message: string,
   details?: Record<string, unknown>,
 ): FastifyReply {
@@ -66,6 +67,24 @@ export async function requireAssignmentEnabled(request: FastifyRequest, reply: F
   if (await assignmentEnabledFor(request.tenantId!, request.accountId)) return true;
   refuse(reply, 403, 'assignment_disabled', AGENT_SCOPE_MESSAGES.assignment_disabled);
   return false;
+}
+
+/**
+ * The supervisor routes' guard, after `requirePermission`: the campaign id's shape (a malformed
+ * id is the not-found answer an unknown one gets, never a `22P02`) → the flag when `gated`
+ * (403 `assignment_disabled`) → ownership ({@link supervisedCampaign}). Null once it has replied.
+ */
+export async function guardSupervisedCampaign(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply,
+  opts: { gated: boolean },
+): Promise<AgencyCampaignRecord | null> {
+  if (!isUuid(request.params.id)) {
+    refuse(reply, 404, 'campaign_not_found', 'Campaign not found.');
+    return null;
+  }
+  if (opts.gated && !(await requireAssignmentEnabled(request, reply))) return null;
+  return supervisedCampaign(request, reply, request.params.id.toLowerCase());
 }
 
 /**

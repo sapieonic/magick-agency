@@ -332,6 +332,34 @@ describe('analytics/posthog — the invite token never leaves the browser', () =
     expect(out.properties.resend).toBe('/invites/resend');
   });
 
+  it('normalises the tenant/account scope in the URLs posthog-js adds itself', async () => {
+    const send = await beforeSend();
+    const TENANT = '3f2b8c1e-5d4a-4e7b-9c6d-1a2b3c4d5e6f';
+    const ACCOUNT = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+    const scoped = `/t/${TENANT}/a/${ACCOUNT}/agency/campaigns`;
+
+    const out = send({
+      uuid: 'e7',
+      event: '$pageview',
+      properties: {
+        $current_url: `https://app.example.com${scoped}?tab=insights`,
+        $pathname: scoped,
+        $host: 'app.example.com',
+      },
+      $set_once: { $initial_current_url: `https://app.example.com${scoped}` },
+    }) as { properties: Record<string, string>; $set_once: Record<string, string> };
+
+    expect(out.properties.$current_url).toBe(
+      'https://app.example.com/t/:tenant/a/:account/agency/campaigns?tab=insights',
+    );
+    expect(out.properties.$pathname).toBe('/t/:tenant/a/:account/agency/campaigns');
+    expect(out.$set_once.$initial_current_url).toBe(
+      'https://app.example.com/t/:tenant/a/:account/agency/campaigns',
+    );
+    expect(JSON.stringify(out)).not.toContain(TENANT);
+    expect(JSON.stringify(out)).not.toContain(ACCOUNT);
+  });
+
   it('leaves an ordinary event alone', async () => {
     const send = await beforeSend();
     const properties = { $current_url: 'https://app.example.com/app/calls', count: 3 };

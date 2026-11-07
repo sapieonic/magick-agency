@@ -4,6 +4,7 @@ import { Menu, Settings } from 'lucide-react';
 import { AgencySidebar } from './AgencySidebar';
 import { TenantSwitcher } from './TenantSwitcher';
 import { AccountSwitcher } from './AccountSwitcher';
+import { CustomerSearchPopover } from '../agency/customers/CustomerSearchPopover';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { accountCreateAccess } from '../../utils/accountCreateAccess';
@@ -68,6 +69,14 @@ export function AgencyLayout() {
             <Settings size={16} aria-hidden="true" />
             <span>Team &amp; settings</span>
           </Link>
+
+          {/*
+            "Search a number" (`docs/customer-history.md` §5): one phone number,
+            every call to it, from any agency page. Hidden without
+            `agency.customer_history.read`, and only once an account is resolved,
+            since the search carries the account header like every agency call.
+          */}
+          {accountId && <CustomerSearchPopover />}
 
           <div className={styles.topbarRight}>
             <TenantSwitcher />

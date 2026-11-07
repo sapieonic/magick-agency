@@ -33,7 +33,11 @@ const CAMPAIGN_SCOPED_PREFIX = /^(agency_|dnc_)/;
  * that always returns nothing, so the module's type narrows it out and this list
  * states it for the runtime checks.
  */
-const ACCOUNT_WIDE: ReadonlySet<string> = new Set(['agency_softphone_settings.updated']);
+const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
+  'agency_softphone_settings.updated',
+  'agency_customer_history.searched',
+  'agency_customer_history.exported',
+]);
 
 const CAMPAIGN_SCOPED = {
   test: (action: string) => CAMPAIGN_SCOPED_PREFIX.test(action) && !ACCOUNT_WIDE.has(action),

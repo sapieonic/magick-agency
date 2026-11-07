@@ -4,6 +4,7 @@ import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
 import { buildLiterals } from '../../../tooling/contracts-literals.mjs';
 import actions from '../fixtures/agent/actions.json';
+import customerHistory from '../fixtures/agent/customer-history.json';
 import literals from '../fixtures/agent/literals.json';
 import platform from '../fixtures/agent/platform.json';
 import reads from '../fixtures/agent/reads.json';
@@ -98,6 +99,33 @@ interface InviteClaimRefusalBody {
   status: PlatformApi.InviteUnavailableStatus | PlatformApi.InviteClaimRefusalStatus;
   email?: string;
 }
+
+// Customer history (docs/customer-history.md): the search, the timeline and their refusals.
+/**
+ * The search answer with its timeline's entries checked one by one below: a JSON array of mixed
+ * entries is typed as a union of shapes, which the stray-key walk cannot match to the
+ * contract's discriminated union as a whole.
+ */
+type CustomerSearchResponseShell = Omit<AgencyApi.CustomerSearchResponse, 'timeline'> & {
+  timeline: { entries: unknown[]; next_cursor: string | null };
+};
+
+const CUSTOMER_HISTORY = {
+  search_request: fits<AgencyApi.CustomerSearchRequest>()(customerHistory.search_request),
+  search_response: fits<CustomerSearchResponseShell>()(customerHistory.search_response),
+  // The answer's timeline entries, one sample per kind (the runtime test below holds them equal).
+  entry_softphone_call: fits<AgencyApi.CustomerTimelineSoftphoneCall>()(customerHistory.entry_softphone_call),
+  entry_callback: fits<AgencyApi.CustomerTimelineCallback>()(customerHistory.entry_callback),
+  entry_campaign_call: fits<AgencyApi.CustomerTimelineCampaignCall>()(customerHistory.entry_campaign_call),
+  entry_dnc_mark: fits<AgencyApi.CustomerTimelineDncMark>()(customerHistory.entry_dnc_mark),
+  entry_roster_entry: fits<AgencyApi.CustomerTimelineRosterEntry>()(customerHistory.entry_roster_entry),
+  search_response_empty: fits<AgencyApi.CustomerSearchResponse>()(customerHistory.search_response_empty),
+  timeline_request: fits<AgencyApi.CustomerTimelineRequest>()(customerHistory.timeline_request),
+  timeline_page_last: fits<AgencyApi.CustomerTimelinePage>()(customerHistory.timeline_page_last),
+  error_invalid_number: fits<AgencyApi.CustomerHistoryErrorResponse>()(customerHistory.error_invalid_number),
+  error_search_expired: fits<AgencyApi.CustomerHistoryErrorResponse>()(customerHistory.error_search_expired),
+  options_response: fits<AgencyApi.CustomerSearchOptionsResponse>()(customerHistory.options_response),
+};
 
 // The station frames are the dialer runtime's own shapes (the proxy relays them unchanged).
 const STATION = {
@@ -402,12 +430,40 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['softphone', 'refusal_outside_hours', 'timezone_source', 'hours_timezone_sources'],
   ['softphone', 'refusal_session_on_campaign', 'state', 'agent_states'],
   ['softphone', 'refusal_outcome_pending', 'call.state', 'manual_call_states'],
+  // Customer history.
+  ['customer-history', 'search_request', 'by', 'customer_search_bys'],
+  ['customer-history', 'search_response', 'key.by', 'customer_search_bys'],
+  ['customer-history', 'search_response', 'summary.contacts.0.state', 'contact_states'],
+  ['customer-history', 'search_response', 'summary.contacts.1.state', 'contact_states'],
+  ['customer-history', 'search_response', 'summary.contacts.0.campaign.status', 'campaign_statuses'],
+  ['customer-history', 'search_response', 'summary.totals.last_contacted.channel', 'customer_timeline_channels'],
+  ['customer-history', 'search_response', 'summary.totals.last_contacted.outcome', 'attempt_outcomes'],
+  ['customer-history', 'search_response', 'summary.dnc.0.scope', 'dnc_entry_scopes'],
+  ['customer-history', 'search_response', 'summary.open.live_calls.0.channel', 'customer_timeline_channels'],
+  ['customer-history', 'search_response', 'summary.filter_options.outcomes.0', 'attempt_outcomes'],
+  ...[0, 1, 2, 3, 4].map((i): [string, string, string, string] => [
+    'customer-history', 'search_response', `timeline.entries.${i}.kind`, 'customer_timeline_kinds',
+  ]),
+  ['customer-history', 'search_response', 'timeline.entries.0.outcome', 'attempt_outcomes'],
+  ['customer-history', 'search_response', 'timeline.entries.0.recording', 'customer_recording_states'],
+  ['customer-history', 'search_response', 'timeline.entries.1.status', 'customer_callback_statuses'],
+  ['customer-history', 'search_response', 'timeline.entries.1.source.channel', 'customer_timeline_channels'],
+  ['customer-history', 'search_response', 'timeline.entries.2.recording', 'customer_recording_states'],
+  ['customer-history', 'search_response', 'timeline.entries.2.override_applied.0', 'override_kinds'],
+  ['customer-history', 'search_response', 'timeline.entries.3.entry.scope', 'dnc_entry_scopes'],
+  ['customer-history', 'timeline_request', 'filters.channel', 'customer_timeline_channels'],
+  ['customer-history', 'timeline_request', 'filters.outcomes.0', 'attempt_outcomes'],
+  ['customer-history', 'error_invalid_number', 'code', 'customer_history_error_codes'],
+  ['customer-history', 'error_invalid_number', 'number_error', 'customer_search_number_errors'],
+  ['customer-history', 'error_search_expired', 'code', 'customer_history_error_codes'],
   ...Object.keys(softphone)
     .filter((s) => s.startsWith('refusal_'))
     .map((s): [string, string, string, string] => ['softphone', s, 'code', 'softphone_error_codes']),
 ];
 
-const FILES: Record<string, Record<string, unknown>> = { station, session, softphone, actions, reads, platform };
+const FILES: Record<string, Record<string, unknown>> = {
+  station, session, softphone, actions, reads, platform, 'customer-history': customerHistory,
+};
 
 function at(value: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((v, k) => (v == null ? v : (v as Record<string, unknown>)[k]), value);
@@ -423,6 +479,7 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
       ['actions', actions, ACTIONS],
       ['reads', reads, READS],
       ['platform', platform, PLATFORM],
+      ['customer-history', customerHistory, CUSTOMER_HISTORY],
     ];
     for (const [name, file, checked] of registered) {
       expect(Object.keys(checked).sort(), `${name}.json`).toEqual(Object.keys(file).sort());
@@ -438,6 +495,16 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
     const value = at(FILES[file]?.[sample], path);
     expect(value, `${file}.${sample} has no ${path}`).not.toBeUndefined();
     if (value !== null) expect(vocab(vocabulary)).toContain(value);
+  });
+
+  it('customer history: the search answer\'s timeline is the five per-kind entry samples, in order', () => {
+    expect(customerHistory.search_response.timeline.entries).toEqual([
+      customerHistory.entry_softphone_call,
+      customerHistory.entry_callback,
+      customerHistory.entry_campaign_call,
+      customerHistory.entry_dnc_mark,
+      customerHistory.entry_roster_entry,
+    ]);
   });
 
   it('keeps the client frames the server reads to ping and media', () => {

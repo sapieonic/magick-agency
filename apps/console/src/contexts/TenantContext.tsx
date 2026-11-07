@@ -1,9 +1,39 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useAuth } from './AuthContext';
+import { useUrlHistory, type UrlScopeValue } from './UrlScopeContext';
+import { loadPage } from '../utils/pageLoad';
+import { isUnscopedPagePath } from '../utils/returnPath';
+import { withUrlScope } from '../utils/urlScope';
 import { listAccounts, listMyAccounts } from '../api/accounts';
 import type { Tenant, TenantAccount, Membership, Role } from '../types/auth';
 
 const STORAGE_KEY = 'magick-active-tenant';
+
+/** This browser's last selection, as the persist effect below writes it. */
+function readStoredSelection(): { tenantId: string | null; accountId: string | null } {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored) as { tenantId?: string; accountId?: string };
+      return { tenantId: parsed.tenantId ?? null, accountId: parsed.accountId ?? null };
+    } catch { /* corrupt: as if nothing were stored */ }
+  }
+  return { tenantId: null, accountId: null };
+}
+
+/**
+ * The tenant to open when the active one is not (or not yet) one of the session's:
+ * the URL's when this person is in it, else this browser's last, else the first.
+ * A link to a tenant they cannot open must not decide where they land instead —
+ * `ScopeGate` refuses it, and "Go to my workspace" opens their own.
+ */
+function fallbackTenantId(tenants: Tenant[], urlScope: UrlScopeValue['scope']): string | null {
+  const listed = (id: string | null | undefined): id is string => !!id && tenants.some(t => t.id === id);
+  if (listed(urlScope?.tenantId)) return urlScope.tenantId;
+  const stored = readStoredSelection().tenantId;
+  if (listed(stored)) return stored;
+  return tenants[0]?.id ?? null;
+}
 
 /**
  * How account resolution went. **`'error'` is the state this context did not have
@@ -75,28 +105,54 @@ interface TenantContextValue {
   accountResolution: AccountResolution;
   /** What to tell the user when `accountResolution` is `'error'` or `'degraded'`. */
   accountError: string | null;
+  /** Switch tenant: a full page load inside the app (see the provider). */
   setActiveTenantId: (id: string) => void;
-  setActiveAccountId: (id: string | null) => void;
+  /** Switch account: a full page load inside the app, at its home or `options.path`. */
+  setActiveAccountId: (id: string | null, options?: { path?: string }) => void;
   reloadAccounts: () => void;
 }
 
 const TenantContext = createContext<TenantContextValue | null>(null);
 
+/**
+ * ── The URL is the source of truth for the active tenant and account ────────
+ * A signed-in page's URL is scoped, `/t/:tenantId/a/:accountId/…` (see
+ * `utils/urlScope`), so a link copied from the address bar opens the same tenant
+ * and account for whoever it is sent to. This provider follows that scope:
+ *
+ *  - **URL → state.** A scope in the URL is adopted, on load and whenever it
+ *    changes (a pasted link, the back button). An account the URL names is
+ *    preferred over the one this browser last used.
+ *  - **Switching reloads.** `setActiveTenantId` and `setActiveAccountId` (the
+ *    switchers) load the console afresh at the new account's home — not the page
+ *    the user was on, whose record (a campaign, a call) belongs to the account
+ *    being left, and not in place, so nothing built for that account (contexts,
+ *    caches, polls, sockets) carries over.
+ *
+ * `localStorage` is still written and read, as the fallback for a URL that names
+ * no scope (an old `/dialer` bookmark, `/` after sign-in) or one this person
+ * cannot open.
+ *
+ * A URL naming a tenant or account the caller cannot open is NOT adopted — the
+ * fallback below picks one they can — and `ScopeGate` says so instead of quietly
+ * showing another account's data under a link that promised something else.
+ */
 export function TenantProvider({ children }: { children: ReactNode }) {
   const { tenants, memberships, user } = useAuth();
+  const { scope: urlScope, go, history: urlHistory } = useUrlHistory();
+  /** The URL's scope NOW, for async work and callbacks that must not re-run on it. */
+  const urlScopeRef = useRef(urlScope);
+  urlScopeRef.current = urlScope;
 
-  const [activeTenantId, setActiveTenantIdState] = useState<string | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as { tenantId?: string };
-        return parsed.tenantId ?? null;
-      } catch { return null; }
-    }
-    return null;
-  });
+  // The URL's tenant, else this browser's last. One this person is not in is
+  // replaced by the selection effect below before any of its accounts are asked
+  // for (`fallbackTenantId`).
+  const [activeTenantId, setActiveTenantIdState] = useState<string | null>(
+    () => urlScope?.tenantId ?? readStoredSelection().tenantId,
+  );
 
-  const [activeAccountId, setActiveAccountIdState] = useState<string | null>(null);
+  /** The account chosen in state: by the switchers, the restore, or the fallback. */
+  const [selectedAccountId, setActiveAccountIdState] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<TenantAccount[]>([]);
   const [accountResolution, setAccountResolution] = useState<AccountResolution>('loading');
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -104,6 +160,48 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   /** The tenant active NOW, for async work that started under another one. */
   const activeTenantRef = useRef<string | null>(activeTenantId);
   useEffect(() => { activeTenantRef.current = activeTenantId; }, [activeTenantId]);
+
+  /**
+   * Forget the accounts of the tenant being left, so they are fetched afresh. A
+   * failure belonged to that tenant too: carrying it across would show the new
+   * tenant's screens an error about the old one's accounts.
+   */
+  const clearAccounts = useCallback(() => {
+    setActiveAccountIdState(null);
+    setAccounts([]);
+    setAccountResolution('loading');
+    setAccountError(null);
+    accountsLoadedForTenant.current = null;
+  }, []);
+
+  /**
+   * The active account is DERIVED, in render, from the URL whenever the URL names
+   * a listed account of the active tenant, and only otherwise from state.
+   *
+   * It used to be copied from the URL into state by an effect keyed on the URL's
+   * scope, and every gap between the two was a defect: an account switch followed
+   * by a `navigate()` in the same handler left state on one account and the URL on
+   * the other with no scope change for the effect to see, so `ScopeGate` waited
+   * forever; a retry that loaded the URL's account had nothing to adopt it; and
+   * back/forward between two accounts spent one render on the old account, which
+   * the gate covered with a spinner and so remounted every page. Deriving it
+   * leaves nothing to fall out of step: the address bar is the answer the moment
+   * it names an account this person has.
+   *
+   * State (the stored or first account, picked when the list loads) still matters
+   * when the URL is unscoped, or names an account that is not in the list
+   * (`ScopeGate` refuses that link; state is what "Go to my workspace" opens).
+   */
+  const urlAccountId =
+    urlScope &&
+    urlScope.tenantId === activeTenantId &&
+    accounts.some(a => a.id === urlScope.accountId)
+      ? urlScope.accountId
+      : null;
+  const activeAccountId = urlAccountId ?? selectedAccountId;
+  /** The active account NOW, for callbacks that must not be rebuilt on it. */
+  const activeAccountIdRef = useRef(activeAccountId);
+  activeAccountIdRef.current = activeAccountId;
 
   /**
    * Resolve the tenant's accounts, **preferring the full list and falling back to
@@ -155,33 +253,52 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // Auto-select first tenant if none selected, or reset if stored tenant is invalid
+  // Select a tenant when none is, or the one selected is not the session's: a
+  // stale stored id, or a link to a tenant this person is not in.
   useEffect(() => {
     if (tenants.length === 0) return;
-    const isValid = activeTenantId && tenants.some(t => t.id === activeTenantId);
-    if (!isValid) {
-      const first = tenants[0];
-      if (first) setActiveTenantIdState(first.id);
-    }
+    if (activeTenantId && tenants.some(t => t.id === activeTenantId)) return;
+    const fallback = fallbackTenantId(tenants, urlScopeRef.current);
+    if (fallback) setActiveTenantIdState(fallback);
   }, [activeTenantId, tenants]);
+
+  /**
+   * URL → state for the TENANT: whenever the URL names a tenant this person is in
+   * and it is not the active one, adopt it — a pasted link, the back button, or
+   * the session's tenant list arriving (or growing, after an invite claim) to
+   * include a tenant the URL already named. The account needs no adopting; it is
+   * derived above.
+   *
+   * Re-run on all three inputs because `ScopeGate` waits for exactly this
+   * (`tenantId !== scope.tenantId`): an adoption that could be skipped once and
+   * never retried left that wait with no end. A tenant the caller is not a
+   * member of is not adopted; `ScopeGate` reports it. With no session yet the
+   * URL's tenant is taken on trust, and corrected once `tenants` arrives.
+   */
+  useEffect(() => {
+    if (!urlScope || urlScope.tenantId === activeTenantId) return;
+    if (tenants.length > 0 && !tenants.some(t => t.id === urlScope.tenantId)) return;
+    setActiveTenantIdState(urlScope.tenantId);
+    clearAccounts();
+  }, [urlScope, tenants, activeTenantId, clearAccounts]);
 
   // Load accounts when tenant changes, then validate/set accountId
   // Gate on `user` to ensure Firebase auth token is available for apiFetch
   useEffect(() => {
     if (!activeTenantId || !user) {
-      setAccounts([]);
-      setActiveAccountIdState(null);
       // Not an error — there is nothing to resolve yet, and saying "we couldn't
       // find your account" before sign-in completes would be a lie with a Retry
       // button on it.
-      setAccountResolution('loading');
-      setAccountError(null);
-      accountsLoadedForTenant.current = null;
+      clearAccounts();
       return;
     }
 
     // Prevent duplicate fetches for the same tenant
     if (accountsLoadedForTenant.current === activeTenantId) return;
+    // A tenant the session does not list (a stale stored id, or a link to a
+    // tenant this person is not in): the effect above is about to replace it, and
+    // asking the server for its accounts would only produce a 403 and an error.
+    if (tenants.length > 0 && !tenants.some(t => t.id === activeTenantId)) return;
 
     // Clear account immediately on tenant switch to prevent stale accountId in API calls
     setActiveAccountIdState(null);
@@ -214,17 +331,11 @@ export function TenantProvider({ children }: { children: ReactNode }) {
             : null,
         );
 
-        // Try to restore from localStorage
-        const stored = localStorage.getItem(STORAGE_KEY);
-        let storedAccountId: string | null = null;
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored) as { tenantId?: string; accountId?: string };
-            if (parsed.tenantId === activeTenantId) {
-              storedAccountId = parsed.accountId ?? null;
-            }
-          } catch { /* ignore */ }
-        }
+        // The selection: the account this browser last had open, else the first.
+        // An account the URL names wins over it without being selected — it is
+        // derived (`activeAccountId`) — which is what a shared link is for.
+        const stored = readStoredSelection();
+        const storedAccountId = stored.tenantId === activeTenantId ? stored.accountId : null;
 
         // Validate stored accountId belongs to this tenant's accounts
         const validStored = storedAccountId && fetchedAccounts.some(a => a.id === storedAccountId);
@@ -257,7 +368,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         setAccountResolution('error');
         setAccountError(err instanceof Error ? err.message : 'Could not load your accounts.');
       });
-  }, [activeTenantId, user, resolveAccounts]);
+  }, [activeTenantId, user, tenants, resolveAccounts, clearAccounts]);
 
   /**
    * Persist to localStorage only when both are valid **and the list is trusted**.
@@ -269,12 +380,17 @@ export function TenantProvider({ children }: { children: ReactNode }) {
    * the id is present in whatever list came back. A five-second the server restart
    * would otherwise pin an `account_admin` to one account across reloads, with the
    * evidence of why long gone.
+   *
+   * Nor while the URL names a scope that is not the one open — a link to a tenant
+   * or account this person cannot open, which `ScopeGate` refuses. The fallback
+   * open underneath is not their choice, and writing it would make it the
+   * workspace "Go to my workspace" and every later unscoped visit opens.
    */
   useEffect(() => {
-    if (activeTenantId && activeAccountId && accountResolution !== 'degraded') {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tenantId: activeTenantId, accountId: activeAccountId }));
-    }
-  }, [activeTenantId, activeAccountId, accountResolution]);
+    if (!activeTenantId || !activeAccountId || accountResolution === 'degraded') return;
+    if (urlScope && (urlScope.tenantId !== activeTenantId || urlScope.accountId !== activeAccountId)) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ tenantId: activeTenantId, accountId: activeAccountId }));
+  }, [activeTenantId, activeAccountId, accountResolution, urlScope]);
 
   const activeTenant = tenants.find(t => t.id === activeTenantId) ?? null;
 
@@ -292,20 +408,77 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     : null;
   const role = tenantMembership?.role ?? accountMembership?.role;
 
-  const setActiveTenantId = useCallback((id: string) => {
-    setActiveTenantIdState(id);
-    setActiveAccountIdState(null);
-    setAccounts([]);
-    // A failure belonged to the tenant we just left. Carrying it across would
-    // show the new tenant's screens an error about the old one's accounts.
-    setAccountResolution('loading');
-    setAccountError(null);
-    accountsLoadedForTenant.current = null; // Force re-fetch for new tenant
-  }, []);
+  /**
+   * Whether a switch should reload the console: the page is an app page rather
+   * than a sign-in or invite page. On those (the invite claim picks the tenant it
+   * just joined, then navigates) the choice is only recorded, and `ScopeGate`
+   * scopes the next app page by it.
+   */
+  const switchReloads = useCallback(
+    () => !isUnscopedPagePath(urlHistory.location.pathname),
+    [urlHistory],
+  );
 
-  const setActiveAccountId = useCallback((id: string | null) => {
+  /** The tenant a switch is resolving an account for; a later switch supersedes it. */
+  const pendingTenantSwitch = useRef<string | null>(null);
+
+  /**
+   * Switch tenant. Inside the app: resolve the tenant's accounts first, then a
+   * full reload straight into its scope — its first account, at its home. (Not
+   * "the account last used there": this browser keeps one selection, and it is
+   * the tenant being left.) Nothing is written to `localStorage` here:
+   * the page that loads persists its own scope, so a load the browser cancels (the
+   * station's leave-page prompt) leaves this page's selection standing.
+   *
+   * A tenant with no account to put in the URL — none, or none that answered —
+   * is switched to in place, at the unscoped root, where the layouts say why and
+   * offer the retry. Elsewhere: state only.
+   */
+  const setActiveTenantId = useCallback((id: string) => {
+    if (!switchReloads()) {
+      setActiveTenantIdState(id);
+      clearAccounts();
+      return;
+    }
+    if (id === activeTenantRef.current) return;
+    pendingTenantSwitch.current = id;
+    void resolveAccounts(id)
+      .then(({ accounts: list }) => list, () => [] as TenantAccount[])
+      .then((list) => {
+        if (pendingTenantSwitch.current !== id) return;
+        pendingTenantSwitch.current = null;
+        const accountId = list[0]?.id;
+        if (accountId) {
+          loadPage(withUrlScope({ tenantId: id, accountId }, '/'));
+          return;
+        }
+        go(null, '/');
+        setActiveTenantIdState(id);
+        clearAccounts();
+      });
+  }, [switchReloads, clearAccounts, resolveAccounts, go]);
+
+  /**
+   * Switch account. Inside the app: a full reload under the account's scope, at
+   * its home — or at `options.path`, for a caller that knows where the user is
+   * going (the soft phone's "Go to station" for a session in a sibling account).
+   * A push, so the back button returns to the account the user came from.
+   * Choosing the account already open is not a switch: no reload, though a
+   * `path` is still followed. Elsewhere: state only.
+   */
+  const setActiveAccountId = useCallback((id: string | null, options?: { path?: string }) => {
+    const tenant = activeTenantRef.current;
+    if (id && tenant && switchReloads()) {
+      const target = { tenantId: tenant, accountId: id };
+      if (id === activeAccountIdRef.current) {
+        if (options?.path) go(target, options.path);
+        return;
+      }
+      loadPage(withUrlScope(target, options?.path ?? '/'));
+      return;
+    }
     setActiveAccountIdState(id);
-  }, []);
+  }, [switchReloads, go]);
 
   /**
    * Re-resolve. Doubles as the **Retry** behind the terminal error screen, which
@@ -337,10 +510,27 @@ export function TenantProvider({ children }: { children: ReactNode }) {
               : 'Could not load the full account list.'
             : null,
         );
+        // The account the URL names, when the fresh list has it, is now the
+        // active one (derived). This is the Retry behind "You can't open this
+        // account" for a narrowed list and behind `AccountUnavailable` after an
+        // outage: the link named an account, and re-pointing it at the first one
+        // below would break the promise the link made.
+        const scoped = urlScopeRef.current?.tenantId === forTenant ? urlScopeRef.current : null;
+        if (scoped && fetched.some(a => a.id === scoped.accountId)) return;
         // If the currently active account was deleted — or was never resolved at
-        // all — switch to the first available.
+        // all — select the first available.
         if (!activeAccountId || !fetched.some(a => a.id === activeAccountId)) {
-          setActiveAccountIdState(fetched[0]?.id ?? null);
+          const replacement = fetched[0]?.id ?? null;
+          setActiveAccountIdState(replacement);
+          // Re-point the URL only when it named the account that went away — the
+          // one open until now — and at the replacement's HOME: the page the user
+          // was on holds a record of the account that is gone. A link to an
+          // account that was never open (not theirs, or not loaded yet) is left
+          // for `ScopeGate` to refuse, not quietly swapped for another account.
+          // An unscoped URL needs nothing: the gate scopes it.
+          if (replacement && scoped && scoped.accountId === activeAccountId) {
+            go({ tenantId: forTenant, accountId: replacement }, '/', { replace: true });
+          }
         }
       })
       .catch((err: unknown) => {
@@ -348,7 +538,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         setAccountResolution('error');
         setAccountError(err instanceof Error ? err.message : 'Could not load your accounts.');
       });
-  }, [activeTenantId, activeAccountId, resolveAccounts]);
+  }, [activeTenantId, activeAccountId, resolveAccounts, go]);
 
   // Stable between renders that change none of these, so a re-render above the
   // provider does not re-render every `useTenant()` consumer.

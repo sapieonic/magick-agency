@@ -164,6 +164,27 @@ export const resolveAgentNames = (
 ): Promise<Map<string, string | null>> => userRepository.findDisplayNamesInTenant(ids, tenantId);
 
 /**
+ * {@link resolveAgentNames} for a read where a name only improves on the id: `ids` de-duplicated
+ * (nulls dropped), and a lookup that fails is logged and answers no names, never a failed read.
+ * `what` names the read in the warning.
+ */
+export async function agentNamesOrNone(
+  ids: Iterable<string | null>,
+  tenantId: string,
+  what: string,
+): Promise<Map<string, string | null>> {
+  const unique = [...new Set([...ids].filter((id): id is string => typeof id === 'string'))];
+  if (unique.length === 0) return new Map();
+  try {
+    return await resolveAgentNames(unique, tenantId);
+  } catch (err) {
+    log.warn({ tenantId, users: unique.length, err: err instanceof Error ? err.message : String(err) },
+      `${what}: agent name resolution failed; emitting names as null`);
+    return new Map();
+  }
+}
+
+/**
  * Put `agent_name` beside the `agent_user_id` on a body whose SUBJECT is one
  * agent — the handler's per-agent stats payload, as opposed to a page of rows.
  *

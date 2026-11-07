@@ -24,6 +24,7 @@ import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
 import { readCuePrefs } from '../../utils/agencyCuePrefs';
 import { agentLandingPath } from '../../utils/agencyStationExit';
 import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
+import { SOFTPHONE_SURFACE } from '../../utils/agencyAgentSurfaces';
 import { StationEscape } from '../../components/agency/StationFatal';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { SoftphoneHeader, SOFTPHONE_LEAVE_BLOCKED_COPY } from '../../components/softphone/SoftphoneHeader';
@@ -497,7 +498,9 @@ function ElsewhereScreen({
             ref={goThereRef}
             type="button"
             className={callPending ? station.fatalAction : station.fatalEscape}
-            onClick={() => setActiveAccountId(refusal.account_id)}
+            // The switch reloads the console (B26), so the soft phone's own path goes
+            // with it: the agent came here to use the soft phone in that account.
+            onClick={() => setActiveAccountId(refusal.account_id, { path: SOFTPHONE_SURFACE.to })}
             disabled={closing}
             data-testid="softphone-elsewhere-go-there"
           >
@@ -526,8 +529,8 @@ export const SOFTPHONE_CAMPAIGN_ELSEWHERE_COPY = (campaign: string, account: str
  * station that shows the soft phone in place: switching it with this account's id
  * is a 404, and `/station` in this account cannot open that campaign. So the switch
  * is sent with the session's account and, once it is taken, the CONSOLE moves to
- * that account (`setActiveAccountId`, what the account switcher does) before going
- * to the station: the soft phone then runs entirely in the account its session
+ * that account (`setActiveAccountId`, what the account switcher does), landing on
+ * the station: the soft phone then runs entirely in the account its session
  * lives in, with no call made across accounts. "Go to station" moves the same way.
  * When the console cannot switch to that account (it is not in the caller's list)
  * the screen says where the session is and offers no button that would fail.
@@ -551,10 +554,14 @@ function CampaignSessionScreen({
   const elsewhere = refusal.account_id !== accountId;
   const there = siblingAccount(accounts, refusal);
 
-  /** To the station, in the session's account when it is another. */
+  /**
+   * To the station, in the session's account when it is another. Switching
+   * account reloads the console, so the station path goes with the switch
+   * rather than after it (B26).
+   */
   const goToStation = () => {
-    if (elsewhere) setActiveAccountId(refusal.account_id);
-    navigate(stationPath);
+    if (elsewhere) setActiveAccountId(refusal.account_id, { path: stationPath });
+    else navigate(stationPath);
   };
 
   const onSwitch = async () => {

@@ -295,6 +295,35 @@ const VOCABULARIES = {
     'api/agency/assignment.ts#AGENCY_AGENT_RETRY_ERROR_CODES',
     () => constList('api/agency/assignment.ts', 'AGENCY_AGENT_RETRY_ERROR_CODES'),
   ],
+  // Customer history: one number across the tenant's campaigns (docs/customer-history.md).
+  customer_search_bys: [
+    'api/agency/customer-history.ts#CUSTOMER_SEARCH_BYS',
+    () => constList('api/agency/customer-history.ts', 'CUSTOMER_SEARCH_BYS'),
+  ],
+  customer_timeline_channels: [
+    'api/agency/customer-history.ts#CUSTOMER_TIMELINE_CHANNELS',
+    () => constList('api/agency/customer-history.ts', 'CUSTOMER_TIMELINE_CHANNELS'),
+  ],
+  customer_timeline_kinds: [
+    'api/agency/customer-history.ts#CUSTOMER_TIMELINE_KINDS',
+    () => constList('api/agency/customer-history.ts', 'CUSTOMER_TIMELINE_KINDS'),
+  ],
+  customer_recording_states: [
+    'api/agency/customer-history.ts#CUSTOMER_RECORDING_STATES',
+    () => constList('api/agency/customer-history.ts', 'CUSTOMER_RECORDING_STATES'),
+  ],
+  customer_callback_statuses: [
+    'api/agency/customer-history.ts#CUSTOMER_CALLBACK_STATUSES',
+    () => constList('api/agency/customer-history.ts', 'CUSTOMER_CALLBACK_STATUSES'),
+  ],
+  customer_search_number_errors: [
+    'api/agency/customer-history.ts#CUSTOMER_SEARCH_NUMBER_ERRORS',
+    () => constList('api/agency/customer-history.ts', 'CUSTOMER_SEARCH_NUMBER_ERRORS'),
+  ],
+  customer_history_error_codes: [
+    'api/agency/customer-history.ts#CUSTOMER_HISTORY_ERROR_CODES',
+    () => constList('api/agency/customer-history.ts', 'CUSTOMER_HISTORY_ERROR_CODES'),
+  ],
 };
 
 /** The JSON document, as it should be committed. */

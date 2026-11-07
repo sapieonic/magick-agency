@@ -18,10 +18,10 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | Package | Responsibility |
 |---|---|
 | `apps/server` | The one Fastify process: identity, tenancy, super-admin auth, the HTTP API, the station WebSocket, carrier webhooks and the media WebSocket, the voice engine, concurrency guard, dialer runtime, analysis worker, sweeps and retention. Bundled by esbuild to `dist/index.js` (`scripts/build.mjs`, CommonJS, B5) |
-| `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, accounts, settings |
+| `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, accounts, settings, customer history. Imports `packages/domain` for the customer-search number rule (the live preview runs the server's rule), so `docker/web.Dockerfile` copies it into the web build |
 | `apps/super-admin` | Vite + React SPA (the super-admin console): tenants and their accounts, users, admins, phone numbers, feature flags, usage, audit |
 | `packages/contracts` | Wire contract shared by the server and both UIs: dialer types (`agency.ts`, a barrel over `agency/`, including the campaign config defaults and rate floors), console wire types (`api/`, re-exported or derived from the dialer types), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permissions (`rbac.ts`) |
-| `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, keyset cursor, rates, retry bounds and summary, success disposition, timers |
+| `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, the customer-search number rule (`customer-search-number.ts`, run by the server's search and the console's preview, ported to Dart in `agency_wire`), a roster row's hero fields (`context-hero.ts`, the contact panel's rule, used by the customer-history summary), keyset cursor, rates, retry bounds and summary, success disposition, timers. Imported by the server and the console |
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
 | `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components and `AppVersion` (the sidebar version footer) with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), the telephony-provider aliases, `mapWithConcurrency`, `useAsyncResource`, `useDialogFocus` (the one focus trap). React, the router and `lucide-react` are peer dependencies; its own no-parent-brand scan (B17). Decision B23 |
@@ -64,7 +64,7 @@ cycle (B12). Boundaries are described in [`seams.md`](seams.md).
                                  recording host)               Sarvam, PostHog
 ```
 
-\* CORS only with the API on its own host (`CORS_ALLOWED_ORIGINS`, decision B25).
+\* CORS only with the API on its own host (`CORS_ALLOWED_ORIGINS`, decision B27).
 
 ## Server composition
 
@@ -86,7 +86,7 @@ their key env var is set, and the subsystem behind them is then registered or sk
 **`AppContext`** (`app-context.ts`) is what every plugin and bootstrap receives: `config`, the pg
 `pool`, the ioredis client. `buildApp({ ctx: null })` builds a routing-only app for tests.
 
-**`buildApp`** (`app.ts`) registers, in order: CORS, only when `CORS_ALLOWED_ORIGINS` is set (B25;
+**`buildApp`** (`app.ts`) registers, in order: CORS, only when `CORS_ALLOWED_ORIGINS` is set (B27;
 `api/middleware/cors.ts`), and it must stay before the rate limiter, because its `OPTIONS *` route
 registered after the limiter would be charged to a bucket; the rate limiter (app scope, so every route is in a
 bucket) and the per-user bucket the session middleware charges; the error handler with the `22P02 → 400` backstop and the 5xx error mask (no driver text
@@ -151,6 +151,11 @@ See [`seams.md`](seams.md).
 
 A request goes: app-wide limiter → session (Firebase) → tenant context → RBAC → public handler →
 `callCore` → internal handler → repository.
+
+A few families read repositories directly, with no internal handler hop, because their reads
+span what one internal call covers: insights, contact assignment, staffing, DNC, and customer
+history (`proxy-agency-customers`, `docs/customer-history.md`), which searches one number across
+every account the caller belongs to (CH2) where every internal handler is single-account.
 
 ## Identity and tenancy
 
@@ -318,9 +323,14 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   invalidations, wrapped by `startAgency`), `account_capacity_freed` (attempt and manual-call
   ends), `agent_available` (a state write into `available`, a station attach), `contacts_changed`
   (ingest chunks, owner sweeps), `station_ready` (a `ready` sent on a `strict` / `preferred`
-  campaign: the engine forgets the session's last `queue` frame and sends it again). The campaign row and the account limit are cached between full ticks in a
-  generation-guarded TTL cache (2 s backstop), dropped by their events and re-primed by the
-  supervise pass. `tickOnce` is a forced full tick that reads everything fresh. Measured by
+  campaign: the engine forgets the session's last `queue` frame and sends it again),
+  `dedications_changed` (a dedicated caller ID set, replaced or released, or an agent's staffing
+  on the campaign closed; wakes nothing). The campaign row, the account limit and the campaign's
+  dedicated caller-ID map (`pacing/dedicated-caller-ids.ts`, DN4, which the runtime's other dial
+  paths share and which reads through while the engine is not listening, as in a media worker)
+  are cached between full ticks in a generation-guarded TTL cache (2 s backstop), dropped by their
+  events; the row is also re-primed by the supervise pass. A dialling batch reads the dedication
+  map before it reserves an agent; a failed read dials nothing (`dedications_unavailable`). `tickOnce` is a forced full tick that reads everything fresh. Measured by
   `test/integration/load/pacing-statements.test.ts`; `agency_pacing_ticks_total` and
   `agency_pacing_missed_wakeups_total` show the skip ratio and any wake-up the bus missed.
 - **Pacing history** (`pacing/pacing-history.ts`, `agency_campaign_pacing_minutes`, 0013; IN2,
@@ -462,7 +472,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   sweeps close what nobody owns. Both clients have it on the same routes and station frame: the
   console's `/dialer/phone` and the agent app's Phone tab ([`mobile.md`](mobile.md)).
 - **Completion notice** (`campaign-completion-notice.ts`). When a campaign finishes, mails holders
-  of `agency.supervise`.
+  of `agency.supervise`, linking to the campaign under its own tenant and account (B26).
 
 ## The voice engine
 
@@ -618,7 +628,10 @@ deliberately coarse. Only the PRESENCE of a bearer picks `ip_auth`; it is not ve
 value is never a key, so a forged bearer buys the larger coarse bucket and is then refused 401 (Q9,
 amended 2026-11-01). A route may add its own tighter per-user cap in its own namespace
 (`createUserRateLimit`): `POST /client-config/uplink-probe` allows 6 per user per window (`up:<id>`),
-charged with its authentication in `preParsing`, so no body is read for a caller who fails either.
+charged with its authentication in `preParsing`, so no body is read for a caller who fails either;
+customer history's search and export share `AGENCY_CUSTOMER_SEARCH_PER_MINUTE` a minute per user
+(`chs:<id>`), whose 429 carries the route's own `message` (the optional `message` option; the
+default reads "Rate limit exceeded. Try again in N seconds.").
 Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
 
 The defaults are sized for ~500 agents and ~50 supervisors behind one office NAT, at 500
@@ -667,6 +680,21 @@ a rate-limit key and never an auth input.
   Brand pack `brands/magick-agency/` (B17); a branding guard test
   (`src/__tests__/branding/noParentBrand.test.ts`). In dev, Vite proxies every API prefix to `:3021`
   (`vite.config.ts`), and `devProxyPrefixes.test.ts` fails for any API segment the proxy misses.
+- **Console URLs carry the tenant and account** (decision B26). Signed-in pages live under
+  `/t/:tenantId/a/:accountId/…`, so a copied link opens the same tenant and account for whoever
+  receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;
+  `ScopedRouter` (`components/routing/`) is a `<Router>` over it whose basename is that prefix, so
+  routes, links and `navigate()` are written without it and `useLocation()` reads the app path.
+  `TenantContext` takes the active tenant and account from the URL; a switch reloads the console
+  at the new account's home, so nothing built for the old account carries over. The choice saved in `localStorage` is only the fallback for an unscoped
+  URL (an old bookmark, `/` after sign-in). `ScopeGate`, the layout route around every signed-in
+  route, scopes an unscoped URL to the active account and refuses a link to a tenant or account the
+  viewer cannot open rather than showing another one. Sign-in, invite and email-verification pages
+  stay unscoped (`isUnscopedPagePath` in `utils/returnPath.ts`). `/t` and `/a` because `/tenants` and
+  `/accounts` are API prefixes in nginx and the Vite proxy. PostHog sees the prefix as
+  `/t/:tenant/a/:account` (`analytics/redact.ts`); the ids travel as its `tenant` and `account`
+  groups. The prefix's shape is `packages/contracts` (`api/platform/console-urls.ts`), which the
+  server's campaign-completion link builds with too.
 - **Super-admin console** (`apps/super-admin`). Tenants (and their accounts), users, admins, phone
   numbers, feature flags, usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
   branding guard.
@@ -719,6 +747,13 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
 - **Logs**: pino (`packages/observability/src/logger.ts`), service name `magick-agency`, PII masking,
   secret-bearing headers redacted. JSON to stdout; with the SDK running, also OTLP through its
   `instrumentation-pino` bridge.
+- **No request log.** Fastify's own logger is off (`buildApp`'s `logger` defaults to `false` in
+  `apps/server/src/app.ts`, and `src/index.ts` passes `false`), so no line per request is written
+  and no request body is ever logged. The error handler (`api/middleware/error-handler.middleware.ts`)
+  logs the method and the URL (through `redactUrl`) of an error it handles, never the body, and
+  pg spans carry no bound parameter values (`enhancedDatabaseReporting: false`,
+  `utils/otel-sdk-config.ts`). A route that carries personal data keeps it in the body for this
+  reason (customer history's number, CH6).
 - **Metrics and traces**: declared per module area in `packages/observability/src/metrics/`; spans
   via `@Traced` plus the SDK's auto-instrumentations (http, undici, pg, ioredis, …). Credentials in
   URLs (`?token=`, `sig=`, `*verify_token=`, signed-URL keys, media-stream path tokens) are

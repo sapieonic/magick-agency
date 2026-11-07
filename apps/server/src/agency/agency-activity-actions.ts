@@ -71,7 +71,10 @@ export type ActivityActionOption =
 type CampaignScopedAuditAction = Exclude<
   Extract<PlatformAuditAction, `agency_${string}` | `dnc_${string}`>,
   // The account's soft-phone settings are account-wide: no row of it carries a campaign.
-  'agency_softphone_settings.updated'
+  | 'agency_softphone_settings.updated'
+  // A customer-history search or export reads one number across the tenant (CH10): no campaign.
+  | 'agency_customer_history.searched'
+  | 'agency_customer_history.exported'
 >;
 
 /**
@@ -178,6 +181,8 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },
   { value: 'agency_contacts.assigned', label: 'Contacts assigned', group: 'Staffing' },
   { value: 'agency_contacts.unassigned_on_unstaff', label: "Unstaffed agent's contacts returned (or kept)", group: 'Staffing' },
+  { value: 'agency_campaign.agent_caller_id_set', label: 'Caller ID dedicated to agent', group: 'Staffing' },
+  { value: 'agency_campaign.agent_caller_id_cleared', label: 'Dedicated caller ID released', group: 'Staffing' },
   { value: 'agency_session.joined', label: 'Agent joined', group: 'Staffing' },
   { value: 'agency_session.left', label: 'Agent left', group: 'Staffing' },
   { value: 'agency_session.break_started', label: 'Break started', group: 'Staffing' },

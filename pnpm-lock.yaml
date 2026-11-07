@@ -26,6 +26,9 @@ importers:
       '@magick-agency/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@magick-agency/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@magick-agency/web-ui':
         specifier: workspace:*
         version: link:../../packages/web-ui

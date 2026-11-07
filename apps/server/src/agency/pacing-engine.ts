@@ -55,7 +55,7 @@ import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
 import { callingWindowState } from './calling-hours.js';
 import { PacingHistoryAccumulator } from './pacing/pacing-history.js';
-import { PACING_IDLE_FIELD, type PacingHistoryField } from './pacing/pacing-history-fields.js';
+import { PACING_TICK_IDLE_FIELD, type PacingHistoryField, type TickIdleReason } from './pacing/pacing-history-fields.js';
 import { RESERVING_MARKER, returnReservedAgent, type QueuedBreakRelease } from './reserved-agent.js';
 import {
   agencyPacingMissedWakeupsTotal,
@@ -69,7 +69,8 @@ import {
 import { safeEmit } from '../utils/safe-emit.js';
 import { LeaderLease, LEADER_RENEW_MS } from './pacing/leader-lease.js';
 import { InFlight } from './pacing/in-flight.js';
-import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { resolveCallerId, usableCallerIds, type DedicatedCallerIds } from './pacing/caller-id-pool.js';
+import { DedicatedCallerIdCache } from './pacing/dedicated-caller-ids.js';
 import { CampaignAnnouncer } from './pacing/campaign-announcer.js';
 import {
   getPacingInvalidationBus,
@@ -77,7 +78,7 @@ import {
   type PacingInvalidationBus,
   type PacingInvalidationEvent,
 } from './pacing/invalidation-bus.js';
-import { GenerationTtlCache } from './pacing/read-cache.js';
+import { GenerationTtlCache, PACING_CACHE_TTL_MS } from './pacing/read-cache.js';
 import { PACING_SHARE_WAIT_MS, PACING_SPLIT_DEADLINE_MS, PacingRound, ShareRotation, accountKeyOf } from './pacing/round.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
@@ -119,13 +120,8 @@ export const TICK_INTERVAL_MS = 250;
  */
 export const PACING_SAFETY_TICK_MS = 1_000;
 
-/**
- * How long a cached campaign row or account limit may be served without an
- * invalidation. The backstop for a write that published nothing (raw SQL, a lost
- * event); every write through the repositories and the concurrency seam publishes.
- * Campaign rows are also re-primed by every supervise pass (`findActive`, 2 s).
- */
-export const PACING_CACHE_TTL_MS = 2_000;
+/** How long a cached read may be served without an invalidation: `pacing/read-cache.ts`. */
+export { PACING_CACHE_TTL_MS };
 /** How often a replica tries to take leadership of campaigns it does not lead. */
 const SUPERVISE_INTERVAL_MS = 2_000;
 
@@ -250,18 +246,30 @@ interface DialHold {
 export const PACING_DIAL_HOLD_MAX_MS = 60_000;
 
 /**
- * Why a tick dialled nothing. Closed set — it is a metric label.
+ * While a campaign's dedicated caller-ID read keeps failing (a database blip), how often its
+ * error is logged again. The first failure logs at once; the ones after it within this
+ * interval are only counted, and the next log carries the count. The first successful read
+ * logs the recovery and resets it. Without this a DB blip logged every 250 ms tick of every
+ * dialling campaign. Each failed tick still counts `dedications_unavailable` in
+ * `agency_tick_idle_total`, unthrottled: the metric, not the log, is the per-tick record.
+ */
+export const DEDICATION_READ_FAILURE_LOG_MS = 60_000;
+
+/*
+ * Why a tick dialled nothing (`TickIdleReason`, `pacing/pacing-history-fields.ts`). Closed set —
+ * it is a metric label.
  *
  * The first four are the benign states a healthy campaign spends most of its day
  * in. `no_caller_ids` is **not** benign: it is a misconfiguration that cannot clear
  * without a human, and it is here rather than in a log-only path precisely because
  * "why is this campaign placing no calls" is the question this label answers.
+ * `dedications_unavailable` is not benign either, for the same reason: the campaign's
+ * dedicated caller IDs could not be read (a database fault), so the tick reserved nothing.
  *
  * `nothing_due` is contact assignment's (`strict` / `preferred`): agents are available but
  * none has a contact due (own, or in `preferred` mode the pool), so none was reserved. Benign,
  * and NOT quiescent: time passing makes contacts due, and no event announces that.
  */
-type TickIdleReason = 'no_agents' | 'no_slots' | 'no_contacts' | 'no_reservations' | 'no_caller_ids' | 'nothing_due';
 
 /** Why a scheduled tick ran in full (a metric label, see `agencyPacingTicksTotal`). */
 export type PacingWakeCause = 'first' | 'event' | 'active' | 'safety' | 'forced';
@@ -311,6 +319,11 @@ export interface PacingEngineOptions {
    * account's headroom without it (MC2). Default {@link PACING_SHARE_WAIT_MS}.
    */
   shareWaitMs?: number;
+  /**
+   * The dedicated caller-ID maps (`pacing/dedicated-caller-ids.ts`), shared with the runtime's
+   * other dial paths. Default: a new one on the engine's clock and cache TTL.
+   */
+  dedications?: DedicatedCallerIdCache;
 }
 
 /** One tick, as the engine saw it. For tests and the measurement harness only. */
@@ -358,6 +371,11 @@ export class PacingEngine {
   private readonly campaignCache: GenerationTtlCache<AgencyCampaignRecord>;
   /** `max_concurrent_calls` per account, invalidated by `account_limit_changed`. */
   private readonly limitCache: GenerationTtlCache<number>;
+  /**
+   * The dedicated caller-ID map per campaign, invalidated by `dedications_changed`, armed and
+   * disarmed with the bus subscription like the two caches above. Read through on a forced tick.
+   */
+  readonly dedications: DedicatedCallerIdCache;
   private readonly bus: PacingInvalidationBus;
   private readonly safetyTickMs: number;
   private readonly now: () => number;
@@ -399,6 +417,7 @@ export class PacingEngine {
     const ttl = options.cacheTtlMs ?? PACING_CACHE_TTL_MS;
     this.campaignCache = new GenerationTtlCache(ttl, this.now);
     this.limitCache = new GenerationTtlCache(ttl, this.now);
+    this.dedications = options.dedications ?? new DedicatedCallerIdCache(ttl, this.now);
     this.history = options.history ?? new PacingHistoryAccumulator();
     this.shareWaitMs = options.shareWaitMs ?? PACING_SHARE_WAIT_MS;
   }
@@ -488,6 +507,13 @@ export class PacingEngine {
    * flushed when a campaign is given up, closed (one last flush, bounded) by `halt()`.
    */
   private readonly history: PacingHistoryAccumulator;
+
+  /**
+   * Per campaign whose dedicated caller-ID read is failing: when it was last logged and how
+   * many failures since ({@link DEDICATION_READ_FAILURE_LOG_MS}). Cleared by the next
+   * successful read, and pruned with the other per-campaign maps.
+   */
+  private readonly dedicationReadFailing = new Map<string, { loggedAt: number; unlogged: number; total: number }>();
 
   /** Per campaign: whether its own calling window was closed, decided once a minute per row. */
   private readonly windowClosedAt = new Map<string, { minute: number; row: AgencyCampaignRecord; closed: boolean }>();
@@ -917,6 +943,7 @@ export class PacingEngine {
     for (const id of this.drainOnly) if (!known.has(id)) this.drainOnly.delete(id);
     for (const id of this.queueSent.keys()) if (!known.has(id)) this.queueSent.delete(id);
     for (const id of this.fallbackSweptAt.keys()) if (!known.has(id)) this.fallbackSweptAt.delete(id);
+    for (const id of this.dedicationReadFailing.keys()) if (!known.has(id)) this.dedicationReadFailing.delete(id);
     // `revoked` too, which `beginLeading` alone used to clear — except under a tick
     // still in flight, whose dial sites are what the mark exists to stop. A campaign
     // absent from `findActive` is neither running nor stopping, so no later tick of
@@ -976,6 +1003,7 @@ export class PacingEngine {
     if (this.unsubscribeBus) return;
     this.campaignCache.clear();
     this.limitCache.clear();
+    this.dedications.arm();
     this.unsubscribeBus = this.bus.subscribe((event) => this.onInvalidation(event));
     if (this.autoRounds) this.startRoundTimer();
   }
@@ -994,6 +1022,7 @@ export class PacingEngine {
     this.unsubscribeBus = null;
     this.campaignCache.clear();
     this.limitCache.clear();
+    this.dedications.disarm();
   }
 
   private async renewLeadership(campaignId: string): Promise<void> {
@@ -1046,6 +1075,7 @@ export class PacingEngine {
     this.campaignCache.invalidate(campaignId);
     this.queueSent.delete(campaignId);
     this.fallbackSweptAt.delete(campaignId);
+    this.dedicationReadFailing.delete(campaignId);
     this.windowClosedAt.delete(campaignId);
     // What this campaign counted goes out now rather than at the next interval (a stop, a
     // completion, a lost lease). Off the path: never awaited, never rejects.
@@ -1237,6 +1267,10 @@ export class PacingEngine {
       case 'contacts_changed':
         this.markDirty(event.campaignId);
         return;
+      case 'dedications_changed':
+        // Which number a dial uses, never whether the campaign can dial: nothing to wake.
+        this.dedications.invalidate(event.campaignId);
+        return;
       case 'station_ready':
         // The station's `ready` now holds its queue (or none, if the read failed), whatever
         // frame this engine sent it before, so the next tick sends it again (`queueSent`).
@@ -1410,7 +1444,7 @@ export class PacingEngine {
           // up in that window. Reserving and dialing past this point would place
           // calls without a lease.
           if (!this.mayDial(campaignId)) return;
-          const dialed = await this.dialUpTo(campaign, plan, hold);
+          const dialed = await this.dialUpTo(campaign, plan, hold, round.fresh);
           if (dialed > 0) return; // did work; completion is only checked on an idle tick
         } else if (plan.idle === 'nothing_due' || plan.idle === 'no_contacts') {
           // Agents are available and nothing is due for them: time passing makes contacts
@@ -1834,6 +1868,42 @@ export class PacingEngine {
   }
 
   /**
+   * A failed dedicated caller-ID read: logged at once the first time for the campaign, then at
+   * most once per {@link DEDICATION_READ_FAILURE_LOG_MS} while it keeps failing, with how many
+   * reads failed since the last log. Logging only, and synchronous: the tick has reserved and
+   * claimed nothing, so there is no unwind for the log to wait on.
+   */
+  private noteDedicationReadFailed(campaign: AgencyCampaignRecord, err: unknown): void {
+    const now = this.now();
+    const failing = this.dedicationReadFailing.get(campaign.id);
+    if (failing && now - failing.loggedAt < DEDICATION_READ_FAILURE_LOG_MS) {
+      failing.unlogged += 1;
+      failing.total += 1;
+      return;
+    }
+    const suppressed = failing?.unlogged ?? 0;
+    const total = (failing?.total ?? 0) + 1;
+    this.dedicationReadFailing.set(campaign.id, { loggedAt: now, unlogged: 0, total });
+    log.error(
+      { err, campaignId: campaign.id, tenantId: campaign.tenant_id, failedReads: total, unloggedSinceLast: suppressed },
+      failing
+        ? 'Still cannot read the campaign\'s dedicated caller IDs — dialling nothing until they can be read'
+        : 'Could not read the campaign\'s dedicated caller IDs — dialling nothing until they can be read',
+    );
+  }
+
+  /** A successful dedicated caller-ID read: the end of a failing run, logged once. */
+  private noteDedicationReadOk(campaign: AgencyCampaignRecord): void {
+    const failing = this.dedicationReadFailing.get(campaign.id);
+    if (!failing) return;
+    this.dedicationReadFailing.delete(campaign.id);
+    log.info(
+      { campaignId: campaign.id, tenantId: campaign.tenant_id, failedReads: failing.total },
+      'The campaign\'s dedicated caller IDs can be read again — dialling resumes',
+    );
+  }
+
+  /**
    * Start the owner sweeps (`pacing/callback-fallback.ts`): the unstaffed-owner return (CA6,
    * with `on_unstaff = 'return_to_pool'`) and the callback grace/fallback (CA5, with
    * `callback_fallback = 'pool'`), at most every {@link CALLBACK_FALLBACK_SWEEP_MS} per
@@ -1897,8 +1967,34 @@ export class PacingEngine {
    * and every such round trip is a window where a crash strands the row for the
    * reaper. Reserving first means a lost CAS costs one Redis call and touches
    * nothing durable.
+   *
+   * **The dedicated caller IDs are read before either** (step 0): a read that fails then
+   * costs nothing to unwind. `fresh` (a forced tick) reads them through the cache.
    */
-  private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan, hold: DialHold): Promise<number> {
+  private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan, hold: DialHold, fresh: boolean): Promise<number> {
+    // ── 0. The campaign's dedicated caller IDs (DN4): read ONCE per dialling batch, from the
+    //       cache (`pacing/dedicated-caller-ids.ts`; invalidated by `dedications_changed`, so
+    //       the read is a database round trip only after a PUT, a DELETE, an unstaff or the
+    //       TTL), never per contact. Each contact's number is then its OWNER's dedicated one,
+    //       else the rotation's: `resolveCallerId` per contact below (DN2), the rule the other
+    //       dial paths apply through `DedicatedCallerIdCache.callerIdForContact`; pacing applies
+    //       it itself because the batch shares one read and the round-robin offset moves.
+    //
+    //       BEFORE any agent is reserved or contact claimed: a failed read (a database blip)
+    //       dials nothing, as dialling an owned contact from a rotation number would break the
+    //       promise the dedication makes, and with nothing taken there is nothing to unwind. The
+    //       tick records `dedications_unavailable` (not quiescent: the next tick reads again)
+    //       and the throttled log ({@link noteDedicationReadFailed}) is written before return.
+    let dedicated: DedicatedCallerIds;
+    try {
+      dedicated = await this.dedications.read(campaign.id, { fresh });
+    } catch (err) {
+      this.recordIdle(campaign.id, campaign.tenant_id, 'dedications_unavailable');
+      this.noteDedicationReadFailed(campaign, err);
+      return 0;
+    }
+    this.noteDedicationReadOk(campaign);
+
     // ── 1. Reserve agents first, strictly before the dial and now also
     //       strictly before the claim. The agent is committed before the carrier
     //       is contacted, which is what makes an answered call with no agent
@@ -1963,6 +2059,7 @@ export class PacingEngine {
     }
     const contacts = pairs.map((p) => p.contact);
     const sessions = pairs.map((p) => p.sessionId);
+    const usable = usableCallerIds(campaign);
 
     let dialed = 0;
 
@@ -2039,7 +2136,7 @@ export class PacingEngine {
       // pool cannot be answered for this contact and cannot be answered for the ones
       // claimed alongside it either, so the whole remainder is returned rather than
       // half of it being carried out by a throw.
-      const callerId = pickCallerId(usableCallerIds(campaign), dialed);
+      const callerId = resolveCallerId({ usable, dedicated, ownerUserId: contact.assigned_user_id, offset: dialed });
       if (!callerId) {
         await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         // Latched, like the top-of-tick guard: this branch is only reachable if the
@@ -2358,7 +2455,7 @@ export class PacingEngine {
 
   private recordIdle(campaignId: string, tenantId: string, reason: TickIdleReason): void {
     // The pacing history's count beside the metric, never behind its guard (see `recordGate`).
-    this.history.count(campaignId, tenantId, PACING_IDLE_FIELD[reason]);
+    this.history.count(campaignId, tenantId, PACING_TICK_IDLE_FIELD[reason]);
     // Same rule. This one is called from `planTick`'s result handling, where a
     // throw would abort the tick before it reserved anything — less damaging, and
     // still not a trade worth making for a counter.

@@ -64,6 +64,11 @@ const mocks = vi.hoisted(() => ({
   // The dialog's caller-ID override renders `CallerIdPicker`, which reads the
   // account's numbers. Mocked at the hook — the picker has its own suite.
   usePhoneNumbers: vi.fn(),
+  // The contact-assignment flag, off unless a test turns it on, and the reads
+  // behind it (dedicated caller IDs, contacts by agent).
+  flag: vi.fn(),
+  getAgentCallerIds: vi.fn(),
+  getAssignmentProgress: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -87,6 +92,15 @@ vi.mock('../../api/agency', () => ({
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
 vi.mock('../../api/agencyInsights', () => mocks.insights);
 vi.mock('../../hooks/usePhoneNumbers', () => ({ usePhoneNumbers: mocks.usePhoneNumbers }));
+vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),
+  useFeatureFlagEnabled: mocks.flag,
+}));
+vi.mock('../../api/agencyAssignment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyAssignment')>()),
+  getAgentCallerIds: mocks.getAgentCallerIds,
+  getAssignmentProgress: mocks.getAssignmentProgress,
+}));
 
 import DetailPage from '../../pages/agency/AgencyCampaignDetailPage';
 import { CampaignLandingRedirect } from '../../pages/agency/campaign-detail/CampaignLandingRedirect';
@@ -178,6 +192,11 @@ beforeEach(() => {
   mocks.getAgencyCampaign.mockResolvedValue(campaign());
   mocks.getAgencyCampaignStats.mockResolvedValue(stats());
   mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
+  mocks.flag.mockReturnValue(false);
+  mocks.getAgentCallerIds.mockResolvedValue({
+    campaign_id: 'camp-1', caller_ids: [], dedicated: [], rotation: [], all_dedicated: false,
+  });
+  mocks.getAssignmentProgress.mockReturnValue(new Promise(() => {}));
   // The Insights reads answer with the reconciling samples; these tests are
   // about the shell around the panel, not the panel's figures.
   mocks.insights.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
@@ -1263,6 +1282,56 @@ describe('campaign detail — assigned agents', () => {
  * says so. The live rows come from the stats payload the floor already has —
  * a prop, not a second fetch.
  */
+describe('campaign detail — dedicated caller IDs on the staffing list', () => {
+  const AGENT = {
+    user_id: 'usr_person', name: 'Ravi', email: null, role: 'agent', assigned_at: '2026-11-01T09:00:00.000Z',
+  };
+
+  it('with the contact-assignment flag on, a supervisor sees each agent’s caller ID', async () => {
+    mocks.flag.mockReturnValue(true);
+    mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
+    renderPage('agents');
+    await waitFor(() => expect(screen.getByTestId('caller-id-usr_person').textContent).toContain('Shared rotation'));
+    expect(mocks.getAgentCallerIds).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+  });
+
+  it('with the flag off and no dedications, the caller IDs are read once and nothing is shown', async () => {
+    mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
+    renderPage('agents');
+    await screen.findByText('Ravi');
+    // Read whatever the flag, so a dedication made while it was on can be released.
+    await waitFor(() => expect(mocks.getAgentCallerIds).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('caller-id-usr_person')).toBeNull();
+    expect(screen.queryByText(/caller ID/i)).toBeNull();
+  });
+
+  it('with the flag off, a dedicated number is shown with only its release', async () => {
+    mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
+    mocks.getAgentCallerIds.mockResolvedValue({
+      campaign_id: 'camp-1',
+      caller_ids: ['+912200000001'],
+      dedicated: [{
+        campaign_id: 'camp-1', user_id: 'usr_person', agent_name: 'Ravi', caller_id: '+912200000001',
+        in_campaign: true, set_at: '2026-11-02T09:00:00.000Z', set_by_user_id: 'usr_sup',
+      }],
+      rotation: ['+912200000001'],
+      all_dedicated: true,
+    });
+    renderPage('agents');
+    await waitFor(() => expect(screen.getByTestId('caller-id-usr_person').textContent).toContain('+91 22000 00001'));
+    expect(screen.getByRole('button', { name: 'Use shared rotation for Ravi' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Change caller ID/ })).toBeNull();
+  });
+
+  it.each(['agent', 'viewer', 'operator'])('%s with the flag on issues no caller ID read', async (role) => {
+    mocks.flag.mockReturnValue(true);
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role });
+    renderPage('agents');
+    await screen.findByRole('heading', { name: 'Collections' });
+    await waitFor(() => expect(mocks.getAgentCallerIds).not.toHaveBeenCalled());
+  });
+});
+
 describe('campaign detail — the not-yet-joined signal', () => {
   const assigned = (userId: string, name: string) => ({
     user_id: userId,

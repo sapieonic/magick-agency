@@ -1,0 +1,106 @@
+/**
+ * The customer-history request bodies (`packages/contracts/src/api/agency/customer-history.ts`),
+ * validated. A LEAF apart from zod and the contract's constants: no I/O.
+ *
+ * A malformed body is `400 invalid_search_request`. The number itself is read by
+ * `parseSearchNumber` (`packages/domain`) after this, and the search id and the cursor after
+ * that, each with its own refusal (`docs/customer-history.md` §2).
+ */
+import { z } from 'zod';
+import {
+  CUSTOMER_SEARCH_BYS,
+  CUSTOMER_SEARCH_VALUE_MAX,
+  CUSTOMER_TIMELINE_CHANNELS,
+  CUSTOMER_TIMELINE_PAGE_MAX,
+  CUSTOMER_TIMELINE_PAGE_SIZE,
+  CUSTOMER_FILTER_LIST_MAX,
+  CUSTOMER_FILTER_CODE_MAX,
+  type CustomerTimelineFilters,
+} from '@magick-agency/contracts/api/agency/customer-history';
+import { AGENCY_MANUAL_CALL_OUTCOMES } from '@magick-agency/contracts/agency';
+import { UUID_RE } from '../../utils/uuid.js';
+
+
+const uuid = z.string().regex(UUID_RE, 'must be a UUID').transform((s) => s.toLowerCase());
+const instant = z.string().datetime({ offset: true });
+
+export const customerSearchRequestSchema = z.object({
+  by: z.enum(CUSTOMER_SEARCH_BYS),
+  value: z.string().max(CUSTOMER_SEARCH_VALUE_MAX, `value is at most ${CUSTOMER_SEARCH_VALUE_MAX} characters`),
+  country: z.string().regex(/^[A-Za-z]{2}$/, 'country is an ISO 3166-1 alpha-2 code').optional(),
+});
+
+const customerTimelineFiltersSchema = z.object({
+  campaign_ids: z.array(uuid).max(CUSTOMER_FILTER_LIST_MAX).optional(),
+  from: instant.optional(),
+  to: instant.optional(),
+  outcomes: z.array(z.enum(AGENCY_MANUAL_CALL_OUTCOMES)).max(CUSTOMER_FILTER_LIST_MAX).optional(),
+  disposition_codes: z.array(z.string().min(1).max(CUSTOMER_FILTER_CODE_MAX)).max(CUSTOMER_FILTER_LIST_MAX).optional(),
+  agent_user_ids: z.array(uuid).max(CUSTOMER_FILTER_LIST_MAX).optional(),
+  connected_only: z.boolean().optional(),
+  channel: z.enum(CUSTOMER_TIMELINE_CHANNELS).optional(),
+}).refine((f) => !(f.from && f.to) || new Date(f.from).getTime() < new Date(f.to).getTime(), {
+  message: 'from must be before to',
+});
+
+/** A search id as minted: `chs_` + 32 hex. Anything else is unknown (`404 search_expired`), not malformed. */
+const searchId = z.string().max(64);
+
+export const customerTimelineRequestSchema = z.object({
+  search_id: searchId,
+  filters: customerTimelineFiltersSchema.optional(),
+  cursor: z.string().max(512).optional(),
+  limit: z.number().int().min(1).max(CUSTOMER_TIMELINE_PAGE_MAX).optional(),
+});
+
+export const customerExportRequestSchema = z.object({
+  search_id: searchId,
+  filters: customerTimelineFiltersSchema.optional(),
+});
+
+/**
+ * The filters as the timeline's SQL applies them (`CUSTOMER_HISTORY_SQL.page*`): lists (NULL when
+ * absent or empty), `from` / `to` as the ISO instants sent (Postgres reads them as
+ * `timestamptz`, half-open `[from, to)`).
+ */
+export interface TimelineFilter {
+  /** ROOT campaigns: a retry is filtered with its root (CH7). */
+  campaignRoots: readonly string[] | null;
+  from: string | null;
+  to: string | null;
+  outcomes: readonly string[] | null;
+  dispositionCodes: readonly string[] | null;
+  agentUserIds: readonly string[] | null;
+  connectedOnly: boolean;
+  channel: 'campaign' | 'softphone' | null;
+  /** Any call-only filter set: only the call sources are read. */
+  callsOnly: boolean;
+}
+
+const listOf = (values: readonly string[] | undefined): readonly string[] | null =>
+  values && values.length > 0 ? [...new Set(values)] : null;
+
+export function toTimelineFilter(filters: CustomerTimelineFilters | undefined): TimelineFilter {
+  const f = filters ?? {};
+  const outcomes = listOf(f.outcomes);
+  const dispositionCodes = listOf(f.disposition_codes);
+  const agentUserIds = listOf(f.agent_user_ids);
+  const connectedOnly = f.connected_only === true;
+  const channel = f.channel ?? null;
+  return {
+    campaignRoots: listOf(f.campaign_ids),
+    from: f.from ?? null,
+    to: f.to ?? null,
+    outcomes,
+    dispositionCodes,
+    agentUserIds,
+    connectedOnly,
+    channel,
+    callsOnly: outcomes !== null || dispositionCodes !== null || agentUserIds !== null || connectedOnly || channel !== null,
+  };
+}
+
+/** The page size asked for, else the default. */
+export function pageLimit(limit: number | undefined): number {
+  return limit ?? CUSTOMER_TIMELINE_PAGE_SIZE;
+}

@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
-import { ChartNoAxesCombined, ListChecks, Phone, PhoneOutgoing } from 'lucide-react';
+import { ChartNoAxesCombined, ListChecks, Phone, PhoneOutgoing, Search } from 'lucide-react';
 import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
@@ -39,18 +39,30 @@ const ICONS: Record<AgentSurfaceId, typeof ListChecks> = {
   phone: Phone,
   performance: ChartNoAxesCombined,
   attempts: PhoneOutgoing,
+  customers: Search,
 };
+
+/**
+ * The caller's role, failing closed (`undefined`) with no provider above, the same
+ * reasoning as `useFeatureFlagEnabled`: `useTenant` reads its context before it
+ * throws, so the hook order is stable.
+ */
+function useRoleOrNone(): ReturnType<typeof useTenant>['role'] {
+  try {
+    return useTenant().role;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether this caller may search customer history (`agency.customer_history.read`, CH1). */
+export function useCustomerHistoryAvailable(): boolean {
+  return hasPermission(useRoleOrNone(), 'agency.customer_history.read');
+}
 
 /** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
 export function useSoftphoneAvailable(): boolean {
-  // Fails closed with no provider above (the same reasoning as `useFeatureFlagEnabled`):
-  // `useTenant` reads its context before it throws, so the hook order is stable.
-  let role: ReturnType<typeof useTenant>['role'];
-  try {
-    role = useTenant().role;
-  } catch {
-    role = undefined;
-  }
+  const role = useRoleOrNone();
   const flagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   return flagOn && hasPermission(role, 'agency.softphone.dial');
 }
@@ -78,9 +90,10 @@ export function AgentNav({
   leaveHint?: string | null;
 }) {
   const softphone = useSoftphoneAvailable();
+  const customers = useCustomerHistoryAvailable();
   const hintId = useId();
   const hint = lockedReason ? null : leaveHint;
-  const surfaces = agentSurfacesFor({ softphone });
+  const surfaces = agentSurfacesFor({ softphone, customers });
   return (
     <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
       {surfaces.map((surface) => {

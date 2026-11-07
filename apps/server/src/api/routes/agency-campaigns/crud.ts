@@ -5,7 +5,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId, getOriginator } from '../../middleware/auth.middleware.js';
 import { auditLogger } from '../../../audit/audit-logger.js';
-import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAgentCallerIdRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
+import { AGENCY_CALLER_ID_DEDICATED_CODE } from '@magick-agency/contracts/api/agency/agent-caller-id';
+import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
+import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type {
   AgencyAssignmentMode,
   AgencyCallbackFallback,
@@ -21,6 +24,7 @@ import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
 import { campaignConfigChange, encodeConfigChange } from '../../../agency/campaign-config-audit.js';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
+import { sendRefusal } from '../helpers/refusal.js';
 // How many ids one `GET /summaries` may name; the staffing `my-*` routes split
 // longer lists into reads of at most this many.
 import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
@@ -81,6 +85,52 @@ export function assignmentModeChangeRefused(
     message: `The assignment mode can be changed only while the campaign is a draft or paused; it is ${campaign.status}. Pause it first.`,
   });
   return true;
+}
+
+/**
+ * DN6: the numbers a PATCH's `caller_ids` (already validated and trimmed) would drop that are
+ * dedicated to an agent on this campaign, sorted. Only a number the campaign still has counts
+ * (one a direct write already dropped is dropped). `dedicated` is the campaign's effective
+ * dedicated numbers (`mapForCampaign`).
+ */
+export function droppedDedicatedCallerIds(
+  campaign: AgencyCampaignRecord,
+  dedicated: Iterable<string>,
+  next: readonly string[],
+): string[] {
+  const usable = new Set(usableCallerIds(campaign));
+  const kept = new Set(next);
+  return [...new Set(dedicated)].filter((n) => usable.has(n) && !kept.has(n)).sort();
+}
+
+/** The 409 `caller_id_dedicated`, naming the numbers the PATCH would drop. */
+export function replyCallerIdDedicated(reply: FastifyReply, dropped: readonly string[]): FastifyReply {
+  return sendRefusal(reply, 409, AGENCY_CALLER_ID_DEDICATED_CODE, dropped.length === 1
+    ? `${dropped[0]} is dedicated to an agent on this campaign. Release it from the agent before removing it.`
+    : `${dropped.join(', ')} are dedicated to agents on this campaign. Release them from the agents before removing them.`,
+  { details: { caller_ids: [...dropped] } });
+}
+
+/**
+ * The PATCH's write. With `caller_ids`, the dedicated caller ID guard (DN6) and the write are
+ * one transaction holding the campaign row `FOR UPDATE` (`updateLocked`): the dedications are
+ * read after the lock, against the row as locked, and a dedication PUT (which reads the row
+ * `FOR SHARE` and validates the number there) either committed before the lock, and is seen,
+ * or waits and then sees the new `caller_ids`. So a number cannot be dedicated as it is
+ * dropped, and never silently reactivates when it is added back. Without `caller_ids`, the
+ * plain update.
+ */
+export async function writeCampaignPatch(
+  campaign: AgencyCampaignRecord,
+  body: Record<string, unknown>,
+): Promise<{ row: AgencyCampaignRecord | null } | { refused: string[] }> {
+  if (!('caller_ids' in body)) return { row: await agencyCampaignRepository.update(campaign.id, body) };
+  const next = body.caller_ids as string[];
+  return agencyCampaignRepository.updateLocked(campaign.id, body, async (row, client) => {
+    const dedicated = await agencyAgentCallerIdRepository.mapForCampaign(row.id, client);
+    const dropped = droppedDedicatedCallerIds(row, dedicated.values(), next);
+    return dropped.length > 0 ? dropped : null;
+  });
 }
 
 /** Registered by `agencyCampaignRoutes` on its own instance, after its `authMiddleware`. */
@@ -268,7 +318,11 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // the profile must not 403 merely because `agency_call_analysis` is off.
     if ('analysis_profile_id' in body
       && await analysisProfileRejected(request, reply, body.analysis_profile_id)) return reply;
-    const updated = await agencyCampaignRepository.update(campaign.id, body);
+    // DN6: never drop a dedicated caller ID. Checked at the write, under the campaign row's
+    // lock (`writeCampaignPatch`), so after every other refusal.
+    const written = await writeCampaignPatch(campaign, body);
+    if ('refused' in written) return replyCallerIdDedicated(reply, written.refused);
+    const updated = written.row;
     // `update` can only return null if the row vanished between the ownership
     // check and the write — a delete racing an edit. 404 rather than serving
     // `null` as a campaign.

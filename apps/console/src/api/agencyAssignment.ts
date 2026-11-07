@@ -13,6 +13,11 @@ import type {
   AgencyMyContactsQuery,
   AgencyMyContactsSummary,
 } from '@magick-agency/contracts/api/agency/assignment';
+import type {
+  AgencyAgentCallerId,
+  AgencyAgentCallerIds,
+  AgencySetAgentCallerIdRequest,
+} from '@magick-agency/contracts/api/agency/agent-caller-id';
 
 /**
  * Contact assignment: the supervisor's operations and progress, and the agent's
@@ -95,6 +100,60 @@ export async function getContactAssignmentHistory(
   return apiFetch<AgencyAssignmentHistory>(
     `${AGENCY_BASE}/campaigns/${campaignId}/contacts/${contactId}/assignments`,
     {},
+    tenantId,
+    accountId,
+  );
+}
+
+// ─── Dedicated caller IDs (`agency.supervise`, same flag) ────────────────────
+// `packages/contracts/src/api/agency/agent-caller-id.ts` lists the routes and
+// their refusals; `utils/agencyAgentCallerIdCopy.ts` words them.
+
+/** Every dedicated number on the campaign, its usable caller IDs and the shared rotation. */
+export async function getAgentCallerIds(
+  campaignId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyAgentCallerIds> {
+  return apiFetch<AgencyAgentCallerIds>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/agent-caller-ids`,
+    {},
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * Dedicate one of the campaign's caller IDs to a staffed agent. Refused
+ * `409 caller_id_taken` (another agent holds it), `409 caller_id_not_in_campaign`
+ * and `404 agent_not_staffed`.
+ */
+export async function setAgentCallerId(
+  campaignId: string,
+  userId: string,
+  callerId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyAgentCallerId> {
+  const body: AgencySetAgentCallerIdRequest = { caller_id: callerId };
+  return apiFetch<AgencyAgentCallerId>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/agents/${userId}/caller-id`,
+    { method: 'PUT', body: JSON.stringify(body) },
+    tenantId,
+    accountId,
+  );
+}
+
+/** Put the agent's contacts back on the shared rotation. 204, also when none was set. */
+export async function clearAgentCallerId(
+  campaignId: string,
+  userId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<void> {
+  await apiFetch<void>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/agents/${userId}/caller-id`,
+    { method: 'DELETE' },
     tenantId,
     accountId,
   );

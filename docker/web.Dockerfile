@@ -21,10 +21,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/console/package.json apps/console/
 COPY apps/super-admin/package.json apps/super-admin/
 COPY packages/contracts/package.json packages/contracts/
+COPY packages/domain/package.json packages/domain/
 COPY packages/web-ui/package.json packages/web-ui/
 RUN pnpm install --frozen-lockfile --filter @magick-agency/console... --filter @magick-agency/super-admin...
 COPY tsconfig.base.json ./
 COPY packages/contracts/ packages/contracts/
+# The console's customer-history search box runs the number rule from packages/domain (CH5).
+COPY packages/domain/ packages/domain/
 COPY packages/web-ui/ packages/web-ui/
 COPY apps/console/ apps/console/
 COPY apps/super-admin/ apps/super-admin/

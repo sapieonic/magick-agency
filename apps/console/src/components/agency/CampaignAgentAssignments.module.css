@@ -88,6 +88,7 @@
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
@@ -155,4 +156,18 @@
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* Every caller ID is dedicated (DN3): contacts without one share them. */
+.warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-left: 2px solid var(--warning);
+  border-radius: 0 var(--radius) var(--radius) 0;
 }

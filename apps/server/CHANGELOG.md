@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.14.0](https://github.com/sapieonic/magick-agency/compare/server-v0.13.0...server-v0.14.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,contracts,db:** dedicated caller ID per agent on a campaign ([#51](https://github.com/sapieonic/magick-agency/issues/51)) ([0d89c15](https://github.com/sapieonic/magick-agency/commit/0d89c15844269ce446cc77075c3423f0cf604c5c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.13.0
+    * @magick-agency/db bumped to 0.11.0
+    * @magick-agency/domain bumped to 0.5.1
+    * @magick-agency/observability bumped to 0.7.0
+
+## [0.13.0](https://github.com/sapieonic/magick-agency/compare/server-v0.12.0...server-v0.13.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,mobile:** customer history, one number across the tenant's campaigns ([#50](https://github.com/sapieonic/magick-agency/issues/50)) ([d1c9f78](https://github.com/sapieonic/magick-agency/commit/d1c9f786476a8f287248126ff98c93a9458aab9e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.12.0
+    * @magick-agency/db bumped to 0.10.0
+    * @magick-agency/domain bumped to 0.5.0
+
+## [0.12.0](https://github.com/sapieonic/magick-agency/compare/server-v0.11.0...server-v0.12.0) (2026-11-06)
+
+
+### Features
+
+* **console,server:** scope console URLs to their tenant and account ([#48](https://github.com/sapieonic/magick-agency/issues/48)) ([d29d2fa](https://github.com/sapieonic/magick-agency/commit/d29d2faf7d478425a7e0c392f1d0137a2417e935))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.11.0
+    * @magick-agency/db bumped to 0.9.1
+    * @magick-agency/domain bumped to 0.4.5
+
 ## [0.11.0](https://github.com/sapieonic/magick-agency/compare/server-v0.10.0...server-v0.11.0) (2026-11-05)
 
 

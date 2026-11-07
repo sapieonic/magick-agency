@@ -308,6 +308,8 @@ class AppGateNotifier extends Notifier<AppGate> {
     if (user == null) {
       _forget();
       state = const GateSignedOut();
+      // Every way to the sign-in screen forgets the numbers searched (as _signOutNow does).
+      unawaited(_store.clearRecentSearches());
       return;
     }
     _uid = user.uid;
@@ -337,6 +339,7 @@ class AppGateNotifier extends Notifier<AppGate> {
             _log.warn('Session refused', {'status': e.status, 'code': e.code});
             _forget();
             state = GateSignedOut(notice: e.userMessage);
+            unawaited(_store.clearRecentSearches());
           }
       }
     } on ApiUnauthorized {
@@ -642,7 +645,8 @@ class AppGateNotifier extends Notifier<AppGate> {
       _holdingInvite = false;
       _forget();
       state = GateSignedOut(notice: notice);
-      await store.clearLastAccount();
+      // The next person on this phone sees neither the account nor the numbers searched.
+      await Future.wait([store.clearLastAccount(), store.clearRecentSearches()]);
       try {
         await auth.signOut();
       } on AuthFailure catch (e) {

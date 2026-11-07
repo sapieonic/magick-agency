@@ -8,7 +8,7 @@ import type {
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyAgentState } from '../types/agency';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
-import { errorBody, errorCode } from './agencyErrors';
+import { errorCode, errorDetails } from './agencyErrors';
 import { formatSpineTimestamp } from './agencySpineCopy';
 import { plural } from './format/number';
 
@@ -57,7 +57,7 @@ export function agentRetryRefusal(err: unknown, fallback: string): string {
   if (code === null || !(code in AGENT_RETRY_REFUSAL_COPY)) {
     return getErrorMessage(err, fallback);
   }
-  const details = detailsOf(err);
+  const details = errorDetails(err);
   if (code === 'outside_calling_hours' && typeof details?.['next_open_at'] === 'string') {
     return `${AGENT_RETRY_REFUSAL_COPY[code]} It opens again ${formatSpineTimestamp(details['next_open_at'])}.`;
   }
@@ -72,12 +72,6 @@ export function agentRetryRefusal(err: unknown, fallback: string): string {
     }
   }
   return AGENT_RETRY_REFUSAL_COPY[code];
-}
-
-/** The refusal's own `details` object (`next_open_at`, `blocked`, ...), off the envelope. */
-function detailsOf(err: unknown): Record<string, unknown> | null {
-  const details = (errorBody(err) as { details?: unknown } | null)?.details;
-  return details && typeof details === 'object' ? (details as Record<string, unknown>) : null;
 }
 
 /** The buckets the agent's filter offers, in the order an agent works them. */

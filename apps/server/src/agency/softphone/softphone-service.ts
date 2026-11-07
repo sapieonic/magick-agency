@@ -47,6 +47,7 @@ import {
 } from '../../db/models/agency.model.js';
 import { defaultPhoneCountryCode } from '../../utils/phone-normalizer.js';
 import { AGENT_LEASE_MS, type AgentStateMachine } from '../agent-state-machine.js';
+import type { DedicatedCallerIdCache } from '../pacing/dedicated-caller-ids.js';
 import type { AgencyDialer } from '../agency-dialer.js';
 import type { DncRegistry } from '../dnc-registry.js';
 import { markDnc } from '../dnc-mark.js';
@@ -155,6 +156,8 @@ export interface SoftphoneServiceDeps {
   dialer: Pick<AgencyDialer, 'hasUnannouncedAttempt'>;
   dnc: Pick<DncRegistry, 'checkEntry'>;
   manual: ManualDialer;
+  /** The tag's dedicated caller IDs (DN4), cached: `pacing/dedicated-caller-ids.ts`. */
+  dedications: Pick<DedicatedCallerIdCache, 'read'>;
 }
 
 const refuse = (refusal: SoftphoneRefusal): { ok: false; refusal: SoftphoneRefusal } => ({ ok: false, refusal });
@@ -292,6 +295,10 @@ export class SoftphoneService {
       dnc: this.deps.dnc,
       findRosterMatches: (campaignId, phone) => agencyContactRepository.findForManualMatch(campaignId, phone),
       findInFlightInAccount: (phone) => agencyContactRepository.findInFlightForAccount(actor.tenantId, actor.accountId, phone),
+      // The cached map, fed to the pure `selectCallerId`: it applies `resolveCallerId` with the
+      // requested number as the sticky and refuses one outside the tag's set, which the
+      // one-contact helper (`callerIdForContact`) does not.
+      findDedicatedCallerIds: (campaignId) => this.deps.dedications.read(campaignId),
     });
     if (!predial.ok) {
       // The session's unsettled call comes first in the order of refusals, but it was

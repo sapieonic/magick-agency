@@ -4,7 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // The scheduled path of the pacing engine: rounds, the skip of a quiescent
 // campaign, the invalidation bus that wakes it, the safety tick that bounds a lost
 // event, the cross-round caches of the campaign row and the account limit, and
-// the per-account split a round arbitrates between the campaigns of one account
+// the per-account split a round arbitrates between the campaigns of one account, the
+// cached dedicated caller IDs (`pacing/dedicated-caller-ids.ts`) and `dedications_changed`,
 // (decisions MC1, MC2, MC4, MC5, MC7; the round itself is `pacing-round.test.ts`), the
 // pending-dial ledger that carries a tick's grant across rounds, and the claim-shortfall cap. `pacing-engine.test.ts` is the tick's
 // arithmetic through `tickOnce` (a forced, never-skipped, fresh tick); this file
@@ -42,6 +43,8 @@ const { repos, settings } = vi.hoisted(() => ({
       findLiveForCampaign: vi.fn().mockResolvedValue([]),
       setState: vi.fn().mockResolvedValue(null),
     },
+    // No dedicated caller IDs (DN1) unless a case says so: every contact dials from the rotation.
+    callerIds: { mapForCampaign: vi.fn(async () => new Map<string, string>()) },
   },
   settings: { getMaxConcurrentCalls: vi.fn().mockResolvedValue(5) },
 }));
@@ -50,6 +53,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
+  agencyAgentCallerIdRepository: repos.callerIds,
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
@@ -171,6 +175,7 @@ beforeEach(() => {
   }));
   settings.getMaxConcurrentCalls.mockResolvedValue(5);
   repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+  repos.callerIds.mapForCampaign.mockImplementation(async () => new Map());
 });
 
 const engines: PacingEngine[] = [];
@@ -217,11 +222,13 @@ describe('PacingInvalidationBus (in process)', () => {
       { type: 'agent_available', sessionId: 's', campaignId: 'c1' },
       { type: 'agent_available', sessionId: 's', campaignId: null },
       { type: 'station_ready', sessionId: 's', campaignId: 'c1' },
+      { type: 'dedications_changed', campaignId: 'c1' },
     ];
     for (const e of events) expect(parsePacingInvalidationEvent(JSON.parse(JSON.stringify(e)))).toEqual(e);
     for (const bad of [null, 'x', {}, { type: 'nope' }, { type: 'campaign_changed' },
       { type: 'account_limit_changed', tenantId: 't' }, { type: 'agent_available', sessionId: 's', campaignId: 7 },
-      { type: 'station_ready', sessionId: 's', campaignId: null }, { type: 'station_ready', campaignId: 'c1' }]) {
+      { type: 'station_ready', sessionId: 's', campaignId: null }, { type: 'station_ready', campaignId: 'c1' },
+      { type: 'dedications_changed' }, { type: 'dedications_changed', campaignId: '' }]) {
       expect(parsePacingInvalidationEvent(bad)).toBeNull();
     }
   });
@@ -532,6 +539,100 @@ describe('PacingEngine rounds: the cached account limit', () => {
     }
     expect(seen).toEqual([2, 2]);
     expect(repos.contact.claimDialable).not.toHaveBeenCalled();
+  });
+});
+
+describe('PacingEngine rounds: the cached dedicated caller IDs (DN4)', () => {
+  const POOL = ['+14155550100', '+14155550101'];
+  const OWNED = { ...CAMPAIGN, caller_ids: POOL };
+  /** One agent, one contact owned by u1 per round: the round's dial shows which map it used. */
+  function dialling() {
+    repos.campaign.findById.mockResolvedValue(OWNED);
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockImplementation(async () => [{ ...contact('c1'), assigned_user_id: 'u1' }]);
+    const states: Record<string, string> = { s1: 'available' };
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1' }), agents: makeAgents(states), cacheTtlMs: 2_000 }));
+    lead(r.e);
+    /** The next round, with the agent back in `available` (the mock dispatch never ends the call). */
+    const round = async () => {
+      states['s1'] = 'available';
+      r.clock.t += 250;
+      await r.e.runRound();
+    };
+    const lastCallerId = () => r.dispatch.mock.calls.at(-1)![0].callerId as string;
+    return { r, round, lastCallerId, states };
+  }
+
+  it('is read once and reused by later dialling rounds; dedications_changed drops it at once', async () => {
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
+    const { r, round, lastCallerId } = dialling();
+    await round();
+    expect(lastCallerId()).toBe('+14155550101');
+
+    // Released in the database, but no event yet: the cached dedication is still used.
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
+    await round();
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(1);
+    expect(lastCallerId()).toBe('+14155550101');
+
+    // Another campaign's event leaves this one cached.
+    r.bus.publish({ type: 'dedications_changed', campaignId: 'camp-2' });
+    await round();
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(1);
+
+    // The release's event: the very next round reads again and dials from the rotation.
+    r.bus.publish({ type: 'dedications_changed', campaignId: 'camp-1' });
+    await round();
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(2);
+    expect(r.dispatch).toHaveBeenCalledTimes(4);
+    expect(POOL).toContain(lastCallerId());
+    expect(r.e.dedications.isArmed).toBe(true);
+  });
+
+  it('a change whose event is LOST is picked up once the TTL lapses (the backstop)', async () => {
+    const { r, round, lastCallerId } = dialling();
+    await round();
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
+    await round();
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(1);
+    r.clock.t += 2_000;
+    await round();
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(2);
+    expect(lastCallerId()).toBe('+14155550101');
+  });
+
+  it('dedications_changed wakes nothing: a quiescent campaign stays skipped', async () => {
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1' }), agents: makeAgents({ s1: 'on_call' }) }));
+    lead(r.e);
+    await r.e.runRound();
+    r.bus.publish({ type: 'dedications_changed', campaignId: 'camp-1' });
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.map((t) => t.mode)).toEqual(['full', 'skipped']);
+    expect(repos.callerIds.mapForCampaign).not.toHaveBeenCalled();
+  });
+
+  it('a failed read is not cached: the next round reads again', async () => {
+    repos.callerIds.mapForCampaign.mockRejectedValueOnce(new Error('connection reset'));
+    const { r, round } = dialling();
+    await round();
+    expect(r.dispatch).not.toHaveBeenCalled();
+    await round();
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(2);
+    expect(r.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a forced tick reads through; giving up the last campaign disarms the cache (reads through again)', async () => {
+    const { r, round, states } = dialling();
+    await round();
+    states['s1'] = 'available';
+    await r.e.tickOnce('camp-1');
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(2);
+    await r.e.stop();
+    expect(r.e.dedications.isArmed).toBe(false);
+    await r.e.dedications.read('camp-1');
+    await r.e.dedications.read('camp-1');
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(4);
   });
 });
 
