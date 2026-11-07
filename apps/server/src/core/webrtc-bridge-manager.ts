@@ -45,7 +45,7 @@ import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
-import { carrierAuthRejectionReason, isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import { carrierAuthRejectionReason, isCarrierDialAborted, isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
@@ -762,8 +762,12 @@ export class WebRtcBridgeManager {
     // up. A step before it (5b) asks the carrier nothing and is torn down as unplaced; a
     // step after `initiateCall` resolved runs with the leg placed and must not land here
     // either (see the `provider_call_id` write below).
+    // The teardown aborts it (`endCall`), so a dial still waiting to be sent is never sent.
+    const dialAbort = new AbortController();
+    session.dialAbort = dialAbort;
     try {
       const result = await adapter.initiateCall({
+        signal: dialAbort.signal,
         callId: record.id,
         to: params.destinationPhone,
         from: params.callerId,
@@ -780,6 +784,20 @@ export class WebRtcBridgeManager {
       session.providerCallId = result.providerCallId || null;
       session.providerRequestId = result.providerRequestId || null;
     } catch (err) {
+      // Torn down while the dial waited to be sent, and the adapter sent nothing: the leg
+      // was never placed. The teardown has already settled the call (terminal row, `ended`,
+      // slots), exactly as for a teardown just before the dial (above), so this returns
+      // the same way and there is nothing to hang up.
+      if (isCarrierDialAborted(err)) {
+        if (session.endHandled) {
+          log.info({ callId: record.id }, 'WebRTC call was torn down while its dial waited to be sent — the dial was not sent');
+          return { record, session };
+        }
+        // Aborted by something other than the teardown (nothing else aborts it today):
+        // still a leg never placed.
+        await this.abortUnplacedLeg(record.id, err);
+        throw err;
+      }
       // Refused with nothing placed (a calls-per-second limit, or the carrier refusing the
       // credential): torn down as unplaced, no `ended`, its own code, so the caller neither
       // charges the contact a carrier refusal nor waits on an `ended` that never comes.
@@ -824,6 +842,8 @@ export class WebRtcBridgeManager {
       );
       refusal.cause = err;
       throw refusal;
+    } finally {
+      session.dialAbort = null;
     }
 
     // The teardown-during-dial race, closed here because this is the first
@@ -2321,6 +2341,8 @@ export class WebRtcBridgeManager {
     if (session.endHandled) return;
     session.endHandled = true;
     session.clearMaxDurationTimer();
+    // A dial still waiting to be sent is called off (`OutboundCallRequest.signal`).
+    session.dialAbort?.abort();
 
     const talkTime = session.getTalkTimeSeconds();
     const duration = session.getDurationSeconds();

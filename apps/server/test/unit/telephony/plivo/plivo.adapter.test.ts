@@ -29,6 +29,7 @@ import { computePlivoV3Signature } from '../../../../src/telephony/plivo/plivo-s
 import { Secret } from '../../../../src/telephony/credentials/secret.js';
 import {
   CarrierAuthRejectedError,
+  CarrierDialAbortedError,
   CarrierRateLimitedError,
   CarrierRequestTimeoutError,
   isDialOutcomeUnknown,
@@ -222,6 +223,41 @@ describe('PlivoAdapter.initiateCall', () => {
     expect((err as CarrierRateLimitedError).source).toBe('local_gate');
     expect(f.sent).toHaveLength(0);
     expect(full.tryAcquire).toHaveBeenCalledWith(AUTH_ID, 2);
+  });
+
+  it('a call torn down while its dial waited at the gate: nothing is sent, an unplaced leg, not counted as a refusal', async () => {
+    const controller = new AbortController();
+    // The window is full once; the dial waits, and the call is torn down meanwhile.
+    const limiter: PlivoDialRateLimiter = {
+      tryAcquire: vi.fn()
+        .mockResolvedValueOnce({ admitted: false as const, retryAfterMs: 400 })
+        .mockResolvedValue({ admitted: true as const }),
+    };
+    const f = fakeFetch([created]);
+    const err = await adapter(f.impl, {
+      rateLimiter: limiter, dialRateMaxWaitMs: 5_000,
+      sleep: async () => { controller.abort(); },
+    }).initiateCall(dial({ signal: controller.signal })).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CarrierDialAbortedError);
+    expect(limiter.tryAcquire).toHaveBeenCalledTimes(2);
+    expect(f.sent).toHaveLength(0);
+    expect(refusals.track).not.toHaveBeenCalled();
+  });
+
+  it('a signal already aborted: refused before the gate, nothing sent', async () => {
+    const limiter = { tryAcquire: vi.fn(async () => ({ admitted: true as const })) };
+    const f = fakeFetch([created]);
+    const err = await adapter(f.impl, { rateLimiter: limiter }).initiateCall(dial({ signal: AbortSignal.abort() })).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CarrierDialAbortedError);
+    expect(limiter.tryAcquire).not.toHaveBeenCalled();
+    expect(f.sent).toHaveLength(0);
+  });
+
+  it('a signal not aborted changes nothing: the dial is sent', async () => {
+    const f = fakeFetch([created]);
+    const r = await adapter(f.impl).initiateCall(dial({ signal: new AbortController().signal }));
+    expect(r.providerRequestId).toBe(REQUEST_UUID);
+    expect(f.sent).toHaveLength(1);
   });
 
   it('gates on the account, at PLIVO_CALLS_PER_SECOND', async () => {

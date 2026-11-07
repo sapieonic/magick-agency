@@ -35,6 +35,7 @@ import { PLIVO_API_BASE } from '../credentials/credential-specs.js';
 import { Secret } from '../credentials/secret.js';
 import {
   CarrierAuthRejectedError,
+  CarrierDialAbortedError,
   CarrierDialOutcomeUnknownError,
   CarrierRateLimitedError,
   CarrierRequestTimeoutError,
@@ -279,6 +280,10 @@ export class PlivoAdapter implements TelephonyProvider {
    *  - A timeout, or a 2xx whose body has no readable `request_uuid`: the call may have
    *    been placed (`dialOutcomeUnknown`); never retried here.
    *
+   * A dial whose `req.signal` is aborted before the create-call is sent (the call was torn
+   * down while it waited at the gate) sends nothing and rejects with
+   * {@link CarrierDialAbortedError}: an unplaced leg, not a refusal, and not counted.
+   *
    * Each of these but a placed call (and the gate's refusal) counts once in
    * `carrier_dial_refusals_total{provider="plivo"}`, by kind. A refusal before the gate (a
    * malformed number or URL: our data, not the carrier) and a network error do not.
@@ -290,6 +295,7 @@ export class PlivoAdapter implements TelephonyProvider {
     const statusUrl = this.checkCallbackUrl(req.statusCallbackUrl, 'hangup_url');
     const timeLimit = positiveInt(req.maxDuration);
     if (!timeLimit) throw new Error('Plivo dial refused before sending: no max duration for time_limit');
+    if (req.signal?.aborted) throw new CarrierDialAbortedError('plivo');
 
     const gate = await acquirePlivoDialSlot(this.rateLimiter ?? getPlivoDialRateLimiter(), this.authId, {
       perSecond: this.settings.callsPerSecond,
@@ -299,6 +305,12 @@ export class PlivoAdapter implements TelephonyProvider {
     if (!gate.admitted) {
       log.warn({ callId: req.callId, waitedMs: gate.waitedMs }, 'Plivo dial not sent: no calls-per-second slot in time');
       throw dialRefused('rate_limited', new CarrierRateLimitedError('plivo', 'local_gate', gate.waitedMs));
+    }
+    // The wait at the gate can be long (`dialRateMaxWaitMs`): a call torn down meanwhile
+    // must not ring a customer for nobody. Nothing has been sent yet.
+    if (req.signal?.aborted) {
+      log.info({ callId: req.callId, waitedMs: gate.waitedMs }, 'Plivo dial not sent: the call ended while it waited for a calls-per-second slot');
+      throw new CarrierDialAbortedError('plivo');
     }
 
     const body = {

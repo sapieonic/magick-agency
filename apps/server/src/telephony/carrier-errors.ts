@@ -101,6 +101,19 @@ export class CarrierAuthRejectedError extends Error {
 }
 
 /**
+ * The dial was abandoned before it was sent, because the caller no longer wanted it
+ * (`OutboundCallRequest.signal` aborted: the call was torn down while the dial waited for
+ * a calls-per-second slot). Nothing reached the carrier: an unplaced leg.
+ */
+export class CarrierDialAbortedError extends Error {
+  readonly carrierDialAborted = true;
+  constructor(readonly provider: string) {
+    super(`${provider} dial not sent: the call ended before it could be placed`);
+    this.name = 'CarrierDialAbortedError';
+  }
+}
+
+/**
  * The dial could not be sent for now because of a calls-per-second limit, and was not
  * placed: retry it shortly, it says nothing about the contact.
  *
@@ -152,6 +165,11 @@ export function carrierAuthRejectionReason(err: unknown): string | null {
     current = (current as { cause?: unknown }).cause;
   }
   return null;
+}
+
+/** Whether `err`, or an error in its `cause` chain, is a {@link CarrierDialAbortedError}. */
+export function isCarrierDialAborted(err: unknown): boolean {
+  return causeChainHas(err, 'carrierDialAborted');
 }
 
 /** Whether `err`, or an error in its `cause` chain, is a {@link CarrierRateLimitedError}. */

@@ -18,6 +18,14 @@ export interface OutboundCallRequest {
   machineDetection?: boolean;
   enableRecording?: boolean;
   headers?: Record<string, string>;
+  /**
+   * Aborted when the dial is no longer wanted: the call was torn down while the dial was
+   * still on its way out. An adapter that can hold a dial before sending it (a
+   * calls-per-second gate) checks it before the carrier request and then sends nothing,
+   * rejecting with `CarrierDialAbortedError` (an unplaced leg). An adapter that sends at
+   * once may ignore it: the bridge hangs up whatever was placed once the dial returns.
+   */
+  signal?: AbortSignal;
 }
 
 /**

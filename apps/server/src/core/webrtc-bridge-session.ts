@@ -45,6 +45,12 @@ export class WebRtcBridgeSession {
    * a teardown before then cancels the dial by it. Persisted as `provider_request_id`.
    */
   providerRequestId: string | null = null;
+  /**
+   * While the carrier request is on its way out: aborted by the teardown, so a dial still
+   * waiting to be sent (a calls-per-second gate) is never sent (`OutboundCallRequest.signal`).
+   * Null before and after the request.
+   */
+  dialAbort: AbortController | null = null;
   /** Provider media stream id (`start.stream_sid`) — needed for `clear`/commands. */
   providerStreamId: string | null = null;
   /**

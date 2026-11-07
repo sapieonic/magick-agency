@@ -99,7 +99,7 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
 
 import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { normalizePlivoCallback, plivoCallEvent } from '../../../src/telephony/plivo/plivo.webhook.js';
-import { CarrierAuthRejectedError, CarrierRateLimitedError } from '../../../src/telephony/carrier-errors.js';
+import { CarrierAuthRejectedError, CarrierDialAbortedError, CarrierRateLimitedError } from '../../../src/telephony/carrier-errors.js';
 import { setBridgeAnalysisHooks, resetBridgeAnalysisHooks } from '../../../src/seams/bridge-analysis-hooks.js';
 
 function fakeWs() {
@@ -375,6 +375,41 @@ describe('a Plivo teardown reaches the carrier by the right id, and never an emp
     await placing;
     expect(plivoAdapter.cancelDialRequest).toHaveBeenCalledWith('req-race');
     expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+  });
+
+  it('a teardown while the dial still waits to be sent aborts it: the adapter sends nothing, the call settles once', async () => {
+    // The adapter as Plivo's behaves at its calls-per-second gate: it waits, and gives up
+    // without sending when the request's signal is aborted.
+    let seen: AbortSignal | undefined;
+    plivoAdapter.initiateCall.mockImplementationOnce((req: { signal?: AbortSignal }) => new Promise((_, reject) => {
+      seen = req.signal;
+      req.signal!.addEventListener('abort', () => reject(new CarrierDialAbortedError('plivo')));
+    }));
+    const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
+    mgr.onLifecycle((e) => lifecycle.push(e));
+    const placing = mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any });
+    await vi.waitFor(() => expect(plivoAdapter.initiateCall).toHaveBeenCalled());
+    expect(seen?.aborted).toBe(false);
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    expect(seen?.aborted).toBe(true);
+    // The dial resolves as for a teardown just before it: no error, nothing to hang up.
+    await expect(placing).resolves.toMatchObject({ id: CALL_ID });
+    expect(plivoAdapter.cancelDialRequest).not.toHaveBeenCalled();
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(1);
+    expect(mgr.getActiveCallIds()).toEqual([]);
+  });
+
+  it('a dial that is placed is not aborted afterwards: a later teardown hangs it up as before', async () => {
+    let seen: AbortSignal | undefined;
+    plivoAdapter.initiateCall.mockImplementationOnce(async (req: { signal?: AbortSignal }) => {
+      seen = req.signal;
+      return { providerCallId: '', providerRequestId: 'req-1' };
+    });
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    expect(seen?.aborted).toBe(false);
+    expect(plivoAdapter.cancelDialRequest).toHaveBeenCalledWith('req-1');
   });
 });
 
