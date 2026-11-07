@@ -485,11 +485,15 @@ Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`,
 
 ### `apps/server/src/api/responses/`
 
-Response serialisers for campaigns and calls.
+Response serialisers for campaigns and calls. A tenant-facing call's `error_message` is the
+vendor-free sentence for its `error_code` (`call-error-message.ts`), never the row's raw text
+(kept in the row and the logs).
 
-Files: `agency-campaign.response.ts`, `webrtc-call.response.ts`
+Files: `agency-campaign.response.ts`, `call-error-message.ts`, `webrtc-call.response.ts`
 
-_No dedicated test files._
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/branding/call-error-message.test.ts` | ~13 |
 
 ### `apps/server/src/api/routes/`
 
