@@ -562,9 +562,11 @@ every account the caller belongs to (CH2) where every internal handler is single
     console's copy a table keyed by it, so a new pause reason needs only its sentence) and, for
     a running campaign, `no_dialable_caller_ids` (PL13) and `no_carrier_capacity` (PL14), ranked
     right after the abandonment pause; the advice says "contact support", since the service's
-    super-admins, not the tenant's, fix a carrier account. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
-    carrier plus the tenant's active credentials). A soft-phone call takes its tag's carrier
-    account, or untagged the account of the chosen caller ID's number.
+    super-admins, not the tenant's, fix a carrier account.
+    The console's carrier choice reads `GET /proxy/agency/carriers` (the service's carrier plus
+    the tenant's active credentials; floor `agency.campaigns.read`, so a read-only viewer of the
+    settings is told "Carrier: …" when there is more than one). A soft-phone call takes its
+    tag's carrier account, or untagged the account of the chosen caller ID's number.
   - *Numbers.* `TelephonyCredentialService.syncNumbers` (super-admin "Sync numbers", `POST
     /super-admin/telephony-credentials/:id/sync-numbers`) pages the account's numbers from
     Plivo's fixed API host and writes them to `phone_numbers` pinned to the credential

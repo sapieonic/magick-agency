@@ -52,6 +52,7 @@ import { useAgencyCarriers } from '../../hooks/useAgencyCarriers';
 import {
   SERVICE_CARRIER,
   carrierOfCampaign,
+  carrierName,
   carrierOptions,
   carrierRefusal,
   sameCarrier,
@@ -124,9 +125,9 @@ export function AgencyCampaignSettingsPage() {
   // Contact assignment's settings and outcome overrides: shown and sent only while
   // the flag is on (the server refuses a non-default value with it off).
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
-  // The carriers list needs the same permission as the save that sends its values, so a
-  // read-only viewer never asks; the picker then filters by the campaign's own carrier.
-  const { carriers } = useAgencyCarriers({ enabled: canEdit });
+  // Read by every viewer (`agency.campaigns.read`): an editor chooses from it, and a
+  // read-only viewer is told which carrier account the campaign dials on.
+  const { carriers } = useAgencyCarriers();
 
   // L1 (UX) gating only — the server's 403 is the real enforcement, and
   // `useGovernance` fails OPEN, so a missing/failed map leaves both controls
@@ -455,6 +456,12 @@ export function AgencyCampaignSettingsPage() {
             onChange={setCarrier}
             error={fieldErrors['telephony_credential_id'] ?? fieldErrors['telephony_provider']}
           />
+        )}
+        {/* A viewer who cannot edit still reads which carrier account it dials on. */}
+        {!canEdit && carrierChoices.length > 1 && (
+          <p className={styles.hint} data-testid="campaign-carrier-readonly">
+            {`Carrier: ${carrierChoices.find((o) => sameCarrier(o, carrier))?.name ?? carrierName(carrier)}`}
+          </p>
         )}
         <div className="form-group">
           <label htmlFor="campaign-caller-ids">

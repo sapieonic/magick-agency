@@ -1,7 +1,7 @@
 // `GET /proxy/agency/carriers` (decisions B18–B22): the service's own carriers, then the
 // tenant's ACTIVE credentials on active carriers that take them, with id, carrier and label
 // only. Which kind a carrier is comes from its credential spec, not its name. The RBAC floor
-// (`agency.campaigns.write`) is pinned by `proxy-agency-campaigns.routes.test.ts`.
+// (`agency.campaigns.read`) is pinned by `proxy-agency-campaigns.routes.test.ts`.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 

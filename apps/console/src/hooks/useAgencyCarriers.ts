@@ -6,9 +6,9 @@ import type { AgencyCarrier } from '../types/agency-campaign';
 
 /**
  * The carrier accounts this tenant's campaigns may dial on, or `null` until they are read
- * (and while `enabled` is false: the list needs `agency.campaigns.write`, so a read-only
- * viewer never asks). A failed read leaves `null` and sets `error`; callers then keep the
- * campaign on the carrier it already has, as the console did before the choice existed.
+ * (and while `enabled` is false). The list needs `agency.campaigns.read`. A failed read
+ * leaves `null` and sets `error`; callers then keep the campaign on the carrier it already
+ * has, as the console did before the choice existed.
  */
 export function useAgencyCarriers({ enabled = true }: { enabled?: boolean } = {}) {
   const { tenantId, accountId } = useTenant();

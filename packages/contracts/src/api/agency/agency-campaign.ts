@@ -619,7 +619,7 @@ export interface AgencyCarrier {
   status: 'active';
 }
 
-/** `GET /proxy/agency/carriers` (`agency.campaigns.write`): the service's carriers first, then the tenant's accounts by label. */
+/** `GET /proxy/agency/carriers` (`agency.campaigns.read`): the service's carriers first, then the tenant's accounts by label. */
 export interface AgencyCarriersResponse {
   carriers: AgencyCarrier[];
 }

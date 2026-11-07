@@ -10,7 +10,9 @@
  *    credentials: its id, carrier and label. Never `account_ref`, config or any secret.
  * Which kind a carrier is comes from whether it takes tenant credentials, not its name.
  *
- * Floor `agency.campaigns.write`, like the campaign create and edit that send its values.
+ * Floor `agency.campaigns.read`: an editor fills the campaign create and edit from it, and a
+ * read-only viewer of a campaign's settings is told which carrier account it dials on. It
+ * holds labels and ids only, nothing a viewer of the campaign could not already learn.
  */
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
@@ -22,7 +24,7 @@ import type { AgencyCarrier, AgencyCarriersResponse } from '@magick-agency/contr
 /** Registered by `proxyAgencyCampaignsRoutes` on its own instance, after its hooks. */
 export async function registerCarrierRoutes(app: FastifyInstance): Promise<void> {
   app.get('/carriers', {
-    preHandler: requirePermission('agency.campaigns.write'),
+    preHandler: requirePermission('agency.campaigns.read'),
   }, async (request, reply) => {
     const tenantId = request.tenantId!;
     const [providers, credentials] = await Promise.all([

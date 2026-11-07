@@ -242,7 +242,7 @@ describe('campaign settings — carrier', () => {
     expect(sentBody()).not.toHaveProperty('caller_ids');
   });
 
-  it('is not offered to a viewer who cannot edit, whose numbers still follow the campaign’s carrier', async () => {
+  it('is not offered to a viewer who cannot edit, who is told the carrier instead; the numbers still follow it', async () => {
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'viewer' });
     mocks.getAgencyCampaign.mockResolvedValue(campaign({
       telephony_provider: 'plivo', telephony_credential_id: CRED_A, caller_ids: ['+14155550102'],
@@ -251,7 +251,28 @@ describe('campaign settings — carrier', () => {
     await screen.findByRole('checkbox', { name: /\+14155550102/ });
     expect(carrierSelect()).toBeNull();
     expect(numberBox(/\+912200000001/)).toBeNull();
-    expect(mocks.useAgencyCarriers).toHaveBeenCalledWith({ enabled: false });
+    expect(screen.getByTestId('campaign-carrier-readonly').textContent).toBe('Carrier: Pravah (Acme main)');
+    expect(document.body.textContent).not.toMatch(/plivo|voicelink/i);
+  });
+
+  it('tells a viewer a service-carrier campaign’s carrier too, and says nothing with one carrier account', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'viewer' });
+    const { unmount } = renderPage();
+    await screen.findByRole('checkbox', { name: /\+912200000001/ });
+    expect(screen.getByTestId('campaign-carrier-readonly').textContent).toBe('Carrier: Swar');
+    unmount();
+
+    mocks.useAgencyCarriers.mockReturnValue({ carriers: [SERVICE], error: null });
+    renderPage();
+    await screen.findByRole('checkbox', { name: /\+912200000001/ });
+    expect(screen.queryByTestId('campaign-carrier-readonly')).toBeNull();
+  });
+
+  it('an editor gets the choice, not the read-only line', async () => {
+    renderPage();
+    await screen.findByRole('checkbox', { name: /\+912200000001/ });
+    expect(carrierSelect()).not.toBeNull();
+    expect(screen.queryByTestId('campaign-carrier-readonly')).toBeNull();
   });
 
   it.each([
