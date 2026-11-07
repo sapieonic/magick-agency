@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Gauge, PhoneOff, Save, SlidersHorizontal } from 'lucide-react';
 import {
   updateAccountConcurrency, getAccountConcurrency, listTelephonyProviders, updateProviderConcurrency,
+  listTelephonyCredentials,
 } from '../../../api/super-admin';
 import type {
   AccountConcurrencyDetail, TenantAccountWithConcurrency,
@@ -12,6 +13,7 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { AccountSettingsPanel } from './AccountSettingsPanel';
+import { carrierAllocationGaps } from './carrierAllocationGaps';
 import styles from '../SATenantDetailPage.module.css';
 
 /** The legacy flat totals, by account id, that the inputs start from. */
@@ -55,6 +57,23 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
     const timers = savedNoteTimers.current;
     return () => { Object.values(timers).forEach(clearTimeout); };
   }, []);
+
+  // The carriers this tenant dials on with its own active carrier accounts, for the
+  // missing-allocation warning (PL14). Best effort: a failed read shows no warning.
+  const [credentialProviders, setCredentialProviders] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const credentials = await listTelephonyCredentials({ tenant_id: tenantId });
+        if (!cancelled) setCredentialProviders(credentials.filter((c) => c.status === 'active').map((c) => c.provider));
+      } catch {
+        if (!cancelled) setCredentialProviders([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tenantId]);
+  const allocationGaps = carrierAllocationGaps(accounts, credentialProviders);
 
   // Re-seed the legacy-total inputs on every (re)load of the accounts, during
   // render rather than in an effect, so no edit can land between the new
@@ -235,6 +254,22 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
           Allocate concurrency by provider. The account total is the sum of provider allocations,
           while legacy accounts retain their existing flat limit until migrated.
         </p>
+        {allocationGaps.length > 0 && (
+          <div className={styles.error} role="alert" data-testid="carrier-allocation-gaps">
+            <p>
+              These accounts have no capacity on a carrier this tenant has an active carrier account on.
+              Their campaigns on that carrier cannot start, and the tenant is told to contact support.
+              Add an allocation for the carrier, or move the account to a legacy total.
+            </p>
+            <ul>
+              {allocationGaps.map((gap) => (
+                <li key={`${gap.accountId}:${gap.provider}`}>
+                  {gap.accountName}: no allocation for {telephonyProviderAlias(gap.provider)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {accountsLoading ? (
             <LoadingSpinner size="sm" />
           ) : accounts.length === 0 ? (

@@ -68,6 +68,12 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAttemptRepository: {},
   agencyContactRepository: {},
 }));
+// Start and resume read the carrier's concurrency allocation (PL14): a legacy total here.
+vi.mock('@magick-agency/db/repositories/provider-concurrency.repository', () => ({
+  providerConcurrencyRepository: {
+    getProviderLimit: vi.fn().mockResolvedValue({ mode: 'legacy_total', limit: null, total: 5, version: 1 }),
+  },
+}));
 vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
   announcementRepository: { findActiveByIdScoped: vi.fn() },
 }));

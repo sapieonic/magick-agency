@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   listProviders: vi.fn(),
   updateProviderConcurrency: vi.fn(),
   getAccountSettings: vi.fn(),
+  listCredentials: vi.fn(),
 }));
 
 vi.mock('../../hooks/useSuperAdminTenant', () => ({ useSuperAdminTenant: mocks.useTenant }));
@@ -29,6 +30,7 @@ vi.mock('../../api/super-admin', () => ({
   listTelephonyProviders: mocks.listProviders,
   updateProviderConcurrency: mocks.updateProviderConcurrency,
   getAccountSettings: mocks.getAccountSettings,
+  listTelephonyCredentials: mocks.listCredentials,
   updateAccountSettings: vi.fn(), changeMembershipRole: vi.fn(), revokeMembership: vi.fn(),
   putFeatureFlagOverride: vi.fn(), deleteFeatureFlagOverride: vi.fn(),
 }));
@@ -74,6 +76,7 @@ beforeEach(() => {
   });
   mocks.listProviders.mockResolvedValue([provider('vobiz'), provider('voicelink')]);
   mocks.updateProviderConcurrency.mockResolvedValue({});
+  mocks.listCredentials.mockResolvedValue([]);
   mocks.getAccountSettings.mockResolvedValue({ settings: {
     tenant_id: 't-1', account_id: 'a-1', allow_recording: false, analyze_calls: false,
     max_concurrent_calls: 5, webrtc_max_duration_seconds: 1800, updated_at: '2026-10-08T00:00:00.000Z',
@@ -486,5 +489,46 @@ describe('SATenantDetailPage — legacy concurrency "Saved" note', () => {
 
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('the Service tab warns of a carrier with no allocation (PL14)', () => {
+  const breakdown = (id: string, name: string, providers: Array<{ provider: string; max_concurrent_calls: number }>) => ({
+    id, name, slug: name.toLowerCase(), status: 'active', max_concurrent_calls: 10,
+    concurrency: {
+      tenant_id: 't-1', account_id: id, mode: 'provider_breakdown' as const, version: 1, total_concurrency: 10, providers,
+    },
+  });
+
+  it('names each breakdown account with no allocation for a carrier the tenant has an active carrier account on', async () => {
+    mocks.getAccounts.mockResolvedValue([
+      breakdown('a-1', 'Sales', [{ provider: 'voicelink', max_concurrent_calls: 10 }]),
+      breakdown('a-2', 'Collections', [{ provider: 'voicelink', max_concurrent_calls: 5 }, { provider: 'plivo', max_concurrent_calls: 5 }]),
+      { id: 'a-3', name: 'Legacy', slug: 'legacy', status: 'active', max_concurrent_calls: 10,
+        concurrency: { tenant_id: 't-1', account_id: 'a-3', mode: 'legacy_total' as const, version: 1, total_concurrency: 10, providers: [] } },
+    ]);
+    mocks.listCredentials.mockResolvedValue([
+      { id: 'cred-1', provider: 'plivo', status: 'active' },
+      { id: 'cred-2', provider: 'plivo', status: 'disabled' },
+    ]);
+
+    renderPage();
+    await waitFor(() => screen.getByRole('heading', { name: 'Acme' }));
+    fireEvent.click(screen.getByRole('tab', { name: /service/i }));
+    const warning = await screen.findByTestId('carrier-allocation-gaps');
+    expect(mocks.listCredentials).toHaveBeenCalledWith({ tenant_id: 't-1' });
+    const items = within(warning).getAllByRole('listitem').map((li) => li.textContent);
+    expect(items).toEqual([`Sales: no allocation for ${telephonyProviderAlias('plivo')}`]);
+  });
+
+  it('says nothing when the tenant has no active carrier account', async () => {
+    mocks.getAccounts.mockResolvedValue([breakdown('a-1', 'Sales', [{ provider: 'voicelink', max_concurrent_calls: 10 }])]);
+    mocks.listCredentials.mockResolvedValue([{ id: 'cred-2', provider: 'plivo', status: 'disabled' }]);
+    renderPage();
+    await waitFor(() => screen.getByRole('heading', { name: 'Acme' }));
+    fireEvent.click(screen.getByRole('tab', { name: /service/i }));
+    await screen.findByRole('cell', { name: 'Sales' });
+    await waitFor(() => expect(mocks.listCredentials).toHaveBeenCalled());
+    expect(screen.queryByTestId('carrier-allocation-gaps')).toBeNull();
   });
 });

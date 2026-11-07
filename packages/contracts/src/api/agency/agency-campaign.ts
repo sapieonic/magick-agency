@@ -426,7 +426,9 @@ export interface AgencyCampaign {
    * may stay: the dial skips one no longer active, PL13). Refusals: 400 (shape, pairing,
    * caller IDs), 404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`;
    * start and resume answer that 409 too once the account stops being active, and 409
-   * `campaign_caller_ids_unavailable` when none of the caller IDs is dialable. A PATCH that moves
+   * `campaign_caller_ids_unavailable` when none of the caller IDs is dialable, or
+   * `carrier_capacity_unallocated` when the account's per-carrier concurrency gives the
+   * carrier no lines (PL14). A PATCH that moves
    * the campaign to the service's carrier sends `telephony_credential_id: null` with it.
    */
   telephony_credential_id?: string | null;

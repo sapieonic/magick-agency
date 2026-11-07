@@ -170,8 +170,9 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
         });
       }
       // And only while the account can dial on it: a caller ID still available on it
-      // (PL13). A campaign that would run and place nothing is refused while a
-      // supervisor is here to read why.
+      // (PL13), and lines on its carrier when the account splits them by carrier (PL14).
+      // A campaign that would run and place nothing is refused while a supervisor is
+      // here to read why.
       const dialability = await campaignDialabilityStartRefusal(campaign);
       if (dialability) {
         return reply.code(dialability.status).send({ error: 'Conflict', code: dialability.code, message: dialability.message });

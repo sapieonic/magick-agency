@@ -297,7 +297,7 @@ void _allRosterCodesListed;
 //
 // These are deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because they are not
 // members of the action union: they are the campaign routes' refusals, not an
-// agent action's. The member set is exactly the nine campaign-lifecycle codes below.
+// agent action's. The member set is exactly the ten campaign-lifecycle codes below.
 // `another_campaign_running` is retired (decisions MC6): an account may run several
 // campaigns at once, so Start and Resume no longer refuse on another running campaign.
 
@@ -336,7 +336,13 @@ export type AgencyCampaignLifecycleErrorCode =
    * caller IDs is still active on that account and available to the campaign's account
    * (decision PL13): it would run and place no calls.
    */
-  | 'campaign_caller_ids_unavailable';
+  | 'campaign_caller_ids_unavailable'
+  /**
+   * 409. Start or resume of a campaign whose account splits its concurrency by carrier
+   * and gives the campaign's carrier no lines (decision PL14): it would run and place no
+   * calls. Support adds the capacity.
+   */
+  | 'carrier_capacity_unallocated';
 
 export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'invalid_campaign_transition',
@@ -348,6 +354,7 @@ export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'telephony_credential_not_found',
   'telephony_credential_not_active',
   'campaign_caller_ids_unavailable',
+  'carrier_capacity_unallocated',
 ] as const satisfies readonly AgencyCampaignLifecycleErrorCode[];
 
 const _allLifecycleCodesListed: AllListed<

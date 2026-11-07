@@ -554,7 +554,9 @@ every account the caller belongs to (CH2) where every internal handler is single
     `active`, and 409 `campaign_caller_ids_unavailable` while none of its caller IDs is still on
     the account. At the dial `agency/campaign-dialability.ts` narrows the pool to the stored
     numbers still active on the credential and available to the account (PL13; cached 15 s,
-    cleared by a sync, retire, delete or unassign); a service-account campaign is not read. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
+    cleared by a sync, retire, delete or unassign); a service-account campaign is not read.
+    Start and resume also answer 409 `carrier_capacity_unallocated` when the account splits its
+    concurrency by carrier and gives the campaign's carrier no lines (PL14), any carrier. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
     carrier plus the tenant's active credentials). A soft-phone call takes its tag's carrier
     account, or untagged the account of the chosen caller ID's number.
   - *Numbers.* `TelephonyCredentialService.syncNumbers` (super-admin "Sync numbers", `POST

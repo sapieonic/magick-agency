@@ -27,10 +27,13 @@
  * An account on a per-carrier concurrency breakdown (`provider_breakdown`) admits a call
  * only against its carrier's allocation, and a carrier with no allocation row (or zero)
  * has none: every dial is refused at admission, which pacing reads as back-pressure, so
- * the campaign runs and places nothing. {@link carrierCapacityMissing} names that state.
+ * the campaign runs and places nothing. {@link carrierCapacityMissing} names that state:
+ * start and resume are refused for it, and the health strip says it of a running one.
+ * It applies to every carrier, the service's own included.
  *
  * Messages are British English and name no carrier brand (they reach the console).
  */
+import { providerConcurrencyRepository } from '@magick-agency/db/repositories/provider-concurrency.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { usableCallerIds } from './pacing/caller-id-pool.js';
@@ -75,7 +78,21 @@ export async function withDialableCallerIds<T extends DialabilityCampaign>(campa
   return { ...campaign, caller_ids: await dialableCallerIds(campaign) };
 }
 
-export type DialabilityRefusalCode = 'campaign_caller_ids_unavailable';
+/**
+ * Whether the campaign's account is on a per-carrier concurrency breakdown that gives the
+ * campaign's carrier no lines (PL14): every dial would be refused at admission. False on
+ * the single-total mode, where every carrier shares the account's total.
+ */
+export async function carrierCapacityMissing(
+  campaign: Pick<AgencyCampaignRecord, 'tenant_id' | 'account_id' | 'telephony_provider'>,
+): Promise<boolean> {
+  const allocation = await providerConcurrencyRepository.getProviderLimit(
+    campaign.tenant_id, campaign.account_id, (campaign.telephony_provider || 'voicelink').toLowerCase(),
+  );
+  return allocation.mode === 'provider_breakdown' && (allocation.limit ?? 0) <= 0;
+}
+
+export type DialabilityRefusalCode = 'campaign_caller_ids_unavailable' | 'carrier_capacity_unallocated';
 
 /**
  * Why a campaign may not start or resume for what its carrier account can dial now, or
@@ -92,6 +109,14 @@ export async function campaignDialabilityStartRefusal(
       code: 'campaign_caller_ids_unavailable',
       message: 'None of this campaign’s caller IDs is available on its carrier account any more, so it cannot place calls. '
         + 'Choose numbers that are still available in the campaign’s settings, or contact support if numbers are missing.',
+    };
+  }
+  if (await carrierCapacityMissing(campaign)) {
+    return {
+      status: 409,
+      code: 'carrier_capacity_unallocated',
+      message: 'This account has no call capacity on this campaign’s carrier, so it cannot place calls. '
+        + 'Contact support to add capacity for this carrier, or move the campaign to another carrier.',
     };
   }
   return null;

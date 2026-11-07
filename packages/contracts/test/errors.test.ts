@@ -120,7 +120,7 @@ describe('roster refusal codes', () => {
 });
 
 describe('campaign-lifecycle codes', () => {
-  it('are the nine campaign-lifecycle names, distinct', () => {
+  it('are the ten campaign-lifecycle names, distinct', () => {
     // `another_campaign_running` is retired (decisions MC6): several campaigns may run per account.
     expect([...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES]).toEqual([
       'invalid_campaign_transition',
@@ -132,6 +132,7 @@ describe('campaign-lifecycle codes', () => {
       'telephony_credential_not_found',
       'telephony_credential_not_active',
       'campaign_caller_ids_unavailable',
+      'carrier_capacity_unallocated',
     ]);
     expectUnique(AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES);
   });
