@@ -339,6 +339,35 @@ describe('start and resume on a pinned campaign', () => {
     expect(started.statusCode, started.body).toBe(200);
   });
 
+  it('the stats strip names a running campaign that cannot dial on its carrier account (PL13, PL14)', async () => {
+    const stall = async (id: string) => {
+      const res = await app.inject({ method: 'GET', url: `/api/v1/agency-campaigns/${id}/stats`, headers: HEADERS });
+      expect(res.statusCode, res.body).toBe(200);
+      return res.json() as { stall: { code: string } | null; other_stalls: string[] };
+    };
+    const campaign = await plivoCampaign({ status: 'running' });
+    expect([(await stall(campaign.id)).stall?.code, ...(await stall(campaign.id)).other_stalls])
+      .not.toContain('no_dialable_caller_ids');
+
+    // Every stored number retired by a sync: named, with the stored count.
+    await phoneNumberRepository.syncForCredential(credA, [], null);
+    invalidateDialableCallerIds();
+    expect((await stall(campaign.id)).stall).toEqual({ code: 'no_dialable_caller_ids', caller_ids_stored: 2 });
+
+    // No lines for the carrier on an account split by carrier.
+    const { providerConcurrencyRepository } = await import('@magick-agency/db/repositories/provider-concurrency.repository');
+    await providerConcurrencyRepository.replaceProviderBreakdown({
+      tenant_id: TENANT, account_id: ACCOUNT, expected_version: 1, providers: [{ provider: 'voicelink', max_concurrent_calls: 5 }],
+    });
+    const both = await stall(campaign.id);
+    expect(both.stall?.code).toBe('no_dialable_caller_ids');
+    expect(both.other_stalls).toContain('no_carrier_capacity');
+
+    // A carrier pause is named on its own, with its reason.
+    const paused = await plivoCampaign({ status: 'paused', pause_reason: 'carrier_auth', paused_at: new Date() });
+    expect((await stall(paused.id)).stall).toMatchObject({ code: 'auto_paused_carrier', reason: 'carrier_auth' });
+  });
+
   it('a service-carrier campaign starts without any credential read', async () => {
     const campaign = await insertAgencyCampaign();
     await insertAgencyContact(campaign.id);
