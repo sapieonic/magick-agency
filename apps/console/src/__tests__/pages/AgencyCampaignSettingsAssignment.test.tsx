@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
+vi.mock('../../api/agencyInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
+  getInsightsAllocation: () => new Promise(() => {}),
+}));
 vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: () => true, map: {}, loading: false, refresh: vi.fn() }),
 }));
@@ -274,5 +279,55 @@ describe('with the flag off', () => {
     const body = mocks.updateAgencyCampaign.mock.calls[0]![1];
     expect(body).not.toHaveProperty('assignment_mode');
     expect(body).not.toHaveProperty('allow_agent_retry');
+  });
+});
+
+describe('a caller ID dedicated to an agent', () => {
+  it('says 409 caller_id_dedicated on the Caller IDs field, naming the number', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(new ApiError(409, {
+      error: 'Conflict', code: 'caller_id_dedicated', message: 'Dedicated.',
+      details: { caller_ids: ['+912200000009'] },
+    }));
+    renderPage();
+    await screen.findByRole('button', { name: 'Save settings' });
+    save();
+    expect(await screen.findByText(
+      '+91 22000 00009 is dedicated to an agent. Release it on the Agents tab first (“Use shared rotation”).',
+    )).toBeTruthy();
+  });
+
+  it('with the flag off says the same: the release is on the Agents tab either way', async () => {
+    mocks.flag.mockReturnValue(false);
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(new ApiError(409, {
+      error: 'Conflict', code: 'caller_id_dedicated', message: 'Dedicated.',
+      details: { caller_ids: ['+912200000009'] },
+    }));
+    renderPage();
+    await screen.findByRole('button', { name: 'Save settings' });
+    save();
+    expect(await screen.findByText(
+      '+91 22000 00009 is dedicated to an agent. Release it on the Agents tab first (“Use shared rotation”).',
+    )).toBeTruthy();
+  });
+
+  it('names every number when several are dedicated, and still says so when none are named', async () => {
+    mocks.updateAgencyCampaign
+      .mockRejectedValueOnce(new ApiError(409, {
+        error: 'Conflict', code: 'caller_id_dedicated', message: 'Dedicated.',
+        details: { caller_ids: ['+912200000008', '+912200000009'] },
+      }))
+      .mockRejectedValueOnce(new ApiError(409, {
+        error: 'Conflict', code: 'caller_id_dedicated', message: 'Dedicated.',
+      }));
+    renderPage();
+    await screen.findByRole('button', { name: 'Save settings' });
+    save();
+    expect(await screen.findByText(
+      '+91 22000 00008 and +91 22000 00009 are dedicated to agents. Release them on the Agents tab first (“Use shared rotation”).',
+    )).toBeTruthy();
+    save();
+    expect(await screen.findByText(
+      'A number you removed is dedicated to an agent. Release it on the Agents tab first (“Use shared rotation”).',
+    )).toBeTruthy();
   });
 });

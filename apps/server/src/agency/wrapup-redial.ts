@@ -73,8 +73,7 @@ import type { AgencyDialer } from './agency-dialer.js';
 import type { ClearedDialCommand, DialDispatcher } from './dial-dispatcher.js';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
-import { pickCallerId } from './pacing/caller-id-pool.js';
-import { dialableCallerIds } from './campaign-dialability.js';
+import type { DedicatedCallerIdCache } from './pacing/dedicated-caller-ids.js';
 import { RESERVING_MARKER } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import type { WrapupManager, WrapupRedialRefusal } from './wrapup-manager.js';
@@ -91,6 +90,8 @@ export interface WrapupRedialDeps {
   dnc: DncRegistry;
   dispatcher: DialDispatcher;
   dialer: Pick<AgencyDialer, 'enterRedialWrapup' | 'releaseAgent' | 'releaseOwingOutcome' | 'abandonUndispatchedRedial'>;
+  /** The dial paths' caller-ID rule over the cached dedications (the runtime's `dedications`). */
+  callerIds: Pick<DedicatedCallerIdCache, 'callerIdForContact'>;
 }
 
 /**
@@ -193,12 +194,16 @@ export async function startWrapupRedial(
   }
 
   // ── 3. Where the call goes from: the station, then a caller ID ─────────────
-  const ownerReplica = await deps.stations.ownerOf(sessionId);
+  // The contact's owner's dedicated number when they have one (DN4); otherwise the number the
+  // customer just spoke to us from while it is still in the rotation (WR7: a number dedicated
+  // to someone else since is not reused for a contact that is not theirs), else the rotation.
+  // All over the campaign's DIALABLE caller IDs (PL13): a number its carrier account no longer
+  // has is neither the dedicated nor the sticky one.
+  const [ownerReplica, callerId] = await Promise.all([
+    deps.stations.ownerOf(sessionId),
+    deps.callerIds.callerIdForContact(campaign, contact.assigned_user_id, { sticky: attempt.caller_id }),
+  ]);
   if (!ownerReplica) return refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.no_station });
-  // The same number the customer just spoke to us from, while it is still usable.
-  // Only numbers still dialable on the campaign's carrier account (PL13).
-  const pool = await dialableCallerIds(campaign);
-  const callerId = pool.includes(attempt.caller_id) ? attempt.caller_id : pickCallerId(pool, 0);
   if (!callerId) return refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.no_caller_id });
 
   // ── 4. The pre-dial gates, last of the checks: the clearance they mint is short-lived

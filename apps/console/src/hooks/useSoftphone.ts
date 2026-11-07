@@ -214,8 +214,19 @@ export interface SoftphoneState {
   /** The campaign the screen is about: the call's tag, else the draft's. */
   campaign: AgencySoftphoneCampaign | null;
   callerIdOptions: string[];
+  /**
+   * The number the call goes (or went) from: the call's own once placed. Before
+   * that, `null` for a tagged draft on Automatic (`callerIdAutomatic`): the
+   * request carries no `caller_id` and the server picks (DN4).
+   */
   callerId: string | null;
-  setCallerId: (id: string) => void;
+  /**
+   * Whether "Automatic" is offered, and is the choice while `callerId` is null: a
+   * tagged draft with caller IDs to pick from. Untagged calls have no Automatic.
+   */
+  callerIdAutomatic: boolean;
+  /** A number from `callerIdOptions`, or `null` for Automatic. */
+  setCallerId: (id: string | null) => void;
   /** Whether the tag and caller ID may still change (nothing dialled yet). */
   setupEditable: boolean;
 
@@ -455,13 +466,20 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     [tagDraft, taggableCampaigns, bootstrap],
   );
   const draftCampaign = tagDraft ? (taggableCampaigns.find((c) => c.campaign_id === tagDraft) ?? null) : null;
+  /**
+   * A tagged call defaults to Automatic (`null`): no `caller_id` on the request,
+   * and the server dials from the matched contact's owner's dedicated number,
+   * else the campaign's rotation (DN2–DN4). Only a number the agent picked is
+   * sent. Untagged calls keep the account's default.
+   */
   const defaultCallerId = draftCampaign
-    ? (draftCampaign.caller_ids[0] ?? null)
+    ? null
     : (bootstrap?.untagged.default_caller_id && callerIdOptions.includes(bootstrap.untagged.default_caller_id)
         ? bootstrap.untagged.default_caller_id
         : (callerIdOptions[0] ?? null));
   const draftCallerId = callerDraft && callerIdOptions.includes(callerDraft) ? callerDraft : defaultCallerId;
   const callerId = call ? call.caller_id : draftCallerId;
+  const callerIdAutomatic = call === null && draftCampaign !== null && callerIdOptions.length > 0;
 
   const baseCatalog: AgencyDisposition[] = call?.tag
     ? (taggableCampaigns.find((c) => c.campaign_id === call.tag!.campaign_id)?.disposition_catalog
@@ -800,7 +818,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     [setupEditable],
   );
   const setCallerId = useCallback(
-    (id: string) => {
+    (id: string | null) => {
       if (!setupEditable) return;
       setCallerDraft(id);
     },
@@ -1076,6 +1094,11 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       const tagId = from.tag?.campaign_id ?? null;
       const tagOk = tagId === null || taggableCampaigns.some((c) => c.campaign_id === tagId);
       setTagDraft(tagOk ? tagId : null);
+      // The number it went from, tagged or not: a redial goes out from the same number
+      // (as WR7's wrap-up redial). On a tagged call the server still dials from the
+      // contact's agent number when it has one (DN4), whatever is sent, and from the
+      // rotation instead of a number since dedicated to another agent. A number the
+      // campaign no longer has falls back to the default (`draftCallerId`'s check).
       setCallerDraft(from.caller_id);
       setDialError(null);
       setFocusCallToken((n) => n + 1);
@@ -1110,6 +1133,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     campaign,
     callerIdOptions: call ? [call.caller_id] : callerIdOptions,
     callerId,
+    callerIdAutomatic,
     setCallerId,
     setupEditable,
     fields,

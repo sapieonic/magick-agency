@@ -228,7 +228,7 @@ export class TenantPhoneAssignmentRepository {
 
   /**
    * Which of `phoneNumbers` an account may dial from on tenant credential
-   * `credentialId`: active numbers synced to that credential (0018), assigned to the
+   * `credentialId`: active numbers synced to that credential (0019), assigned to the
    * tenant and available to the account (the `findAvailableForAccount` rule). A
    * campaign pinned to the credential may name only these as caller IDs.
    */

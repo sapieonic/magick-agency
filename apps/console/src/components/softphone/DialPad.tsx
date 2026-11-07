@@ -20,6 +20,35 @@ import styles from './SoftphoneView.module.css';
 export const RINGING_HANGUP_WARNING =
   'This carrier cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
 
+/** The tagged call's default "Call from" (DN4): the server picks the number. */
+export const AUTOMATIC_CALLER_ID_LABEL = 'Automatic';
+export const AUTOMATIC_CALLER_ID_HINT = 'Automatic: the contact’s agent number, else the campaign’s rotation.';
+
+/**
+ * The hint under "Call from" for a number picked by hand. On a tagged call the
+ * server keeps the pick only while it is the contact's agent number or in the
+ * campaign's rotation (DN4): the contact's agent number wins, and a number
+ * dedicated to another agent goes out from the rotation instead.
+ */
+export function pickedCallerIdHint(campaignName: string | null): string {
+  return campaignName
+    ? `From ${campaignName}’s caller IDs. The contact’s agent number wins; another agent’s number gives way to the rotation.`
+    : 'From the numbers assigned to your account';
+}
+
+/**
+ * The hint under "Call from": Automatic's while it is the choice; a picked number's
+ * only while the setup is editable. Once Call is pressed the pick is no longer the
+ * agent's to change, and once placed the number is the call's own and final, so
+ * "wins / gives way" would tell them it might still change: no hint then.
+ */
+export function callerIdHint(
+  sp: Pick<SoftphoneState, 'callerIdAutomatic' | 'callerId' | 'setupEditable' | 'campaign'>,
+): string | null {
+  if (sp.callerIdAutomatic && sp.callerId === null) return AUTOMATIC_CALLER_ID_HINT;
+  return sp.setupEditable ? pickedCallerIdHint(sp.campaign?.campaign_name ?? null) : null;
+}
+
 const STATUS_LABEL = {
   dialing: 'Dialling',
   ringing: 'Ringing',
@@ -116,6 +145,7 @@ export function DialPad({
   const blockCopy = sp.number.length > 0 && sp.dialBlock ? DIAL_BLOCK_COPY[sp.dialBlock] : null;
   const reason = sp.dialUnavailableReason ?? blockCopy;
   const disabled = !sp.setupEditable;
+  const callerHint = callerIdHint(sp);
 
   return (
     <form
@@ -189,19 +219,22 @@ export function DialPad({
           id={callerSelectId}
           value={sp.callerId ?? ''}
           disabled={disabled || sp.callerIdOptions.length === 0}
-          onChange={(event) => sp.setCallerId(event.target.value)}
+          onChange={(event) => sp.setCallerId(event.target.value || null)}
           data-testid="caller-id"
         >
           {sp.callerIdOptions.length === 0 ? <option value="">No numbers available</option> : null}
+          {sp.callerIdAutomatic ? <option value="">{AUTOMATIC_CALLER_ID_LABEL}</option> : null}
           {sp.callerIdOptions.map((id) => (
             <option key={id} value={id}>
               {formatDialNumber(id)}
             </option>
           ))}
         </select>
-        <p className={styles.hint}>
-          {sp.campaign ? `From ${sp.campaign.campaign_name}’s caller IDs` : 'From the numbers assigned to your account'}
-        </p>
+        {callerHint ? (
+          <p className={styles.hint} data-testid="caller-id-hint">
+            {callerHint}
+          </p>
+        ) : null}
       </div>
 
       <button

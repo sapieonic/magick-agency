@@ -136,10 +136,20 @@ Owned by `AgencyRuntime`. One call at a time per session.
    as the CHECK counts them); E.164 (a bracketed trunk `(0)` directly after the country code dropped,
    `+44 (0)20…` → `+4420…`, a soft-phone-local step; then `normalizePhoneToE164` then `normalizeE164`; the schema has no account country, so the default
    region is the platform's, `DEFAULT_PHONE_COUNTRY_CODE`, `+91` by default); caller ID in the
-   allowed set (tagged: the campaign's `caller_ids`, default the pool's round-robin pick as pacing
-   dials; untagged: the account's assigned numbers, `findAvailableForAccount`, which offers a number
-   synced from a tenant's own carrier account only while its credential is `active` (PL4), default
-   the settings' `default_caller_id` while still assigned, else the account's default number); roster
+   allowed set, else `caller_id_not_allowed` with the set (tagged: the campaign's `caller_ids` that are still dialable on its carrier account (PL13: on a
+   tenant's own account, only the numbers still active on it), default the rotation's round-robin pick as pacing dials; when the number matches a contact of the
+   tag, the one the roster guard below would pick, whose owner has a dedicated caller ID on the
+   campaign that it still has, the call goes out from that number whatever in-set caller ID was
+   requested or defaulted; otherwise an in-set request is kept only while it is in the rotation,
+   else the rotation's pick, so another agent's dedicated number never goes out for a contact that
+   is not theirs; the response's `caller_id` reports what was dialled: decisions DN4, the dial
+   paths' one rule `resolveCallerId` with the request as its sticky number; the mobile app sends
+   the campaign's first caller ID by default (the console's tagged default is Automatic, sending
+   none, and a redial resends the number it went from), so a request is replaced rather than
+   refused; the match is read first, its refusals answered in their
+   own place, so a caller ID outside the set is still refused before `contact_in_flight`; untagged: the account's assigned numbers, `findAvailableForAccount`, which offers a number
+   synced from a tenant's own carrier account only while its credential is `active` (PL4), default the
+   settings' `default_caller_id` while still assigned, else the account's default number); roster
    guard, one live call per number across the account (decisions MC4) — tagged, the match on the
    tag (`campaign_id` + phone digits, the existing index), and a contact `in_flight` refuses
    `contact_in_flight` with no override; then, tagged or untagged, the number `in_flight` on ANY

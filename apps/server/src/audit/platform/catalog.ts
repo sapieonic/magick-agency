@@ -80,6 +80,13 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // where an unstaffed agent held contacts (moved to the pool, or `kept: true`).
   'agency_contacts.assigned',
   'agency_contacts.unassigned_on_unstaff',
+  // ── Dedicated caller IDs (decision DN10) ──────────────────────────────────────────
+  // A supervisor dedicated one of the campaign's caller IDs to an agent (`details`:
+  // campaign_id, user_id, caller_id, previous_caller_id), or the dedication was released
+  // (`details`: campaign_id, user_id, caller_id, cause: `supervisor` | `unstaff`). Ids and the
+  // number only.
+  'agency_campaign.agent_caller_id_set',
+  'agency_campaign.agent_caller_id_cleared',
   // ── Contact assignment: the agent's own contacts (decision CA12) ─────────────────────
   // An agent reopened their not-reached contacts into their queue (one row per request that
   // reopened any; `details`: campaign, counts). And an agent dialled one of their contacts

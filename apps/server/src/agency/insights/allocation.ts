@@ -67,8 +67,9 @@ import {
   type OwnerCounts,
 } from '../../db/repositories/agency.repository.js';
 import { callbackCodes } from '../../db/repositories/agency/assignment-sql.js';
+import { agentNamesOrNone } from '../agency-agent-identity.js';
 import { localDayEnd } from '../calling-hours.js';
-import { actorOf, iso, namesIn, reconcile, successCodes } from './shared.js';
+import { actorOf, iso, reconcile, successCodes } from './shared.js';
 
 /** A due backlog at least this many times the staffed average is "high". */
 export const IMBALANCE_HIGH_FACTOR = 1.5;
@@ -151,7 +152,7 @@ async function history(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAl
     limit: ALLOCATION_HISTORY_LIMIT,
     withTotal: false,
   });
-  const names = await namesIn(page.logs.map((r) => r.user_id), campaign.tenant_id);
+  const names = await agentNamesOrNone(page.logs.map((r) => r.user_id), campaign.tenant_id, 'insights');
   return page.logs.map((row) => {
     const details = (row.details ?? {}) as Record<string, unknown>;
     const system = row.actor_type === 'system' || (row.actor_type === null && row.user_id === null);
@@ -191,7 +192,7 @@ export async function computeAllocation(campaign: AgencyCampaignRecord): Promise
   // The progress read's order: the staffed agents, then any other owner, then anyone else who dialled.
   const dialled = [...counters.keys()].filter((k): k is string => k !== null).sort();
   const ids = [...new Set([...staffing.map((s) => s.user_id), ...[...byOwner.keys()].sort(), ...dialled])];
-  const names = await namesIn(ids, campaign.tenant_id);
+  const names = await agentNamesOrNone(ids, campaign.tenant_id, 'insights');
   const nowMs = now.getTime();
 
   const agents: AgencyInsightsAllocationRow[] = ids.map((id) => {

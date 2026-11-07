@@ -10,7 +10,8 @@
 import type { AgencyInsightsUploads } from '@magick-agency/contracts/api/agency/insights';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import { agencyInsightsReadRepository } from '../../db/repositories/agency.repository.js';
-import { actorOf, iso, namesIn, userIdOf } from './shared.js';
+import { agentNamesOrNone } from '../agency-agent-identity.js';
+import { actorOf, iso, userIdOf } from './shared.js';
 
 function reasonCounts(raw: Record<string, unknown> | null): Record<string, number> {
   const out: Record<string, number> = {};
@@ -23,7 +24,7 @@ function reasonCounts(raw: Record<string, unknown> | null): Record<string, numbe
 
 export async function computeUploads(campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id'>): Promise<AgencyInsightsUploads> {
   const rows = await agencyInsightsReadRepository.listUploads(campaign.tenant_id, campaign.id);
-  const names = await namesIn(rows.map((r) => userIdOf(r.created_by)), campaign.tenant_id);
+  const names = await agentNamesOrNone(rows.map((r) => userIdOf(r.created_by)), campaign.tenant_id, 'insights');
   return {
     campaign_id: campaign.id,
     uploads: rows.map((r) => ({

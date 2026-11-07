@@ -1,4 +1,4 @@
--- 0018_plivo_numbers_and_carrier_pause.sql — the Plivo dial path's schema (decisions B18–B22).
+-- 0019_plivo_numbers_and_carrier_pause.sql — the Plivo dial path's schema (decisions B18–B22).
 --
 -- 1. Activates the `plivo` provider row 0002 seeded inactive: numbers, concurrency
 --    allocations and campaigns may now name it.

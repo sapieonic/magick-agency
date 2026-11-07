@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.1](https://github.com/sapieonic/magick-agency/compare/domain-v0.5.0...domain-v0.5.1) (2026-11-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.13.0
+
+## [0.5.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.4.5...domain-v0.5.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,mobile:** customer history, one number across the tenant's campaigns ([#50](https://github.com/sapieonic/magick-agency/issues/50)) ([d1c9f78](https://github.com/sapieonic/magick-agency/commit/d1c9f786476a8f287248126ff98c93a9458aab9e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.12.0
+
 ## [0.4.5](https://github.com/sapieonic/magick-agency/compare/domain-v0.4.4...domain-v0.4.5) (2026-11-06)
 
 

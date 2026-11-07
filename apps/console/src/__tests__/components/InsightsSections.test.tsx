@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactElement } from 'react';
-import { activity, allocation, health, roster, summary, trends, uploads, ZONE } from '../helpers/insights';
+import { activity, allocation, allocationRow, health, roster, summary, trends, uploads, ZONE } from '../helpers/insights';
 
 /**
  * Each Insights section against a reconciling sample (`helpers/insights.ts`):
@@ -37,7 +37,7 @@ import {
 import { AgentsSection } from '../../pages/agency/campaign-detail/insights/AgentsSection';
 import { TrendsSection, bestHour } from '../../pages/agency/campaign-detail/insights/TrendsSection';
 import { HealthSection, RecordingSection } from '../../pages/agency/campaign-detail/insights/HealthSection';
-import { CampaignSettingsPanel } from '../../pages/agency/campaign-detail/insights/CampaignFacts';
+import { LifecyclePanel } from '../../pages/agency/campaign-detail/insights/CampaignFacts';
 import { UploadsSection } from '../../pages/agency/campaign-detail/insights/UploadsSection';
 
 const NAMES: Record<string, string> = { usr_priya: 'Priya Nair', usr_vikram: 'Vikram Rao', usr_meera: 'Meera Iyer' };
@@ -117,6 +117,20 @@ describe('allocation', () => {
   function renderAllocation(over = {}) {
     return show(<AllocationSection campaignId="camp-1" campaignName="EMI Recovery" allocation={allocation(over)} timezone={ZONE} />);
   }
+
+  it('says a shared pool with nothing assigned in one line, and keeps its table of zeros a click away', () => {
+    const zero = allocationRow({ allocated: 0, attempted: 0, not_attempted: 0, due_now: 0 });
+    renderAllocation({
+      assignment_mode: 'pool',
+      agents: [zero],
+      unassigned: { ...allocation().totals, allocated: 1000, not_attempted: 380 },
+    });
+    expect(screen.getByTestId('allocation-pool-only').textContent).toContain('all 1,000 sit in the shared pool');
+    expect(screen.getByTestId('allocation-pool-only').textContent).toContain('380 have not been dialled yet');
+    expect(screen.queryByTestId('allocation-table')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show the table' }));
+    expect(screen.getByTestId('allocation-table')).toBeTruthy();
+  });
 
   it('has a row per agent, then Unassigned and Total, as table semantics', () => {
     renderAllocation();
@@ -245,12 +259,12 @@ describe('overrides', () => {
 });
 
 describe('agents', () => {
-  it('reads time in states, occupancy and rates, and links the name to the Agents tab', () => {
+  it('reads time in states, occupancy and rates, and names the agent without a link to the tab it is on', () => {
     show(<AgentsSection ctx={ctx} activity={activity()} />);
     const table = screen.getByTestId('agents-table');
-    const priya = within(table).getByRole('link', { name: 'Priya Nair' });
-    expect(priya.getAttribute('href')).toBe('/agency/campaigns/camp-1/agents');
-    const row = priya.closest('tr') as HTMLElement;
+    // The table is on the Agents tab: a link there would only drop the range (IN13).
+    expect(within(table).queryByRole('link', { name: 'Priya Nair' })).toBeNull();
+    const row = within(table).getByText('Priya Nair').closest('tr') as HTMLElement;
     expect(row.textContent).toContain('60%'); // occupancy (10,000 + 2,000) / 20,000
     expect(row.textContent).toContain('32.4%'); // connect rate 220 human connects / (700 dials - 20 redials)
     expect(hrefOf(row, '700 dials')).toBe(`/agency/campaigns/camp-1/attempts?agent_user_id=usr_priya&${RANGE_QS}`);
@@ -320,17 +334,23 @@ describe('trends', () => {
   });
 });
 
-describe('the settings panel', () => {
-  it('prints the abandonment ceiling as stored, two decimals included', () => {
+describe('the lifecycle panel (Settings tab)', () => {
+  it('lists every transition with who made it, and the campaign’s facts above them', () => {
     const base = summary();
-    show(<CampaignSettingsPanel summary={{ ...base, settings: { ...base.settings, abandonment_ceiling_pct: 7.25 } }} />);
-    const row = screen.getByText('Abandonment ceiling').closest('div') as HTMLElement;
-    expect(row.textContent).toBe('Abandonment ceiling7.25%');
+    show(<LifecyclePanel summary={base} />);
+    expect(screen.getByTestId('insights-meta').textContent).toContain('Account');
+    const items = within(screen.getByTestId('insights-transitions')).getAllByRole('listitem');
+    expect(items).toHaveLength(base.transitions.length);
+  });
+
+  it('says a campaign that never started has no lifecycle yet', () => {
+    show(<LifecyclePanel summary={{ ...summary(), transitions: [] }} />);
+    expect(screen.getByText('Not started yet.')).toBeTruthy();
   });
 
   it('says a carrier_auth pause was the carrier refusing the account, not a person', () => {
     const base = summary();
-    show(<CampaignSettingsPanel summary={{
+    show(<LifecyclePanel summary={{
       ...base,
       transitions: [
         { to_status: 'paused', at: '2026-11-04T08:00:00.000Z', actor: null, reason: 'abandonment_ceiling' },
@@ -345,7 +365,7 @@ describe('the settings panel', () => {
 
   it('says a carrier_account_unavailable pause was the carrier account going away, not a person', () => {
     const base = summary();
-    show(<CampaignSettingsPanel summary={{
+    show(<LifecyclePanel summary={{
       ...base,
       transitions: [{ to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_account_unavailable' }],
     }} />);
@@ -355,7 +375,7 @@ describe('the settings panel', () => {
 
   it('says a carrier_refusing_calls pause was the carrier refusing calls, not a person', () => {
     const base = summary();
-    show(<CampaignSettingsPanel summary={{
+    show(<LifecyclePanel summary={{
       ...base,
       transitions: [{ to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_refusing_calls' }],
     }} />);

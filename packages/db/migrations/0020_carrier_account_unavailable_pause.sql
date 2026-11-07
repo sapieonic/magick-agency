@@ -1,11 +1,11 @@
--- 0019_carrier_account_unavailable_pause.sql — a campaign whose carrier account went away
+-- 0020_carrier_account_unavailable_pause.sql — a campaign whose carrier account went away
 -- (decisions B18–B20).
 --
 -- `agency_campaigns.pause_reason` gains `carrier_account_unavailable`: a campaign pinned to a
 -- tenant's carrier credential that was disabled, marked invalid, revoked or could no longer
 -- be opened after the campaign started is paused on its first dial refused for that reason
 -- (the bridge's `telephony_credential_unavailable`), instead of holding each contact and
--- cycling the roster through refusals. `carrier_auth` (0018) stays the carrier's own 401.
+-- cycling the roster through refusals. `carrier_auth` (0019) stays the carrier's own 401.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down
 -- marker comments (see 0001_baseline.sql's header for the regex).

@@ -10,12 +10,15 @@ const mocks = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../api/client', () => ({ apiFetch: mocks.apiFetch, ApiError: class extends Error {} }));
 
 import {
+  clearAgentCallerId,
   commitAssignment,
+  getAgentCallerIds,
   getAssignmentProgress,
   getContactAssignmentHistory,
   getMyContactsSummary,
   listMyContacts,
   previewAssignment,
+  setAgentCallerId,
 } from '../../api/agencyAssignment';
 import { callMyContact, retryMyContacts } from '../../api/agencyMyContacts';
 
@@ -55,6 +58,29 @@ describe('supervisor routes', () => {
     expect(lastCall().url.endsWith('/assignments/progress?absent_after_minutes=30')).toBe(true);
     await getContactAssignmentHistory('camp-1', 'c-1', 't', 'acc');
     expect(lastCall().url.endsWith(`${BASE}/campaigns/camp-1/contacts/c-1/assignments`)).toBe(true);
+  });
+});
+
+describe('dedicated caller ID routes', () => {
+  it('reads the campaign’s dedications, sets one with its body and clears one', async () => {
+    await getAgentCallerIds('camp-1', 't', 'acc');
+    let call = lastCall();
+    expect(call.url.endsWith(`${BASE}/campaigns/camp-1/agent-caller-ids`)).toBe(true);
+    expect(call.init.method).toBeUndefined();
+    expect([call.tenantId, call.accountId]).toEqual(['t', 'acc']);
+
+    await setAgentCallerId('camp-1', 'user-1', '+912200000001', 't', 'acc');
+    call = lastCall();
+    expect(call.url.endsWith(`${BASE}/campaigns/camp-1/agents/user-1/caller-id`)).toBe(true);
+    expect(call.init.method).toBe('PUT');
+    expect(JSON.parse(call.init.body as string)).toEqual({ caller_id: '+912200000001' });
+    expect([call.tenantId, call.accountId]).toEqual(['t', 'acc']);
+
+    await clearAgentCallerId('camp-1', 'user-1', 't', 'acc');
+    call = lastCall();
+    expect(call.url.endsWith(`${BASE}/campaigns/camp-1/agents/user-1/caller-id`)).toBe(true);
+    expect(call.init.method).toBe('DELETE');
+    expect(call.init.body).toBeUndefined();
   });
 });
 

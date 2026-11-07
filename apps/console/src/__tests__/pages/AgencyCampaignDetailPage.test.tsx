@@ -64,6 +64,11 @@ const mocks = vi.hoisted(() => ({
   // The dialog's caller-ID override renders `CallerIdPicker`, which reads the
   // account's numbers. Mocked at the hook — the picker has its own suite.
   usePhoneNumbers: vi.fn(),
+  // The contact-assignment flag, off unless a test turns it on, and the reads
+  // behind it (dedicated caller IDs, contacts by agent).
+  flag: vi.fn(),
+  getAgentCallerIds: vi.fn(),
+  getAssignmentProgress: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -87,6 +92,15 @@ vi.mock('../../api/agency', () => ({
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
 vi.mock('../../api/agencyInsights', () => mocks.insights);
 vi.mock('../../hooks/usePhoneNumbers', () => ({ usePhoneNumbers: mocks.usePhoneNumbers }));
+vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),
+  useFeatureFlagEnabled: mocks.flag,
+}));
+vi.mock('../../api/agencyAssignment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyAssignment')>()),
+  getAgentCallerIds: mocks.getAgentCallerIds,
+  getAssignmentProgress: mocks.getAssignmentProgress,
+}));
 
 import DetailPage from '../../pages/agency/AgencyCampaignDetailPage';
 import { CampaignLandingRedirect } from '../../pages/agency/campaign-detail/CampaignLandingRedirect';
@@ -146,19 +160,23 @@ function wrappingAgent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervi
 }
 
 /**
- * The page is two panels, each its own URL, and both mount the same component.
+ * The page is five panels, each its own URL, and all mount the same component.
  * The campaign's own URL and the retired `…/performance` redirect, as in
  * `App.tsx`. Tests name the section they are about — the default is the one a
  * supervisor lands on. `path` opens any other URL (a redirect under test).
  */
-function renderPage(section: 'insights' | 'agents' = 'insights', path?: string) {
+function renderPage(section: 'overview' | 'calls' | 'agents' | 'callbacks' | 'health' = 'overview', path?: string) {
   return render(
     <MemoryRouter initialEntries={[path ?? `/agency/campaigns/camp-1/${section}`]}>
       <Routes>
         <Route path="/agency/campaigns/:id" element={<CampaignLandingRedirect />} />
         <Route path="/agency/campaigns/:id/performance" element={<CampaignLandingRedirect />} />
-        <Route path="/agency/campaigns/:id/insights" element={<DetailPage />} />
+        <Route path="/agency/campaigns/:id/insights" element={<CampaignLandingRedirect />} />
+        <Route path="/agency/campaigns/:id/overview" element={<DetailPage />} />
+        <Route path="/agency/campaigns/:id/calls" element={<DetailPage />} />
         <Route path="/agency/campaigns/:id/agents" element={<DetailPage />} />
+        <Route path="/agency/campaigns/:id/callbacks" element={<DetailPage />} />
+        <Route path="/agency/campaigns/:id/health" element={<DetailPage />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -174,6 +192,11 @@ beforeEach(() => {
   mocks.getAgencyCampaign.mockResolvedValue(campaign());
   mocks.getAgencyCampaignStats.mockResolvedValue(stats());
   mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
+  mocks.flag.mockReturnValue(false);
+  mocks.getAgentCallerIds.mockResolvedValue({
+    campaign_id: 'camp-1', caller_ids: [], dedicated: [], rotation: [], all_dedicated: false,
+  });
+  mocks.getAssignmentProgress.mockReturnValue(new Promise(() => {}));
   // The Insights reads answer with the reconciling samples; these tests are
   // about the shell around the panel, not the panel's figures.
   mocks.insights.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
@@ -582,13 +605,13 @@ describe('campaign detail — landmarks and the refresh stamp', () => {
  * did not ask for, and hiding something they must never have to choose to see.
  */
 describe('campaign detail — sections', () => {
-  it('lands a supervisor on Insights, from the campaign’s own URL and from the retired Performance URL', async () => {
-    for (const path of ['/agency/campaigns/camp-1', '/agency/campaigns/camp-1/performance']) {
+  it('lands a supervisor on Overview, from the campaign’s own URL and the retired Performance and Insights URLs', async () => {
+    for (const path of ['/agency/campaigns/camp-1', '/agency/campaigns/camp-1/performance', '/agency/campaigns/camp-1/insights']) {
       cleanup();
-      renderPage('insights', path);
+      renderPage('overview', path);
       await screen.findByRole('heading', { name: 'Collections' });
-      expect(await screen.findByTestId('insights-panel')).toBeTruthy();
-      expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBe('page');
+      expect((await screen.findByTestId('insights-panel')).getAttribute('data-view')).toBe('overview');
+      expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBe('page');
     }
   });
 
@@ -597,24 +620,24 @@ describe('campaign detail — sections', () => {
     async (role) => {
       mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role });
       mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: [wrappingAgent()] }));
-      for (const path of ['/agency/campaigns/camp-1', '/agency/campaigns/camp-1/insights']) {
+      for (const path of ['/agency/campaigns/camp-1', '/agency/campaigns/camp-1/insights', '/agency/campaigns/camp-1/calls']) {
         cleanup();
-        renderPage('insights', path);
+        renderPage('overview', path);
         await screen.findByRole('heading', { name: 'Collections' });
         expect(await screen.findByTestId('floor-row-wrap-sess')).toBeTruthy();
         expect(screen.queryByTestId('insights-panel')).toBeNull();
-        expect(screen.queryByTestId('campaign-tab-insights')).toBeNull();
+        expect(screen.queryByTestId('campaign-tab-overview')).toBeNull();
         expect(screen.getByTestId('campaign-tab-agents').getAttribute('aria-current')).toBe('page');
       }
       expect(mocks.insights.getInsightsSummary).not.toHaveBeenCalled();
     },
   );
 
-  it('keeps the shell — name, controls, health strip — on Insights and on Agents', async () => {
+  it('keeps the shell — name, controls, health strip — on every tab of the page', async () => {
     mocks.getAgencyCampaignStats.mockResolvedValue(
       stats({ stall: { code: 'dnc_unavailable', tenant_wide: true }, other_stalls: [] }),
     );
-    for (const section of ['insights', 'agents'] as const) {
+    for (const section of ['overview', 'calls', 'agents', 'callbacks', 'health'] as const) {
       cleanup();
       renderPage(section);
       await screen.findByRole('heading', { name: 'Collections' });
@@ -624,7 +647,7 @@ describe('campaign detail — sections', () => {
     }
   });
 
-  it('shows the floor only on Agents, and Insights only on Insights', async () => {
+  it('shows the floor only on Agents, with the agents’ performance beneath it for a supervisor', async () => {
     mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: [wrappingAgent()] }));
     renderPage();
     await screen.findByTestId('insights-panel');
@@ -634,12 +657,33 @@ describe('campaign detail — sections', () => {
     renderPage('agents');
     await screen.findByRole('heading', { name: 'Collections' });
     expect(screen.getByTestId('floor-row-wrap-sess')).toBeTruthy();
-    expect(screen.queryByTestId('insights-panel')).toBeNull();
+    const panel = await screen.findByTestId('insights-panel');
+    expect(panel.getAttribute('data-view')).toBe('agents');
+    // The Overview's own parts stay on Overview.
+    expect(screen.queryByTestId('overview-kpis')).toBeNull();
+    expect(await screen.findByTestId('insights-agents')).toBeTruthy();
+  });
+
+  it('shows each analytic tab its own sections and none of the others’', async () => {
+    const own: Record<string, string> = {
+      overview: 'overview-kpis',
+      calls: 'insights-calls',
+      callbacks: 'insights-callbacks',
+      health: 'insights-health',
+    };
+    for (const [section, testId] of Object.entries(own)) {
+      cleanup();
+      renderPage(section as 'overview');
+      expect(await screen.findByTestId(testId)).toBeTruthy();
+      for (const [other, otherId] of Object.entries(own)) {
+        if (other !== section) expect(screen.queryByTestId(otherId)).toBeNull();
+      }
+    }
   });
 
   it('does not read the staffing routes until the Agents section is opened', async () => {
     // Both reads 403 below `agency.supervise` and neither answers a question
-    // Insights asks, so a campaign page view should not spend them.
+    // Overview asks, so a campaign page view should not spend them.
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
 
@@ -656,18 +700,46 @@ describe('campaign detail — sections', () => {
     await screen.findByRole('heading', { name: 'Collections' });
 
     expect(screen.getByTestId('campaign-tab-agents')).toBeTruthy();
-    for (const id of ['insights', 'contacts', 'attempts', 'activity', 'settings']) {
+    for (const id of ['overview', 'calls', 'callbacks', 'health', 'contacts', 'attempts', 'activity', 'settings']) {
       expect(screen.queryByTestId(`campaign-tab-${id}`)).toBeNull();
     }
   });
 
-  it('puts Insights first in the bar for a supervisor, with no Overview or Performance', async () => {
+  it('puts Overview first in the bar for a supervisor, then a tab per question, with no Insights or Performance', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
     const tabs = within(screen.getByTestId('campaign-tabs')).getAllByRole('link');
-    expect(tabs[0]?.textContent).toBe('Insights');
-    expect(screen.queryByTestId('campaign-tab-overview')).toBeNull();
+    expect(tabs.slice(0, 5).map((t) => t.getAttribute('data-testid'))).toEqual(
+      ['overview', 'calls', 'agents', 'callbacks', 'health'].map((id) => `campaign-tab-${id}`),
+    );
+    expect(tabs[0]?.textContent).toBe('Overview');
+    expect(screen.queryByTestId('campaign-tab-insights')).toBeNull();
     expect(screen.queryByTestId('campaign-tab-performance')).toBeNull();
+  });
+
+  it('keeps the range when moving between the analytic tabs, and drops it for the other screens', async () => {
+    renderPage('overview', '/agency/campaigns/camp-1/calls?range=today');
+    await screen.findByRole('heading', { name: 'Collections' });
+    expect(screen.getByTestId('campaign-tab-callbacks').getAttribute('href')).toBe('/agency/campaigns/camp-1/callbacks?range=today');
+    expect(screen.getByTestId('campaign-tab-contacts').getAttribute('href')).toBe('/agency/campaigns/camp-1/contacts');
+  });
+
+  it('badges the Callbacks tab with the callbacks overdue now, and nothing when there are none', async () => {
+    const withOverdue = insightsSamples.allocation();
+    withOverdue.totals.callbacks_overdue = 7;
+    mocks.insights.getInsightsAllocation.mockResolvedValue(withOverdue);
+    renderPage();
+    const badge = await screen.findByTestId('campaign-tab-callbacks-alert');
+    expect(badge.textContent).toBe('7, 7 overdue');
+
+    cleanup();
+    const none = insightsSamples.allocation();
+    none.totals.callbacks_overdue = 0;
+    mocks.insights.getInsightsAllocation.mockResolvedValue(none);
+    renderPage();
+    await screen.findByTestId('overview-kpis');
+    await waitFor(() => expect(mocks.insights.getInsightsAllocation).toHaveBeenCalled());
+    expect(screen.queryByTestId('campaign-tab-callbacks-alert')).toBeNull();
   });
 
   it('marks the open section as the current page, and only that one', async () => {
@@ -675,7 +747,7 @@ describe('campaign detail — sections', () => {
     await screen.findByRole('heading', { name: 'Collections' });
 
     expect(screen.getByTestId('campaign-tab-agents').getAttribute('aria-current')).toBe('page');
-    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
   });
 
   it('badges the Agents tab with the live floor — and says nothing when the floor is unknown', async () => {
@@ -695,8 +767,8 @@ describe('campaign detail — sections', () => {
     expect(screen.queryByTestId('campaign-tab-agents-count')).toBeNull();
   });
 
-  it('re-reads every Insights section when the shell’s Refresh is pressed', async () => {
-    renderPage();
+  it('re-reads every section of the tab when the shell’s Refresh is pressed', async () => {
+    renderPage('calls');
     await screen.findByTestId('insights-panel');
     await waitFor(() => expect(mocks.insights.getInsightsActivity).toHaveBeenCalledTimes(1));
 
@@ -1232,6 +1304,56 @@ describe('campaign detail — assigned agents', () => {
  * says so. The live rows come from the stats payload the floor already has —
  * a prop, not a second fetch.
  */
+describe('campaign detail — dedicated caller IDs on the staffing list', () => {
+  const AGENT = {
+    user_id: 'usr_person', name: 'Ravi', email: null, role: 'agent', assigned_at: '2026-11-01T09:00:00.000Z',
+  };
+
+  it('with the contact-assignment flag on, a supervisor sees each agent’s caller ID', async () => {
+    mocks.flag.mockReturnValue(true);
+    mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
+    renderPage('agents');
+    await waitFor(() => expect(screen.getByTestId('caller-id-usr_person').textContent).toContain('Shared rotation'));
+    expect(mocks.getAgentCallerIds).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+  });
+
+  it('with the flag off and no dedications, the caller IDs are read once and nothing is shown', async () => {
+    mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
+    renderPage('agents');
+    await screen.findByText('Ravi');
+    // Read whatever the flag, so a dedication made while it was on can be released.
+    await waitFor(() => expect(mocks.getAgentCallerIds).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('caller-id-usr_person')).toBeNull();
+    expect(screen.queryByText(/caller ID/i)).toBeNull();
+  });
+
+  it('with the flag off, a dedicated number is shown with only its release', async () => {
+    mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
+    mocks.getAgentCallerIds.mockResolvedValue({
+      campaign_id: 'camp-1',
+      caller_ids: ['+912200000001'],
+      dedicated: [{
+        campaign_id: 'camp-1', user_id: 'usr_person', agent_name: 'Ravi', caller_id: '+912200000001',
+        in_campaign: true, set_at: '2026-11-02T09:00:00.000Z', set_by_user_id: 'usr_sup',
+      }],
+      rotation: ['+912200000001'],
+      all_dedicated: true,
+    });
+    renderPage('agents');
+    await waitFor(() => expect(screen.getByTestId('caller-id-usr_person').textContent).toContain('+91 22000 00001'));
+    expect(screen.getByRole('button', { name: 'Use shared rotation for Ravi' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Change caller ID/ })).toBeNull();
+  });
+
+  it.each(['agent', 'viewer', 'operator'])('%s with the flag on issues no caller ID read', async (role) => {
+    mocks.flag.mockReturnValue(true);
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role });
+    renderPage('agents');
+    await screen.findByRole('heading', { name: 'Collections' });
+    await waitFor(() => expect(mocks.getAgentCallerIds).not.toHaveBeenCalled());
+  });
+});
+
 describe('campaign detail — the not-yet-joined signal', () => {
   const assigned = (userId: string, name: string) => ({
     user_id: userId,
@@ -1485,7 +1607,7 @@ describe('the campaign header names the retry chain', () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
     expect(screen.queryByTestId('campaign-lineage')).toBeNull();
-    expect(screen.getByTestId('campaign-tab-insights')).toBeTruthy();
+    expect(screen.getByTestId('campaign-tab-overview')).toBeTruthy();
   });
 });
 

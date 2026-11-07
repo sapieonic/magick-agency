@@ -59,6 +59,7 @@ import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../..
 import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import { agencyAttemptRepository } from '../../../src/db/repositories/agency.repository.js';
+import { publishPacingInvalidation } from '../../../src/agency/pacing/invalidation-bus.js';
 
 const CATALOG = JSON.stringify([
   { code: 'interested', label: 'Interested', is_success: true, terminal: true },
@@ -467,4 +468,117 @@ describe('wrap-up redial — real app, real runtime, fake carrier (integration)'
     const bad = await post(`/proxy/agency/sessions/${session.id}/redial`, agent, { attempt_id: 'nope' });
     expect(bad.statusCode).toBe(400);
   });
+
+  it('DN4: a redial of an owned contact goes out from the owner\'s dedicated number; an unowned contact\'s, never from a number since dedicated to another agent', async () => {
+    await getTestPool().query(
+      "UPDATE agency_campaigns SET status = 'completed' WHERE account_id = $1 AND status = 'running'", [account]);
+    const { rows: live } = await getTestPool().query<{ id: string }>(
+      'SELECT id FROM agency_agent_sessions WHERE agent_user_id = $1 AND left_at IS NULL', [agent.id]);
+    for (const s of live) await post(`/proxy/agency/sessions/${s.id}/leave`, agent);
+    const R1 = '+919000000021';
+    const R2 = '+919000000022';
+    const OWN = '+919000000023';
+    const campaign = await insertAgencyCampaign({
+      tenant_id: tenant, account_id: account, status: 'running',
+      wrapup_seconds: 60, wrapup_auto_return: true, disposition_catalog: CATALOG,
+      allow_wrapup_redial: true, caller_ids: [R1, R2, OWN],
+    });
+    const other = (await insertUser()).id as string;
+    await insertMembership({ user_id: other, tenant_id: tenant, account_id: account, role: 'agent' });
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4), ($1, $2, $3, $5)`,
+      [tenant, account, campaign.id, agent.id, other],
+    );
+    // The agent's number, set after the staffing began (effective, DN1).
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agent_caller_ids (tenant_id, account_id, campaign_id, user_id, caller_id, set_at)
+       VALUES ($1, $2, $3, $4, $5, clock_timestamp())`,
+      [tenant, account, campaign.id, agent.id, OWN],
+    );
+    const owned = await insertAgencyContact(campaign.id, {
+      tenant_id: tenant, account_id: account, phone_e164: '+919812340021', assigned_user_id: agent.id, assigned_at: new Date(),
+    });
+    // Not due until the owned contact is done, so the order of the paced dials is fixed (and
+    // the campaign has work outstanding meanwhile, so it does not complete in between).
+    const unowned = await insertAgencyContact(campaign.id, {
+      tenant_id: tenant, account_id: account, phone_e164: '+919812340022', next_attempt_at: new Date(Date.now() + 3_600_000),
+    });
+
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    expect(joined.statusCode, joined.body).toBeLessThan(300);
+    const sessionId = joined.json().session_id as string;
+    const frames: Frame[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${joined.json().station_ws_url}`);
+    ws.on('message', (raw, isBinary) => { if (!isBinary) frames.push(JSON.parse(raw.toString())); });
+    try {
+      await waitFor('ready', () => frames.find((f) => f['event'] === 'ready'));
+      expect((await post(`/proxy/agency/sessions/${sessionId}/available`, agent)).statusCode).toBe(200);
+
+      const reservedFor = (n: number) => waitFor(`reserved #${n}`, () =>
+        frames.filter((f) => f['event'] === 'reserved')[n - 1]?.['attempt']);
+      const wrapupFor = (attemptId: string) => waitFor(`wrap-up on ${attemptId}`, () =>
+        [...frames].reverse().find((f) => f['event'] === 'wrapup' && f['wrapup'].attempt_id === attemptId)?.['wrapup']);
+      const callerIdOf = async (attemptId: string) => (await agencyAttemptRepository.findById(attemptId))!.caller_id;
+      const dialledFrom = async (attemptId: string) => {
+        const leg = await legOf(attemptId);
+        const call = mocks.fakeAdapter.initiateCall.mock.calls
+          .map((c) => c[0] as unknown as { callId: string; from: string })
+          .find((c) => c.callId === leg);
+        return call?.from;
+      };
+
+      /** The paced call connects and ends; redial it; the redial rings out; save the outcome. */
+      async function pacedThenRedial(n: number, contactId: string, beforeRedial?: (pacedFrom: string) => Promise<void>) {
+        const paced = await reservedFor(n);
+        expect(paced.contact_id).toBe(contactId);
+        const pacedId = paced.attempt_id as string;
+        const pacedFrom = await callerIdOf(pacedId);
+        const leg = await legOf(pacedId);
+        answer(leg);
+        await waitFor('bridged', async () => (await agencyAttemptRepository.findById(pacedId))?.bridged_at);
+        await customerHangsUp(leg);
+        await wrapupFor(pacedId);
+        await beforeRedial?.(pacedFrom);
+        const res = await post(`/proxy/agency/sessions/${sessionId}/redial`, agent, { attempt_id: pacedId });
+        expect(res.statusCode, res.body).toBe(200);
+        const redialId = res.json().attempt_id as string;
+        expect((await reservedFor(n + 1)).attempt_id).toBe(redialId);
+        const redialFrom = await callerIdOf(redialId);
+        expect(await dialledFrom(redialId)).toBe(redialFrom);
+        ringOut(await legOf(redialId));
+        await wrapupFor(redialId);
+        const saved = await post(`/proxy/agency/attempts/${redialId}/disposition`, agent, { disposition_code: 'interested' });
+        expect(saved.statusCode, saved.body).toBe(200);
+        await waitFor('available', async () => (await runtime.agents.get(sessionId))?.state === 'available');
+        return { pacedFrom, redialFrom };
+      }
+
+      // ── The owned contact: paced and redialled from the owner's number. ──────────
+      const ownedCalls = await pacedThenRedial(1, owned.id as string);
+      expect(ownedCalls).toEqual({ pacedFrom: OWN, redialFrom: OWN });
+
+      // ── An unowned contact: paced from the rotation; that number is then dedicated to
+      // another agent during the wrap-up, so the redial takes the rest of the rotation. ──
+      await getTestPool().query('UPDATE agency_contacts SET next_attempt_at = now() WHERE id = $1', [unowned.id]);
+      const unownedCalls = await pacedThenRedial(3, unowned.id as string, async (pacedFrom) => {
+        expect([R1, R2]).toContain(pacedFrom);
+        await getTestPool().query(
+          `INSERT INTO agency_campaign_agent_caller_ids (tenant_id, account_id, campaign_id, user_id, caller_id, set_at)
+           VALUES ($1, $2, $3, $4, $5, clock_timestamp())`,
+          [tenant, account, campaign.id, other, pacedFrom],
+        );
+        // What the PUT publishes after its commit (a raw write publishes nothing, and the dial
+        // paths' cached map would keep the old one until its TTL: `dedicated-caller-ids.ts`).
+        publishPacingInvalidation({ type: 'dedications_changed', campaignId: campaign.id });
+      });
+      expect(unownedCalls.redialFrom).toBe(unownedCalls.pacedFrom === R1 ? R2 : R1);
+    } finally {
+      await post(`/proxy/agency/sessions/${sessionId}/leave`, agent);
+      if (ws.readyState !== WebSocket.CLOSED) {
+        const closed = new Promise<void>((resolve) => ws.once('close', () => resolve()));
+        ws.close();
+        await closed;
+      }
+    }
+  }, 60_000);
 });

@@ -11,6 +11,7 @@ import {
   CONTACT_ASSIGNMENT_FLAG,
   assignmentModeLocked,
 } from '../../utils/agencyAssignmentCopy';
+import { callerIdDedicatedMessage, dedicatedCallerIdsOf } from '../../utils/agencyAgentCallerIdCopy';
 import { getAgencyCampaign, updateAgencyCampaign } from '../../api/agencyCampaigns';
 import { hasPermission } from '../../utils/permissions';
 import {
@@ -62,6 +63,7 @@ import {
 import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
@@ -337,6 +339,15 @@ export function AgencyCampaignSettingsPage() {
       // edits stay on screen.
       if (errorCode(err) === 'mode_change_requires_pause') {
         setFieldErrors({ assignment_mode: ASSIGNMENT_REFUSAL_COPY.mode_change_requires_pause });
+        return;
+      }
+      // The new caller IDs drop a number dedicated to an agent (409
+      // `caller_id_dedicated`). Said on the field, naming the numbers: its
+      // `details.caller_ids` is a list, not the per-field map
+      // `fieldErrorsFromResponse` reads.
+      const dedicated = dedicatedCallerIdsOf(err);
+      if (dedicated !== null) {
+        setFieldErrors({ caller_ids: callerIdDedicatedMessage(dedicated) });
         return;
       }
       // The server answers `{ details: { field: message } }` keyed by the body path,
@@ -624,6 +635,14 @@ export function AgencyCampaignSettingsPage() {
           {block !== null && <p className={styles.blockCopy}>{CONFIG_BLOCK_COPY[block]}</p>}
         </div>
       )}
+
+      {/*
+        The lifecycle and the upload history (decision IN13), which used to sit
+        at the bottom of the Insights scroll: they are about how this campaign
+        was set up and run, so they live with its settings. Both reads are floored
+        at `agency.supervise`, so a role below it is not shown a pair of 403s.
+      */}
+      {hasPermission(role, 'agency.supervise') ? <CampaignHistory campaignId={campaign.id} /> : null}
     </div>
   );
 }

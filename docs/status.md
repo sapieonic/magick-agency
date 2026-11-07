@@ -938,6 +938,66 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
 - **Never "Removed from roster"** (CH12 c): roster replace does not remove contacts (B15, no
   supersede), so the history never shows a row as removed.
 
+### Dedicated caller ID per agent 2026-11-06 (DN1–DN10)
+
+ClickUp "Dedicated caller ID per agent allocation". A supervisor dedicates one of a campaign's
+caller IDs to an agent staffed on it, and every dial to a contact that agent owns on the campaign
+goes out from that number. Design and defaults: [`decisions.md`](decisions.md) §4, "Dedicated
+caller ID per agent". Server, db, contracts and console.
+
+- Migration `0018_agent_caller_ids.sql`: `agency_campaign_agent_caller_ids`, one number per agent
+  and one agent per number on a campaign (DN1). A row counts only while its agent is staffed on
+  the campaign and was set since that staffing began (`EFFECTIVE_DEDICATION_SQL`, every read), so
+  a row an unstaff left behind never dials, blocks or revives.
+- One rule for every dial path, `resolveCallerId` (`agency/pacing/caller-id-pool.ts`): the
+  contact owner's dedicated number while the campaign still has it, else the rotation (the usable
+  numbers minus the dedicated ones, or all of them when every one is dedicated). Every dial path
+  reads the campaign's dedications from one per-campaign cache (`DedicatedCallerIdCache`, 2 s TTL,
+  invalidated by `dedications_changed`, which the PUT, the DELETE and every unstaff publish; read
+  through in a media worker). Pacing reads them once per dialling batch, before it reserves an
+  agent or claims a contact (a failed read dials nothing, records the idle reason
+  `dedications_unavailable` and logs, throttled per campaign, once a minute while it keeps
+  failing); the agent's own call and the wrap-up redial (WR7's "same number" kept only while it is
+  in the rotation) ask its `callerIdForContact`, and the soft phone tagged to a campaign feeds its
+  map to `selectCallerId` (DN2–DN4).
+- The soft phone tagged to a campaign refuses a caller ID outside the campaign's set as before.
+  An in-set request goes through the same rule as the redial's previous number: the matched
+  contact owner's dedicated number whatever was requested, else the requested number while it is
+  in the rotation, else the rotation's pick, so another agent's dedicated number never goes out
+  for a contact that is not theirs (the mobile app sends the campaign's first caller ID by
+  default; the console's tagged default is Automatic, sending none). The response's `caller_id`
+  says which number was dialled.
+- Supervisor routes `GET /campaigns/:id/agent-caller-ids`, `PUT` / `DELETE
+  /campaigns/:id/agents/:userId/caller-id` beside the contact-assignment routes; audited
+  `agency_campaign.agent_caller_id_set` / `_cleared` (DN5, DN10). Only the PUT is behind
+  `agency_contact_assignment_enabled` (403 `assignment_disabled`); the list and the release work
+  with the flag off, so a dedication made while it was on can be seen and released (DN9). The PUT
+  checks the staffing and the campaign's caller IDs inside its transaction, under locks an
+  unstaff and a campaign PATCH meet. The campaign PATCH refuses to drop a dedicated number
+  (`caller_id_dedicated`, DN6), checked under the campaign row's lock.
+- Unstaff releases the number on all three paths whatever `on_unstaff` says (DN7), except on a
+  campaign the agent has been staffed on again by the time the release runs; it audits only a
+  number that was effective on the staffing that closed, and deletes an older stale row silently.
+- The agent's My contacts summary carries `caller_id` (null when the read fails, with a warning,
+  rather than failing the summary). The console's campaign Agents tab sets and releases the
+  numbers; the agent's My contacts panel names theirs.
+- Counts (2026-11-06, from inside each package): `apps/server` unit 8207 passed + 42 skipped (410 files), rest lane
+  2022 passed + 9 expected fail + 1 skipped (206 files + 1 skipped), wall-clock lane 15 (3 files); `packages/db` unit 428 (25 files), integration 573 (55 files);
+  `packages/contracts` 301 (11 files), `contracts-literals --check` up to date; `apps/console`
+  5434 (284 files); `apps/super-admin` 446, `packages/web-ui` 235, `packages/domain` 61,
+  `packages/observability` 14; `pnpm lint` clean at the root; `pnpm test:grafana` 33 and
+  `pnpm test:release` 10 pass; console and server builds clean. Under full-suite load a
+  plan-shape assertion (`agency/insights-reads.test.ts`, `db/attempt-indexes-migration.test.ts`)
+  and a media WebSocket load case (`load/voicelink-media-ws-load.test.ts`) have each failed once;
+  all three pass alone (3 of 3) and in the full rerun these counts come from, and none touches
+  this feature's code.
+- Not run: the mobile app's `agency_wire` `dart test` (no Dart toolchain on the build machine;
+  the summary fixture gained `caller_id`, which the Dart decoder ignores as an unknown key).
+- Follow-ups ([`decisions.md`](decisions.md) §5): per-number concurrency (`phone_numbers.max_concurrent_calls`
+  is enforced on no dial path, and a dedication concentrates traffic on one number); the mobile
+  app omitting `caller_id` by default (its `caller_ids[0]` default is now kept only while it is in
+  the rotation) and showing the agent's dedicated number.
+
 ## Test counts
 
 Latest run, 2026-11-07, the Plivo review fixes on `f7f06dc`, from inside each package, with no
@@ -1046,7 +1106,7 @@ pass; details and the one file that fails only in the combined run: "Wrap-up red
 | `apps/server` | 7720 passed + 42 skipped (386 files) | rest lane 1602 passed + 9 expected fail; wall-clock lane 15 (177 files) |
 | `packages/db` | 427 | 519 (48 files) |
 | `apps/console` | 5015 (256 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 252 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -1064,7 +1124,7 @@ package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 a
 | `apps/server` | 7590 passed + 42 skipped (380 files) | 1545 passed + 10 expected fail + 1 failed (167 files) |
 | `packages/db` | 427 | 512 (47 files) |
 | `apps/console` | 4944 (252 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -1081,7 +1141,7 @@ clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` p
 | `apps/server` | 7430 passed + 42 skipped (360 files) | 1511 passed + 10 expected fail (161 files) |
 | `packages/db` | 427 | 506 (46 files) |
 | `apps/console` | 4917 (251 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
@@ -1101,7 +1161,7 @@ test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana
 | `apps/server` | 7170 passed + 4 expected fail (340 files) | 1476 passed + 10 expected fail (154 files) |
 | `packages/db` | 427 | 495 (44 files) |
 | `apps/console` | 4808 (245 files) | — |
-| `apps/super-admin` | 436 | — |
+| `apps/super-admin` | 446 | — |
 | `packages/contracts` | 94 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 55 | — |

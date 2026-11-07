@@ -28,6 +28,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
+vi.mock('../../api/agencyInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
+  getInsightsAllocation: () => new Promise(() => {}),
+}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
@@ -264,7 +269,7 @@ describe('the campaign section bar', () => {
     expect(tab.getAttribute('aria-current')).toBe('page');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
-    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
   });
 });
 
@@ -422,7 +427,7 @@ describe('Retry these contacts', () => {
 });
 
 /**
- * ── The Insights tab's drill-downs (docs/insights.md, WS F) ─────────────────
+ * ── The analytic tabs' drill-downs (docs/insights.md, WS F) ─────────────────
  * A roster number opens this list with `waiting` / `attempted` in the URL. The form has no
  * control for either, so each shows as a removable chip, Apply keeps them, and the list
  * asks for the exact total so the count on screen can be checked against the number clicked.

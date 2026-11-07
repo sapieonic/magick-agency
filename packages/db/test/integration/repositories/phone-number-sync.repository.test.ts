@@ -1,6 +1,6 @@
 // `phoneNumberRepository.syncForCredential` and the reads that follow a synced number
 // (`findAvailableForAccount`, `findCredentialNumbersForAccount`) against real Postgres
-// (0018, decisions B18–B22): inserted on the credential's provider and pinned to it,
+// (0019, decisions B18–B22): inserted on the credential's provider and pinned to it,
 // assigned to the credential's tenant, a number registered elsewhere refused rather than
 // taken over, numbers gone from the account retired (never deleted), a credential that is
 // not active refused with nothing written.

@@ -37,6 +37,10 @@ CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; consol
 (2026-11-06: one number searched across the tenant's campaigns, CH1–CH13, reviewed and fixed the
 same day; a search measured at 15 ms median on a 1M-contact tenant) is built on the server, the
 console and the app; its test counts are in `status.md`, and the app's Dart side has not run yet.
+A dedicated caller ID per agent (2026-11-06, behind the contact-assignment flag: a supervisor gives
+a staffed agent one of the campaign's caller IDs and every dial to a contact they own goes out from
+it, decisions DN1–DN10) leaves server 8207 unit / 2037 integration + 9 expected fail; db 428 / 573;
+console 5434.
 Plivo on tenants' own accounts (B18–B22, PL1–PL16: credentials super-admins add, campaigns pinned
 to one, number sync, signed callbacks, two automatic pauses) is built through step 4 (2026-11-07)
 and tested end to end against a mock Plivo carrier: server 8582 unit / 2075 integration + 9
@@ -70,7 +74,7 @@ Details and next steps: [`status.md`](status.md).
 | [`mobile.md`](mobile.md) | The agent mobile app (`apps/mobile`, Flutter): V1 scope, the foreground rule and `device_away`, how it talks to the server and the station socket (`client=mobile`, `media=alaw8`), the app's structure, builds and releases, what is not verified |
 | [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |
 | [`customer-history.md`](customer-history.md) | Customer history: one phone number searched across the tenant's campaigns and the soft phone; decisions CH1–CH13, the number rule shared by console, server and app, the API (the number only in `POST` bodies, a short-lived search id), the summary and the timeline, visibility, audit and rate limit, the v2 key-column design |
-| [`insights.md`](insights.md) | The campaign Insights tab: decisions IN1–IN8, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
+| [`insights.md`](insights.md) | The campaign's analytic tabs (Overview, Calls, Agents, Callbacks, Health): decisions IN1–IN13, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |

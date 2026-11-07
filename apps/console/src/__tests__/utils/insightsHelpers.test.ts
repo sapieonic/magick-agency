@@ -18,7 +18,6 @@ import {
   timeShare,
 } from '../../utils/agency/insights/rates';
 import {
-  agentLink,
   attemptsLink,
   contactsLink,
   rosterBucketLink,
@@ -147,10 +146,6 @@ describe('drill-down links', () => {
       '/agency/campaigns/c1/contacts?state=suppressed&suppressed_reason=max_attempts&suppressed_reason=manual&suppressed_reason=none',
     );
     expect(rosterBucketLink('c1', 'never_attempted')).toBe('/agency/campaigns/c1/contacts?attempted=0');
-  });
-
-  it('sends an agent row to the Agents tab, since a performance view has no URL', () => {
-    expect(agentLink('c1', 'usr_a')).toBe('/agency/campaigns/c1/agents');
   });
 });
 

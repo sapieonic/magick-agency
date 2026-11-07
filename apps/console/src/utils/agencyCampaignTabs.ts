@@ -18,18 +18,25 @@ import type { Role } from '../types/auth';
  *
  * ── Sections are URLs, not component state ──────────────────────────────────
  * Every tab is a real path, so a section survives a refresh, can be sent to a
- * colleague, and answers the browser's back button. Two of them (`insights`,
- * `agents`) are panels of the detail page itself; the others are the
- * standalone screens that already existed at their own routes and are
- * unchanged apart from growing this bar.
+ * colleague, and answers the browser's back button. Five of them (`overview`,
+ * `calls`, `agents`, `callbacks`, `health`) are panels of the detail page
+ * itself; the others are the standalone screens that already existed at their
+ * own routes and are unchanged apart from growing this bar.
  *
- * ── Insights replaced Overview and Performance (decision IN1) ──────────────
- * One analytic surface, so two screens can no longer disagree about the same
- * campaign. Its reads are floored at `agency.supervise`, so the tab is too:
- * the old Overview and Performance were ungated and their chart 403'd for a
- * viewer or operator. Their URLs (`/agency/campaigns/:id` and `…/performance`)
- * redirect to Insights for a supervisor and to Agents, the one panel every
- * campaign reader can open, for everyone else (`campaignLandingPath`).
+ * ── Overview first, one tab per question (decision IN13) ────────────────────
+ * Insights (IN1) replaced Overview and Performance with one analytic surface,
+ * which then grew to fourteen stacked sections a supervisor had to scroll to
+ * learn what was on it. It is now split by the question each part answers:
+ * Overview (what needs me, and where the list stands), Calls, Agents,
+ * Callbacks and Health, each about one screen. They are still one surface —
+ * one component and one set of reads behind all five, so they cannot disagree.
+ * Settings carries the lifecycle and upload history.
+ *
+ * The analytic tabs are floored at `agency.supervise`, the floor of every
+ * insights read. The old URLs (`/agency/campaigns/:id`, `…/performance`,
+ * `…/insights`) redirect to Overview for a supervisor and to Agents, the one
+ * panel every campaign reader can open, for everyone else
+ * (`campaignLandingPath`).
  *
  * ── The permission on each tab is the one the API enforces ───────────────────
  * Not a looser proxy for it. A tab that renders and then 403s on arrival is a
@@ -37,17 +44,24 @@ import type { Role } from '../types/auth';
  * follow.
  */
 export type CampaignTabId =
-  | 'insights'
+  | 'overview'
+  | 'calls'
   | 'agents'
+  | 'callbacks'
+  | 'health'
   | 'contacts'
   | 'attempts'
   | 'manual'
   | 'activity'
   | 'settings';
 
-/** The two tabs the detail page renders itself, in tab order. */
-export const CAMPAIGN_PANEL_IDS = ['insights', 'agents'] as const;
+/** The tabs the detail page renders itself, in tab order. */
+export const CAMPAIGN_PANEL_IDS = ['overview', 'calls', 'agents', 'callbacks', 'health'] as const;
 export type CampaignPanelId = (typeof CAMPAIGN_PANEL_IDS)[number];
+
+export function isCampaignPanel(id: string): id is CampaignPanelId {
+  return (CAMPAIGN_PANEL_IDS as readonly string[]).includes(id);
+}
 
 export interface CampaignTabDefinition {
   id: CampaignTabId;
@@ -67,19 +81,42 @@ export interface CampaignTabDefinition {
 
 export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
   {
-    id: 'insights',
-    label: 'Insights',
-    hint: 'The whole campaign in one place: progress, allocation, calls, agents, trends and health',
+    id: 'overview',
+    label: 'Overview',
+    hint: 'What needs your attention, the headline numbers and where the list stands',
     // Every `…/insights/*` read is floored at `agency.supervise`.
     permission: 'agency.supervise',
-    path: (id) => `/agency/campaigns/${id}/insights`,
+    path: (id) => `/agency/campaigns/${id}/overview`,
+  },
+  {
+    id: 'calls',
+    label: 'Calls',
+    hint: 'How dials ended, what agents marked them, and the trends over time',
+    permission: 'agency.supervise',
+    path: (id) => `/agency/campaigns/${id}/calls`,
   },
   {
     id: 'agents',
     label: 'Agents',
-    hint: 'Who is on the floor right now, and who is assigned to this campaign',
+    hint: 'Who is on the floor, who is assigned, and how each agent is doing',
+    // The floor and staffing are ungated; the performance tables below them are
+    // rendered only for `agency.supervise`, the floor of their reads.
     permission: null,
     path: (id) => `/agency/campaigns/${id}/agents`,
+  },
+  {
+    id: 'callbacks',
+    label: 'Callbacks',
+    hint: 'The callbacks promised to customers: kept, late, missed and still open',
+    permission: 'agency.supervise',
+    path: (id) => `/agency/campaigns/${id}/callbacks`,
+  },
+  {
+    id: 'health',
+    label: 'Health',
+    hint: 'Abandonment, stalls, caller IDs, carrier failures and recording',
+    permission: 'agency.supervise',
+    path: (id) => `/agency/campaigns/${id}/health`,
   },
   {
     id: 'contacts',
@@ -123,7 +160,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
   {
     id: 'settings',
     label: 'Settings',
-    hint: 'Caller IDs, recording and retry behaviour for this campaign',
+    hint: 'Caller IDs, recording and retry behaviour, the lifecycle and the uploads',
     /*
       Deliberately the gate the old header button carried, not the looser
       `agency.campaigns.write` the form's own fields check. Moving a link
@@ -134,6 +171,16 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     path: (id) => `/agency/campaigns/${id}/settings`,
   },
 ];
+
+/**
+ * A tab's link. The panels share one range (`?range=…`), so `search` rides along
+ * to them: a supervisor reading Today's calls who opens Agents wants Today's
+ * agents. The standalone screens own their own query strings and never get it.
+ */
+export function campaignTabHref(tab: CampaignTabId, campaignId: string, search = ''): string {
+  const path = CAMPAIGN_TABS.find((t) => t.id === tab)!.path(campaignId);
+  return isCampaignPanel(tab) ? `${path}${search}` : path;
+}
 
 /** The tabs a given role may actually reach, in tab order. */
 export function visibleCampaignTabs(
@@ -148,14 +195,14 @@ export function visibleCampaignTabs(
 }
 
 /**
- * Where `/agency/campaigns/:id` (and the retired `…/performance`) lands a role:
- * Insights when its reads would answer, else the Agents panel, which every role
- * that can open a campaign can read. Never a tab that would 403 on arrival.
+ * Where `/agency/campaigns/:id` (and the retired `…/performance` and `…/insights`)
+ * lands a role: Overview when its reads would answer, else the Agents panel, which
+ * every role that can open a campaign can read. Never a tab that would 403 on arrival.
  */
 export function campaignLandingPath(campaignId: string, role: Role | undefined): string {
-  const insights = CAMPAIGN_TABS.find((tab) => tab.id === 'insights');
-  const canInsights = insights?.permission ? hasPermission(role, insights.permission) : true;
-  return canInsights ? `/agency/campaigns/${campaignId}/insights` : `/agency/campaigns/${campaignId}/agents`;
+  const overview = CAMPAIGN_TABS.find((tab) => tab.id === 'overview');
+  const canOverview = overview?.permission ? hasPermission(role, overview.permission) : true;
+  return canOverview ? `/agency/campaigns/${campaignId}/overview` : `/agency/campaigns/${campaignId}/agents`;
 }
 
 /**
@@ -185,5 +232,5 @@ export function campaignPanelFromPath(pathname: string): CampaignPanelId {
   );
   if (anchor === -1) return 'agents';
   const panel = segments[anchor + 2];
-  return CAMPAIGN_PANEL_IDS.find((id) => id === panel) ?? 'agents';
+  return panel !== undefined && isCampaignPanel(panel) ? panel : 'agents';
 }

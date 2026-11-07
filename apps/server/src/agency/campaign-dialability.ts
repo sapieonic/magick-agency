@@ -55,7 +55,7 @@ import { usableCallerIds } from './pacing/caller-id-pool.js';
 export const DIALABLE_CACHE_TTL_MS = 15_000;
 const DIALABLE_CACHE_MAX_ENTRIES = 5_000;
 
-type DialabilityCampaign = Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'caller_ids' | 'telephony_credential_id'>;
+export type DialabilityCampaign = Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'caller_ids' | 'telephony_credential_id'>;
 
 const cache = new ExpiringCache<string[]>({ ttlMs: DIALABLE_CACHE_TTL_MS, maxEntries: DIALABLE_CACHE_MAX_ENTRIES });
 

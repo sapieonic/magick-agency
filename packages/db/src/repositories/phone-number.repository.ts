@@ -72,7 +72,7 @@ export class PhoneNumberRepository {
 
   /**
    * Make the inventory match the numbers a tenant credential's carrier account lists
-   * (BYOC, B18; 0018), in one transaction:
+   * (BYOC, B18; 0019), in one transaction:
    *
    *  - a listed number not in the inventory is inserted on the credential's provider,
    *    pinned to the credential (`telephony_credential_id`), and assigned to the

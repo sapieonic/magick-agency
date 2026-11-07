@@ -26,7 +26,7 @@ const log = createChildLogger({ component: 'super-admin-phone-routes' });
  * that carrier and an assignment of a synced number to another tenant is refused.
  * Deliberately absent:
  *  - Telephony-provider writes: the migrations seed the provider rows (`voicelink`,
- *    and `plivo`, which 0018 activates). `provider_id` still references
+ *    and `plivo`, which 0019 activates). `provider_id` still references
  *    `telephony_providers`, so number creation checks it and refuses an inactive
  *    provider, and `GET /telephony-providers` is kept so the super-admin console can
  *    pick the id.

@@ -1,6 +1,6 @@
-// Real Postgres: migrations/0018_plivo_numbers_and_carrier_pause.sql (decisions B18–B22).
+// Real Postgres: migrations/0019_plivo_numbers_and_carrier_pause.sql (decisions B18–B22).
 // globalSetup has applied every migration. Pins the provider row's activation (read straight
-// after a fresh down-up of 0018, since truncateAll empties the seed), the synced-number column
+// after a fresh down-up of 0019, since truncateAll empties the seed), the synced-number column
 // and its FK, the widened pause_reason CHECK, then down (plivo inactive again, the column gone,
 // a carrier_auth pause rewritten to a supervisor pause) and up again.
 import { randomUUID } from 'node:crypto';
@@ -20,7 +20,7 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {} });
 
-const FILE = '0018_plivo_numbers_and_carrier_pause.sql';
+const FILE = '0019_plivo_numbers_and_carrier_pause.sql';
 
 async function seedProviders(plivoStatus: 'active' | 'inactive' = 'active'): Promise<{ voicelink: string; plivo: string }> {
   const { rows } = await pool().query<{ id: string; name: string }>(
@@ -44,7 +44,7 @@ async function columnExists(table: string, column: string): Promise<boolean> {
   return rowCount === 1;
 }
 
-/** Roll 0018 (and anything after it) back, run `body`, and always re-apply. */
+/** Roll 0019 (and anything after it) back, run `body`, and always re-apply. */
 async function whileDown(body: () => Promise<void>): Promise<void> {
   const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
   await migrate('down', files.length - files.indexOf(FILE));
@@ -55,7 +55,7 @@ async function whileDown(body: () => Promise<void>): Promise<void> {
   }
 }
 
-describe('0018 — plivo numbers and the carrier_auth pause', () => {
+describe('0019 — plivo numbers and the carrier_auth pause', () => {
   it('phone_numbers.telephony_credential_id: nullable, a foreign key to telephony_credentials, indexed', async () => {
     const { plivo } = await seedProviders();
     const tenant = (await insertTenant()).id as string;
@@ -92,7 +92,7 @@ describe('0018 — plivo numbers and the carrier_auth pause', () => {
     const campaign = await insertCampaign({ status: 'paused', pause_reason: 'carrier_auth', paused_at: new Date() });
     await whileDown(async () => {
       const ledger = await pool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1');
-      expect(ledger.rows[0]!.name).toBe('0017_customer_history_contacts_index');
+      expect(ledger.rows[0]!.name).toBe('0018_agent_caller_ids');
       const status = await pool().query<{ status: string }>(`SELECT status FROM telephony_providers WHERE name = 'plivo'`);
       expect(status.rows[0]!.status).toBe('inactive');
       expect(await columnExists('phone_numbers', 'telephony_credential_id')).toBe(false);

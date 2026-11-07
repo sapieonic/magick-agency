@@ -15,7 +15,13 @@ vi.mock('../../api/softphone', () => api);
 
 import { useSoftphone, SOFTPHONE_MUTED_AT_ANSWER_COPY, type SoftphoneAudio } from '../../hooks/useSoftphone';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
-import { RINGING_HANGUP_WARNING } from '../../components/softphone/DialPad';
+import {
+  AUTOMATIC_CALLER_ID_HINT,
+  RINGING_HANGUP_WARNING,
+  callerIdHint,
+  pickedCallerIdHint,
+} from '../../components/softphone/DialPad';
+import { formatDialNumber } from '../../utils/softphone/phoneInput';
 import { serverClock } from '../../hooks/useServerClock';
 import type { RingbackTone } from '../../utils/softphone/ringback';
 import type { StationConnection } from '../../hooks/agencyStation/types';
@@ -203,20 +209,149 @@ describe('Ready', () => {
     expect(api.placeManualCall).toHaveBeenCalledTimes(1);
   });
 
-  it('logs to a campaign: its caller IDs, its outcomes, and the tag on the request', async () => {
+  it('logs to a campaign: Automatic, then its caller IDs, and the tag on the request', async () => {
     api.placeManualCall.mockResolvedValue({ ok: true, value: manualCall({ tag: { campaign_id: 'camp-1', campaign_name: CAMPAIGN.campaign_name } }) });
     await mount();
     fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
     const caller = screen.getByTestId('caller-id') as HTMLSelectElement;
-    expect([...caller.options].map((o) => o.value)).toEqual(CAMPAIGN.caller_ids);
+    expect([...caller.options].map((o) => [o.value, o.textContent])).toEqual([
+      ['', 'Automatic'],
+      ...CAMPAIGN.caller_ids.map((id) => [id, formatDialNumber(id)]),
+    ]);
     fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
     await act(async () => {
       fireEvent.click(screen.getByTestId('dial-call'));
     });
-    expect(api.placeManualCall.mock.calls[0]![0]).toMatchObject({ campaign_id: 'camp-1', caller_id: '+912248901120' });
+    expect(api.placeManualCall.mock.calls[0]![0]).toMatchObject({ campaign_id: 'camp-1' });
     // Fixed once dialled.
     expect(screen.queryByTestId('log-to-select')).toBeNull();
     expect(screen.getByTestId('log-to-fixed').textContent).toBe(CAMPAIGN.campaign_name);
+  });
+
+  describe('Call from on a tagged call (DN4)', () => {
+    const tagged = (over: Partial<AgencyManualCall> = {}) =>
+      manualCall({ tag: { campaign_id: 'camp-1', campaign_name: CAMPAIGN.campaign_name }, ...over });
+    const caller = () => screen.getByTestId('caller-id') as HTMLSelectElement;
+
+    it('defaults to Automatic and sends no caller_id: the server picks the number', async () => {
+      api.placeManualCall.mockResolvedValue({ ok: true, value: tagged() });
+      await mount();
+      fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
+      expect(caller().value).toBe('');
+      expect(caller().selectedOptions[0]!.textContent).toBe('Automatic');
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(AUTOMATIC_CALLER_ID_HINT);
+      fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('dial-call'));
+      });
+      const body = api.placeManualCall.mock.calls[0]![0];
+      expect(body).toEqual({ session_id: 'sess-sp', to: '9820461733', campaign_id: 'camp-1' });
+      expect('caller_id' in body).toBe(false);
+    });
+
+    it('a number the agent picks is sent; picking Automatic again takes it off', async () => {
+      api.placeManualCall.mockResolvedValue({ ok: true, value: tagged({ caller_id: '+912248901121' }) });
+      await mount();
+      fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
+      fireEvent.change(caller(), { target: { value: '+912248901121' } });
+      expect(caller().value).toBe('+912248901121');
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(
+        'From Home Loan Renewals’s caller IDs. The contact’s agent number wins; another agent’s number gives way to the rotation.',
+      );
+      expect(pickedCallerIdHint(CAMPAIGN.campaign_name)).toBe(screen.getByTestId('caller-id-hint').textContent);
+      fireEvent.change(caller(), { target: { value: '' } });
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(AUTOMATIC_CALLER_ID_HINT);
+      fireEvent.change(caller(), { target: { value: '+912248901121' } });
+      fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('dial-call'));
+      });
+      expect(api.placeManualCall.mock.calls[0]![0]).toEqual({
+        session_id: 'sess-sp', to: '9820461733', caller_id: '+912248901121', campaign_id: 'camp-1',
+      });
+    });
+
+    it('a picked number’s hint only while the setup is editable: none once Call is pressed', async () => {
+      let answer: (value: unknown) => void = () => {};
+      api.placeManualCall.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      await mount();
+      fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
+      fireEvent.change(caller(), { target: { value: '+912248901121' } });
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(pickedCallerIdHint(CAMPAIGN.campaign_name));
+      fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+      // In flight: the pick is no longer the agent's to change, so no "wins / gives way".
+      act(() => {
+        fireEvent.click(screen.getByTestId('dial-call'));
+      });
+      expect(screen.queryByTestId('caller-id-hint')).toBeNull();
+      await act(async () => {
+        answer({ ok: true, value: tagged({ caller_id: '+912248901121' }) });
+      });
+      expect(screen.queryByText(/gives way to the rotation/)).toBeNull();
+    });
+
+    it('callerIdHint: none for a placed call, whose number is final; the pick’s while editing', () => {
+      const campaign = CAMPAIGN;
+      // A placed tagged call: Automatic is off and the setup fixed (useSoftphone).
+      expect(callerIdHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: false, campaign })).toBeNull();
+      expect(callerIdHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: true, campaign }))
+        .toBe(pickedCallerIdHint(CAMPAIGN.campaign_name));
+      expect(callerIdHint({ callerIdAutomatic: true, callerId: null, setupEditable: true, campaign })).toBe(AUTOMATIC_CALLER_ID_HINT);
+    });
+
+    it('once placed, shows the number the server dialled, not the draft', async () => {
+      // Automatic on the request; the contact's owner's dedicated number on the call.
+      api.placeManualCall.mockResolvedValue({ ok: true, value: tagged({ caller_id: '+912248901121' }) });
+      await mount();
+      fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
+      fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('dial-call'));
+      });
+      expect(screen.getByText(`From ${formatDialNumber('+912248901121')}`)).toBeTruthy();
+    });
+
+    it('back to untagged, the account’s default returns and no Automatic is offered', async () => {
+      api.placeManualCall.mockResolvedValue({ ok: true, value: manualCall() });
+      await mount();
+      fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
+      fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: '' } });
+      expect(caller().value).toBe('+912248908888');
+      expect([...caller().options].map((o) => o.value)).toEqual(BOOTSTRAP.untagged.caller_ids);
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe('From the numbers assigned to your account');
+      fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('dial-call'));
+      });
+      expect(api.placeManualCall.mock.calls[0]![0]).toEqual({
+        session_id: 'sess-sp', to: '9820461733', caller_id: '+912248908888', campaign_id: null,
+      });
+    });
+
+    it('a redial goes out from the number it went from, tagged or untagged', async () => {
+      api.listManualCalls.mockResolvedValue({
+        rows: [
+          manualCall({
+            id: 'old-t', destination_e164: '+919820461733', caller_id: '+912248901121', state: 'ended',
+            outcome: 'no_answer', settled_at: '2026-10-30T09:00:00Z',
+            tag: { campaign_id: 'camp-1', campaign_name: CAMPAIGN.campaign_name },
+          }),
+          manualCall({
+            id: 'old-u', destination_e164: '+919820461744', caller_id: '+912248909999', state: 'ended',
+            outcome: 'no_answer', settled_at: '2026-10-30T08:00:00Z',
+          }),
+        ],
+        next_cursor: null,
+        limit: 8,
+      });
+      await mount();
+      fireEvent.click(screen.getByRole('button', { name: 'Redial +91 98204 61733' }));
+      expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
+      expect(caller().value).toBe('+912248901121');
+      fireEvent.click(screen.getByRole('button', { name: 'Redial +91 98204 61744' }));
+      expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('');
+      expect(caller().value).toBe('+912248909999');
+    });
   });
 
   it('says a closed window is the campaign’s time, which the customer’s own may not share', async () => {

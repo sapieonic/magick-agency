@@ -13,7 +13,7 @@ export interface PhoneNumberRecord {
   // admin and is never handed to an unverified signup.
   pool_eligible: boolean;
   /**
-   * The tenant carrier credential this number was synced from (BYOC, B18; 0018).
+   * The tenant carrier credential this number was synced from (BYOC, B18; 0019).
    * NULL = a number on the service's own account, added by a super-admin. Written only
    * by `syncForCredential`.
    */

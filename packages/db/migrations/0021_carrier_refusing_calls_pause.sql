@@ -1,4 +1,4 @@
--- 0020_carrier_refusing_calls_pause.sql — a campaign whose carrier account keeps refusing its
+-- 0021_carrier_refusing_calls_pause.sql — a campaign whose carrier account keeps refusing its
 -- dials (decisions B18–B20, PL11).
 --
 -- `agency_campaigns.pause_reason` gains `carrier_refusing_calls`: a campaign pinned to a
@@ -6,7 +6,7 @@
 -- that could not be sent for the carrier's configuration, several times in a row with no call
 -- placed in between, is paused instead of spending the roster on refusals: a destination the
 -- account is not enabled for, an account out of credit, a caller ID the carrier rejects.
--- `carrier_auth` (0018) stays the carrier's own 401 and `carrier_account_unavailable` (0019) a
+-- `carrier_auth` (0019) stays the carrier's own 401 and `carrier_account_unavailable` (0020) a
 -- credential no longer active.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down

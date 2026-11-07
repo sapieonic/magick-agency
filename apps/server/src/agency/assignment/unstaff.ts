@@ -10,14 +10,32 @@
  * campaign. A campaign where they held nothing writes nothing (most campaigns never use
  * assignment, and an unstaff there is already audited as `agency_campaign_agent.unassigned`).
  *
+ * The same statement releases the number dedicated to the agent on each of those campaigns,
+ * whatever its `on_unstaff` (DN7): one `agency_campaign.agent_caller_id_cleared` row
+ * (`cause: 'unstaff'`) per campaign where one was released, under the campaign's account, with
+ * the same actor; nothing where none was set. A campaign the agent has been staffed on again
+ * by the time it runs keeps its row (see `returnOnUnstaff`).
+ *
+ * First, before anything can fail, it publishes `dedications_changed` for every campaign whose
+ * staffing closed: the agent's dedication there stopped counting when the staffing row closed
+ * (`EFFECTIVE_DEDICATION_SQL`), so the dial paths' cached map (`DedicatedCallerIdCache`) must
+ * drop it now, whether or not the release below succeeds. This is the one place every unstaff
+ * path passes through (the supervisor's DELETE, the team routes' offboarding, the super admin's
+ * membership change), and each calls it only after its close has committed.
+ *
  * Never throws: it follows a staffing change that has already committed, and a failure
  * leaves contacts with a former agent (visible on the progress screen, reassignable), never
- * a wrong permission.
+ * a wrong permission. A dedication left behind by a failure is never used: it stopped counting
+ * when the staffing closed (`EFFECTIVE_DEDICATION_SQL`, DN1), so it is not dialled, listed or
+ * guarded, does not revive if the agent is staffed again, and is replaced by the next PUT or
+ * deleted by the next unstaff's release.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import type { AuditActorFields } from '../../audit/platform/audit-actor.js';
 import { agencyAssignmentRepository, type UnstaffReturn } from '../../db/repositories/agency.repository.js';
+import { auditAgentCallerIdCleared } from '../agent-caller-id-audit.js';
+import { publishPacingInvalidation } from '../pacing/invalidation-bus.js';
 
 const log = createChildLogger({ component: 'agency-assignment-unstaff' });
 
@@ -37,6 +55,8 @@ export async function returnContactsOnUnstaff(input: {
 }): Promise<UnstaffReturn[]> {
   const campaignIds = [...new Set(input.campaignIds)];
   if (campaignIds.length === 0) return [];
+  // The closes have committed: their dedications no longer count (see the module note).
+  for (const campaignId of campaignIds) publishPacingInvalidation({ type: 'dedications_changed', campaignId });
   let rows: UnstaffReturn[];
   try {
     rows = await agencyAssignmentRepository.returnOnUnstaff({
@@ -54,6 +74,15 @@ export async function returnContactsOnUnstaff(input: {
     return [];
   }
   for (const r of rows) {
+    if (r.released_caller_id !== null) {
+      auditAgentCallerIdCleared(
+        { tenantId: input.tenantId, accountId: r.account_id, actor: input.actor, campaignId: r.campaign_id,
+          userId: input.userId, callerId: r.released_caller_id },
+        'unstaff',
+        { unstaff_cause: input.cause, ...(input.details ?? {}) },
+      );
+    }
+    if (!r.held) continue;
     platformAuditLogger.log({
       tenant_id: input.tenantId,
       account_id: r.account_id,
@@ -78,7 +107,8 @@ export async function returnContactsOnUnstaff(input: {
   if (rows.length > 0) {
     log.info(
       { tenantId: input.tenantId, userId: input.userId, cause: input.cause,
-        moved: rows.reduce((s, r) => s + r.moved, 0), campaigns: rows.length },
+        moved: rows.reduce((s, r) => s + r.moved, 0), campaigns: rows.length,
+        callerIdsReleased: rows.filter((r) => r.released_caller_id !== null).length },
       'Unstaffed agent\'s contacts handled per campaign on_unstaff',
     );
   }

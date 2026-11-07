@@ -2459,6 +2459,27 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/agent-caller-ids",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "dedicated caller ID route, served by the public API layer at the console path (decision B16; decisions DN1-DN10; contracts api/agency/agent-caller-id.ts)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/agency/campaigns/:id/agents/:userId/caller-id",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "dedicated caller ID route, served by the public API layer at the console path (decision B16; decisions DN1-DN10; contracts api/agency/agent-caller-id.ts)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/campaigns/:id/agents/:userId/caller-id",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "dedicated caller ID route, served by the public API layer at the console path (decision B16; decisions DN1-DN10; contracts api/agency/agent-caller-id.ts)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/insights/summary",
       "source": "apps/console/src/api/agencyInsights.ts",
       "status": "served",

@@ -14,7 +14,7 @@ export interface TenantPhoneAssignmentRecord {
   capabilities?: string[];
   region?: string;
   /**
-   * The tenant carrier credential the number was synced from (0018); null = the
+   * The tenant carrier credential the number was synced from (0019); null = the
    * service's own account. It decides the carrier account a call from this number
    * dials on.
    */

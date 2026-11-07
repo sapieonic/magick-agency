@@ -1,5 +1,10 @@
-import { Link } from 'react-router-dom';
-import { visibleCampaignTabs, type CampaignTabId } from '../../utils/agencyCampaignTabs';
+import { useCallback } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
+import { getInsightsAllocation } from '../../api/agencyInsights';
+import { useTenant } from '../../contexts/TenantContext';
+import { hasPermission } from '../../utils/permissions';
+import { campaignTabHref, isCampaignPanel, visibleCampaignTabs, type CampaignTabId } from '../../utils/agencyCampaignTabs';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
@@ -10,9 +15,9 @@ import styles from './CampaignTabs.module.css';
  * The campaign workspace's section bar.
  *
  * ── Links, not `role="tab"` ─────────────────────────────────────────────────
- * Four of these sections are separate routes with their own data, their own
- * filters and their own deep links; the other three are panels of the detail
- * page. Under the ARIA tabs pattern all seven would have to be panels of one
+ * Five of these sections are separate routes with their own data, their own
+ * filters and their own deep links; the other five are panels of the detail
+ * page. Under the ARIA tabs pattern all ten would have to be panels of one
  * mounted widget, and a screen-reader user pressing the arrow keys would be
  * told a page navigation was a panel swap. So this is what it actually is:
  * navigation, with `aria-current="page"` marking where you are. The visual
@@ -59,6 +64,13 @@ export interface CampaignTabsProps {
    * (no hardcoded `'running'` fallback).
    */
   campaignStatus?: string;
+  /**
+   * The callbacks overdue now, for the Callbacks tab's badge, from a host that
+   * already polls it (the detail page; null until it knows). Left out, the bar
+   * reads it once itself, so the badge is on every campaign screen and leaving
+   * the detail page never makes the warning look resolved.
+   */
+  callbacksOverdue?: number | null;
 }
 
 export function CampaignTabs({
@@ -67,9 +79,15 @@ export function CampaignTabs({
   role,
   liveAgentCount,
   campaignStatus,
+  callbacksOverdue,
 }: CampaignTabsProps) {
+  const overdue = useCallbacksOverdue(campaignId, role, callbacksOverdue);
+  // The range rides between panels (`campaignTabHref`); a standalone screen's
+  // query string is its own filters, never a range, so it rides nowhere.
+  const { search } = useLocation();
+  const carrySearch = isCampaignPanel(active) ? search : '';
   // Never empty: Agents is ungated, so every role that can open a campaign gets
-  // at least that. A viewer or operator gets ONLY that (Insights and the spine
+  // at least that. A viewer or operator gets ONLY that (the analytic tabs and the spine
   // tabs floor at `agency.supervise`), and the bar still says where they are.
   const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const tabs = visibleCampaignTabs(role, (flag) => flag === SOFTPHONE_FLAG && softphone);
@@ -79,6 +97,12 @@ export function CampaignTabs({
       {tabs.map((tab) => {
         const isActive = tab.id === active;
         const showCount = tab.id === 'agents' && typeof liveAgentCount === 'number' && liveAgentCount > 0;
+        // Rendered only for a positive count, in the danger tone: unlike the
+        // floor count this one is a warning, not a "someone is there".
+        const alert = tab.id === 'callbacks' && overdue !== null && overdue > 0
+          ? { count: overdue, label: `${overdue} overdue` }
+          : null;
+        const showAlert = alert !== null;
         return (
           /*
             A plain `Link`, deliberately not a `NavLink`. NavLink derives
@@ -90,7 +114,7 @@ export function CampaignTabs({
           */
           <Link
             key={tab.id}
-            to={tab.path(campaignId)}
+            to={campaignTabHref(tab.id, campaignId, carrySearch)}
             className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
             aria-current={isActive ? 'page' : undefined}
             title={tab.hint}
@@ -113,6 +137,12 @@ export function CampaignTabs({
                 {liveAgentCount}
               </span>
             )}
+            {showAlert && (
+              <span className={`${styles.badge} ${styles.badgeAlert}`} data-testid={`campaign-tab-${tab.id}-alert`}>
+                <span aria-hidden="true">{alert.count}</span>
+                <span className="sr-only">{`, ${alert.label}`}</span>
+              </span>
+            )}
           </Link>
         );
       })}
@@ -121,3 +151,21 @@ export function CampaignTabs({
 }
 
 export default CampaignTabs;
+
+/**
+ * The overdue callbacks for the badge: the host's count when it has one, else
+ * one read of the allocation here (not polled: a standalone screen is a short
+ * visit, and the detail page polls it). Supervisors only — the Callbacks tab is
+ * theirs, and the read 403s below them.
+ */
+function useCallbacksOverdue(campaignId: string, role: Role | undefined, known: number | null | undefined): number | null {
+  const { tenantId, accountId } = useTenant();
+  const read = known === undefined && hasPermission(role, 'agency.supervise') && Boolean(tenantId && accountId);
+  const fetchAllocation = useCallback(
+    () => getInsightsAllocation(campaignId, tenantId ?? undefined, accountId ?? undefined),
+    [campaignId, tenantId, accountId],
+  );
+  const allocation = useAsyncResource(fetchAllocation, { initialData: null, enabled: read });
+  if (known !== undefined) return known;
+  return read ? allocation.data?.totals.callbacks_overdue ?? null : null;
+}

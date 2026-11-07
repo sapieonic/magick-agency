@@ -32,9 +32,9 @@ import type {
 
 /**
  * The pauses the dialler makes when a campaign's carrier account cannot dial, or keeps
- * refusing its dials (`carrier-account-pause.ts`): `carrier_auth` (0018), the carrier
- * refused the credential; `carrier_account_unavailable` (0019), the credential is no longer
- * active; `carrier_refusing_calls` (0020, PL11), the carrier refused several dials in a row.
+ * refusing its dials (`carrier-account-pause.ts`): `carrier_auth` (0019), the carrier
+ * refused the credential; `carrier_account_unavailable` (0020), the credential is no longer
+ * active; `carrier_refusing_calls` (0021, PL11), the carrier refused several dials in a row.
  * The contract's single list (`CARRIER_ACCOUNT_PAUSE_REASONS`), re-exported for the
  * model's importers.
  */
@@ -138,9 +138,9 @@ export interface AgencyCampaignRecord {
    * Why the campaign is currently paused, or NULL when it is not paused.
    *
    * Five values are writable (CHECK-constrained): `supervisor`,
-   * `abandonment_ceiling`, (0018) `carrier_auth`: the carrier refused the
-   * campaign's credential, (0019) `carrier_account_unavailable`: the campaign's
-   * credential is no longer active, and (0020) `carrier_refusing_calls`: the carrier
+   * `abandonment_ceiling`, (0019) `carrier_auth`: the carrier refused the
+   * campaign's credential, (0020) `carrier_account_unavailable`: the campaign's
+   * credential is no longer active, and (0021) `carrier_refusing_calls`: the carrier
    * refused the campaign's dials several times in a row (PL11). The WS enum's `auto_paused` is deliberately
    * absent — its two emit sites are transient broadcasts that write no row.
    */

@@ -40,6 +40,7 @@ const { AgencyReaper } = await import('../../../../src/agency/reaper.js');
 const { ManualDialer } = await import('../../../../src/agency/softphone/manual-dialer.js');
 const { SoftphoneService } = await import('../../../../src/agency/softphone/softphone-service.js');
 const { DncRegistry } = await import('../../../../src/agency/dnc-registry.js');
+const { DedicatedCallerIdCache } = await import('../../../../src/agency/pacing/dedicated-caller-ids.js');
 const { BreakRegistry } = await import('@magick-agency/domain/break-manager');
 const { auditLogger } = await import('../../../../src/audit/audit-logger.js');
 
@@ -60,7 +61,7 @@ function bootProcess() {
   });
   const service = new SoftphoneService({
     agents, stations, breaks: new BreakRegistry(), dialer: { hasUnannouncedAttempt: () => false },
-    dnc: new DncRegistry(), manual,
+    dnc: new DncRegistry(), manual, dedications: new DedicatedCallerIdCache(),
   });
   return { agents, reaper, service, manual };
 }

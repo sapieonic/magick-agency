@@ -323,9 +323,14 @@ every account the caller belongs to (CH2) where every internal handler is single
   invalidations, wrapped by `startAgency`), `account_capacity_freed` (attempt and manual-call
   ends), `agent_available` (a state write into `available`, a station attach), `contacts_changed`
   (ingest chunks, owner sweeps), `station_ready` (a `ready` sent on a `strict` / `preferred`
-  campaign: the engine forgets the session's last `queue` frame and sends it again). The campaign row and the account limit are cached between full ticks in a
-  generation-guarded TTL cache (2 s backstop), dropped by their events and re-primed by the
-  supervise pass. `tickOnce` is a forced full tick that reads everything fresh. Measured by
+  campaign: the engine forgets the session's last `queue` frame and sends it again),
+  `dedications_changed` (a dedicated caller ID set, replaced or released, or an agent's staffing
+  on the campaign closed; wakes nothing). The campaign row, the account limit and the campaign's
+  dedicated caller-ID map (`pacing/dedicated-caller-ids.ts`, DN4, which the runtime's other dial
+  paths share and which reads through while the engine is not listening, as in a media worker)
+  are cached between full ticks in a generation-guarded TTL cache (2 s backstop), dropped by their
+  events; the row is also re-primed by the supervise pass. A dialling batch reads the dedication
+  map before it reserves an agent; a failed read dials nothing (`dedications_unavailable`). `tickOnce` is a forced full tick that reads everything fresh. Measured by
   `test/integration/load/pacing-statements.test.ts`; `agency_pacing_ticks_total` and
   `agency_pacing_missed_wakeups_total` show the skip ratio and any wake-up the bus missed.
 - **Pacing history** (`pacing/pacing-history.ts`, `agency_campaign_pacing_minutes`, 0013; IN2,
@@ -573,7 +578,7 @@ every account the caller belongs to (CH2) where every internal handler is single
   - *Numbers.* `TelephonyCredentialService.syncNumbers` (super-admin "Sync numbers", `POST
     /super-admin/telephony-credentials/:id/sync-numbers`) pages the account's numbers from
     Plivo's fixed API host and writes them to `phone_numbers` pinned to the credential
-    (`telephony_credential_id`, migration 0018), assigned to the tenant untagged; numbers gone
+    (`telephony_credential_id`, migration 0019), assigned to the tenant untagged; numbers gone
     from the account are retired. `findAvailableForAccount` offers a synced number only while its
     credential is `active` (PL4, PL5). The sync answer lists the live campaigns still naming the
     credential's retired numbers (`campaigns_holding_retired`), for the operator to raise with the
