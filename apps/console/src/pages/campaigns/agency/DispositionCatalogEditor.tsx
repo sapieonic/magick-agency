@@ -4,9 +4,9 @@ import {
   BUILT_IN_LOCK_COPY,
   DISPOSITION_FLAGS,
   SUPPRESS_BEATS_TERMINAL_NOTE,
+  builtInRowsOf,
   dispositionSummary,
   editCatalog,
-  isBuiltInCode,
   type CatalogEdit,
 } from '../../../utils/agencyCampaignConfigForm';
 import type { AgencyDispositionEntry } from '../../../types/agency-campaign';
@@ -42,6 +42,13 @@ interface DispositionCatalogEditorProps {
  * state and is tested there. This component holds that set across renders
  * (rows this session added; a loaded row never follows its label) and writes the
  * entries back through `onChange`.
+ *
+ * Which rows are built-ins is held the same way, and is a property of the row,
+ * not of its code: seeded from the catalog this editor is handed
+ * (`builtInRowsOf`), then carried by `editCatalog`. It is re-seeded only when the
+ * parent hands over a catalog this editor did not write (a campaign that loaded
+ * after mount, a reset); the editor's own writes come back as the very array it
+ * emitted, so typing `voicemail` into a custom row never re-reads it as one.
  */
 export function DispositionCatalogEditor({
   dispositions,
@@ -50,11 +57,24 @@ export function DispositionCatalogEditor({
   overrides = false,
 }: DispositionCatalogEditorProps) {
   const autoCodeRows = useRef<ReadonlySet<number>>(new Set());
+  const builtInRows = useRef<ReadonlySet<number>>(new Set());
+  const seededFrom = useRef<AgencyDispositionEntry[] | null>(null);
+  if (seededFrom.current !== dispositions) {
+    seededFrom.current = dispositions;
+    builtInRows.current = builtInRowsOf(dispositions);
+  }
 
   const edit = (action: CatalogEdit) => {
-    const next = editCatalog({ dispositions, autoCodeRows: autoCodeRows.current }, action);
+    const next = editCatalog(
+      { dispositions, autoCodeRows: autoCodeRows.current, builtInRows: builtInRows.current },
+      action,
+    );
     autoCodeRows.current = next.autoCodeRows;
-    if (next.dispositions !== dispositions) onChange(next.dispositions);
+    builtInRows.current = next.builtInRows;
+    if (next.dispositions !== dispositions) {
+      seededFrom.current = next.dispositions;
+      onChange(next.dispositions);
+    }
   };
 
   /*
@@ -84,7 +104,7 @@ export function DispositionCatalogEditor({
       </p>
       <ul className={styles.dispositions}>
         {dispositions.map((entry, index) => {
-          const locked = isBuiltInCode(entry.code);
+          const locked = builtInRows.current.has(index);
           const name = entry.label || entry.code || `Outcome ${index + 1}`;
           /*
             Precedence, from the API's `resolveDispositionDecision`: suppress

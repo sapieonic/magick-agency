@@ -85,6 +85,28 @@ describe('Settings → Soft phone', () => {
     expect(within(outcomes).getByRole('button', { name: 'Use the built-in outcomes instead' })).toBeTruthy();
   });
 
+  it('locks the seeded built-ins once customised, and leaves a custom row typed as one editable', async () => {
+    await renderPage();
+    const outcomes = screen.getByTestId('softphone-settings-outcomes');
+    fireEvent.click(screen.getByTestId('softphone-settings-customise'));
+    for (const builtIn of ['voicemail', 'callback', 'do_not_call']) {
+      expect(within(outcomes).getAllByTestId(`lock-${builtIn}`)).toHaveLength(1);
+    }
+
+    fireEvent.click(within(outcomes).getByRole('button', { name: /Add an outcome/ }));
+    const n = within(outcomes).getAllByRole('listitem').length;
+    const code = within(outcomes).getByLabelText(`Outcome ${n} code`) as HTMLInputElement;
+    code.focus();
+    let typed = '';
+    for (const char of 'callback') {
+      typed += char;
+      fireEvent.change(code, { target: { value: typed } });
+      expect(document.activeElement).toBe(code);
+    }
+    expect(code.value).toBe('callback');
+    expect(within(outcomes).getAllByTestId('lock-callback')).toHaveLength(1);
+  });
+
   it('fixes a saved field’s key and lets a new one follow its label', async () => {
     await renderPage();
     expect(screen.getByTestId('field-key-locked-0').textContent).toBe('customer_name');

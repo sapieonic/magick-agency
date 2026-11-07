@@ -169,6 +169,53 @@ describe('an outcome added in this session', () => {
     expect((screen.getByRole('button', { name: 'Remove Voicemail' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId('lock-voicemail')).toBeTruthy();
   });
+
+  /*
+    A row is built in because it was seeded as one, not because of what is typed
+    into it. The editor used to decide from the current code, so the last
+    keystroke of `voicemail` swapped this row's code input for the locked chip:
+    the input was unmounted and focus dropped to the page.
+  */
+  it('stays editable, and keeps focus, while a built-in code is typed into its code', () => {
+    render(<Editor />);
+    fireEvent.click(screen.getByRole('button', { name: /Add an outcome/ }));
+    fireEvent.change(screen.getByLabelText('Outcome 4 label'), { target: { value: 'Left a message' } });
+
+    const code = screen.getByLabelText('Outcome 4 code') as HTMLInputElement;
+    code.focus();
+    let typed = '';
+    for (const char of 'voicemail') {
+      typed += char;
+      fireEvent.change(code, { target: { value: typed } });
+      expect(screen.getByLabelText('Outcome 4 code')).toBe(code);
+      expect(document.activeElement).toBe(code);
+    }
+
+    expect(code.value).toBe('voicemail');
+    expect(code.readOnly).toBe(false);
+    expect(code.isConnected).toBe(true);
+    // Only the seeded Voicemail row is locked; this one can still be removed.
+    expect(screen.getAllByTestId('lock-voicemail')).toHaveLength(1);
+    expect((screen.getByRole('button', { name: 'Remove Left a message' }) as HTMLButtonElement).disabled)
+      .toBe(false);
+    expect((screen.getByRole('button', { name: 'Remove Voicemail' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps following a label typed as “Voicemail…” without locking', () => {
+    render(<Editor />);
+    fireEvent.click(screen.getByRole('button', { name: /Add an outcome/ }));
+    const label = screen.getByLabelText('Outcome 4 label') as HTMLInputElement;
+    label.focus();
+    let typed = '';
+    for (const char of 'Voicemail box') {
+      typed += char;
+      fireEvent.change(label, { target: { value: typed } });
+      expect(screen.getByLabelText('Outcome 4 code')).toBeTruthy();
+      expect(document.activeElement).toBe(label);
+    }
+    expect(value('Outcome 4 code')).toBe('voicemail_box');
+    expect(screen.getAllByTestId('lock-voicemail')).toHaveLength(1);
+  });
 });
 
 describe('field errors are tied to their fields', () => {

@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BUILT_IN_CODES,
   DEFAULT_DISPOSITION_RETRY,
+  builtInRowsOf,
   editCatalog,
   type CatalogEditState,
   DEFAULT_DISPOSITIONS,
@@ -902,13 +903,13 @@ describe('describeDays drops days outside 1–7, like the campaigns home', () =>
 });
 
 describe('editCatalog — the outcome editor as a pure reducer', () => {
-  const loaded = (): CatalogEditState => ({
-    dispositions: [
+  const loaded = (): CatalogEditState => {
+    const dispositions = [
       { code: 'voicemail', label: 'Voicemail' },
       { code: 'sale', label: 'Sale' },
-    ],
-    autoCodeRows: new Set(),
-  });
+    ];
+    return { dispositions, autoCodeRows: new Set(), builtInRows: builtInRowsOf(dispositions) };
+  };
 
   it('adds a row that follows its label, and a loaded row that never does', () => {
     const added = editCatalog(loaded(), { type: 'add' });
@@ -956,5 +957,46 @@ describe('editCatalog — the outcome editor as a pure reducer', () => {
     expect(off.dispositions[1]!.retry).toBeUndefined();
     expect(JSON.stringify(before.dispositions)).toBe(frozen);
     expect(editCatalog(before, { type: 'update', index: 9, patch: { label: 'x' } })).toBe(before);
+  });
+  it('seeds built-ins as the first row with each built-in code, never a later duplicate', () => {
+    expect([...builtInRowsOf([
+      { code: 'sale', label: 'Sale' },
+      { code: 'voicemail', label: 'Voicemail' },
+      { code: 'do_not_call', label: 'Do not call' },
+      { code: 'voicemail', label: 'Voicemail again' },
+    ])]).toEqual([1, 2]);
+  });
+
+  /*
+    Built-in-ness belongs to the row. Deciding it from the row's current code
+    turned a custom row into a locked, unremovable built-in the moment its code
+    read `voicemail` (typed, or slugged from a "Voicemail" label).
+  */
+  it('keeps a custom row custom when its code becomes a built-in code, and validation reports the duplicate', () => {
+    let state = editCatalog(loaded(), { type: 'add' });
+    state = editCatalog(state, { type: 'setCode', index: 2, code: 'voicemail' });
+    expect([...state.builtInRows]).toEqual([0]);
+    expect(validateConfig(config({ dispositions: state.dispositions }))['disposition_catalog[2].code'])
+      .toBe('‘voicemail’ is already used. Codes must be unique.');
+    const removed = editCatalog(state, { type: 'remove', index: 2 });
+    expect(removed.dispositions.map((d) => d.code)).toEqual(['voicemail', 'sale']);
+  });
+
+  it('keeps a new row following its label through a label that slugs to a built-in code', () => {
+    let state = editCatalog(loaded(), { type: 'add' });
+    state = editCatalog(state, { type: 'rename', index: 2, label: 'Voicemail' });
+    expect(state.dispositions[2]!.code).toBe('voicemail');
+    state = editCatalog(state, { type: 'rename', index: 2, label: 'Voicemail box' });
+    expect(state.dispositions[2]!.code).toBe('voicemail_box');
+    expect([...state.builtInRows]).toEqual([0]);
+  });
+
+  it('carries built-in-ness with the row through moves and removals', () => {
+    let state = editCatalog(loaded(), { type: 'move', index: 0, delta: 1 });
+    expect([...state.builtInRows]).toEqual([1]);
+    expect(editCatalog(state, { type: 'remove', index: 1 })).toBe(state);
+    state = editCatalog(state, { type: 'remove', index: 0 });
+    expect(state.dispositions.map((d) => d.code)).toEqual(['voicemail']);
+    expect([...state.builtInRows]).toEqual([0]);
   });
 });

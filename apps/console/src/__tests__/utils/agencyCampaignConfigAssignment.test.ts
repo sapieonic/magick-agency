@@ -120,6 +120,7 @@ describe('editCatalog: the override patches', () => {
   const start = (entry: Partial<AgencyDispositionEntry> = {}): CatalogEditState => ({
     dispositions: [{ code: 'ptp', label: 'Promise to pay', ...entry }],
     autoCodeRows: new Set(),
+    builtInRows: new Set(),
   });
 
   it('switches a part on and keeps only the parts that are on', () => {

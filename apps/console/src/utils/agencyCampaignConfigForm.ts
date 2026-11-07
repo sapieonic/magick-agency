@@ -214,6 +214,54 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
 export interface CatalogEditState {
   dispositions: AgencyDispositionEntry[];
   autoCodeRows: ReadonlySet<number>;
+  /**
+   * The rows that ARE built-in outcomes: locked code, cannot be removed. A
+   * property of the row, fixed when the catalog is seeded or loaded
+   * ({@link builtInRowsOf}) and kept in step through removes and moves — never
+   * re-read from the row's current code. Deciding it from the code meant a
+   * custom row whose code was typed (or slugged from a label) into `voicemail`
+   * turned into the locked built-in mid-keystroke: its code input was swapped
+   * for the chip and focus went with it. Such a row stays custom, and the
+   * catalog's validation reports the duplicate code.
+   */
+  builtInRows: ReadonlySet<number>;
+}
+
+/**
+ * The rows of a seeded or loaded catalog that are built-ins: the FIRST row
+ * carrying each built-in code. A later row with the same code is a duplicate
+ * that validation reports, and is left editable so it can be fixed.
+ */
+export function builtInRowsOf(dispositions: readonly AgencyDispositionEntry[]): ReadonlySet<number> {
+  const rows = new Set<number>();
+  const seen = new Set<string>();
+  dispositions.forEach((entry, index) => {
+    if (isBuiltInCode(entry.code) && !seen.has(entry.code)) {
+      seen.add(entry.code);
+      rows.add(index);
+    }
+  });
+  return rows;
+}
+
+/** Keep a set of row indices in step with the removal of row `removed`. */
+function shiftPastRemoved(rows: ReadonlySet<number>, removed: number): Set<number> {
+  const next = new Set<number>();
+  for (const row of rows) {
+    if (row < removed) next.add(row);
+    else if (row > removed) next.add(row - 1);
+  }
+  return next;
+}
+
+/** Keep a set of row indices in step with rows `a` and `b` swapping places. */
+function swapRows(rows: ReadonlySet<number>, a: number, b: number): Set<number> {
+  const next = new Set(rows);
+  next.delete(a);
+  next.delete(b);
+  if (rows.has(b)) next.add(a);
+  if (rows.has(a)) next.add(b);
+  return next;
 }
 
 /** One edit to the catalog, as the editor's controls produce them. */
@@ -252,7 +300,7 @@ export type CatalogEdit =
  * one leaking into a render that still reads it.
  */
 export function editCatalog(state: CatalogEditState, edit: CatalogEdit): CatalogEditState {
-  const { dispositions, autoCodeRows } = state;
+  const { dispositions, autoCodeRows, builtInRows } = state;
   const patchRow = (index: number, patch: Partial<AgencyDispositionEntry>): AgencyDispositionEntry[] =>
     dispositions.map((entry, i) => (i === index ? { ...entry, ...patch } : entry));
 
@@ -261,24 +309,26 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
       return {
         dispositions: [...dispositions, { code: '', label: '' }],
         autoCodeRows: new Set([...autoCodeRows, dispositions.length]),
+        builtInRows,
       };
     case 'rename': {
       const entry = dispositions[edit.index];
       if (!entry) return state;
-      const derive = autoCodeRows.has(edit.index) && !isBuiltInCode(entry.code);
+      const derive = autoCodeRows.has(edit.index) && !builtInRows.has(edit.index);
       return {
         dispositions: patchRow(edit.index, {
           label: edit.label,
           ...(derive ? { code: slugifyCode(edit.label) } : {}),
         }),
         autoCodeRows,
+        builtInRows,
       };
     }
     case 'setCode': {
       if (!dispositions[edit.index]) return state;
       const rows = new Set(autoCodeRows);
       rows.delete(edit.index);
-      return { dispositions: patchRow(edit.index, { code: edit.code }), autoCodeRows: rows };
+      return { dispositions: patchRow(edit.index, { code: edit.code }), autoCodeRows: rows, builtInRows };
     }
     case 'update': {
       const entry = dispositions[edit.index];
@@ -289,9 +339,10 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
         return {
           dispositions: dispositions.map((row, i) => (i === edit.index ? rest : row)),
           autoCodeRows,
+          builtInRows,
         };
       }
-      return { dispositions: patchRow(edit.index, edit.patch), autoCodeRows };
+      return { dispositions: patchRow(edit.index, edit.patch), autoCodeRows, builtInRows };
     }
     case 'setOverride': {
       const entry = dispositions[edit.index];
@@ -308,6 +359,7 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
       return {
         dispositions: dispositions.map((current, i) => (i === edit.index ? row : current)),
         autoCodeRows,
+        builtInRows,
       };
     }
     case 'toggleRetry':
@@ -320,23 +372,23 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
       return {
         dispositions: patchRow(edit.index, { retry: edit.on ? { ...DEFAULT_DISPOSITION_RETRY } : undefined }),
         autoCodeRows,
+        builtInRows,
       };
     case 'remove': {
       const entry = dispositions[edit.index];
-      if (!entry || isBuiltInCode(entry.code)) return state;
-      const rows = new Set<number>();
-      for (const row of autoCodeRows) {
-        if (row < edit.index) rows.add(row);
-        else if (row > edit.index) rows.add(row - 1);
-      }
-      return { dispositions: dispositions.filter((_, i) => i !== edit.index), autoCodeRows: rows };
+      if (!entry || builtInRows.has(edit.index)) return state;
+      return {
+        dispositions: dispositions.filter((_, i) => i !== edit.index),
+        autoCodeRows: shiftPastRemoved(autoCodeRows, edit.index),
+        builtInRows: shiftPastRemoved(builtInRows, edit.index),
+      };
     }
     case 'move': {
       /*
         Built-ins move like any other: the lock is against *deletion* (removing
         one removes a capability agents need), and it was never against position
         — the order is the agent's number-key order and nothing downstream reads
-        it. The row's label-following moves with it.
+        it. The row's label-following and built-in-ness move with it.
       */
       const target = edit.index + edit.delta;
       const from = dispositions[edit.index];
@@ -345,12 +397,11 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
       const next = [...dispositions];
       next[edit.index] = to;
       next[target] = from;
-      const rows = new Set(autoCodeRows);
-      rows.delete(edit.index);
-      rows.delete(target);
-      if (autoCodeRows.has(target)) rows.add(edit.index);
-      if (autoCodeRows.has(edit.index)) rows.add(target);
-      return { dispositions: next, autoCodeRows: rows };
+      return {
+        dispositions: next,
+        autoCodeRows: swapRows(autoCodeRows, edit.index, target),
+        builtInRows: swapRows(builtInRows, edit.index, target),
+      };
     }
   }
 }
