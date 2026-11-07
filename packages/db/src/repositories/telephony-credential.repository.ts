@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { getPool } from '../connection.js';
 import { WEBRTC_NON_TERMINAL_STATUSES } from '../models/agency-call.model.js';
+import { LIVE_CAMPAIGN } from './live-campaign.js';
 import type {
   CreateTelephonyCredentialInput,
   SealedSecretInput,
@@ -68,13 +69,6 @@ function callStillNeedsCredential(cred: string, statuses: string, holdSecs: stri
        AND (c.status = ANY(${statuses}::varchar[])
             OR COALESCE(c.ended_at, c.updated_at) > NOW() - make_interval(secs => ${holdSecs}::int)))`;
 }
-
-/**
- * Campaign statuses that can still dial. A completed or stopped campaign is terminal,
- * so it no longer holds a credential live (it would otherwise block a revoke forever:
- * campaigns are never deleted).
- */
-const LIVE_CAMPAIGN = `('draft', 'running', 'paused', 'stopping')`;
 
 async function inTransaction<T>(fn: (client: PoolClient) => Promise<T | null>): Promise<T | null> {
   const client = await getPool().connect();

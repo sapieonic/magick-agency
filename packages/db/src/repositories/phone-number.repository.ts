@@ -1,5 +1,6 @@
 import { getPool } from '../connection.js';
 import { withTransaction } from '../utils/transaction.js';
+import { LIVE_CAMPAIGN } from './live-campaign.js';
 import type {
   PhoneNumberRecord,
   CreatePhoneNumberInput,
@@ -216,7 +217,7 @@ export class PhoneNumberRepository {
          FROM agency_campaigns c
          JOIN accounts a ON a.id = c.account_id
         WHERE c.telephony_credential_id = $1::uuid
-          AND c.status IN ('draft', 'running', 'paused', 'stopping')
+          AND c.status IN ${LIVE_CAMPAIGN}
           AND c.caller_ids && ARRAY(SELECT phone_number::text FROM inactive)
         ORDER BY a.name, c.name, c.id`,
       [credentialId],
