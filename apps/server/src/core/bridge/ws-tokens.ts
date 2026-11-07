@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import type Redis from 'ioredis';
 import { createChildLogger } from '@magick-agency/observability';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../../telephony/webhook-grace.js';
+import { WEBRTC_MAX_DURATION_SECONDS } from '../../config/call-duration-limits.js';
 
 const log = createChildLogger({ component: 'webrtc-bridge-manager' });
 
@@ -34,9 +35,11 @@ export const UNSTORED_WS_TOKEN_SWEEP_MS = 10_000;
  * ({@link BridgeWsTokens.claimCallbackNonce}): past the longest a callback can still pass the
  * webhook token (the call, then WEBHOOK_TOKEN_POST_END_GRACE_SECONDS after it ends), so a
  * captured callback cannot be replayed while its token would still let it through. Every
- * callback re-arms it.
+ * callback re-arms it, but the call may run on after its last one (its answer) for as long
+ * as an account's max duration allows, so the TTL is the longest any account's call may
+ * last (`WEBRTC_MAX_DURATION_SECONDS`, 4 h) plus that grace.
  */
-export const CALLBACK_NONCE_TTL_SECONDS = WEBHOOK_TOKEN_POST_END_GRACE_SECONDS + 4 * 60 * 60;
+export const CALLBACK_NONCE_TTL_SECONDS = WEBHOOK_TOKEN_POST_END_GRACE_SECONDS + WEBRTC_MAX_DURATION_SECONDS;
 /*
  * WEBHOOK_TOKEN_POST_END_GRACE_SECONDS (`telephony/webhook-grace.ts`), Q6 (Manas,
  * 2026-10-09): how long a call's WEBHOOK token stays verifiable after the call ends. VoiceLink keeps posting to `/webrtc-status/:callId` after our teardown — the
