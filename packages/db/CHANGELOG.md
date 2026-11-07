@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.0](https://github.com/sapieonic/magick-agency/compare/db-v0.12.0...db-v0.13.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,contracts,db,domain:** automatic outcomes for unanswered calls ([#58](https://github.com/sapieonic/magick-agency/issues/58)) ([7879bfc](https://github.com/sapieonic/magick-agency/commit/7879bfcf1e9742f8613c5420163ec8c536fe1ae3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.15.0
+    * @magick-agency/domain bumped to 0.7.0
+
 ## [0.12.0](https://github.com/sapieonic/magick-agency/compare/db-v0.11.0...db-v0.12.0) (2026-11-07)
 
 
