@@ -1,23 +1,23 @@
-// Whether a hang-up stops a call on a carrier ringing, per carrier: the one statement of each
-// carrier module's `cancelsRinging` (`CarrierModule.cancelsRinging`; each module reads its own
-// entry). Its own module, codec-free and import-free, so a reader that needs only this (the
-// agency repository's manual-call projection) does not load the carrier modules and the codec
-// tables they build at load. `carrier-modules.test.ts` holds it equal to the registry.
+// Whether a hang-up stops a call on a carrier ringing, per carrier: the codec-free registry of
+// the capability each carrier declares in its own folder (`<carrier>/<carrier>.capabilities.ts`;
+// each carrier module reads its own declaration for `CarrierModule.cancelsRinging`). Codec-free
+// and free of the carrier modules, so a reader that needs only this (the agency repository's
+// manual-call projection) does not load the carrier modules and the codec tables they build at
+// load. `carrier-modules.test.ts` holds it equal to the registry.
+import { plivoCapabilities } from './plivo/plivo.capabilities.js';
+import { voicelinkCapabilities } from './voicelink/voicelink.capabilities.js';
 
-const CANCELS_RINGING: Readonly<Record<string, boolean>> = {
-  // VoiceLink has no hangup endpoint for a leg still ringing: it rings on (SP3).
-  voicelink: false,
-  // Plivo cancels a ringing dial by its request id (`DELETE /Request/{id}/`).
-  plivo: true,
-};
-
-/**
- * The declaration for a carrier module named `provider` (false for a name with none). Each
- * carrier module sets its `cancelsRinging` from this.
- */
-export function declaredCancelsRinging(provider: string): boolean {
-  return Object.hasOwn(CANCELS_RINGING, provider) && CANCELS_RINGING[provider] === true;
+/** What a carrier declares about itself without its codec (`CarrierModule` repeats it). */
+export interface CarrierCapabilities {
+  /** The provider name its carrier module answers to. */
+  readonly name: string;
+  /** Whether a hang-up stops a dial still ringing (`CarrierModule.cancelsRinging`, SP3). */
+  readonly cancelsRinging: boolean;
 }
+
+const DECLARATIONS: ReadonlyMap<string, CarrierCapabilities> = new Map(
+  [voicelinkCapabilities, plivoCapabilities].map((c) => [c.name, c]),
+);
 
 /**
  * Whether a hang-up stops a call on this carrier ringing. Fails closed, like
@@ -25,10 +25,10 @@ export function declaredCancelsRinging(provider: string): boolean {
  * reads as unable, so the agent is warned rather than misled.
  */
 export function carrierCancelsRinging(provider: string | null | undefined): boolean {
-  return provider ? declaredCancelsRinging(provider) : false;
+  return provider ? DECLARATIONS.get(provider)?.cancelsRinging === true : false;
 }
 
 /** Every carrier with a declaration, for the conformance test. */
 export function carrierRingingDeclarations(): string[] {
-  return Object.keys(CANCELS_RINGING);
+  return [...DECLARATIONS.keys()];
 }

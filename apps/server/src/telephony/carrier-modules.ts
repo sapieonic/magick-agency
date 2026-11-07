@@ -18,7 +18,7 @@ export function findCarrierModule(provider: string): CarrierModule | undefined {
 
 /**
  * Whether a hang-up stops a call on this carrier ringing ({@link CarrierModule.cancelsRinging}),
- * from the codec-free declaration every module reads (`carrier-ringing.ts`).
+ * from the codec-free registry of each carrier's own declaration (`carrier-ringing.ts`).
  */
 export { carrierCancelsRinging } from './carrier-ringing.js';
 

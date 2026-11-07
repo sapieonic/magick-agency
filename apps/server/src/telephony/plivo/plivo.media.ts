@@ -8,7 +8,7 @@ import type { CallEvent } from '../types.js';
 import { classifyPlivoOutcome, plivoCallbackFromEvent } from './plivo.webhook.js';
 import { MulawTranscoder } from '../../utils/audio-fir.js';
 import { pcmToMulaw } from '../../utils/audio.js';
-import { declaredCancelsRinging } from '../carrier-ringing.js';
+import { plivoCapabilities } from './plivo.capabilities.js';
 
 /** The `contentType` the answer XML asks for and every outbound frame declares. */
 export const PLIVO_STREAM_CONTENT_TYPE = 'audio/x-mulaw';
@@ -80,7 +80,7 @@ export const plivoCarrier: CarrierModule = {
   answeredHangup: 'rest',
   // The stream URL goes in the answer XML Plivo fetches on answer, not in the dial.
   mediaUrlInDialRequest: false,
-  // A ringing dial is cancelled by its request id (`DELETE /Request/{id}/`): `carrier-ringing.ts`.
-  cancelsRinging: declaredCancelsRinging('plivo'),
+  // A ringing dial is cancelled by its request id (`plivo.capabilities.ts`).
+  cancelsRinging: plivoCapabilities.cancelsRinging,
   lifecycle: plivoLifecycle,
 };
