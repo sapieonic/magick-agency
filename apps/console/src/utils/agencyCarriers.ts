@@ -194,6 +194,12 @@ export const CARRIER_PAUSE_COPY: Record<CarrierPauseReason, CarrierPauseCopy> = 
     cause: 'this campaign’s carrier account is no longer active',
     action: 'Contact support to have it re-enabled, or choose another carrier.',
   },
+  // The carrier refused the campaign's dials several times in a row, none placed between (PL11).
+  carrier_refusing_calls: {
+    by: 'The carrier',
+    cause: 'the carrier refused several of this campaign’s calls in a row',
+    action: 'Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume.',
+  },
 };
 
 /** The copy for an automatic carrier pause, or `null` for any other reason. */

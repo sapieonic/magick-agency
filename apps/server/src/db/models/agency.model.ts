@@ -30,6 +30,14 @@ import type {
 } from '@magick-agency/contracts/agency';
 
 /**
+ * The pauses the dialler makes when a campaign's carrier account cannot dial, or keeps
+ * refusing its dials (`carrier-account-pause.ts`): `carrier_auth` (0018), the carrier
+ * refused the credential; `carrier_account_unavailable` (0019), the credential is no longer
+ * active; `carrier_refusing_calls` (0020, PL11), the carrier refused several dials in a row.
+ */
+export type CarrierAccountPauseReason = 'carrier_auth' | 'carrier_account_unavailable' | 'carrier_refusing_calls';
+
+/**
  * Retry policy keyed by outcome. No `machine` key — AMD is out.
  *
  * ── READ THIS BEFORE CHANGING HOW REAPED ATTEMPTS ARE RETRIED ────────────────
@@ -57,8 +65,6 @@ import type {
  * **3. A `null` outcome is possible** and is not the same as `failed`: an attempt
  * can end before it was ever classified. Key the policy defensively.
  */
-/** The pauses the dialler makes when a campaign's carrier account cannot dial (`carrier-account-pause.ts`). */
-export type CarrierAccountPauseReason = 'carrier_auth' | 'carrier_account_unavailable';
 
 export type AgencyRetryPolicy = Partial<
   Record<AgencyAttemptOutcome, { delay_minutes?: number; max_attempts: number }>
@@ -128,10 +134,11 @@ export interface AgencyCampaignRecord {
   /**
    * Why the campaign is currently paused, or NULL when it is not paused.
    *
-   * Four values are writable (CHECK-constrained): `supervisor`,
+   * Five values are writable (CHECK-constrained): `supervisor`,
    * `abandonment_ceiling`, (0018) `carrier_auth`: the carrier refused the
-   * campaign's credential, and (0019) `carrier_account_unavailable`: the campaign's
-   * credential is no longer active. The WS enum's `auto_paused` is deliberately
+   * campaign's credential, (0019) `carrier_account_unavailable`: the campaign's
+   * credential is no longer active, and (0020) `carrier_refusing_calls`: the carrier
+   * refused the campaign's dials several times in a row (PL11). The WS enum's `auto_paused` is deliberately
    * absent — its two emit sites are transient broadcasts that write no row.
    */
   pause_reason: 'supervisor' | 'abandonment_ceiling' | CarrierAccountPauseReason | null;

@@ -382,7 +382,9 @@ every account the caller belongs to (CH2) where every internal handler is single
   refused a calls-per-second slot (`carrier_rate_limited`), and one refused because the
   campaign's carrier account cannot dial (`carrier_auth_rejected`, `telephony_credential_unavailable`),
   which first pauses the campaign `carrier_auth` or `carrier_account_unavailable`
-  (`carrier-account-pause.ts`; "The voice engine", Plivo).
+  (`carrier-account-pause.ts`; "The voice engine", Plivo). A campaign on a tenant credential whose
+  carrier refuses five dials in a row with none placed is paused `carrier_refusing_calls`
+  (`carrier-refusal-breaker.ts`, PL11).
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);
@@ -634,7 +636,11 @@ every account the caller belongs to (CH2) where every internal handler is single
     `telephony_credential_unavailable` pauses it `carrier_account_unavailable`. Running campaigns
     only, on the first refusal, with an ERROR line and an `agency_campaign.auto_paused` audit row
     carrying the reason (Insights reads it as a system pause); the contact goes back at once,
-    uncharged. Nothing resumes it automatically.
+    uncharged. A third reason, `carrier_refusing_calls`, is the refusal breaker's
+    (`agency/carrier-refusal-breaker.ts`, PL11): 5 carrier refusals in a row (any status but 401
+    and 429, or a dial not sent for the carrier's configuration) with no call placed in between,
+    counted per campaign in Redis with a TTL; a placed call resets it. Nothing resumes it
+    automatically.
   - *Recordings* (`telephony/recording-access.ts`, B21). Every recording fetch (the attempt and
     soft-phone recording proxies, signed playback and the analysis fetch) asks a per-carrier table
     with the call row's provider, pinned credential and tenant. VoiceLink: the configured hosts,

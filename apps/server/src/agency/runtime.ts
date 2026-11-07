@@ -17,6 +17,7 @@ import {
 import { StationRegistry, stationGraceFor } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
+import { CarrierRefusalBreaker } from './carrier-refusal-breaker.js';
 import { LocalDialDispatcher, type DialDispatcher } from './dial-dispatcher.js';
 import { PacingEngine, type PacingStations, type ReservedReturn } from './pacing-engine.js';
 import { AgencyReaper, type AgencyReaperDeps } from './reaper.js';
@@ -130,7 +131,9 @@ export class AgencyRuntime {
     // there by finishing a wrap-up, skipping one, or never having had one.
     this.wrapup = new WrapupManager(this.stations, this.agents, (sessionId) =>
       this.dialer.releaseAgent(sessionId));
-    this.dialer = new AgencyDialer(bridge, this.stations, this.agents, this.wrapup, this.breaks);
+    this.dialer = new AgencyDialer(
+      bridge, this.stations, this.agents, this.wrapup, this.breaks, new CarrierRefusalBreaker(redis, keyPrefix),
+    );
     // Both liveness questions the periodic sweep needs, and the attempts the
     // dialer could not write `ended`, as lazy closures rather than references: `this.dialer` is assigned above but the arrow keeps the
     // reaper independent of construction order, and re-reading on every sweep is

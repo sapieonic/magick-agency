@@ -5,6 +5,12 @@ import type { AgencyCampaignRecord, CarrierAccountPauseReason } from '../db/mode
 
 const log = createChildLogger({ component: 'agency-carrier-account-pause' });
 
+const PAUSE_LOG_LINE: Record<CarrierAccountPauseReason, string> = {
+  carrier_auth: 'Agency campaign auto-paused — the carrier refused its carrier-account credential',
+  carrier_account_unavailable: 'Agency campaign auto-paused — its carrier-account credential is no longer active',
+  carrier_refusing_calls: 'Agency campaign auto-paused — the carrier refused its dials several times in a row',
+};
+
 /**
  * ─── PAUSE A CAMPAIGN WHOSE CARRIER ACCOUNT CANNOT DIAL ─────────────────────
  *
@@ -18,6 +24,11 @@ const log = createChildLogger({ component: 'agency-carrier-account-pause' });
  * Dialling on would cycle the roster through refusals, so the campaign is paused with that
  * reason on the first one, and stays paused until a supervisor resumes it (resume is
  * refused while the credential is not `active`). Nothing here ever resumes.
+ *
+ * A third, `carrier_refusing_calls`, is the refusal breaker's (`carrier-refusal-breaker.ts`,
+ * PL11): the carrier refused several dials in a row with no call placed in between (a
+ * destination the account is not enabled for, no credit, a caller ID it rejects), which no
+ * single refusal says. A supervisor resumes it once the account is fixed at the carrier.
  *
  * Written like the abandonment guardrail's pause (`abandonment-guardrail.ts`): the row
  * (`pauseForCarrierAccount`, running campaigns only, so a second refusal racing the first
@@ -45,9 +56,7 @@ export async function pauseCampaignForCarrierAccount(
         telephonyCredentialId: campaign.telephony_credential_id,
         reason,
       },
-      reason === 'carrier_auth'
-        ? 'Agency campaign auto-paused — the carrier refused its carrier-account credential'
-        : 'Agency campaign auto-paused — its carrier-account credential is no longer active',
+      PAUSE_LOG_LINE[reason],
     );
     auditLogger.log({
       tenantId: paused.tenant_id,
@@ -55,7 +64,8 @@ export async function pauseCampaignForCarrierAccount(
       eventType: 'agency_campaign.auto_paused',
       eventCategory: 'call',
       severity: 'error',
-      actor: reason === 'carrier_auth' ? 'system:carrier-auth' : 'system:carrier-account',
+      actor: reason === 'carrier_auth' ? 'system:carrier-auth'
+        : reason === 'carrier_refusing_calls' ? 'system:carrier-refusals' : 'system:carrier-account',
       eventData: {
         campaign_id: campaign.id,
         reason,

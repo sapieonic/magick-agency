@@ -47,6 +47,7 @@ import {
   type RosterCounts,
 } from '../../db/repositories/agency.repository.js';
 import { windowEndToday } from '../calling-hours.js';
+import { isCarrierAccountPauseReason } from '../carrier-account-pause-reasons.js';
 import { RETRY_NO_OUTCOME } from '../spine-filters.js';
 import { computeReadiness } from './readiness.js';
 import { readRoster, rosterWire } from './roster.js';
@@ -116,8 +117,8 @@ export async function computeSummary(campaign: AgencyCampaignRecord, deps: Summa
     name: names.get(transitionBy) ?? campaign.last_transition_by_name ?? null,
   };
   // The headline's actor and instants need the transitions and names read above.
-  // An automatic pause (the guardrail, or the carrier refusing the credential) has no actor.
-  if (headline.paused) headline.paused.actor = campaign.pause_reason === 'abandonment_ceiling' || campaign.pause_reason === 'carrier_auth' || campaign.pause_reason === 'carrier_account_unavailable' ? null : transitionActor;
+  // An automatic pause (the guardrail, or the carrier-account pause) has no actor.
+  if (headline.paused) headline.paused.actor = campaign.pause_reason === 'abandonment_ceiling' || isCarrierAccountPauseReason(campaign.pause_reason) ? null : transitionActor;
   if (headline.stopping) {
     const pressed = [...transitions].reverse().find((t) => t.to_status === 'stopping');
     headline.stopping.actor = transitionActor;

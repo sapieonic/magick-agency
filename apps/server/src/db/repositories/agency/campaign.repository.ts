@@ -608,11 +608,12 @@ export class AgencyCampaignRepository {
 
   /**
    * Pause a RUNNING campaign because its carrier account cannot dial: the carrier refused
-   * the campaign's credential on a dial (HTTP 401, `carrier_auth`), or the credential is
-   * no longer active (`carrier_account_unavailable`). Every further dial on that credential
-   * would be refused too. Like the abandonment guardrail's pause, it
+   * the campaign's credential on a dial (HTTP 401, `carrier_auth`), the credential is
+   * no longer active (`carrier_account_unavailable`), or the carrier refused its dials
+   * several times in a row (`carrier_refusing_calls`, PL11). Every further dial on that
+   * credential would likely be refused too. Like the abandonment guardrail's pause, it
    * has no human behind it, so the transition actor is cleared, and it never resumes on
-   * its own: a supervisor resumes once the credential is fixed (resume refuses a
+   * its own: a supervisor resumes once the account is fixed (resume refuses a
    * credential that is not `active`). `pause_abandonment_rate_pct` is cleared: it is the
    * evidence of an abandonment pause only.
    *

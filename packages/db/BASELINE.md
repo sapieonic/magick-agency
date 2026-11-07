@@ -156,7 +156,7 @@ Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snap
 
 ### Dialer
 
-**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. The baseline allows one running campaign per account (`uq_agency_campaign_running`); 0015 drops that index, so an account may run several (see below). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below). 0018 lets `pause_reason` be `carrier_auth`, 0019 `carrier_account_unavailable`.
+**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. The baseline allows one running campaign per account (`uq_agency_campaign_running`); 0015 drops that index, so an account may run several (see below). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below). 0018 lets `pause_reason` be `carrier_auth`, 0019 `carrier_account_unavailable`, 0020 `carrier_refusing_calls`.
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provider`, `calling_window_start`, `calling_window_end`, `calling_days`, `default_timezone`, `wrapup_seconds`, `wrapup_auto_return`, `retry_policy`, `disposition_catalog`, `record_calls`, `analysis_profile_id`, `context_display`, `status`, `contacts_total`, `created_by`, `started_at`, `completed_at`, `created_at`, `updated_at`, `break_reasons`, `abandon_announcement_id`, `abandonment_ceiling_pct`, `pause_reason`, `paused_at`, `pause_abandonment_rate_pct`, `ended_at`, `last_transition_by_user_id`, `last_transition_by_name`, `parent_campaign_id`, `root_campaign_id`, `retry_generation`, `retry_selector`, `retry_idempotency_key`.
 
@@ -857,6 +857,23 @@ A campaign whose carrier account went away (decisions B18–B20).
 carrier-account pause) and restores 0018's CHECK. **Tests**:
 `test/integration/db/carrier-account-unavailable-migration.test.ts` (the CHECK, down then up) and the
 down → up suite.
+
+### 0020 — `migrations/0020_carrier_refusing_calls_pause.sql`
+
+A campaign whose carrier account keeps refusing its dials (decisions B18–B20, PL11).
+
+- **`ck_agency_campaign_pause_reason`** gains `carrier_refusing_calls`: a campaign pinned to a
+  tenant credential whose dials the carrier refused (any status but 401 and 429), or that could not
+  be sent for the carrier's configuration, five times in a row with no call placed in between
+  (`agency/carrier-refusal-breaker.ts`), is paused (`pauseForCarrierAccount`, running campaigns
+  only) instead of spending the roster on refusals. A supervisor resumes it once the account is
+  fixed at the carrier; nothing about the credential blocks the resume.
+- **Locking.** The CHECK swap on `agency_campaigns` (ACCESS EXCLUSIVE, one scan of a small table);
+  one transaction, at container start.
+
+**Down** rewrites `carrier_refusing_calls` pauses to `supervisor` (still paused, resumable) and
+restores 0019's CHECK. **Tests**: `test/integration/db/carrier-refusing-calls-migration.test.ts` (the
+CHECK, down then up) and the down → up suite.
 
 ## Tests
 

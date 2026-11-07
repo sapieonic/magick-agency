@@ -771,7 +771,7 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 | Sign-in works, then every API call is 401 | `FIREBASE_PROJECT_ID` does not match the console's `VITE_FIREBASE_PROJECT_ID` | Make them the same project; rebuild `web` if the console side was wrong |
 | Calls ring but the console never shows them connecting or ending | `VOICELINK_WEBHOOK_BASE_URL` wrong (bare origin, old domain, http) | Step 6.2; recreate the server |
 | Every Plivo dial fails before it reaches Plivo (call rows `failed` with `BRIDGE_SETUP_FAILED`, or the log "Plivo dial refused before sending") | `PLIVO_WEBHOOK_BASE_URL` unset, not https, or not on the origin the callback URLs are built from | Step 8.6; recreate the server |
-| A Plivo campaign pauses by itself (`carrier_auth` or `carrier_account_unavailable`) | Plivo refused the credential (401), or the credential is no longer active | `docs/operations.md`, "Enabling Plivo for a tenant", "Automatic pauses" |
+| A Plivo campaign pauses by itself (`carrier_auth`, `carrier_account_unavailable` or `carrier_refusing_calls`) | Plivo refused the credential (401), the credential is no longer active, or Plivo refused five dials in a row (a destination not enabled, no credit, a caller ID it rejects) | `docs/operations.md`, "Enabling Plivo for a tenant", "Automatic pauses" |
 | Uploads fail with "S3 client not initialized" | `S3_AUDIO_BUCKET` / `AWS_*` missing | Step 3.4 |
 | Recording playback answers 502 "not hosted on an allowed carrier host" | Recordings come from another VoiceLink host | `VOICELINK_RECORDING_HOSTS` (`docs/operations.md`, "Recordings") |
 | Recording links stop working after every restart | `RECORDING_URL_SIGNING_SECRET` unset | Set it once and keep it |

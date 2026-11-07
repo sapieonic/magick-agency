@@ -77,6 +77,7 @@ describe('computeHealth abandonment.auto_pauses', () => {
     mocks.findFiltered.mockResolvedValue({
       total: null,
       rows: [
+        row('2026-11-04T10:00:00.000Z', { reason: 'carrier_refusing_calls', telephony_provider: 'plivo', telephony_credential_id: 'c' }),
         row('2026-11-04T09:00:00.000Z', { reason: 'carrier_account_unavailable', telephony_provider: 'plivo', telephony_credential_id: 'c' }),
         row('2026-11-04T08:00:00.000Z', { reason: 'abandonment_ceiling', measured_pct: 3.4, ceiling_pct: 3 }),
         row('2026-11-04T07:00:00.000Z', { reason: 'carrier_auth', telephony_provider: 'plivo', telephony_credential_id: 'c' }),
@@ -111,5 +112,6 @@ describe('isGuardrailPause', () => {
     expect(isGuardrailPause({ reason: null })).toBe(true);
     expect(isGuardrailPause({ reason: 'carrier_auth' })).toBe(false);
     expect(isGuardrailPause({ reason: 'carrier_account_unavailable' })).toBe(false);
+    expect(isGuardrailPause({ reason: 'carrier_refusing_calls' })).toBe(false);
   });
 });

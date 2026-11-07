@@ -302,6 +302,13 @@ describe('start and resume on a pinned campaign', () => {
     expect(resumed.json()).toMatchObject({ status: 'running', pause_reason: null });
   });
 
+  it('a carrier_refusing_calls pause resumes while the credential is active; resuming clears the reason (PL11)', async () => {
+    const campaign = await plivoCampaign({ status: 'paused', pause_reason: 'carrier_refusing_calls', paused_at: new Date() });
+    const resumed = await post(campaign.id, 'resume');
+    expect(resumed.statusCode, resumed.body).toBe(200);
+    expect(resumed.json()).toMatchObject({ status: 'running', pause_reason: null });
+  });
+
   it('pause and stop are never refused for it (they reduce dialling)', async () => {
     const campaign = await plivoCampaign({ status: 'running' });
     await setStatus(credA, 'disabled');
@@ -423,7 +430,7 @@ describe('retry of a pinned campaign', () => {
 });
 
 describe('agencyCampaignRepository.pauseForCarrierAccount — the pinned credential cannot dial', () => {
-  it.each(['carrier_auth', 'carrier_account_unavailable'] as const)('pauses a running campaign `%s`, clears the actor and the abandonment evidence, and then refuses a second time', async (reason) => {
+  it.each(['carrier_auth', 'carrier_account_unavailable', 'carrier_refusing_calls'] as const)('pauses a running campaign `%s`, clears the actor and the abandonment evidence, and then refuses a second time', async (reason) => {
     const campaign = await plivoCampaign({
       status: 'running', last_transition_by_name: 'Asha', pause_abandonment_rate_pct: 7.5,
     });

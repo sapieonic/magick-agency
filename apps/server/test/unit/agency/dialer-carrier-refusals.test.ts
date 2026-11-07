@@ -68,7 +68,10 @@ import { AgencyDialer, PRE_CARRIER_FAILURE_REDIAL_DELAY_MS } from '../../../src/
 import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import { StationRegistry } from '../../../src/agency/station-registry.js';
-import { CarrierAuthRejectedError, CarrierRateLimitedError } from '../../../src/telephony/carrier-errors.js';
+import {
+  CarrierAuthRejectedError, CarrierDialNotSentError, CarrierRateLimitedError, CarrierRequestTimeoutError,
+} from '../../../src/telephony/carrier-errors.js';
+import { CarrierRefusalBreaker, CARRIER_REFUSAL_BREAKER_THRESHOLD } from '../../../src/agency/carrier-refusal-breaker.js';
 import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
 
 function fakeWs() {
@@ -111,20 +114,23 @@ function makeCmd(): DialCommand {
   };
 }
 
-async function dialWith(rejection?: unknown) {
+async function dialWith(rejection?: unknown, breaker?: CarrierRefusalBreaker, campaign: any = CAMPAIGN) {
   const bridge = fakeBridge();
   if (rejection) bridge.createBridgedCall.mockRejectedValue(rejection);
   const stations = new StationRegistry(null, '', 'r1');
   const agents = new AgentStateMachine(null, '');
   vi.spyOn(agents, 'transition').mockResolvedValue(true);
-  const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+  const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any, breaker);
   dialer.start();
   await stations.attach({ sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1', agentUserId: 'user-1', ws: fakeWs() as any });
-  await dialer.executeDial(makeCmd());
+  await dialer.executeDial({ ...makeCmd(), campaign });
   return bridge;
 }
 
-function refusal(code: 'carrier_auth_rejected' | 'carrier_rate_limited' | 'telephony_credential_unavailable' | 'telephony_init_failed', cause: unknown) {
+function refusal(
+  code: 'carrier_auth_rejected' | 'carrier_rate_limited' | 'telephony_credential_unavailable' | 'telephony_init_failed' | 'carrier_dial_not_sent',
+  cause: unknown,
+) {
   const err = new WebRtcCallError('refused', code, 502);
   err.cause = cause;
   return err;
@@ -229,6 +235,71 @@ describe('a carrier refusal that placed nothing', () => {
     await dialWith(refusal('telephony_init_failed', new Error('no webhook base')));
     const nextAt = (repos.contact.unclaim.mock.calls[0]![1] as Date).getTime();
     expect(nextAt).toBeGreaterThanOrEqual(before + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The refusal breaker (PL11): a credential-pinned campaign whose carrier refuses its dials
+// CARRIER_REFUSAL_BREAKER_THRESHOLD times in a row, with no call placed in between, is paused
+// `carrier_refusing_calls`. One breaker is shared across the dials, as the runtime's is.
+// ---------------------------------------------------------------------------
+describe('the carrier refusal breaker', () => {
+  const carrierRefused = () => refusal('telephony_init_failed', new Error('Plivo create call error 403: {"error":"geo"}'));
+  const notSentFor = (reason: 'configuration' | 'destination' | 'network') =>
+    refusal('carrier_dial_not_sent', new CarrierDialNotSentError('plivo', reason, 'x'));
+
+  it('pauses the campaign `carrier_refusing_calls` on the fifth carrier refusal in a row, audited, and not before', async () => {
+    expect(CARRIER_REFUSAL_BREAKER_THRESHOLD).toBe(5);
+    const breaker = new CarrierRefusalBreaker(null, '');
+    for (let i = 1; i < CARRIER_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(carrierRefused(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+    await dialWith(carrierRefused(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).toHaveBeenCalledTimes(1);
+    expect(repos.campaign.pauseForCarrierAccount).toHaveBeenCalledWith('camp-1', 'carrier_refusing_calls');
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'agency_campaign.auto_paused',
+      actor: 'system:carrier-refusals',
+      eventData: expect.objectContaining({ campaign_id: 'camp-1', reason: 'carrier_refusing_calls' }),
+    }));
+  });
+
+  it('a placed call breaks the streak', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    for (let i = 1; i < CARRIER_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(carrierRefused(), breaker);
+    await dialWith(undefined, breaker);
+    for (let i = 1; i < CARRIER_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(carrierRefused(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+  });
+
+  it('a dial not sent for the carrier`s configuration counts, uncharged; the one that trips it returns its contact at once', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    for (let i = 1; i < CARRIER_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(notSentFor('configuration'), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+    expectUncharged();
+    repos.contact.unclaim.mockClear();
+    await dialWith(notSentFor('configuration'), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).toHaveBeenCalledWith('camp-1', 'carrier_refusing_calls');
+    expect((repos.contact.unclaim.mock.calls[0]![1] as Date).getTime()).toBeLessThanOrEqual(Date.now());
+    expectUncharged();
+  });
+
+  it.each([
+    ['a 401 (paused on its own reason)', () => refusal('carrier_auth_rejected', new CarrierAuthRejectedError('plivo', 401))],
+    ['a rate limit', () => refusal('carrier_rate_limited', new CarrierRateLimitedError('plivo', 'carrier', 0))],
+    ['an unknown outcome', () => refusal('telephony_init_failed', new CarrierRequestTimeoutError('Plivo create call', 15_000, true))],
+    ['the contact`s malformed number', () => notSentFor('destination')],
+    ['the API unreachable', () => notSentFor('network')],
+  ])('%s does not count', async (_what, make) => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    for (let i = 0; i < CARRIER_REFUSAL_BREAKER_THRESHOLD + 1; i++) await dialWith(make(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount.mock.calls.filter(([, r]: any[]) => r === 'carrier_refusing_calls')).toEqual([]);
+  });
+
+  it('a campaign on the service`s own account (no credential) is never paused by it', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    const own = { ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null };
+    for (let i = 0; i < CARRIER_REFUSAL_BREAKER_THRESHOLD + 1; i++) await dialWith(carrierRefused(), breaker, own);
     expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
   });
 });

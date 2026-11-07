@@ -352,6 +352,16 @@ describe('the settings panel', () => {
     const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
     expect(items[0]).toMatch(/automatically: this campaign’s carrier account is no longer active\. Contact support to have it re-enabled, or choose another carrier\.$/);
   });
+
+  it('says a carrier_refusing_calls pause was the carrier refusing calls, not a person', () => {
+    const base = summary();
+    show(<CampaignSettingsPanel summary={{
+      ...base,
+      transitions: [{ to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_refusing_calls' }],
+    }} />);
+    const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
+    expect(items[0]).toMatch(/automatically: the carrier refused several of this campaign’s calls in a row\. Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume\.$/);
+  });
 });
 
 describe('health and compliance', () => {

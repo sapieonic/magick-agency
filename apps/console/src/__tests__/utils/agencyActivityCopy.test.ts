@@ -156,6 +156,11 @@ describe('activityDetailSummary', () => {
       .toBe('Paused: this campaign’s carrier account is no longer active. Contact support to have it re-enabled, or choose another carrier.');
   });
 
+  it('says what to do when the carrier refused several calls in a row', () => {
+    expect(activityDetailSummary(row({ detail: { reason: 'carrier_refusing_calls' } })))
+      .toBe('Paused: the carrier refused several of this campaign’s calls in a row. Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume.');
+  });
+
   it('names a move to another carrier account in a config change', () => {
     expect(activityDetailSummary(row({
       action: 'agency_campaign.config_changed',

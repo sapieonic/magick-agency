@@ -8,8 +8,9 @@
  *    `ceiling_pct` the campaign's; `auto_pauses` the guardrail's `agency_campaign.auto_paused`
  *    audit rows in range with the rate it measured and the ceiling it held (at most
  *    {@link AUTO_PAUSES_MAX}, oldest first). The carrier-account pause writes the same event
- *    (`carrier-account-pause.ts`, reason `carrier_auth` or `carrier_account_unavailable`); its
- *    rows are not the guardrail's and are left out ({@link isGuardrailPause}).
+ *    (`carrier-account-pause.ts`, reason `carrier_auth`, `carrier_account_unavailable` or
+ *    `carrier_refusing_calls`); its rows are not the guardrail's and are left out
+ *    ({@link isGuardrailPause}).
  *  - `predial_blocks`, `concurrency_limit_minutes`, `our_fault_retired`, `stalls`,
  *    `pacing_history_since`: `pacingHistory` (the stall rule is its module header). It starts the
  *    day the pacing history shipped; `pacing_history_since` says when.

@@ -50,9 +50,10 @@ import { PLIVO_HANGUP_XML } from '../../../src/telephony/plivo/plivo.adapter.js'
 import { bits, isLoudMulaw, isLoudPcm16 } from '../../mocks/voicelink/audio-pattern.js';
 import type { PlivoCall, PlivoCallScript } from '../../mocks/plivo/index.js';
 import {
-  ADMIN, CALLER_ID, PLIVO_E2E_ENV, attemptOf, callRow, campaignRow, closePlivoDb, initPlivoDb, joinAgent, plivoCampaign,
+  ACCOUNT, ADMIN, CALLER_ID, PLIVO_E2E_ENV, TENANT, attemptOf, callRow, campaignRow, closePlivoDb, initPlivoDb, joinAgent, plivoCampaign,
   startPlivoRig, waitFor, type PlivoRig, type Station,
 } from './plivo-rig.js';
+import { insertAgencyContact } from '../agency/agency-factories.js';
 
 const TERMINAL = new Set(['completed', 'no_answer', 'busy', 'canceled', 'failed']);
 
@@ -339,6 +340,28 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     const verified = await r.credentials.verify(r.credentialId, ADMIN);
     expect(verified.ok && verified.value).toMatchObject({ status: 'active', last_error: null });
     expect(await campaignCredentialStartRefusal({ telephony_credential_id: r.credentialId })).toBeNull();
+  }, 60_000);
+
+  it('(j) Plivo refusing dial after dial (403) pauses the campaign `carrier_refusing_calls` on the fifth in a row (PL11)', async () => {
+    const r = rig!;
+    const audit = vi.spyOn(auditLogger, 'log');
+    r.carrier.injectFault('create_call', { kind: 'status', status: 403 }, Infinity);
+    const { campaignId } = await plivoCampaign(r);
+    for (let i = 2; i <= 7; i++) {
+      await insertAgencyContact(campaignId, {
+        tenant_id: TENANT, account_id: ACCOUNT, phone_e164: `+91981234567${i}`, source_row_number: i,
+      });
+    }
+    station = await joinAgent(r, campaignId);
+    await waitFor('campaign paused', async () => (await campaignRow(campaignId)).status === 'paused', 30_000);
+    expect(await campaignRow(campaignId)).toEqual({ status: 'paused', pause_reason: 'carrier_refusing_calls' });
+    expect(r.carrier.requestsTo('create_call')).toHaveLength(5);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'agency_campaign.auto_paused',
+      eventData: expect.objectContaining({ campaign_id: campaignId, reason: 'carrier_refusing_calls', telephony_credential_id: r.credentialId }),
+    }));
+    // The credential is not the carrier's verdict here: it stays active, so a resume is allowed.
+    expect((await r.credentials.get(r.credentialId))?.status).toBe('active');
   }, 60_000);
 
   it('(g) a credential disabled while its campaign runs pauses it `carrier_account_unavailable`; nothing reaches the carrier', async () => {

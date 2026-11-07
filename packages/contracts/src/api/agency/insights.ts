@@ -175,8 +175,10 @@ export interface AgencyInsightsHeadline {
      * `carrier_auth`: the carrier refused the campaign's carrier-account credential.
      * `carrier_account_unavailable`: that credential is no longer active (disabled,
      * invalid, revoked or unopenable since the campaign started).
+     * `carrier_refusing_calls`: the carrier refused the campaign's dials several times in a
+     * row with none placed in between (PL11).
      */
-    reason: 'supervisor' | 'abandonment_ceiling' | 'carrier_auth' | 'carrier_account_unavailable';
+    reason: 'supervisor' | 'abandonment_ceiling' | 'carrier_auth' | 'carrier_account_unavailable' | 'carrier_refusing_calls';
     /** The 24 h abandonment rate the guardrail measured, for an auto-pause. */
     abandonment_rate_pct_at_pause: number | null;
     calls_finishing: number;

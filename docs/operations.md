@@ -523,8 +523,8 @@ Then per tenant:
    credential's label). The caller IDs offered are then that account's synced numbers. The soft
    phone's untagged calls dial on the carrier account of the caller ID chosen.
 
-**Automatic pauses.** Two reasons on a campaign's pause say its carrier account cannot dial. Each
-is set on the first refused dial, written to the activity trail as "Auto-paused" with the reason,
+**Automatic pauses.** Three reasons on a campaign's pause say its carrier account cannot dial. The
+first two are set on the first refused dial, the third after five in a row; each is written to the activity trail as "Auto-paused" with the reason,
 shown on the Insights headline, and logged at ERROR; the contact goes back uncharged. Nothing
 resumes the campaign by itself:
 
@@ -539,6 +539,13 @@ resumes the campaign by itself:
   `agy-credential-keyring-missing-keys`). Resume answers 409 `telephony_credential_not_active` until
   a super-admin re-enables or fixes the credential (or restores the key), or the campaign is moved
   to another carrier account in its settings.
+- `carrier_refusing_calls`: the carrier refused five of the campaign's dials in a row with none
+  placed in between (PL11): any status but 401 and 429 (a 403 for a destination the account's
+  geo permissions do not enable, an account out of credit, a caller ID it rejects), or a dial not
+  sent for the carrier's configuration (`PLIVO_WEBHOOK_BASE_URL` unset). The refusals are on the
+  call rows (`error_code`) and in the `Plivo create call error` / `Plivo dial not sent` log lines.
+  Fix the account at Plivo (or the server's configuration), then a supervisor resumes; the
+  credential stays `active`, so nothing refuses the resume.
 
 The console tells supervisors to contact support for either (PL15): a tenant's own admins cannot
 see or fix a carrier account. A soft-phone call on such an account is refused `409

@@ -40,6 +40,7 @@ import { isCampaignSession, type AgencyCampaignRecord, type CarrierAccountPauseR
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
+import { CarrierRefusalBreaker, countsTowardBreaker } from './carrier-refusal-breaker.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -239,6 +240,12 @@ export class AgencyDialer {
     private readonly agents: AgentStateMachine,
     private readonly wrapup: WrapupManager,
     private readonly breaks: BreakRegistry,
+    /**
+     * Counts a credential-pinned campaign's carrier refusals in a row and says when to pause
+     * it (`carrier-refusal-breaker.ts`, PL11). The runtime hands the Redis-backed one; the
+     * default counts in this process.
+     */
+    private readonly refusalBreaker: CarrierRefusalBreaker = new CarrierRefusalBreaker(null, ''),
   ) {}
 
   /** Subscribe to bridge lifecycle. Call once at wiring time. */
@@ -571,6 +578,9 @@ export class AgencyDialer {
       // Before the check below: an `ended` arm that settled this attempt while the dial
       // was in flight is waiting on this answer to settle its contact.
       dialReturned(outcomeUnknown);
+      // The refusal breaker (PL11), before the check below too: a carrier refusal
+      // (`telephony_init_failed`) has already been settled by the `ended` arm, and still counts.
+      const refusalStreakTripped = await this.noteCarrierRefusal(cmd, err);
       // ── Settled exactly once ─────────────────────────────────────────────────
       //
       // A dial the bridge got as far as the carrier with is ended by the bridge before
@@ -600,13 +610,18 @@ export class AgencyDialer {
       // the resume.
       const carrierPause = err instanceof WebRtcCallError ? CARRIER_ACCOUNT_PAUSES.get(err.code) : undefined;
       if (carrierPause) await pauseCampaignForCarrierAccount(cmd.campaign, carrierPause);
-      const capacityRefused = err instanceof WebRtcCallError && (CAPACITY_REFUSALS.has(err.code) || carrierPause !== undefined);
+      // A dial not sent for the carrier's configuration that tripped the breaker: the campaign
+      // is paused, so its contact goes back at once like any carrier-account pause's.
+      const capacityRefused = err instanceof WebRtcCallError
+        && (CAPACITY_REFUSALS.has(err.code) || carrierPause !== undefined || refusalStreakTripped);
       log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
       await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused);
       return;
     }
     live.placing = false;
     dialReturned(false);
+    // Placed: the carrier took the create-call, so any refusal streak is broken (PL11).
+    if (cmd.campaign.telephony_credential_id) await this.refusalBreaker.notePlaced(cmd.campaignId);
 
     // Id only — NEVER the state. By the time this runs the carrier may already
     // have answered and `onBridgeLifecycle` may already have written `bridged`
@@ -624,6 +639,25 @@ export class AgencyDialer {
         'Could not attach the media leg to the agency attempt — call is live but uncorrelated',
       ),
     );
+  }
+
+  /**
+   * Count a dial's rejection toward the campaign's refusal breaker (PL11), and pause the
+   * campaign `carrier_refusing_calls` when the streak reaches the threshold. Only a campaign
+   * pinned to a tenant credential is counted: the service's own account is not a tenant's
+   * to fix. True when this rejection tripped the breaker. Never throws.
+   */
+  private async noteCarrierRefusal(cmd: DialCommand, err: unknown): Promise<boolean> {
+    if (!cmd.campaign.telephony_credential_id || !countsTowardBreaker(err)) return false;
+    try {
+      if (!(await this.refusalBreaker.noteRefusal(cmd.campaignId))) return false;
+      log.warn({ campaignId: cmd.campaignId, attemptId: cmd.attemptId }, 'The carrier refused this campaign\'s dials several times in a row — pausing it');
+      await pauseCampaignForCarrierAccount(cmd.campaign, 'carrier_refusing_calls');
+      return true;
+    } catch (breakerErr) {
+      log.error({ err: breakerErr, campaignId: cmd.campaignId }, 'Carrier refusal breaker failed — the dial settles as usual');
+      return false;
+    }
   }
 
   /**

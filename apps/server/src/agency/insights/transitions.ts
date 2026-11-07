@@ -11,7 +11,7 @@
  * | console `agency_campaign.paused` | paused | the user | `supervisor` |
  * | console `agency_campaign.resumed` | running | the user | `supervisor` |
  * | console `agency_campaign.stopped` (Stop pressed: the campaign drains) | stopping | the user | `supervisor` |
- * | dialer `agency_campaign.auto_paused` | paused | system | the row's `detail.reason`: `carrier_auth` (the carrier refused the campaign's credential) or `carrier_account_unavailable` (the credential is no longer active), both `carrier-account-pause.ts`, else `abandonment_ceiling` |
+ * | dialer `agency_campaign.auto_paused` | paused | system | the row's `detail.reason`: `carrier_auth` (the carrier refused the campaign's credential), `carrier_account_unavailable` (the credential is no longer active) or `carrier_refusing_calls` (the carrier refused several dials in a row, PL11), all `carrier-account-pause.ts`, else `abandonment_ceiling` |
  * | dialer `agency_campaign.stopped` (the drain finished) | stopped | system | `calls_drained` |
  * | dialer `agency_campaign.completed` | completed | system | `completed_by_dialler` |
  *
@@ -21,6 +21,7 @@
 import type { AgencyCampaignStatus } from '@magick-agency/contracts/agency';
 import type { AgencyInsightsTransition } from '@magick-agency/contracts/api/agency/insights';
 import { fetchActivityPage } from '../agency-activity.service.js';
+import { isCarrierAccountPauseReason } from '../carrier-account-pause-reasons.js';
 import { ACTIVITY_MAX_LIMIT, type ActivityCursor, type ActivityRow } from '../agency-activity.js';
 
 /** The most transitions read (a campaign paused and resumed hundreds of times keeps its newest). */
@@ -51,10 +52,10 @@ export function transitionOf(row: Pick<ActivityRow, 'source' | 'action' | 'at' |
   switch (row.action) {
     // Two writers: the abandonment guardrail (no `reason` on its oldest rows, and
     // `abandonment_ceiling` since) and the carrier-account pause, which says
-    // `carrier_auth` or `carrier_account_unavailable`.
+    // `carrier_auth`, `carrier_account_unavailable` or `carrier_refusing_calls`.
     case 'agency_campaign.auto_paused': {
       const reason = row.detail?.['reason'];
-      return make('paused', reason === 'carrier_auth' || reason === 'carrier_account_unavailable' ? reason : 'abandonment_ceiling', null);
+      return make('paused', isCarrierAccountPauseReason(reason) ? reason : 'abandonment_ceiling', null);
     }
     case 'agency_campaign.stopped': return make('stopped', 'calls_drained', null);
     case 'agency_campaign.completed': return make('completed', 'completed_by_dialler', null);

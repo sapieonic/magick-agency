@@ -175,6 +175,11 @@ describe('paused', () => {
     expect(CARRIER_PAUSE_COPY.carrier_account_unavailable.by).toBe('Carrier account not active');
     expect(CARRIER_PAUSE_COPY.carrier_account_unavailable.cause).not.toContain('refused');
   });
+
+  it('says the carrier refused several calls in a row (PL11): the carrier paused it, and support checks the account', () => {
+    expect(CARRIER_PAUSE_COPY.carrier_refusing_calls.by).toBe('The carrier');
+    expect(CARRIER_PAUSE_COPY.carrier_refusing_calls.cause).toMatch(/refused several .* calls in a row/);
+  });
 });
 
 describe('stopping', () => {
