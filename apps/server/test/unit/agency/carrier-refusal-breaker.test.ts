@@ -12,7 +12,7 @@ vi.mock('../../../src/config/index.js', () => ({ config: { redis: { keyPrefix: '
 
 import { CarrierRefusalBreaker, countsTowardBreaker } from '../../../src/agency/carrier-refusal-breaker.js';
 import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
-import { CarrierDialNotSentError, CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
+import { CarrierDialNotSentError, CarrierDialRefusedError, CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
 
 /** Enough of ioredis for the breaker: MULTI INCR/EXPIRE/EXEC and DEL, with TTLs recorded. */
 function fakeRedis() {
@@ -81,7 +81,11 @@ describe('CarrierRefusalBreaker', () => {
 describe('countsTowardBreaker', () => {
   const wrap = (code: any, cause: unknown) => Object.assign(new WebRtcCallError('x', code, 502), { cause });
   it.each([
-    ['a carrier refusal', wrap('telephony_init_failed', new Error('Plivo create call error 403')), true],
+    ['a carrier refusal (403)', wrap('telephony_init_failed', new CarrierDialRefusedError('plivo', 403, 'Plivo create call error 403')), true],
+    ['a carrier refusal (402, no credit)', wrap('telephony_init_failed', new CarrierDialRefusedError('plivo', 402, 'x')), true],
+    ['a 500 (the carrier`s platform, not the account)', wrap('telephony_init_failed', new CarrierDialRefusedError('plivo', 500, 'x')), false],
+    ['a 503', wrap('telephony_init_failed', new CarrierDialRefusedError('plivo', 503, 'x')), false],
+    ['a refusal that carries no status', wrap('telephony_init_failed', new Error('Plivo create call error 403')), false],
     ['a dial not sent for configuration', wrap('carrier_dial_not_sent', new CarrierDialNotSentError('plivo', 'configuration', 'x')), true],
     ['an unknown outcome', wrap('telephony_init_failed', new CarrierRequestTimeoutError('op', 1, true)), false],
     ['a dial not sent for its number', wrap('carrier_dial_not_sent', new CarrierDialNotSentError('plivo', 'destination', 'x')), false],

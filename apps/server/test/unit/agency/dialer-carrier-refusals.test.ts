@@ -70,6 +70,7 @@ import { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import {
   CarrierAuthRejectedError, CarrierDialNotSentError, CarrierRateLimitedError, CarrierRequestTimeoutError,
+  CarrierDialRefusedError,
 } from '../../../src/telephony/carrier-errors.js';
 import { CarrierRefusalBreaker, CARRIER_REFUSAL_BREAKER_THRESHOLD } from '../../../src/agency/carrier-refusal-breaker.js';
 import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
@@ -245,7 +246,7 @@ describe('a carrier refusal that placed nothing', () => {
 // `carrier_refusing_calls`. One breaker is shared across the dials, as the runtime's is.
 // ---------------------------------------------------------------------------
 describe('the carrier refusal breaker', () => {
-  const carrierRefused = () => refusal('telephony_init_failed', new Error('Plivo create call error 403: {"error":"geo"}'));
+  const carrierRefused = () => refusal('telephony_init_failed', new CarrierDialRefusedError('plivo', 403, 'Plivo create call error 403: {"error":"geo"}'));
   const notSentFor = (reason: 'configuration' | 'destination' | 'network') =>
     refusal('carrier_dial_not_sent', new CarrierDialNotSentError('plivo', reason, 'x'));
 
@@ -288,6 +289,7 @@ describe('the carrier refusal breaker', () => {
     ['a 401 (paused on its own reason)', () => refusal('carrier_auth_rejected', new CarrierAuthRejectedError('plivo', 401))],
     ['a rate limit', () => refusal('carrier_rate_limited', new CarrierRateLimitedError('plivo', 'carrier', 0))],
     ['an unknown outcome', () => refusal('telephony_init_failed', new CarrierRequestTimeoutError('Plivo create call', 15_000, true))],
+    ['a 5xx (an outage on the carrier`s platform)', () => refusal('telephony_init_failed', new CarrierDialRefusedError('plivo', 503, 'Plivo create call error 503'))],
     ['the contact`s malformed number', () => notSentFor('destination')],
     ['the API unreachable', () => notSentFor('network')],
   ])('%s does not count', async (_what, make) => {

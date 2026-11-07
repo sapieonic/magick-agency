@@ -15,6 +15,7 @@
 import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency';
 import {
   carrierDialNotSentReason,
+  carrierDialRefusalStatus,
   isCarrierAuthRejected,
   isCarrierRateLimited,
   isDialOutcomeUnknown,
@@ -66,7 +67,9 @@ export function dialNotSentReason(err: unknown): CarrierDialNotSentReason | null
  *    ({@link CARRIER_ACCOUNT_PAUSES});
  *  - `not_sent`: the adapter would not send the dial, and why;
  *  - `carrier_refused`: the carrier refused the dial (`telephony_init_failed`), with whether
- *    it may have been placed after all (`outcomeUnknown`);
+ *    it may have been placed after all (`outcomeUnknown`) and the HTTP status it answered
+ *    (`httpStatus`, null when the adapter's error carries none: a timeout, a network fault,
+ *    a carrier whose adapter does not say);
  *  - `other`: anything else (a bridge failure before the carrier, or not a bridge rejection).
  */
 export type DialRefusal =
@@ -74,7 +77,7 @@ export type DialRefusal =
   | { kind: 'capacity' }
   | { kind: 'carrier_account'; pause: CarrierAccountPauseReason }
   | { kind: 'not_sent'; reason: CarrierDialNotSentReason }
-  | { kind: 'carrier_refused'; outcomeUnknown: boolean }
+  | { kind: 'carrier_refused'; outcomeUnknown: boolean; httpStatus: number | null }
   | { kind: 'other' };
 
 /** Classify a dial's rejection ({@link DialRefusal}); the one reading every caller shares. */
@@ -84,7 +87,9 @@ export function classifyDialRefusal(err: unknown): DialRefusal {
   if (CAPACITY_REFUSAL_CODES.has(err.code)) return { kind: 'capacity' };
   const pause = CARRIER_ACCOUNT_PAUSES.get(err.code);
   if (pause) return { kind: 'carrier_account', pause };
-  if (err.code === 'telephony_init_failed') return { kind: 'carrier_refused', outcomeUnknown: isDialOutcomeUnknown(err) };
+  if (err.code === 'telephony_init_failed') {
+    return { kind: 'carrier_refused', outcomeUnknown: isDialOutcomeUnknown(err), httpStatus: carrierDialRefusalStatus(err) };
+  }
   const notSent = dialNotSentReason(err);
   if (notSent) return { kind: 'not_sent', reason: notSent };
   return { kind: 'other' };

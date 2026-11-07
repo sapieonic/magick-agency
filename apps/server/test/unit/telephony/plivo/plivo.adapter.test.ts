@@ -34,6 +34,7 @@ import {
   CarrierRateLimitedError,
   CarrierRequestTimeoutError,
   carrierDialNotSentReason,
+  carrierDialRefusalStatus,
   isDialOutcomeUnknown,
 } from '../../../../src/telephony/carrier-errors.js';
 import type { OutboundCallRequest } from '../../../../src/telephony/types.js';
@@ -189,6 +190,7 @@ describe('PlivoAdapter.initiateCall', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(CarrierAuthRejectedError);
     expect((err as Error).message).toMatch(/403/);
+    expect(carrierDialRefusalStatus(err)).toBe(403);
   });
 
   it('a 429 is CarrierRateLimitedError from the carrier; a 5xx is a plain refusal', async () => {
@@ -198,6 +200,9 @@ describe('PlivoAdapter.initiateCall', () => {
     const e500 = await adapter(fakeFetch([{ status: 500, body: 'boom' }]).impl).initiateCall(dial()).catch((e: unknown) => e);
     expect((e500 as Error).message).toMatch(/error 500/);
     expect(isDialOutcomeUnknown(e500)).toBe(false);
+    // The status rides on the refusal, so the breaker can leave an outage out (PL11).
+    expect(carrierDialRefusalStatus(e500)).toBe(500);
+    expect(carrierDialRefusalStatus(e429)).toBeNull();
   });
 
   it.each([

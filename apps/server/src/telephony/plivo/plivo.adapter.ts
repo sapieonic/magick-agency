@@ -39,6 +39,7 @@ import {
   CarrierDialAbortedError,
   CarrierDialNotSentError,
   CarrierDialOutcomeUnknownError,
+  CarrierDialRefusedError,
   CarrierRateLimitedError,
   CarrierRequestTimeoutError,
   isAbortTimeout,
@@ -292,7 +293,8 @@ export class PlivoAdapter implements TelephonyProvider {
    *  - 401: {@link CarrierAuthRejectedError}; nothing placed, and the credential is refused.
    *  - 429: {@link CarrierRateLimitedError} (`carrier`); nothing placed.
    *  - Any other non-2xx (403 included: Plivo's answer for a destination its geo
-   *    permissions do not allow): a plain refusal.
+   *    permissions do not allow): {@link CarrierDialRefusedError}, carrying the status, so
+   *    the refusal breaker can tell a 4xx about the account from a 5xx outage (PL11).
    *  - A timeout, or a 2xx whose body has no readable `request_uuid`: the call may have
    *    been placed (`dialOutcomeUnknown`); never retried here.
    *
@@ -393,7 +395,7 @@ export class PlivoAdapter implements TelephonyProvider {
     if (status === 401) throw dialRefused('auth_rejected', new CarrierAuthRejectedError('plivo', status));
     if (status === 429) throw dialRefused('rate_limited', new CarrierRateLimitedError('plivo', 'carrier', 0));
     if (status < 200 || status >= 300) {
-      throw dialRefused('refused', new Error(`Plivo create call error ${status}: ${text.slice(0, 300)}`));
+      throw dialRefused('refused', new CarrierDialRefusedError('plivo', status, `Plivo create call error ${status}: ${text.slice(0, 300)}`));
     }
     let requestUuid: unknown;
     try {

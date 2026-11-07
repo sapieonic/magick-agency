@@ -127,6 +127,35 @@ export class CarrierAuthRejectedError extends Error {
 }
 
 /**
+ * The carrier answered a dial with a status that refuses it (any non-2xx but 401 and 429,
+ * which have their own errors): nothing was placed. `httpStatus` is what it answered, so a
+ * caller can tell a refusal about the account or the dial (4xx) from a fault on the
+ * carrier's platform (5xx), read through `cause` chains by {@link carrierDialRefusalStatus}.
+ */
+export class CarrierDialRefusedError extends Error {
+  readonly carrierDialRefused = true;
+  constructor(
+    /** The provider name, e.g. `plivo`. */
+    readonly provider: string,
+    readonly httpStatus: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CarrierDialRefusedError';
+  }
+}
+
+/**
+ * The HTTP status of the {@link CarrierDialRefusedError} in `err`'s `cause` chain, or null
+ * when there is none (or it carries no status). Bounded walk.
+ */
+export function carrierDialRefusalStatus(err: unknown): number | null {
+  const refused = findInCauseChain(err, (link) => link['carrierDialRefused'] === true);
+  const status = refused?.['httpStatus'];
+  return typeof status === 'number' && Number.isInteger(status) ? status : null;
+}
+
+/**
  * The dial was abandoned before it was sent, because the caller no longer wanted it
  * (`OutboundCallRequest.signal` aborted: the call was torn down while the dial waited for
  * a calls-per-second slot). Nothing reached the carrier: an unplaced leg.

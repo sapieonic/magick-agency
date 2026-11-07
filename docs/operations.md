@@ -544,9 +544,11 @@ resumes the campaign by itself:
   a super-admin re-enables or fixes the credential (or restores the key), or the campaign is moved
   to another carrier account in its settings.
 - `carrier_refusing_calls`: the carrier refused five of the campaign's dials in a row with none
-  placed in between (PL11): any status but 401 and 429 (a 403 for a destination the account's
+  placed in between (PL11): a 4xx other than 401 and 429 (a 403 for a destination the account's
   geo permissions do not enable, an account out of credit, a caller ID it rejects), or a dial not
-  sent for the carrier's configuration (`PLIVO_WEBHOOK_BASE_URL` unset). The refusals are on the
+  sent for the carrier's configuration (`PLIVO_WEBHOOK_BASE_URL` unset). A 5xx from Plivo (an
+  outage on its platform) never counts: those dials fail and their contacts are retried, and no
+  campaign is paused for it. The refusals are on the
   call rows (`error_code`) and in the `Plivo create call error` / `Plivo dial not sent` log lines.
   Fix the account at Plivo (or the server's configuration), then a supervisor resumes; the
   credential stays `active`, so nothing refuses the resume.

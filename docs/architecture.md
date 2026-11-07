@@ -662,8 +662,9 @@ every account the caller belongs to (CH2) where every internal handler is single
     only, on the first refusal, with an ERROR line and an `agency_campaign.auto_paused` audit row
     carrying the reason (Insights reads it as a system pause); the contact goes back at once,
     uncharged. A third reason, `carrier_refusing_calls`, is the refusal breaker's
-    (`agency/carrier-refusal-breaker.ts`, PL11): 5 carrier refusals in a row (any status but 401
-    and 429, or a dial not sent for the carrier's configuration) with no call placed in between,
+    (`agency/carrier-refusal-breaker.ts`, PL11): 5 carrier refusals in a row (a 4xx other than 401
+    and 429, never a 5xx or a refusal without a status, or a dial not sent for the carrier's
+    configuration) with no call placed in between,
     counted per campaign in Redis with a TTL; a placed call resets it. Nothing resumes it
     automatically.
   - *Recordings* (`telephony/recording-access.ts`, B21). Every recording fetch (the attempt and

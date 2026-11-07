@@ -389,6 +389,20 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     expect((await r.credentials.get(r.credentialId))?.status).toBe('active');
   }, 60_000);
 
+  it('(j2) Plivo answering 503 dial after dial (an outage on its platform) never pauses the campaign (PL11 counts 4xx only)', async () => {
+    const r = rig!;
+    r.carrier.injectFault('create_call', { kind: 'status', status: 503 }, Infinity);
+    const { campaignId } = await plivoCampaign(r);
+    for (let i = 2; i <= 7; i++) {
+      await insertAgencyContact(campaignId, {
+        tenant_id: TENANT, account_id: ACCOUNT, phone_e164: `+91981234567${i}`, source_row_number: i,
+      });
+    }
+    station = await joinAgent(r, campaignId);
+    await waitFor('six refused dials', async () => r.carrier.requestsTo('create_call').length >= 6, 30_000);
+    expect(await campaignRow(campaignId)).toEqual({ status: 'running', pause_reason: null });
+  }, 60_000);
+
   it('(g) a credential disabled while its campaign runs pauses it `carrier_account_unavailable`; nothing reaches the carrier', async () => {
     const r = rig!;
     const audit = vi.spyOn(auditLogger, 'log');

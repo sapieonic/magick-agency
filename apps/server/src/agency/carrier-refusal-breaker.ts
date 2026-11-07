@@ -16,11 +16,14 @@ const log = createChildLogger({ component: 'agency-carrier-refusal-breaker' });
  * `carrier_refusing_calls` (`carrier-account-pause.ts`). Any placed call (the carrier answered
  * the create-call 2xx) resets the count.
  *
- * What counts ({@link countsTowardBreaker}): the carrier refusing a dial (`telephony_init_failed`
- * whose outcome is known: any status but 401 and 429), and a dial the adapter would not send
- * for the carrier's configuration (`carrier_dial_not_sent`, reason `configuration`). Not a 401
- * or an inactive credential (paused on the first one already), a rate limit (back-pressure),
- * an unknown outcome (the call may be placed), a malformed contact number (the contact's), the
+ * What counts ({@link countsTowardBreaker}): the carrier refusing a dial with a 4xx
+ * (`telephony_init_failed` whose outcome is known and whose adapter error carries a 4xx
+ * status, 401 and 429 excepted: they have their own codes), and a dial the adapter would not
+ * send for the carrier's configuration (`carrier_dial_not_sent`, reason `configuration`). Not
+ * a 5xx (a fault on the carrier's platform: an outage there would otherwise pause every
+ * campaign on every tenant's account with it), a refusal that carries no status, a 401 or an
+ * inactive credential (paused on the first one already), a rate limit (back-pressure), an
+ * unknown outcome (the call may be placed), a malformed contact number (the contact's), the
  * API unreachable (the network's), an admission refusal or a bridge failure.
  *
  * The count is in Redis per campaign (`INCR` + `EXPIRE`, shared by every process that dials
@@ -40,7 +43,9 @@ export const CARRIER_REFUSAL_BREAKER_TTL_SECONDS = 15 * 60;
  */
 export function countsTowardBreaker(err: unknown): boolean {
   const refusal = classifyDialRefusal(err);
-  if (refusal.kind === 'carrier_refused') return !refusal.outcomeUnknown;
+  if (refusal.kind === 'carrier_refused') {
+    return !refusal.outcomeUnknown && refusal.httpStatus !== null && refusal.httpStatus >= 400 && refusal.httpStatus < 500;
+  }
   if (refusal.kind === 'not_sent') return refusal.reason === 'configuration';
   return false;
 }

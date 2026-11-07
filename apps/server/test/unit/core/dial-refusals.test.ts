@@ -11,6 +11,7 @@ import { WebRtcCallError, type WebRtcRejectReason } from '../../../src/core/brid
 import {
   CarrierDialNotSentError,
   CarrierDialOutcomeUnknownError,
+  CarrierDialRefusedError,
   type CarrierDialNotSentReason,
 } from '../../../src/telephony/carrier-errors.js';
 
@@ -46,9 +47,11 @@ describe('classifyDialRefusal', () => {
 
   it('reads a dead station, a carrier refusal and a dial not sent', () => {
     expect(classifyDialRefusal(rejection('station_socket_unavailable'))).toEqual({ kind: 'station_unavailable' });
-    expect(classifyDialRefusal(rejection('telephony_init_failed'))).toEqual({ kind: 'carrier_refused', outcomeUnknown: false });
+    expect(classifyDialRefusal(rejection('telephony_init_failed'))).toEqual({ kind: 'carrier_refused', outcomeUnknown: false, httpStatus: null });
     expect(classifyDialRefusal(rejection('telephony_init_failed', new CarrierDialOutcomeUnknownError('maybe'))))
-      .toEqual({ kind: 'carrier_refused', outcomeUnknown: true });
+      .toEqual({ kind: 'carrier_refused', outcomeUnknown: true, httpStatus: null });
+    expect(classifyDialRefusal(rejection('telephony_init_failed', new CarrierDialRefusedError('plivo', 403, 'geo'))))
+      .toEqual({ kind: 'carrier_refused', outcomeUnknown: false, httpStatus: 403 });
     for (const reason of ['configuration', 'destination', 'network'] as const) {
       expect(classifyDialRefusal(notSent(reason))).toEqual({ kind: 'not_sent', reason });
     }
