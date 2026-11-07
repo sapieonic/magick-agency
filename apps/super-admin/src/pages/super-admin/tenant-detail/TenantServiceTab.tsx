@@ -264,7 +264,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
             <ul>
               {allocationGaps.map((gap) => (
                 <li key={`${gap.accountId}:${gap.provider}`}>
-                  {gap.accountName}: no allocation for {telephonyProviderAlias(gap.provider)}
+                  {gap.accountName}: no allocation for {operatorCarrierName(gap.provider)}
                 </li>
               ))}
             </ul>

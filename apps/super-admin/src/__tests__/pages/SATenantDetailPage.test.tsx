@@ -518,7 +518,7 @@ describe('the Service tab warns of a carrier with no allocation (PL14)', () => {
     const warning = await screen.findByTestId('carrier-allocation-gaps');
     expect(mocks.listCredentials).toHaveBeenCalledWith({ tenant_id: 't-1' });
     const items = within(warning).getAllByRole('listitem').map((li) => li.textContent);
-    expect(items).toEqual([`Sales: no allocation for ${telephonyProviderAlias('plivo')}`]);
+    expect(items).toEqual([`Sales: no allocation for ${operatorCarrierName('plivo')}`]);
   });
 
   it('says nothing when the tenant has no active carrier account', async () => {
