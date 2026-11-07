@@ -21,7 +21,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { agencyAgentCallerIdRepository, agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
-import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
+import { dedicatedCallerIdOf, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
 import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
@@ -56,10 +56,10 @@ function fieldError(reply: FastifyReply, field: string, message: string): Fastif
 
 /**
  * The summary's `caller_id`: the agent's dedicated number on the campaign by the dial path's
- * own rule (DN2: the stored number counts only while it is still one of the campaign's usable
- * caller IDs; otherwise their contacts use the rotation). A failed read is not the summary's
- * failure: it answers `caller_id: null`, as for an agent with no number, with a warning, so a
- * dedication read blip never takes the agent's whole My contacts panel down.
+ * own rule, `dedicatedCallerIdOf` (DN2: the stored number counts only while it is still one of
+ * the campaign's usable caller IDs; otherwise their contacts use the rotation). A failed read is
+ * not the summary's failure: it answers `caller_id: null`, as for an agent with no number, with
+ * a warning, so a dedication read blip never takes the agent's whole My contacts panel down.
  */
 export function summaryCallerId(
   campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'caller_ids'>,
@@ -76,7 +76,7 @@ export function summaryCallerId(
   }
   const stored = read.value;
   if (stored === null) return null;
-  return usableCallerIds(campaign).includes(stored) ? stored : null;
+  return dedicatedCallerIdOf(usableCallerIds(campaign), new Map([[userId, stored]]), userId);
 }
 
 export async function registerMyContactRoutes(app: FastifyInstance): Promise<void> {
