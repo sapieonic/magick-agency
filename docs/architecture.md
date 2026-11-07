@@ -553,8 +553,9 @@ every account the caller belongs to (CH2) where every internal handler is single
     `telephony_credential_not_active`) and every caller ID the write adds is one of the
     credential's active synced numbers (on the same account, a stored number since retired may
     stay). Start and resume answer 409 `telephony_credential_not_active` while it is not
-    `active`, and 409 `campaign_caller_ids_unavailable` while none of its caller IDs is still on
-    the account. At the dial `agency/campaign-dialability.ts` narrows the pool to the stored
+    `active`, 409 `carrier_not_ready` while the carrier cannot dial from this server (no
+    webhook base, `telephony/carrier-dial-readiness.ts`, PL12), and 409
+    `campaign_caller_ids_unavailable` while none of its caller IDs is still on the account. At the dial `agency/campaign-dialability.ts` narrows the pool to the stored
     numbers still active on the credential and available to the account (PL13; cached 15 s,
     cleared by a sync, retire, delete or unassign); a service-account campaign is not read.
     Start and resume also answer 409 `carrier_capacity_unallocated` when the account splits its
@@ -566,7 +567,7 @@ every account the caller belongs to (CH2) where every internal handler is single
     right after the abandonment pause; the advice says "contact support", since the service's
     super-admins, not the tenant's, fix a carrier account.
     The console's carrier choice reads `GET /proxy/agency/carriers` (the service's carrier plus
-    the tenant's active credentials; floor `agency.campaigns.read`, so a read-only viewer of the
+    the tenant's active credentials on a carrier that can dial, PL12; floor `agency.campaigns.read`, so a read-only viewer of the
     settings is told "Carrier: …" when there is more than one). A soft-phone call takes its
     tag's carrier account, or untagged the account of the chosen caller ID's number.
   - *Numbers.* `TelephonyCredentialService.syncNumbers` (super-admin "Sync numbers", `POST

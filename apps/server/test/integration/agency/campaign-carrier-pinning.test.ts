@@ -5,6 +5,10 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { DEFAULTS } from '../setup/factories.js';
 import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
 
+// The tenant-account carrier can dial from this server only with its webhook base set
+// (PL12); set before the config loads. One test below unsets it.
+vi.hoisted(() => { process.env['PLIVO_WEBHOOK_BASE_URL'] = 'https://agency.test/api/v1/webhooks/plivo'; });
+
 /**
  * ─── A campaign pinned to a tenant's own carrier account, through the real routes ─
  *
@@ -14,7 +18,8 @@ import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js
  *  - the carrier must be an active provider row; the service's carrier takes no
  *    credential; a tenant-account carrier needs an ACTIVE credential of THIS tenant;
  *  - its caller IDs must be active numbers synced from that credential;
- *  - start and resume are refused while the pinned credential is not active;
+ *  - start and resume are refused while the pinned credential is not active, and while its
+ *    carrier cannot dial from this server (no webhook base, PL12);
  *  - a retry inherits the pin;
  *  - a carrier 401 pauses a running campaign `carrier_auth`, a credential no longer active
  *    `carrier_account_unavailable` (`pauseForCarrierAccount`).
@@ -40,6 +45,7 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 }));
 
 const { agencyCampaignRoutes } = await import('../../../src/api/routes/agency-campaigns.routes.js');
+const { config } = await import('../../../src/config/index.js');
 const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
 const { decodeConfigChange } = await import('../../../src/agency/campaign-config-audit.js');
 const { agencyCampaignRepository } = await import('../../../src/db/repositories/agency.repository.js');
@@ -307,6 +313,29 @@ describe('start and resume on a pinned campaign', () => {
     const resumed = await post(campaign.id, 'resume');
     expect(resumed.statusCode, resumed.body).toBe(200);
     expect(resumed.json()).toMatchObject({ status: 'running', pause_reason: null });
+  });
+
+  it('start and resume are refused while the carrier cannot dial from this server (no webhook base), with a vendor-free message (PL12)', async () => {
+    const plivo = config.telephony.plivo as { webhookBaseUrl: string };
+    const saved = plivo.webhookBaseUrl;
+    plivo.webhookBaseUrl = '';
+    try {
+      const draft = await plivoCampaign();
+      await insertAgencyContact(draft.id);
+      const paused = await plivoCampaign({ status: 'paused', pause_reason: 'supervisor', paused_at: new Date() });
+      for (const [id, verb] of [[draft.id, 'start'], [paused.id, 'resume']] as const) {
+        const refused = await post(id, verb);
+        expect(refused.statusCode, refused.body).toBe(409);
+        expect(refused.json()).toMatchObject({ code: 'carrier_not_ready' });
+        expect(refused.json().message).not.toMatch(/plivo|voicelink|PLIVO_/i);
+      }
+      // A service-carrier campaign is not judged by it.
+      const own = await insertAgencyCampaign();
+      await insertAgencyContact(own.id);
+      expect((await post(own.id, 'start')).statusCode).toBe(200);
+    } finally {
+      plivo.webhookBaseUrl = saved;
+    }
   });
 
   it('pause and stop are never refused for it (they reduce dialling)', async () => {

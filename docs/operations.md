@@ -495,7 +495,11 @@ service's own carrier stays VoiceLink. How a Plivo call flows: [`architecture.md
    keyring backed up apart from the database.
 2. `PLIVO_WEBHOOK_BASE_URL=https://<public host>/api/v1/webhooks/plivo`, the same public host the
    carrier reaches for VoiceLink (nginx already sends `/api/*` to the server). Restart the server.
-   Nothing needs setting on Plivo's side: each dial names its own answer and callback URLs.
+   Nothing needs setting on Plivo's side: each dial names its own answer and callback URLs. It
+   must be an absolute `https:` URL with no query or fragment, or the server does not start.
+   While it is unset, Plivo accounts are not offered for campaigns, start and resume of a campaign
+   pinned to one answer 409 `carrier_not_ready`, and any Plivo dial is refused before it is sent
+   (`carrier_dial_not_sent`, PL12).
 
 Then per tenant:
 

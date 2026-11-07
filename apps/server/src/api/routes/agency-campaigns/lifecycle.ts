@@ -17,6 +17,7 @@ import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.re
 import { campaignOf, ownedCampaign } from './guards.js';
 import { campaignCredentialStartRefusal } from '../../../agency/campaign-carrier.js';
 import { campaignDialabilityStartRefusal } from '../../../agency/campaign-dialability.js';
+import { campaignCarrierNotReady } from '../../../agency/campaign-carrier-readiness.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
@@ -168,6 +169,12 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
         return reply.code(refusal.status).send({
           error: refusal.status === 404 ? 'Not Found' : 'Conflict', code: refusal.code, message: refusal.message,
         });
+      }
+      // Nor while its carrier cannot dial from this server at all (PL12): every dial would be
+      // refused before the carrier.
+      const notReady = campaignCarrierNotReady(campaign);
+      if (notReady) {
+        return reply.code(notReady.status).send({ error: 'Conflict', code: notReady.code, message: notReady.message });
       }
       // And only while the account can dial on it: a caller ID still available on it
       // (PL13), and lines on its carrier when the account splits them by carrier (PL14).

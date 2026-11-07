@@ -7,7 +7,9 @@
  * runtime to own. The list is what the campaign write accepts (`agency/campaign-carrier.ts`):
  *  - each active carrier dialled on the service's own account, with no credential;
  *  - each `active` credential of the tenant on an active carrier that takes tenant
- *    credentials: its id, carrier and label. Never `account_ref`, config or any secret.
+ *    credentials and can dial from this server (`carrierDialReady`, PL12: not while its
+ *    webhook base is unset): its id, carrier and label. Never `account_ref`, config or any
+ *    secret.
  * Which kind a carrier is comes from whether it takes tenant credentials, not its name.
  *
  * Floor `agency.campaigns.read`: an editor fills the campaign create and edit from it, and a
@@ -19,6 +21,7 @@ import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { telephonyProviderRepository } from '../../../db/repositories/telephony-provider.repository.js';
 import { carrierTakesTenantCredential } from '../../../agency/campaign-carrier.js';
+import { carrierDialReady } from '../../../telephony/carrier-dial-readiness.js';
 import type { AgencyCarrier, AgencyCarriersResponse } from '@magick-agency/contracts/api/agency/agency-campaign';
 
 /** Registered by `proxyAgencyCampaignsRoutes` on its own instance, after its hooks. */
@@ -37,7 +40,8 @@ export async function registerCarrierRoutes(app: FastifyInstance): Promise<void>
         .filter((p) => !carrierTakesTenantCredential(p.name))
         .map((p): AgencyCarrier => ({ telephony_provider: p.name, telephony_credential_id: null, label: null, status: 'active' })),
       ...credentials
-        .filter((c) => c.status === 'active' && active.has(c.provider) && carrierTakesTenantCredential(c.provider))
+        .filter((c) => c.status === 'active' && active.has(c.provider) && carrierTakesTenantCredential(c.provider)
+          && carrierDialReady(c.provider))
         .map((c): AgencyCarrier => ({ telephony_provider: c.provider, telephony_credential_id: c.id, label: c.label, status: 'active' })),
     ];
     const body: AgencyCarriersResponse = { carriers };

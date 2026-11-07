@@ -8,7 +8,12 @@ import Fastify, { type FastifyInstance } from 'fastify';
 const mocks = vi.hoisted(() => ({
   providers: vi.fn(),
   credentials: vi.fn(),
+  dialReady: vi.fn((_provider: string) => true),
 }));
+
+// Whether a carrier can dial from this server (PL12) is its own module's question
+// (`carrier-dial-readiness.test.ts`); here it is scripted.
+vi.mock('../../../../src/telephony/carrier-dial-readiness.js', () => ({ carrierDialReady: mocks.dialReady }));
 
 vi.mock('../../../../src/rbac/rbac.middleware.js', () => ({ requirePermission: () => async () => {} }));
 vi.mock('../../../../src/db/repositories/telephony-provider.repository.js', () => ({
@@ -32,6 +37,7 @@ let app: FastifyInstance;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.dialReady.mockImplementation(() => true);
   mocks.providers.mockResolvedValue([{ name: 'plivo', status: 'active' }, { name: 'voicelink', status: 'active' }]);
   mocks.credentials.mockResolvedValue([
     cred({ id: 'cred-1', label: 'Main' }),
@@ -69,6 +75,15 @@ describe('GET /proxy/agency/carriers', () => {
     expect(res.json().carriers).toEqual([
       { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' },
     ]);
+  });
+
+  it('a tenant-account carrier that cannot dial from this server (no webhook base) offers none of its accounts (PL12)', async () => {
+    mocks.dialReady.mockImplementation((provider: string) => provider !== 'plivo');
+    const res = await app.inject({ method: 'GET', url: '/proxy/agency/carriers' });
+    expect(res.json().carriers).toEqual([
+      { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' },
+    ]);
+    expect(mocks.dialReady).toHaveBeenCalledWith('plivo');
   });
 
   it('a tenant with no credentials sees only the service carrier', async () => {
