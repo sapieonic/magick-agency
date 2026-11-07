@@ -20,19 +20,33 @@ vi.hoisted(() => {
   process.env['FF_AGENCY_DIALER'] = 'true';
   process.env['MAX_CONCURRENT_CALLS'] = '20';
   process.env['VOICELINK_WEBHOOK_BASE_URL'] = 'https://agency.test/api/v1/webhooks/voicelink';
+  process.env['PLIVO_WEBHOOK_BASE_URL'] = 'https://agency.test/api/v1/webhooks/plivo';
 });
 
-const { fakeAdapter } = vi.hoisted(() => ({
+const { fakeAdapter, fakePlivo } = vi.hoisted(() => ({
   fakeAdapter: {
     name: 'voicelink',
     capabilities: { cancelRinging: false, queuesOutboundDials: true },
     initiateCall: vi.fn(async (req: { callId: string }) => ({ providerCallId: `carrier-${req.callId}` })),
     endCall: vi.fn(async () => undefined),
   },
+  // The tenant's own Plivo account, served only for a pinned credential.
+  fakePlivo: {
+    name: 'plivo',
+    capabilities: { cancelRinging: true, queuesOutboundDials: false },
+    initiateCall: vi.fn(async (req: { callId: string }) => ({ providerCallId: '', providerRequestId: `req-${req.callId}` })),
+    endCall: vi.fn(async () => undefined),
+    cancelDialRequest: vi.fn(async () => 'canceled' as const),
+    resolved: [] as Array<[string, string | null, string, string]>,
+  },
 }));
 vi.mock('../../../src/telephony/factory.js', () => ({
   TelephonyProviderRegistry: class {
     get() { return fakeAdapter; }
+    async getForCredentialId(provider: string, id: string | null, purpose: string, tenantId: string) {
+      fakePlivo.resolved.push([provider, id, purpose, tenantId]);
+      return id ? fakePlivo : fakeAdapter;
+    }
   },
 }));
 
@@ -827,4 +841,40 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     });
     await runtime.agents.set(session.id, 'break');
   }, 40_000);
+
+  it('an untagged call from a number synced off a tenant\'s own carrier account dials that carrier on that credential', async () => {
+    const pool = getTestPool();
+    await pool.query(
+      `INSERT INTO telephony_providers (name, display_name, status) VALUES ('voicelink', 'VoiceLink', 'active'), ('plivo', 'Plivo', 'active')
+       ON CONFLICT (name) DO UPDATE SET status = 'active'`);
+    const { rows: [cred] } = await pool.query<{ id: string }>(
+      `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref) VALUES ($1, 'plivo', 'Own', $2) RETURNING id`,
+      [TENANT, `MA${randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`]);
+    const PLIVO_NUMBER = '+14155550111';
+    const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
+    expect(await phoneNumberRepository.syncForCredential(cred!.id, [{ phone_number: PLIVO_NUMBER, label: null }], null)).not.toBeNull();
+
+    const agent = randomUUID();
+    const session = await softphoneSession(agent);
+    await openStation(session.id);
+    fakePlivo.resolved.length = 0;
+    const placed = await runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '9811100077', callerId: PLIVO_NUMBER });
+    if (!placed.ok) throw new Error(`refused: ${placed.refusal.code}`);
+    expect(placed.call.caller_id).toBe(PLIVO_NUMBER);
+
+    const webrtcCallId = await webrtcCallIdOf(placed.call.id);
+    const { rows: [leg] } = await pool.query(
+      'SELECT provider, telephony_credential_id, provider_request_id FROM agency_calls WHERE id = $1', [webrtcCallId]);
+    expect(leg).toEqual({ provider: 'plivo', telephony_credential_id: cred!.id, provider_request_id: `req-${webrtcCallId}` });
+    expect(fakePlivo.initiateCall).toHaveBeenCalledWith(expect.objectContaining({ callId: webrtcCallId, from: PLIVO_NUMBER }));
+    expect(fakePlivo.resolved).toContainEqual(['plivo', cred!.id, 'dial', TENANT]);
+    expect(fakeAdapter.initiateCall).not.toHaveBeenCalledWith(expect.objectContaining({ callId: webrtcCallId }));
+
+    // Hung up while ringing: cancelled at the carrier by the dial's request id.
+    expect((await runtime.softphone.hangup(actor(agent), placed.call.id)).ok).toBe(true);
+    await waitFor('carrier cancel', () => fakePlivo.cancelDialRequest.mock.calls.length > 0);
+    expect(fakePlivo.cancelDialRequest).toHaveBeenCalledWith(`req-${webrtcCallId}`);
+    expect(fakePlivo.endCall).not.toHaveBeenCalled();
+    await waitFor('manual call ended', () => lastCall(stations.at(-1)!)?.state === 'ended');
+  });
 });

@@ -1,5 +1,6 @@
-// Only `config.telephony.voicelink` exists, so `rawBaseUrl` has a `voicelink` case and
-// an unknown provider falls back to the VoiceLink base.
+// Each carrier's webhook namespace comes from env (`config.telephony.<provider>`), never
+// from tenant data. A provider with no namespace here throws: a carrier handed another
+// carrier's callback base would post its callbacks to routes that cannot read them.
 import { config } from '../config/index.js';
 import { normalizeWebhookBase } from '../utils/webhook-base.js';
 
@@ -9,20 +10,18 @@ export { normalizeWebhookBase };
  * Builds the provider webhook base URL the WebRTC bridge hands to telephony
  * adapters when placing outbound calls. Pure and stateless — every value
  * derives from `config.telephony`. Kept in its own class so the per-provider
- * URL-shape knowledge (the `webhookBaseUrl` fallback) lives in one testable place.
+ * URL-shape knowledge lives in one testable place.
  */
 export class WebhookUrlBuilder {
   /**
-   * Base URL for a provider's webhook namespace.
+   * Base URL for a provider's webhook namespace, e.g.
+   * `https://host/api/v1/webhooks/plivo`.
    *
-   * An unknown provider falls back to VoiceLink's base — the only carrier this
-   * service runs on. The fallback decides where the carrier POSTs the status
-   * callbacks that drive the whole call state machine, so it points at the
-   * carrier the service actually runs on.
-   *
-   * Note this is best-effort by construction: a provider we cannot name is a
-   * provider whose webhook shape we also do not know, so the fallback only ever
-   * buys a well-formed URL, never a working callback.
+   * An unknown provider throws rather than falling back to another carrier's base: the
+   * base decides where the carrier POSTs the callbacks that drive the whole call state
+   * machine, and another carrier's routes would refuse or misread every one of them. The
+   * bridge calls this before the carrier is asked anything, so the throw is a dial that
+   * was never placed.
    *
    * Trailing slashes are stripped: every caller appends `/<route>/…` (the
    * status callback, the WebRTC status hop), and a base written `…/voicelink/`
@@ -39,8 +38,10 @@ export class WebhookUrlBuilder {
     switch (providerName) {
       case 'voicelink':
         return config.telephony.voicelink.webhookBaseUrl;
+      case 'plivo':
+        return config.telephony.plivo.webhookBaseUrl;
       default:
-        return config.telephony.voicelink.webhookBaseUrl;
+        throw new Error(`No webhook base URL for telephony provider: ${providerName}`);
     }
   }
 }

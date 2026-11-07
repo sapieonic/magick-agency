@@ -1,5 +1,5 @@
-// The WebRTC bridge: VoiceLink PSTN leg ⇄ the agent's browser (station) socket, no AI
-// pipeline. The constructor takes `TelephonyGuardHost` for capacity; analysis is reached
+// The WebRTC bridge: a carrier's PSTN leg (VoiceLink, or Plivo on a tenant's own
+// account) ⇄ the agent's browser (station) socket, no AI pipeline. The constructor takes `TelephonyGuardHost` for capacity; analysis is reached
 // only through the analysis seam (`getBridgeAnalysisHooks()`, docs/seams.md). Max
 // duration comes from `account_settings.webrtc_max_duration_seconds`, and the default
 // provider is `voicelink`. The members the dialer runtime calls (onLifecycle,
@@ -28,8 +28,8 @@ import {
   type WebrtcCallEndedBy,
 } from '../analytics/posthog.js';
 import { canCancelRinging } from '../telephony/types.js';
-import { classifyVoicelinkOutcome, normalizeVoicelinkWebhook } from '../telephony/voicelink/voicelink.webhook.js';
-import type { VoicelinkWebhookBody } from '../telephony/voicelink/voicelink.types.js';
+import { findCarrierModule } from '../telephony/carrier-modules.js';
+import type { CarrierEventFacts } from '../telephony/carrier-module.js';
 import type { TelephonyGuardHost } from './telephony-guard-host.js';
 import type { CallEvent, TelephonyProvider } from '../telephony/types.js';
 import type { WebRtcCallRecord, WebRtcCallStatus } from '@magick-agency/db/models/agency-call.model';
@@ -50,6 +50,21 @@ import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
 import { buildCarrierUrls, type CarrierUrls } from './bridge/carrier-urls.js';
+import {
+  carrierUnplacedRefusal, CREDENTIAL_UNAVAILABLE, isCredentialUnavailable, unplacedRefusalError, type UnplacedRefusal,
+} from './bridge/dial-refusals.js';
+
+/**
+ * What a carrier that streams via its answer response (`mediaUrlInDialRequest: false`)
+ * is answered with when the far end picks up: the stream to open, and the recording to
+ * run (`WebRtcBridgeManager.answerCarrierCall`). The route renders it with the adapter.
+ */
+export interface CarrierAnswerPlan {
+  streamUrl: string;
+  enableRecording: boolean;
+  recordingCallbackUrl?: string;
+  maxDurationSeconds?: number;
+}
 
 /** One call's telephony slots, held under its concurrency key (`WebRtcBridgeManager.heldLeases`). */
 export interface HeldLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
@@ -99,7 +114,7 @@ function webrtcEndedBy(opts: { status: WebRtcCallStatus; outcome?: string; error
 // The exported types and `WebRtcCallError` live in `bridge/bridge-types.ts` and are
 // re-exported here unchanged: this module path is the seam (docs/seams.md §3.1).
 
-/** How long to wait for a VoiceLink `start` frame before tearing down a silent WS. */
+/** How long to wait for a carrier's media `start` frame before tearing down a silent WS. */
 const PROVIDER_START_TIMEOUT_SECONDS = 30;
 /**
  * Most carrier frames held while the provider token is checked
@@ -186,7 +201,7 @@ const CLIP_STREAM_GRACE_MS = 2000;
 const DEFAULT_WEBRTC_MAX_DURATION_SECONDS = 1800;
 
 /**
- * Orchestrates WebRTC human-bridge calls: browser leg ⇄ this service ⇄ VoiceLink
+ * Orchestrates WebRTC human-bridge calls: browser leg ⇄ this service ⇄ the carrier's
  * PSTN leg, no AI pipeline.
  *
  * Concurrency goes through `TelephonyGuardHost`'s guards, so a tenant's
@@ -502,7 +517,7 @@ export class WebRtcBridgeManager {
     /** Borrowed sockets only: re-attach window on close. 0/absent ⇒ hang up now. */
     browserCloseGraceMs?: number;
   }): Promise<{ record: WebRtcCallRecord; session: WebRtcBridgeSession }> {
-    // No provider named: the service's own VoiceLink account (every dial today).
+    // No provider named: the service's own VoiceLink account.
     const provider = params.provider || 'voicelink';
     // Per-account recording ceiling: an account with allow_recording=false cannot
     // record a human-bridge call even if record:true was requested. NULL (no row, or
@@ -533,12 +548,15 @@ export class WebRtcBridgeManager {
     });
     this.noteLease({ op: 'held', lease: { callId: concurrencyKey, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider } });
 
-    // 2. Persist the call (status initiating). Every call dials on the service's own
-    // VoiceLink account. The INSERT stays inside the same try so a failure still
-    // releases the slots it just took.
+    // 2. Persist the call (status initiating), pinned to the tenant carrier credential it
+    // dials on (null: the service's own account). The insert re-checks that credential is
+    // `active` in the same statement and writes nothing otherwise. The INSERT stays inside
+    // the same try so a failure still releases the slots it just took.
+    const credentialId = params.telephonyCredentialId ?? null;
     let record: WebRtcCallRecord;
     try {
       record = await webrtcCallRepository.create({
+        ...(credentialId ? { telephony_credential_id: credentialId } : {}),
         tenant_id: params.tenantId,
         account_id: params.accountId,
         caller_id: params.callerId,
@@ -573,6 +591,12 @@ export class WebRtcBridgeManager {
       });
     } catch (err) {
       await this.releaseSlotsByKey(concurrencyKey, params.tenantId, params.accountId, provider);
+      // A credential that is not `active` at the insert: refused as a leg never placed,
+      // with its own code (no row, no session, nothing at the carrier).
+      if (isCredentialUnavailable(err)) {
+        log.warn({ err, provider, telephonyCredentialId: credentialId }, 'WebRTC dial refused: its carrier credential is not active');
+        throw unplacedRefusalError(CREDENTIAL_UNAVAILABLE, err);
+      }
       throw err;
     }
 
@@ -613,8 +637,7 @@ export class WebRtcBridgeManager {
     // session, its slots, its lease entry, its timer and the borrowed station socket's
     // listeners all left in place until the max-duration timer fired, 30 minutes on.
     // See `abortUnplacedLeg` for why that teardown emits no `ended`.
-    let base: string;
-    let adapter: ReturnType<TelephonyProviderRegistry['get']>;
+    let adapter: TelephonyProvider;
     let carrierUrls: CarrierUrls;
     try {
       // 4. Max-duration guard (resolved above, reused for the slot TTL).
@@ -660,22 +683,37 @@ export class WebRtcBridgeManager {
       }
 
       // 5b. Everything the carrier request is built from. None of it asks the carrier
-      // anything, so a throw here (no webhook base configured, a provider with no adapter)
-      // is a failure before the carrier, torn down by the catch below. Inside the carrier
-      // request's own try it was reported as the carrier refusing the dial
-      // (`TELEPHONY_INIT_FAILED`, with an `ended`), and the dialer charged the contact's
-      // `failed` allowance for a dial that never left this process.
+      // anything, so a throw here (no webhook base configured, a provider with no adapter,
+      // a credential that cannot dial) is a failure before the carrier, torn down by the
+      // catch below. Inside the carrier request's own try it was reported as the carrier
+      // refusing the dial (`TELEPHONY_INIT_FAILED`, with an `ended`), and the dialer
+      // charged the contact's `failed` allowance for a dial that never left this process.
       //
-      // `base` is the provider's own webhook namespace (…/webhooks/voicelink), so
-      // `${base}/webrtc-status/${id}` resolves to the per-provider route.
-      base = this.webhookUrls.baseUrl(provider);
-      // The service's own carrier account only: the synchronous registry lookup.
-      adapter = this.telephonyRegistry.get(provider);
-      // A carrier with no answer XML (VoiceLink) dials OUT to a stream URL baked
-      // into the dial request, so hand it the bridge's dedicated PSTN leg explicitly.
-      // Embed the webhook token so forged lifecycle events (which drive
-      // status/concurrency) are rejected. A provider with no carrier module gets an
-      // untokenized URL.
+      // `base` is the provider's own webhook namespace (…/webhooks/voicelink,
+      // …/webhooks/plivo), so `${base}/webrtc-status/${id}` resolves to its own route.
+      const base = this.webhookUrls.baseUrl(provider);
+      // TODO(plivo part 2): forward the answer, status and recording callbacks of a
+      // carrier that streams via its answer response to the media worker that holds the
+      // call (`cluster/media-cluster.ts`, IPC `carrier.webhook`), then drop this refusal.
+      // Until then such a call is refused here, before the carrier, in a media worker:
+      // its answer would reach the primary, which holds no session and hangs it up.
+      if (this.options.carrierRouteHint && session.carrier && !session.carrier.mediaUrlInDialRequest) {
+        throw new Error(`${provider} callbacks are not forwarded to media workers yet: the dial is refused before the carrier`);
+      }
+      // The account the leg is placed on: the tenant credential pinned on the row,
+      // resolved for `dial` (active only, and of this tenant and provider), or, when it
+      // is null, the service's own account through the synchronous lookup (which knows
+      // no BYOC carrier: a Plivo dial with no credential throws here). An unresolvable
+      // credential is a leg never placed; it never falls back (B20).
+      adapter = session.telephonyCredentialId
+        ? await this.telephonyRegistry.getForCredentialId(
+          provider, session.telephonyCredentialId, 'dial', params.tenantId,
+        )
+        : this.telephonyRegistry.get(provider);
+      // The stream URL goes in the dial (VoiceLink, no answer XML) or is kept for our
+      // answer response (Plivo). Every callback embeds the webhook token so forged
+      // lifecycle events (which drive status/concurrency) are rejected. A provider with
+      // no carrier module gets untokenized URLs.
       carrierUrls = buildCarrierUrls({
         base,
         callId: record.id,
@@ -684,6 +722,8 @@ export class WebRtcBridgeManager {
         webhookToken,
         routeHint: this.options.carrierRouteHint ?? null,
       });
+      session.answerStreamUrl = carrierUrls.answerStreamUrl ?? null;
+      session.recordingCallbackUrl = session.carrier ? carrierUrls.recordingCallbackUrl : null;
 
       auditLogger.log({
         callId: record.id,
@@ -695,6 +735,10 @@ export class WebRtcBridgeManager {
         eventData: { provider, destination: params.destinationPhone, caller_id: params.callerId },
       });
     } catch (err) {
+      if (isCredentialUnavailable(err)) {
+        await this.abortUnplacedLeg(record.id, err, CREDENTIAL_UNAVAILABLE);
+        throw unplacedRefusalError(CREDENTIAL_UNAVAILABLE, err);
+      }
       await this.abortUnplacedLeg(record.id, err);
       throw err;
     }
@@ -718,17 +762,28 @@ export class WebRtcBridgeManager {
         callId: record.id,
         to: params.destinationPhone,
         from: params.callerId,
-        webhookUrl: `${base}/webrtc-answer/${record.id}`,
+        webhookUrl: carrierUrls.answerUrl,
         statusCallbackUrl: carrierUrls.statusCallbackUrl,
         mediaStreamUrl: carrierUrls.mediaStreamUrl,
         maxDuration,
         // The VoiceLink adapter does not send this flag; the carrier's recording URL
-        // arrives on its terminal webhook.
+        // arrives on its terminal webhook. Plivo records from our answer XML (`<Record>`,
+        // `answerCarrierCall`), its URL on the recording callback.
         enableRecording: recordEnabled,
         machineDetection: false,
       });
       session.providerCallId = result.providerCallId || null;
+      session.providerRequestId = result.providerRequestId || null;
     } catch (err) {
+      // Refused with nothing placed (a calls-per-second limit, or the carrier refusing the
+      // credential): torn down as unplaced, no `ended`, its own code, so the caller neither
+      // charges the contact a carrier refusal nor waits on an `ended` that never comes.
+      const unplaced = carrierUnplacedRefusal(err);
+      if (unplaced) {
+        log.warn({ err, callId: record.id, code: unplaced.code }, 'WebRTC outbound dial refused before the carrier placed it');
+        await this.abortUnplacedLeg(record.id, err, unplaced);
+        throw unplacedRefusalError(unplaced, err);
+      }
       // (rejection of telephony init is reported as a completed `failed` call via
       // endCall below — not a pre-flight rejection.)
       //
@@ -757,8 +812,9 @@ export class WebRtcBridgeManager {
     }
 
     // The teardown-during-dial race, closed here because this is the first
-    // instant it can be closed. `endCall`'s hangup is gated on
-    // `providerCallId`, which does not exist until the line above — so a
+    // instant it can be closed. `endCall`'s hangup needs a carrier handle (the call
+    // id, or the dial request id it cancels by), which does not exist until the line
+    // above — so a
     // teardown that ran while the dial was in flight (a borrowed socket is
     // attached BEFORE the dial, so an agent who dismisses a ringing call is
     // squarely inside this window) claimed the terminal state, found no carrier
@@ -767,7 +823,7 @@ export class WebRtcBridgeManager {
     // hold the reference, which is all the hangup needs.
     if (session.endHandled) {
       log.warn(
-        { callId: record.id, providerCallId: session.providerCallId },
+        { callId: record.id, providerCallId: session.providerCallId, providerRequestId: session.providerRequestId },
         'WebRTC call was torn down mid-dial — hanging up the carrier leg now that it has an id',
       );
       await this.hangupProviderLeg(session);
@@ -784,7 +840,13 @@ export class WebRtcBridgeManager {
     // contact a carrier refusal and scheduled its redial, and the soft phone recorded
     // the call as never placed. The carrier's own events backfill the id
     // (`persistCarrierCallId`).
-    await webrtcCallRepository.update(record.id, { provider_call_id: session.carrierCallId ?? session.providerCallId })
+    //
+    // The dial request id (Plivo's `request_uuid`) is written with it: the only handle on
+    // the call before the carrier names it.
+    await webrtcCallRepository.update(record.id, {
+      provider_call_id: session.carrierCallId ?? session.providerCallId,
+      ...(session.providerRequestId ? { provider_request_id: session.providerRequestId } : {}),
+    })
       .catch((err: unknown) => log.error(
         { err, callId: record.id, providerCallId: session.providerCallId },
         'Could not persist the carrier call id — the call is placed and carries on',
@@ -1248,7 +1310,7 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * Attach the provider media WebSocket (the VoiceLink lead WS). `early` is what the
+   * Attach the provider media WebSocket (VoiceLink's lead WS, Plivo's `<Stream>`). `early` is what the
    * socket sent before this ran ({@link attachPstnLegVerified}); it is handled first, in
    * order, as though it had arrived after.
    */
@@ -1303,13 +1365,13 @@ export class WebRtcBridgeManager {
       // talked call as no_answer. First-write-wins, so a prior anchor is preserved.
       this.anchorAnswer(session);
     } else {
-      // VoiceLink: the socket opens BEFORE the carrier `start` frame. Do NOT anchor
+      // VoiceLink, Plivo: the socket opens BEFORE the carrier `start` frame. Do NOT anchor
       // answer here (an open-but-silent WS is not a connected call) — wait for a
       // valid `start` (handled in onPstnMessage). Arm a timeout so a WS that never
       // sends `start` is torn down instead of hanging as answered.
       session.setEndConfirmationTimer(this.startTimeoutSeconds, () => {
         if (!session.providerMediaReady && !session.endHandled) {
-          log.warn({ callId }, 'VoiceLink WS never sent a valid start — ending');
+          log.warn({ callId }, 'Carrier media WS never sent a valid start — ending');
           this.inBackground(
             this.endCall(callId, { status: 'failed', outcome: 'provider_start_timeout', hangupProvider: false }),
             callId, 'Error ending call on start timeout',
@@ -1580,35 +1642,55 @@ export class WebRtcBridgeManager {
     this.emitBridgedIfLive(session);
   }
 
-  // ─── VoiceLink webhooks ──────────────────────────────────────────────────
+  // ─── Carrier callbacks ───────────────────────────────────────────────────
 
   /**
-   * VoiceLink status webhook. VoiceLink has no answer XML — the PSTN leg is
-   * established when VoiceLink dials into the pstn-stream WS (URL baked into the
-   * dial request), so `answer` arrives here as a status event and anchors
-   * talk-time (no XML returned). Terminal events use a VoiceLink-specific
-   * classifier (no_answer/busy/canceled/failed) rather than a generic
-   * telephony_error, and are handled even when the live session is already gone
-   * (late `call.completed` / carrier confirmation of a local hangup).
+   * A VoiceLink status webhook: {@link handleCarrierStatus} for `voicelink`. VoiceLink has
+   * no answer XML — the PSTN leg is established when VoiceLink dials into the pstn-stream
+   * WS (URL baked into the dial request), so `answer` arrives here as a status event and
+   * anchors talk-time.
    */
   async handleVoicelinkStatus(callId: string, event: CallEvent): Promise<void> {
-    // Re-normalize the raw body (the parser spread it into metadata) so we can run
-    // the VoiceLink-specific classifier + capture the real carrier id / recording.
-    const norm = normalizeVoicelinkWebhook((event.metadata ?? {}) as VoicelinkWebhookBody);
+    await this.handleCarrierStatus(callId, event, 'voicelink');
+  }
+
+  /**
+   * A carrier's lifecycle event (ringing, answer, terminal), parsed by that carrier's own
+   * route into a `CallEvent`. The carrier module's `lifecycle` reads it (the carrier's
+   * real call id, the recording URL, the terminal classification: no_answer / busy /
+   * canceled / failed rather than a generic telephony error), so nothing here branches
+   * on the carrier. Terminal events are handled even when the live session is already
+   * gone (a late completion, or the carrier confirming a local hangup).
+   *
+   * `provider` is the carrier whose route received the event. An event for a call placed
+   * on another carrier is ignored: each carrier's events are read only by its own module.
+   */
+  async handleCarrierStatus(callId: string, event: CallEvent, provider: string): Promise<void> {
+    const lifecycle = findCarrierModule(provider)?.lifecycle;
+    if (!lifecycle) {
+      log.warn({ callId, provider }, 'Status event from a carrier with no lifecycle reader — ignoring');
+      return;
+    }
+    // The carrier's own reading of the event: its real call id, recording URL, classifier.
+    const facts = lifecycle.readEvent(event);
     const session = this.sessions.get(callId);
 
     // ── No live session: a late/terminal event (e.g. call.completed after we
     // already tore down, or carrier confirming our hangup). Persist final data
     // (recording URL, real carrier id, terminal outcome) idempotently and return.
     if (!session) {
-      await this.persistLateVoicelinkTerminal(callId, event, norm);
+      await this.persistLateCarrierTerminal(callId, event, facts, provider);
+      return;
+    }
+    if (session.provider !== provider) {
+      log.warn({ callId, provider, callProvider: session.provider }, 'Status event from another carrier than the call was placed on — ignoring');
       return;
     }
 
     // Learn the carrier's real id even if a dial-time placeholder is present.
-    if (norm.providerCallId && norm.providerCallId !== session.carrierCallId) {
-      session.carrierCallId = norm.providerCallId;
-      await this.persistCarrierCallId(callId, norm.providerCallId);
+    if (facts.carrierCallId && facts.carrierCallId !== session.carrierCallId) {
+      session.carrierCallId = facts.carrierCallId;
+      await this.persistCarrierCallId(callId, facts.carrierCallId);
     }
 
     // ── Progress events for a call already tearing down ─────────────────────
@@ -1621,7 +1703,7 @@ export class WebRtcBridgeManager {
     //
     // This is the same window `attachPstnLeg` refuses, and it is the one that
     // matters MOST here, because VoiceLink has no answer XML: `case 'answer'` IS
-    // the answer path for this carrier. Left unguarded it would do three things to
+    // the answer path for that carrier. Left unguarded it would do three things to
     // a cancelled dial the customer then picked up: `anchorAnswer` emits
     // `answered`, which lands a phantom entry in the compliance DENOMINATOR and
     // (with the bind refused) drives `abandonAnsweredCall`; the `in_progress` write
@@ -1637,8 +1719,8 @@ export class WebRtcBridgeManager {
     if ((event.eventType === 'answer' || event.eventType === 'ringing')
       && session.isTearingDown) {
       log.warn(
-        { callId, eventType: event.eventType, endHandled: session.endHandled, ending: session.ending },
-        'VoiceLink progress event for a call already tearing down — ignoring so it cannot resurrect the row or emit a phantom answer',
+        { callId, provider, eventType: event.eventType, endHandled: session.endHandled, ending: session.ending },
+        'Carrier progress event for a call already tearing down — ignoring so it cannot resurrect the row or emit a phantom answer',
       );
       return;
     }
@@ -1674,35 +1756,32 @@ export class WebRtcBridgeManager {
         // waiting for one that never comes. It is a late terminal in all but name, so
         // it takes the late path, which fills the recording and carrier id idempotently.
         if (session.endHandled) {
-          await this.persistLateVoicelinkTerminal(callId, event, norm);
+          await this.persistLateCarrierTerminal(callId, event, facts, provider);
           return;
         }
         // Terminal. If we're already awaiting carrier confirmation of a local
         // hangup, THIS is that confirmation — finalize with the pending intent.
         if (session.ending) {
-          await this.finalizeEnding(callId, norm);
+          await this.finalizeEnding(callId, facts);
           return;
         }
         // Otherwise classify the remote outcome precisely (no_answer/busy/…).
-        // The real `call.ended` payload carries NO `callStatus` (only `status`,
-        // `hangupCause`, `answeredAt`), so `norm.wasAnswered` is false even for a
-        // call we already anchored as answered on `call.answered`. Fold in the
+        // A real VoiceLink `call.ended` payload carries NO `callStatus` (only
+        // `status`, `hangupCause`, `answeredAt`), so `facts.wasAnswered` is false even
+        // for a call we already anchored as answered on `call.answered`. Fold in the
         // session's own answer state so a normal remote hangup of an answered call
         // classifies as `completed`, not `failed`. `session.answeredAt` is the
         // authoritative first-write-wins anchor.
-        const answered = norm.wasAnswered || session.answeredAt != null;
-        const { status, outcome, rawCause } = classifyVoicelinkOutcome({
-          ...norm,
-          wasAnswered: answered,
-        });
-        if (norm.recordingUrl) session.recordingUrl = norm.recordingUrl;
+        const answered = facts.wasAnswered || session.answeredAt != null;
+        const { status, outcome, rawCause } = facts.classify(answered);
+        if (facts.recordingUrl) session.recordingUrl = facts.recordingUrl;
         await this.endCall(callId, {
           status,
           outcome,
           ...(status === 'failed' && !answered
             ? { errorCode: 'TELEPHONY_ERROR', errorMessage: rawCause || undefined }
             : {}),
-          recordingUrl: norm.recordingUrl,
+          recordingUrl: facts.recordingUrl,
           hangupProvider: false,
         });
         return;
@@ -1713,35 +1792,151 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * Persist final data from a terminal VoiceLink event that arrived with no live
+   * Persist final data from a terminal carrier event that arrived with no live
    * session (late `call.completed`, or a carrier confirmation after teardown).
    * Idempotent: only fills recording/provider-id and, if the row wasn't already
    * terminal, records the classified outcome. Never runs teardown a second time
    * (it already ran).
    */
-  private async persistLateVoicelinkTerminal(
+  private async persistLateCarrierTerminal(
     callId: string,
     event: CallEvent,
-    norm: ReturnType<typeof normalizeVoicelinkWebhook>,
+    facts: CarrierEventFacts,
+    provider: string,
   ): Promise<void> {
     if (event.eventType !== 'hangup' && event.eventType !== 'error') return;
+    await this.persistLateCarrierData(callId, provider, facts, 'terminal');
+  }
+
+  /**
+   * Fill a call row's recording URL and carrier id from a carrier event that has no live
+   * session to go to, and wake a dialer-analysis job waiting on the recording. Idempotent:
+   * a recording URL already on the row is kept. A row placed on another carrier is left
+   * alone. Never throws.
+   */
+  private async persistLateCarrierData(
+    callId: string,
+    provider: string,
+    facts: Pick<CarrierEventFacts, 'carrierCallId' | 'recordingUrl'>,
+    what: 'terminal' | 'recording',
+  ): Promise<void> {
     try {
       const existing = await webrtcCallRepository.findById(callId);
       if (!existing) return;
+      // `provider` is absent only on a hand-built row; a real row always names its carrier.
+      if (existing.provider && existing.provider !== provider) {
+        log.warn({ callId, provider, callProvider: existing.provider }, 'Late carrier event from another carrier than the call was placed on — ignoring');
+        return;
+      }
       const patch: Record<string, unknown> = {};
-      if (norm.recordingUrl && !existing.recording_url) patch.recording_url = norm.recordingUrl;
-      if (norm.providerCallId && norm.providerCallId !== existing.provider_call_id) {
-        patch.provider_call_id = norm.providerCallId;
+      if (facts.recordingUrl && !existing.recording_url) patch.recording_url = facts.recordingUrl;
+      if (facts.carrierCallId && facts.carrierCallId !== existing.provider_call_id) {
+        patch.provider_call_id = facts.carrierCallId;
       }
       if (Object.keys(patch).length > 0) {
         await webrtcCallRepository.update(callId, patch);
-        log.info({ callId, patch: Object.keys(patch) }, 'Persisted late VoiceLink completion data');
+        log.info({ callId, provider, patch: Object.keys(patch) }, `Persisted late carrier ${what} data`);
       }
       // A late recording_url may satisfy a dialer-analysis job still awaiting one.
       if (patch.recording_url) await getBridgeAnalysisHooks().onRecordingReady(callId);
     } catch (err) {
-      log.error({ err, callId }, 'Failed to persist late VoiceLink terminal data');
+      log.error({ err, callId, provider }, `Failed to persist late carrier ${what} data`);
     }
+  }
+
+  /**
+   * A carrier's recording-ready callback (Plivo's `<Record callbackUrl>`), carrying the
+   * recording URL. On a live call it is kept for the terminal write (which hands it to
+   * analysis at finalize); once the call has ended or is ending, it is written to the row
+   * at once and recording-ready fires, as for a late VoiceLink completion.
+   */
+  async handleCarrierRecording(
+    callId: string,
+    provider: string,
+    recording: { recordingUrl: string; carrierCallId?: string },
+  ): Promise<void> {
+    if (!recording.recordingUrl) return;
+    const session = this.sessions.get(callId);
+    if (session && session.provider === provider && !session.endHandled) {
+      session.recordingUrl = recording.recordingUrl;
+      return;
+    }
+    await this.persistLateCarrierData(
+      callId, provider, { carrierCallId: recording.carrierCallId ?? '', recordingUrl: recording.recordingUrl }, 'recording',
+    );
+  }
+
+  /**
+   * The adapter that checks a carrier callback for `callId`: the account the call was
+   * placed on (the tenant credential pinned on it, resolved for `call_control`, or the
+   * service's own account). Read off the live session, else off the call row (a callback
+   * after teardown). Null when the call is unknown, was placed on another carrier, or
+   * its credential cannot be resolved: the callback is then refused.
+   */
+  async carrierCallbackAdapter(callId: string, provider: string): Promise<TelephonyProvider | null> {
+    const session = this.sessions.get(callId);
+    let pin: { provider: string; credentialId: string | null; tenantId: string };
+    if (session) {
+      pin = { provider: session.provider, credentialId: session.telephonyCredentialId, tenantId: session.tenantId };
+    } else {
+      let row: WebRtcCallRecord | null;
+      try {
+        row = await webrtcCallRepository.findById(callId);
+      } catch (err) {
+        log.error({ err, callId, provider }, 'Could not read the call a carrier callback names');
+        return null;
+      }
+      if (!row) return null;
+      pin = { provider: row.provider, credentialId: row.telephony_credential_id ?? null, tenantId: row.tenant_id };
+    }
+    if (pin.provider !== provider) {
+      log.warn({ callId, provider, callProvider: pin.provider }, 'Carrier callback for a call placed on another carrier — refusing');
+      return null;
+    }
+    try {
+      return await this.telephonyRegistry.getForCredentialId(provider, pin.credentialId, 'call_control', pin.tenantId);
+    } catch (err) {
+      log.error(
+        { err, callId, provider, telephonyCredentialId: pin.credentialId },
+        'Cannot resolve the carrier account a callback must be checked against — refusing it',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * The far end answered a call whose carrier fetches the media stream from our answer
+   * response (`mediaUrlInDialRequest: false`). Runs the answer as a status event (learns
+   * the carrier's call id, anchors the answer, writes `in_progress`) and returns what the
+   * answer response is built from: the stream URL kept at dial time and the recording.
+   *
+   * Null — the route answers with a hangup — for a call that is unknown here, placed on
+   * another carrier, or tearing down (its teardown found no call to hang up: this is
+   * where that customer's phone is put down), or that has no stream URL.
+   */
+  async answerCarrierCall(callId: string, event: CallEvent, provider: string): Promise<CarrierAnswerPlan | null> {
+    const session = this.sessions.get(callId);
+    if (!session || session.provider !== provider) {
+      log.warn({ callId, provider }, 'Answer callback for a call with no live session here — answering with a hangup');
+      return null;
+    }
+    if (session.isTearingDown) {
+      log.warn({ callId, provider, endHandled: session.endHandled }, 'Answer callback for a call already tearing down — answering with a hangup');
+      return null;
+    }
+    if (!session.answerStreamUrl) {
+      log.error({ callId, provider }, 'Answer callback for a call with no stream URL — answering with a hangup');
+      return null;
+    }
+    await this.handleCarrierStatus(callId, event, provider);
+    // The answer may have been the last straw (a teardown that ran meanwhile).
+    if (session.isTearingDown || this.sessions.get(callId) !== session) return null;
+    return {
+      streamUrl: session.answerStreamUrl,
+      enableRecording: session.recordEnabled,
+      ...(session.recordEnabled && session.recordingCallbackUrl ? { recordingCallbackUrl: session.recordingCallbackUrl } : {}),
+      ...(session.maxDurationSeconds ? { maxDurationSeconds: session.maxDurationSeconds } : {}),
+    };
   }
 
   // ─── Termination ─────────────────────────────────────────────────────────
@@ -1768,7 +1963,7 @@ export class WebRtcBridgeManager {
    * seconds in the pilot). Finalizing now drops the session from the map, so that
    * same connect hits `attachPstnLeg`'s unknown-call branch and is closed, the
    * relay never opens, and the late `call.answered`/`call.ended` land in
-   * {@link persistLateVoicelinkTerminal} where they belong. The point is the
+   * {@link persistLateCarrierTerminal} where they belong. The point is the
    * *removal from the map*, not the status we write.
    */
   private async localHangup(
@@ -1823,16 +2018,16 @@ export class WebRtcBridgeManager {
    */
   private async finalizeEnding(
     callId: string,
-    norm: ReturnType<typeof normalizeVoicelinkWebhook> | null,
+    facts: CarrierEventFacts | null,
   ): Promise<void> {
     const session = this.sessions.get(callId);
     if (!session || session.endHandled) return;
     session.clearEndConfirmationTimer();
     const intent = session.pendingEnd ?? { status: 'completed', outcome: 'ended_by_user' };
-    if (norm?.recordingUrl) session.recordingUrl = norm.recordingUrl;
+    if (facts?.recordingUrl) session.recordingUrl = facts.recordingUrl;
     await this.endCall(callId, {
       ...intent,
-      recordingUrl: norm?.recordingUrl ?? session.recordingUrl ?? undefined,
+      recordingUrl: facts?.recordingUrl ?? session.recordingUrl ?? undefined,
       // WS already closed in localHangup; nothing more to hang up.
       hangupProvider: false,
     });
@@ -1855,13 +2050,21 @@ export class WebRtcBridgeManager {
    * skipped: there is no other account to hang the leg up on, and the leg may still
    * be live. It never falls back to the service's own account (decision B20).
    *
-   * Only `providerCallId` reaches the carrier (`endCall` takes no other id). A
-   * carrier whose ringing call is cancelled through a separate dial-request id
-   * (`provider_request_id`) is not wired here.
+   * Which handle reaches the carrier, and never an empty one (a Plivo hangup with no id
+   * disconnects every call on the account):
+   *  - before the answer, with a dial request id (Plivo's `request_uuid`) and an adapter
+   *    that cancels by it: the dial is cancelled by that id. If the carrier no longer
+   *    holds the request (`not_found`: it has connected, or is ringing past the queue)
+   *    and the carrier has named the call, the call is hung up by its id. If it has not,
+   *    nothing more can be sent: the answer callback for a call that is no longer here is
+   *    answered with a hangup, which is the backstop;
+   *  - otherwise the carrier's call id (`carrierCallId`, learned from its callbacks or
+   *    stream), else the dial-time id (`providerCallId`), through `endCall`;
+   *  - with neither, nothing is sent.
    *
-   * The adapter is resolved even when there is no `providerCallId` to hang up,
-   * because that combination — a teardown with no carrier handle — is exactly the
-   * case the capability warning below exists to report.
+   * The adapter is resolved even when there is no handle to send, because that
+   * combination — a teardown with no carrier handle — is exactly the case the
+   * capability warning below exists to report.
    */
   private async hangupProviderLeg(session: WebRtcBridgeSession): Promise<void> {
     const callId = session.callId;
@@ -1897,8 +2100,21 @@ export class WebRtcBridgeManager {
         );
       }
 
-      if (!session.providerCallId) return;
-      await hangupAdapter.endCall(session.providerCallId);
+      const carrierCallId = session.carrierCallId || session.providerCallId || null;
+      if (session.answeredAt === null && session.providerRequestId && hangupAdapter.cancelDialRequest) {
+        const cancelled = await hangupAdapter.cancelDialRequest(session.providerRequestId);
+        if (cancelled === 'canceled') return;
+        if (!carrierCallId) {
+          log.warn(
+            { callId, correlationId: session.correlationId, provider: session.provider, providerRequestId: session.providerRequestId },
+            'Carrier no longer holds the dial request and has not named the call — '
+            + 'if it connects, its answer callback is answered with a hangup',
+          );
+          return;
+        }
+      }
+      if (!carrierCallId) return;
+      await hangupAdapter.endCall(carrierCallId);
     } catch (err) {
       log.warn({ err, callId }, 'Error hanging up provider leg (already ended?)');
     }
@@ -1925,13 +2141,19 @@ export class WebRtcBridgeManager {
    *
    * Never throws: the caller rethrows the original error.
    */
-  private async abortUnplacedLeg(callId: string, err: unknown): Promise<void> {
-    log.error({ err, callId }, 'WebRTC call failed before its carrier leg was placed — tearing it down');
+  private async abortUnplacedLeg(
+    callId: string,
+    err: unknown,
+    /** A refusal with its own code (`bridge/dial-refusals.ts`); absent: a bridge setup failure. */
+    refusal?: UnplacedRefusal,
+  ): Promise<void> {
+    if (refusal) log.warn({ err, callId, code: refusal.code }, 'WebRTC call refused before its carrier leg was placed — tearing it down');
+    else log.error({ err, callId }, 'WebRTC call failed before its carrier leg was placed — tearing it down');
     try {
       await this.endCall(callId, {
         status: 'failed',
-        outcome: 'bridge_setup_failed',
-        errorCode: 'BRIDGE_SETUP_FAILED',
+        outcome: refusal?.outcome ?? 'bridge_setup_failed',
+        errorCode: refusal?.errorCode ?? 'BRIDGE_SETUP_FAILED',
         errorMessage: err instanceof Error ? err.message : String(err),
         hangupProvider: false,
         announce: false,

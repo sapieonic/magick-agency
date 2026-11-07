@@ -606,6 +606,36 @@ export class AgencyCampaignRepository {
   }
 
   /**
+   * Pause a RUNNING campaign because its carrier refused the campaign's carrier-account
+   * credential on a dial (HTTP 401, `pause_reason = 'carrier_auth'`): every further dial
+   * on that credential would be refused too. Like the abandonment guardrail's pause, it
+   * has no human behind it, so the transition actor is cleared, and it never resumes on
+   * its own: a supervisor resumes once the credential is fixed (resume refuses a
+   * credential that is not `active`). `pause_abandonment_rate_pct` is cleared: it is the
+   * evidence of an abandonment pause only.
+   *
+   * Zero rows (null) when the campaign is not running: already paused (by this or anything
+   * else), stopping or terminal. The caller then writes no audit row.
+   */
+  async pauseForCarrierAuth(campaignId: string): Promise<AgencyCampaignRecord | null> {
+    const { rows } = await getPool().query<AgencyCampaignRecord>(
+      `UPDATE agency_campaigns
+          SET status = 'paused',
+              pause_reason = 'carrier_auth',
+              paused_at = now(),
+              pause_abandonment_rate_pct = NULL,
+              last_transition_by_user_id = NULL,
+              last_transition_by_name = NULL,
+              updated_at = now()
+        WHERE id = $1 AND status = 'running'
+      RETURNING *`,
+      [campaignId],
+    );
+    announceCampaignChanged(rows[0]);
+    return rows[0] ?? null;
+  }
+
+  /**
    * A campaign is complete when nothing is outstanding — no pending contact, none
    * in flight, none connected-but-undispositioned. Note this is genuinely
    * different from "list exhausted": `next_attempt_at` can be hours out, so the

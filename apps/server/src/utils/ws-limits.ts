@@ -40,8 +40,9 @@ const ALAW_8K_ONE_SECOND_BYTES = 8_000;
  *  - **Station socket**, `media=alaw8`: binary A-law, at most 1 s = 8000 bytes
  *    (`AGENCY_STATION_ALAW8_MAX_FRAME_BYTES`; the bridge drops anything longer).
  *  - **Carrier PSTN media stream**, `/api/v1/webrtc-call/:id/pstn-stream`: VoiceLink's
- *    Twilio-shaped JSON, A-law 8 kHz, sent in 20 ms chunks (216 base64 characters). Sized
- *    for one second of audio in one frame plus metadata, far above anything observed.
+ *    Twilio-shaped JSON, A-law 8 kHz, sent in 20 ms chunks (216 base64 characters), or
+ *    Plivo's JSON, μ-law 8 kHz (one byte a sample too, so the same size). Sized for one
+ *    second of audio in one frame plus metadata, far above anything observed.
  */
 export const WS_ROUTE_LARGEST_MESSAGE_BYTES: Readonly<Record<string, number>> = {
   '/proxy/agency/station/:sessionId': Math.max(

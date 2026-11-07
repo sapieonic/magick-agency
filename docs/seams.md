@@ -86,6 +86,16 @@ export interface WebRtcLifecycleEvent {}
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 ```
 
+`WebRtcOutboundParams` names the carrier (`provider`) and, for a carrier dialled on a
+tenant's own account, the credential (`telephonyCredentialId`, decisions B18–B20): the bridge
+pins it on the call row (an insert that re-checks it is `active`) and dials on it, never on the
+service's own account. The refusals with nothing placed at the carrier each have their own
+`WebRtcRejectReason` and emit no `ended`: the admission refusals, `station_socket_unavailable`,
+`telephony_credential_unavailable` (the credential cannot dial), `carrier_rate_limited` (a
+calls-per-second limit) and `carrier_auth_rejected` (the carrier refused the credential, HTTP
+401; the dialer pauses the campaign `carrier_auth`). `telephony_init_failed` is the carrier
+refusing a dial: it ends the call first, with an `ended`.
+
 `correlation` says what a leg belongs to: a campaign attempt (the dialer) or a soft-phone call
 (`agency_manual_calls`, `docs/softphone.md` §4.3). The `agency_calls` insert writes `campaign_id` +
 `agency_attempt_id` with `origin = 'campaign'` for an attempt, and `origin = 'manual'` +

@@ -23,6 +23,8 @@ import {
  * which fails anyway but reports the wrong cause.
  */
 export class ByocCredentialUnavailableError extends Error {
+  /** Read by the bridge, which may not import this module's classes (`isCredentialUnavailable`). */
+  readonly credentialUnavailable = true;
   constructor(readonly credentialId: string, readonly reason?: string) {
     super(`Telephony credential ${credentialId} could not be resolved${reason ? `: ${reason}` : ''}`);
     this.name = 'ByocCredentialUnavailableError';

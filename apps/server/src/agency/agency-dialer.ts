@@ -39,6 +39,7 @@ import type { WrapupManager } from './wrapup-manager.js';
 import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
+import { pauseCampaignForCarrierAuth } from './carrier-auth-pause.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -113,6 +114,10 @@ const CAPACITY_REFUSALS: ReadonlySet<string> = new Set([
   'account_concurrency_limit',
   'provider_concurrency_limit',
   'provider_concurrency_unavailable',
+  // A calls-per-second limit (our per-account gate, or the carrier's 429) gave the dial no
+  // slot: nothing was placed and it says nothing about the contact. Back-pressure too: the
+  // gate bounds the rate, so the next tick's dial is the retry.
+  'carrier_rate_limited',
 ]);
 
 /**
@@ -490,6 +495,9 @@ export class AgencyDialer {
       callerId: cmd.callerId,
       destinationPhone: cmd.contact.phone_e164,
       provider: cmd.campaign.telephony_provider,
+      // The tenant carrier credential the campaign is pinned to (null: the service's own
+      // account). The bridge pins it on the call row and dials on it, never on another.
+      telephonyCredentialId: cmd.campaign.telephony_credential_id ?? null,
       // No SIP connection: there is no BYO-SIP egress, so `WebRtcOutboundParams` has no
       // such field (`docs/seams.md`).
       record: cmd.campaign.record_calls,
@@ -574,7 +582,13 @@ export class AgencyDialer {
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
           ? 'reservation_expired'
           : 'failed';
-      const capacityRefused = err instanceof WebRtcCallError && CAPACITY_REFUSALS.has(err.code);
+      // The carrier refused the campaign's credential (HTTP 401): every further dial on it
+      // would be refused too, so the campaign is paused before this attempt is settled.
+      // Nothing was placed and the contact did nothing wrong: it goes back at once,
+      // uncharged, and waits for the resume.
+      const carrierAuthRejected = err instanceof WebRtcCallError && err.code === 'carrier_auth_rejected';
+      if (carrierAuthRejected) await pauseCampaignForCarrierAuth(cmd.campaign);
+      const capacityRefused = err instanceof WebRtcCallError && (CAPACITY_REFUSALS.has(err.code) || carrierAuthRejected);
       log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
       await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused);
       return;
@@ -627,8 +641,9 @@ export class AgencyDialer {
      * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
      * (`holdOutcomeUnknownContact`). Otherwise it goes back uncharged: after
      * {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS} for a dial that failed in the bridge
-     * (`failed`), at once for a dial called off before it (`reservation_expired`) or
-     * refused admission (`capacityRefused`).
+     * (`failed`), at once for a dial called off before it (`reservation_expired`), refused
+     * admission or a calls-per-second slot, or refused by the carrier for the campaign's
+     * credential, which pauses the campaign (`capacityRefused`).
      */
     dialOutcomeUnknown = false,
     capacityRefused = false,
@@ -690,8 +705,10 @@ export class AgencyDialer {
       // condition was the agent's or ours and has cleared, so `now()`. A dial the bridge
       // failed before the carrier waits PRE_CARRIER_FAILURE_REDIAL_DELAY_MS, so a failure
       // that repeats cannot redial the same contact on every tick (see the constant). Only
-      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's. An
-      // admission refusal is back-pressure, not a failure: at once (CAPACITY_REFUSALS).
+      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's (except
+      // the two that placed nothing, a rate limit and a refused credential, which the bridge
+      // rejects with no `ended`). An admission or rate-limit refusal is back-pressure, not a
+      // failure, and a refused credential paused the campaign: at once (`capacityRefused`).
       const notBefore = reason === 'failed' && !capacityRefused
         ? new Date(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS)
         : new Date();

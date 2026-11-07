@@ -8,7 +8,7 @@ import { AlawFramer, browserLegMediaFormatOf, type BrowserLegMediaFormat } from 
 
 /**
  * In-memory state for a single WebRTC human-bridge call. Holds the two media
- * WebSockets (browser leg + VoiceLink PSTN leg) and the lifecycle flags/timers,
+ * WebSockets (browser leg + the carrier's PSTN leg) and the lifecycle flags/timers,
  * so the bridge can relay audio between them and tear both down idempotently.
  *
  * Concurrency accounting is NOT held here — it goes through
@@ -25,20 +25,36 @@ export class WebRtcBridgeSession {
   readonly startedAt: Date;
 
   /**
-   * Correlation id we handed the provider at dial time (our own call id for
-   * VoiceLink, since its real carrier id is async). NOT the carrier's id — see
-   * {@link carrierCallId}. Persisted as `provider_call_id` for back-compat.
+   * The call id the carrier returned at dial time (our own call id for VoiceLink,
+   * since its real carrier id is async; null for Plivo, which names the call only on
+   * its callbacks). NOT necessarily the carrier's id — see {@link carrierCallId}.
+   * Persisted as `provider_call_id` until the carrier's own id is known.
    */
   providerCallId: string | null = null;
   /**
    * The provider's REAL call id, learned asynchronously from the WS `start` frame
-   * (`start.call_sid`) or a lifecycle webhook (`call.id`). Distinct from the
-   * dial-time correlation id so CDR/hangup lookups can use the true carrier key.
+   * (VoiceLink `start.call_sid`, Plivo `start.callId`) or a lifecycle callback
+   * (VoiceLink `call.id`, Plivo `CallUUID`). Distinct from the dial-time id so CDR and
+   * hangup lookups use the true carrier key (a Plivo hangup takes nothing else).
    * Null until the carrier reveals it.
    */
   carrierCallId: string | null = null;
+  /**
+   * The carrier's id for the dial REQUEST, when it names one apart from the call
+   * (Plivo's `request_uuid`). The only handle a call has before the carrier names it, so
+   * a teardown before then cancels the dial by it. Persisted as `provider_request_id`.
+   */
+  providerRequestId: string | null = null;
   /** Provider media stream id (`start.stream_sid`) — needed for `clear`/commands. */
   providerStreamId: string | null = null;
+  /**
+   * For a carrier that takes the media stream URL from our answer response
+   * (`mediaUrlInDialRequest: false`): that URL, built at dial time with the provider
+   * token, for the answer route to render. Null otherwise. Never logged.
+   */
+  answerStreamUrl: string | null = null;
+  /** The recording-ready callback URL our answer response names (with its webhook token). */
+  recordingCallbackUrl: string | null = null;
   status: WebRtcCallStatus = 'initiating';
 
   /**

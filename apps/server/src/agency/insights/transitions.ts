@@ -11,7 +11,7 @@
  * | console `agency_campaign.paused` | paused | the user | `supervisor` |
  * | console `agency_campaign.resumed` | running | the user | `supervisor` |
  * | console `agency_campaign.stopped` (Stop pressed: the campaign drains) | stopping | the user | `supervisor` |
- * | dialer `agency_campaign.auto_paused` | paused | system | `abandonment_ceiling` |
+ * | dialer `agency_campaign.auto_paused` | paused | system | the row's `detail.reason`: `carrier_auth` (the carrier refused the campaign's credential, `carrier-auth-pause.ts`), else `abandonment_ceiling` |
  * | dialer `agency_campaign.stopped` (the drain finished) | stopped | system | `calls_drained` |
  * | dialer `agency_campaign.completed` | completed | system | `completed_by_dialler` |
  *
@@ -36,7 +36,7 @@ const TRANSITION_ACTIONS = [
 ];
 
 /** A trail row as a transition, or null when the row is not one (see the table above). */
-export function transitionOf(row: Pick<ActivityRow, 'source' | 'action' | 'at' | 'actor'>): Omit<AgencyInsightsTransition, 'actor'> & { user_id: string | null } | null {
+export function transitionOf(row: Pick<ActivityRow, 'source' | 'action' | 'at' | 'actor'> & { detail?: ActivityRow['detail'] }): Omit<AgencyInsightsTransition, 'actor'> & { user_id: string | null } | null {
   const user = row.actor.system ? null : row.actor.user_id;
   const make = (to: AgencyCampaignStatus, reason: string, userId: string | null) => ({ to_status: to, at: row.at, reason, user_id: userId });
   if (row.source === 'master') {
@@ -49,7 +49,10 @@ export function transitionOf(row: Pick<ActivityRow, 'source' | 'action' | 'at' |
     }
   }
   switch (row.action) {
-    case 'agency_campaign.auto_paused': return make('paused', 'abandonment_ceiling', null);
+    // Two writers: the abandonment guardrail (no `reason` on its oldest rows, and
+    // `abandonment_ceiling` since) and the carrier-auth pause, which says `carrier_auth`.
+    case 'agency_campaign.auto_paused':
+      return make('paused', row.detail?.['reason'] === 'carrier_auth' ? 'carrier_auth' : 'abandonment_ceiling', null);
     case 'agency_campaign.stopped': return make('stopped', 'calls_drained', null);
     case 'agency_campaign.completed': return make('completed', 'completed_by_dialler', null);
     default: return null;

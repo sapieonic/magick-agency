@@ -52,7 +52,7 @@ import type { DncRegistry } from '../dnc-registry.js';
 import { markDnc } from '../dnc-mark.js';
 import type { StationRegistry } from '../station-registry.js';
 import { submittedCallFields, validateCallFieldValues } from './call-fields.js';
-import { runManualPredial } from './manual-predial.js';
+import { runManualPredial, softphoneCarrier } from './manual-predial.js';
 import { manualDispositionDecision, prepareManualDisposition, resolveManualCatalog } from './manual-disposition.js';
 import type { ManualDialer } from './manual-dialer.js';
 import { onSoftphoneBreak, setAvailableGuarded } from './session-guard.js';
@@ -270,11 +270,13 @@ export class SoftphoneService {
     const fields = validateCallFieldValues(settings.call_fields, req.fields, { requireFilled: false });
     if (!fields.ok) return refuse({ code: 'fields_invalid', details: fields.details });
 
-    const accountNumbers = tag
-      ? []
-      : (await tenantPhoneAssignmentRepository.findAvailableForAccount(actor.tenantId, actor.accountId))
-        .map((n) => n.phone_number)
-        .filter((n): n is string => typeof n === 'string');
+    // Untagged: any number available to the account, on any carrier. The chosen caller
+    // ID's number then decides the carrier account the call is placed on (a number synced
+    // from a tenant's own carrier account dials on that account's credential).
+    const available = tag ? [] : await tenantPhoneAssignmentRepository.findAvailableForAccount(actor.tenantId, actor.accountId);
+    const accountNumbers = available
+      .map((n) => n.phone_number)
+      .filter((n): n is string => typeof n === 'string');
 
     const predial = await runManualPredial({
       tenantId: actor.tenantId,
@@ -387,7 +389,7 @@ export class SoftphoneService {
     }
 
     // ── Step 4: dial, agent first ─────────────────────────────────────────────
-    const dialed = await this.deps.manual.dial(call, { socket, ...(tag ? { provider: tag.telephony_provider } : {}) });
+    const dialed = await this.deps.manual.dial(call, { socket, ...softphoneCarrier(tag, available, plan.callerId) });
     if (!dialed.ok) return refuse({ code: dialed.failure });
 
     const fresh = await agencyManualCallRepository.findById(call.id, { tenantId: actor.tenantId, accountId: actor.accountId });

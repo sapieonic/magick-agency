@@ -187,6 +187,33 @@ export function plivoCallEvent(n: NormalizedPlivoCallback, callId: string): Call
   };
 }
 
+/**
+ * The callback a {@link plivoCallEvent} event was made from, read back off its metadata
+ * (the bridge is handed the event, not the params). Never throws: a field the event does
+ * not carry is '' or absent, as in {@link normalizePlivoCallback}.
+ */
+export function plivoCallbackFromEvent(event: CallEvent): NormalizedPlivoCallback {
+  const m = (event.metadata ?? {}) as Record<string, unknown>;
+  const text = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const kind: PlivoCallbackKind = m['rawEvent'] === 'answer' || m['rawEvent'] === 'recording' ? m['rawEvent'] : 'status';
+  const durationSec = typeof m['durationSec'] === 'number' ? m['durationSec'] : undefined;
+  return {
+    kind,
+    callUuid: typeof event.providerCallId === 'string' ? event.providerCallId : '',
+    requestUuid: text(m['requestUuid']),
+    callStatus: text(m['rawCallStatus']),
+    hangupCause: text(m['hangupCause']),
+    hangupCauseCode: text(m['hangupCauseCode']),
+    hangupSource: text(m['hangupSource']),
+    ...(durationSec !== undefined ? { durationSec } : {}),
+    ...(text(m['answeredAt']) ? { answeredAt: text(m['answeredAt']) } : {}),
+    ...(text(m['endedAt']) ? { endedAt: text(m['endedAt']) } : {}),
+    ...(text(m['recordingUrl']) ? { recordingUrl: text(m['recordingUrl']) } : {}),
+    ...(text(m['recordingId']) ? { recordingId: text(m['recordingId']) } : {}),
+    wasAnswered: m['wasAnswered'] === true,
+  };
+}
+
 /** Which callback a param set is, when the route does not say: a recording, else a status. */
 export function inferPlivoCallbackKind(params: Record<string, string>): PlivoCallbackKind {
   if (str(params, 'RecordUrl') || str(params, 'RecordingID')) return 'recording';

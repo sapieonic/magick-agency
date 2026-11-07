@@ -2,6 +2,7 @@
 // its media-stream wire protocol and how a hangup reaches it. One `CarrierModule` per
 // carrier, registered in `carrier-modules.ts`; the bridge asks the module instead of
 // branching on a provider name (decision B18).
+import type { CallEvent } from './types.js';
 
 /** A per-call, stateful codec between the carrier's wire audio and the browser's PCM16 16 kHz. */
 export interface CarrierMediaCodec {
@@ -58,6 +59,44 @@ export interface CarrierMediaProtocol {
   encodeClip(pcm16: Buffer, sampleRate: number): { buffer: Buffer; byteRate: number } | null;
 }
 
+/**
+ * A terminal call classified in the bridge's one vocabulary, whichever carrier reported
+ * it: `status` is what the row settles as, `outcome` its label, `rawCause` the carrier's
+ * own wording (diagnostics only, never a status).
+ */
+export interface CarrierTerminalOutcome {
+  status: 'completed' | 'no_answer' | 'busy' | 'canceled' | 'failed';
+  outcome: string;
+  rawCause: string;
+}
+
+/** What the bridge reads off one of a carrier's lifecycle events. */
+export interface CarrierEventFacts {
+  /** The carrier's own id for the call, as this event names it, or ''. */
+  carrierCallId: string;
+  /** The carrier's recording URL, when this event carries one. */
+  recordingUrl?: string;
+  /** Whether the event itself says the far end answered. */
+  wasAnswered: boolean;
+  /**
+   * Classify the event as a terminal. `answered` is the event's own answer folded with
+   * the bridge's answer anchor: a carrier whose terminal event omits the answer (a
+   * VoiceLink `call.ended` carries no `callStatus`) still settles a talked call as one.
+   */
+  classify(answered: boolean): CarrierTerminalOutcome;
+}
+
+/**
+ * How the bridge reads a carrier's lifecycle events. The carrier's own route parses its
+ * callback into a `CallEvent`; the bridge hands that event back here for the carrier's
+ * ids, recording URL and terminal classification, so its status handling has no branch
+ * per carrier.
+ */
+export interface CarrierLifecycle {
+  /** Read an event this carrier's parser produced. Never throws. */
+  readEvent(event: CallEvent): CarrierEventFacts;
+}
+
 export interface CarrierModule {
   /** The provider name, as stored on `agency_calls.provider` and campaigns. */
   readonly name: string;
@@ -76,4 +115,9 @@ export interface CarrierModule {
    * out to it). False when the carrier fetches it later from our answer response.
    */
   readonly mediaUrlInDialRequest: boolean;
+  /**
+   * How the bridge reads this carrier's lifecycle events (status callbacks). Optional:
+   * a carrier without it drives no status handling, and its events are refused.
+   */
+  readonly lifecycle?: CarrierLifecycle;
 }

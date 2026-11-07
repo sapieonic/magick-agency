@@ -264,10 +264,14 @@ export class ManualDialer {
    * socket. Resolves once the bridge has accepted (or refused) the dial: `ok` means
    * the call is in the bridge's hands (or the carrier refused it and it has
    * already ended `failed`, settled by its own `ended`).
+   *
+   * `provider` and `telephonyCredentialId` name the carrier account the call is placed
+   * on (`softphone-service.ts` decides them: the tag's, else the caller ID's number's).
+   * Absent: the service's own account.
    */
   async dial(
     call: AgencyManualCallRecord,
-    opts: { socket: WebSocket; provider?: string },
+    opts: { socket: WebSocket; provider?: string; telephonyCredentialId?: string | null },
   ): Promise<{ ok: true } | { ok: false; failure: ManualDialFailure }> {
     // Registered before the first await: a hang-up (or the reconnect, or the orphan
     // sweep's live set) arriving while the priors load must find the call.
@@ -321,6 +325,7 @@ export class ManualDialer {
         callerId: call.caller_id,
         destinationPhone: call.destination_e164,
         ...(opts.provider ? { provider: opts.provider } : {}),
+        ...(opts.telephonyCredentialId ? { telephonyCredentialId: opts.telephonyCredentialId } : {}),
         record: call.recording_requested,
         analysisProfileId: call.analysis_profile_id,
         initiatedBy: call.session_id,

@@ -1,6 +1,9 @@
 // VoiceLink's media-stream protocol: Twilio-shaped JSON frames, audio carrier-forced
 // to G.711 A-law 8 kHz, negotiated by a `start` frame that arrives after the socket opens.
-import type { CarrierMediaProtocol, CarrierModule, CarrierStartResult } from '../carrier-module.js';
+import type { CarrierLifecycle, CarrierMediaProtocol, CarrierModule, CarrierStartResult } from '../carrier-module.js';
+import type { CallEvent } from '../types.js';
+import { classifyVoicelinkOutcome, normalizeVoicelinkWebhook } from './voicelink.webhook.js';
+import type { VoicelinkWebhookBody } from './voicelink.types.js';
 import { VoicelinkTranscoder } from '../../utils/audio-fir.js';
 import { pcmToAlaw } from '../../utils/audio.js';
 
@@ -46,6 +49,23 @@ export const voicelinkMedia: CarrierMediaProtocol = {
   },
 };
 
+/**
+ * VoiceLink's events, read for the bridge. `parseVoicelinkWebhook` spreads the raw body
+ * into the event's metadata, so the body is normalised again here for the carrier's real
+ * call id, the recording URL and the classifier's inputs.
+ */
+export const voicelinkLifecycle: CarrierLifecycle = {
+  readEvent(event: CallEvent) {
+    const norm = normalizeVoicelinkWebhook((event.metadata ?? {}) as VoicelinkWebhookBody);
+    return {
+      carrierCallId: norm.providerCallId,
+      ...(norm.recordingUrl ? { recordingUrl: norm.recordingUrl } : {}),
+      wasAnswered: norm.wasAnswered,
+      classify: (answered: boolean) => classifyVoicelinkOutcome({ ...norm, wasAnswered: answered }),
+    };
+  },
+};
+
 export const voicelinkCarrier: CarrierModule = {
   name: 'voicelink',
   media: voicelinkMedia,
@@ -53,4 +73,5 @@ export const voicelinkCarrier: CarrierModule = {
   answeredHangup: 'close_media',
   // `add_lead` carries the `websocket_url` VoiceLink dials out to; there is no answer XML.
   mediaUrlInDialRequest: true,
+  lifecycle: voicelinkLifecycle,
 };

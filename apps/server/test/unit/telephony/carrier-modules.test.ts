@@ -186,3 +186,46 @@ describe('plivo carrier module', () => {
     expect(peak).toBeLessThan(9000);
   });
 });
+
+// The lifecycle hook: the bridge's status handling reads every carrier's events through
+// it (B18: no `provider === …` branch in the bridge), so each module must have one, and
+// it must read what that carrier's own parser produced.
+describe('carrier lifecycle readers', () => {
+  it('every module reads its own lifecycle events', () => {
+    for (const name of carrierModuleNames()) {
+      expect(findCarrierModule(name)!.lifecycle, name).toBeDefined();
+    }
+  });
+
+  it('voicelink: the real call id, the recording and VoiceLink`s classifier, the bridge`s answer folded in', async () => {
+    const { parseVoicelinkWebhook } = await import('../../../src/telephony/voicelink/voicelink.webhook.js');
+    const lifecycle = findCarrierModule('voicelink')!.lifecycle!;
+    // A real `call.ended` carries no callStatus: unanswered by itself.
+    const event = parseVoicelinkWebhook({
+      event: 'call.ended',
+      call: { id: 'vl-1', status: 'ended', hangupCause: '16', recordingUrl: 'https://rec.example/r.mp3' },
+    } as never, 'call-1')!;
+    const facts = lifecycle.readEvent(event);
+    expect(facts).toMatchObject({ carrierCallId: 'vl-1', recordingUrl: 'https://rec.example/r.mp3', wasAnswered: false });
+    expect(facts.classify(true)).toMatchObject({ status: 'completed', outcome: 'remote_hangup' });
+    expect(facts.classify(false).status).not.toBe('completed');
+  });
+
+  it('plivo: the CallUUID, the recording and Plivo`s classifier, read back off its own event', async () => {
+    const { normalizePlivoCallback, plivoCallEvent } = await import('../../../src/telephony/plivo/plivo.webhook.js');
+    const lifecycle = findCarrierModule('plivo')!.lifecycle!;
+    const busy = lifecycle.readEvent(plivoCallEvent(normalizePlivoCallback('status', {
+      CallStatus: 'busy', CallUUID: 'uuid-1', RequestUUID: 'req-1', HangupCauseName: 'Busy Line', HangupSource: 'Callee',
+    }), 'call-1')!);
+    expect(busy).toMatchObject({ carrierCallId: 'uuid-1', wasAnswered: false });
+    expect(busy.classify(false)).toMatchObject({ status: 'busy', outcome: 'busy' });
+    // The bridge's own answer anchor wins over a terminal that does not say it was answered.
+    expect(busy.classify(true)).toMatchObject({ status: 'completed', outcome: 'remote_hangup' });
+
+    const done = lifecycle.readEvent(plivoCallEvent(normalizePlivoCallback('status', {
+      CallStatus: 'completed', CallUUID: 'uuid-2', Duration: '31', AnswerTime: '2026-11-07 10:00:00',
+    }), 'call-1')!);
+    expect(done).toMatchObject({ carrierCallId: 'uuid-2', wasAnswered: true });
+    expect(done.classify(done.wasAnswered).status).toBe('completed');
+  });
+});

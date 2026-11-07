@@ -79,6 +79,17 @@ vi.mock('../../../src/telephony/carrier-modules.js', async (importOriginal) => {
   };
   return { ...actual, findCarrierModule: (p: string) => (p === 'l16' ? l16 : actual.findCarrierModule(p)) };
 });
+// The made-up `l16` carrier has no webhook namespace in config, and the builder refuses a
+// provider it cannot name: give it one, the rest unchanged.
+vi.mock('../../../src/core/webhook-url-builder.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/core/webhook-url-builder.js')>();
+  class WebhookUrlBuilder extends actual.WebhookUrlBuilder {
+    override baseUrl(p: string): string {
+      return p === 'l16' ? 'https://server.test/api/v1/webhooks/l16' : super.baseUrl(p);
+    }
+  }
+  return { ...actual, WebhookUrlBuilder };
+});
 
 import { WebRtcBridgeManager } from '../../../src/core/webrtc-bridge-manager.js';
 import {

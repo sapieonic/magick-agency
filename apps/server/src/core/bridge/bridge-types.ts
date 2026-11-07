@@ -17,7 +17,21 @@ export type WebRtcRejectReason =
   // dial time. Deliberately absent from the PostHog `WebrtcCallRejectionReason`
   // union — that is a published analytics contract with dashboards behind it, and
   // this reason belongs to the agency funnel.
-  | 'station_socket_unavailable';
+  | 'station_socket_unavailable'
+  // The rest are refusals before the carrier placed anything, each its own code so a
+  // caller can tell them apart from a carrier refusal (`telephony_init_failed`, which
+  // ends the call with an `ended`). None emits `ended`.
+  //
+  // The tenant carrier credential the dial names cannot dial: not `active` at the call
+  // row's insert, or not resolvable for `dial` (disabled, revoked, unopenable, another
+  // tenant's or provider's). Never falls back to the service's own account (B20).
+  | 'telephony_credential_unavailable'
+  // A calls-per-second limit gave the dial no slot: our own per-account gate, or the
+  // carrier's 429. Nothing was placed; retryable, and says nothing about the contact.
+  | 'carrier_rate_limited'
+  // The carrier refused the credential itself (HTTP 401). Every further dial on it will
+  // be refused too: the caller stops dialling on it.
+  | 'carrier_auth_rejected';
 
 export class WebRtcCallError extends Error {
   constructor(
@@ -37,6 +51,13 @@ export interface WebRtcOutboundParams {
   callerId: string;
   destinationPhone: string;
   provider?: string;
+  /**
+   * The tenant carrier credential to dial on (BYOC, decisions B18–B20): pinned on the
+   * call row at insert, which re-checks it is `active`, and resolved for `dial` to place
+   * the leg. Null or absent: the service's own account for `provider`. A credential that
+   * cannot dial refuses the leg (`telephony_credential_unavailable`); it never falls back.
+   */
+  telephonyCredentialId?: string | null;
   initiatedBy?: string | null;
   metadata?: Record<string, unknown>;
   record?: boolean;

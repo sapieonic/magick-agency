@@ -15,7 +15,8 @@ import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js
  *    credential; a tenant-account carrier needs an ACTIVE credential of THIS tenant;
  *  - its caller IDs must be active numbers synced from that credential;
  *  - start and resume are refused while the pinned credential is not active;
- *  - a retry inherits the pin.
+ *  - a retry inherits the pin;
+ *  - a carrier 401 pauses a running campaign `carrier_auth` (`pauseForCarrierAuth`).
  */
 
 vi.mock('@magick-agency/db', async (importOriginal) => ({
@@ -39,6 +40,7 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 
 const { agencyCampaignRoutes } = await import('../../../src/api/routes/agency-campaigns.routes.js');
 const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
+const { agencyCampaignRepository } = await import('../../../src/db/repositories/agency.repository.js');
 type AgencyCampaignRouteDeps = import('../../../src/api/routes/agency-campaigns.routes.js').AgencyCampaignRouteDeps;
 
 const TENANT = DEFAULTS.tenantId;
@@ -274,5 +276,37 @@ describe('retry of a pinned campaign', () => {
     const res = await post(parent.id, 'retry', { selector: { state: ['pending'] } });
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json().campaign).toMatchObject({ telephony_provider: 'plivo', telephony_credential_id: credA, caller_ids: MINE });
+  });
+});
+
+describe('agencyCampaignRepository.pauseForCarrierAuth — the carrier refused the pinned credential', () => {
+  it('pauses a running campaign `carrier_auth`, clears the actor and the abandonment evidence, and then refuses a second time', async () => {
+    const campaign = await plivoCampaign({
+      status: 'running', last_transition_by_name: 'Asha', pause_abandonment_rate_pct: 7.5,
+    });
+    const paused = await agencyCampaignRepository.pauseForCarrierAuth(campaign.id);
+    expect(paused).toMatchObject({
+      id: campaign.id, status: 'paused', pause_reason: 'carrier_auth',
+      pause_abandonment_rate_pct: null, last_transition_by_user_id: null, last_transition_by_name: null,
+    });
+    expect(paused!.paused_at).toBeInstanceOf(Date);
+    // Already paused: nothing more is written (the caller writes no second audit row).
+    expect(await agencyCampaignRepository.pauseForCarrierAuth(campaign.id)).toBeNull();
+    const { rows } = await (await pool()).query('SELECT status, pause_reason FROM agency_campaigns WHERE id = $1', [campaign.id]);
+    expect(rows[0]).toEqual({ status: 'paused', pause_reason: 'carrier_auth' });
+  });
+
+  it.each(['draft', 'stopping', 'stopped', 'completed'])('leaves a %s campaign alone', async (status) => {
+    const campaign = await plivoCampaign({ status });
+    expect(await agencyCampaignRepository.pauseForCarrierAuth(campaign.id)).toBeNull();
+    const { rows } = await (await pool()).query('SELECT status, pause_reason FROM agency_campaigns WHERE id = $1', [campaign.id]);
+    expect(rows[0]).toEqual({ status, pause_reason: null });
+  });
+
+  it('a supervisor`s pause is not rewritten', async () => {
+    const campaign = await plivoCampaign({ status: 'paused', pause_reason: 'supervisor', paused_at: new Date() });
+    expect(await agencyCampaignRepository.pauseForCarrierAuth(campaign.id)).toBeNull();
+    const { rows } = await (await pool()).query('SELECT pause_reason FROM agency_campaigns WHERE id = $1', [campaign.id]);
+    expect(rows[0]!.pause_reason).toBe('supervisor');
   });
 });

@@ -186,6 +186,27 @@ export function selectCallerId(input: {
 }
 
 /**
+ * The carrier account a soft-phone call is placed on, once its caller ID is chosen.
+ *
+ *  - Tagged: the campaign's carrier and its pinned credential (null: the service's own
+ *    account), whatever the caller ID: the tag's caller IDs are that credential's numbers.
+ *  - Untagged: the chosen caller ID's own number decides. A number synced from a tenant's
+ *    carrier account dials on that credential; a number of the service's own carrier
+ *    dials with none. A caller ID that is not among the account's numbers (not reachable:
+ *    `selectCallerId` allows only those) names nothing, and the bridge's default applies.
+ */
+export function softphoneCarrier(
+  tag: Pick<AgencyCampaignRecord, 'telephony_provider' | 'telephony_credential_id'> | null,
+  accountNumbers: ReadonlyArray<{ phone_number?: string | null; provider_name?: string | null; telephony_credential_id?: string | null }>,
+  callerId: string,
+): { provider?: string; telephonyCredentialId?: string | null } {
+  if (tag) return { provider: tag.telephony_provider, telephonyCredentialId: tag.telephony_credential_id ?? null };
+  const number = accountNumbers.find((n) => typeof n.phone_number === 'string' && n.phone_number.trim() === callerId);
+  if (!number?.provider_name) return {};
+  return { provider: number.provider_name, telephonyCredentialId: number.telephony_credential_id ?? null };
+}
+
+/**
  * Step 4's rule over the matches (oldest first, as `findForManualMatch` answers):
  * any `in_flight` refuses; else the oldest `pending`; else the oldest.
  */

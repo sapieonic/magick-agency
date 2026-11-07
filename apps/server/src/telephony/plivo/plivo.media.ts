@@ -3,7 +3,9 @@
 // a `start` frame, then sends `{event:'media', media:{track, timestamp, chunk, payload}}`
 // and finally `{event:'stop'}`. Audio to Plivo goes as `playAudio` frames. G.711 μ-law
 // 8 kHz both ways; no browser leg speaks it, so every leg transcodes.
-import type { CarrierMediaProtocol, CarrierModule, CarrierStartResult } from '../carrier-module.js';
+import type { CarrierLifecycle, CarrierMediaProtocol, CarrierModule, CarrierStartResult } from '../carrier-module.js';
+import type { CallEvent } from '../types.js';
+import { classifyPlivoOutcome, plivoCallbackFromEvent } from './plivo.webhook.js';
 import { MulawTranscoder } from '../../utils/audio-fir.js';
 import { pcmToMulaw } from '../../utils/audio.js';
 
@@ -57,6 +59,19 @@ export const plivoMedia: CarrierMediaProtocol = {
   },
 };
 
+/** Plivo's events (`plivoCallEvent`), read for the bridge. */
+export const plivoLifecycle: CarrierLifecycle = {
+  readEvent(event: CallEvent) {
+    const n = plivoCallbackFromEvent(event);
+    return {
+      carrierCallId: n.callUuid,
+      ...(n.recordingUrl ? { recordingUrl: n.recordingUrl } : {}),
+      wasAnswered: n.wasAnswered,
+      classify: (answered: boolean) => classifyPlivoOutcome({ ...n, wasAnswered: answered }),
+    };
+  },
+};
+
 export const plivoCarrier: CarrierModule = {
   name: 'plivo',
   media: plivoMedia,
@@ -64,4 +79,5 @@ export const plivoCarrier: CarrierModule = {
   answeredHangup: 'rest',
   // The stream URL goes in the answer XML Plivo fetches on answer, not in the dial.
   mediaUrlInDialRequest: false,
+  lifecycle: plivoLifecycle,
 };
