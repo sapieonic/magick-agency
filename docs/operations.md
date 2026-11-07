@@ -526,9 +526,11 @@ shown on the Insights headline, and logged at ERROR; the contact goes back uncha
 resumes the campaign by itself:
 
 - `carrier_auth`: Plivo refused the credential (HTTP 401): its Auth Token was changed or the
-  account suspended at Plivo. The credential still reads `active` here. A super-admin rotates the
-  credential's secret to the current token (or verifies it, which marks it `invalid` if Plivo still
-  refuses it), then a supervisor resumes the campaign.
+  account suspended at Plivo. The refusal also marks the credential `invalid` with its
+  `last_error` (only if the secret version that was refused is still the current one), audited
+  `telephony_credential.carrier_refused`, so resume answers 409 `telephony_credential_not_active`
+  until a super-admin rotates the credential's secret to the current token, or verifies it once
+  Plivo accepts it again; both bring it back to `active`. Then a supervisor resumes the campaign.
 - `carrier_account_unavailable`: the pinned credential is no longer `active`: disabled, marked
   invalid, revoked, or its secret cannot be opened (a keyring key missing,
   `agy-credential-keyring-missing-keys`). Resume answers 409 `telephony_credential_not_active` until
