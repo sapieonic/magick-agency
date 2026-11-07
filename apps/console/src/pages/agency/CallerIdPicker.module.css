@@ -107,3 +107,16 @@
   padding: 2px 6px;
   border-radius: 4px;
 }
+
+/* A selected number the account no longer lists: shown so it can be removed. */
+.unavailable {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.remove {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 2px 8px;
+}

@@ -350,7 +350,7 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       telephony_provider: 'telephony_provider' in overrides ? overrides['telephony_provider'] : parent.telephony_provider,
       telephony_credential_id: 'telephony_credential_id' in overrides ? overrides['telephony_credential_id'] : parent.telephony_credential_id,
       caller_ids: (overrides['caller_ids'] as string[] | undefined) ?? parent.caller_ids,
-    })) return reply;
+    }, parent)) return reply;
 
     const generation = parent.retry_generation + 1;
     const requestedName = typeof body['name'] === 'string' ? body['name'].trim() : '';

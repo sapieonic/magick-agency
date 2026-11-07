@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactElement } from 'react';
 import { usePhoneNumbers } from '../../hooks/usePhoneNumbers';
 import { carrierKey, carrierName, numberOnCarrier, type CarrierChoice } from '../../utils/agencyCarriers';
 import styles from './CallerIdPicker.module.css';
@@ -32,6 +32,12 @@ export interface CallerIdPickerProps {
  * When the carrier changes (the page's carrier choice), selected numbers that are not on
  * the new carrier account are dropped, once the account's numbers are known: they would
  * be hidden here and still sent.
+ *
+ * A selected number the account no longer lists on THIS carrier account (a sync or a
+ * platform administrator retired it, or it was untagged from the account) is not pruned on
+ * load: it is shown as its own row, marked no longer available, with a Remove button, so
+ * the count matches what is on screen and the supervisor can take it out. The server keeps
+ * such a number when a save leaves it in the pool, and the dialler skips it (PL13).
  */
 export function CallerIdPicker({
   selected,
@@ -64,6 +70,40 @@ export function CallerIdPicker({
     if (kept.length !== selected.length) onChange(kept);
   }, [key, loading, error, onCarrier, selected, onChange]);
 
+  // Selected numbers not offered on this carrier account any more. Only meaningful once
+  // the numbers are known (the loading and error branches return first).
+  const unavailable = selected.filter((phone) => !onCarrier.some((pn) => pn.phone_number === phone));
+  const remove = (phone: string) => onChange(selected.filter((p) => p !== phone));
+  const withUnavailable = (body: ReactElement) => (
+    unavailable.length === 0 ? body : (
+      <>
+        {body}
+        <ul className={styles.list} aria-label="Selected numbers no longer available">
+          {unavailable.map((phone) => (
+            <li key={phone} className={styles.row} data-testid="caller-id-unavailable">
+              <span className={styles.number}>{phone}</span>
+              <span className={styles.unavailable}>No longer available</span>
+              <button
+                type="button"
+                className={styles.remove}
+                disabled={disabled}
+                onClick={() => remove(phone)}
+                aria-label={`Remove ${phone}`}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className={styles.hint}>
+          {unavailable.length === 1 ? 'This number is' : 'These numbers are'} no longer available
+          to this account on {name}, so calls skip {unavailable.length === 1 ? 'it' : 'them'}.
+          Remove {unavailable.length === 1 ? 'it' : 'them'} to tidy the list.
+        </p>
+      </>
+    )
+  );
+
   const toggle = (phone: string) => {
     onChange(
       selected.includes(phone) ? selected.filter((p) => p !== phone) : [...selected, phone],
@@ -74,7 +114,7 @@ export function CallerIdPicker({
   if (error) return <p className={styles.error}>{error}</p>;
 
   if (onCarrier.length === 0) {
-    return (
+    return withUnavailable(
       <div className={styles.empty}>
         <p className={styles.emptyTitle}>No numbers on {name} are assigned to this account.</p>
         <p className={styles.emptyBody}>
@@ -89,11 +129,11 @@ export function CallerIdPicker({
           )}{' '}
           Ask an administrator to assign one.
         </p>
-      </div>
+      </div>,
     );
   }
 
-  return (
+  return withUnavailable(
     <div className={styles.picker}>
       <ul className={styles.list}>
         {onCarrier.map((pn) => {
@@ -132,6 +172,6 @@ export function CallerIdPicker({
           {`${otherCount} number${otherCount === 1 ? '' : 's'} on other carriers ${otherCount === 1 ? 'is' : 'are'} not shown — this campaign dials through ${name} only.`}
         </p>
       )}
-    </div>
+    </div>,
   );
 }

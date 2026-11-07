@@ -154,18 +154,22 @@ export function configRejected(
  * (`campaignCarrierRefusal`: the carrier active, a tenant-account carrier pinned to an
  * active credential of this tenant, its caller IDs that credential's numbers). `effective`
  * is the campaign after the write; `body` is what the caller sent, which decides what is
- * judged. Returns false only when it has already replied.
+ * judged; `stored` is the campaign before it (null on a create), so caller IDs already in
+ * its pool on the same carrier account are not re-judged. Returns false only when it has
+ * already replied.
  */
 export async function carrierRejected(
   request: FastifyRequest,
   reply: FastifyReply,
   body: Record<string, unknown>,
   effective: { telephony_provider: unknown; telephony_credential_id: unknown; caller_ids: readonly string[] },
+  stored: { telephony_provider: string | null; telephony_credential_id: string | null; caller_ids: readonly string[] } | null = null,
 ): Promise<boolean> {
   const refusal = await campaignCarrierRefusal(
     { tenantId: getTenantId(request), accountId: getAccountId(request) },
     effective,
     { provider: 'telephony_provider' in body, credential: 'telephony_credential_id' in body, callerIds: 'caller_ids' in body },
+    stored,
   );
   if (!refusal) return false;
   if (refusal.kind === 'validation') {

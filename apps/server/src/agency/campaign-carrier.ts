@@ -63,6 +63,11 @@ const notFound: CodedRefusal = {
  *    the credential (pinning is the moment that must see an active credential; a caller-ID
  *    edit on a campaign whose credential was later disabled is not refused for it);
  *  - the caller IDs against the credential's numbers, whenever any of the three changes.
+ *    When the write leaves the campaign on the carrier account it is `stored` on, only
+ *    the caller IDs it ADDS are judged: a number already in the pool that a sync or a
+ *    super-admin has since retired may stay (the dial skips it, `usableCallerIds` and
+ *    PL13), so a rename or a calling-hours fix is never refused over a number the
+ *    supervisor can no longer see. `stored` is null on a create.
  *
  * Returns null when the write may go ahead.
  */
@@ -70,6 +75,7 @@ export async function campaignCarrierRefusal(
   scope: { tenantId: string; accountId: string },
   effective: { telephony_provider: unknown; telephony_credential_id: unknown; caller_ids: readonly string[] },
   changed: { provider: boolean; credential: boolean; callerIds: boolean },
+  stored: { telephony_provider: string | null; telephony_credential_id: string | null; caller_ids: readonly string[] } | null = null,
 ): Promise<CampaignCarrierRefusal | null> {
   if (!changed.provider && !changed.credential && !changed.callerIds) return null;
   const provider = effective.telephony_provider;
@@ -110,10 +116,19 @@ export async function campaignCarrierRefusal(
     if (credential.status !== 'active') return notActive(credential.status);
   }
 
+  // Same carrier account as stored: the numbers already in the pool were judged when they
+  // were added and are filtered at the dial; only the new ones are judged now.
+  const sameAccount = stored !== null
+    && stored.telephony_provider === provider
+    && (stored.telephony_credential_id ?? null) === credentialId;
+  const judged = sameAccount
+    ? effective.caller_ids.filter((id) => !stored.caller_ids.includes(id))
+    : effective.caller_ids;
+  if (judged.length === 0) return null;
   const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
-    scope.tenantId, scope.accountId, credentialId, effective.caller_ids,
+    scope.tenantId, scope.accountId, credentialId, judged,
   ));
-  const foreign = effective.caller_ids.filter((id) => !allowed.has(id));
+  const foreign = judged.filter((id) => !allowed.has(id));
   if (foreign.length > 0) {
     return {
       kind: 'validation',

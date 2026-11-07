@@ -151,3 +151,31 @@ describe('a change of carrier', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe('a selected number the account no longer lists on this carrier account', () => {
+  it('is shown as its own row with a Remove button, and counted', () => {
+    const onChange = vi.fn();
+    render(<CallerIdPicker selected={['+14155550104', '+14155550199']} onChange={onChange} carrier={TENANT_A} carrierLabel="Acme main" />);
+    // Mounting never prunes it.
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId('caller-id-unavailable').textContent).toMatch(/\+14155550199.*No longer available/);
+    expect(screen.getByText(/^2 selected\./)).toBeTruthy();
+    screen.getByRole('button', { name: 'Remove +14155550199' }).click();
+    expect(onChange).toHaveBeenCalledWith(['+14155550104']);
+  });
+
+  it('is shown with the empty state too, when nothing on the account is available', () => {
+    const onChange = vi.fn();
+    render(
+      <CallerIdPicker
+        selected={['+14155550199']}
+        onChange={onChange}
+        carrier={{ telephony_provider: 'plivo', telephony_credential_id: '33333333-3333-4333-8333-333333333333' }}
+        carrierLabel="Acme spare"
+      />,
+    );
+    expect(screen.getByText('No numbers on Pravah (Acme spare) are assigned to this account.')).toBeTruthy();
+    screen.getByRole('button', { name: 'Remove +14155550199' }).click();
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+});

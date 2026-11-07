@@ -83,6 +83,11 @@ import styles from './AgencyCampaignSettingsPage.module.css';
  * snapshot it was dialed with. The banner says so rather than leaving the
  * operator to guess whether the change took effect mid-run.
  */
+/** Whether two caller-ID pools hold the same numbers (the picker appends, so order is incidental). */
+function samePool(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((n) => b.includes(n));
+}
+
 export function AgencyCampaignSettingsPage() {
   const { id } = useParams<{ id: string }>();
   const { tenantId, accountId, role } = useTenant();
@@ -235,6 +240,12 @@ export function AgencyCampaignSettingsPage() {
     */
     const sendCarrier = !campaign?.telephony_provider
       || !sameCarrier(carrier, carrierOfCampaign(campaign));
+    /*
+      The caller IDs likewise go only when they changed (or the carrier moves, which
+      re-judges the pool). A stored number since retired or untagged would otherwise be
+      resent with every rename; the server keeps it (PL13), but there is nothing to write.
+    */
+    const sendCallerIds = sendCarrier || !samePool(callerIds, campaign?.caller_ids ?? []);
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -250,7 +261,7 @@ export function AgencyCampaignSettingsPage() {
           ...buildConfigPayload(config, assignmentScope),
           ...recordingFields,
           name: name.trim(),
-          caller_ids: callerIds,
+          ...(sendCallerIds ? { caller_ids: callerIds } : {}),
           ...(sendCarrier
             ? {
               telephony_provider: carrier.telephony_provider,

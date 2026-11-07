@@ -123,6 +123,41 @@ beforeEach(() => {
   mocks.updateAgencyCampaign.mockImplementation(async (_id, body) => campaign(body));
 });
 
+describe('campaign settings — a stored caller ID no longer available', () => {
+  beforeEach(() => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({
+      telephony_provider: 'plivo', telephony_credential_id: CRED_A, caller_ids: ['+14155550102', '+14155550199'],
+    }));
+  });
+
+  it('is shown as its own row, counted, and a save that does not touch the pool does not send it', async () => {
+    renderPage();
+    await screen.findByRole('checkbox', { name: /\+14155550102/ });
+    const row = screen.getByTestId('caller-id-unavailable');
+    expect(row.textContent).toMatch(/\+14155550199/);
+    expect(row.textContent).toMatch(/No longer available/);
+    // The count agrees with what is on screen: one ticked row and one unavailable row.
+    expect(screen.getByText(/^2 selected\./)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/campaign name/i), { target: { value: 'Renamed' } });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody()).toMatchObject({ name: 'Renamed' });
+    expect(sentBody()).not.toHaveProperty('caller_ids');
+  });
+
+  it('can be removed, and the save then sends the pool without it', async () => {
+    renderPage();
+    await screen.findByRole('checkbox', { name: /\+14155550102/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove +14155550199' }));
+    expect(screen.queryByTestId('caller-id-unavailable')).toBeNull();
+    expect(screen.getByText(/^1 selected\./)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody().caller_ids).toEqual(['+14155550102']);
+  });
+});
+
 describe('campaign settings — carrier', () => {
   it('is hidden with one carrier account, and an unchanged carrier is not re-sent', async () => {
     mocks.useAgencyCarriers.mockReturnValue({ carriers: [SERVICE], error: null });
@@ -203,7 +238,8 @@ describe('campaign settings — carrier', () => {
     // Naming the carrier would make the server re-check the account and refuse the save.
     expect(sentBody()).not.toHaveProperty('telephony_provider');
     expect(sentBody()).not.toHaveProperty('telephony_credential_id');
-    expect(sentBody().caller_ids).toEqual(['+14155550199']);
+    // Nor the unchanged caller IDs: there is nothing to write.
+    expect(sentBody()).not.toHaveProperty('caller_ids');
   });
 
   it('is not offered to a viewer who cannot edit, whose numbers still follow the campaign’s carrier', async () => {

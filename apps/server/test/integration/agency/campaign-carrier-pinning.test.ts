@@ -209,6 +209,36 @@ describe('PATCH /api/v1/agency-campaigns/:id — the carrier account', () => {
     expect((await patch(campaign.id, { caller_ids: [MINE[1]] })).statusCode).toBe(200);
   });
 
+  it('a stored caller ID retired since does not lock the campaign: a save resending the pool is accepted', async () => {
+    const campaign = await plivoCampaign();
+    // A sync retires MINE[1]; the settings page still resends the whole stored pool.
+    await phoneNumberRepository.syncForCredential(credA, [{ phone_number: MINE[0]!, label: null }], null);
+    const res = await patch(campaign.id, { name: 'Renamed', caller_ids: MINE });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ name: 'Renamed', caller_ids: MINE });
+    // Naming the same carrier account it is already on changes nothing about that.
+    const same = await patch(campaign.id, { telephony_provider: 'plivo', telephony_credential_id: credA, caller_ids: MINE });
+    expect(same.statusCode, same.body).toBe(200);
+  });
+
+  it('only the caller IDs a save ADDS are judged on the same carrier account', async () => {
+    const campaign = await plivoCampaign({ caller_ids: [MINE[0]] });
+    await phoneNumberRepository.syncForCredential(credA, [{ phone_number: MINE[0]!, label: null }], null);
+    const res = await patch(campaign.id, { caller_ids: [MINE[0], MINE[1], THEIRS] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details.caller_ids).toContain(MINE[1]);
+    expect(res.json().details.caller_ids).toContain(THEIRS);
+  });
+
+  it('moving to another credential judges the whole pool, stored numbers included', async () => {
+    const credB = await insertCredential(TENANT, 'Second');
+    await phoneNumberRepository.syncForCredential(credB, [{ phone_number: '+14155550004', label: null }], null);
+    const campaign = await plivoCampaign();
+    const res = await patch(campaign.id, { telephony_credential_id: credB, caller_ids: [...MINE, '+14155550004'] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details.caller_ids).toContain(MINE[0]);
+  });
+
   it('a caller-ID edit is not refused because the credential was disabled since (the pin is not being set)', async () => {
     const campaign = await plivoCampaign({ status: 'paused' });
     await setStatus(credA, 'disabled');
@@ -277,6 +307,20 @@ describe('retry of a pinned campaign', () => {
     const res = await post(parent.id, 'retry', { selector: { state: ['pending'] } });
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json().campaign).toMatchObject({ telephony_provider: 'plivo', telephony_credential_id: credA, caller_ids: MINE });
+  });
+
+  it('a caller-ID override keeping a number retired since is accepted; one adding a foreign number is not', async () => {
+    const parent = await plivoCampaign({ status: 'completed' });
+    await insertAgencyContact(parent.id);
+    await phoneNumberRepository.syncForCredential(credA, [{ phone_number: MINE[0]!, label: null }], null);
+    const refused = await post(parent.id, 'retry', {
+      selector: { state: ['pending'] }, config_overrides: { caller_ids: [...MINE, THEIRS] },
+    });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().details.caller_ids).toContain(THEIRS);
+    expect(refused.json().details.caller_ids).not.toContain(MINE[1]);
+    const res = await post(parent.id, 'retry', { selector: { state: ['pending'] }, config_overrides: { caller_ids: MINE } });
+    expect(res.statusCode, res.body).toBe(201);
   });
 });
 

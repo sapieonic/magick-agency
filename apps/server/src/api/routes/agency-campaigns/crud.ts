@@ -279,7 +279,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       telephony_provider: 'telephony_provider' in body ? body.telephony_provider : campaign.telephony_provider,
       telephony_credential_id: 'telephony_credential_id' in body ? body.telephony_credential_id : campaign.telephony_credential_id,
       caller_ids: (body.caller_ids as string[] | undefined) ?? campaign.caller_ids,
-    })) return reply;
+    }, campaign)) return reply;
 
     if ('abandon_announcement_id' in body
       && await abandonAnnouncementRejected(request, reply, body.abandon_announcement_id)) return reply;
