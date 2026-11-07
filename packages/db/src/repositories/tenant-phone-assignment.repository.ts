@@ -4,7 +4,29 @@ import type {
   PhoneAccountTagRecord,
 } from '../models/tenant-phone-assignment.model.js';
 
+/**
+ * The number was synced from a tenant's own carrier account (`phone_numbers.telephony_credential_id`,
+ * decisions B18, PL5) and the assignment names another tenant. Such a number belongs to its
+ * credential's tenant: assigned elsewhere, another tenant's calls would present a number billed
+ * to, and dialled on, someone else's account.
+ */
+export class PhoneNumberOtherTenantError extends Error {
+  readonly code = 'phone_number_other_tenant';
+  constructor(readonly phoneNumberId: string, readonly tenantId: string) {
+    super(`Phone number ${phoneNumberId} is synced from another tenant's carrier account; it cannot be assigned to tenant ${tenantId}`);
+    this.name = 'PhoneNumberOtherTenantError';
+  }
+}
+
 export class TenantPhoneAssignmentRepository {
+  /**
+   * Assign a number to a tenant. A number synced from a tenant credential is assignable only
+   * to that credential's tenant (PL5): checked IN the insert (`INSERT … SELECT … WHERE`), so
+   * every caller is held to it, not only the super-admin route, and nothing can slip in
+   * between a check and the write. Throws {@link PhoneNumberOtherTenantError} when it does
+   * not hold; a number or tenant that does not exist is the FK's `23503`, a repeat the
+   * unique index's `23505`, as before.
+   */
   async assign(
     tenantId: string,
     phoneNumberId: string,
@@ -14,11 +36,18 @@ export class TenantPhoneAssignmentRepository {
     const pool = getPool();
     const result = await pool.query<TenantPhoneAssignmentRecord>(
       `INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id, is_default, assigned_by)
-       VALUES ($1, $2, $3, $4)
+       SELECT $1::uuid, $2::uuid, $3, $4
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM phone_numbers pn
+            JOIN telephony_credentials tc ON tc.id = pn.telephony_credential_id
+           WHERE pn.id = $2::uuid AND tc.tenant_id <> $1::uuid
+        )
        RETURNING *`,
       [tenantId, phoneNumberId, isDefault, assignedBy || null],
     );
-    return result.rows[0]!;
+    if (!result.rows[0]) throw new PhoneNumberOtherTenantError(phoneNumberId, tenantId);
+    return result.rows[0];
   }
 
   async findById(assignmentId: string): Promise<TenantPhoneAssignmentRecord | null> {

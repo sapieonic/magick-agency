@@ -63,7 +63,8 @@ vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
   },
 }));
 
-vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () => ({
+vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', async (importOriginal) => ({
+  PhoneNumberOtherTenantError: (await importOriginal<typeof import('@magick-agency/db/repositories/tenant-phone-assignment.repository')>()).PhoneNumberOtherTenantError,
   tenantPhoneAssignmentRepository: {
     findByPhoneNumberId: mocks.findByPhoneNumberId,
     assign: mocks.assign,
@@ -307,15 +308,18 @@ describe('numbers on a tenant\'s own carrier account (B18): synced, never added 
     expect(mocks.createPhone).not.toHaveBeenCalled();
   });
 
-  it('a synced number is assigned only to its credential\'s tenant', async () => {
+  it('a synced number is assigned only to its credential\'s tenant (the repository refuses; the route says why)', async () => {
     mocks.findPhoneById.mockResolvedValue({ id: 'pn-1', status: 'active', telephony_credential_id: 'cred-a' });
-    mocks.findCredentialById.mockResolvedValue({ id: 'cred-a', tenant_id: TENANT_A });
-    mocks.assign.mockResolvedValue({ id: 'asg-1' });
+    const { PhoneNumberOtherTenantError } = await import('@magick-agency/db/repositories/tenant-phone-assignment.repository');
+    mocks.assign.mockImplementation(async (tenantId: string, id: string) => {
+      if (tenantId !== TENANT_A) throw new PhoneNumberOtherTenantError(id, tenantId);
+      return { id: 'asg-1' };
+    });
     const app = await buildApp();
 
     const refused = await app.inject({ method: 'POST', url: '/super-admin/phone-numbers/pn-1/assign', payload: { tenant_id: TENANT_B } });
     expect(refused.statusCode).toBe(409);
-    expect(mocks.assign).not.toHaveBeenCalled();
+    expect(refused.json().message).toMatch(/synced from another tenant’s carrier account/);
 
     const allowed = await app.inject({ method: 'POST', url: '/super-admin/phone-numbers/pn-1/assign', payload: { tenant_id: TENANT_A } });
     expect(allowed.statusCode).toBe(201);

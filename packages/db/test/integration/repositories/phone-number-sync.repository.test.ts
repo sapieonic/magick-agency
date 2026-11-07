@@ -260,3 +260,33 @@ describe('phoneNumberRepository.findCampaignsHoldingInactiveNumbers (integration
     ]);
   });
 });
+
+describe('tenantPhoneAssignmentRepository.assign: a synced number stays with its credential`s tenant (integration, PL5)', () => {
+  it('assigning a synced number to another tenant is refused in the insert, and nothing is written', async () => {
+    const { PhoneNumberOtherTenantError } = await import('../../../src/repositories/tenant-phone-assignment.repository.js');
+    const cred = await insertCredential();
+    await phoneNumberRepository.syncForCredential(cred, listed('+14155550001'), admin);
+    const id = (await getTestPool().query<{ id: string }>(`SELECT id FROM phone_numbers WHERE phone_number = '+14155550001'`)).rows[0]!.id;
+
+    const err = await tenantPhoneAssignmentRepository.assign(otherTenant, id, false).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PhoneNumberOtherTenantError);
+    expect(err).toMatchObject({ code: 'phone_number_other_tenant', phoneNumberId: id, tenantId: otherTenant });
+    expect(await assignedTenants('+14155550001')).toEqual([tenant]);
+  });
+
+  it('its own tenant may assign it (a repeat is the unique index`s 23505); a service number goes to any tenant; a missing number is the FK`s 23503', async () => {
+    const cred = await insertCredential();
+    await phoneNumberRepository.syncForCredential(cred, listed('+14155550001'), admin);
+    const synced = (await getTestPool().query<{ id: string }>(`SELECT id FROM phone_numbers WHERE phone_number = '+14155550001'`)).rows[0]!.id;
+    await getTestPool().query('DELETE FROM tenant_phone_assignments WHERE phone_number_id = $1', [synced]);
+    expect(await tenantPhoneAssignmentRepository.assign(tenant, synced, true)).toMatchObject({ tenant_id: tenant, phone_number_id: synced, is_default: true });
+    await expect(tenantPhoneAssignmentRepository.assign(tenant, synced, false)).rejects.toMatchObject({ code: '23505' });
+
+    const own = (await getTestPool().query<{ id: string }>(
+      `INSERT INTO phone_numbers (phone_number, provider_id) VALUES ('+919000000001', $1) RETURNING id`, [providers.voicelink])).rows[0]!.id;
+    expect(await tenantPhoneAssignmentRepository.assign(otherTenant, own, false)).toMatchObject({ tenant_id: otherTenant });
+    expect(await tenantPhoneAssignmentRepository.assign(tenant, own, false)).toMatchObject({ tenant_id: tenant });
+
+    await expect(tenantPhoneAssignmentRepository.assign(tenant, randomUUID(), false)).rejects.toMatchObject({ code: '23503' });
+  });
+});

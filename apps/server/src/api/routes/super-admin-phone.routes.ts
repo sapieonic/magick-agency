@@ -3,7 +3,7 @@ import { superAdminMiddleware } from '../../auth/super-admin.middleware.js';
 import { recordSuperAdminAudit } from '../../audit/super-admin-audit.js';
 import { telephonyProviderRepository } from '../../db/repositories/telephony-provider.repository.js';
 import { phoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
-import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
+import { PhoneNumberOtherTenantError, tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
 import type { PhoneNumberRecord } from '@magick-agency/db/models/phone-number.model';
@@ -14,7 +14,6 @@ import {
 } from '../validators/phone-number.validator.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
-import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { findCredentialSpec } from '../../telephony/credentials/credential-specs.js';
 
 const log = createChildLogger({ component: 'super-admin-phone-routes' });
@@ -334,17 +333,8 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     }
     // A number synced from a tenant's carrier account belongs to that tenant: assigning
     // it to another would let that tenant's calls present a number billed to, and dialled
-    // on, someone else's account.
-    if (phoneNumber.telephony_credential_id) {
-      const credential = await telephonyCredentialRepository.findById(phoneNumber.telephony_credential_id);
-      if (!credential || credential.tenant_id !== tenant_id) {
-        return reply.code(409).send({
-          error: 'Conflict',
-          message: 'This number is synced from another tenant’s carrier account and can only be assigned to that tenant',
-        });
-      }
-    }
-
+    // on, someone else's account. The repository's insert enforces it
+    // (`PhoneNumberOtherTenantError`), for every caller.
     try {
       const assignment = await tenantPhoneAssignmentRepository.assign(
         tenant_id,
@@ -365,6 +355,12 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
 
       return reply.code(201).send({ assignment });
     } catch (err: any) {
+      if (err instanceof PhoneNumberOtherTenantError) {
+        return reply.code(409).send({
+          error: 'Conflict',
+          message: 'This number is synced from another tenant’s carrier account and can only be assigned to that tenant',
+        });
+      }
       // Handle unique constraint violation (already assigned)
       if (err.code === '23505') {
         return reply.code(409).send({ error: 'Conflict', message: 'Phone number already assigned to this tenant' });
