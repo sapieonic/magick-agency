@@ -1,6 +1,7 @@
 import { isUsableTimezone } from './calling-hours.js';
 import {
   AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX,
+  AGENCY_AUTO_DISPOSITION_OUTCOMES,
   AGENCY_AGENT_RETRY_ROUNDS_MAX,
   AGENCY_AGENT_RETRY_ROUNDS_MIN,
   AGENCY_ASSIGNMENT_MODES,
@@ -12,8 +13,12 @@ import {
   DEVICE_AWAY_BREAK_REASON,
   RESERVED_BREAK_REASONS,
   SOFTPHONE_BREAK_REASON,
+  type AgencyAttemptOutcome,
+  type AgencyAutoDispositionOutcome,
   type AgencyReservedBreakReason,
 } from '@magick-agency/contracts/agency';
+import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
+import { autoDispositionRefusal, isAutoDispositionOutcome } from '@magick-agency/domain/auto-disposition';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG — THE INTERNAL HANDLER'S OWN BOUNDARY ───────────
@@ -180,6 +185,10 @@ const MAX_TIMEZONE_LENGTH = 64;
 export const CAMPAIGN_CONFIG_COLUMN_DEFAULTS = {
   calling_window_start: '09:00:00',
   calling_window_end: '20:00:00',
+  // The automatic-outcome pair's defaults, so a create's map is checked against the
+  // catalog it will actually store (`validateOutcomeDispositions`): none sent ⇒ `[]`.
+  disposition_catalog: [],
+  outcome_dispositions: {},
 } as const;
 
 // The default abandonment ceiling. Lives in the leaf the repository also imports
@@ -196,10 +205,23 @@ export interface CampaignConfigOptions {
   allowDispositionOverride?: boolean;
 }
 
+/**
+ * A disposition code: lowercase letters, digits and underscores, at most 50
+ * (`agency_call_attempts.disposition_code` and `auto_disposition_code` are `VARCHAR(50)`).
+ */
+const DISPOSITION_CODE_RE = /^[a-z0-9_]{1,50}$/;
+
 /** What the effective config is, before this body is applied. */
 export interface CampaignConfigBase {
   calling_window_start?: string;
   calling_window_end?: string;
+  /**
+   * The stored catalog and automatic-outcome map (a PATCH, a retry's parent), so a body
+   * that changes one is checked against the other (OD6). Absent on a create: `[]` and
+   * `{}`, the column defaults.
+   */
+  disposition_catalog?: unknown;
+  outcome_dispositions?: unknown;
 }
 
 /** Normalise `HH:MM` and `HH:MM:SS` to a comparable `HH:MM:SS`. */
@@ -411,7 +433,7 @@ function validateDispositionCatalog(catalog: unknown, allowOverride: boolean): C
     const entry = raw as Record<string, unknown>;
 
     const code = entry['code'];
-    if (typeof code !== 'string' || !/^[a-z0-9_]{1,50}$/.test(code)) {
+    if (typeof code !== 'string' || !DISPOSITION_CODE_RE.test(code)) {
       issues.push({
         field: `${at}.code`,
         // Compared byte-for-byte where it is consumed — the catalog lookup on
@@ -630,6 +652,7 @@ export function validateAgencyCampaignConfig(
       options.allowDispositionOverride ?? true,
     ));
   }
+  issues.push(...validateOutcomeDispositions(record, base));
   if (record['retry_policy'] !== undefined) {
     issues.push(...validateRetryPolicy(record['retry_policy']));
   }
@@ -642,6 +665,96 @@ export function validateAgencyCampaignConfig(
   issues.push(...validateBooleanSetting(record, 'allow_wrapup_redial'));
   issues.push(...validateAssignmentSettings(record));
   issues.push(...validateCallingWindow(record, base));
+  return issues;
+}
+
+/**
+ * Why an outcome that is not mappable is refused (OD2). Keyed by every attempt outcome
+ * outside `AGENCY_AUTO_DISPOSITION_OUTCOMES`, so an outcome added to the union must be
+ * given a reason here (or made mappable) before this compiles.
+ */
+const UNMAPPABLE_OUTCOME_REASON: Readonly<Record<Exclude<AgencyAttemptOutcome, AgencyAutoDispositionOutcome>, string>> = {
+  connected: 'an agent spoke to the customer and records the outcome themselves',
+  agent_disconnected: 'it is our own fault, not something the customer did',
+  orphaned: 'it is our own fault, not something the customer did',
+  canceled: 'it is a dial we stopped ourselves, not something the customer did',
+  machine: 'it never happens: answering-machine detection is off, so a voicemail is a connected call',
+};
+
+/** The tail of both "this entry claims a consequence" refusals (OD3). */
+const AUTO_OUTCOME_IS_A_LABEL =
+  'an automatic outcome is only a label and never changes what happens to the contact (the retry rules decide that)';
+
+/**
+ * Automatic outcomes for unanswered calls (`outcome_dispositions`, decisions OD1–OD8).
+ *
+ * The shape, whenever the body carries the map: an object keyed by the mappable outcomes
+ * only, each value a code string. Then the cross-field rule (OD3, OD6), whenever the body
+ * carries the map or the catalog, on the EFFECTIVE pair (the body over `base`): every
+ * mapped code passes `autoDispositionRefusal` (`@magick-agency/domain/auto-disposition`,
+ * the console's rule too). The catalog side is what refuses an edit that removes or
+ * changes a mapped entry, keyed on the mapping so the operator sees which one.
+ *
+ * `base` follows the calling-window rule's convention: an ABSENT base value is unknown,
+ * and the cross-field check is skipped unless the body carries both. The internal handler
+ * passes the column defaults on a create (`CAMPAIGN_CONFIG_COLUMN_DEFAULTS`: `[]` and
+ * `{}`), the stored campaign on a PATCH and the parent on a retry; the public API layer,
+ * which holds no stored campaign, passes none. Exported for it: same rules, same messages.
+ */
+export function validateOutcomeDispositions(
+  record: Record<string, unknown>,
+  base: CampaignConfigBase = {},
+): CampaignConfigIssue[] {
+  const hasMap = record['outcome_dispositions'] !== undefined;
+  const hasCatalog = record['disposition_catalog'] !== undefined;
+  if (!hasMap && !hasCatalog) return [];
+
+  if (hasMap) {
+    const map = record['outcome_dispositions'];
+    if (map === null || typeof map !== 'object' || Array.isArray(map)) {
+      return [{ field: 'outcome_dispositions', message: 'outcome_dispositions must be an object keyed by outcome.' }];
+    }
+    const shapeIssues: CampaignConfigIssue[] = [];
+    for (const [key, code] of Object.entries(map as Record<string, unknown>)) {
+      const field = `outcome_dispositions.${key}`;
+      if (!isAutoDispositionOutcome(key)) {
+        const reason = Object.hasOwn(UNMAPPABLE_OUTCOME_REASON, key)
+          ? UNMAPPABLE_OUTCOME_REASON[key as keyof typeof UNMAPPABLE_OUTCOME_REASON]
+          : undefined;
+        shapeIssues.push({
+          field,
+          message: reason
+            ? `'${key}' cannot have an automatic outcome: ${reason}.`
+            : `'${key}' is not an unanswered-call outcome. Valid keys: ${AGENCY_AUTO_DISPOSITION_OUTCOMES.join(', ')}.`,
+        });
+      } else if (typeof code !== 'string' || !DISPOSITION_CODE_RE.test(code)) {
+        shapeIssues.push({ field, message: 'Each automatic outcome must be a disposition code from this campaign\'s outcome list.' });
+      }
+    }
+    if (shapeIssues.length > 0) return shapeIssues;
+  }
+
+  const map = hasMap ? record['outcome_dispositions'] : base.outcome_dispositions;
+  const catalog = hasCatalog ? record['disposition_catalog'] : base.disposition_catalog;
+  // Unknown (no base), or a malformed catalog: that is the catalog validator's refusal.
+  // The stored map is an object (the column CHECK, and the shape check above).
+  if (map === undefined || !Array.isArray(catalog)) return [];
+
+  const issues: CampaignConfigIssue[] = [];
+  for (const [outcome, code] of Object.entries(map as Record<string, unknown>)) {
+    if (!isAutoDispositionOutcome(outcome) || typeof code !== 'string') continue;
+    const refusal = autoDispositionRefusal(catalog, code);
+    if (refusal === null) continue;
+    const calls = `“${ATTEMPT_OUTCOME_LABELS[outcome]}” calls`;
+    // Worded for the edit that caused it: a map naming a missing code, or a catalog edit
+    // that took away a mapped one.
+    const message = refusal === 'missing'
+      ? hasMap
+        ? `'${code}' is not in this campaign's outcome list. Pick an outcome from the list for ${calls}.`
+        : `The outcome list no longer has '${code}', the automatic outcome for ${calls}. Choose another automatic outcome for them first.`
+      : `'${code}' ${refusal === 'suppress' ? 'stops the number being called' : 'closes the contact'}, so it cannot be the automatic outcome for ${calls}: ${AUTO_OUTCOME_IS_A_LABEL}.`;
+    issues.push({ field: `outcome_dispositions.${outcome}`, message });
+  }
   return issues;
 }
 

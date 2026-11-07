@@ -491,3 +491,52 @@ describe('the disposition the agent filed', () => {
     expect(screen.queryByText('Written up as')).toBeNull();
   });
 });
+
+describe('an automatic outcome (decisions OD1–OD8)', () => {
+  it('is its own fact, named automatic, never the write-up', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue({
+      id: 'camp-1', name: 'Q3 Renewals', status: 'stopped',
+      disposition_catalog: [{ code: 'retry_later', label: 'Retry later' }],
+    });
+    mocks.getAgencyAttemptCall.mockResolvedValue(detail({
+      attempt: { ...ATTEMPT, outcome: 'busy', disposition_code: null, auto_disposition_code: 'retry_later' },
+    }));
+    renderPage();
+
+    const fact = await screen.findByTestId('call-fact-Automatic outcome');
+    await waitFor(() => expect(fact.textContent).toContain('Retry later'));
+    expect(screen.getByTitle(/name this outcome\. Filed as “retry_later”\.$/)).toBeTruthy();
+    // The write-up stays "not written up": nobody wrote it.
+    expect(screen.getByTestId('call-fact-Code').textContent).toContain('Not written up');
+  });
+
+  it('never says no one wrote the call up beside a write-up', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue({
+      id: 'camp-1', name: 'Q3 Renewals', status: 'stopped',
+      disposition_catalog: [
+        { code: 'retry_later', label: 'Retry later' },
+        { code: 'callback', label: 'Callback' },
+      ],
+    });
+    mocks.getAgencyAttemptCall.mockResolvedValue(detail({
+      attempt: {
+        ...ATTEMPT, outcome: 'no_answer', disposition_code: 'callback', auto_disposition_code: 'retry_later',
+      },
+    }));
+    renderPage();
+
+    const fact = await screen.findByTestId('call-fact-Automatic outcome');
+    await waitFor(() => expect(fact.textContent).toContain('Retry later'));
+    expect(screen.getByTestId('call-fact-Written up as').textContent).toContain('Callback');
+    // Both hints stay: what filed the automatic one, and the write-up's own code.
+    expect(screen.getByTitle(/name this outcome\. Filed as “retry_later”\.$/)).toBeTruthy();
+    expect(screen.getByTitle('Filed as “callback”')).toBeTruthy();
+    expect(screen.queryByTitle(/No one wrote/i)).toBeNull();
+  });
+
+  it('is absent on an attempt without one', async () => {
+    renderPage();
+    await screen.findByTestId('call-fact-Code');
+    expect(screen.queryByTestId('call-fact-Automatic outcome')).toBeNull();
+  });
+});

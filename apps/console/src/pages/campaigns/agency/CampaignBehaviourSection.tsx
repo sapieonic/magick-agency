@@ -1,16 +1,23 @@
+import { useRef } from 'react';
 import { ComposerSection } from '../components/ComposerSection';
-import type { CampaignConfigState } from '../../../utils/agencyCampaignConfigForm';
+import {
+  followCatalogEdit,
+  type CampaignConfigState,
+  type MappedRows,
+} from '../../../utils/agencyCampaignConfigForm';
 import { useConfigFieldErrors } from './configFieldErrors';
 import { CallingHoursFields } from './CallingHoursFields';
 import { DispositionCatalogEditor } from './DispositionCatalogEditor';
 import { RetryPolicyTable } from './RetryPolicyTable';
+import { OutcomeDispositionMap } from './OutcomeDispositionMap';
 import { WrapupFields } from './WrapupFields';
 import { AbandonmentCeilingFields } from './AbandonmentCeilingFields';
 import { AssignmentFields } from './AssignmentFields';
 
 /**
  * Campaign configuration: calling hours, the
- * disposition catalog, the retry policy, wrap-up and the abandonment limit.
+ * disposition catalog, the retry policy, the automatic outcomes for unanswered
+ * calls (`OutcomeDispositionMap`), wrap-up and the abandonment limit.
  *
  * Every rule lives in `utils/agencyCampaignConfigForm.ts`. This file assembles
  * five editors — `CallingHoursFields`, `DispositionCatalogEditor`,
@@ -107,6 +114,8 @@ export function CampaignBehaviourSection({
   readOnly = false,
 }: CampaignBehaviourSectionProps) {
   const errors = useConfigFieldErrors(fieldErrors);
+  // The catalog row each mapped outcome follows through code edits (`followCatalogEdit`).
+  const mappedRows = useRef<MappedRows>({});
   const showHours = include.includes('hours');
   const showBehaviour = include.includes('behaviour');
 
@@ -123,7 +132,16 @@ export function CampaignBehaviourSection({
     <>
       <DispositionCatalogEditor
         dispositions={state.dispositions}
-        onChange={(dispositions) => onChange({ ...state, dispositions })}
+        // A mapped row's code edits are followed into the automatic-outcome mapping;
+        // a removed row is left for the mapping's row to report.
+        onChange={(dispositions, edit) => {
+          const followed = followCatalogEdit(state.dispositions, edit, dispositions, {
+            mapping: state.outcomeDispositions,
+            rows: mappedRows.current,
+          });
+          mappedRows.current = followed.rows;
+          onChange({ ...state, dispositions, outcomeDispositions: followed.mapping });
+        }}
         errors={errors}
         overrides={assignment !== undefined}
       />
@@ -131,6 +149,12 @@ export function CampaignBehaviourSection({
         retryPolicy={state.retryPolicy}
         onChange={(retryPolicy) => onChange({ ...state, retryPolicy })}
         errors={errors}
+      />
+      <OutcomeDispositionMap
+        mapping={state.outcomeDispositions}
+        dispositions={state.dispositions}
+        onChange={(outcomeDispositions) => onChange({ ...state, outcomeDispositions })}
+        fieldErrors={fieldErrors}
       />
       <WrapupFields
         wrapupSeconds={state.wrapupSeconds}
@@ -180,8 +204,8 @@ export function CampaignBehaviourSection({
         <ComposerSection
           title="Behaviour"
           helper={assignment
-            ? 'Outcomes agents can pick, how retries work, wrap-up, when the campaign pauses itself, and how contacts are assigned.'
-            : 'Outcomes agents can pick, how retries work, wrap-up, and when the campaign pauses itself.'}
+            ? 'Outcomes agents can pick, how retries work, what an unanswered call is filed as, wrap-up, when the campaign pauses itself, and how contacts are assigned.'
+            : 'Outcomes agents can pick, how retries work, what an unanswered call is filed as, wrap-up, and when the campaign pauses itself.'}
         >
           {behaviour}
         </ComposerSection>

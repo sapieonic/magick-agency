@@ -75,7 +75,7 @@ function attempt(id: string, createdIso: string, over: Partial<CustomerHistoryAt
   const created = new Date(createdIso);
   return {
     id, contact_id: uid(100), campaign_id: ROOT, account_id: ACC_A, attempt_number: 1, webrtc_call_id: null,
-    agent_user_id: OTHER, state: 'ended', outcome: 'connected', disposition_code: 'ptp', notes: 'Spoke to her',
+    agent_user_id: OTHER, state: 'ended', outcome: 'connected', disposition_code: 'ptp', auto_disposition_code: null, notes: 'Spoke to her',
     callback_at: null, dialed_at: created, ended_at: new Date(created.getTime() + 60_000), talk_seconds: 50,
     dispositioned_by_user_id: null, dispositioned_at: null, redial_of_attempt_id: null, chain_attempt_id: id, redial_number: 0,
     override_applied: [], override_note: null, record_calls: true, created_at: created, at: micro(createdIso), ...over,
@@ -371,6 +371,20 @@ describe('the timeline page', () => {
     expect(byKey.get(`dnc_mark:${uid(400)}`)).toMatchObject({ entry: { reason: 'Asked not to be called', added_by: 'Karan Shah' } });
   });
 
+  it('the automatic outcome rides beside the recorded code, shown even where the notes are hidden', () => {
+    // OD1–OD8: a catalog code the campaign chose, not agent-typed text, so it is not gated by CH8
+    // the way `notes` is. Null on an attempt that has none.
+    const unanswered = attempt(uid(5), '2026-10-05T09:00:00Z', {
+      outcome: 'no_answer', disposition_code: null, notes: null, auto_disposition_code: 'callback', talk_seconds: null,
+    });
+    const answered = attempt(uid(6), '2026-10-06T09:00:00Z');
+    for (const viewer of [viewerAs('agent'), viewerAs('account_admin')]) {
+      const byKey = new Map(buildTimeline(page({ viewer, attempts: [unanswered, answered] })).map((e) => [e.key, e]));
+      expect(byKey.get(`campaign_call:${uid(5)}`)).toMatchObject({ outcome: 'no_answer', disposition_code: null, auto_disposition_code: 'callback' });
+      expect(byKey.get(`campaign_call:${uid(6)}`)).toMatchObject({ disposition_code: 'ptp', auto_disposition_code: null });
+    }
+  });
+
   it('DNC detail follows the entry\'s own account, not the caller\'s highest role', () => {
     // An agent in A who is a viewer in B: B's campaign mark shows its reason, A's does not.
     const viewer = buildViewer(ME, [{ account_id: ACC_A, role: 'agent' }, { account_id: ACC_B, role: 'viewer' }],
@@ -508,6 +522,25 @@ describe('the CSV', () => {
     const redial = lines.find((l) => l.includes('Attempt 2'))!;
     expect(redial).toContain('Wrap-up redial 1');
     expect(redial).not.toContain(uid(200));
+  });
+
+  it('the automatic outcome goes in "Details", leaving every column where it was', () => {
+    const entries = buildTimeline(page({
+      attempts: [
+        attempt(uid(7), '2026-10-07T09:00:00Z', { outcome: 'busy', disposition_code: null, auto_disposition_code: 'callback' }),
+        attempt(uid(8), '2026-10-08T09:00:00Z'),
+      ],
+    }));
+    const csv = customerHistoryCsv(entries, '+919876543210', () => null);
+    const [header, newer, older] = csv.trimEnd().split('\n');
+    expect(header).toBe(CUSTOMER_HISTORY_CSV_HEADERS.join(','));
+    expect(CUSTOMER_HISTORY_CSV_HEADERS.at(-1)).toBe('Details');
+    // "Outcome code" stays what a person recorded: empty on the unanswered call.
+    const code = CUSTOMER_HISTORY_CSV_HEADERS.indexOf('Outcome code');
+    expect(older!.split(',')[code]).toBe('');
+    expect(older!.split(',').at(-1)).toBe('Attempt 1; Automatic outcome: callback');
+    expect(newer!.split(',')[code]).toBe('ptp');
+    expect(newer).not.toContain('Automatic outcome');
   });
 
   it('every cell that starts like a formula (= + - @) is written as text', () => {

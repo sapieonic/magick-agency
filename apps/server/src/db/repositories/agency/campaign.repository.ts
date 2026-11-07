@@ -51,6 +51,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'break_reasons',
+  // Automatic outcomes for unanswered calls (0022). An operator setting, patchable at any
+  // status; the dialer reads it from the campaign row it settles with.
+  'outcome_dispositions',
   // Wrap-up redial (0008). An operator setting like `wrapup_auto_return`, so it is
   // patchable at any status; a session reads it at join (the bootstrap).
   'allow_wrapup_redial',
@@ -83,7 +86,7 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
  * `agency-campaign-update.test.ts`.
  */
 const CAMPAIGN_JSONB_COLUMNS: ReadonlySet<string> = new Set([
-  'retry_policy', 'disposition_catalog', 'context_display', 'break_reasons',
+  'retry_policy', 'disposition_catalog', 'context_display', 'break_reasons', 'outcome_dispositions',
 ]);
 
 /** The UPDATE for a patch (its patchable columns only), or null when it names none. */
@@ -125,6 +128,7 @@ export class AgencyCampaignRepository {
     assignment_mode?: AgencyAssignmentMode; on_unstaff?: AgencyOnUnstaff;
     callback_owner_grace_minutes?: number; callback_fallback?: AgencyCallbackFallback;
     allow_agent_retry?: boolean; agent_retry_rounds?: number; agent_retry_cooldown_minutes?: number;
+    outcome_dispositions?: unknown;
   }): Promise<AgencyCampaignRecord> {
     // ── Every placeholder inside a COALESCE must carry its column's type ───────
     //
@@ -167,7 +171,7 @@ export class AgencyCampaignRepository {
                $19, $20, COALESCE($21,false),
                COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
                COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
-               COALESCE($28::integer,30),$29::uuid)
+               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb))
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -196,6 +200,8 @@ export class AgencyCampaignRepository {
         input.agent_retry_cooldown_minutes ?? null,
         // The tenant carrier credential it dials on (0002); NULL = the service's own account.
         input.telephony_credential_id ?? null,
+        // Automatic outcomes (0022). Omitted ⇒ `{}`, the column DEFAULT: nothing mapped.
+        input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
       ],
     );
     return rows[0]!;

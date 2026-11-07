@@ -353,6 +353,8 @@ export interface CustomerTimelineCampaignCall extends CustomerTimelineBase {
   agent: CustomerHistoryUser | null;
   outcome: AgencyAttemptOutcome | null;
   disposition_code: string | null;
+  /** As `AgencyAttemptRow.auto_disposition_code` (`agency/spine.ts`). */
+  auto_disposition_code?: string | null;
   talk_seconds: number | null;
   notes: string | null;
   notes_hidden: boolean;

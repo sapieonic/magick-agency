@@ -10,7 +10,7 @@ import { agencyCampaignRepository } from '../../../db/repositories/agency.reposi
 import { announcementRepository } from '@magick-agency/db/repositories/announcement.repository';
 import { preflightAnalysisProfile } from '../../../analysis/profile-preflight.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
-import { issuesToDetails, validateAgencyCampaignConfig } from '../../../agency/campaign-config.js';
+import { issuesToDetails, validateAgencyCampaignConfig, type CampaignConfigBase } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { campaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
 
@@ -141,7 +141,7 @@ export function campaignOf(request: FastifyRequest): AgencyCampaignRecord {
 export function configRejected(
   reply: FastifyReply,
   body: unknown,
-  base: { calling_window_start?: string; calling_window_end?: string },
+  base: CampaignConfigBase,
 ): boolean {
   const issues = validateAgencyCampaignConfig(body, base);
   if (issues.length === 0) return false;

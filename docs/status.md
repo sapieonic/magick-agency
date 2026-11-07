@@ -999,6 +999,54 @@ caller ID per agent". Server, db, contracts and console.
   app omitting `caller_id` by default (its `caller_ids[0]` default is now kept only while it is in
   the rotation) and showing the agent's dedicated number.
 
+### Automatic outcomes for unanswered calls 2026-11-07 (OD1–OD8)
+
+For calls nobody answered, a campaign files an outcome chosen in advance (busy → "Retry later",
+no answer → "Callback"), so agents and supervisors reading the call later know what to do with
+it. Set in the campaign builder and settings ("Unanswered calls"). Design and defaults:
+[`decisions.md`](decisions.md) §4, "Automatic outcomes for unanswered calls". OD1 (a label
+only) is Manas's choice of 2026-11-07; OD2–OD8 are defaults pending ratification. Server, db,
+domain, contracts and console.
+
+- Migration `0022_outcome_dispositions.sql`: `agency_campaigns.outcome_dispositions` (JSONB
+  object, `{}` maps nothing) and `agency_call_attempts.auto_disposition_code` (CHECK: only on
+  `no_answer`, `busy`, `failed`, `invalid`, `abandoned`; added NOT VALID, every existing row
+  being NULL).
+- The dialer stamps the mapped code on the attempt when it settles on the customer's ledger
+  (`settleContact`), beside the contact's charge, in one guarded statement; a failed stamp is
+  logged and never holds up the contact. The contact is routed exactly as without a mapping:
+  `disposition_code` and `last_disposition` stay what a person recorded, so no rate, count,
+  filter or wrap-up rule changes (OD1, OD4, OD5). Not stamped: connected calls, wrap-up
+  redials, our-fault outcomes, outcome-unknown dials, pre-carrier failures, the soft phone (OD7).
+- One rule decides which catalog codes may be mapped (`packages/domain/src/auto-disposition.ts`:
+  in the catalog, neither suppress nor terminal), run by the server's validator, the dialer's
+  re-check and the console. The internal handler checks every create, PATCH and retry override
+  against the stored campaign (or parent), so a catalog edit that would break a mapping is
+  refused, keyed on the mapping (OD6); retry campaigns inherit the map (OD8).
+- Reads: the attempt lists and their CSV (a last column), the supervisor's call page, the
+  agent's calls, the station's prior attempts (and the soft phone's), and the customer-history
+  timeline (its CSV export adds it to "Details"). The console tags it "(automatic)", secondary
+  under a write-up; the builder's editor offers only eligible outcomes, keeps a stale mapping
+  visible with its error, and follows a mapped code through every edit of its catalog row.
+- VoiceLink reports a switched-off handset as Busy; a declined call arrives as Busy or No
+  answer, depending on what the carrier reports (OD2). The console says so beside the editor.
+- Reviewed with fresh context and by a four-angle clean-up pass; every finding fixed or
+  recorded (§5 open questions: where else the label shows, the mobile app, the label on an
+  exhausting or `invalid` attempt).
+- Counts (2026-11-07, from inside each package, one green run): `apps/server` unit 8318 passed
+  + 1 expected fail + 42 skipped (418 files), rest lane 2131 passed + 9 expected fail + 1
+  skipped (211 files + 1 skipped), wall-clock lane 15 (3 files); `packages/db` unit 428 (25
+  files), integration 586 (58 files); `packages/contracts` 334 (11 files),
+  `contracts-literals --check` up to date; `packages/domain` 142 (9 files); `apps/console` 5644
+  (293 files); `apps/super-admin` 446, `packages/web-ui` 235, `packages/observability` 14;
+  `pnpm lint` clean at the root; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass; builds
+  clean. Earlier runs of the rest lane each had one load-sensitive failure that passed alone and
+  touches none of this feature's code (`load/voicelink-media-ws-load.test.ts`,
+  `cache/local-cache-invalidation.test.ts`); the run these counts come from had none.
+- Not run: the mobile app's `agency_wire` `dart test` (no Dart toolchain on the build machine).
+  The contract change adds only optional fields, which the Dart decoders, reading by name,
+  never read.
+
 ## Test counts
 
 Latest run, 2026-11-07, the eight PR #56 review fixes on top of `8423bae` (the PL11 breaker counts

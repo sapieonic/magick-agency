@@ -235,6 +235,9 @@ describe('activityDetailSummary', () => {
     // One field reads as a sentence too, and a row naming nothing falls back to the raw detail.
     expect(activityDetailSummary({ ...changed, detail: { fields: ['retry_policy'] } }))
       .toBe('Changed retry policy.');
+    // The unanswered-call mapping (OD1–OD8) is named, not spelled out from its wire name.
+    expect(activityDetailSummary({ ...changed, detail: { fields: ['retry_policy', 'outcome_dispositions'] } }))
+      .toBe('Changed retry policy and automatic outcomes for unanswered calls.');
     expect(activityDetailSummary({ ...changed, detail: { fields: [] } })).toBeNull();
   });
 

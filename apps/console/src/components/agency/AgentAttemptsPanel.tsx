@@ -36,14 +36,10 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { FilterChip } from './FilterChip';
+import { AttemptDispositionCell } from './AttemptDispositionCell';
 import { FiltersCard } from './FiltersCard';
 import spine from './SpineListLayout.module.css';
 import { formatCount } from '../../utils/format/number';
-import {
-  SYSTEM_DISPOSITION_HINTS,
-  isSystemDispositionCode,
-  systemDispositionLabel,
-} from '../../utils/agency/systemDisposition';
 import styles from './AgentAttemptsPanel.module.css';
 
 /**
@@ -665,25 +661,9 @@ function AttemptRow({
         </span>
       </td>
       <td>
-        {isSystemDispositionCode(attempt.disposition_code) ? (
-          <span
-            className={styles.mutedCell}
-            title={SYSTEM_DISPOSITION_HINTS[attempt.disposition_code]}
-            data-system-disposition=""
-          >
-            {systemDispositionLabel(attempt.disposition_code)}
-          </span>
-        ) : (
-          attempt.disposition_code ?? <span className={styles.mutedCell}>Not written up</span>
-        )}
-        {attempt.dispositioned_on_behalf && (
-          <span
-            className={styles.onBehalf}
-            title="Filed by someone other than the agent on the call"
-          >
-            on behalf
-          </span>
-        )}
+        {/* No catalog here (the rows span campaigns), so a write-up or an automatic
+            outcome is shown as its code. */}
+        <AttemptDispositionCell attempt={attempt} placeholder="Not written up" testIdPrefix="my-attempt" />
         {/* Agent-typed free text, rendered as TEXT — never as markup. Shown
             because it is frequently the answer to "why did this call go that
             way", which is the question somebody reading their own history is

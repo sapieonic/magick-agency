@@ -65,8 +65,9 @@ describe('the retry bound constants', () => {
     // dialled — a terminal status, a start time, or a stale auto-pause record on
     // a draft. `campaign-retry-repository.test.ts` asserts they are absent from
     // the INSERT; this asserts they are absent from the SOURCE of that list.
-    expect(RETRY_INHERITED_CONFIG_KEYS).toHaveLength(26);
+    expect(RETRY_INHERITED_CONFIG_KEYS).toHaveLength(27);
     expect(RETRY_INHERITED_CONFIG_KEYS as readonly string[]).toContain('telephony_credential_id');
+    expect(RETRY_INHERITED_CONFIG_KEYS as readonly string[]).toContain('outcome_dispositions');
     for (const forbidden of [
       'status', 'started_at', 'ended_at', 'completed_at', 'contacts_total',
       'parent_campaign_id', 'root_campaign_id', 'retry_generation', 'retry_selector',

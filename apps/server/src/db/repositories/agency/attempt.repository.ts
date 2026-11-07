@@ -61,7 +61,7 @@ const log = createChildLogger({ component: 'agency-repository' });
  */
 const ATTEMPT_ROW_SELECT_SQL = `a.id, a.campaign_id, a.contact_id, a.attempt_number, c.phone_e164, a.caller_id,
              s.agent_user_id, a.reserved_agent_id, a.state, a.outcome,
-             a.disposition_code, a.notes, a.callback_at,
+             a.disposition_code, a.auto_disposition_code, a.notes, a.callback_at,
              a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
              a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
              a.talk_seconds, a.wrapup_seconds, a.redial_of_attempt_id, a.redial_number, a.created_at`;
@@ -427,6 +427,25 @@ export class AgencyAttemptRepository {
       'UPDATE agency_call_attempts SET webrtc_call_id = $2, updated_at = now() WHERE id = $1',
       [attemptId, webrtcCallId],
     );
+  }
+
+  /**
+   * Stamp the campaign's automatic outcome on an attempt that ended unanswered
+   * (`auto_disposition_code`, decisions OD1–OD8). Returns whether it landed.
+   *
+   * Guarded, one statement: only on the ended attempt with the outcome the caller
+   * resolved the code for, only while it has no automatic outcome yet (a replayed settle
+   * cannot restamp it with a since-edited mapping: the code is what the campaign said when
+   * the call ended, OD5). Never touches `disposition_code` or the contact.
+   */
+  async stampAutoDisposition(attemptId: string, outcome: AgencyAttemptOutcome, code: string): Promise<boolean> {
+    const { rowCount } = await getPool().query(
+      `UPDATE agency_call_attempts
+          SET auto_disposition_code = $3, updated_at = now()
+        WHERE id = $1 AND state = 'ended' AND outcome = $2 AND auto_disposition_code IS NULL`,
+      [attemptId, outcome, code],
+    );
+    return (rowCount ?? 0) > 0;
   }
 
   async findById(id: string): Promise<AgencyCallAttemptRecord | null> {

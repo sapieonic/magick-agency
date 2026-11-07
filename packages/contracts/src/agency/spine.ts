@@ -98,6 +98,14 @@ export interface AgencyAttemptRow {
   /** NULL is possible and is NOT `failed` — the attempt ended unclassified. */
   outcome: AgencyAttemptOutcome | null;
   disposition_code: string | null;
+  /**
+   * The automatic outcome the campaign's `outcome_dispositions` stamped on this attempt when
+   * it ended unanswered (decisions OD1–OD8): a code of the campaign's catalog, or null.
+   * Never set together with a write-up's `disposition_code` by the dialer, and never a
+   * routing decision: the retry policy routed the contact. Optional on the wire: a server
+   * that predates it sends nothing, which reads as null.
+   */
+  auto_disposition_code?: string | null;
   /** See privacy decision 3 above. */
   notes: string | null;
   callback_at: string | null;

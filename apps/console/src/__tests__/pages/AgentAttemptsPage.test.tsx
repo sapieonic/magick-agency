@@ -262,6 +262,25 @@ describe('AgentAttemptsPage — the rows a call list cannot show', () => {
     expect(within(row).getByText('Not written up')).toBeTruthy();
   });
 
+  it('shows an automatic outcome instead of "not written up", tagged as automatic', async () => {
+    // Filed by the campaign's unanswered-call mapping (decisions OD1–OD8). The rows
+    // span campaigns, so no catalog names it: the code, as a write-up would be.
+    const auto: AgencyAttempt = { ...NEVER_BRIDGED, auto_disposition_code: 'retry_later' };
+    const both: AgencyAttempt = { ...CONNECTED, auto_disposition_code: 'retry_later' };
+    mocks.getMyAttempts.mockResolvedValue(page([both, auto]));
+    renderPage();
+    const row = await screen.findByTestId(`my-attempt-row-${auto.id}`);
+    expect(within(row).queryByText('Not written up')).toBeNull();
+    const tag = screen.getByTestId(`my-attempt-auto-disposition-${auto.id}`);
+    expect(tag.textContent).toBe('retry_later (automatic)');
+    expect(tag.getAttribute('data-auto-disposition')).toBe('primary');
+    // Beside a write-up it is secondary, and the write-up stays.
+    const bothRow = screen.getByTestId(`my-attempt-row-${both.id}`);
+    expect(within(bothRow).getByText('not_interested')).toBeTruthy();
+    expect(screen.getByTestId(`my-attempt-auto-disposition-${both.id}`).getAttribute('data-auto-disposition'))
+      .toBe('secondary');
+  });
+
   it('counts what is shown and never claims a total the API cannot produce', async () => {
     renderPage();
     await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);

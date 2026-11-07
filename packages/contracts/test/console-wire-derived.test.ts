@@ -216,6 +216,8 @@ interface OldAgencyAttempt {
   state: Api.AgencyAttemptState;
   outcome: Api.AgencyAttemptOutcome | null;
   disposition_code: string | null;
+  // Added deliberately (automatic outcomes, OD1–OD8): the outcome an unanswered call was stamped with.
+  auto_disposition_code?: string | null;
   notes: string | null;
   callback_at: string | null;
   dispositioned_by_user_id: string | null;

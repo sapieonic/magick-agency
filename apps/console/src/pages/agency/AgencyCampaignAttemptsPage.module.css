@@ -115,16 +115,6 @@
   color: var(--danger, #d64545);
 }
 
-.onBehalf {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  background: var(--bg-tertiary, var(--bg-secondary));
-  color: var(--text-muted);
-}
-
 .recordingLink {
   display: inline-flex;
   align-items: center;

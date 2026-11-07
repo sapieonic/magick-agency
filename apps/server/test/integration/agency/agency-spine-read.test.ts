@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, uuidFor } from '../setup/factories.js';
 
@@ -139,6 +140,63 @@ describe('attempts: the rows a naive join drops', () => {
       campaignId: s.campaign.id, filters: {}, limit: 50,
     });
     expect(page.rows.every((r) => r.contact_id !== otherContact.id)).toBe(true);
+  });
+});
+
+describe('the automatic outcome (OD1–OD8), on every attempt read', () => {
+  /**
+   * An unanswered attempt the campaign labelled (`auto_disposition_code`, 0022),
+   * reserved to the seed's agent so the agent-scoped spine sees it too, and a second, busy,
+   * attempt on the same contact that carries none. Written straight to the row: the stamping
+   * is the dialer's, these are the reads.
+   */
+  async function seedLabelled() {
+    const s = await seedCampaign();
+    const contact = await insertAgencyContact(s.campaign.id, {
+      phone_e164: '+919876500004', state: 'pending', attempt_count: 2, last_outcome: 'busy',
+    });
+    const labelled = await insertAgencyAttempt(s.campaign.id, contact.id, {
+      attempt_number: 1, state: 'ended', outcome: 'no_answer', reserved_agent_id: s.session.id,
+      auto_disposition_code: 'call_later', ended_at: new Date(Date.now() - 60_000),
+    });
+    const unlabelled = await insertAgencyAttempt(s.campaign.id, contact.id, {
+      attempt_number: 2, state: 'ended', outcome: 'busy', reserved_agent_id: s.session.id,
+      ended_at: new Date(),
+    });
+    return { ...s, contact, labelled, unlabelled };
+  }
+
+  it('the campaign spine, the single attempt and the agent spine serve it beside disposition_code', async () => {
+    const s = await seedLabelled();
+
+    const campaignPage = await agencyAttemptRepository.listForCampaign({
+      campaignId: s.campaign.id, filters: {}, limit: 50,
+    });
+    const agentPage = await agencyAttemptRepository.listForAgent({
+      tenantId: T, accountId: A, agentUserId: uuidFor('ravi'), filters: {}, limit: 50,
+    });
+    for (const rows of [campaignPage.rows, agentPage.rows]) {
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      expect(byId.get(s.labelled.id)).toMatchObject({
+        outcome: 'no_answer', disposition_code: null, auto_disposition_code: 'call_later',
+      });
+      // Null, never absent: the key is on every row, as `disposition_code` is.
+      expect(byId.get(s.unlabelled.id)).toHaveProperty('auto_disposition_code', null);
+      expect(byId.get(s.bridged.id)).toMatchObject({ disposition_code: 'not_interested', auto_disposition_code: null });
+    }
+
+    expect(await agencyAttemptRepository.findForCampaign(s.campaign.id, s.labelled.id))
+      .toMatchObject({ id: s.labelled.id, auto_disposition_code: 'call_later', disposition_code: null });
+    expect(await agencyAttemptRepository.findForCampaign(s.campaign.id, s.bridged.id))
+      .toHaveProperty('auto_disposition_code', null);
+  });
+
+  it('the prior attempts read (the call panel\'s history) carries it', async () => {
+    const s = await seedLabelled();
+    const priors = await agencyAttemptRepository.findPriorForContactLineage(s.contact.id, randomUUID());
+    const byId = new Map(priors.map((r) => [r.id, r]));
+    expect(byId.get(s.labelled.id)?.auto_disposition_code).toBe('call_later');
+    expect(byId.get(s.unlabelled.id)?.auto_disposition_code).toBeNull();
   });
 });
 

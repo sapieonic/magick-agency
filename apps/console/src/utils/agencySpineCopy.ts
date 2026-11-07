@@ -35,15 +35,47 @@ import type { AgencyCampaign, AgencyDispositionEntry } from '../types/agency-cam
  * action, and `AgencyCampaignStatusBadge` for an unrecognised status.
  *
  * A code the SYSTEM writes (`redialed`, `utils/agency/systemDisposition`) is named
- * first: no catalog may hold it, so it is never the operator's to label.
+ * first: no catalog may hold it, so it is never the operator's to label. An entry
+ * with an empty label (one being typed in the campaign builder) reads as its code too.
  */
 export function dispositionLabel(
   code: string | null | undefined,
   catalog: readonly AgencyDispositionEntry[] | undefined,
 ): string | null {
   if (!code) return null;
-  return systemDispositionLabel(code) ?? catalog?.find((entry) => entry.code === code)?.label ?? code;
+  return systemDispositionLabel(code) ?? (catalog?.find((entry) => entry.code === code)?.label || code);
 }
+
+/**
+ * An attempt's AUTOMATIC outcome (`auto_disposition_code`, decisions OD1–OD8), in
+ * words: the catalog label (or the raw code, by {@link dispositionLabel}'s
+ * fallbacks) tagged "(automatic)", or `null` when there is none.
+ *
+ * The campaign's "Unanswered calls" mapping filed it when the call ended without
+ * anyone answering, so no person wrote it up. Every view that shows it says so in
+ * the same words, and never passes it off as a write-up: where an attempt carries
+ * both, the write-up is the disposition and this is shown beside it, secondary.
+ */
+export function autoDispositionLabel(
+  code: string | null | undefined,
+  catalog?: readonly AgencyDispositionEntry[],
+): string | null {
+  const label = dispositionLabel(code, catalog);
+  return label === null ? null : `${label} (automatic)`;
+}
+
+/**
+ * What filed an automatic outcome, for a tooltip or a hint beside it.
+ *
+ * It says what filed THIS label and nothing about a write-up. The same hint sits on
+ * the secondary badge under a person's write-up, on the call page's "Automatic
+ * outcome" fact and in the customer timeline, where a write-up may well exist; a
+ * "no one wrote this call up" here was false on every one of those. Whether the call
+ * was written up is said where it is shown — the write-up itself, or "Not written up".
+ */
+export const AUTO_DISPOSITION_HINT =
+  'Filed automatically: the call ended without anyone speaking to the customer, and the '
+  + 'campaign’s settings for unanswered calls name this outcome.';
 
 /**
  * That this campaign is not recording, or `null`.

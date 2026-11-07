@@ -15,6 +15,9 @@ import {
 import type { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS, type AgentSetResult } from './agent-state-machine.js';
 import type { DialCommand, DialOptions } from './dial-dispatcher.js';
+// The pure row → wire projection, imported from its leaf rather than the barrel: the
+// dialer's unit tests replace the barrel wholesale, and the panel's shape is not a mock's to make.
+import { projectPriorAttempt } from '../db/repositories/agency/projections.js';
 import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
 import { holdOutcomeUnknownContact, parkRedialContact, settleContact } from './dialer/contact-settlement.js';
 import { wrapupRedialRemaining } from './wrapup-redial-rules.js';
@@ -359,19 +362,7 @@ export class AgencyDialer {
         cmd.contact.root_contact_id ?? cmd.contactId,
         attemptId,
       );
-      priors = rows.map((r) => ({
-        attempt_number: r.attempt_number,
-        outcome: r.outcome,
-        disposition_code: r.disposition_code,
-        notes: r.notes,
-        ended_at: r.ended_at ? r.ended_at.toISOString() : null,
-        campaign_id: r.campaign_id,
-        campaign_name: r.campaign_name,
-        // Distinct from `ended_at`: an attempt reaped mid-flight has no end, and
-        // `attempt_number` is no longer a global ordering (it resets per retry
-        // campaign), so without this such a row would carry no time at all.
-        dialed_at: r.dialed_at ? r.dialed_at.toISOString() : null,
-      }));
+      priors = rows.map(projectPriorAttempt);
     } catch (err) {
       // History is nice-to-have; its absence must not cost the call. The panel
       // renders without it rather than the customer never being dialed.

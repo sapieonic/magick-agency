@@ -123,6 +123,8 @@ export interface CustomerHistoryAttemptRow {
   state: string;
   outcome: string | null;
   disposition_code: string | null;
+  /** The campaign's automatic outcome for an unanswered attempt (OD1–OD8); NULL = none. */
+  auto_disposition_code: string | null;
   notes: string | null;
   callback_at: Date | null;
   dialed_at: Date | null;
@@ -549,8 +551,8 @@ export const CUSTOMER_HISTORY_SQL = {
        ORDER BY a.created_at DESC, a.id DESC
        LIMIT $6::int)
     SELECT a.id, a.contact_id, a.campaign_id, a.account_id, a.attempt_number, a.webrtc_call_id,
-           s.agent_user_id, a.state, a.outcome, a.disposition_code, a.notes, a.callback_at,
-           a.dialed_at, a.ended_at, a.talk_seconds, a.dispositioned_by_user_id, a.dispositioned_at,
+           s.agent_user_id, a.state, a.outcome, a.disposition_code, a.auto_disposition_code,
+           a.notes, a.callback_at, a.dialed_at, a.ended_at, a.talk_seconds, a.dispositioned_by_user_id, a.dispositioned_at,
            a.redial_of_attempt_id, ${CHAIN_SQL} AS chain_attempt_id, a.redial_number,
            a.override_applied, a.override_note, g.record_calls, a.created_at,
            ${keysetAtSql('a.created_at')} AS at

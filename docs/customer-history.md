@@ -175,7 +175,10 @@ Entries' `at` is sent at millisecond precision; the cursor keeps the microsecond
 true`. Its `result_count` for the audit is the search's own count, from the same reads
 (`countCustomerEntries`: `callStats` and the DNC entries, run together, summed by `entryCount`).
 CSV columns are British English; a wrap-up redial's "Details" cell reads
-"Wrap-up redial N"; every cell goes through the spreadsheet-formula guard.
+"Wrap-up redial N", and a campaign call with an automatic outcome (decisions OD1–OD8) adds
+"Automatic outcome: <code>" there (no new column: the columns are shared by every entry kind);
+every cell goes through the spreadsheet-formula guard. Timeline campaign calls carry
+`auto_disposition_code` beside `disposition_code`, shown to every viewer like it.
 
 **Measured at the spec's scale** (spec §6: a number with 500+ calls across 20 campaigns, first page
 under 1 s on a 1M-contact tenant), 2026-11-06, through the real service and repository on a local

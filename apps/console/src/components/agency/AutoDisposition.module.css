@@ -1,0 +1,27 @@
+/*
+ * An automatic outcome (`auto_disposition_code`): filed by the campaign's settings
+ * for unanswered calls, never by a person. A dashed outline and lighter text keep it
+ * from reading as a write-up, wherever it sits.
+ */
+.auto {
+  display: inline-block;
+  padding: 0 7px;
+  border: 1px dashed var(--border-strong, var(--text-muted));
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  font-style: normal;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  /* In a column flex list (the station's prior attempts) it keeps its own width. */
+  align-self: flex-start;
+}
+
+/* Beside a write-up: under it, smaller still, so the write-up stays the disposition. */
+.secondary {
+  display: table;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+}

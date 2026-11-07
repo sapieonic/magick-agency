@@ -68,6 +68,7 @@ export * from './agency/actions';
 export * from './agency/campaign-stats';
 export * from './agency/campaign-lifecycle';
 export * from './agency/campaign-defaults';
+export * from './agency/outcome-dispositions';
 export * from './agency/performance';
 export * from './agency/spine';
 export * from './agency/softphone';

@@ -21,7 +21,7 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, accounts, settings, customer history. Imports `packages/domain` for the customer-search number rule (the live preview runs the server's rule), so `docker/web.Dockerfile` copies it into the web build |
 | `apps/super-admin` | Vite + React SPA (the super-admin console): tenants and their accounts, users, admins, phone numbers, feature flags, usage, audit |
 | `packages/contracts` | Wire contract shared by the server and both UIs: dialer types (`agency.ts`, a barrel over `agency/`, including the campaign config defaults and rate floors), console wire types (`api/`, re-exported or derived from the dialer types), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permissions (`rbac.ts`) |
-| `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, the customer-search number rule (`customer-search-number.ts`, run by the server's search and the console's preview, ported to Dart in `agency_wire`), a roster row's hero fields (`context-hero.ts`, the contact panel's rule, used by the customer-history summary), keyset cursor, rates, retry bounds and summary, success disposition, timers. Imported by the server and the console |
+| `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, the customer-search number rule (`customer-search-number.ts`, run by the server's search and the console's preview, ported to Dart in `agency_wire`), a roster row's hero fields (`context-hero.ts`, the contact panel's rule, used by the customer-history summary), keyset cursor, rates, retry bounds and summary, success disposition, timers, and which catalog codes may be an automatic outcome (`auto-disposition.ts`). Imported by the server and the console |
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
 | `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components and `AppVersion` (the sidebar version footer) with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), the telephony-provider aliases, `mapWithConcurrency`, `useAsyncResource`, `useDialogFocus` (the one focus trap). React, the router and `lucide-react` are peer dependencies; its own no-parent-brand scan (B17). Decision B23 |
@@ -469,6 +469,17 @@ every account the caller belongs to (CH2) where every internal handler is single
   that corrects a callback time, or DNC-suppressed, where only `last_disposition` lands). A late
   replay of an old attempt's disposition therefore answers the same 200 and leaves a contact a
   later call settled, or pacing or the soft phone re-claimed, as it is.
+- **Automatic outcomes for unanswered calls** (`auto-disposition.ts`, decisions OD1–OD8). A
+  campaign's `outcome_dispositions` maps `no_answer`, `busy`, `failed`, `invalid` and `abandoned`
+  to a code of its catalog. `settleContact`, on the path that charges the customer's allowance,
+  stamps the mapped code on the attempt (`auto_disposition_code`, one guarded statement:
+  ended, same outcome, none stamped yet), beside the contact's charge. A label only: the retry
+  policy routes the contact exactly as without a mapping, and `disposition_code` and the
+  contact's `last_disposition` stay what a person recorded, so no rate, count or wrap-up rule
+  reads it. Not on connected calls, wrap-up redials, our-fault outcomes, outcome-unknown dials
+  or the soft phone. A failed stamp is logged and never holds up the contact. The write-time
+  rule (`validateOutcomeDispositions`, on the shared `autoDispositionRefusal` in `packages/domain`, which the console's editor also runs) refuses a map naming a code the effective catalog lacks or
+  one that suppresses or is terminal, and a catalog edit that would break a stored mapping.
 - **Soft phone** (`softphone/`, [`softphone.md`](softphone.md)). Manual calls outside pacing:
   `ManualDialer` dials agent-first through the bridge with a `manual` correlation and owns the
   call until it ends; `SoftphoneService` (`runtime.softphone`) is the API layer's surface. The

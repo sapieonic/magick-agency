@@ -7,6 +7,7 @@ import {
   dispositionOverrideIssues,
   reservedDispositionCodeMessage,
   validateAssignmentSettings,
+  validateOutcomeDispositions,
 } from './campaign-config.js';
 
 /**
@@ -655,6 +656,11 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   if (record['retry_policy'] !== undefined) {
     issues.push(...validateRetryPolicy(record['retry_policy']));
   }
+  // Automatic outcomes for unanswered calls (0022): the internal handler's rule, imported.
+  // This layer does not hold the stored campaign (no base), so the map is checked against
+  // a catalog only when the body carries both (the console's save always does); the
+  // internal handler checks every body against the stored pair.
+  issues.push(...validateOutcomeDispositions(record));
   // Wrap-up redial (0008): a `BOOLEAN NOT NULL` column, so anything but a JSON
   // boolean is refused here as the internal handler refuses it, with its message.
   const allowRedial = record['allow_wrapup_redial'];

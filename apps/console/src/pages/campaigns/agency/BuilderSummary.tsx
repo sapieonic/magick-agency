@@ -1,4 +1,10 @@
-import { ceilingStateError, describeDays, type CampaignConfigState } from '../../../utils/agencyCampaignConfigForm';
+import {
+  ceilingStateError,
+  describeDays,
+  outcomeDispositionsSummary,
+  validateOutcomeDispositions,
+  type CampaignConfigState,
+} from '../../../utils/agencyCampaignConfigForm';
 import type { AgencyIngestJob } from '../../../types/agency-campaign';
 import type { UploadPhase } from '../../../hooks/useRosterIngest';
 import type { BuilderStepId } from './builderFlow';
@@ -90,6 +96,16 @@ export function BuilderSummary({
             config.wrapupSeconds === 0 ? 'no wrap-up' : `${config.wrapupSeconds}s wrap-up`
           }`}
           ready
+          current={current === 'behaviour'}
+          onClick={() => onJump('behaviour')}
+        />
+        <SummaryRow
+          label="Unanswered calls"
+          value={outcomeDispositionsSummary(config.outcomeDispositions, config.dispositions)}
+          ready={
+            Object.keys(validateOutcomeDispositions(config.outcomeDispositions, config.dispositions))
+              .length === 0
+          }
           current={current === 'behaviour'}
           onClick={() => onJump('behaviour')}
         />

@@ -9,7 +9,8 @@
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyAttemptOutcome } from '@magick-agency/contracts/agency';
 import { countOurFaultRetirement } from '../pacing/pacing-history.js';
-import { agencyContactRepository } from '../../db/repositories/agency.repository.js';
+import { agencyAttemptRepository, agencyContactRepository } from '../../db/repositories/agency.repository.js';
+import { resolveAutoDisposition } from '../auto-disposition.js';
 import type { DialCommand } from '../dial-dispatcher.js';
 import {
   OUR_FAULT_RETIRED_STATE,
@@ -209,10 +210,22 @@ export async function settleContact(
         : 'Contact requeued without charging an attempt — the customer was never reached',
     );
   } else {
-    // Charge the budget FIRST and decide on what Postgres returns. The policy is
+    // ── The campaign's automatic outcome for an unanswered call (OD1–OD8) ────────
+    // On this branch only: the customer's own outcome, charged to their allowance. A
+    // conversation (`connected`) is written up by the agent, a wrap-up redial keeps the
+    // conversation's write-up owed, and the our-fault branch above says nothing about the
+    // customer. Which dials are labelled therefore follows this routing (OD7): reshaping the
+    // branches reshapes it. Beside the charge, not before it: the two writes are independent
+    // (an attempt row and a contact row), the stamp never throws, and the agent's release
+    // waits on this settle. Started before any early return below, so none can skip it.
+    //
+    // Charge the budget and decide on what Postgres returns. The policy is
     // defined on attempts INCLUDING this one, and passing the pre-bump count would
     // grant every contact one dial more than the operator configured.
-    const attemptsUsed = await agencyContactRepository.chargeAttempt(cmd.contactId, outcome);
+    const [, attemptsUsed] = await Promise.all([
+      stampAutoDisposition(cmd, outcome),
+      agencyContactRepository.chargeAttempt(cmd.contactId, outcome),
+    ]);
     const decision = resolveRetryDecision(
       cmd.campaign.retry_policy, outcome, new Date(), attemptsUsed,
     );
@@ -260,6 +273,30 @@ export async function settleContact(
         nextAttemptAt: decision.nextAttemptAt,
       },
       'Contact released by the outcome retry policy',
+    );
+  }
+}
+
+/**
+ * Stamp the campaign's automatic outcome for `outcome` on the attempt, when the campaign
+ * maps one (`resolveAutoDisposition`). A label only: it touches neither the contact nor
+ * `disposition_code`. Never throws.
+ */
+async function stampAutoDisposition(cmd: DialCommand, outcome: AgencyAttemptOutcome): Promise<void> {
+  const code = resolveAutoDisposition(cmd.campaign, outcome);
+  if (code === null) return;
+  try {
+    const stamped = await agencyAttemptRepository.stampAutoDisposition(cmd.attemptId, outcome, code);
+    log.info(
+      { contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, autoDispositionCode: code, stamped },
+      stamped
+        ? 'Automatic outcome filed on the unanswered attempt'
+        : 'Automatic outcome not filed — the attempt already has one, or is not this ended outcome',
+    );
+  } catch (err) {
+    log.error(
+      { err, contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, autoDispositionCode: code },
+      'Could not file the automatic outcome on the attempt — the contact is routed regardless',
     );
   }
 }

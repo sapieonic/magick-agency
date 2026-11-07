@@ -48,6 +48,9 @@ expected fail; step 5, a real Plivo call, needs a Plivo account. Merged with `ma
 the dedicated caller ID decides over the campaign's dialable numbers (PL13's addendum), and this
 branch's migrations are 0019–0021 after `main`'s 0018; server 8837 unit / 2150 + 15 integration
 + 9 expected fail, db 428 / 612, console 5685 (`status.md`, "Test counts").
+Automatic outcomes for unanswered calls (2026-11-07: a campaign maps no answer, busy, failed,
+invalid number and abandoned to one of its outcomes, filed on the call as a label only, OD1–OD8)
+is merged over Plivo the same day (its migration is 0022): db unit 428, console 5742.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)

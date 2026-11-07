@@ -152,6 +152,7 @@ export const CONFIG_FIELD_LABEL: Readonly<Record<string, string>> = {
   agent_retry_cooldown_minutes: 'agent retry cool-down',
   retry_policy: 'retry policy',
   disposition_catalog: 'call outcomes',
+  outcome_dispositions: 'automatic outcomes for unanswered calls',
   context_display: 'contact details layout',
   break_reasons: 'break reasons',
   record_calls: 'call recording',

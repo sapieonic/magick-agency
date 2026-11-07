@@ -199,6 +199,8 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       agent_retry_cooldown_minutes: body?.agent_retry_cooldown_minutes as number | undefined,
       retry_policy: body?.retry_policy,
       disposition_catalog: body?.disposition_catalog,
+      // Automatic outcomes (0022). Omitted ⇒ `{}`; checked against the catalog by `configRejected`.
+      outcome_dispositions: body?.outcome_dispositions,
       context_display: body?.context_display,
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,

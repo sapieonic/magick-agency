@@ -161,16 +161,6 @@
   color: var(--danger, #d64545);
 }
 
-.onBehalf {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  background: var(--bg-tertiary, var(--bg-secondary));
-  color: var(--text-muted);
-}
-
 /* The agent's own words, under the code they filed it against. Wrapped rather
    than truncated: a note cut off mid-sentence is the half that mattered. */
 .notes {

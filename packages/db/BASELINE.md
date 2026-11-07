@@ -911,6 +911,30 @@ A campaign whose carrier account keeps refusing its dials (decisions B18–B20, 
 restores 0020's CHECK. **Tests**: `test/integration/db/carrier-refusing-calls-migration.test.ts` (the
 CHECK, down then up) and the down → up suite.
 
+### 0022 — `migrations/0022_outcome_dispositions.sql`
+
+Automatic outcomes for unanswered calls (`docs/decisions.md`, "Automatic outcomes for unanswered
+calls", OD1–OD8).
+
+- **`agency_campaigns.outcome_dispositions`** `JSONB NOT NULL DEFAULT '{}'`: outcome
+  (`no_answer | busy | failed | invalid | abandoned`, `AGENCY_AUTO_DISPOSITION_OUTCOMES`) → a
+  `disposition_catalog` code. `{}` maps nothing, so every existing campaign is unchanged.
+  **`ck_agency_campaign_outcome_dispositions`**: a JSON object. Keys and codes are the server's
+  to validate (each code names a catalog entry that neither suppresses nor is terminal).
+- **`agency_call_attempts.auto_disposition_code`** `VARCHAR(50)` NULL: the code the dialer stamped
+  when the attempt ended with a mapped outcome. Separate from `disposition_code` (what a person
+  recorded), which every rate, agent count and wrap-up rule reads (OD4).
+  **`ck_agency_attempt_auto_disposition`**: only on an attempt whose `outcome` is one of the five
+  (a NULL outcome is refused too). Added **NOT VALID**: every existing row is NULL, so validating
+  would scan the largest table under ACCESS EXCLUSIVE to prove nothing; enforced on every write.
+- **Locking.** ADD COLUMN without a rewrite on both tables; the campaigns CHECK scans
+  `agency_campaigns` once.
+
+**Down** drops both columns and their CHECKs (mappings and stamped automatic outcomes are lost).
+**Tests**: `test/integration/db/outcome-dispositions-migration.test.ts` (column shapes and
+defaults, both CHECKs including the NULL outcome, a write-up beside an automatic outcome, the
+NOT VALID attempts CHECK, down then up) and the down → up suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

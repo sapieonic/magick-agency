@@ -5,7 +5,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 
-const { insertAgencyCampaign, insertAgencyContact, insertAgencyAttempt, insertAgentSession } = await import('./agency-factories.js');
+const { insertAgencyCampaign, insertAgencyContact, insertAgencyAttempt, insertAgentSession, dialCommandFor } = await import('./agency-factories.js');
 const { agencyContactRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { settleContact } = await import('../../../src/agency/dialer/contact-settlement.js');
 const { overrideGrantOf } = await import('../../../src/agency/contact-overrides.js');
@@ -102,13 +102,9 @@ async function dialNoAnswer(campaign: Record<string, unknown>, contactId: string
   const attempt = await insertAgencyAttempt(campaign['id'] as string, contactId, {
     attempt_number: n, state: 'ended', outcome: 'no_answer', reserved_agent_id: sessionId, ended_at: new Date(),
   });
-  const { rows: [c] } = await getTestPool().query('SELECT * FROM agency_campaigns WHERE id = $1', [campaign['id']]);
-  const { rows: [k] } = await getTestPool().query('SELECT * FROM agency_contacts WHERE id = $1', [contactId]);
-  await settleContact({
-    attemptId: attempt.id as string, campaignId: c.id, contactId, sessionId, ownerReplica: 'r1',
-    tenantId: c.tenant_id, accountId: c.account_id, callerId: '+919000000001', attemptNumber: n,
-    campaign: c, contact: k,
-  } as never, 'no_answer', false, null);
+  await settleContact(await dialCommandFor({
+    campaignId: campaign['id'] as string, contactId, attemptId: attempt.id as string, sessionId, attemptNumber: n,
+  }), 'no_answer', false, null);
   return attempt.id as string;
 }
 
