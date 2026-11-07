@@ -31,7 +31,11 @@ export type WebRtcRejectReason =
   | 'carrier_rate_limited'
   // The carrier refused the credential itself (HTTP 401). Every further dial on it will
   // be refused too: the caller stops dialling on it.
-  | 'carrier_auth_rejected';
+  | 'carrier_auth_rejected'
+  // The adapter refused the dial before sending anything to the carrier
+  // (`CarrierDialNotSentError`): no webhook base, a malformed number or caller ID, the
+  // carrier's API unreachable. Nothing was placed.
+  | 'carrier_dial_not_sent';
 
 export class WebRtcCallError extends Error {
   constructor(

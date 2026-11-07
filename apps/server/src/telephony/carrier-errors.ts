@@ -61,11 +61,15 @@ export class CarrierRequestTimeoutError extends Error {
   }
 }
 
-/** A dial request the carrier answered 2xx in a body that cannot be read: it may have queued the lead. */
+/**
+ * A dial request whose outcome cannot be known: the carrier answered 2xx in a body that
+ * cannot be read, or the connection failed after the request may have reached it (a reset,
+ * a closed socket). Either way it may have queued or placed the call.
+ */
 export class CarrierDialOutcomeUnknownError extends Error {
   readonly dialOutcomeUnknown = true;
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'CarrierDialOutcomeUnknownError';
   }
 }
@@ -110,6 +114,37 @@ export class CarrierDialAbortedError extends Error {
   constructor(readonly provider: string) {
     super(`${provider} dial not sent: the call ended before it could be placed`);
     this.name = 'CarrierDialAbortedError';
+  }
+}
+
+/**
+ * Why a dial was refused before anything was sent to the carrier
+ * ({@link CarrierDialNotSentError}):
+ *  - `configuration`: something every dial on this carrier account shares, which the
+ *    next dial would trip too: no webhook base for the carrier's callbacks, a callback URL
+ *    off that base, a caller ID the carrier cannot take, no max duration;
+ *  - `destination`: the number dialled is not one the carrier can take (that contact's
+ *    data, not the account's);
+ *  - `network`: the carrier's API could not be reached at all (DNS, the TCP connect or the
+ *    TLS handshake failed), so the request never left this process.
+ */
+export type CarrierDialNotSentReason = 'configuration' | 'destination' | 'network';
+
+/**
+ * The adapter refused the dial before sending anything to the carrier (`reason` says why):
+ * an unplaced leg, never the carrier refusing the call, so the dial path tears it down with
+ * no `ended` and does not charge the contact (`core/bridge/dial-refusals.ts`).
+ */
+export class CarrierDialNotSentError extends Error {
+  readonly carrierDialNotSent = true;
+  constructor(
+    readonly provider: string,
+    readonly reason: CarrierDialNotSentReason,
+    /** What was wrong, for logs and the call row (never shown to a tenant as is). */
+    detail: string,
+  ) {
+    super(`${provider} dial not sent: ${detail}`);
+    this.name = 'CarrierDialNotSentError';
   }
 }
 
@@ -172,9 +207,53 @@ export function isCarrierDialAborted(err: unknown): boolean {
   return causeChainHas(err, 'carrierDialAborted');
 }
 
+/**
+ * The {@link CarrierDialNotSentReason} of the {@link CarrierDialNotSentError} in `err`'s
+ * `cause` chain, or null when there is none. Bounded walk.
+ */
+export function carrierDialNotSentReason(err: unknown): CarrierDialNotSentReason | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (typeof current === 'object' && (current as Record<string, unknown>)['carrierDialNotSent'] === true) {
+      const reason = (current as { reason?: unknown }).reason;
+      return reason === 'destination' || reason === 'network' ? reason : 'configuration';
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
 /** Whether `err`, or an error in its `cause` chain, is a {@link CarrierRateLimitedError}. */
 export function isCarrierRateLimited(err: unknown): boolean {
   return causeChainHas(err, 'carrierRateLimited');
+}
+
+/**
+ * Network error codes that can only come before the request was written: the host was
+ * not resolved, the TCP connect was refused or timed out, or the TLS handshake refused the
+ * peer's certificate. A reset or a closed socket (`ECONNRESET`, `UND_ERR_SOCKET`, …) is not
+ * here: it can come after the request reached the carrier.
+ */
+const CONNECT_PHASE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT',
+  'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+
+/**
+ * Whether a `fetch` rejection (or an error in its `cause` chain: undici wraps the socket's
+ * error in `TypeError('fetch failed')`) says the request was never sent
+ * ({@link CONNECT_PHASE_ERROR_CODES}). False for anything else, which may have reached
+ * the carrier.
+ */
+export function isConnectPhaseFailure(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    const code = typeof current === 'object' ? (current as { code?: unknown }).code : undefined;
+    if (typeof code === 'string' && CONNECT_PHASE_ERROR_CODES.has(code)) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /** True for the error `fetch` rejects with when an `AbortSignal.timeout` fires. */

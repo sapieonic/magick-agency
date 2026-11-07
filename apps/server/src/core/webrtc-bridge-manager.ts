@@ -44,8 +44,10 @@ import {
 import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
-import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
-import { carrierAuthRejectionReason, isCarrierDialAborted, isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import { trackCarrierDialRefusal, trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
+import {
+  CarrierDialNotSentError, carrierAuthRejectionReason, isCarrierDialAborted, isDialOutcomeUnknown,
+} from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
@@ -705,6 +707,14 @@ export class WebRtcBridgeManager {
       // `base` is the provider's own webhook namespace (…/webhooks/voicelink,
       // …/webhooks/plivo), so `${base}/webrtc-status/${id}` resolves to its own route.
       const base = this.webhookUrls.baseUrl(provider);
+      // No webhook base for this carrier (an optional one left unset): every dial on it
+      // would be refused here, so it is the carrier's configuration that refuses, as the
+      // adapter's own pre-send checks do (`carrier_dial_not_sent`, counted toward the
+      // campaign's refusal breaker, PL11), not a bridge failure.
+      if (base === '') {
+        trackCarrierDialRefusal(provider, 'not_sent');
+        throw new CarrierDialNotSentError(provider, 'configuration', 'no webhook base URL is configured for this carrier');
+      }
       // The account the leg is placed on: the tenant credential pinned on the row,
       // resolved for `dial` (active only, and of this tenant and provider), or, when it
       // is null, the service's own account through the synchronous lookup (which knows
@@ -743,6 +753,11 @@ export class WebRtcBridgeManager {
       if (isCredentialUnavailable(err)) {
         await this.abortUnplacedLeg(record.id, err, CREDENTIAL_UNAVAILABLE);
         throw unplacedRefusalError(CREDENTIAL_UNAVAILABLE, err);
+      }
+      const notSent = carrierUnplacedRefusal(err);
+      if (notSent) {
+        await this.abortUnplacedLeg(record.id, err, notSent);
+        throw unplacedRefusalError(notSent, err);
       }
       await this.abortUnplacedLeg(record.id, err);
       throw err;

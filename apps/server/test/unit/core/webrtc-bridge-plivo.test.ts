@@ -99,7 +99,10 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
 
 import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { normalizePlivoCallback, plivoCallEvent } from '../../../src/telephony/plivo/plivo.webhook.js';
-import { CarrierAuthRejectedError, CarrierDialAbortedError, CarrierRateLimitedError } from '../../../src/telephony/carrier-errors.js';
+import {
+  CarrierAuthRejectedError, CarrierDialAbortedError, CarrierDialNotSentError, CarrierRateLimitedError,
+} from '../../../src/telephony/carrier-errors.js';
+import { config } from '../../../src/config/index.js';
 import { setBridgeAnalysisHooks, resetBridgeAnalysisHooks } from '../../../src/seams/bridge-analysis-hooks.js';
 
 function fakeWs() {
@@ -258,6 +261,11 @@ describe('a Plivo dial places the leg on the call`s own credential', () => {
     ['local calls-per-second gate', new CarrierRateLimitedError('plivo', 'local_gate', 5000), 'carrier_rate_limited', 'CARRIER_RATE_LIMITED'],
     ['carrier 429', new CarrierRateLimitedError('plivo', 'carrier', 0), 'carrier_rate_limited', 'CARRIER_RATE_LIMITED'],
     ['carrier 401', new CarrierAuthRejectedError('plivo', 401), 'carrier_auth_rejected', 'CARRIER_AUTH_REJECTED'],
+    // The adapter's own pre-send refusals: never `telephony_init_failed` (an `ended` the
+    // dialer charges to the contact as a carrier refusal), always a leg never placed.
+    ['dial not sent for configuration', new CarrierDialNotSentError('plivo', 'configuration', 'PLIVO_WEBHOOK_BASE_URL is not set'), 'carrier_dial_not_sent', 'CARRIER_DIAL_NOT_SENT'],
+    ['dial not sent for the API unreachable', new CarrierDialNotSentError('plivo', 'network', 'the carrier API could not be reached'), 'carrier_dial_not_sent', 'CARRIER_DIAL_NOT_SENT'],
+    ['dial not sent for its number', new CarrierDialNotSentError('plivo', 'destination', "'to' is not a phone number"), 'carrier_dial_not_sent', 'CARRIER_DIAL_INVALID_NUMBER'],
   ])('a %s is a refusal before anything was placed: its own code, the adapter error as cause, no `ended`', async (_n, cause, code, errorCode) => {
     plivoAdapter.initiateCall.mockRejectedValueOnce(cause);
     const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
@@ -279,6 +287,26 @@ describe('a Plivo dial places the leg on the call`s own credential', () => {
       );
     } else {
       expect(registry.recordCredentialRefused).not.toHaveBeenCalled();
+    }
+  });
+
+  it('no Plivo webhook base configured: a dial not sent (configuration), before the adapter is asked, no `ended`', async () => {
+    const plivo = (config as any).telephony.plivo;
+    const saved = plivo.webhookBaseUrl;
+    plivo.webhookBaseUrl = '';
+    try {
+      const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
+      mgr.onLifecycle((e) => lifecycle.push(e));
+      const err = await mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any }).catch((e) => e);
+      expect(err).toBeInstanceOf(WebRtcCallError);
+      expect(err.code).toBe('carrier_dial_not_sent');
+      expect(plivoAdapter.initiateCall).not.toHaveBeenCalled();
+      expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(0);
+      expect(mockRepo.update).toHaveBeenCalledWith(CALL_ID, expect.objectContaining({ status: 'failed', error_code: 'CARRIER_DIAL_NOT_SENT' }));
+      expect(mgr.getActiveCallIds()).toEqual([]);
+      expect(mgr.heldLeases()).toEqual([]);
+    } finally {
+      plivo.webhookBaseUrl = saved;
     }
   });
 

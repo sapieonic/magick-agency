@@ -96,8 +96,10 @@ service's own account. The refusals with nothing placed at the carrier each have
 `carrier_account_unavailable`), `carrier_rate_limited` (a
 calls-per-second limit) and `carrier_auth_rejected` (the carrier refused the credential, HTTP
 401; the bridge marks the credential `invalid` against the secret version that dialled, and
-the dialer pauses the campaign `carrier_auth`). `telephony_init_failed` is the carrier
-refusing a dial: it ends the call first, with an `ended`.
+the dialer pauses the campaign `carrier_auth`) and `carrier_dial_not_sent` (the adapter
+would not send the dial: no webhook base, a malformed number or caller ID, the carrier's API
+unreachable; `CarrierDialNotSentError`). `telephony_init_failed` is the carrier refusing a
+dial: it ends the call first, with an `ended`.
 
 `correlation` says what a leg belongs to: a campaign attempt (the dialer) or a soft-phone call
 (`agency_manual_calls`, `docs/softphone.md` §4.3). The `agency_calls` insert writes `campaign_id` +

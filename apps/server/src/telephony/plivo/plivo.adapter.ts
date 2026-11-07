@@ -36,11 +36,14 @@ import { Secret } from '../credentials/secret.js';
 import {
   CarrierAuthRejectedError,
   CarrierDialAbortedError,
+  CarrierDialNotSentError,
   CarrierDialOutcomeUnknownError,
   CarrierRateLimitedError,
   CarrierRequestTimeoutError,
   isAbortTimeout,
+  isConnectPhaseFailure,
   isDialOutcomeUnknown,
+  type CarrierDialNotSentReason,
 } from '../carrier-errors.js';
 import { redactUrlTail } from '../voicelink/voicelink.adapter.js';
 import { acquirePlivoDialSlot, getPlivoDialRateLimiter, type PlivoDialRateLimiter } from './plivo-dial-rate.js';
@@ -51,9 +54,14 @@ import { PLIVO_STREAM_CONTENT_TYPE, PLIVO_STREAM_SAMPLE_RATE } from './plivo.med
 const log = createChildLogger({ component: 'plivo-adapter' });
 
 /** Count a create-call that did not place a known call (`carrier_dial_refusals_total`), and hand back its error to throw. */
-function dialRefused<E>(kind: 'auth_rejected' | 'rate_limited' | 'outcome_unknown' | 'refused', err: E): E {
+function dialRefused<E>(kind: 'auth_rejected' | 'rate_limited' | 'outcome_unknown' | 'refused' | 'not_sent', err: E): E {
   trackCarrierDialRefusal('plivo', kind);
   return err;
+}
+
+/** A dial refused before anything was sent. Counted (`not_sent`) where `initiateCall` throws it. */
+function notSent(reason: CarrierDialNotSentReason, detail: string): CarrierDialNotSentError {
+  return new CarrierDialNotSentError('plivo', reason, detail);
 }
 
 /** The env settings every Plivo adapter shares (`config.telephony.plivo`). */
@@ -155,7 +163,11 @@ export function plivoNumber(raw: string, field: 'to' | 'from'): string {
   const cleaned = (raw ?? '').trim().replace(/[\s\-().]/g, '');
   const digits = cleaned.startsWith('+') ? cleaned.slice(1) : cleaned;
   if (!/^[1-9]\d{6,14}$/.test(digits)) {
-    throw new Error(`Plivo dial refused before sending: '${field}' is not a phone number with its country code`);
+    // `to` is the contact's number; `from` is the campaign's caller ID, shared by its dials.
+    throw notSent(
+      field === 'to' ? 'destination' : 'configuration',
+      `'${field}' is not a phone number with its country code`,
+    );
   }
   return digits;
 }
@@ -246,17 +258,17 @@ export class PlivoAdapter implements TelephonyProvider {
   /** The answer and status URLs must be on our env webhook origin, over https. */
   private checkCallbackUrl(raw: string, field: string): string {
     const base = this.settings.webhookBaseUrl;
-    if (!base) throw new Error('Plivo dial refused before sending: PLIVO_WEBHOOK_BASE_URL is not set');
+    if (!base) throw notSent('configuration', 'PLIVO_WEBHOOK_BASE_URL is not set');
     let url: URL;
     let origin: string;
     try {
       url = new URL(raw);
       origin = new URL(base).origin;
     } catch {
-      throw new Error(`Plivo dial refused before sending: ${field} is not a URL`);
+      throw notSent('configuration', `${field} is not a URL`);
     }
     if (url.protocol !== 'https:' || url.origin !== origin) {
-      throw new Error(`Plivo dial refused before sending: ${field} is not on PLIVO_WEBHOOK_BASE_URL's origin`);
+      throw notSent('configuration', `${field} is not on PLIVO_WEBHOOK_BASE_URL's origin`);
     }
     return raw;
   }
@@ -280,21 +292,38 @@ export class PlivoAdapter implements TelephonyProvider {
    *  - A timeout, or a 2xx whose body has no readable `request_uuid`: the call may have
    *    been placed (`dialOutcomeUnknown`); never retried here.
    *
-   * A dial whose `req.signal` is aborted before the create-call is sent (the call was torn
-   * down while it waited at the gate) sends nothing and rejects with
-   * {@link CarrierDialAbortedError}: an unplaced leg, not a refusal, and not counted.
+   *  - The connection failed before the request was written (DNS, TCP connect, TLS
+   *    certificate: `isConnectPhaseFailure`): {@link CarrierDialNotSentError} (`network`).
+   *  - Any other network error (a reset, a closed socket): the request may have reached
+   *    Plivo, so the call may be placed ({@link CarrierDialOutcomeUnknownError}).
    *
-   * Each of these but a placed call (and the gate's refusal) counts once in
-   * `carrier_dial_refusals_total{provider="plivo"}`, by kind. A refusal before the gate (a
-   * malformed number or URL: our data, not the carrier) and a network error do not.
+   * A dial refused before anything is sent (a malformed number, no webhook base, a callback
+   * URL off it, no max duration) rejects with {@link CarrierDialNotSentError}: an unplaced
+   * leg, never charged to the contact as a carrier refusal. A dial whose `req.signal` is
+   * aborted before the create-call is sent (the call was torn down while it waited at the
+   * gate) sends nothing and rejects with {@link CarrierDialAbortedError}: an unplaced leg,
+   * not a refusal, and not counted.
+   *
+   * Each of these but a placed call and an aborted one counts once in
+   * `carrier_dial_refusals_total{provider="plivo"}`, by kind (`not_sent` for a dial refused
+   * before sending).
    */
   async initiateCall(req: OutboundCallRequest): Promise<InitiateCallResult> {
-    const to = plivoNumber(req.to, 'to');
-    const from = plivoNumber(req.from, 'from');
-    const answerUrl = this.checkCallbackUrl(req.webhookUrl, 'answer_url');
-    const statusUrl = this.checkCallbackUrl(req.statusCallbackUrl, 'hangup_url');
-    const timeLimit = positiveInt(req.maxDuration);
-    if (!timeLimit) throw new Error('Plivo dial refused before sending: no max duration for time_limit');
+    let to: string;
+    let from: string;
+    let answerUrl: string;
+    let statusUrl: string;
+    let timeLimit: number | undefined;
+    try {
+      to = plivoNumber(req.to, 'to');
+      from = plivoNumber(req.from, 'from');
+      answerUrl = this.checkCallbackUrl(req.webhookUrl, 'answer_url');
+      statusUrl = this.checkCallbackUrl(req.statusCallbackUrl, 'hangup_url');
+      timeLimit = positiveInt(req.maxDuration);
+      if (!timeLimit) throw notSent('configuration', 'no max duration for time_limit');
+    } catch (err) {
+      throw dialRefused('not_sent', err);
+    }
     if (req.signal?.aborted) throw new CarrierDialAbortedError('plivo');
 
     const gate = await acquirePlivoDialSlot(this.rateLimiter ?? getPlivoDialRateLimiter(), this.authId, {
@@ -342,7 +371,19 @@ export class PlivoAdapter implements TelephonyProvider {
     try {
       answer = await this.send('POST', 'Call/', 'Plivo create call', body, { timeoutMeansMaybePlaced: true });
     } catch (err) {
-      throw isDialOutcomeUnknown(err) ? dialRefused('outcome_unknown', err) : err;
+      if (isDialOutcomeUnknown(err)) throw dialRefused('outcome_unknown', err);
+      // Not a timeout (`send` turned those into the error above). A connection that never
+      // got as far as writing the request placed nothing; anything else (a reset, a
+      // socket closed under the response) may have reached Plivo after the request did.
+      if (isConnectPhaseFailure(err)) {
+        log.warn({ err, callId: req.callId }, 'Plivo dial not sent: the API could not be reached');
+        throw dialRefused('not_sent', new CarrierDialNotSentError('plivo', 'network', 'the carrier API could not be reached'));
+      }
+      log.error({ err, callId: req.callId }, 'Plivo create call failed on the network; the call may be placed');
+      throw dialRefused('outcome_unknown', new CarrierDialOutcomeUnknownError(
+        'Plivo create call failed on the network after it may have been sent; the call may be placed',
+        { cause: err },
+      ));
     }
     const { status, text } = answer;
     if (status === 401) throw dialRefused('auth_rejected', new CarrierAuthRejectedError('plivo', status));

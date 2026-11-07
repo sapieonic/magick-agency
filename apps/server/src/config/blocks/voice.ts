@@ -89,10 +89,28 @@ const plivoSchema = z.object({
   /**
    * `PLIVO_WEBHOOK_BASE_URL`: this server's public base for Plivo's callbacks, e.g.
    * `https://<public host>/api/v1/webhooks/plivo`. Env only, never tenant data: Plivo
-   * POSTs the answer and status callbacks that drive a call here. Unset, Plivo dials are
-   * refused before anything is sent.
+   * POSTs the answer and status callbacks that drive a call here. Unset (empty), Plivo
+   * accounts are not offered to new campaigns, a campaign pinned to one cannot start, and
+   * any Plivo dial is refused before anything is sent (`carrier_dial_not_sent`, PL12).
+   * Set, it must be an absolute `https:` URL with no query or fragment (the callbacks and
+   * their signatures are built by appending to it): anything else fails startup.
    */
-  webhookBaseUrl: z.string().optional().default(''),
+  webhookBaseUrl: z.string().optional().default('').superRefine((value, ctx) => {
+    if (value === '') return;
+    let url: URL | null = null;
+    try {
+      url = new URL(value);
+    } catch {
+      url = null;
+    }
+    if (!url || url.protocol !== 'https:' || url.search !== '' || url.hash !== '' || value.includes('?') || value.includes('#')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'PLIVO_WEBHOOK_BASE_URL must be empty or an absolute https: URL with no query or fragment, '
+          + 'e.g. https://<public host>/api/v1/webhooks/plivo',
+      });
+    }
+  }),
   /**
    * `PLIVO_CALLS_PER_SECOND`: new calls a second per Plivo account (Plivo's default
    * account limit is 2). Counted across every process in Redis.

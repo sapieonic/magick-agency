@@ -30,8 +30,10 @@ import { Secret } from '../../../../src/telephony/credentials/secret.js';
 import {
   CarrierAuthRejectedError,
   CarrierDialAbortedError,
+  CarrierDialNotSentError,
   CarrierRateLimitedError,
   CarrierRequestTimeoutError,
+  carrierDialNotSentReason,
   isDialOutcomeUnknown,
 } from '../../../../src/telephony/carrier-errors.js';
 import type { OutboundCallRequest } from '../../../../src/telephony/types.js';
@@ -141,24 +143,37 @@ describe('PlivoAdapter.initiateCall', () => {
     expect(f.sent.map((s) => JSON.parse(String(s.init.body)).time_limit)).toEqual([90, 1]);
   });
 
+  // Every refusal before sending is a CarrierDialNotSentError (an unplaced leg, never a
+  // carrier refusal charged to the contact), with the reason the dial path reads.
+  const notSent = (err: unknown, reason: string, message: RegExp) => {
+    expect(err).toBeInstanceOf(CarrierDialNotSentError);
+    expect(carrierDialNotSentReason(err)).toBe(reason);
+    expect((err as Error).message).toMatch(message);
+    expect(isDialOutcomeUnknown(err)).toBe(false);
+  };
+
   it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])('refuses a max duration of %s before sending', async (maxDuration) => {
     const f = fakeFetch([created]);
-    await expect(adapter(f.impl).initiateCall(dial({ maxDuration }))).rejects.toThrow(/time_limit/);
+    notSent(await adapter(f.impl).initiateCall(dial({ maxDuration })).catch((e: unknown) => e), 'configuration', /time_limit/);
     expect(f.sent).toHaveLength(0);
   });
 
-  it('refuses a number that is not a single phone number before sending', async () => {
+  it('refuses a number that is not a single phone number before sending: the contact\'s (destination), the caller ID (configuration)', async () => {
     const f = fakeFetch([created]);
-    await expect(adapter(f.impl).initiateCall(dial({ to: '919812345678<14155550100' }))).rejects.toThrow(/'to'/);
-    await expect(adapter(f.impl).initiateCall(dial({ from: 'sip:x@y' }))).rejects.toThrow(/'from'/);
+    notSent(await adapter(f.impl).initiateCall(dial({ to: '919812345678<14155550100' })).catch((e: unknown) => e), 'destination', /'to'/);
+    notSent(await adapter(f.impl).initiateCall(dial({ from: 'sip:x@y' })).catch((e: unknown) => e), 'configuration', /'from'/);
     expect(f.sent).toHaveLength(0);
   });
 
   it('refuses callback URLs off the env webhook origin, or not https, and an unset base', async () => {
     const f = fakeFetch([created]);
-    await expect(adapter(f.impl).initiateCall(dial({ webhookUrl: 'https://evil.example/x' }))).rejects.toThrow(/answer_url/);
-    await expect(adapter(f.impl).initiateCall(dial({ statusCallbackUrl: 'http://srv.example.com/api/v1/webhooks/plivo/s' }))).rejects.toThrow(/hangup_url/);
-    await expect(adapter(f.impl, { webhookBaseUrl: '' }).initiateCall(dial())).rejects.toThrow(/PLIVO_WEBHOOK_BASE_URL/);
+    const a = adapter(f.impl);
+    notSent(await a.initiateCall(dial({ webhookUrl: 'https://evil.example/x' })).catch((e: unknown) => e), 'configuration', /answer_url/);
+    notSent(
+      await a.initiateCall(dial({ statusCallbackUrl: 'http://srv.example.com/api/v1/webhooks/plivo/s' })).catch((e: unknown) => e),
+      'configuration', /hangup_url/,
+    );
+    notSent(await adapter(f.impl, { webhookBaseUrl: '' }).initiateCall(dial()).catch((e: unknown) => e), 'configuration', /PLIVO_WEBHOOK_BASE_URL/);
     expect(f.sent).toHaveLength(0);
   });
 
@@ -209,10 +224,26 @@ describe('PlivoAdapter.initiateCall', () => {
     expect(f.sent).toHaveLength(1);
   });
 
-  it('a network error is a plain refusal', async () => {
-    const err = await adapter(fakeFetch([new TypeError('fetch failed')]).impl).initiateCall(dial()).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(TypeError);
-    expect(isDialOutcomeUnknown(err)).toBe(false);
+  const fetchFailed = (code: string) => new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) });
+
+  it.each(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'CERT_HAS_EXPIRED'])(
+    'a connection that failed before the request was written (%s) is a dial not sent (network)',
+    async (code) => {
+      const err = await adapter(fakeFetch([fetchFailed(code)]).impl).initiateCall(dial()).catch((e: unknown) => e);
+      notSent(err, 'network', /could not be reached/);
+    },
+  );
+
+  it.each([
+    ['a reset', fetchFailed('ECONNRESET')],
+    ['a socket closed under the response', fetchFailed('UND_ERR_SOCKET')],
+    ['a bare fetch failure', new TypeError('fetch failed')],
+  ])('any other network error (%s) may have reached Plivo: an unknown outcome, not retried', async (_what, error) => {
+    const f = fakeFetch([error, created]);
+    const err = await adapter(f.impl).initiateCall(dial()).catch((e: unknown) => e);
+    expect(isDialOutcomeUnknown(err)).toBe(true);
+    expect(carrierDialNotSentReason(err)).toBeNull();
+    expect(f.sent).toHaveLength(1);
   });
 
   it('refuses unsent when the calls-per-second gate gives no slot in time', async () => {
@@ -298,10 +329,25 @@ describe('PlivoAdapter.initiateCall: carrier_dial_refusals_total', () => {
     expect(refusals.track.mock.calls).toEqual([['plivo', 'rate_limited']]);
   });
 
-  it('a placed call, a refusal before the gate and a network error do not count', async () => {
+  it.each([
+    ['a malformed number', { to: 'sip:x@y' }, {}],
+    ['a callback URL off the webhook base', { webhookUrl: 'https://evil.example/x' }, {}],
+    ['no webhook base', {}, { webhookBaseUrl: '' }],
+    ['no max duration', { maxDuration: 0 }, {}],
+  ] as const)('a dial refused before sending (%s) counts once as not_sent', async (_what, req, over) => {
+    await adapter(fakeFetch([created]).impl, over).initiateCall(dial(req)).catch(() => undefined);
+    expect(refusals.track.mock.calls).toEqual([['plivo', 'not_sent']]);
+  });
+
+  it('the API unreachable counts as not_sent; a reset as outcome_unknown', async () => {
+    const cause = (code: string) => new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) });
+    await adapter(fakeFetch([cause('ECONNREFUSED')]).impl).initiateCall(dial()).catch(() => undefined);
+    await adapter(fakeFetch([cause('ECONNRESET')]).impl).initiateCall(dial()).catch(() => undefined);
+    expect(refusals.track.mock.calls).toEqual([['plivo', 'not_sent'], ['plivo', 'outcome_unknown']]);
+  });
+
+  it('a placed call does not count', async () => {
     await adapter(fakeFetch([created]).impl).initiateCall(dial());
-    await adapter(fakeFetch([created]).impl).initiateCall(dial({ to: 'sip:x@y' })).catch(() => undefined);
-    await adapter(fakeFetch([new TypeError('fetch failed')]).impl).initiateCall(dial()).catch(() => undefined);
     expect(refusals.track).not.toHaveBeenCalled();
   });
 });

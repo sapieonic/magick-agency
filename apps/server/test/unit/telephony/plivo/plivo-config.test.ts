@@ -48,6 +48,28 @@ describe('telephony.plivo config', () => {
     expect(plivo({ [key]: value })).toBeNull();
   });
 
+  it.each([
+    'http://srv.example.com/api/v1/webhooks/plivo',
+    'srv.example.com/api/v1/webhooks/plivo',
+    '/api/v1/webhooks/plivo',
+    'https://srv.example.com/api/v1/webhooks/plivo?x=1',
+    'https://srv.example.com/api/v1/webhooks/plivo#frag',
+    'https://srv.example.com/api/v1/webhooks/plivo?',
+    'not a url',
+  ])('refuses PLIVO_WEBHOOK_BASE_URL=%s at load, saying what it must be', (value) => {
+    const result = parseConfig({ ...valid, PLIVO_WEBHOOK_BASE_URL: value });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const issue = result.issues.find((i) => i.path.join('.') === 'telephony.plivo.webhookBaseUrl');
+    expect(issue?.message).toMatch(/PLIVO_WEBHOOK_BASE_URL must be empty or an absolute https: URL with no query or fragment/);
+  });
+
+  it('accepts PLIVO_WEBHOOK_BASE_URL empty, or an absolute https: URL (a port, a path prefix, a trailing slash)', () => {
+    for (const value of ['', 'https://srv.example.com', 'https://srv.example.com:8443/edge/api/v1/webhooks/plivo/']) {
+      expect(plivo({ PLIVO_WEBHOOK_BASE_URL: value })?.webhookBaseUrl).toBe(value);
+    }
+  });
+
   it('a production boot does not require Plivo settings (Plivo accounts are tenants’, not env)', () => {
     const result = parseConfig({
       ...valid,

@@ -260,19 +260,20 @@ export function trackTelephonyCredentialSweep(result: 'ok' | 'failed', shredded 
 }
 
 // ── Carrier dial refusals ─────────────────────────────────────────────────────
-// A dial the carrier adapter gave up on once its own pre-send checks had passed:
-// `auth_rejected` (the carrier refused the credential, 401), `rate_limited` (the account's
+// A dial the carrier adapter did not place: `not_sent` (refused before anything was sent:
+// no webhook base, a callback URL off it, a malformed number, the API unreachable), `auth_rejected` (the carrier refused the credential, 401), `rate_limited` (the account's
 // calls-per-second gate gave no slot in time, or the carrier answered 429), `outcome_unknown`
-// (a timeout, or a 2xx with no readable call id: the call may be placed), `refused` (any other
+// (a timeout, a reset after the request may have been sent, or a 2xx with no readable call
+// id: the call may be placed), `refused` (any other
 // non-2xx). `provider` and `kind` are closed, code-owned sets; no tenant, credential or call ids.
 const carrierDialRefusalsTotal = counter<'provider' | 'kind'>(meter, 'carrier_dial_refusals_total', {
-  description: 'Carrier dials refused or left with an unknown outcome, by provider and kind (auth_rejected, rate_limited, outcome_unknown, refused)',
+  description: 'Carrier dials refused or left with an unknown outcome, by provider and kind (auth_rejected, rate_limited, outcome_unknown, refused, not_sent)',
 });
 
 /** Record one carrier dial refusal. Guarded: it runs on the dial path. */
 export function trackCarrierDialRefusal(
   provider: string,
-  kind: 'auth_rejected' | 'rate_limited' | 'outcome_unknown' | 'refused',
+  kind: 'auth_rejected' | 'rate_limited' | 'outcome_unknown' | 'refused' | 'not_sent',
 ): void {
   safeEmit('carrier-dial-refusal', () => carrierDialRefusalsTotal.inc({ provider, kind }));
 }

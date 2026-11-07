@@ -547,8 +547,11 @@ finished (draft, running, paused or stopping) is pinned to the credential; the r
 five of them (tenant / account, status).
 
 `carrier_dial_refusals_total{provider="plivo",kind}` counts create-calls that placed no known call
-(`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`). A steady `rate_limited` means the
-dial rate is above `PLIVO_CALLS_PER_SECOND`; dials then wait and retry on the next pacing tick.
+(`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`, and `not_sent` for a dial refused
+before anything was sent: no webhook base, a malformed number or caller ID, the API unreachable).
+A steady `rate_limited` means the dial rate is above `PLIVO_CALLS_PER_SECOND`; dials then wait and
+retry on the next pacing tick. A steady `not_sent` is configuration or network: read the
+`Plivo dial not sent` log lines.
 
 ## Recordings
 

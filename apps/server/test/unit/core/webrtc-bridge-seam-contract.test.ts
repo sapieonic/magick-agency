@@ -88,7 +88,8 @@ type CoreRejectReason =
   | 'station_socket_unavailable'
   | 'telephony_credential_unavailable'
   | 'carrier_rate_limited'
-  | 'carrier_auth_rejected';
+  | 'carrier_auth_rejected'
+  | 'carrier_dial_not_sent';
 
 describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
   it('has exactly the seam member signatures', () => {

@@ -587,14 +587,24 @@ every account the caller belongs to (CH2) where every internal handler is single
     duration) and `ring_timeout`, and answer, ring and hangup URLs that must be on
     `PLIVO_WEBHOOK_BASE_URL`'s origin. Plivo answers only a `request_uuid`, which the bridge keeps
     on the session and in `provider_request_id`; the `call_uuid` arrives on the callbacks. A 401
-    is `CarrierAuthRejectedError`, a 429 or no slot in time `CarrierRateLimitedError`, a timeout or
-    an unreadable 2xx an unknown outcome (never retried), any other status (a 403 included, PL1) a
-    plain refusal; each counts in `carrier_dial_refusals_total{provider,kind}`.
+    is `CarrierAuthRejectedError`, a 429 or no slot in time `CarrierRateLimitedError`, a timeout,
+    an unreadable 2xx or a network error after the request may have been written (a reset, a
+    closed socket) an unknown outcome (never retried), any other status (a 403 included, PL1) a
+    plain refusal. A dial the adapter will not send (a malformed number or caller ID, no webhook
+    base, a callback URL off it, no max duration, or the API unreachable before the request was
+    written: DNS, connect, TLS) is `CarrierDialNotSentError` with its reason (`configuration`,
+    `destination`, `network`). Each counts in `carrier_dial_refusals_total{provider,kind}`
+    (`not_sent` for the last). `PLIVO_WEBHOOK_BASE_URL` is validated at load: empty, or an
+    absolute `https:` URL with no query or fragment.
   - *Refusals with nothing placed* (`core/bridge/dial-refusals.ts`) tear the leg down with no
     `ended` and their own `WebRtcRejectReason`: `telephony_credential_unavailable` (the
     credential cannot dial, at the insert or the resolve; never the service's account instead),
-    `carrier_rate_limited` and `carrier_auth_rejected` (`seams.md` §3.1). The dialler treats a rate
-    limit as back-pressure, and on the other two pauses the campaign (below).
+    `carrier_rate_limited`, `carrier_auth_rejected` and `carrier_dial_not_sent` (the adapter's
+    `CarrierDialNotSentError`, or an empty webhook base for the carrier, row
+    `CARRIER_DIAL_NOT_SENT`, or `CARRIER_DIAL_INVALID_NUMBER` for the contact's number;
+    `seams.md` §3.1). The dialler treats a rate limit as back-pressure, pauses the campaign on
+    the credential's two (below), and returns a not-sent dial's contact uncharged after
+    `PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`.
   - *Callbacks* (`api/routes/webhooks/plivo.ts`): `POST /api/v1/webhooks/plivo/webrtc-answer/:callId`,
     `webrtc-status/:callId` (ring and hangup) and `webrtc-recording/:callId`. Each needs the
     purpose-bound webhook token in its URL (Q6) and a V3 signature (`plivo-signature.ts`) from the
