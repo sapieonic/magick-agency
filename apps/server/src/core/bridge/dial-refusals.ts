@@ -125,6 +125,22 @@ export const CREDENTIAL_UNAVAILABLE: UnplacedRefusal = {
 export const CARRIER_DIAL_NOT_SENT_ERROR_CODE = 'CARRIER_DIAL_NOT_SENT';
 export const CARRIER_DIAL_INVALID_NUMBER_ERROR_CODE = 'CARRIER_DIAL_INVALID_NUMBER';
 
+/** A calls-per-second limit gave the dial no slot (our gate, or the carrier's 429). */
+export const CARRIER_RATE_LIMITED: UnplacedRefusal = {
+  code: 'carrier_rate_limited',
+  statusCode: 503,
+  outcome: 'carrier_rate_limited',
+  errorCode: 'CARRIER_RATE_LIMITED',
+};
+
+/** The carrier refused the credential itself (HTTP 401). */
+export const CARRIER_AUTH_REJECTED: UnplacedRefusal = {
+  code: 'carrier_auth_rejected',
+  statusCode: 502,
+  outcome: 'carrier_auth_rejected',
+  errorCode: 'CARRIER_AUTH_REJECTED',
+};
+
 /**
  * A carrier request that the adapter refused before anything was placed, or that the
  * carrier answered by placing nothing: a calls-per-second limit (retryable), the carrier
@@ -133,12 +149,8 @@ export const CARRIER_DIAL_INVALID_NUMBER_ERROR_CODE = 'CARRIER_DIAL_INVALID_NUMB
  * Null for any other dial failure, which stays a carrier refusal.
  */
 export function carrierUnplacedRefusal(err: unknown): UnplacedRefusal | null {
-  if (isCarrierRateLimited(err)) {
-    return { code: 'carrier_rate_limited', statusCode: 503, outcome: 'carrier_rate_limited', errorCode: 'CARRIER_RATE_LIMITED' };
-  }
-  if (isCarrierAuthRejected(err)) {
-    return { code: 'carrier_auth_rejected', statusCode: 502, outcome: 'carrier_auth_rejected', errorCode: 'CARRIER_AUTH_REJECTED' };
-  }
+  if (isCarrierRateLimited(err)) return CARRIER_RATE_LIMITED;
+  if (isCarrierAuthRejected(err)) return CARRIER_AUTH_REJECTED;
   const notSent = carrierDialNotSentReason(err);
   if (notSent) {
     return {

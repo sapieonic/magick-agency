@@ -46,7 +46,7 @@ import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
 import { trackCarrierDialRefusal, trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import {
-  CarrierDialNotSentError, carrierAuthRejectionReason, isCarrierDialAborted, isDialOutcomeUnknown,
+  CarrierDialNotSentError, carrierAuthRejectionReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isCarrierDialAborted, isDialOutcomeUnknown,
 } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
@@ -876,7 +876,7 @@ export class WebRtcBridgeManager {
       await this.endCall(record.id, {
         status: 'failed',
         outcome: 'telephony_init_failed',
-        errorCode: outcomeUnknown ? 'TELEPHONY_INIT_OUTCOME_UNKNOWN' : 'TELEPHONY_INIT_FAILED',
+        errorCode: outcomeUnknown ? DIAL_OUTCOME_UNKNOWN_ERROR_CODE : 'TELEPHONY_INIT_FAILED',
         errorMessage: err instanceof Error ? err.message : String(err),
         hangupProvider: false,
       });
