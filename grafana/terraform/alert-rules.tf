@@ -42,6 +42,8 @@
 #     webhook_signature_rejected_total, no media_stream_connect_timeouts_total
 #     and no DNC registry metric, so no 5xx-ratio, latency, dial-failure,
 #     carrier-signature, media-timeout or DNC-write rule.
+#   * Carrier dial refusals: carrier_dial_refusals_total (Plivo's adapter only)
+#     has a dashboard panel and no rule until it has a production baseline.
 ###############################################################################
 
 locals {
@@ -254,6 +256,51 @@ locals {
         no_data_state = "OK"
         summary       = "Most telephony lease releases are taking the per-scope fallback"
         description   = "More than 50% of telephony lease releases on {{ $labels.service_name }} have used the per-scope fallback for 30m instead of the single atomic transaction. The likely cause is a concurrency guard latched into degraded mode after a Redis failure — that latch never resets, so the process keeps accounting concurrency in a local counter. Restart the process once Redis is healthy. Search the logs for 'Atomic telephony lease release declined' and read `declineReason`: `degraded_guard` = the above; `no_provider` = a session reached teardown with no telephony provider stamped, a code bug worth a ticket; `missing_core_guard`/`no_release_all` = a wiring problem at boot. Calls are unaffected — this is a capacity-accounting alert, not a call-failure one."
+      },
+    ]
+
+    # ── Tenant carrier credentials (docs/decisions.md B19-B20) ───────────
+    #
+    # The main process's credential housekeeping (apps/server/src/bootstrap/voice.ts,
+    # startCredentialHousekeeping) checks the keyring and sweeps at boot, then hourly. Both
+    # series exist from boot (the gauge once the first check answers; the sweep counter is
+    # recorded at zero for both results), and carry no credential, tenant or key id: the
+    # ERROR/WARN logs name them.
+    "carrier-credentials" = [
+      {
+        uid  = "agy-credential-keyring-missing-keys"
+        name = "Carrier credentials sealed under a master key the keyring does not hold"
+        # A gauge set at boot and after each hourly sweep, so no window and no guard; max BY
+        # service_name (one main process per deployment). It changes only on a restart or a
+        # pass, so a firing instance is a configuration fact, not a blip: for 0s. Pages: every
+        # call on those tenants' credentials fails closed, and so do the hangups and webhook
+        # checks of calls already pinned to them (B20: never a fallback to another account).
+        expr          = "max by (service_name) (telephony_credential_missing_key_ids{${local.agency}})"
+        op            = "gt"
+        threshold     = 0
+        for           = "0s"
+        severity      = "critical"
+        no_data_state = "OK"
+        summary       = "Stored carrier credentials cannot be opened: their master key is missing from the keyring"
+        description   = "telephony_credential_missing_key_ids is {{ $value }} on {{ $labels.service_name }}: tenant carrier credential secrets (Plivo, B19) are sealed under master key ids that TELEPHONY_CREDENTIAL_KEYS does not hold, so those secrets cannot be opened. Every call on an affected credential fails closed (no fallback to the service's VoiceLink account, B20): campaigns pinned to it place no calls, and the hangups and webhook signature checks of its calls already in flight fail too. The service's own VoiceLink calls are unaffected. The main-process ERROR 'Telephony credential secrets are sealed under keys missing from TELEPHONY_CREDENTIAL_KEYS' (component telephony bootstrap) names the missing ids (kekIds). Almost always a deploy that dropped or renamed a keyring entry: restore the missing id:key pairs to TELEPHONY_CREDENTIAL_KEYS (from the keyring backup, kept apart from the database) and restart; the gauge reads 0 at the next boot. If a key is truly lost, its secrets never open again: a super-admin rotates each affected credential's secret (the Telephony Credentials screen), which reseals it under TELEPHONY_CREDENTIAL_ACTIVE_KEY. No keyring configured at all (TELEPHONY_CREDENTIAL_KEYS unset) with credentials stored reads every stored key id as missing. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-credential-sweep-failing"
+        name = "Carrier credential sweeps failing"
+        # One sweep an hour (and one at boot), so a 3h window holds ~3 passes. One failure is
+        # retried an hour later and costs a shred or prune an hour late; 2+ failed in 3h
+        # (threshold 1.5, N-0.5) is the sweep failing persistently. Recorded at zero at boot
+        # (primeTelephonyCredentialSweeps); the new-series guard covers a failure before that
+        # zero's first export. Warns (Slack): nothing dials on a revoked credential either way,
+        # but its secrets outlive the retention B20 promises.
+        expr          = "sum by (service_name) (((telephony_credential_sweeps_total{result=\"failed\",${local.agency}} unless telephony_credential_sweeps_total{result=\"failed\",${local.agency}} offset 3h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 3h)) or increase(telephony_credential_sweeps_total{result=\"failed\",${local.agency}}[3h]))"
+        op            = "gt"
+        threshold     = 1.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "The carrier credential sweep keeps failing"
+        description   = "telephony_credential_sweeps_total{result=\"failed\"} advanced by 2+ in 3h on {{ $labels.service_name }}: the hourly sweep that shreds revoked carrier credentials once their calls have ended (2 h after the last one) and drops secret versions past the 24 h rotation grace is failing. Nothing dials on a revoked credential either way, but its sealed secrets stay in telephony_credential_secrets past the retention B20 promises until a sweep succeeds. Read the main-process WARN 'Telephony credential sweep failed' for the error: it is almost always agency's Postgres or its pool (the sweep is a few reads and row-locked updates on telephony_credentials, telephony_credential_secrets and the calls pinned to them). A lock wait on a credential row being revoked or rotated clears on its own. The sweep is idempotent and the next hourly pass catches up once it succeeds; a restart also runs one at boot. Runbook: docs/operations.md, 'Alert runbooks'."
       },
     ]
 

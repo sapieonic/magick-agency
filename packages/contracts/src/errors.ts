@@ -297,7 +297,7 @@ void _allRosterCodesListed;
 //
 // These are deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because they are not
 // members of the action union: they are the campaign routes' refusals, not an
-// agent action's. The member set is exactly the six campaign-lifecycle codes below.
+// agent action's. The member set is exactly the ten campaign-lifecycle codes below.
 // `another_campaign_running` is retired (decisions MC6): an account may run several
 // campaigns at once, so Start and Resume no longer refuse on another running campaign.
 
@@ -318,7 +318,31 @@ export type AgencyCampaignLifecycleErrorCode =
    * `analysis_profile_id` names a profile this account does not own, or one that
    * no longer exists (the dialer runtime `analysis/profile-preflight.ts`).
    */
-  | 'analysis_profile_not_found';
+  | 'analysis_profile_not_found'
+  /**
+   * 404. `telephony_credential_id` names no carrier credential of this tenant on the
+   * campaign's `telephony_provider` (unknown, another tenant's, or another carrier's:
+   * the three are not told apart).
+   */
+  | 'telephony_credential_not_found'
+  /**
+   * 409. The tenant carrier credential is not `active` (disabled, invalid or revoked):
+   * a campaign cannot be pinned to it, and a campaign pinned to it cannot start or
+   * resume until a platform administrator re-enables it or the campaign is moved.
+   */
+  | 'telephony_credential_not_active'
+  /**
+   * 409. Start or resume of a campaign on a tenant's own carrier account none of whose
+   * caller IDs is still active on that account and available to the campaign's account
+   * (decision PL13): it would run and place no calls.
+   */
+  | 'campaign_caller_ids_unavailable'
+  /**
+   * 409. Start or resume of a campaign whose account splits its concurrency by carrier
+   * and gives the campaign's carrier no lines (decision PL14): it would run and place no
+   * calls. Support adds the capacity.
+   */
+  | 'carrier_capacity_unallocated';
 
 export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'invalid_campaign_transition',
@@ -327,6 +351,10 @@ export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'campaign_roster_exhausted',
   'announcement_not_found',
   'analysis_profile_not_found',
+  'telephony_credential_not_found',
+  'telephony_credential_not_active',
+  'campaign_caller_ids_unavailable',
+  'carrier_capacity_unallocated',
 ] as const satisfies readonly AgencyCampaignLifecycleErrorCode[];
 
 const _allLifecycleCodesListed: AllListed<
@@ -379,7 +407,7 @@ export type AgencySoftphoneErrorCode =
   | 'manual_call_live'
   /** 409. A dial while the session's last call awaits its outcome: one unsettled call per session. */
   | 'outcome_pending'
-  /** 429. The account, provider or global concurrency guard refused the dial. */
+  /** 429. The account, provider or global concurrency guard refused the dial, or the carrier account's calls-per-second limit gave it no slot. Nothing was dialled; retry in a moment. */
   | 'concurrency_limit'
   /** 409. The session has no attached station socket to dial the agent leg on. */
   | 'station_unavailable'
@@ -396,7 +424,9 @@ export type AgencySoftphoneErrorCode =
   /** 400. `PUT /settings` body is invalid (catalog, call fields, profile or caller ID). `details` per path. */
   | 'settings_invalid'
   /** 409. Contact assignment: the tagged campaign is `strict` and the number's contact belongs to another agent. A supervisor is not refused. */
-  | 'contact_assigned_elsewhere';
+  | 'contact_assigned_elsewhere'
+  /** 409. The carrier account the caller ID's number is on cannot place calls: it is no longer active (disabled, invalid, revoked) or the carrier refused its credentials. Nothing was dialled, and retrying cannot help until support has fixed the account; another caller ID may. */
+  | 'carrier_account_unavailable';
 
 /** Runtime list of {@link AgencySoftphoneErrorCode}, in declaration order. */
 export const AGENCY_SOFTPHONE_ERROR_CODES = [
@@ -425,6 +455,7 @@ export const AGENCY_SOFTPHONE_ERROR_CODES = [
   'fields_invalid',
   'settings_invalid',
   'contact_assigned_elsewhere',
+  'carrier_account_unavailable',
 ] as const satisfies readonly AgencySoftphoneErrorCode[];
 
 const _allSoftphoneCodesListed: AllListed<

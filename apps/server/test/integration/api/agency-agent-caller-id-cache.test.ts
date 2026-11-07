@@ -126,7 +126,7 @@ describe('the supervisor\'s writes', () => {
     expect(await expectCached()).toEqual({});
     await put(agent(0).id, X);
     expect(await cached()).toEqual({ [agent(0).id]: X });
-    expect(await cache.callerIdForContact({ id: A(), caller_ids: POOL }, agent(0).id)).toBe(X);
+    expect(await cache.callerIdForContact({ id: A(), caller_ids: POOL, tenant_id: 't', account_id: 'a', telephony_credential_id: null }, agent(0).id)).toBe(X);
 
     // Replacing the number: the same.
     expect(await expectCached()).toEqual({ [agent(0).id]: X });
@@ -139,7 +139,7 @@ describe('the supervisor\'s writes', () => {
     const res = await call(app(), 'DELETE', agentUrl(agent(0).id), sup(), floor);
     expect(res.statusCode).toBe(204);
     expect(await cached()).toEqual({});
-    expect(POOL).toContain(await cache.callerIdForContact({ id: A(), caller_ids: POOL }, agent(0).id));
+    expect(POOL).toContain(await cache.callerIdForContact({ id: A(), caller_ids: POOL, tenant_id: 't', account_id: 'a', telephony_credential_id: null }, agent(0).id));
   });
 });
 

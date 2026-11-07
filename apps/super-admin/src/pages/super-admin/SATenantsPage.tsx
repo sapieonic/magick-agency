@@ -106,7 +106,7 @@ export default function SATenantsPage() {
     <div>
       <PageHeader
         title="Tenants"
-        subtitle="Organizations on the platform — members and accounts."
+        subtitle="Organisations on the platform — members and accounts."
         badge={tenants.length}
         actions={
           <button className="btn-primary" onClick={() => setShowCreate(true)}>
@@ -166,7 +166,7 @@ export default function SATenantsPage() {
         open={showCreate}
         onClose={() => setShowCreate(false)}
         title="Add tenant"
-        subtitle="Creates the organization and invites its owner."
+        subtitle="Creates the organisation and invites its owner."
         footer={
           <>
             <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>
@@ -180,7 +180,7 @@ export default function SATenantsPage() {
       >
         <form id="create-tenant-form" onSubmit={handleCreate} className={styles.form}>
           <div className={styles.field}>
-            <label htmlFor="tenant-name">Organization name</label>
+            <label htmlFor="tenant-name">Organisation name</label>
             <input
               id="tenant-name"
               value={createForm.name}

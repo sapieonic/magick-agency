@@ -274,7 +274,8 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
        VALUES ($1, $2, true, true, 20), ($1, $3, true, true, 20)`,
       [tenant, account, sibling],
     );
-    const provider = await insertTelephonyProvider();
+    // The service's own carrier: an untagged dial is placed on its caller ID's number's carrier.
+    const provider = await insertTelephonyProvider({ name: 'voicelink' });
     const number = await insertPhoneNumber({ provider_id: provider.id, phone_number: '+919000000098' });
     await insertPhoneAssignment({ tenant_id: tenant, phone_number_id: number.id, is_default: true });
     supervisor = await user(tenant, account, 'account_admin');

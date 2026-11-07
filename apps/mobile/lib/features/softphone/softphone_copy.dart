@@ -60,9 +60,10 @@ abstract final class SoftphoneCopy {
   static const statusConnected = 'Connected';
   static const statusEnded = 'Ended';
 
-  /// SP3: what the agent must know before hanging up a ringing call.
+  /// SP3: what the agent must know before hanging up a ringing call whose
+  /// carrier cannot stop it ringing (`SoftphoneView.warnRingingHangUp`).
   static const ringingHangupWarning =
-      'VoiceLink cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
+      'This carrier cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
 
   // ── Controls ──
   static const mute = 'Mute';

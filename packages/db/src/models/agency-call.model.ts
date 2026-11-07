@@ -167,8 +167,14 @@ export interface CreateWebRtcCallInput {
   caller_id: string;
   destination_phone: string;
   provider?: string;
-  /** Pinned at intake, immutable after; null = the service's own VoiceLink account. */
+  /**
+   * Pinned at intake, immutable after; null = the service's own VoiceLink account.
+   * Non-null: the insert happens only while the credential is `active`, else `create`
+   * throws `TelephonyCredentialNotActiveError` and writes nothing.
+   */
   telephony_credential_id?: string | null;
+  /** The carrier's dial-request id, when already known at insert (Plivo `request_uuid`). */
+  provider_request_id?: string | null;
   initiated_by?: string | null;
   metadata?: Record<string, unknown>;
   recording_requested?: boolean;

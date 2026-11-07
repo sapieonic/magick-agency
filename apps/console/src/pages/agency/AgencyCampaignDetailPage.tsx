@@ -4,6 +4,7 @@ import { Activity } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { transitionAgencyCampaign } from '../../api/agencyCampaigns';
+import { withCarrierRefusalCopy } from '../../utils/agencyCarriers';
 import { ApiError } from '../../api/client';
 import { hasPermission } from '../../utils/permissions';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
@@ -119,6 +120,16 @@ export function AgencyCampaignDetailPage() {
 
 
 
+  /**
+   * Say why a lifecycle action was refused. A carrier refusal (start or resume on a
+   * carrier account that is no longer active, or gone) gets the console's own sentence,
+   * which says who can fix it; anything else shows the API's message.
+   */
+  const reportRefusal = useCallback(
+    (err: unknown) => showErrorToast(withCarrierRefusalCopy(err), 'Could not change the campaign state.'),
+    [showErrorToast],
+  );
+
   const runAction = useCallback(
     async (action: Action) => {
       if (!id || !tenantId || !accountId) return;
@@ -181,12 +192,12 @@ export function AgencyCampaignDetailPage() {
           const latest = await refreshCampaign();
           const stillOffered = latest ? isLifecycleActionEnabled(latest.status, action) : true;
           if (stillOffered) {
-            showErrorToast(err, 'Could not change the campaign state.');
+            reportRefusal(err);
           } else {
             reportFailure = false;
           }
         } else {
-          showErrorToast(err, 'Could not change the campaign state.');
+          reportRefusal(err);
         }
         if (reportFailure && fromStatus && isKnownCampaignStatus(fromStatus)) {
           trackAgencyCampaignLifecycleFailed({
@@ -203,7 +214,7 @@ export function AgencyCampaignDetailPage() {
         setBusy(null);
       }
     },
-    [id, tenantId, accountId, load, refreshCampaign, commitCampaign, campaignRef, showToast, showErrorToast, panel],
+    [id, tenantId, accountId, load, refreshCampaign, commitCampaign, campaignRef, showToast, reportRefusal, panel],
   );
 
   const onActionClick = useCallback(

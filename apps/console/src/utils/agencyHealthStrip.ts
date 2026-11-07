@@ -1,4 +1,5 @@
 import type { AgencyStall, AgencyStallCode } from '../types/agency-campaign';
+import { carrierPauseCopy, type CarrierPauseCopy } from './agencyCarriers';
 import { formatCount, pct, plural } from './format/number';
 import { ceilingPctText } from './agency/abandonmentCeiling';
 
@@ -33,6 +34,9 @@ import { ceilingPctText } from './agency/abandonmentCeiling';
  */
 export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
   'auto_paused_abandonment',
+  'auto_paused_carrier',
+  'no_dialable_caller_ids',
+  'no_carrier_capacity',
   'dnc_unavailable',
   'no_agents_available',
   'concurrency_saturated',
@@ -46,6 +50,9 @@ export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
 /** Short names for the "more issues" disclosure. One line each, no evidence. */
 export const AGENCY_STALL_LABELS: Record<AgencyStallCode, string> = {
   auto_paused_abandonment: 'Paused by the abandonment limit',
+  auto_paused_carrier: 'Paused: the carrier account cannot place calls',
+  no_dialable_caller_ids: 'No caller ID available on the carrier account',
+  no_carrier_capacity: 'No call capacity on this carrier',
   dnc_unavailable: 'Do Not Call check unavailable',
   no_agents_available: 'No agents available',
   concurrency_saturated: 'At the concurrency limit',
@@ -156,6 +163,15 @@ function breakClause(byReason: Record<string, number>): string | null {
 }
 
 /**
+ * For a carrier pause reason this build has no copy for (a newer server): still true, still
+ * actionable. Every known reason's copy is `CARRIER_PAUSE_COPY`, shared with Insights and Activity.
+ */
+const CARRIER_PAUSE_FALLBACK: Pick<CarrierPauseCopy, 'cause' | 'action'> = {
+  cause: 'this campaign’s carrier account cannot place calls',
+  action: 'Contact support about the campaign’s carrier account, then resume the campaign.',
+};
+
+/**
  * The diagnosis for one stall, derived only from that arm's own evidence.
  *
  * `formatInstant` is injected rather than imported so the caller owns the
@@ -185,9 +201,38 @@ export function stallCopy(
       });
     }
 
+    case 'auto_paused_carrier': {
+      const pausedAt = formatInstant(stall.paused_at);
+      const copy = carrierPauseCopy(stall.reason) ?? CARRIER_PAUSE_FALLBACK;
+      return diagnosis({
+        headline: `Paused automatically — ${copy.cause}.`,
+        facts: [{ text: `Paused at ${pausedAt}. No calls are placed until it is resumed.`, emphasis: pausedAt }],
+        advice: copy.action,
+      });
+    }
+
+    case 'no_dialable_caller_ids':
+      return diagnosis({
+        headline: 'Not dialling — none of this campaign’s caller IDs is available on its carrier account any more.',
+        facts: [
+          {
+            text: `${count(stall.caller_ids_stored, 'caller ID')} chosen, none still available.`,
+            emphasis: num(stall.caller_ids_stored),
+          },
+        ],
+        advice: 'Choose numbers that are still available in the campaign’s settings, or contact support if numbers are missing.',
+      });
+
+    case 'no_carrier_capacity':
+      return diagnosis({
+        headline: 'Not dialling — this account has no call capacity on the campaign’s carrier.',
+        facts: [{ text: 'Every call on this carrier is refused until capacity is added.' }],
+        advice: 'Contact support to add capacity for this carrier, or move the campaign to another carrier in its settings.',
+      });
+
     case 'dnc_unavailable':
       return diagnosis({
-        headline: 'Dialing has stopped — the Do Not Call check is unavailable.',
+        headline: 'Dialling has stopped — the Do Not Call check is unavailable.',
         facts: [
           {
             text: stall.tenant_wide
@@ -195,7 +240,7 @@ export function stallCopy(
               : 'The Do Not Call list could not be read.',
           },
         ],
-        advice: 'Nothing to change here — dialing resumes on its own once the check is back. Contact support if it persists.',
+        advice: 'Nothing to change here — dialling resumes on its own once the check is back. Contact support if it persists.',
       });
 
     case 'no_agents_available': {
@@ -264,7 +309,7 @@ export function stallCopy(
         ],
         advice: stall.next_retry_at
           ? `The next one is due at ${formatInstant(stall.next_retry_at)}.`
-          : 'No retry time is set — add contacts if you need this campaign dialing now.',
+          : 'No retry time is set — add contacts if you need this campaign dialling now.',
       });
 
     // There is no `credits_low` arm ("Credit is running low.", "Top up before

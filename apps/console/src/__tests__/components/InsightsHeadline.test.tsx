@@ -6,6 +6,8 @@ import { InsightsHeadline } from '../../pages/agency/campaign-detail/insights/In
 import type { AgencyInsightsReadiness, AgencyInsightsSummary } from '../../types/agency-insights';
 import type { AgencyCampaignStatus } from '../../types/agency';
 import { readiness, summary } from '../helpers/insights';
+import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency';
+import { CARRIER_PAUSE_COPY } from '../../utils/agencyCarriers';
 
 /**
  * The status-aware headline: one component per status, each reading its own
@@ -150,6 +152,34 @@ describe('paused', () => {
     expect(kpi('kpi-paused-by')).toContain('The abandonment guardrail');
     expect(kpi('kpi-paused-by')).toContain('Abandonment reached 3.4% (ceiling 3%)');
     expect(screen.getByTestId('headline-paused').textContent).not.toContain('fallen due since the pause');
+  });
+
+  /**
+   * Every automatic carrier pause (the reasons come from the wire type, so a new one is
+   * here once it has its copy): "Paused by" names what caused it, never "the dialler",
+   * and the sub says when, then why and what to do, without repeating "Paused:" inside
+   * the panel titled "Paused".
+   */
+  it.each(Object.entries(CARRIER_PAUSE_COPY))('names the cause of a %s pause, when, and who can fix it', (reason, copy) => {
+    const s = summary('paused');
+    s.headline.paused = { ...s.headline.paused!, reason: reason as CarrierAccountPauseReason, actor: null, abandonment_rate_pct_at_pause: null, callbacks_missed_while_paused: 0 };
+    renderHeadline(s);
+    const text = kpi('kpi-paused-by');
+    expect(text).toContain(copy.by);
+    expect(text).toMatch(new RegExp(`Automatic, [^.]*\\d: ${copy.cause}\\. ${copy.action.replace(/[.,]/g, '\\$&')}$`));
+    expect(text).toMatch(/Contact support/);
+    expect(text).not.toMatch(/The dialler|Paused:|Supervisor pause|administrator/);
+  });
+
+  it('says the carrier refused the account’s credentials, or that the account is no longer active', () => {
+    expect(CARRIER_PAUSE_COPY.carrier_auth.by).toBe('The carrier');
+    expect(CARRIER_PAUSE_COPY.carrier_account_unavailable.by).toBe('Carrier account not active');
+    expect(CARRIER_PAUSE_COPY.carrier_account_unavailable.cause).not.toContain('refused');
+  });
+
+  it('says the carrier refused several calls in a row (PL11): the carrier paused it, and support checks the account', () => {
+    expect(CARRIER_PAUSE_COPY.carrier_refusing_calls.by).toBe('The carrier');
+    expect(CARRIER_PAUSE_COPY.carrier_refusing_calls.cause).toMatch(/refused several .* calls in a row/);
   });
 });
 

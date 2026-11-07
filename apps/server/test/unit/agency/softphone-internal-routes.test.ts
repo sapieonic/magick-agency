@@ -336,6 +336,13 @@ describe('GET /softphone/calls/:id and its recording', () => {
     const any = await get(`/softphone/calls/${CALL}/recording?${sup}`);
     expect(any.statusCode).toBe(200);
     expect(any.body).toBe('bytes');
+    // The media row itself (its provider and pinned credential decide the access) and the
+    // process's recording access resolver (B21) reach the proxy.
+    const { proxyCallRecording } = await import('../../../src/utils/recording-proxy.js');
+    const call = vi.mocked(proxyCallRecording).mock.calls.at(-1)!;
+    expect(call[0]).toEqual({ id: LEG, recording_url: 'https://rec' });
+    const resolve = call[3] as import('../../../src/telephony/recording-access.js').RecordingAccessResolver;
+    expect((await resolve({ provider: 'voicelink', telephony_credential_id: null, tenant_id: 't' })).allowedHosts).toEqual([]);
   });
 
   it('the recording refuses an agent, their own call included, before any read', async () => {
@@ -377,7 +384,7 @@ describe('the settings', () => {
       code: 'settings_invalid',
       details: [{
         path: 'disposition_catalog[0].override',
-        message: "Overrides are a campaign feature: the soft phone's outcome catalog cannot grant one.",
+        message: "Overrides are a campaign feature: the soft phone's outcome catalogue cannot grant one.",
       }],
     });
     expect(res.json().details).toHaveLength(1);

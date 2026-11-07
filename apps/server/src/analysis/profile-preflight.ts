@@ -63,7 +63,7 @@ export async function preflightAnalysisProfile(
       // switch that actually controls it.
       message: scope === 'agency'
         ? 'Agency call analysis is not enabled for this account.'
-        : 'Dialer call analysis is not enabled for this account.',
+        : 'Dialler call analysis is not enabled for this account.',
     };
   }
   const profile = await callAnalysisProfileRepository.findByIdScoped(profileId, tenantId, accountId);

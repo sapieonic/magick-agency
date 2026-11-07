@@ -15,6 +15,7 @@ import { CAMPAIGN_CONCURRENCY_STATUSES, campaignConcurrency } from '../../../age
 import { parseCampaignSeriesQuery } from '../../../agency/campaign-series.js';
 import { accountSettingsRepository } from '@magick-agency/db/repositories/account-settings.repository';
 import { campaignHealth, RECENT_FAILURE_WINDOW_MINUTES } from '../../../agency/campaign-health.js';
+import { carrierCapacityMissing, dialableCallerIds } from '../../../agency/campaign-dialability.js';
 import { resolveCallingWindow, callingWindowState, nextWindowOpen } from '../../../agency/calling-hours.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import type { AgencyCampaignRouteDeps } from '../agency-campaigns.routes.js';
@@ -113,7 +114,8 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
     // the other two fall back to `null`, which the assembler reads as "unknown".
     // The limit is read as `null` on failure and turned into that `0` below, so the
     // `concurrency` block (MC7) can tell a failed read from a real ceiling.
-    const [dncAppliedVersion, limitRead, concurrencyInUse, connected, accountCounts] = await Promise.all([
+    const running = campaign.status === 'running';
+    const [dncAppliedVersion, limitRead, concurrencyInUse, connected, accountCounts, dialable, capacityMissing] = await Promise.all([
       bestEffort<number | null>(
         'agency.dnc.appliedVersion',
         () => deps.runtime.dnc.appliedVersion(tenantId),
@@ -168,6 +170,19 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
         },
         null,
       ),
+      // What the dial itself would rotate, for a running campaign on a tenant's own
+      // carrier account (PL13); cached by the dial path, so a poll costs nothing extra.
+      bestEffort<number | null>(
+        'agency.dialable_caller_ids',
+        async () => (running && campaign.telephony_credential_id ? (await dialableCallerIds(campaign)).length : null),
+        null,
+      ),
+      // Whether the account gives the campaign's carrier no lines (PL14), while running.
+      bestEffort<boolean | null>(
+        'agency.carrier_capacity',
+        async () => (running ? carrierCapacityMissing(campaign) : null),
+        null,
+      ),
     ]);
     const concurrencyLimit = limitRead ?? 0;
 
@@ -218,6 +233,8 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
         lastDialAt: health.lastDialAt,
         recentFailures: { ...health.recent, windowMinutes: RECENT_FAILURE_WINDOW_MINUTES },
         onBreakByReason: health.onBreakByReason,
+        dialableCallerIds: dialable,
+        carrierCapacityMissing: capacityMissing,
       }),
     };
     return reply.send(payload);

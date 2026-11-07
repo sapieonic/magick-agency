@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   TELEPHONY_PROVIDER_ALIASES,
+  TELEPHONY_PROVIDER_VENDOR_NAMES,
   normalizeTelephonyProviderKey,
   hasTelephonyProviderAlias,
   telephonyProviderAlias,
+  telephonyProviderVendorName,
 } from '../src/telephonyProviders';
 
 describe('TELEPHONY_PROVIDER_ALIASES', () => {
@@ -96,5 +98,19 @@ describe('telephonyProviderAlias', () => {
     expect(telephonyProviderAlias('   ')).toBe('');
     expect(telephonyProviderAlias(null, 'Airtel IQ')).toBe('Airtel IQ');
     expect(telephonyProviderAlias('   ', 'Airtel IQ')).toBe('Airtel IQ');
+  });
+});
+
+describe('TELEPHONY_PROVIDER_VENDOR_NAMES', () => {
+  it('has a vendor name for exactly the aliased carriers', () => {
+    expect(Object.keys(TELEPHONY_PROVIDER_VENDOR_NAMES).sort()).toEqual(Object.keys(TELEPHONY_PROVIDER_ALIASES).sort());
+  });
+
+  it('looks a vendor up by slug or display name, and says null for an unknown one', () => {
+    expect(telephonyProviderVendorName('plivo')).toBe('Plivo');
+    expect(telephonyProviderVendorName('Generic SIP')).toBe('Generic SIP');
+    expect(telephonyProviderVendorName('acme_tel')).toBeNull();
+    expect(telephonyProviderVendorName('constructor')).toBeNull();
+    expect(telephonyProviderVendorName(null)).toBeNull();
   });
 });

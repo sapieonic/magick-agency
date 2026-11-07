@@ -111,7 +111,7 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     expect(screen.getByTestId('dnc-scope-tenant').textContent).toBe('Every campaign');
     const title = screen.getByTestId('dnc-scope-tenant').getAttribute('title') ?? '';
     // The only scope that may claim the dial-time block list.
-    expect(title).toContain('Enforced for all agency dialing');
+    expect(title).toContain('Enforced for all agency dialling');
     // OVER-claim guard, and the widest claim on the page. "Enforced
     // everywhere" is what this said, and everywhere is not what it is: the
     // dial-time set is read by the agency pacing engine alone.
@@ -264,7 +264,7 @@ describe('DNC — agency-only, and the copy has to say so', () => {
     // The STORED value is untouched — the API still writes and filters
     // `source: 'regulator'`; only the words it renders as are narrowed.
     const cell = await screen.findByText('Regulator list (agency only)');
-    expect(cell.getAttribute('title')).toContain('suppresses agency dialing');
+    expect(cell.getAttribute('title')).toContain('suppresses agency dialling');
   });
 
   it('leaves the other three sources alone', async () => {

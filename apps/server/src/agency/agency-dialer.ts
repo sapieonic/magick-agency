@@ -1,6 +1,5 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import { WebRtcCallError } from '../core/webrtc-bridge-manager.js';
 import {
   DIAL_OUTCOME_UNKNOWN_ERROR_CODE,
   DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS,
@@ -39,6 +38,9 @@ import type { WrapupManager } from './wrapup-manager.js';
 import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
+import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
+import { CarrierRefusalBreaker, countsTowardBreaker } from './carrier-refusal-breaker.js';
+import { classifyDialRefusal, dialWasSent } from '../core/bridge/dial-refusals.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -83,8 +85,8 @@ export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
  * How long a contact waits after its dial failed in the bridge before the carrier was asked
  * (the bridge rejected with no `ended`: the call row INSERT, the carrier tokens, the carrier
  * request's own inputs). Default, pending Manas (`docs/decisions.md`, "Dial failed before the
- * carrier"). Not an admission refusal ({@link CAPACITY_REFUSALS}): that is back-pressure, not
- * a fault, and its contact goes back at once.
+ * carrier"). Not an admission refusal (`capacity`, `classifyDialRefusal`): that is
+ * back-pressure, not a fault, and its contact goes back at once.
  *
  * Without it the contact went back dialable at once, uncharged, and a failure that repeats
  * (a missing webhook base, a database refusing the INSERT) redialled the same contact on
@@ -102,18 +104,24 @@ export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
 export const PRE_CARRIER_FAILURE_REDIAL_DELAY_MS = 60_000;
 
 /**
- * The bridge's admission refusals: a concurrency slot was not available. Nothing failed, so
- * the contact goes back dialable at once, as before {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS}
- * existed: pacing caps its dials by the account limit, so the refusal is bounded by the next
- * tick's capacity, not a loop, and holding the contact a minute would only stall a floor that
- * frees capacity within seconds (`integration/load/concurrency-cap.test.ts`).
+ * What becomes of the contact of a dial abandoned before it was placed
+ * (`AgencyDialer.abandonBeforeDial`), decided once by the caller. A wrap-up redial's
+ * contact is parked for the outcome its agent still owes whatever the fate; only
+ * `hold_unknown` changes its reopened wrap-up (no further redial is offered).
+ *
+ *  - `hold_unknown`: the carrier may have queued the failed dial. The contact is held back
+ *    {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
+ *    (`holdOutcomeUnknownContact`).
+ *  - `suppress_invalid`: the carrier will never dial this contact's number
+ *    (`carrier_dial_not_sent`, `destination`). Suppressed `invalid`, uncharged, as the
+ *    pre-dial gate's `phone_invalid` does.
+ *  - `return_now`: back dialable at once, uncharged: a dial called off before it
+ *    (`reservation_expired`), refused admission or a calls-per-second slot, or refused for
+ *    the campaign's carrier account, which pauses the campaign.
+ *  - `return_delayed`: back uncharged after {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS}: a
+ *    dial that failed in the bridge before the carrier was asked (`failed`).
  */
-const CAPACITY_REFUSALS: ReadonlySet<string> = new Set([
-  'global_concurrency_limit',
-  'account_concurrency_limit',
-  'provider_concurrency_limit',
-  'provider_concurrency_unavailable',
-]);
+type AbandonedContactFate = 'hold_unknown' | 'suppress_invalid' | 'return_now' | 'return_delayed';
 
 /**
  * How long a `released` the agent never saw is kept for them to collect on
@@ -225,6 +233,12 @@ export class AgencyDialer {
     private readonly agents: AgentStateMachine,
     private readonly wrapup: WrapupManager,
     private readonly breaks: BreakRegistry,
+    /**
+     * Counts a credential-pinned campaign's carrier refusals in a row and says when to pause
+     * it (`carrier-refusal-breaker.ts`, PL11). The runtime hands the Redis-backed one; the
+     * default counts in this process.
+     */
+    private readonly refusalBreaker: CarrierRefusalBreaker = new CarrierRefusalBreaker(null, ''),
   ) {}
 
   /** Subscribe to bridge lifecycle. Call once at wiring time. */
@@ -320,7 +334,7 @@ export class AgencyDialer {
     const socket = this.stations.socketFor(sessionId);
     if (!socket || socket.readyState !== 1 /* OPEN */) {
       log.warn({ attemptId, sessionId, lateBinding }, 'Agent socket gone before dial — releasing');
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
 
@@ -382,7 +396,7 @@ export class AgencyDialer {
       const delivered = this.stations.send(sessionId, { event: 'reserved', attempt });
       if (!delivered) {
         log.warn({ attemptId, sessionId }, 'Could not deliver reserved frame — releasing');
-        await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+        await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
         return;
       }
       panelDelivered = true;
@@ -406,7 +420,7 @@ export class AgencyDialer {
         { attemptId, sessionId },
         'Station socket went away while the dial was being prepared — abandoning before placing an unbound call nobody is watching',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
     // Two short writes (the lease CAS, the `dialing` stamp) still sit between this
@@ -417,7 +431,7 @@ export class AgencyDialer {
         { attemptId, sessionId, campaignId: cmd.campaignId },
         'Pacing stopped or lost the campaign lease while the dial was being prepared — abandoning before the carrier is contacted',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
 
@@ -443,7 +457,7 @@ export class AgencyDialer {
         { attemptId, sessionId },
         'Lost the agent lease before dialing — abandoning rather than calling with no agent',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
     this.startLeaseRenewal(attemptId, sessionId, 'reserved');
@@ -490,6 +504,9 @@ export class AgencyDialer {
       callerId: cmd.callerId,
       destinationPhone: cmd.contact.phone_e164,
       provider: cmd.campaign.telephony_provider,
+      // The tenant carrier credential the campaign is pinned to (null: the service's own
+      // account). The bridge pins it on the call row and dials on it, never on another.
+      telephonyCredentialId: cmd.campaign.telephony_credential_id ?? null,
       // No SIP connection: there is no BYO-SIP egress, so `WebRtcOutboundParams` has no
       // such field (`docs/seams.md`).
       record: cmd.campaign.record_calls,
@@ -530,7 +547,7 @@ export class AgencyDialer {
         { attemptId, sessionId },
         'Station socket went away while the dial was being prepared — abandoning before placing an unbound call nobody is watching',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
 
@@ -554,6 +571,9 @@ export class AgencyDialer {
       // Before the check below: an `ended` arm that settled this attempt while the dial
       // was in flight is waiting on this answer to settle its contact.
       dialReturned(outcomeUnknown);
+      // The refusal breaker (PL11), before the check below too: a carrier refusal
+      // (`telephony_init_failed`) has already been settled by the `ended` arm, and still counts.
+      const refusalStreakTripped = await this.noteCarrierRefusal(cmd, err);
       // ── Settled exactly once ─────────────────────────────────────────────────
       //
       // A dial the bridge got as far as the carrier with is ended by the bridge before
@@ -570,17 +590,53 @@ export class AgencyDialer {
         log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed after its end was settled — the ended arm settles its contact');
         return;
       }
-      const reason: AgencyReleaseReason =
-        err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
-          ? 'reservation_expired'
-          : 'failed';
-      const capacityRefused = err instanceof WebRtcCallError && CAPACITY_REFUSALS.has(err.code);
-      log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
-      await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused);
+      const refusal = classifyDialRefusal(err);
+      const reason: AgencyReleaseReason = refusal.kind === 'station_unavailable' ? 'reservation_expired' : 'failed';
+      // The campaign's carrier account cannot dial: the carrier refused its credential
+      // (HTTP 401, `carrier_auth`), or the credential is no longer active (disabled,
+      // invalid or revoked since the campaign started, refused before the carrier:
+      // `carrier_account_unavailable`). A keyring fault (a master key missing) is not one:
+      // the bridge rethrows it as its own failure (`other`), held a minute, nothing paused. Every further dial on it would be refused
+      // too, so the campaign is paused before this attempt is settled. Nothing was placed
+      // and the contact did nothing wrong: it goes back at once, uncharged, and waits for
+      // the resume.
+      if (refusal.kind === 'carrier_account') await pauseCampaignForCarrierAccount(cmd.campaign, refusal.pause);
+      // An admission or calls-per-second refusal is back-pressure: pacing caps its dials by
+      // the account limit, so it is bounded by the next tick's capacity, not a loop, and
+      // holding the contact a minute would only stall a floor that frees capacity within
+      // seconds (`integration/load/concurrency-cap.test.ts`). A dial not sent for the
+      // carrier's configuration that tripped the breaker: the campaign is paused, so its
+      // contact goes back at once like any carrier-account pause's.
+      const capacityRefused =
+        refusal.kind === 'capacity' || refusal.kind === 'carrier_account' || refusalStreakTripped;
+      // The carrier cannot dial this contact's number at all (it passed our E.164 gate but
+      // not the carrier's own check): terminal for the contact, as the pre-dial gate's
+      // `phone_invalid` is, never a minute's hold that repeats for as long as the campaign runs.
+      const fate: AbandonedContactFate =
+        refusal.kind === 'not_sent' && refusal.reason === 'destination' ? 'suppress_invalid'
+          : outcomeUnknown ? 'hold_unknown'
+            : reason !== 'failed' || capacityRefused ? 'return_now'
+              : 'return_delayed';
+      log.warn({ err, attemptId, outcomeUnknown, fate }, 'Agency dial failed');
+      await this.abandonBeforeDial(cmd, reason, panelDelivered, fate);
       return;
     }
     live.placing = false;
     dialReturned(false);
+    // Placed: the carrier took the create-call, so any refusal streak is broken (PL11). Not
+    // awaited: the reset is off the dial path. Its Redis DEL is queued on the connection
+    // before this returns, so a later refusal's INCR still lands after it. `notePlaced`
+    // never throws; the catch only makes an unhandled rejection impossible.
+    //
+    // Only a dial that was sent: a teardown while the dial waited for a calls-per-second
+    // slot (or before it) resolves too, with no carrier handle (`dialWasSent`). Nothing
+    // reached the carrier, so it says nothing about the account and must not end a streak.
+    // Its `ended` arm has settled the attempt already; the attach below still correlates
+    // the row with its (terminal) call.
+    if (cmd.campaign.telephony_credential_id && dialWasSent(record)) {
+      void this.refusalBreaker.notePlaced(cmd.campaignId).catch((err) =>
+        log.warn({ err, campaignId: cmd.campaignId }, 'Carrier refusal streak not reset — it lapses with its TTL'));
+    }
 
     // Id only — NEVER the state. By the time this runs the carrier may already
     // have answered and `onBridgeLifecycle` may already have written `bridged`
@@ -598,6 +654,25 @@ export class AgencyDialer {
         'Could not attach the media leg to the agency attempt — call is live but uncorrelated',
       ),
     );
+  }
+
+  /**
+   * Count a dial's rejection toward the campaign's refusal breaker (PL11), and pause the
+   * campaign `carrier_refusing_calls` when the streak reaches the threshold. Only a campaign
+   * pinned to a tenant credential is counted: the service's own account is not a tenant's
+   * to fix. True when this rejection tripped the breaker. Never throws.
+   */
+  private async noteCarrierRefusal(cmd: DialCommand, err: unknown): Promise<boolean> {
+    if (!cmd.campaign.telephony_credential_id || !countsTowardBreaker(err)) return false;
+    try {
+      if (!(await this.refusalBreaker.noteRefusal(cmd.campaignId))) return false;
+      log.warn({ campaignId: cmd.campaignId, attemptId: cmd.attemptId }, 'The carrier refused this campaign\'s dials several times in a row — pausing it');
+      await pauseCampaignForCarrierAccount(cmd.campaign, 'carrier_refusing_calls');
+      return true;
+    } catch (breakerErr) {
+      log.error({ err: breakerErr, campaignId: cmd.campaignId }, 'Carrier refusal breaker failed — the dial settles as usual');
+      return false;
+    }
   }
 
   /**
@@ -622,18 +697,11 @@ export class AgencyDialer {
     cmd: DialCommand,
     reason: AgencyReleaseReason,
     notifyAgent: boolean,
-    /**
-     * The carrier may have queued the failed dial: the contact is held back
-     * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
-     * (`holdOutcomeUnknownContact`). Otherwise it goes back uncharged: after
-     * {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS} for a dial that failed in the bridge
-     * (`failed`), at once for a dial called off before it (`reservation_expired`) or
-     * refused admission (`capacityRefused`).
-     */
-    dialOutcomeUnknown = false,
-    capacityRefused = false,
+    /** What becomes of the contact ({@link AbandonedContactFate}). */
+    fate: AbandonedContactFate,
   ): Promise<void> {
     const outcome = reason === 'failed' ? 'failed' : 'orphaned';
+    const dialOutcomeUnknown = fate === 'hold_unknown';
     /**
      * ── Seat time on the abandon-before-dial paths (added by review) ─────────
      *
@@ -680,7 +748,12 @@ export class AgencyDialer {
       // never claims, so no paced dial follows it. But the carrier may still ring the
       // customer, so the reopened wrap-up offers NO further redial (below).
       await parkRedialContact(cmd, outcome);
-    } else if (dialOutcomeUnknown) {
+    } else if (fate === 'suppress_invalid') {
+      // Terminal and uncharged: no dial was placed, so no `bump_attempt` (see the pacing
+      // engine's `suppress` gate, which this mirrors).
+      await agencyContactRepository.markState(cmd.contactId, 'suppressed', { suppressed_reason: 'invalid' })
+        .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to suppress a contact the carrier cannot dial'));
+    } else if (fate === 'hold_unknown') {
       // Not to be dialled again yet, and counted: the hold and the our-fault charge are
       // one statement, so a contact whose dials keep ending this way is retired at the
       // our-fault bound rather than redialled every 15 minutes for ever.
@@ -690,9 +763,11 @@ export class AgencyDialer {
       // condition was the agent's or ours and has cleared, so `now()`. A dial the bridge
       // failed before the carrier waits PRE_CARRIER_FAILURE_REDIAL_DELAY_MS, so a failure
       // that repeats cannot redial the same contact on every tick (see the constant). Only
-      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's. An
-      // admission refusal is back-pressure, not a failure: at once (CAPACITY_REFUSALS).
-      const notBefore = reason === 'failed' && !capacityRefused
+      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's (except
+      // the two that placed nothing, a rate limit and a refused credential, which the bridge
+      // rejects with no `ended`). An admission or rate-limit refusal is back-pressure, not a
+      // failure, and a refused credential paused the campaign: at once (`return_now`).
+      const notBefore = fate === 'return_delayed'
         ? new Date(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS)
         : new Date();
       await agencyContactRepository.unclaim(cmd.contactId, notBefore)
@@ -722,7 +797,7 @@ export class AgencyDialer {
    * as a dial that failed before the carrier. For `wrapup-redial.ts` only.
    */
   async abandonUndispatchedRedial(cmd: DialCommand): Promise<void> {
-    await this.abandonBeforeDial(cmd, 'failed', true);
+    await this.abandonBeforeDial(cmd, 'failed', true, 'return_delayed');
   }
 
   /**

@@ -103,7 +103,7 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   // `agency/pre-dial-gates.ts`. The widest true claim is every agency campaign in
   // the workspace.
   tenant:
-    'Enforced for all agency dialing: this number is in the dialer’s block list, so no agency '
+    'Enforced for all agency dialling: this number is in the dialler’s block list, so no agency '
     + 'campaign in this workspace will call it, and it is dropped from every roster import. It '
     + 'does not stop AI calls or broadcasts.',
   campaign:
@@ -133,7 +133,7 @@ const SOURCE_LABEL: Record<DncSource, string> = {
 
 const SOURCE_TOOLTIP: Partial<Record<DncSource, string>> = {
   regulator:
-    'Loaded from a regulator-supplied list. Like every entry here it suppresses agency dialing '
+    'Loaded from a regulator-supplied list. Like every entry here it suppresses agency dialling '
     + 'only — it is not a platform-wide compliance record.',
 };
 
@@ -414,7 +414,7 @@ export function DncPage() {
             appliedFilter
               ? 'No suppressed number matches that search.'
               : 'When an agent marks a customer as do-not-call, they appear here and agency '
-                + 'campaigns stop dialing them.'
+                + 'campaigns stop dialling them.'
           }
         />
       )}

@@ -1890,6 +1890,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       muteEnabled: ringing || phase == SoftphonePhase.onCall,
       audio: audio,
       canHangUp: live && !_hangingUp,
+      // As the console's: anything but an explicit `true` warns (fail closed).
+      warnRingingHangUp: ringing && call?.canCancelRinging != true,
       hangingUp: _hangingUp,
       // This screen's own hang-up failure, else one from the system controls
       // (CallKit, the notification), which only the host sees.

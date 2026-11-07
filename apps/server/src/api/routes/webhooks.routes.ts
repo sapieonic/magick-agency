@@ -1,13 +1,15 @@
-// Carrier webhooks: the plugin-scoped form-urlencoded content-type parser and
-// `POST /voicelink/webrtc-status/:callId`, the only webhook the bridge depends on
-// (VoiceLink posts every lifecycle event of a bridge leg here, token-gated by the
-// purpose-bound webhook token). No other carrier's webhooks are served.
+// Carrier webhooks, under `/api/v1/webhooks`: the plugin-scoped form-urlencoded
+// content-type parser, VoiceLink's `POST /voicelink/webrtc-status/:callId` (VoiceLink
+// posts every lifecycle event of a bridge leg there, token-gated by the purpose-bound
+// webhook token), and Plivo's answer, status and recording callbacks
+// (`webhooks/plivo.ts`, token-gated and signature-checked).
 import querystring from 'node:querystring';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { parseVoicelinkWebhook } from '../../telephony/voicelink/voicelink.webhook.js';
 import type { VoicelinkWebhookBody } from '../../telephony/voicelink/voicelink.types.js';
 import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
+import { registerPlivoWebhookRoutes, type PlivoCallbackForwarder } from './webhooks/plivo.js';
 
 const log = createChildLogger({ component: 'webhooks-routes' });
 
@@ -30,6 +32,13 @@ export function setVoicelinkWebhookForwarder(forwarder: VoicelinkWebhookForwarde
   webhookForwarder = forwarder;
 }
 
+/** The same for Plivo's callbacks (`webhooks/plivo.ts`): a hinted one runs in its worker. */
+let plivoForwarder: PlivoCallbackForwarder | null = null;
+
+export function setPlivoCallbackForwarder(forwarder: PlivoCallbackForwarder | null): void {
+  plivoForwarder = forwarder;
+}
+
 export async function webhooksRoutes(
   app: FastifyInstance,
   opts: { webrtcBridge?: WebRtcBridgeManager | null },
@@ -44,7 +53,7 @@ export async function webhooksRoutes(
   // `stringify` does not round-trip byte-for-byte (parameter order, `+` vs
   // `%20`, and the array-on-repeated-key collapse all move), so a check over a
   // re-serialised body would fail every valid request. Nothing reads `rawBody`
-  // today.
+  // today: Plivo's signature is over the URL and the parsed params, not the bytes.
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
     { parseAs: 'string' },
@@ -73,6 +82,11 @@ export async function webhooksRoutes(
     const answer = forwarded ?? await handleVoicelinkStatusWebhook(webrtcBridge, callId, request.query?.token, request.body);
     return reply.code(answer.statusCode).send(answer.body);
   });
+
+  // ─── Plivo (tenants' own accounts) ───────────────────────────────────────
+  // POST /api/v1/webhooks/plivo/webrtc-{answer,status,recording}/:callId?token=<webhook token>
+  // With media workers a hinted callback runs in its worker (`setPlivoCallbackForwarder`).
+  registerPlivoWebhookRoutes(app, { webrtcBridge, forwarder: () => plivoForwarder });
 }
 
 /** What the status webhook answers: the HTTP status and body the carrier gets. */

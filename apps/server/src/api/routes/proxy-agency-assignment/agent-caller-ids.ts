@@ -15,6 +15,14 @@
  * nor released while the PATCH still refuses to drop its number (DN6). Audited
  * `agency_campaign.agent_caller_id_set` / `_cleared` (`cause: 'supervisor'`), ids and the number
  * only (DN10). Part of `proxy-agency-assignment.routes.ts`.
+ *
+ * On a campaign pinned to a tenant's own carrier account, "the campaign's caller IDs" here are
+ * the DIALABLE ones (PL13, `dialableCallerIds`), the pool every dial path decides over: the GET
+ * lists only those (a dedicated number the account no longer has reads `in_campaign: false`,
+ * flagged in the console, and the rotation leaves it out), and the PUT refuses a stored number
+ * the account no longer has with the same `409 caller_id_not_in_campaign`, its
+ * `details.caller_ids` the dialable ones. The check is a cached read before the write, not under
+ * its lock: a number retired as it is dedicated is simply not used (every dial re-checks).
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -30,6 +38,7 @@ import {
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { rotationCallerIds, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
+import { dialableCallerIds, withDialableCallerIds } from '../../../agency/campaign-dialability.js';
 import { guardSupervisedCampaign, isUuid, refuse } from './shared.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent-caller-ids' });
@@ -43,6 +52,7 @@ export const AGENT_CALLER_ID_MESSAGES = {
   caller_id_invalid: 'Choose one of the campaign\'s caller IDs.',
   agent_not_staffed: 'Only an agent staffed on this campaign can be given a caller ID.',
   caller_id_not_in_campaign: 'That number is not one of this campaign\'s caller IDs.',
+  caller_id_not_dialable: 'That number is no longer available on this campaign\'s carrier account.',
   caller_id_taken: 'That number is already dedicated to another agent on this campaign.',
 } as const;
 
@@ -134,9 +144,13 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
   }, async (request, reply) => {
     const campaign = await guardSupervisedCampaign(request, reply, { gated: false });
     if (!campaign) return reply;
-    const rows = await agencyAgentCallerIdRepository.listForCampaign(campaign.tenant_id, campaign.id);
+    // A pinned campaign's caller IDs as the dial paths see them: the dialable ones (PL13).
+    const [rows, dialable] = await Promise.all([
+      agencyAgentCallerIdRepository.listForCampaign(campaign.tenant_id, campaign.id),
+      withDialableCallerIds(campaign),
+    ]);
     const names = await namesFor(rows.map((r) => r.user_id), campaign.tenant_id);
-    return reply.code(200).send(agentCallerIdsBody(campaign, rows, names));
+    return reply.code(200).send(agentCallerIdsBody(dialable, rows, names));
   });
 
   /**
@@ -158,6 +172,14 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
     if (!isUuid(userId)) return refuse(reply, 404, 'agent_not_staffed', AGENT_CALLER_ID_MESSAGES.agent_not_staffed);
     const agentId = userId.toLowerCase();
 
+    // A pinned campaign dials only the stored numbers still active on its carrier account
+    // (PL13), so only those can be dedicated. Null on the service's own account: no read.
+    const dialable = campaign.telephony_credential_id ? await dialableCallerIds(campaign) : null;
+    if (dialable && !dialable.includes(body.callerId) && usableCallerIds(campaign).includes(body.callerId)) {
+      return refuse(reply, 409, 'caller_id_not_in_campaign', AGENT_CALLER_ID_MESSAGES.caller_id_not_dialable,
+        { caller_ids: dialable });
+    }
+
     // The staffing and the campaign's caller IDs are checked inside the write's transaction,
     // under locks (the repository's header): an unstaff or a campaign PATCH racing this PUT
     // either waits for it or is seen by it.
@@ -175,7 +197,7 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
       }
       if (outcome.reason === 'not_in_campaign') {
         return refuse(reply, 409, 'caller_id_not_in_campaign', AGENT_CALLER_ID_MESSAGES.caller_id_not_in_campaign,
-          { caller_ids: outcome.caller_ids });
+          { caller_ids: dialable ? outcome.caller_ids.filter((n) => dialable.includes(n)) : outcome.caller_ids });
       }
       const holder = outcome.holder_user_id;
       const holderName = holder ? (await namesFor([holder], campaign.tenant_id)).get(holder) ?? null : null;

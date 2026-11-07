@@ -34,10 +34,13 @@ describe('WebRtcCallRepository — analysis columns', () => {
   describe('create()', () => {
     it('binds the pinned carrier credential, and NULL when the call is on the service’s own account', async () => {
       await repo.create({ tenant_id: 't1', account_id: 'a1', caller_id: '+91000', destination_phone: '+91999', provider: 'plivo', telephony_credential_id: 'cred-1' });
-      // 15th column, then the soft-phone pair (0005) closes the list.
-      expect(firstQueryText()).toMatch(/telephony_credential_id,\s*origin, manual_call_id\)\s*VALUES/);
+      // 15th column, then the soft-phone pair (0005) and the dial-request id close the list. The
+      // credential is the $15 the insert's active-credential check reads (behaviour pinned on
+      // real Postgres: credential-call-insert.repository.test.ts).
+      expect(firstQueryText()).toMatch(/telephony_credential_id,\s*origin, manual_call_id, provider_request_id\)\s*SELECT/);
+      expect(firstQueryText()).toMatch(/WHERE \$15::uuid IS NULL\s+OR EXISTS \(SELECT 1 FROM telephony_credentials c\s+WHERE c\.id = \$15::uuid AND c\.status = 'active'\s+FOR SHARE\)/);
       expect(firstQueryValues()[14]).toBe('cred-1');
-      expect(firstQueryValues().slice(15)).toEqual(['campaign', null]);
+      expect(firstQueryValues().slice(15)).toEqual(['campaign', null, null]);
       vi.clearAllMocks();
       mocks.poolQuery.mockResolvedValue({ rows: [{ id: 'wc-2' }], rowCount: 1 });
       await repo.create({ tenant_id: 't1', account_id: 'a1', caller_id: '+91000', destination_phone: '+91999' });

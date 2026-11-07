@@ -863,6 +863,39 @@ void main() {
     expect(h.view.hangupFailure, own);
   });
 
+  // ─── Rule 12c ─────────────────────────────────────────────────────────────
+
+  group('rule 12c: the SP3 ringing warning follows the call’s can_cancel_ringing', () {
+    softphoneTest('a carrier that cannot cancel, or a call that does not say, warns while ringing', (h) {
+      h.openWith(call: ringing({'can_cancel_ringing': false}));
+      expect(h.view.warnRingingHangUp, isTrue);
+      // A newer copy without the key (the ringing copy is at +5 s).
+      h.host.frame(advance(h.host.view!.call!, 6, {'state': 'ringing'}));
+      h.pump();
+      expect(h.host.view!.call!.canCancelRinging, isNull);
+      expect(h.view.warnRingingHangUp, isTrue, reason: 'absent is not true: fail closed, as the console');
+    });
+
+    softphoneTest('a carrier that cancels a ringing call: no warning, and none once answered', (h) {
+      final call = ringing({'can_cancel_ringing': true});
+      h.openWith(call: call);
+      expect(h.view.phase, SoftphonePhase.ringing);
+      expect(h.view.warnRingingHangUp, isFalse);
+      expect(h.view.canHangUp, isTrue);
+      h.host.frame(
+        advance(call, 10, {
+          'state': 'bridged',
+          'answered_at': '2026-10-30T10:00:10.000Z',
+          'bridged_at': '2026-10-30T10:00:10.000Z',
+          'can_cancel_ringing': false,
+        }),
+      );
+      h.pump();
+      expect(h.view.phase, SoftphonePhase.onCall);
+      expect(h.view.warnRingingHangUp, isFalse, reason: 'only while ringing');
+    });
+  });
+
   // ─── Rule 13 ──────────────────────────────────────────────────────────────
 
   group('rule 13: Mute', () {

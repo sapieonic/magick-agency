@@ -1,19 +1,75 @@
 /**
- * The two URLs a carrier with no answer XML (VoiceLink) is handed per dial: the PSTN
- * media stream it dials back, and its status webhook. Each carries its purpose-bound
- * token (Q6).
+ * The URLs a carrier is handed per dial, under its own webhook namespace: its answer,
+ * status and recording callbacks, and the PSTN media stream it connects to. Each carries
+ * its purpose-bound token (Q6): the callbacks the `webhook` token, the stream the
+ * `provider` token.
+ *
+ * Where the stream URL goes is the carrier module's `mediaUrlInDialRequest`:
+ *  - true (VoiceLink, no answer XML): in the dial request itself (`mediaStreamUrl`);
+ *  - false (Plivo): in our answer response, which the carrier fetches when the far end
+ *    answers. The bridge keeps it on the session (`answerStreamUrl`) for the answer route
+ *    to render; it is never sent in the dial.
  *
  * `routeHint` is the media worker's slot when the server runs as several processes
  * (`docs/scaling.md` §2.5): appended as `&w=<slot>`, it lets the primary send the
- * carrier's socket and posts to the worker that holds the call, decided before `add_lead`
+ * carrier's socket and posts to the worker that holds the call, decided before the dial
  * so nothing can race it. It is routing, never authority: the token is still what the
- * owning worker verifies. Absent (one process) the URLs are exactly what they always were.
+ * owning worker verifies. Absent (one process) the URLs carry no hint.
  */
+import { normalizeWebhookBase } from '../../utils/webhook-base.js';
+
 export const CARRIER_ROUTE_HINT_PARAM = 'w';
 
+/** The callback routes a carrier is handed, under its webhook namespace. */
+export type CarrierCallbackRoute = 'webrtc-answer' | 'webrtc-status' | 'webrtc-recording';
+
+/**
+ * One carrier callback URL: the provider's webhook base as configured (only trailing
+ * slashes stripped, by `normalizeWebhookBase`; host case, an explicit port and any path
+ * prefix are kept as written), then the route, the call id and `query` (`?…`, or '').
+ *
+ * The one construction of these URLs. The dial builds them here ({@link buildCarrierUrls}),
+ * and a carrier that signs the URL it called (Plivo's V3 signature) is verified over this
+ * same string, rebuilt from the same base and the request's query, so what is checked is
+ * byte for byte what the carrier was handed. Rebuilding it from the request instead (an
+ * origin parsed out of the base, plus the path the request arrived on) would lower-case
+ * the host, drop a default port, and lose a path prefix a reverse proxy strips: every
+ * callback refused.
+ */
+export function carrierCallbackUrl(base: string, route: CarrierCallbackRoute, callId: string, query = ''): string {
+  return `${normalizeWebhookBase(base)}/${route}/${callId}${query}`;
+}
+
+/** The server's own path of every carrier's webhook namespace, after any prefix a proxy adds. */
+const WEBHOOK_NAMESPACE_PATH = /\/api\/v1\/webhooks\/[^/]+$/;
+
+/**
+ * The PSTN media stream's URL for a call: `wss://` on the base's host, the stream route, the
+ * token and the hint. A base whose path is `<prefix>/api/v1/webhooks/<carrier>` keeps
+ * `<prefix>` before the stream route, as the callbacks keep it: a reverse proxy that serves
+ * the API under a prefix (and strips it) does the same for the stream's socket. A base laid
+ * out any other way has no prefix to take, and the stream route sits at the host's root, as
+ * before (VoiceLink's documented base, `https://<host>/api/v1/webhooks/voicelink`, builds the
+ * same URL either way).
+ */
+function streamUrlFor(base: string, callId: string, providerToken: string, hint: string): string {
+  const url = new URL(base);
+  const path = url.pathname.replace(/\/+$/, '');
+  const prefix = WEBHOOK_NAMESPACE_PATH.test(path) ? path.replace(WEBHOOK_NAMESPACE_PATH, '') : '';
+  return `wss://${url.host}${prefix}/api/v1/webrtc-call/${callId}/pstn-stream?token=${providerToken}${hint}`;
+}
+
 export interface CarrierUrls {
+  /** The media stream URL for the dial request; set only when the carrier takes it there. */
   mediaStreamUrl: string | undefined;
+  /** The media stream URL for our answer response; set only when the carrier takes it there. */
+  answerStreamUrl: string | undefined;
+  /** The carrier's answer callback (`…/webrtc-answer/:id`). A carrier with no answer XML ignores it. */
+  answerUrl: string;
+  /** The carrier's status callback (`…/webrtc-status/:id`): ring, answer and terminal events. */
   statusCallbackUrl: string;
+  /** The carrier's recording-ready callback (`…/webrtc-recording/:id`), for a carrier that has one. */
+  recordingCallbackUrl: string;
 }
 
 export function buildCarrierUrls(input: {
@@ -26,13 +82,17 @@ export function buildCarrierUrls(input: {
   routeHint?: string | null;
 }): CarrierUrls {
   const hint = input.routeHint ? `&${CARRIER_ROUTE_HINT_PARAM}=${encodeURIComponent(input.routeHint)}` : '';
-  const mediaStreamUrl = input.mediaUrlInDialRequest
-    ? `wss://${new URL(input.base).host}/api/v1/webrtc-call/${input.callId}/pstn-stream?token=${input.providerToken}${hint}`
-    : undefined;
-  // A provider with no carrier module gets an untokenized URL (and no hint: nothing
-  // routes it but its call id).
-  const statusCallbackUrl = input.webhookToken
-    ? `${input.base}/webrtc-status/${input.callId}?token=${input.webhookToken}${hint}`
-    : `${input.base}/webrtc-status/${input.callId}`;
-  return { mediaStreamUrl, statusCallbackUrl };
+  const streamUrl = input.providerToken ? streamUrlFor(input.base, input.callId, input.providerToken, hint) : undefined;
+  // A provider with no carrier module gets untokenized callbacks (and no hint: nothing
+  // routes them but their call id).
+  const callback = (route: CarrierCallbackRoute): string => carrierCallbackUrl(
+    input.base, route, input.callId, input.webhookToken ? `?token=${input.webhookToken}${hint}` : '',
+  );
+  return {
+    mediaStreamUrl: input.mediaUrlInDialRequest ? streamUrl : undefined,
+    answerStreamUrl: input.mediaUrlInDialRequest ? undefined : streamUrl,
+    answerUrl: callback('webrtc-answer'),
+    statusCallbackUrl: callback('webrtc-status'),
+    recordingCallbackUrl: callback('webrtc-recording'),
+  };
 }

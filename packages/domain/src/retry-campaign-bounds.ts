@@ -112,6 +112,9 @@ export const PRIOR_ATTEMPT_LIMIT = 20;
  */
 export const RETRY_INHERITED_CONFIG_KEYS = [
   'caller_ids', 'telephony_provider', 'sip_connection_id',
+  // The tenant carrier credential (BYOC, B18): the child dials on the parent's carrier
+  // account, held to its provider by the composite foreign key.
+  'telephony_credential_id',
   'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'context_display', 'break_reasons', 'record_calls', 'analysis_profile_id',

@@ -1,5 +1,7 @@
 import { formatDate } from '@magick-agency/web-ui/format';
 import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
+import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { carrierAccountPauseCopy } from './agencyCarriers';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that
@@ -36,7 +38,7 @@ export function retentionNotice(retention: ActivityRetention | null): string | n
     // that this figure says nothing about. Stating it unqualified would claim a
     // guarantee for dispositions, do-not-call marks and staffing changes that
     // has not been checked — the retention trap, one store further along.
-    return `The dialer’s records go back to ${formatDate(retention.earliest_retained_at)}. `
+    return `The dialler’s records go back to ${formatDate(retention.earliest_retained_at)}. `
       + 'Anything older has passed its retention window and is no longer stored. Console records '
       + 'follow their own retention schedule, which this date does not cover.';
   }
@@ -75,7 +77,7 @@ export function formatActivityTimestamp(at: string): string {
  * does name the person.
  */
 export const CLIENT_ACTOR_TOOLTIP =
-  'The dialer does not record who pressed the button — it records which application asked. '
+  'The dialler does not record who pressed the button — it records which application asked. '
   + 'The matching “Console” row for this action names the person.';
 
 /**
@@ -129,10 +131,11 @@ function str(value: unknown): string | null {
  * row carries wire field names; a field missing here (one added later) is spelled out
  * from its name rather than dropped, because an audit summary must never hide a change.
  */
-const CONFIG_FIELD_LABEL: Record<string, string> = {
+export const CONFIG_FIELD_LABEL: Readonly<Record<string, string>> = {
   name: 'name',
   caller_ids: 'caller IDs',
   telephony_provider: 'carrier',
+  telephony_credential_id: 'carrier account',
   calling_window_start: 'calling hours start',
   calling_window_end: 'calling hours end',
   calling_days: 'calling days',
@@ -168,6 +171,35 @@ function configValue(value: unknown): string {
   return String(value);
 }
 
+/**
+ * One side of a carrier-account change, never its id. `null` is the service's own
+ * account (every campaign's default). A tenant's account is named by the label the row
+ * carries, as it was when the change was made; `label === null` means the server found
+ * no such account then; a row without a label (written before labels were recorded)
+ * says only that it was the tenant's own.
+ */
+function carrierAccountValue(id: unknown, label: unknown, hasLabel: boolean): string {
+  if (id === null || id === undefined) return 'the default account';
+  if (typeof label === 'string' && label.trim().length > 0) return `“${label.trim()}”`;
+  return hasLabel ? 'an account no longer available' : 'your own account';
+}
+
+type ConfigFieldChange = { from?: unknown; to?: unknown; from_label?: unknown; to_label?: unknown };
+
+/** "from → to" for one changed field, in the operator's words. */
+function configChangeValues(field: string, change: ConfigFieldChange): string {
+  if (field === 'telephony_provider') {
+    // The carrier by its alias, never the identifier the API stores (Swar, Pravah).
+    const name = (v: unknown) => (typeof v === 'string' && v.trim() ? telephonyProviderAlias(v) : 'none');
+    return `${name(change.from)} → ${name(change.to)}`;
+  }
+  if (field === 'telephony_credential_id') {
+    return `${carrierAccountValue(change.from, change.from_label, 'from_label' in change)} → `
+      + carrierAccountValue(change.to, change.to_label, 'to_label' in change);
+  }
+  return `${configValue(change.from)} → ${configValue(change.to)}`;
+}
+
 /** "a", "a and b", "a, b and c". */
 function listSentence(items: string[]): string {
   if (items.length <= 1) return items.join('');
@@ -186,11 +218,11 @@ function configChangedSummary(detail: Record<string, unknown>): string | null {
   if (fields.length === 0) return null;
   const changes = (detail['changes'] && typeof detail['changes'] === 'object'
     ? detail['changes']
-    : {}) as Record<string, { from?: unknown; to?: unknown } | undefined>;
+    : {}) as Record<string, ConfigFieldChange | undefined>;
   const parts = fields.map((field) => {
     const change = changes[field];
     return change && 'from' in change && 'to' in change
-      ? `${configFieldLabel(field)} (${configValue(change.from)} → ${configValue(change.to)})`
+      ? `${configFieldLabel(field)} (${configChangeValues(field, change)})`
       : configFieldLabel(field);
   });
   return `Changed ${listSentence(parts)}.`;
@@ -212,6 +244,10 @@ export function activityDetailSummary(row: ActivityRow): string | null {
   const detail = row.detail ?? {};
 
   if (row.action === 'agency_campaign.auto_paused') {
+    // The carrier refused the account's credentials, or the carrier account is no longer
+    // active: what to do is the whole content.
+    const carrierCopy = carrierAccountPauseCopy(str(detail['reason']));
+    if (carrierCopy) return carrierCopy;
     const measured = num(detail['measured_pct']);
     const ceiling = num(detail['ceiling_pct']);
     if (measured !== null && ceiling !== null) {
@@ -297,7 +333,7 @@ export function activityDetailSummary(row: ActivityRow): string | null {
  */
 export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
   master: 'Console',
-  core: 'Dialer',
+  core: 'Dialler',
 };
 
 /**
@@ -312,7 +348,7 @@ export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
  */
 export const ACTIVITY_SOURCE_LEGEND =
   '“Recorded by” names which system logged the row: Console is someone in this workspace pressing '
-  + 'a control, Dialer is the campaign itself changing state — so the same pause can legitimately '
+  + 'a control, Dialler is the campaign itself changing state — so the same pause can legitimately '
   + 'appear once as each.';
 
 /** The table's accessible name — the campaign it belongs to, when known. */

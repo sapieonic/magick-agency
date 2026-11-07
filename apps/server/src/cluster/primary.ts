@@ -6,7 +6,7 @@
  * needs (`socket-pause.ts`; without it the server runs as one process and says so), builds
  * the {@link MediaCluster}, and installs its adapters where the single-process code looks
  * them up: the agency runtime's stations, dispatcher, reserved-agent return and reaper
- * inputs; `callCore`'s injector; the carrier webhook forwarder.
+ * inputs; `callCore`'s injector; the carrier webhook forwarders (VoiceLink, Plivo).
  *
  * After the bootstraps (the startup reap has run, with no worker alive, so its "every
  * non-terminal row is dead" premise holds): {@link startMediaWorkers} binds what only
@@ -20,10 +20,11 @@ import type Redis from 'ioredis';
 import type { AppContext } from '../app-context.js';
 import { StationRegistry } from '../agency/station-registry.js';
 import { AgentStateMachine } from '../agency/agent-state-machine.js';
+import { onDialableCallerIdsInvalidated } from '../agency/campaign-dialability.js';
 import { configureAgencyRuntime, getAgencyRuntime } from '../bootstrap/agency.js';
 import { getVoiceEngine } from '../bootstrap/voice.js';
 import { setCoreInjector } from '../api/core-dispatch.js';
-import { setVoicelinkWebhookForwarder } from '../api/routes/webhooks.routes.js';
+import { setPlivoCallbackForwarder, setVoicelinkWebhookForwarder } from '../api/routes/webhooks.routes.js';
 import { getConcurrencyControl, setConcurrencyControl, type ConcurrencyControl } from '../seams/concurrency-control.js';
 import { releaseTelephonyLease } from '../core/telephony-release.js';
 import { agencyCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
@@ -82,6 +83,8 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
   });
 
   configureAgencyRuntime({
+    // The workers dial; each counts its own agents' refusals (`carrier-refusal-breaker.ts`).
+    refusalCountShared: true,
     pacingStations: cluster.directory,
     dispatcher: cluster.dispatcher,
     reservedReturn: cluster.reservedReturn,
@@ -100,6 +103,7 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
   });
   setCoreInjector(cluster.coreInjector);
   setVoicelinkWebhookForwarder(cluster.webhookForwarder);
+  setPlivoCallbackForwarder(cluster.plivoCallbackForwarder);
   return cluster;
 }
 
@@ -120,6 +124,14 @@ export function warnIfMoreProcessesThanCores(
   warn({ cores, processes, mediaWorkers, analysisWorkers, primary: 1 },
     'More server processes than CPU cores: they will share cores (MEDIA_WORKERS + ANALYSIS_WORKERS + the primary)');
   return true;
+}
+
+/**
+ * Relay this process's dialable caller-ID invalidations (`invalidateDialableCallerIds`, PL13)
+ * to every media worker, whose dials read their own cache. Returns the unsubscribe.
+ */
+export function relayDialableInvalidations(cluster: Pick<MediaCluster, 'invalidateDialableCallerIds'>): () => void {
+  return onDialableCallerIdsInvalidated(() => cluster.invalidateDialableCallerIds());
 }
 
 /** After the bootstraps: bind what exists only now, then fork the workers and wait for them. */
@@ -149,6 +161,8 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
     getDistributedAccountCount: (tenantId, accountId) => inner.getDistributedAccountCount(tenantId, accountId),
   };
   setConcurrencyControl(broadcasting);
+  // A number change made here (the super-admin routes) clears every worker's dialable caller-ID cache.
+  const offDialable = relayDialableInvalidations(cluster);
 
   await cluster.start();
   logger.info({ mediaWorkers: cluster.count }, 'Media worker processes started');
@@ -163,6 +177,7 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
       cluster.stop(MEDIA_WORKER_STOP_GRACE_MS),
     ]);
     offRevoke();
+    offDialable();
     if (getConcurrencyControl() === broadcasting) setConcurrencyControl(inner);
   };
 }

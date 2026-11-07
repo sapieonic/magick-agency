@@ -338,20 +338,23 @@ describe('the agent mail is byte-for-byte what it was before the layout was shar
    * The digests were taken from the template BEFORE the move. If one changes,
    * the agent mail changed: that may be the intent, but it is then a decision
    * made with this comment in front of somebody, not a side effect of editing
-   * the workspace invitation.
+   * the workspace invitation.   *
+   * Re-taken once, deliberately: the step "The dialer screen you take calls from"
+   * became "The dialler screen" (British English in user-facing copy); nothing
+   * else in the mail changed.
    */
   const digest = (input: Parameters<typeof renderAgentInviteEmail>[0]) =>
     createHash('sha256').update(JSON.stringify(renderAgentInviteEmail(input))).digest('hex');
 
   it.each([
-    ['the ordinary invitation', BASE, '3f40109cc4b486d240072f063bd74bf0a1e91c86185c53683237e4e3f47059f4'],
-    ['no nameable inviter', { ...BASE, inviterName: null }, 'cc6ce52743630821e8ed824a548d18b048be6556460e78251397dc574925a8b1'],
+    ['the ordinary invitation', BASE, '2d129ce8e8b7764843ec277611e48aae64e6a836c5c9e0a0fb1827281f4401c8'],
+    ['no nameable inviter', { ...BASE, inviterName: null }, '6696b5354e18221f9186b9103f08fae677282dacd6afafa6f169ac42be6adefd'],
     [
       'another brand, a logo and an accent',
       { ...BASE, brandName: 'Northwind', logoUrl: 'https://cdn.test/l.png?a=1&b=2', accentColor: '#ff0055' },
-      '2bd67c2d28cd3f29a4923168806abad8d6d9689f8afe9730e5110d279642529e',
+      '6e99a2b412bcf09ef61a8e006188c0aaf84720158cdead05efa318d902490519',
     ],
-    ['a hostile tenant name', { ...BASE, tenantName: '<script>"x"</script> & y' }, 'cac32f2d6b4cd49aca6a3f8699a67a8852ea2c117c521ea9f54e5bd9979609da'],
+    ['a hostile tenant name', { ...BASE, tenantName: '<script>"x"</script> & y' }, 'f03616beee427ff7a7eb30721f26c3b83a82cffc3fb9f85760fe92fa9f468f61'],
   ])('%s', (_label, input, expected) => {
     expect(digest(input)).toBe(expected);
   });

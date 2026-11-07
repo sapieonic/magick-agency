@@ -157,6 +157,8 @@ const EXPECTED_CAMPAIGN_ROUTES = [
   'GET /proxy/agency/campaigns/:id/retry/preview',
   'GET /proxy/agency/campaigns/:id/stats',
   'GET /proxy/agency/campaigns/:id/stats/series',
+  // The carrier accounts a campaign may dial on (B18; answered by this layer, no internal handler).
+  'GET /proxy/agency/carriers',
   'GET /proxy/agency/ingest/jobs/:id',
   'GET /proxy/agency/ingest/jobs/:id/rejected.csv',
   'GET /proxy/agency/ingest/limits',

@@ -86,6 +86,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   disableTelephonyCredential: () => api.disableTelephonyCredential('c1'),
   enableTelephonyCredential: () => api.enableTelephonyCredential('c1'),
   revokeTelephonyCredential: () => api.revokeTelephonyCredential('c1'),
+  syncTelephonyCredentialNumbers: () => api.syncTelephonyCredentialNumbers('c1'),
 };
 
 describe('api/super-admin.ts ↔ SA_ROUTES', () => {

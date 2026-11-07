@@ -8,7 +8,7 @@ import { AlawFramer, browserLegMediaFormatOf, type BrowserLegMediaFormat } from 
 
 /**
  * In-memory state for a single WebRTC human-bridge call. Holds the two media
- * WebSockets (browser leg + VoiceLink PSTN leg) and the lifecycle flags/timers,
+ * WebSockets (browser leg + the carrier's PSTN leg) and the lifecycle flags/timers,
  * so the bridge can relay audio between them and tear both down idempotently.
  *
  * Concurrency accounting is NOT held here — it goes through
@@ -25,20 +25,42 @@ export class WebRtcBridgeSession {
   readonly startedAt: Date;
 
   /**
-   * Correlation id we handed the provider at dial time (our own call id for
-   * VoiceLink, since its real carrier id is async). NOT the carrier's id — see
-   * {@link carrierCallId}. Persisted as `provider_call_id` for back-compat.
+   * The call id the carrier returned at dial time (our own call id for VoiceLink,
+   * since its real carrier id is async; null for Plivo, which names the call only on
+   * its callbacks). NOT necessarily the carrier's id — see {@link carrierCallId}.
+   * Persisted as `provider_call_id` until the carrier's own id is known.
    */
   providerCallId: string | null = null;
   /**
    * The provider's REAL call id, learned asynchronously from the WS `start` frame
-   * (`start.call_sid`) or a lifecycle webhook (`call.id`). Distinct from the
-   * dial-time correlation id so CDR/hangup lookups can use the true carrier key.
+   * (VoiceLink `start.call_sid`, Plivo `start.callId`) or a lifecycle callback
+   * (VoiceLink `call.id`, Plivo `CallUUID`). Distinct from the dial-time id so CDR and
+   * hangup lookups use the true carrier key (a Plivo hangup takes nothing else).
    * Null until the carrier reveals it.
    */
   carrierCallId: string | null = null;
+  /**
+   * The carrier's id for the dial REQUEST, when it names one apart from the call
+   * (Plivo's `request_uuid`). The only handle a call has before the carrier names it, so
+   * a teardown before then cancels the dial by it. Persisted as `provider_request_id`.
+   */
+  providerRequestId: string | null = null;
+  /**
+   * While the carrier request is on its way out: aborted by the teardown, so a dial still
+   * waiting to be sent (a calls-per-second gate) is never sent (`OutboundCallRequest.signal`).
+   * Null before and after the request.
+   */
+  dialAbort: AbortController | null = null;
   /** Provider media stream id (`start.stream_sid`) — needed for `clear`/commands. */
   providerStreamId: string | null = null;
+  /**
+   * For a carrier that takes the media stream URL from our answer response
+   * (`mediaUrlInDialRequest: false`): that URL, built at dial time with the provider
+   * token, for the answer route to render. Null otherwise. Never logged.
+   */
+  answerStreamUrl: string | null = null;
+  /** The recording-ready callback URL our answer response names (with its webhook token). */
+  recordingCallbackUrl: string | null = null;
   status: WebRtcCallStatus = 'initiating';
 
   /**
@@ -298,6 +320,8 @@ export class WebRtcBridgeSession {
   droppedPstnMediaFrames: number = 0;
 
   private maxDurationTimer: NodeJS.Timeout | null = null;
+  /** The ring deadline (`setRingDeadlineTimer`): cleared by the answer and by teardown. */
+  private ringDeadlineTimer: NodeJS.Timeout | null = null;
   private readonly log;
 
   constructor(params: {
@@ -385,6 +409,8 @@ export class WebRtcBridgeSession {
   markAnswered(): boolean {
     if (this.answeredAt === null) {
       this.answeredAt = new Date();
+      // Answered: the ring deadline no longer applies.
+      this.clearRingDeadlineTimer();
       return true;
     }
     return false;
@@ -458,6 +484,25 @@ export class WebRtcBridgeSession {
     if (this.maxDurationTimer) {
       clearTimeout(this.maxDurationTimer);
       this.maxDurationTimer = null;
+    }
+  }
+
+  /**
+   * Arm the pre-answer deadline: `onTimeout` runs `seconds` from now unless the call is
+   * answered ({@link markAnswered}) or torn down first. Idempotent.
+   */
+  setRingDeadlineTimer(seconds: number, onTimeout: () => void): void {
+    this.clearRingDeadlineTimer();
+    this.ringDeadlineTimer = setTimeout(() => {
+      this.ringDeadlineTimer = null;
+      onTimeout();
+    }, seconds * 1000);
+  }
+
+  clearRingDeadlineTimer(): void {
+    if (this.ringDeadlineTimer) {
+      clearTimeout(this.ringDeadlineTimer);
+      this.ringDeadlineTimer = null;
     }
   }
 
@@ -584,6 +629,7 @@ export class WebRtcBridgeSession {
    */
   destroy(): void {
     this.clearMaxDurationTimer();
+    this.clearRingDeadlineTimer();
     this.clearEndConfirmationTimer();
     // A call that ends for any other reason while a dropped socket is still
     // inside its window must not fire a hangup afterwards.

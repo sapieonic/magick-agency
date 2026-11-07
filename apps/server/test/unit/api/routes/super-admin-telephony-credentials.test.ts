@@ -29,6 +29,12 @@ const ROW = {
   created_by: null, updated_by: null, created_at: new Date(0), updated_at: new Date(0), revoked_at: null, shredded_at: null,
 };
 
+const SYNC = {
+  listed: 4, added: ['+14155550001'], reactivated: [], taken_over: [], unchanged: ['+14155550002'], retired: ['+14155550009'],
+  skipped: [{ number: '14155550003', reason: 'not_voice' }],
+  conflicts: [{ phone_number: '+14155550005', reason: 'registered_elsewhere' }], active_numbers: 2,
+};
+
 let svc: Record<string, ReturnType<typeof vi.fn>> & { storeAvailable: boolean };
 let app: FastifyInstance;
 
@@ -46,6 +52,7 @@ beforeEach(async () => {
     get: vi.fn().mockResolvedValue(ROW),
     usage: vi.fn().mockResolvedValue({ campaigns: 2, inFlightCalls: 1 }),
     list: vi.fn().mockResolvedValue([ROW]),
+    syncNumbers: vi.fn().mockResolvedValue({ ok: true, value: { credential: ROW, sync: SYNC } }),
   } as never;
   app = Fastify();
   // The app-wide 5xx mask, as `buildApp` registers it, so the status mapping is tested
@@ -116,6 +123,7 @@ describe('super-admin telephony credential routes', () => {
     credential_store_unavailable: 503, secret_unavailable: 409, unknown_provider: 400, invalid_input: 400,
     tenant_not_found: 404, not_found: 404, duplicate_account: 409, duplicate_label: 409, carrier_rejected: 422,
     carrier_unreachable: 502, version_conflict: 409, invalid_transition: 409, in_use: 409,
+    credential_not_active: 409, too_many_numbers: 422,
   };
 
   it('has an expected status for every code of the contract, and no other', () => {
@@ -132,10 +140,11 @@ describe('super-admin telephony credential routes', () => {
 
   it.each([
     ['GET', ''], ['PATCH', ''], ['PUT', '/secret'], ['POST', '/verify'], ['POST', '/disable'], ['POST', '/enable'], ['POST', '/revoke'],
+    ['POST', '/sync-numbers'],
   ])('%s …/:id%s answers 404 for a non-UUID id without calling the service', async (method, suffix) => {
     const res = await app.inject({ method: method as 'GET', url: `/super-admin/telephony-credentials/x'1${suffix}`, payload: method === 'GET' || method === 'POST' ? undefined : { label: 'x', fields: {}, expected_version: 1 } });
     expect(res.statusCode).toBe(404);
-    for (const fn of ['get', 'rename', 'rotate', 'verify', 'disable', 'enable', 'revoke']) expect(svc[fn]).not.toHaveBeenCalled();
+    for (const fn of ['get', 'rename', 'rotate', 'verify', 'disable', 'enable', 'revoke', 'syncNumbers']) expect(svc[fn]).not.toHaveBeenCalled();
   });
 
   it('returns detail with usage', async () => {
@@ -177,5 +186,32 @@ describe('super-admin telephony credential routes', () => {
     await app.inject({ method: 'GET', url: `/super-admin/telephony-credentials?tenant_id=${TENANT}&include_revoked=true` });
     expect(svc.list).toHaveBeenCalledWith({ tenantId: TENANT, includeRevoked: true });
     expect((await app.inject({ method: 'GET', url: '/super-admin/telephony-credentials?tenant_id=nope' })).statusCode).toBe(400);
+  });
+});
+
+describe('POST /super-admin/telephony-credentials/:id/sync-numbers', () => {
+  it('syncs as the signed-in admin, answers the credential and what changed, and audits it', async () => {
+    const res = await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/sync-numbers` });
+    expect(res.statusCode).toBe(200);
+    expect(svc.syncNumbers).toHaveBeenCalledWith(ID, 'super-1');
+    expect(res.json()).toEqual({ credential: expect.objectContaining({ id: ID, status: 'active' }), sync: SYNC });
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'sync_telephony_credential_numbers', resource_type: 'telephony_credential', resource_id: ID,
+      details: expect.objectContaining({
+        tenant_id: TENANT, listed: 4, active_numbers: 2, added: ['+14155550001'], retired: ['+14155550009'],
+        conflicts: [{ phone_number: '+14155550005', reason: 'registered_elsewhere' }],
+      }),
+    }));
+  });
+
+  it.each([
+    ['credential_not_active', 409], ['not_found', 404], ['carrier_rejected', 422], ['carrier_unreachable', 502],
+    ['too_many_numbers', 422], ['credential_store_unavailable', 503], ['unknown_provider', 400],
+  ])('a refusal %s answers %i, keeps its message and is not audited', async (code, status) => {
+    svc.syncNumbers!.mockResolvedValue({ ok: false, code, message: 'service message' });
+    const res = await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/sync-numbers` });
+    expect(res.statusCode).toBe(status);
+    expect(res.json()).toMatchObject({ error: code, message: 'service message' });
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 });

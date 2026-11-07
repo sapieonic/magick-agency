@@ -1,16 +1,16 @@
 // Two kinds of adapter. The service's own carrier accounts (VoiceLink) are built from
 // env by `buildProviderConfig` + `instantiate`; any other name there throws `Unknown
 // telephony provider: <name>`. A tenant's own carrier account (BYOC, decision B18) is
-// built by `BYOC_ADAPTERS` from a credential the credential service resolves; no BYOC
-// adapter is registered yet (Plivo's lands with its adapter), so such a credential
-// passes its row checks and then throws `ByocCredentialUnavailableError`, with no
-// secret opened.
+// built by `BYOC_ADAPTERS` from a credential the credential service resolves (Plivo).
 import type { TelephonyProvider } from './types.js';
 import type { AppConfig } from '../config/index.js';
 import { VoicelinkAdapter } from './voicelink/voicelink.adapter.js';
+import { createPlivoAdapter } from './plivo/plivo.adapter.js';
 import {
   CredentialUnavailableError,
+  isKeyringFaultKind,
   type CredentialPeek,
+  type CredentialUnavailableKind,
   type ResolvedCredential,
   type ResolvePurpose,
 } from './credentials/credential-service.js';
@@ -25,9 +25,25 @@ import {
  * which fails anyway but reports the wrong cause.
  */
 export class ByocCredentialUnavailableError extends Error {
-  constructor(readonly credentialId: string, readonly reason?: string) {
+  /** Read by the bridge, which may not import this module's classes (`isCredentialUnavailable`). */
+  readonly credentialUnavailable = true;
+  /**
+   * True when the cause is this server's keyring, not the credential (`isKeyringFaultKind`:
+   * no keyring, or a secret that would not open): the credential is fine and serves again
+   * once an operator restores the key, so the dial path reads it as a failure of its own,
+   * never as an account that cannot dial. Read by the bridge as a flag, like
+   * {@link credentialUnavailable}.
+   */
+  readonly keyringFault: boolean;
+  constructor(
+    readonly credentialId: string,
+    readonly reason?: string,
+    /** The credential service's cause, when it gave one. */
+    readonly credentialKind?: CredentialUnavailableKind,
+  ) {
     super(`Telephony credential ${credentialId} could not be resolved${reason ? `: ${reason}` : ''}`);
     this.name = 'ByocCredentialUnavailableError';
+    this.keyringFault = isKeyringFaultKind(credentialKind);
   }
 }
 
@@ -38,6 +54,13 @@ export class ByocCredentialUnavailableError extends Error {
 export interface CredentialResolver {
   peek(credentialId: string, purpose: ResolvePurpose): Promise<CredentialPeek>;
   resolve(credentialId: string, purpose: ResolvePurpose): Promise<ResolvedCredential>;
+  /** The carrier refused a credential on a call: record that verdict (`TelephonyCredentialService`). Never throws. */
+  recordCarrierRefusal?(
+    credentialId: string,
+    secretVersion: number,
+    reason: string,
+    at: { tenantId: string; accountId: string; callId?: string },
+  ): Promise<unknown>;
 }
 
 /** Builds an adapter on a tenant's own carrier account. */
@@ -48,7 +71,9 @@ export type ByocAdapterFactory = (credential: ResolvedCredential, config: AppCon
  * here**, its credential spec (`credentials/credential-specs.ts`) and its carrier
  * module (`carrier-modules.ts`).
  */
-const BYOC_ADAPTERS: ReadonlyMap<string, ByocAdapterFactory> = new Map();
+const BYOC_ADAPTERS: ReadonlyMap<string, ByocAdapterFactory> = new Map<string, ByocAdapterFactory>([
+  ['plivo', createPlivoAdapter],
+]);
 
 /** The providers a tenant credential can dial on. The carrier-module guard reads it. */
 export function byocProviderNames(): string[] {
@@ -106,6 +131,8 @@ export class TelephonyProviderRegistry {
   private providers = new Map<string, TelephonyProvider>();
   /** BYOC adapters, keyed `credentialId:purpose` and tagged with the versions `peek` listed when built. */
   private byoc = new Map<string, { fingerprint: string; adapter: TelephonyProvider }>();
+  /** Which credential, at which secret version, each BYOC adapter this registry built holds. */
+  private readonly byocOrigin = new WeakMap<TelephonyProvider, { credentialId: string; secretVersion: number }>();
   private readonly config: AppConfig;
   private readonly credentials: (() => CredentialResolver) | null;
   private readonly byocAdapters: ReadonlyMap<string, ByocAdapterFactory>;
@@ -137,7 +164,7 @@ export class TelephonyProviderRegistry {
     return provider;
   }
 
-  /** Get the default provider: always VoiceLink, the only carrier. */
+  /** Get the default provider: VoiceLink, the service's own account (BYOC carriers have no default). */
   getDefault(): TelephonyProvider {
     return this.get('voicelink');
   }
@@ -183,7 +210,7 @@ export class TelephonyProviderRegistry {
     // A pinned id that cannot be resolved is NOT the service's own account —
     // substituting it would issue the hangup against the wrong carrier and report
     // the wrong cause.
-    if (!this.credentials) throw new ByocCredentialUnavailableError(credentialId, 'no credential store');
+    if (!this.credentials) throw new ByocCredentialUnavailableError(credentialId, 'no credential store', 'store_unconfigured');
     const credentials = this.credentials();
     const peeked = await this.unavailableAsByoc(credentialId, () => credentials.peek(credentialId, purpose));
     if (peeked.tenantId !== tenantId) {
@@ -204,10 +231,36 @@ export class TelephonyProviderRegistry {
       throw new ByocCredentialUnavailableError(credentialId, 'credential changed while it was resolved');
     }
     const adapter = factory(resolved, this.config);
+    this.byocOrigin.set(adapter, { credentialId: resolved.id, secretVersion: resolved.version });
     this.byoc.delete(slot);
     if (this.byoc.size >= BYOC_CACHE_MAX) this.byoc.delete(this.byoc.keys().next().value!);
     this.byoc.set(slot, { fingerprint, adapter });
     return adapter;
+  }
+
+  /**
+   * The carrier refused the credential `adapter` holds (HTTP 401 on a dial): record that
+   * verdict on the credential through the credential service, against the secret
+   * version this adapter was built with, so a rotation since is never marked by an old
+   * secret's refusal (B20). An adapter on the service's own account, or one this registry
+   * did not build, has no credential and records nothing. Never throws.
+   *
+   * @returns whether the verdict was written.
+   */
+  async recordCredentialRefused(
+    adapter: TelephonyProvider,
+    reason: string,
+    at: { tenantId: string; accountId: string; callId?: string },
+  ): Promise<boolean> {
+    const origin = this.byocOrigin.get(adapter);
+    if (!origin || !this.credentials) return false;
+    try {
+      const written = await this.credentials().recordCarrierRefusal?.(origin.credentialId, origin.secretVersion, reason, at);
+      return written !== null && written !== undefined;
+    } catch {
+      // The credential service logs its own failures; a resolver that threw says nothing more.
+      return false;
+    }
   }
 
   /** Run a credential-service call; a credential that cannot serve drops its adapters. */
@@ -217,7 +270,7 @@ export class TelephonyProviderRegistry {
     } catch (err) {
       if (!(err instanceof CredentialUnavailableError)) throw err;
       this.dropByoc(credentialId);
-      throw new ByocCredentialUnavailableError(credentialId, err.reason);
+      throw new ByocCredentialUnavailableError(credentialId, err.reason, err.kind);
     }
   }
 

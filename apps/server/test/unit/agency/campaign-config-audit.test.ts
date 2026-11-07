@@ -4,6 +4,7 @@ import {
   campaignConfigChange,
   decodeConfigChange,
   encodeConfigChange,
+  withCarrierAccountLabels,
 } from '../../../src/agency/campaign-config-audit.js';
 
 /** The handler's serialisation of a campaign, before a PATCH. */
@@ -91,5 +92,40 @@ describe('the header encoding', () => {
     expect(decodeConfigChange('%%%')).toBeNull();
     expect(decodeConfigChange(Buffer.from('{"fields":[]}').toString('base64url'))).toBeNull();
     expect(decodeConfigChange(Buffer.from('{"fields":[1]}').toString('base64url'))).toBeNull();
+  });
+});
+
+describe('withCarrierAccountLabels', () => {
+  const ID_A = '11111111-1111-4111-8111-111111111111';
+  const ID_B = '22222222-2222-4222-8222-222222222222';
+
+  it('labels each side that names an account, never the service\'s own (null)', async () => {
+    const change = {
+      fields: ['telephony_provider', 'telephony_credential_id'],
+      changes: {
+        telephony_provider: { from: 'voicelink', to: 'plivo' },
+        telephony_credential_id: { from: null, to: ID_A },
+      },
+    };
+    const lookups: string[] = [];
+    const labelled = await withCarrierAccountLabels(change, async (id) => { lookups.push(id); return 'Acme main'; });
+    expect(labelled.changes['telephony_credential_id']).toEqual({ from: null, to: ID_A, to_label: 'Acme main' });
+    expect(labelled.changes['telephony_provider']).toEqual({ from: 'voicelink', to: 'plivo' });
+    expect(lookups).toEqual([ID_A]);
+  });
+
+  it('a side whose account is not found is labelled null', async () => {
+    const change = { fields: ['telephony_credential_id'], changes: { telephony_credential_id: { from: ID_A, to: ID_B } } };
+    const labelled = await withCarrierAccountLabels(change, async (id) => (id === ID_B ? 'New' : null));
+    expect(labelled.changes['telephony_credential_id']).toEqual({ from: ID_A, to: ID_B, from_label: null, to_label: 'New' });
+  });
+
+  it('reads nothing when the account did not change, and a failed read leaves the change as it was', async () => {
+    const plain = { fields: ['name'], changes: { name: { from: 'a', to: 'b' } } };
+    let reads = 0;
+    expect(await withCarrierAccountLabels(plain, async () => { reads += 1; return 'x'; })).toEqual(plain);
+    expect(reads).toBe(0);
+    const carrier = { fields: ['telephony_credential_id'], changes: { telephony_credential_id: { from: null, to: ID_A } } };
+    expect(await withCarrierAccountLabels(carrier, async () => { throw new Error('db down'); })).toEqual(carrier);
   });
 });

@@ -98,6 +98,25 @@ describe('transitions', () => {
     expect(transitionOf(row('core', 'agency_campaign.paused'))).toBeNull();
     expect(transitionOf(row('master', 'agency_campaign.completed'))).toBeNull();
   });
+
+  it('an auto-pause reads its reason off the row: carrier_auth or carrier_account_unavailable from the carrier-account pause, else abandonment_ceiling', () => {
+    const auto = (detail?: Record<string, unknown>) => ({ ...row('core', 'agency_campaign.auto_paused', system), ...(detail ? { detail } : {}) });
+    expect(transitionOf(auto({ campaign_id: 'c1', reason: 'carrier_auth', telephony_provider: 'plivo' })))
+      .toMatchObject({ to_status: 'paused', reason: 'carrier_auth', user_id: null });
+    expect(transitionOf(auto({ campaign_id: 'c1', reason: 'carrier_account_unavailable', telephony_provider: 'plivo' })))
+      .toMatchObject({ to_status: 'paused', reason: 'carrier_account_unavailable', user_id: null });
+    expect(transitionOf(auto({ campaign_id: 'c1', reason: 'carrier_refusing_calls', telephony_provider: 'plivo' })))
+      .toMatchObject({ to_status: 'paused', reason: 'carrier_refusing_calls', user_id: null });
+    // Any other reason on the row is the guardrail's, not passed through.
+    expect(transitionOf(auto({ campaign_id: 'c1', reason: 'made_up' }))).toMatchObject({ reason: 'abandonment_ceiling' });
+    expect(transitionOf(auto({ campaign_id: 'c1', reason: 'abandonment_ceiling', measured_pct: 4 })))
+      .toMatchObject({ to_status: 'paused', reason: 'abandonment_ceiling' });
+    // An older guardrail row with no reason, or none at all, is the guardrail's.
+    expect(transitionOf(auto({ campaign_id: 'c1' }))).toMatchObject({ reason: 'abandonment_ceiling' });
+    expect(transitionOf(auto())).toMatchObject({ reason: 'abandonment_ceiling' });
+    // A supervisor's console pause is never read off a detail field.
+    expect(transitionOf({ ...row('master', 'agency_campaign.paused'), detail: { reason: 'carrier_auth' } })).toMatchObject({ reason: 'supervisor' });
+  });
 });
 
 describe('user references', () => {

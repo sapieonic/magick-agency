@@ -120,7 +120,7 @@ function tenant(over: Record<string, unknown> = {}) {
  *
  * The section takes the page's own list now, because choosing which campaign the
  * roster opens on needs each campaign's `status` — a name map cannot say which one
- * is dialing. `running` here, so `defaultRosterCampaign` picks it.
+ * is dialling. `running` here, so `defaultRosterCampaign` picks it.
  */
 type TestCampaign = { id: string; name: string; status: string };
 

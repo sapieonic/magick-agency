@@ -101,7 +101,7 @@ describe('CampaignPerformance', () => {
   it('names what handle time excluded, on its denominator line', () => {
     render(<CampaignPerformance stats={stats()} wrapupSeconds={45} />);
     expect(screen.getByTestId('handle-time-readout-secondary').textContent)
-      .toBe('Voicemail excluded — the dialer’s own figure');
+      .toBe('Voicemail excluded — the dialler’s own figure');
   });
 
   it('marks a figure unknown rather than colouring it as a problem', () => {

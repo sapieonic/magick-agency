@@ -21,7 +21,7 @@ const STEPS: Array<{ title: string; text: string; icon: LucideIcon }> = [
     icon: UserPlus,
   },
   {
-    title: 'Start dialing',
+    title: 'Start dialling',
     text: 'Agents join from the agent station, and answered calls go straight to them.',
     icon: Phone,
   },

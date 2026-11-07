@@ -139,7 +139,7 @@ export function Sidebar({ collapsed, onClose }: SidebarProps) {
    */
   const agencyEntry = isAgencySupervisor(role)
     ? { to: '/agency/campaigns', label: 'Switch to Magick Agency' }
-    : { to: '/dialer', label: 'Take dialer calls' };
+    : { to: '/dialer', label: 'Take dialler calls' };
   const { isEnabled } = useFeatureFlags();
   const { isEnabled: isCapabilityEnabled } = useGovernance();
   const location = useLocation();

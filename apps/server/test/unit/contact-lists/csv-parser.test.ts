@@ -121,7 +121,7 @@ describe('parseCsv', () => {
     expect(result.errors).toHaveLength(0);
     expect(result.rows[0]!.phone).toBe('+919876543210');
     expect(result.rows[1]!.phone).toBe('+919876543211');
-    expect(result.warnings).toContainEqual(expect.stringContaining('Normalized'));
+    expect(result.warnings).toContainEqual(expect.stringContaining('Normalised'));
   });
 
   it('should auto-prepend +91 to bare 10-digit Indian numbers and normalize formatting', () => {
@@ -131,7 +131,7 @@ describe('parseCsv', () => {
     expect(result.rows[0]!.phone).toBe('+919876543210');
     expect(result.rows[1]!.phone).toBe('+919876543211');
     expect(result.rows[2]!.phone).toBe('+919876543212');
-    expect(result.warnings).toContainEqual(expect.stringContaining('Normalized'));
+    expect(result.warnings).toContainEqual(expect.stringContaining('Normalised'));
   });
 
   it('should leave international E.164 numbers untouched', () => {

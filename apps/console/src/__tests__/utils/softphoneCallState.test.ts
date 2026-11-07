@@ -109,7 +109,7 @@ describe('describeSoftphoneRail', () => {
   it('Ready, with the campaign sentence only when switched from one', () => {
     expect(rail({}).label).toBe('Ready to dial');
     expect(rail({}).detail).not.toMatch(/paced/);
-    expect(rail({ fromCampaign: true }).detail).toMatch(/not paced, and the campaign's dialer does not reserve you/);
+    expect(rail({ fromCampaign: true }).detail).toMatch(/not paced, and the campaign's dialler does not reserve you/);
   });
 
   it('Dialing and Ringing name the number and time from dialed_at', () => {
@@ -118,7 +118,7 @@ describe('describeSoftphoneRail', () => {
     expect(r.label).toBe('Ringing +91 98204 61733');
     expect(r.detail).toMatch(/ringback tone plays in your browser/);
     expect(r.timerFrom).toBe(ringing.dialed_at);
-    expect(rail({ call: manualCall() }).label).toBe('Dialing +91 98204 61733');
+    expect(rail({ call: manualCall() }).label).toBe('Dialling +91 98204 61733');
   });
 
   it('On call names the contact and times from bridged_at alone', () => {

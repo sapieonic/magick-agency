@@ -101,6 +101,55 @@ describe('body decoders', () => {
     expect(decode(snap([{ attemptId: '', dialOutcomeUnknown: false }]))).toBeNull();
   });
 
+  it('carrier.plivo_callback: the URL, params and only the two signature headers cross; anything else refused', () => {
+    const decode = IPC_REQUEST_DECODERS['carrier.plivo_callback'].req;
+    const body = {
+      kind: 'answer', callId: 'c1', token: 'tok',
+      url: 'https://agency.test/api/v1/webhooks/plivo/webrtc-answer/c1?token=tok&w=1',
+      params: { CallUUID: 'u1', CallStatus: 'in-progress' },
+      headers: { 'x-plivo-signature-v3': 'sig', 'x-plivo-signature-v3-nonce': 'n' },
+    };
+    expect(decode(roundTrip(body))).toEqual(body);
+    expect(decode({ ...body, token: null })).toEqual({ ...body, token: null });
+    expect(decode({ ...body, headers: {} })).toEqual({ ...body, headers: {} });
+    // The scheme's case is not the URL's: a base written `HTTPS://` (which the config accepts,
+    // and which dials and verifies in one process) crosses as written, so its signature still
+    // verifies in the worker over the same bytes.
+    const upper = { ...body, url: 'HTTPS://agency.test/api/v1/webhooks/plivo/webrtc-answer/c1?token=tok&w=1' };
+    expect(decode(roundTrip(upper))).toEqual(upper);
+    for (const bad of [
+      { ...body, url: 'wss://agency.test/x' },
+      { ...body, url: 'https//agency.test/x' },
+      { ...body, url: 'not a url' },
+      { ...body, kind: 'hangup' },
+      { ...body, callId: '' },
+      { ...body, token: 7 },
+      { ...body, url: 'http://agency.test/x' },
+      { ...body, url: `https://agency.test/${'x'.repeat(9000)}` },
+      { ...body, params: { CallUUID: 7 } },
+      { ...body, params: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`k${i}`, 'v'])) },
+      // Any other header is refused, not dropped: the route sends only these two.
+      { ...body, headers: { ...body.headers, cookie: 'x' } },
+      { ...body, headers: { 'x-plivo-signature-v3': ['a'] } },
+      { ...body, headers: undefined },
+    ]) expect(decode(bad)).toBeNull();
+
+    const answer = IPC_REQUEST_DECODERS['carrier.plivo_callback'].res;
+    const xml = { statusCode: 200, contentType: 'text/xml', body: '<Response><Hangup/></Response>' };
+    expect(answer(roundTrip(xml))).toEqual(xml);
+    expect(answer({ statusCode: 503, contentType: 'application/json', body: '{"status":false}' })).not.toBeNull();
+    for (const bad of [{ ...xml, contentType: 'text/html' }, { ...xml, statusCode: 99 }, { ...xml, body: { status: true } }, { ...xml, body: 'x'.repeat(65 * 1024) }]) {
+      expect(answer(bad)).toBeNull();
+    }
+  });
+
+  it('dialable.invalidate carries nothing, and refuses a body that is not an object', () => {
+    const decode = IPC_EVENT_DECODERS['dialable.invalidate'];
+    expect(decode(roundTrip({}))).toEqual({});
+    expect(decode(undefined)).toEqual({});
+    for (const bad of ['x', 1, null, ['a']]) expect(decode(bad)).toBeNull();
+  });
+
   it('every request type has both decoders and a default deadline', () => {
     for (const type of Object.keys(IPC_REQUEST_DECODERS) as Array<keyof typeof IPC_REQUEST_DECODERS>) {
       expect(typeof IPC_REQUEST_DECODERS[type].req).toBe('function');
@@ -122,6 +171,7 @@ describe('body decoders', () => {
       'station.broadcast': { campaignId: 'c', frame: { event: 'campaign_state', campaign_id: 'c' } },
       'station.send': { sessionId: 's', frame: { event: 'queue', campaign_id: 'c', due: false, reason: 'queue_empty', next_due_at: null } },
       'concurrency.invalidate': { tenantId: 't', accountId: 'a' },
+      'dialable.invalidate': {},
       'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
       'voice.wake_self_heal': {},
       'call.lease': { op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink' } },

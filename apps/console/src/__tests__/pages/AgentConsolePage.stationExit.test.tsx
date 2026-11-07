@@ -293,7 +293,7 @@ describe('AgentConsolePage — the station menu', () => {
     // Still focusable: going `available` is exactly a transition that can land
     // while the item holds focus.
     expect(exit.hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText(/still in the dialing pool/i)).toBeTruthy();
+    expect(screen.getByText(/still in the dialling pool/i)).toBeTruthy();
     // Not the mid-call sentence — there is no call.
     expect(screen.queryByText(/this call is still on your screen/i)).toBeNull();
 

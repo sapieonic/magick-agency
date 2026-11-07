@@ -19,7 +19,7 @@ import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { StatCard } from '../../components/common';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
-import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { operatorCarrierName } from '../../utils/carrierName';
 import { PhoneNumberCreateModal } from './phone-numbers/PhoneNumberCreateModal';
 import { PhoneNumberEditModal } from './phone-numbers/PhoneNumberEditModal';
 import { usePhoneNumberBulk } from './phone-numbers/usePhoneNumberBulk';
@@ -264,7 +264,7 @@ export default function SAPhoneNumbersPage() {
         >
           <option value="">All providers</option>
           {providers.map(p => (
-            <option key={p.id} value={p.id}>{telephonyProviderAlias(p.name, p.display_name)}</option>
+            <option key={p.id} value={p.id}>{operatorCarrierName(p.name, p.display_name)}</option>
           ))}
         </select>
         <select
@@ -348,7 +348,7 @@ export default function SAPhoneNumbersPage() {
                   </td>
                   <td>
                     <span className={styles.providerBadge}>
-                      {telephonyProviderAlias(pn.provider_name, pn.provider_display_name)}
+                      {operatorCarrierName(pn.provider_name, pn.provider_display_name)}
                     </span>
                   </td>
                   <td>

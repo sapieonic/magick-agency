@@ -49,6 +49,8 @@ interface CoreOutboundParams {
   callerId: string;
   destinationPhone: string;
   provider?: string;
+  /** The tenant carrier credential to dial on; null/absent = the service's own account. */
+  telephonyCredentialId?: string | null;
   initiatedBy?: string | null;
   metadata?: Record<string, unknown>;
   record?: boolean;
@@ -83,7 +85,11 @@ type CoreRejectReason =
   | 'provider_concurrency_limit'
   | 'provider_concurrency_unavailable'
   | 'telephony_init_failed'
-  | 'station_socket_unavailable';
+  | 'station_socket_unavailable'
+  | 'telephony_credential_unavailable'
+  | 'carrier_rate_limited'
+  | 'carrier_auth_rejected'
+  | 'carrier_dial_not_sent';
 
 describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
   it('has exactly the seam member signatures', () => {

@@ -15,6 +15,9 @@ import {
   type AgencyContactState,
   type AgencyManualCall,
 } from '@magick-agency/contracts/agency';
+// The codec-free declaration, not `carrier-modules.js`: that loads every carrier's media
+// codec (and the tables it builds at load) into the repository's import graph.
+import { carrierCancelsRinging } from '../../../telephony/carrier-ringing.js';
 
 /**
  * Does this row have enough CONNECTS behind it to quote a rate whose denominator is
@@ -130,6 +133,12 @@ export interface AgencyManualCallJoinedRow extends AgencyManualCallRecord {
   contact_state: AgencyContactState | null;
   /** Only projected by the reads that serve a live call or the detail. */
   contact_context?: Record<string, unknown> | null;
+  /**
+   * The media leg's carrier (`agency_calls.provider`), NULL before the leg is placed.
+   * Only projected by the live-call read (`findWireById`); present, it adds
+   * `can_cancel_ringing`.
+   */
+  call_provider?: string | null;
 }
 
 /** The tag name shown when the tagged campaign row no longer exists (no FK). */
@@ -160,6 +169,8 @@ export function manualCallRequiresDisposition(
  *   never filled here: the caller adds it from the attempt repository.
  * - `tag.campaign_name` falls back to {@link MANUAL_CALL_DELETED_CAMPAIGN_NAME}
  *   when the campaign row is gone; `contact` is null when the contact row is.
+ * - `can_cancel_ringing` is carried only when the read projected `call_provider`
+ *   (the live call): the leg's carrier module's `cancelsRinging`, false with no leg.
  */
 export function projectManualCallRow(
   row: AgencyManualCallJoinedRow,
@@ -204,6 +215,7 @@ export function projectManualCallRow(
     dispositioned_at: iso(row.dispositioned_at),
     dispositioned_on_behalf: row.dispositioned_on_behalf,
     webrtc_call_id: row.webrtc_call_id,
+    ...(row.call_provider !== undefined ? { can_cancel_ringing: carrierCancelsRinging(row.call_provider) } : {}),
     dialed_at: iso(row.dialed_at),
     answered_at: iso(row.answered_at),
     bridged_at: iso(row.bridged_at),

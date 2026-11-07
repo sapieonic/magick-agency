@@ -1,8 +1,11 @@
 import { resolveClientRecordingUrl } from '../../utils/recording-url-resolver.js';
+import { tenantCallErrorMessage } from './call-error-message.js';
 import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.model';
 
 /**
- * Shape a WebRTC call row for the API. An explicit allow-list (deny-by-default)
+ * Shape a WebRTC call row for a TENANT-facing API (the agency spine and the soft phone).
+ * `error_message` is the vendor-free sentence for `error_code`, never the row's raw text.
+ * An explicit allow-list (deny-by-default)
  * so a future column added to `webrtc_calls` isn't auto-exposed. `recording_url`
  * is replaced with an authenticated proxy path (when a recording exists) so the
  * raw, auth-gated carrier media URL is never leaked; for unauthenticated
@@ -44,7 +47,10 @@ export function formatWebRtcCallResponse(record: WebRtcCallRecord, recordingPath
     status: record.status,
     outcome: record.outcome,
     error_code: record.error_code,
-    error_message: record.error_message,
+    // Never the row's raw text (a carrier's response body, a server setting's name): a
+    // vendor-free sentence from the code (`call-error-message.ts`). The raw text stays in
+    // the row and the logs.
+    error_message: tenantCallErrorMessage(record.error_code, record.error_message),
     initiated_by: record.initiated_by,
     metadata: record.metadata,
     recording_requested: record.recording_requested,

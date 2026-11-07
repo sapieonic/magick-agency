@@ -25,11 +25,12 @@ export const ALL_DEDICATED_WARNING =
   'Every caller ID is dedicated, so contacts without one share them.';
 
 /**
- * A dedicated number that is no longer one of the campaign's caller IDs
- * (`in_campaign: false`): the dial path ignores it and uses the rotation.
+ * A dedicated number the campaign can no longer dial from (`in_campaign: false`):
+ * dropped from its caller IDs, or, on a tenant's own carrier account, no longer
+ * active there (PL13). The dial path ignores it and uses the rotation.
  */
 export const STALE_CALLER_ID_FLAG =
-  'No longer one of this campaign’s caller IDs, so their calls use the shared rotation.';
+  'No longer a caller ID this campaign can dial from, so their calls use the shared rotation.';
 
 /** Refusals of the dedicated caller ID routes, in the console's words. */
 export const AGENT_CALLER_ID_REFUSAL_COPY: Record<AgencyAgentCallerIdErrorCode, string> = {
@@ -38,7 +39,7 @@ export const AGENT_CALLER_ID_REFUSAL_COPY: Record<AgencyAgentCallerIdErrorCode, 
   campaign_not_found: 'This campaign no longer exists, or isn’t in this account.',
   agent_not_staffed: 'This agent is no longer on this campaign.',
   caller_id_not_in_campaign:
-    'That number is no longer one of this campaign’s caller IDs. Refresh and pick another.',
+    'That number is no longer a caller ID this campaign can dial from. Refresh and pick another.',
   caller_id_taken: 'That number is already dedicated to another agent on this campaign.',
 };
 

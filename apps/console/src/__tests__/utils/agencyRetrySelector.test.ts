@@ -189,7 +189,7 @@ describe('the cohort, in words', () => {
     const words = describeSelector(DEFAULT_RETRY_SELECTOR, []);
     expect(words).toContain('no answer');
     expect(words).toContain('busy');
-    expect(words).toContain('never dialed at all');
+    expect(words).toContain('never dialled at all');
   });
 
   it('says so plainly when nothing is selected', () => {
@@ -446,7 +446,7 @@ describe('refusedValueNotice', () => {
 
 describe('outcomeBucketLabel', () => {
   it('renders the NULL-outcome bucket key as words', () => {
-    expect(outcomeBucketLabel('__none__')).toBe('Never dialed');
+    expect(outcomeBucketLabel('__none__')).toBe('Never dialled');
   });
 
   it('leaves a real outcome to the shared copy table', () => {

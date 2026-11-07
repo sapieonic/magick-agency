@@ -2,13 +2,14 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-06.
+are as of 2026-11-07.
 
 ## What Magick Agency is
 
 Magick Agency is an outbound power dialer for human agents. Supervisors load campaigns, the dialer
 paces calls to the number of available agents, and each answered call is bridged to an agent's
-browser over WebRTC and VoiceLink, with the contact's details already on screen. It is one
+browser over WebRTC and VoiceLink (or a tenant's own Plivo account), with the contact's details
+already on screen. It is one
 self-contained application: a Fastify server, a Postgres database, Redis, an agent and supervisor
 console, and a super-admin console, depending only on vendors (VoiceLink, Firebase Authentication,
 Mailjet, S3, Gemini / OpenAI, PostHog).
@@ -40,6 +41,13 @@ A dedicated caller ID per agent (2026-11-06, behind the contact-assignment flag:
 a staffed agent one of the campaign's caller IDs and every dial to a contact they own goes out from
 it, decisions DN1–DN10) leaves server 8207 unit / 2037 integration + 9 expected fail; db 428 / 573;
 console 5434.
+Plivo on tenants' own accounts (B18–B22, PL1–PL16: credentials super-admins add, campaigns pinned
+to one, number sync, signed callbacks, two automatic pauses) is built through step 4 (2026-11-07)
+and tested end to end against a mock Plivo carrier: server 8582 unit / 2075 integration + 9
+expected fail; step 5, a real Plivo call, needs a Plivo account. Merged with `main` the same day:
+the dedicated caller ID decides over the campaign's dialable numbers (PL13's addendum), and this
+branch's migrations are 0019–0021 after `main`'s 0018; server 8837 unit / 2150 + 15 integration
++ 9 expected fail, db 428 / 612, console 5685 (`status.md`, "Test counts").
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)

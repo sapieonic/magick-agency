@@ -225,13 +225,13 @@ describe('the hand-off panel carries what has to be passed on', () => {
   it('explains the dialer link only for an agent', async () => {
     await invite('agent', 'agent@example.com');
 
-    expect(screen.getByText(/straight to the dialer/i)).toBeTruthy();
+    expect(screen.getByText(/straight to the dialler/i)).toBeTruthy();
   });
 
   it('does not explain a dialer link to a role that has no dialer link', async () => {
     await invite('viewer', 'v@example.com');
 
-    expect(screen.queryByText(/straight to the dialer/i)).toBeNull();
+    expect(screen.queryByText(/straight to the dialler/i)).toBeNull();
     expect(screen.queryByTestId('agent-dialer-gated-note')).toBeNull();
   });
 });
@@ -421,7 +421,7 @@ describe('the dialer promise is conditional on the gates that decide it', () => 
   /**
    * `/dialer` is gated on `RequireCapability capability="agency"` AND `RequireFlag
    * flag="agency_dialer_enabled"`. The panel used to promise flatly that the
-   * link "takes them straight to the dialer" while reading neither, so a
+   * link "takes them straight to the dialler" while reading neither, so a
    * supervisor at a tenant with the dialer off was told in the product's own
    * voice that the link would work — and the person they emailed hit an
    * unavailable screen on their first ever sign-in.

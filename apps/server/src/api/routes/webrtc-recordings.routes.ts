@@ -2,11 +2,13 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
 import { verifyRecordingToken } from '../../utils/recording-url.js';
 import { proxyCallRecording } from '../../utils/recording-proxy.js';
+import { refuseAllRecordingAccess, type RecordingAccessResolver } from '../../telephony/recording-access.js';
 import { createChildLogger } from '@magick-agency/observability';
 
 /*
- * `proxyCallRecording` takes the VoiceLink recording-host allow-list (`allowedHosts`
- * option; empty = refuse every proxy).
+ * `proxyCallRecording` takes the recording access resolver (`resolveRecordingAccess`
+ * option): the call row's carrier decides the hosts and any credential (B21). Omitted =
+ * refuse every proxy.
  */
 
 const log = createChildLogger({ component: 'webrtc-recordings-routes' });
@@ -15,9 +17,10 @@ const log = createChildLogger({ component: 'webrtc-recordings-routes' });
  * Unauthenticated WebRTC recording playback endpoint, protected by a signed query
  * token. The signed URL is issued by the authenticated
  * `GET /api/v1/agency-campaigns/:id/attempts/:attemptId/recording-url` route, so
- * the raw VoiceLink recording URL can be played directly in an `<audio src>`
- * without forwarding tenant/account headers from the browser. The proxy streams
- * the carrier-hosted MP3 (no upstream credentials).
+ * a proxied recording can be played directly in an `<audio src>` without forwarding
+ * tenant/account headers from the browser. The proxy streams the carrier-hosted MP3:
+ * with no upstream credentials for VoiceLink, with the tenant's credential (resolved
+ * for the call's pinned credential, refused once revoked) for a BYOC carrier.
  *
  * ── Why this route is deliberately scope-agnostic ──────────────────────────
  *
@@ -43,15 +46,15 @@ const log = createChildLogger({ component: 'webrtc-recordings-routes' });
  * unauthenticated route unscoped, so a stale list is a silently weakened one.
  */
 export interface WebrtcRecordingsRoutesOptions {
-  /** VoiceLink recording hosts the proxy may fetch from (`voicelinkRecording.allowedHosts`). */
-  allowedHosts?: readonly string[];
+  /** How a call's recording is fetched (`telephony/recording-access.ts`). Omitted = refuse all. */
+  resolveRecordingAccess?: RecordingAccessResolver;
 }
 
 export async function webrtcRecordingsRoutes(
   app: FastifyInstance,
   opts: WebrtcRecordingsRoutesOptions = {},
 ): Promise<void> {
-  const allowedHosts = opts.allowedHosts ?? [];
+  const resolveAccess = opts.resolveRecordingAccess ?? refuseAllRecordingAccess;
   app.get('/:id', async (
     request: FastifyRequest<{
       Params: { id: string };
@@ -75,6 +78,6 @@ export async function webrtcRecordingsRoutes(
       return reply.code(404).send({ error: 'Not Found', message: 'WebRTC call not found' });
     }
 
-    return proxyCallRecording(callRecord, request, reply, allowedHosts);
+    return proxyCallRecording(callRecord, request, reply, resolveAccess);
   });
 }

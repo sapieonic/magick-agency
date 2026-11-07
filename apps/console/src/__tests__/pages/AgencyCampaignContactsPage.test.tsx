@@ -159,7 +159,7 @@ describe('add contacts — a campaign that has finished', () => {
 
     renderPage();
 
-    expect(await screen.findByText(/would never be dialed/i)).toBeTruthy();
+    expect(await screen.findByText(/would never be dialled/i)).toBeTruthy();
     // Not merely disabled — absent. A disabled file picker on a dead campaign
     // reads as a permissions problem the operator might go looking to fix.
     expect(document.querySelector('input[type=file]')).toBeNull();
@@ -171,6 +171,6 @@ describe('add contacts — a campaign that has finished', () => {
     renderPage();
 
     await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
-    expect(screen.queryByText(/would never be dialed/i)).toBeNull();
+    expect(screen.queryByText(/would never be dialled/i)).toBeNull();
   });
 });

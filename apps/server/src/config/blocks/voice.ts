@@ -81,6 +81,56 @@ const voicelinkSchema = z.object({
 });
 
 /**
+ * What every Plivo adapter shares, from env (`telephony/plivo/plivo.adapter.ts`). The
+ * Plivo accounts themselves are tenants' (BYOC, decision B18), stored per tenant under
+ * `telephonyCredentials`; nothing here names an account.
+ */
+const plivoSchema = z.object({
+  /**
+   * `PLIVO_WEBHOOK_BASE_URL`: this server's public base for Plivo's callbacks, e.g.
+   * `https://<public host>/api/v1/webhooks/plivo`. Env only, never tenant data: Plivo
+   * POSTs the answer and status callbacks that drive a call here. Unset (empty), Plivo
+   * accounts are not offered to new campaigns, a campaign pinned to one cannot start, and
+   * any Plivo dial is refused before anything is sent (`carrier_dial_not_sent`, PL12).
+   * Set, it must be an absolute `https:` URL with no query or fragment (the callbacks and
+   * their signatures are built by appending to it): anything else fails startup.
+   */
+  webhookBaseUrl: z.string().optional().default('').superRefine((value, ctx) => {
+    if (value === '') return;
+    let url: URL | null = null;
+    try {
+      url = new URL(value);
+    } catch {
+      url = null;
+    }
+    if (!url || url.protocol !== 'https:' || url.search !== '' || url.hash !== '' || value.includes('?') || value.includes('#')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'PLIVO_WEBHOOK_BASE_URL must be empty or an absolute https: URL with no query or fragment, '
+          + 'e.g. https://<public host>/api/v1/webhooks/plivo',
+      });
+    }
+  }),
+  /**
+   * `PLIVO_CALLS_PER_SECOND`: new calls a second per Plivo account (Plivo's default
+   * account limit is 2). Counted across every process in Redis.
+   */
+  callsPerSecond: z.coerce.number().int().min(1).max(100).default(2),
+  /**
+   * `PLIVO_DIAL_RATE_MAX_WAIT_MS`: the longest a dial waits for a calls-per-second slot
+   * before it is refused unsent (a retryable refusal). Default 5 s.
+   */
+  dialRateMaxWaitMs: z.coerce.number().int().min(0).max(60_000).default(5_000),
+  /**
+   * `PLIVO_REQUEST_TIMEOUT_MS`: abandon a Plivo REST request after this long. A timed-out
+   * create-call may have placed the call, so it is never retried. Default 15 s.
+   */
+  requestTimeoutMs: z.coerce.number().int().min(1000).max(120_000).default(15_000),
+  /** `PLIVO_RING_TIMEOUT_SECONDS`: how long Plivo lets a dial ring. Default 45 s. */
+  ringTimeoutSeconds: z.coerce.number().int().min(5).max(120).default(45),
+});
+
+/**
  * The service's own carrier account: VoiceLink, configured here from env. Tenant
  * carrier accounts (BYOC, decision B18) are not configured here; they are stored
  * per tenant, sealed under `telephonyCredentials` below.
@@ -93,6 +143,7 @@ const voicelinkSchema = z.object({
 export const telephonySchema = z.object({
   requireVoicelink: z.boolean().default(false),
   voicelink: voicelinkSchema.default({}),
+  plivo: plivoSchema.default({}),
 }).superRefine((data, ctx) => {
   if (!data.requireVoicelink) return;
   const provider = 'voicelink';
@@ -290,6 +341,13 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
         defaultCountryCode: env['VOICELINK_DEFAULT_COUNTRY_CODE'],
         loginTimeoutMs: env['VOICELINK_LOGIN_TIMEOUT_MS'],
         addLeadTimeoutMs: env['VOICELINK_ADD_LEAD_TIMEOUT_MS'],
+      },
+      plivo: {
+        webhookBaseUrl: env['PLIVO_WEBHOOK_BASE_URL'],
+        callsPerSecond: env['PLIVO_CALLS_PER_SECOND'],
+        dialRateMaxWaitMs: env['PLIVO_DIAL_RATE_MAX_WAIT_MS'],
+        requestTimeoutMs: env['PLIVO_REQUEST_TIMEOUT_MS'],
+        ringTimeoutSeconds: env['PLIVO_RING_TIMEOUT_SECONDS'],
       },
     },
     telephonyCredentials: {

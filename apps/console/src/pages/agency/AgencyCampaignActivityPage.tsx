@@ -430,7 +430,7 @@ export function AgencyCampaignActivityPage() {
         pageKey="agency-campaign-activity"
         description={
           'Everything recorded for this campaign, newest first — who did it, when, and to what. '
-          + 'Two systems record here: the console logs what someone pressed, the dialer logs what '
+          + 'Two systems record here: the console logs what someone pressed, the dialler logs what '
           + 'the campaign then did, so a pause legitimately appears twice.'
         }
         tips={[

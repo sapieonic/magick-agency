@@ -131,7 +131,7 @@ export function AccountSettingsPanel({ tenantId, accounts }: {
               </label>
               <label className={styles.checkboxLabel}>
                 <input type="checkbox" checked={analyzeCalls} onChange={e => setAnalyzeCalls(e.target.checked)} />
-                Analyze calls
+                Analyse calls
               </label>
               <div className={styles.field}>
                 <label htmlFor="settings-duration">Max call duration (seconds)</label>

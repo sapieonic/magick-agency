@@ -25,14 +25,23 @@ import {
 } from '../../../src/agency/campaign-health.js';
 import {
   AGENCY_STALL_PRIORITY,
+  CARRIER_ACCOUNT_PAUSE_REASONS,
   type AgencyStallCode,
+  type CarrierAccountPauseReason as ContractCarrierPause,
 } from '@magick-agency/contracts/agency';
-import type { AgencyCampaignRecord } from '../../../src/db/models/agency.model.js';
+import type { AgencyCampaignRecord, CarrierAccountPauseReason } from '../../../src/db/models/agency.model.js';
+
+// The server's carrier pause reasons are the contract's list, exactly: a new automatic
+// carrier pause added to the model and not to `CARRIER_ACCOUNT_PAUSE_REASONS` (or the
+// other way round) fails `pnpm lint` here, and so cannot be missing from the strip.
+type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+const _samePauses: Equals<CarrierAccountPauseReason, ContractCarrierPause> = true;
+void _samePauses;
 
 function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignRecord {
   return {
     id: 'camp-1', tenant_id: 't1', account_id: 'a1', name: 'c',
-    caller_ids: ['+911'], telephony_provider: 'vobiz',
+    caller_ids: ['+911'], telephony_provider: 'vobiz', telephony_credential_id: null,
     calling_window_start: '00:00:00', calling_window_end: '24:00:00',
     calling_days: [0, 1, 2, 3, 4, 5, 6], default_timezone: 'UTC',
     wrapup_seconds: 30, abandon_announcement_id: null, wrapup_auto_return: true, allow_wrapup_redial: false,
@@ -75,6 +84,8 @@ function healthy(patch: Partial<CampaignHealthInputs> = {}): CampaignHealthInput
     lastDialAt: new Date('2026-08-14T10:00:00Z'),
     recentFailures: { attempts: 100, failed: 1, windowMinutes: RECENT_FAILURE_WINDOW_MINUTES },
     onBreakByReason: {},
+    dialableCallerIds: null,
+    carrierCapacityMissing: null,
     ...patch,
   };
 }
@@ -150,6 +161,47 @@ describe('the health strip shows one diagnosis, and it is the right one', () => 
     for (const code of emitted) {
       expect(AGENCY_STALL_PRIORITY).toContain(code);
     }
+  });
+});
+
+describe('the carrier-account diagnoses', () => {
+  it.each(CARRIER_ACCOUNT_PAUSE_REASONS)('an automatic `%s` pause is named, with its reason and when', (reason) => {
+    const pausedAt = new Date('2026-11-04T09:00:00Z');
+    const { stall } = campaignHealth(healthy({
+      campaign: campaign({ status: 'paused', pause_reason: reason, paused_at: pausedAt }),
+    }));
+    expect(stall).toEqual({ code: 'auto_paused_carrier', reason, paused_at: pausedAt.toISOString() });
+  });
+
+  it('a supervisor or guardrail pause is not a carrier pause', () => {
+    for (const reason of ['supervisor', 'abandonment_ceiling'] as const) {
+      const codes = diagnoseAll(healthy({ campaign: campaign({ status: 'paused', pause_reason: reason, paused_at: new Date() }) }))
+        .map((s) => s.code);
+      expect(codes).not.toContain('auto_paused_carrier');
+    }
+  });
+
+  it('a running campaign with none of its caller IDs dialable outranks staffing and capacity', () => {
+    const { stall, other_stalls } = campaignHealth(healthy({
+      campaign: campaign({ caller_ids: ['+911', '+912'], telephony_credential_id: 'cred-1' }),
+      dialableCallerIds: 0,
+      concurrencyInUse: 5,
+    }));
+    expect(stall).toEqual({ code: 'no_dialable_caller_ids', caller_ids_stored: 2 });
+    expect(other_stalls).toEqual(['concurrency_saturated']);
+  });
+
+  it('says nothing of caller IDs it could not read, or that are dialable, or on a campaign not running', () => {
+    expect(campaignHealth(healthy({ dialableCallerIds: null })).stall).toBeNull();
+    expect(campaignHealth(healthy({ dialableCallerIds: 1 })).stall).toBeNull();
+    expect(diagnoseAll(healthy({ campaign: campaign({ status: 'paused' }), dialableCallerIds: 0 })).map((s) => s.code))
+      .not.toContain('no_dialable_caller_ids');
+  });
+
+  it('a running campaign whose carrier has no lines on the account is named; unknown is silence', () => {
+    expect(campaignHealth(healthy({ carrierCapacityMissing: true })).stall).toEqual({ code: 'no_carrier_capacity' });
+    expect(campaignHealth(healthy({ carrierCapacityMissing: null })).stall).toBeNull();
+    expect(campaignHealth(healthy({ carrierCapacityMissing: false })).stall).toBeNull();
   });
 });
 

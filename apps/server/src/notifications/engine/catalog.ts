@@ -107,7 +107,7 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDefinition[] = [
   {
     key: 'agency.campaign.completed',
     label: 'Agency campaign finished',
-    description: 'Sent to supervisors when a dialer campaign completes or is stopped.',
+    description: 'Sent to supervisors when a dialler campaign completes or is stopped.',
     category: 'agency',
     cadence: 'immediate',
     // Derived, never restated: `agency.supervise` is already this platform's

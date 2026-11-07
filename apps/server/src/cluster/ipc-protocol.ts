@@ -19,6 +19,8 @@ import { parsePacingInvalidationEvent, type PacingInvalidationEvent } from '../a
 import type { DialCommand } from '../agency/dial-dispatcher.js';
 import type { AgencyManualCallRecord } from '../db/models/agency.model.js';
 import type { UnrecordedEnd } from '../agency/reaper.js';
+import type { PlivoCallbackKind } from '../telephony/plivo/plivo.webhook.js';
+import { PLIVO_SIGNATURE_V3_HEADER, PLIVO_SIGNATURE_V3_NONCE_HEADER } from '../telephony/plivo/plivo-signature.js';
 import { CHILD_ROLES, type ChildRole } from './roles.js';
 import { decodeDialCommand, decodeManualCallRecord } from './record-codecs.js';
 
@@ -230,6 +232,21 @@ export interface CoreInjectBody { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DE
 export interface CoreInjectAnswer { statusCode: number; headers: Record<string, string | string[]>; body: string }
 export interface CarrierWebhookBody { callId: string; token: string | null; body: unknown }
 export interface CarrierWebhookAnswer { statusCode: number; body: { status: boolean } }
+/**
+ * A Plivo callback forwarded to the worker that holds its call (`docs/scaling.md` §3.2):
+ * the route's parsed input, with exactly what the V3 signature check needs (the public
+ * URL Plivo called, the form params, and only the two signature headers).
+ */
+export interface CarrierPlivoCallbackBody {
+  kind: PlivoCallbackKind;
+  callId: string;
+  token: string | null;
+  url: string;
+  params: Record<string, string>;
+  headers: Partial<Record<PlivoSignatureHeader, string>>;
+}
+/** What Plivo is answered with: the answer callback's XML, or a status body. */
+export interface CarrierPlivoCallbackAnswer { statusCode: number; contentType: 'text/xml' | 'application/json'; body: string }
 export interface SessionBody { sessionId: string }
 /** The slots one live call holds, so the primary can release them if its worker dies. */
 export interface CallLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
@@ -313,6 +330,56 @@ export function parseCarrierWebhookAnswer(raw: unknown): CarrierWebhookAnswer | 
   if (!isRecord(raw) || !isNonNegativeInt(raw['statusCode']) || !isRecord(raw['body']) || typeof raw['body']['status'] !== 'boolean') return null;
   return { statusCode: raw['statusCode'], body: { status: raw['body']['status'] } };
 }
+const PLIVO_CALLBACK_KINDS: readonly PlivoCallbackKind[] = ['answer', 'status', 'recording'];
+/** The only headers a forwarded Plivo callback carries: the two its signature is read from. */
+export const PLIVO_SIGNATURE_HEADERS = [PLIVO_SIGNATURE_V3_HEADER, PLIVO_SIGNATURE_V3_NONCE_HEADER] as const;
+export type PlivoSignatureHeader = (typeof PLIVO_SIGNATURE_HEADERS)[number];
+const MAX_PLIVO_PARAMS = 256;
+const MAX_PLIVO_PARAM_LENGTH = 8192;
+const MAX_PLIVO_URL_LENGTH = 8192;
+const MAX_PLIVO_ANSWER_BODY = 64 * 1024;
+const PLIVO_ANSWER_TYPES = ['text/xml', 'application/json'] as const;
+
+/**
+ * Whether `url` is an absolute `https:` URL, read as the dial and the config read it (`new URL`,
+ * so the scheme's case does not matter): a base written `HTTPS://…` dials and verifies in one
+ * process, so its forwarded callbacks must decode too.
+ */
+function isHttpsUrl(url: string): boolean {
+  try {
+    return new URL(url).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function parseCarrierPlivoCallback(raw: unknown): CarrierPlivoCallbackBody | null {
+  if (!isRecord(raw) || !isId(raw['callId'])) return null;
+  const { kind, token, url, params, headers } = raw;
+  if (!(PLIVO_CALLBACK_KINDS as readonly unknown[]).includes(kind)) return null;
+  if (token !== null && typeof token !== 'string') return null;
+  if (typeof url !== 'string' || url.length > MAX_PLIVO_URL_LENGTH || !isHttpsUrl(url)) return null;
+  if (!isRecord(params)) return null;
+  const entries = Object.entries(params);
+  if (entries.length > MAX_PLIVO_PARAMS) return null;
+  if (!entries.every(([k, v]) => k.length <= 128 && typeof v === 'string' && v.length <= MAX_PLIVO_PARAM_LENGTH)) return null;
+  // Exactly the signature headers, nothing else: a forwarded callback carries no other.
+  if (!isRecord(headers)) return null;
+  const out: CarrierPlivoCallbackBody['headers'] = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!(PLIVO_SIGNATURE_HEADERS as readonly string[]).includes(k) || typeof v !== 'string' || v.length > 4096) return null;
+    out[k as PlivoSignatureHeader] = v;
+  }
+  return { kind: kind as PlivoCallbackKind, callId: raw['callId'], token, url, params: params as Record<string, string>, headers: out };
+}
+export function parseCarrierPlivoCallbackAnswer(raw: unknown): CarrierPlivoCallbackAnswer | null {
+  if (!isRecord(raw)) return null;
+  const { statusCode, contentType, body } = raw;
+  if (!isNonNegativeInt(statusCode) || statusCode < 100 || statusCode > 599) return null;
+  if (!(PLIVO_ANSWER_TYPES as readonly unknown[]).includes(contentType)) return null;
+  if (typeof body !== 'string' || body.length > MAX_PLIVO_ANSWER_BODY) return null;
+  return { statusCode, contentType: contentType as CarrierPlivoCallbackAnswer['contentType'], body };
+}
 export function parseSessionBody(raw: unknown): SessionBody | null {
   return isRecord(raw) && isId(raw['sessionId']) ? { sessionId: raw['sessionId'] } : null;
 }
@@ -372,6 +439,8 @@ export interface IpcEventMap {
   'station.broadcast': StationBroadcastBody;
   'station.send': StationSendBody;
   'concurrency.invalidate': AccountScopeBody;
+  /** Primary → every media worker: drop the dialable caller-ID cache (PL13, `campaign-dialability.ts`). */
+  'dialable.invalidate': EmptyBody;
   'reaper.forget_unrecorded': AttemptIdsBody;
   'voice.wake_self_heal': EmptyBody;
   'call.lease': CallLeaseBody;
@@ -384,6 +453,7 @@ export interface IpcRequestMap {
   'dial.execute': { req: DialExecuteBody; res: EmptyBody };
   'core.inject': { req: CoreInjectBody; res: CoreInjectAnswer };
   'carrier.webhook': { req: CarrierWebhookBody; res: CarrierWebhookAnswer };
+  'carrier.plivo_callback': { req: CarrierPlivoCallbackBody; res: CarrierPlivoCallbackAnswer };
   'agent.return_reserved': { req: SessionBody; res: EmptyBody };
   'reaper.snapshot': { req: EmptyBody; res: ReaperSnapshotBody };
   'softphone.closed_by_sweep': { req: ManualCallRowsBody; res: EmptyBody };
@@ -406,6 +476,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'station.broadcast': parseStationBroadcast,
   'station.send': parseStationSend,
   'concurrency.invalidate': parseAccountScope,
+  'dialable.invalidate': parseEmptyBody,
   'reaper.forget_unrecorded': parseAttemptIds,
   'voice.wake_self_heal': parseEmptyBody,
   'call.lease': parseCallLease,
@@ -419,6 +490,7 @@ export const IPC_REQUEST_DECODERS: {
   'dial.execute': { req: parseDialExecute, res: parseEmptyBody },
   'core.inject': { req: parseCoreInject, res: parseCoreInjectAnswer },
   'carrier.webhook': { req: parseCarrierWebhook, res: parseCarrierWebhookAnswer },
+  'carrier.plivo_callback': { req: parseCarrierPlivoCallback, res: parseCarrierPlivoCallbackAnswer },
   'agent.return_reserved': { req: parseSessionBody, res: parseEmptyBody },
   'reaper.snapshot': { req: parseEmptyBody, res: parseReaperSnapshot },
   'softphone.closed_by_sweep': { req: parseManualCallRows, res: parseEmptyBody },
@@ -434,6 +506,7 @@ export const IPC_DEFAULT_DEADLINES_MS: { readonly [K in IpcRequestType]: number 
   'dial.execute': 40_000,
   'core.inject': 15_000,
   'carrier.webhook': 10_000,
+  'carrier.plivo_callback': 10_000,
   'agent.return_reserved': 5_000,
   'reaper.snapshot': 5_000,
   'softphone.closed_by_sweep': 10_000,

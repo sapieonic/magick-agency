@@ -15,6 +15,16 @@
  *  - `POST   /telephony-credentials/:id/disable`         → `TelephonyCredentialResponse`
  *  - `POST   /telephony-credentials/:id/enable`          → `TelephonyCredentialResponse`
  *  - `POST   /telephony-credentials/:id/revoke`          → `TelephonyCredentialResponse`
+ *  - `POST   /telephony-credentials/:id/sync-numbers`    → `TelephonyCredentialSyncNumbersResponse`
+ *
+ * Number sync: the carrier account's voice numbers become the tenant's numbers. Each is
+ * added to the phone inventory pinned to the credential and assigned to the
+ * credential's tenant with no account tag, so every account of the tenant may use it as
+ * a caller ID (a credential serves every account of its tenant, B20); a super-admin may
+ * still narrow one to some accounts with the existing account tags. A number already in
+ * the inventory on another credential or on the service's own account is reported as a
+ * conflict and left alone; the credential's numbers the account no longer lists are
+ * retired, never deleted. Only an `active` credential syncs.
  *
  * Errors are `{ error: TelephonyCredentialErrorCode, message, details? }`; `details`
  * lists field paths and messages, never submitted values.
@@ -108,6 +118,73 @@ export interface RotateTelephonyCredentialSecretBody {
   expected_version: number;
 }
 
+/** Why a number the carrier listed was not taken into the inventory at all. */
+export type TelephonyNumberSyncSkipReason =
+  /** The carrier says the number cannot carry voice calls. */
+  | 'not_voice'
+  /** Not a phone number once normalised to E.164. */
+  | 'invalid_number'
+  /**
+   * On the carrier's list, but another account's: a main account lists the numbers it
+   * has transferred to its subaccounts. Never claimed by this credential.
+   */
+  | 'other_account';
+
+/** Why a listed voice number was not taken into this credential's inventory. */
+export type TelephonyNumberSyncConflictReason =
+  /**
+   * Already in the inventory on another credential, or on the service's own account. Never
+   * taken over, except from a revoked registration of the same carrier account of the same
+   * tenant (`taken_over`).
+   */
+  | 'registered_elsewhere'
+  /** This credential's number (or such a revoked registration's), deleted by a super-admin: a sync does not bring it back. */
+  | 'deleted';
+
+/** What one sync did. Numbers are E.164 (`+…`); `skipped` echoes the carrier's spelling. */
+export interface TelephonyCredentialNumberSync {
+  /** Numbers the carrier listed on the account, voice or not. */
+  listed: number;
+  added: string[];
+  /** The credential's numbers that had been retired and are on the account again. */
+  reactivated: string[];
+  /**
+   * Numbers that were pinned to a REVOKED credential of the same tenant and carrier account
+   * (the account registered again): now this credential's, and active. Calls placed on the
+   * old credential, and their recordings, stay on it.
+   */
+  taken_over: string[];
+  unchanged: string[];
+  /** The credential's numbers no longer on the account: retired, never deleted. */
+  retired: string[];
+  skipped: Array<{ number: string; reason: TelephonyNumberSyncSkipReason }>;
+  conflicts: Array<{ phone_number: string; reason: TelephonyNumberSyncConflictReason }>;
+  /** The credential's active numbers after the sync: what its campaigns may use as caller IDs. */
+  active_numbers: number;
+  /**
+   * Live campaigns (draft, running, paused, stopping) on this credential whose caller IDs
+   * still name one of its numbers that is no longer active. Such a number is never
+   * dialled (decision PL13), so the operator can tell the tenant to replace it.
+   */
+  campaigns_holding_retired: TelephonyCredentialSyncCampaign[];
+}
+
+/** A campaign still naming retired numbers of the synced credential (`campaigns_holding_retired`). */
+export interface TelephonyCredentialSyncCampaign {
+  campaign_id: string;
+  campaign_name: string;
+  account_id: string;
+  account_name: string;
+  status: string;
+  /** Its caller IDs that are the credential's numbers and not active, sorted. */
+  retired_caller_ids: string[];
+}
+
+export interface TelephonyCredentialSyncNumbersResponse {
+  credential: TelephonyCredential;
+  sync: TelephonyCredentialNumberSync;
+}
+
 /**
  * Why a credential route refused.
  *
@@ -118,6 +195,10 @@ export interface RotateTelephonyCredentialSecretBody {
  *   no longer holds. Retrying does not help; rotate the secret or restore the key.
  * - `version_conflict` (409): the credential changed (a rotation, or a status change)
  *   while the request was in flight. Re-read it and try again.
+ * - `credential_not_active` (409): numbers are synced only from an `active` credential.
+ * - `too_many_numbers` (422): the account lists more numbers than one sync reads, so the
+ *   list is incomplete and nothing was changed (a partial list would retire numbers that
+ *   are still on the account).
  */
 export type TelephonyCredentialErrorCode =
   | 'credential_store_unavailable'
@@ -132,7 +213,9 @@ export type TelephonyCredentialErrorCode =
   | 'carrier_unreachable'
   | 'version_conflict'
   | 'invalid_transition'
-  | 'in_use';
+  | 'in_use'
+  | 'credential_not_active'
+  | 'too_many_numbers';
 
 /** Runtime list of {@link TelephonyCredentialErrorCode}, in declaration order. */
 export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
@@ -149,6 +232,8 @@ export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
   'version_conflict',
   'invalid_transition',
   'in_use',
+  'credential_not_active',
+  'too_many_numbers',
 ] as const satisfies readonly TelephonyCredentialErrorCode[];
 
 const _allTelephonyCredentialErrorCodesListed: AllListed<

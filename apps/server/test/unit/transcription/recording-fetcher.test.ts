@@ -2,6 +2,7 @@
  * Covers: no auth headers on an allow-listed host; off-list host, lookalike
  * hosts (suffix, userinfo, path, query), http scheme, empty list and unparseable URL
  * are permanent failures that never reach `fetch`; the mimeType assertion. Every other case runs against an allow-listed host.
+ * B21: a BYOC fetch's headers go to the first URL only, and `exactHosts` refuses subdomains.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -105,6 +106,41 @@ describe('fetchRecordingBytes — redirects (SSRF)', () => {
   it('a redirect status without a Location is just a non-2xx response', async () => {
     (global.fetch as any).mockResolvedValueOnce(redirect(null));
     await expect(fetchRecordingBytes(URL_OK, OPTS)).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED' });
+  });
+});
+
+describe('fetchRecordingBytes — a BYOC credential (B21)', () => {
+  const origFetch = global.fetch;
+  beforeEach(() => { global.fetch = vi.fn(); });
+  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); });
+  const PLIVO = 'https://media.plivo.com/v1/Account/MA1/Recording/r.mp3';
+  const BYOC = { maxBytes: 1000, timeoutMs: 5000, allowedHosts: ['media.plivo.com'], headers: { Authorization: 'Basic abc' }, exactHosts: true };
+  const authOf = (call: unknown[]) => new Headers((call[1] as RequestInit).headers).get('authorization');
+
+  it('sends the headers to the first URL, with the timeout signal', async () => {
+    (global.fetch as any).mockResolvedValueOnce(streamResponse([Buffer.from('a')], { contentType: 'audio/mpeg' }));
+    await fetchRecordingBytes(PLIVO, BYOC);
+    const call = (global.fetch as any).mock.calls[0];
+    expect(authOf(call)).toBe('Basic abc');
+    expect((call[1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('never sends them past a redirect: the hop carries no Authorization', async () => {
+    (global.fetch as any)
+      .mockResolvedValueOnce(redirect(`${PLIVO}?v=2`))
+      .mockResolvedValueOnce(streamResponse([], { status: 401 }));
+    await expect(fetchRecordingBytes(PLIVO, BYOC)).rejects.toMatchObject({ retryable: false });
+    const calls = (global.fetch as any).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(authOf(calls[0])).toBe('Basic abc');
+    expect(authOf(calls[1])).toBeNull();
+  });
+
+  it('with exactHosts refuses a subdomain of the recording host without fetching (permanent)', async () => {
+    await expect(fetchRecordingBytes('https://x.media.plivo.com/r.mp3', BYOC)).rejects.toMatchObject({
+      code: 'TRANSCRIPTION_FAILED', retryable: false,
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 

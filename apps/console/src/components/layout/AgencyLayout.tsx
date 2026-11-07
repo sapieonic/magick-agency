@@ -99,7 +99,7 @@ export function AgencyLayout() {
               <p>
                 {accounts.length === 0
                   ? 'This workspace has no accounts yet. An account is where campaigns, contacts and the Do Not Call list live, so one has to exist before the Agency Dialer can be used.'
-                  : 'Choose an account from the switcher above. Campaigns, rosters and dialing all belong to a single account.'}
+                  : 'Choose an account from the switcher above. Campaigns, rosters and dialling all belong to a single account.'}
               </p>
               {accounts.length === 0 && canCreateAccount && (
                 <p>

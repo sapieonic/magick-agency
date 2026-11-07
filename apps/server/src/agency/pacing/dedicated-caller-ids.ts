@@ -29,7 +29,8 @@
  *    paths call: a dedication stops counting when its staffing row closes,
  *    `EFFECTIVE_DEDICATION_SQL`). Nothing else changes the map: a re-staffing never revives an
  *    older row (DN1), the campaign PATCH cannot drop a dedicated number (DN6) and the map does
- *    not depend on `caller_ids` anyway (each dial path filters by the campaign row it read), and
+ *    not depend on `caller_ids` anyway (each dial path filters by the campaign's dialable caller
+ *    IDs, `dialableCallerIds`, which a number sync, retire or unassign clears, PL13), and
  *    a user delete's cascade has no route (a raw delete is covered by the TTL).
  *  - The generation guard keeps a load that an invalidation overtook from being stored: a
  *    dial uses a released dedication only if its read started before the release committed,
@@ -44,8 +45,8 @@
  * Forced pacing ticks (`tickOnce`) read through too (`fresh`), as they do for the row and limit.
  */
 import { agencyAgentCallerIdRepository } from '../../db/repositories/agency.repository.js';
-import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
-import { resolveCallerId, usableCallerIds, type DedicatedCallerIds } from './caller-id-pool.js';
+import { dialableCallerIds, type DialabilityCampaign } from '../campaign-dialability.js';
+import { resolveCallerId, type DedicatedCallerIds } from './caller-id-pool.js';
 import { GenerationTtlCache, PACING_CACHE_TTL_MS } from './read-cache.js';
 
 export type DedicatedCallerIdLoader = (campaignId: string) => Promise<DedicatedCallerIds>;
@@ -99,20 +100,23 @@ export class DedicatedCallerIdCache {
   }
 
   /**
-   * THE caller ID one dial to a contact of `campaign` goes out from (DN2): the contact owner's
-   * (`ownerUserId`, the contact's `assigned_user_id`) dedicated number while the campaign still
-   * has it, else `sticky` while it is in the rotation, else the rotation's pick
-   * (`resolveCallerId`). Null only when the campaign has no usable caller ID. Rejects when the
-   * map cannot be read.
+   * THE caller ID one dial to a contact of `campaign` goes out from (DN2 over PL13): the contact
+   * owner's (`ownerUserId`, the contact's `assigned_user_id`) dedicated number while it is one of
+   * the campaign's DIALABLE caller IDs, else `sticky` while it is in the rotation, else the
+   * rotation's pick (`resolveCallerId` over `dialableCallerIds`). The pool is the dialable one:
+   * on a campaign pinned to a tenant's own carrier account (PL13), only the stored numbers still
+   * active on it, so a dedicated number the account no longer has falls back to the rotation; on
+   * the service's own account, `usableCallerIds` with no read. Null only when the pool is empty.
+   * Rejects when the map or the pool cannot be read.
    */
   async callerIdForContact(
-    campaign: Pick<AgencyCampaignRecord, 'id' | 'caller_ids'>,
+    campaign: DialabilityCampaign,
     ownerUserId: string | null | undefined,
     opts: { sticky?: string | null } = {},
   ): Promise<string | null> {
-    const dedicated = await this.read(campaign.id);
+    const [dedicated, usable] = await Promise.all([this.read(campaign.id), dialableCallerIds(campaign)]);
     return resolveCallerId({
-      usable: usableCallerIds(campaign),
+      usable,
       dedicated,
       ownerUserId,
       offset: 0,

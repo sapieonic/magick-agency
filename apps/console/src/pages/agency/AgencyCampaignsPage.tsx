@@ -133,7 +133,7 @@ export function AgencyCampaignsPage() {
                     <Phone size={18} />
                   </span>
                   <div>
-                    <p className={styles.idleTitle}>Nothing is dialing right now</p>
+                    <p className={styles.idleTitle}>Nothing is dialling right now</p>
                     <p className={styles.idleText}>
                       {counts.draft > 0
                         ? 'Open a draft and start it when its contacts and agents are ready.'

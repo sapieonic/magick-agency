@@ -8,7 +8,7 @@ repo; see [Routing](#routing-managed-outside-this-repo).
 | Path | What it is |
 |---|---|
 | [`terraform/`](terraform/) | The root module: the folder **Magick Agency Alerts** (uid `magick-agency-alerts`), the alert rules, the dashboard |
-| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 20 `agy-*` rules, as data (the newest, `agy-pacing-share-starved`, watches how the pacing round splits an account's slots between its running campaigns; the `insights` group before it watches the insights rollup job and the pacing history; runbooks in `docs/operations.md`, "Alert runbooks") |
+| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 22 `agy-*` rules, as data (the newest, the `carrier-credentials` group, watches the tenant carrier credential keyring and sweep; `agy-pacing-share-starved` before it watches how the pacing round splits an account's slots between its running campaigns; the `insights` group before it watches the insights rollup job and the pacing history; runbooks in `docs/operations.md`, "Alert runbooks") |
 | [`terraform/alerting.tf`](terraform/alerting.tf) | The folder, `local.agency` (the selector), the routing labels, and the one `grafana_rule_group` resource |
 | [`terraform/dashboard.tf`](terraform/dashboard.tf) | The dashboard resource (app-platform `grafana_apps_dashboard_dashboard_v1beta1`) |
 | [`dashboards/magick-agency-overview.json`](dashboards/magick-agency-overview.json) | The dashboard (uid `magick-agency-overview`, classic model) |
@@ -104,6 +104,8 @@ Every expression selects `${local.agency}` and nothing else.
 | `agy-event-loop-delay-p99` | `nodejs_eventloop_delay_p99_seconds` |
 | `agy-metric-cardinality-overflow` | `{otel_metric_overflow="true"}` |
 | `agy-cluster-child-crash` | `cluster_child_exits_total{expected="false"}`, with the new-series guard; the supervisor also records the series at zero when it starts |
+| `agy-credential-keyring-missing-keys` | `telephony_credential_missing_key_ids` above 0: stored carrier credential secrets sealed under a master key `TELEPHONY_CREDENTIAL_KEYS` does not hold (B19). Set at boot and after each hourly sweep; pages |
+| `agy-credential-sweep-failing` | `telephony_credential_sweeps_total{result="failed"}`, 2+ in 3h (the sweep is hourly), with the new-series guard; the housekeeping also records both results at zero when it starts |
 | `agy-insights-rollup-failing` | `agency_insights_rollup_failures_total`, 10+ in 15m, with the new-series guard |
 | `agy-insights-rollup-behind` | `agency_insights_rollup_oldest_dirty_seconds` above 120s (8 rollup intervals) for 10m |
 | `agy-insights-rollup-stalled` | `agency_insights_rollup_recompute_seconds_count`, no committed batch for ~15m (a pass that never finishes freezes the backlog gauges) |
@@ -142,7 +144,8 @@ and `service_name=~"$service_name"`. The rows:
   contended report to the split, and the slots the fair-share rule withheld
   from it, a measure of contention, MC1–MC7).
 - **Voice, capacity and storage**: WebSockets, telephony lease release,
-  provider concurrency admission, rate-limit rejections, S3.
+  provider concurrency admission, rate-limit rejections, S3, the carrier
+  credential keyring and sweeps, carrier dial refusals.
 - **Identity and mail**: sign-in attempts; invite emails and claims.
 - **Analysis**: dialer analysis and its latency.
 - **Runtime and telemetry**: event-loop delay and utilization, heap,
@@ -155,7 +158,9 @@ metric in `packages/observability/src/metrics/` first:
 
 - `api_requests_total` / `api_request_duration_seconds`: no 5xx ratio, API
   latency, request rate or status-mix panels or rules.
-- `call_dial_failures_total`: no carrier dial-failure rule.
+- `call_dial_failures_total`: no carrier dial-failure rule. `carrier_dial_refusals_total`
+  (by `provider` and `kind`; Plivo only, counted in its adapter) has a panel and no rule yet:
+  it needs a production baseline first, and VoiceLink does not count into it.
 - `webhook_signature_rejected_total`: no carrier signature-refusal rule.
 - `media_stream_connect_timeouts_total`: no media-timeout rule.
 - DNC registry writes: nothing counts them. The rollback-window DNC mirror that

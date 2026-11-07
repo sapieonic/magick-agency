@@ -3,12 +3,13 @@ import { Link } from 'react-router-dom';
 import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { useTenant } from '../../../../contexts/TenantContext';
 import { getInsightsSummary, getInsightsUploads } from '../../../../api/agencyInsights';
-import type { AgencyInsightsSummary, AgencyInsightsUploads } from '../../../../types/agency-insights';
+import type { AgencyInsightsSummary, AgencyInsightsTransition, AgencyInsightsUploads } from '../../../../types/agency-insights';
 import { formatCount } from '../../../../utils/format/number';
 import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../utils/agency/insights/copy';
 import { Panel, SectionBody } from './InsightsParts';
 import { UploadsSection } from './UploadsSection';
 import styles from './Insights.module.css';
+import { carrierPauseCopy } from '../../../../utils/agencyCarriers';
 
 const STATUS_WORDS: Record<string, string> = {
   draft: 'Created',
@@ -58,7 +59,7 @@ export function LifecyclePanel({ summary }: { summary: AgencyInsightsSummary }) 
         <ol className={styles.callouts} data-testid="insights-transitions">
           {summary.transitions.map((t) => (
             <li key={`${t.to_status}-${t.at}`} className={styles.callout}>
-              {`${STATUS_WORDS[t.to_status] ?? t.to_status} ${formatZoned(t.at, zone)} by ${t.reason === 'abandonment_ceiling' ? 'the abandonment guardrail' : actorName(t.actor, 'the dialler')}`}
+              {`${STATUS_WORDS[t.to_status] ?? t.to_status} ${formatZoned(t.at, zone)} ${transitionBy(t)}`}
             </li>
           ))}
         </ol>
@@ -67,6 +68,16 @@ export function LifecyclePanel({ summary }: { summary: AgencyInsightsSummary }) 
       )}
     </Panel>
   );
+}
+
+/** Who or what made a lifecycle transition, as the end of "Paused 7 Nov, 10:00 …". */
+function transitionBy(t: AgencyInsightsTransition): string {
+  if (t.reason === 'abandonment_ceiling') return 'by the abandonment guardrail';
+  // Nobody pressed Pause: the campaign's carrier account could not dial (refused by the
+  // carrier, or no longer active). Every such reason has its copy in `CARRIER_PAUSE_COPY`.
+  const carrier = carrierPauseCopy(t.reason);
+  if (carrier) return `automatically: ${carrier.cause}. ${carrier.action}`;
+  return `by ${actorName(t.actor, 'the dialler')}`;
 }
 
 /**

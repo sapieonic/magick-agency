@@ -2,15 +2,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import Fastify, { type FastifyInstance } from 'fastify';
 import { closePool, initDbPool } from '@magick-agency/db';
 import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
-import { DEFAULTS, OTHER_TENANT, insertWebrtcCall } from '../../../../../packages/db/test/integration/setup/factories.js';
+import { randomUUID } from 'node:crypto';
+import { DEFAULTS, OTHER_TENANT, insertTenant, insertWebrtcCall } from '../../../../../packages/db/test/integration/setup/factories.js';
 
 /*
  * The `GET /api/v1/webrtc-recordings/:id` route on real Postgres 5436 and the REAL signing
  * code. There is no `GET /webrtc-call/:id/recording-url` route or authenticated
  * `/recording` proxy, so the URL is minted with `signRecordingUrl`
- * exactly as the agency attempt route will. No carrier credentials exist: the test asserts
- * NONE are sent. Also covered: off-list host / redirect refusal and the signed-URL TTL/path
- * checks on the real route.
+ * exactly as the agency attempt route will. A VoiceLink recording carries no credentials:
+ * the test asserts NONE are sent. Also covered: off-list host / redirect refusal, the
+ * signed-URL TTL/path checks on the real route, and a Plivo recording on the tenant's
+ * credential (below).
  */
 const SECRET = 'integration-test-signing-secret-xyz123';
 process.env['RECORDING_URL_SIGNING_SECRET'] = SECRET;
@@ -20,6 +22,24 @@ const REC_PREFIX = '/api/v1/webrtc-recordings';
 
 const { webrtcRecordingsRoutes } = await import('../../../src/api/routes/webrtc-recordings.routes.js');
 const { signRecordingUrl } = await import('../../../src/utils/recording-url.js');
+const { createRecordingAccessResolver } = await import('../../../src/telephony/recording-access.js');
+const { TelephonyCredentialService } = await import('../../../src/telephony/credentials/credential-service.js');
+const { buildSealerFromConfig } = await import('../../../src/telephony/credentials/index.js');
+const { telephonyCredentialRepository } = await import('@magick-agency/db/repositories/telephony-credential.repository');
+const { tenantRepository } = await import('@magick-agency/db/repositories/tenant.repository');
+
+/*
+ * B21 on real Postgres: the credential service is the real one (real repository, real
+ * sealer over a test keyring); only the carrier's verify call is stubbed. A Plivo
+ * recording is fetched with Basic auth from the call's pinned credential; revoking the
+ * credential ends playback.
+ */
+const credentialService = new TelephonyCredentialService({
+  repo: telephonyCredentialRepository,
+  tenants: tenantRepository,
+  sealer: buildSealerFromConfig({ keyring: `t1:${Buffer.alloc(32, 7).toString('base64')}`, activeKeyId: 't1' }),
+  fetchImpl: async () => ({ status: 200 }),
+});
 
 function makeUpstreamResponse(body: Buffer | string, init: { status?: number; contentRange?: string; contentLength?: string; location?: string } = {}): Response {
   const headers = new Headers();
@@ -37,7 +57,10 @@ describe('webrtc recording playback (integration)', () => {
   beforeEach(async () => {
     await truncateAll();
     app = Fastify({ logger: false });
-    await app.register(webrtcRecordingsRoutes, { prefix: REC_PREFIX, allowedHosts: [HOST] });
+    await app.register(webrtcRecordingsRoutes, {
+      prefix: REC_PREFIX,
+      resolveRecordingAccess: createRecordingAccessResolver({ voicelinkHosts: [HOST], credentials: () => credentialService }),
+    });
     await app.ready();
   });
   afterEach(async () => {
@@ -154,5 +177,64 @@ describe('webrtc recording playback (integration)', () => {
     const bounce = await signed();
     expect((await app.inject({ method: 'GET', url: bounce.url })).statusCode).toBe(502);
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  describe('a Plivo recording on the tenant credential (B21)', () => {
+    const AUTH_ID = 'MAABCDEFGHIJKLMNOPQR';
+    const AUTH_TOKEN = 'tok_integration_0123456789';
+    const PLIVO_URL = `https://media.plivo.com/v1/Account/${AUTH_ID}/Recording/r-1.mp3`;
+
+    const adminId = randomUUID();
+
+    async function plivoCall() {
+      await insertTenant({ id: DEFAULTS.tenantId });
+      // `truncateAll` empties the provider catalogue too; the credential's FK needs the row.
+      await getTestPool().query(
+        `INSERT INTO telephony_providers (name, display_name) VALUES ('plivo', 'Plivo') ON CONFLICT (name) DO NOTHING`,
+      );
+      await getTestPool().query(
+        `INSERT INTO super_admins (id, email, password_hash, name, status) VALUES ($1, 'rec@b21.example.com', 'x', 'Rec Admin', 'active')`,
+        [adminId],
+      );
+      const created = await credentialService.create({
+        tenantId: DEFAULTS.tenantId, provider: 'plivo', label: 'Main',
+        fields: { auth_id: AUTH_ID, auth_token: AUTH_TOKEN }, adminId,
+      });
+      if (!created.ok) throw new Error(`credential create failed: ${created.code}`);
+      const signedCall = await signed({
+        provider: 'plivo', telephony_credential_id: created.value.id, recording_url: PLIVO_URL,
+      });
+      return { ...signedCall, credentialId: created.value.id };
+    }
+
+    it('fetches media.plivo.com with Basic auth from the pinned credential', async () => {
+      const mockFetch = vi.fn().mockResolvedValue(makeUpstreamResponse(Buffer.from('PLIVO_MP3')));
+      vi.stubGlobal('fetch', mockFetch);
+      const { url } = await plivoCall();
+
+      const res = await app.inject({ method: 'GET', url });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.rawPayload.toString()).toBe('PLIVO_MP3');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [fetchedUrl, fetchInit] = mockFetch.mock.calls[0]!;
+      expect(fetchedUrl).toBe(PLIVO_URL);
+      expect(new Headers(fetchInit.headers).get('authorization'))
+        .toBe(`Basic ${Buffer.from(`${AUTH_ID}:${AUTH_TOKEN}`).toString('base64')}`);
+    });
+
+    it('a revoked credential ends playback: 404 recording_unavailable, nothing fetched', async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal('fetch', mockFetch);
+      const { url, credentialId } = await plivoCall();
+      const revoked = await credentialService.revoke(credentialId, adminId);
+      expect(revoked.ok).toBe(true);
+
+      const res = await app.inject({ method: 'GET', url });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('recording_unavailable');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
 });

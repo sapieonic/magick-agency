@@ -21,14 +21,16 @@ import type {
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
-import { campaignConfigChange, encodeConfigChange } from '../../../agency/campaign-config-audit.js';
+import { campaignConfigChange, encodeConfigChange, withCarrierAccountLabels } from '../../../agency/campaign-config-audit.js';
+import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { sendRefusal } from '../helpers/refusal.js';
 // How many ids one `GET /summaries` may name; the staffing `my-*` routes split
 // longer lists into reads of at most this many.
 import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
-import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, configRejected, gate, ownedCampaign } from './guards.js';
+import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, gate, ownedCampaign } from './guards.js';
+import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
 
 
 /** Every campaign status, as a record so a status added to the type must be added here. */
@@ -163,12 +165,21 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
 
     if (await analysisProfileRejected(request, reply, body?.analysis_profile_id)) return reply;
 
+    // The carrier account it dials on. Omitted, the campaign is on the service's own
+    // carrier (the column DEFAULT) with no credential; named, it is judged in full.
+    const telephonyProvider = body?.telephony_provider ?? DEFAULT_CAMPAIGN_PROVIDER;
+    const telephonyCredentialId = body?.telephony_credential_id ?? null;
+    if (await carrierRejected(request, reply, { ...body, caller_ids: callerIds }, {
+      telephony_provider: telephonyProvider, telephony_credential_id: telephonyCredentialId, caller_ids: callerIds,
+    })) return reply;
+
     const campaign = await agencyCampaignRepository.create({
       tenant_id: getTenantId(request),
       account_id: getAccountId(request),
       name,
       caller_ids: callerIds,
-      telephony_provider: body?.telephony_provider as string | undefined,
+      telephony_provider: telephonyProvider as string,
+      telephony_credential_id: telephonyCredentialId as string | null,
       calling_window_start: body?.calling_window_start as string | undefined,
       calling_window_end: body?.calling_window_end as string | undefined,
       calling_days: body?.calling_days as number[] | undefined,
@@ -312,6 +323,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // After the shape check, so a malformed mode is the 400 that names the field.
     if (assignmentModeChangeRefused(reply, body, campaign)) return reply;
 
+    // The carrier account, judged on the campaign as it will be after this PATCH: moving
+    // to the service's carrier must clear the credential (`telephony_credential_id: null`),
+    // moving to a tenant's carrier must name an active one and that account's numbers.
+    if (await carrierRejected(request, reply, body, {
+      telephony_provider: 'telephony_provider' in body ? body.telephony_provider : campaign.telephony_provider,
+      telephony_credential_id: 'telephony_credential_id' in body ? body.telephony_credential_id : campaign.telephony_credential_id,
+      caller_ids: (body.caller_ids as string[] | undefined) ?? campaign.caller_ids,
+    }, campaign)) return reply;
+
     if ('abandon_announcement_id' in body
       && await abandonAnnouncementRejected(request, reply, body.abandon_announcement_id)) return reply;
     // Guarded on presence, like the apology above: a PATCH that does not mention
@@ -338,7 +358,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     const change = campaignConfigChange(
       request.body, formatAgencyCampaignResponse(campaign), response,
     );
-    if (change) reply.header(CONFIG_CHANGE_HEADER, encodeConfigChange(change));
+    if (change) {
+      // The carrier account by its label, never its id (read only when it changed).
+      const tenantId = getTenantId(request);
+      const labelled = await withCarrierAccountLabels(change, async (credentialId) => {
+        const credential = await telephonyCredentialRepository.findById(credentialId);
+        return credential && credential.tenant_id === tenantId ? credential.label : null;
+      });
+      reply.header(CONFIG_CHANGE_HEADER, encodeConfigChange(labelled));
+    }
     return reply.send(response);
   };
   app.patch<{ Params: { id: string } }>('/:id', { preHandler: ownedCampaign({ gated: true }) }, patchHandler);

@@ -644,7 +644,7 @@ export class AgencyIngestService {
       if (err instanceof DncUnavailableError) {
         await failJob(
           'dnc_unavailable',
-          'The Do Not Call list could not be checked, so no contacts were imported. Nothing was dialed. Try the import again.',
+          'The Do Not Call list could not be checked, so no contacts were imported. Nothing was dialled. Try the import again.',
         );
         log.error({ err, jobId: job.id }, 'Agency roster ingest halted — DNC list unavailable');
         return;
@@ -719,7 +719,7 @@ export class AgencyIngestService {
       if (err instanceof RosterChunkError) {
         await failJob(
           'core_rejected_chunk',
-          `The dialer runtime rejected roster chunk ${err.chunkIndex}: ${err.message}`,
+          `The dialler runtime rejected roster chunk ${err.chunkIndex}: ${err.message}`,
         );
         return;
       }

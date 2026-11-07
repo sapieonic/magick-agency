@@ -568,10 +568,10 @@ describe('the call, driven by manual_call frames', () => {
       fireEvent.click(screen.getByTestId('dial-call'));
     });
     // The HTTP answer is enough to show the call before any frame lands.
-    expect(rail()).toBe('Dialing +91 98204 61733');
+    expect(rail()).toBe('Dialling +91 98204 61733');
     expect(document.activeElement).toBe(screen.getByTestId('softphone-body'));
 
-    const ringing = step(queued, 2, { state: 'ringing' });
+    const ringing = step(queued, 2, { state: 'ringing', can_cancel_ringing: false });
     await view.frame(ringing);
     expect(rail()).toBe('Ringing +91 98204 61733');
     expect(screen.getByTestId('ringing-warning').textContent).toBe(RINGING_HANGUP_WARNING);
@@ -620,6 +620,38 @@ describe('the call, driven by manual_call frames', () => {
     );
     expect(rail()).toBe('Ready to dial');
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('');
+  });
+
+  it('SP3: no hang-up warning while ringing on a carrier that can stop a ringing call', async () => {
+    const queued = manualCall();
+    api.placeManualCall.mockResolvedValue({ ok: true, value: queued });
+    const view = await mount();
+    fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    await view.frame(step(queued, 2, { state: 'ringing', can_cancel_ringing: true }));
+    expect(rail()).toBe('Ringing +91 98204 61733');
+    expect(screen.queryByTestId('ringing-warning')).toBeNull();
+  });
+
+  it('SP3: a ringing call that does not say its carrier can stop it is warned about (fails closed)', async () => {
+    const queued = manualCall();
+    api.placeManualCall.mockResolvedValue({ ok: true, value: queued });
+    const view = await mount();
+    fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    const ringing = step(queued, 2, { state: 'ringing' });
+    expect(ringing).not.toHaveProperty('can_cancel_ringing');
+    await view.frame(ringing);
+    expect(screen.getByTestId('ringing-warning').textContent).toBe(RINGING_HANGUP_WARNING);
+  });
+
+  it('the ringing hang-up warning names no carrier', () => {
+    expect(RINGING_HANGUP_WARNING).toMatch(/^This carrier cannot stop a ringing call\./);
+    expect(RINGING_HANGUP_WARNING).not.toMatch(/voicelink|plivo/i);
   });
 
   it('notes cleared just before Save are saved cleared, not left as the old text', async () => {
@@ -842,7 +874,7 @@ describe('the outcome window', () => {
     );
     expect(rail()).toBe('Outcome needed');
     expect(screen.getByTestId('outcome-closes').textContent).toMatch(
-      /^Dialing is blocked until this call has an outcome\. Without one, it closes in 1:(29|30)\.$/,
+      /^Dialling is blocked until this call has an outcome\. Without one, it closes in 1:(29|30)\.$/,
     );
   });
 });

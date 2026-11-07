@@ -280,6 +280,28 @@ describe('telephony credentials (integration)', () => {
       expect(await repo.revoke(cred.id, admin)).toMatchObject({ status: 'revoked' });
     });
 
+    it('names the live campaigns pinned to it, running first and capped; finished ones are not', async () => {
+      const cred = await create();
+      const accountId = randomUUID();
+      await getTestPool().query(
+        `INSERT INTO accounts (id, tenant_id, name, slug) VALUES ($1, $2, 'Main', $3)`, [accountId, tenantA, `main-${accountId.slice(0, 8)}`]);
+      const pin = (name: string, status: string, account = accountId) => getTestPool().query(
+        `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids, telephony_provider, telephony_credential_id, status)
+         VALUES ($1, $2, $3, ARRAY['+14155550100'], 'plivo', $4, $5)`, [tenantA, account, name, cred.id, status]);
+      await pin('Drafted', 'draft');
+      await pin('Live', 'running');
+      await pin('Held', 'paused', randomUUID());
+      await pin('Done', 'completed');
+      const { rows: [tenant] } = await getTestPool().query<{ name: string }>('SELECT name FROM tenants WHERE id = $1', [tenantA]);
+
+      expect(await repo.liveCampaigns(cred.id, 10)).toEqual([
+        expect.objectContaining({ name: 'Live', status: 'running', tenant_name: tenant!.name, account_name: 'Main' }),
+        expect.objectContaining({ name: 'Held', status: 'paused', account_name: null }),
+        expect.objectContaining({ name: 'Drafted', status: 'draft', account_name: 'Main' }),
+      ]);
+      expect((await repo.liveCampaigns(cred.id, 1)).map((c) => c.name)).toEqual(['Live']);
+    });
+
     it('sees a campaign pin that commits while the revoke waits on the row lock', async () => {
       const cred = await create();
       const pinner = await getTestPool().connect();

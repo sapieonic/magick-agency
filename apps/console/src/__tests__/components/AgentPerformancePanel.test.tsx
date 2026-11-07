@@ -180,7 +180,7 @@ describe('AgentPerformancePanel — the headline trio', () => {
     );
   });
 
-  it('says the dialer placed the call, not that it was placed TO the agent', () => {
+  it('says the dialler placed the call, not that it was placed TO the agent', () => {
     /**
      * "Calls placed to you" is backwards for an outbound predictive dialer: the server
      * places the dial to a CUSTOMER and reserves the agent onto it. An agent
@@ -189,7 +189,7 @@ describe('AgentPerformancePanel — the headline trio', () => {
      */
     const dials = headlineTrio(undefined)[0]!;
     expect(dials.hint).not.toMatch(/placed to you/i);
-    expect(dials.hint).toMatch(/dialer/i);
+    expect(dials.hint).toMatch(/dialler/i);
     expect(screen.queryByText(/calls placed to you/i)).toBeNull();
   });
 });

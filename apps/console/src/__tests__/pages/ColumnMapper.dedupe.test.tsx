@@ -75,7 +75,7 @@ describe('ColumnMapper: Check duplicates on', () => {
   it('says what a chosen column means for rows that share a number', () => {
     renderMapper({ ...initialMapping(ANALYSIS), dedupe: { mode: 'column', column: 'Loan No' } });
     expect(screen.getByTestId('dedupe-note').textContent).toBe(
-      'Loan No: 100% unique in this file. Rows that share a phone number are all kept. The dialer never calls one number twice at the same time.',
+      'Loan No: 100% unique in this file. Rows that share a phone number are all kept. The dialler never calls one number twice at the same time.',
     );
   });
 });

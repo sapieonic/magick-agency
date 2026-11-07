@@ -72,7 +72,7 @@ describe('AppHomeRedirect', () => {
     mocks.useTenant.mockReturnValue({ role: 'agent', accountResolution: 'ready' });
     mocks.useFeatureFlags.mockReturnValue({ isEnabled: () => false, status: 'ready' });
     renderIndex();
-    expect(screen.getByText(/The dialer isn’t switched on yet/)).toBeTruthy();
+    expect(screen.getByText(/The dialler isn’t switched on yet/)).toBeTruthy();
     expect(landsOn()).toBeNull();
   });
 

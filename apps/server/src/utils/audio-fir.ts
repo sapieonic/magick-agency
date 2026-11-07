@@ -38,7 +38,7 @@
 // (`test/helpers/reference-audio-fir.ts`); `scripts/bench-transcoder.ts` measures
 // the per-frame cost of both.
 
-import { alawDecodeTable, alawEncodeTable } from './audio.js';
+import { alawDecodeTable, alawEncodeTable, decodeMulaw, encodeMulaw } from './audio.js';
 
 // Half-width of the prototype low-pass kernel, in 16kHz samples.
 // 16 taps per phase → ~74dB stopband (same target as the generic resampler).
@@ -110,6 +110,16 @@ for (let i = 0; i < UP_ODD.length; i++) UP_ODD[i] = PROTO[2 * i + 1]!;
 // not an imported one, which unbundled loaders (tsx, vitest) turn into a getter call.
 const ALAW_DECODE: Int16Array = alawDecodeTable;
 const ALAW_ENCODE: Uint8Array = alawEncodeTable;
+
+// The μ-law tables, built once at load from the standard codec in `audio.ts` (so the two
+// can never disagree): every codeword decoded, and every int16 sample encoded (64 KiB,
+// indexed `sample + 32768`, as the A-law encode table is).
+const MULAW_DECODE: Int16Array = decodeMulaw(Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
+const MULAW_ENCODE: Uint8Array = (() => {
+  const all = new Int16Array(65536);
+  for (let i = 0; i < 65536; i++) all[i] = i - 32768;
+  return new Uint8Array(encodeMulaw(all));
+})();
 
 function clamp16(v: number): number {
   return v > 32767 ? 32767 : v < -32768 ? -32768 : v;
@@ -502,6 +512,60 @@ export class VoicelinkTranscoder {
     const pcm8k = n <= this.pcm8k.length ? this.pcm8k : new Int16Array(n);
     this.down.emit(pcm8k);
     return encodeAlawFrom(pcm8k, n);
+  }
+
+  reset(): void {
+    this.up.reset();
+    this.down.reset();
+  }
+}
+
+/** A fresh Buffer of the first `n` samples of `pcm`, μ-law encoded. */
+function encodeMulawFrom(pcm: Int16Array, n: number): Buffer {
+  // allocUnsafe: every byte is written below.
+  const out = Buffer.allocUnsafe(n);
+  for (let i = 0; i < n; i++) out[i] = MULAW_ENCODE[pcm[i]! + 32768]!;
+  return out;
+}
+
+/**
+ * A per-session pair of stateful transcoders for a μ-law carrier leg (Plivo):
+ * G.711 μ-law 8k ⇄ PCM16 16k, on the same streaming resamplers as
+ * {@link VoicelinkTranscoder}, so framed output is bit-identical to whole-buffer output.
+ *
+ * Every Buffer returned is freshly allocated and owned by the caller.
+ */
+export class MulawTranscoder {
+  private readonly up = new Upsampler8to16();     // PSTN μ-law 8k → browser PCM16 16k
+  private readonly down = new Downsampler16to8();  // browser PCM16 16k → PSTN μ-law 8k
+  /** 8kHz samples on their way to the μ-law encoder; never handed out. */
+  private readonly pcm8k = new Int16Array(WINDOW_SAMPLES);
+
+  /** PSTN μ-law 8kHz → browser PCM16 16kHz. */
+  mulawToPcm16k(mulaw: Buffer): Buffer {
+    const at = this.up.reserve(mulaw.length);
+    const win = this.up.window();
+    for (let i = 0; i < mulaw.length; i++) win[at + i] = MULAW_DECODE[mulaw[i]!]!;
+    this.up.commit(mulaw.length);
+
+    const n = this.up.ready();
+    const out = Buffer.allocUnsafe(n * 2);
+    if (out.byteOffset % 2 === 0) {
+      this.up.emit(new Int16Array(out.buffer, out.byteOffset, n));
+      return out;
+    }
+    const pcm = new Int16Array(n);
+    this.up.emit(pcm);
+    return int16ToBuffer(pcm);
+  }
+
+  /** Browser PCM16 16kHz → PSTN μ-law 8kHz. */
+  pcm16kToMulaw(pcm: Buffer): Buffer {
+    this.down.append(bufferToInt16(pcm));
+    const n = this.down.ready();
+    const pcm8k = n <= this.pcm8k.length ? this.pcm8k : new Int16Array(n);
+    this.down.emit(pcm8k);
+    return encodeMulawFrom(pcm8k, n);
   }
 
   reset(): void {

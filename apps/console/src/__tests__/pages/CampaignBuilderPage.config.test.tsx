@@ -458,7 +458,7 @@ describe('the retry policy editor', () => {
      * The regression this exists for. The row seed was `{ max_attempts: 0 }`, so
      * touching only the delay box submitted `max_attempts: 0` the operator never
      * typed — and the API reads `min(configured, OUR_FAULT_REDIAL_BOUND)`, retiring
-     * the contact on its FIRST pre-connect agent drop. Never dialed again.
+     * the contact on its FIRST pre-connect agent drop. Never dialled again.
      */
     await openBehaviour();
     fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) delay in minutes'), {
@@ -684,6 +684,8 @@ describe('the campaign a builder actually creates', () => {
       name: 'Collections',
       caller_ids: ['+912200000001'],
       telephony_provider: 'voicelink',
+      // The service's own carrier account: no tenant credential.
+      telephony_credential_id: null,
       // The create carries the limit too (see the roster-first case in CampaignBuilderPage.test.tsx).
       abandonment_ceiling_pct: 3,
     });

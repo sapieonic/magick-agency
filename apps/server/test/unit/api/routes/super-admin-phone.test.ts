@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   findProviderById: vi.fn(),
   unassign: vi.fn(),
   findByPhoneNumberId: vi.fn().mockResolvedValue([]),
+  assign: vi.fn(),
+  findCredentialById: vi.fn(),
   auditLog: vi.fn().mockResolvedValue(undefined),
   logWarn: vi.fn(),
 }));
@@ -61,14 +63,19 @@ vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
   },
 }));
 
-vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () => ({
+vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', async (importOriginal) => ({
+  PhoneNumberOtherTenantError: (await importOriginal<typeof import('@magick-agency/db/repositories/tenant-phone-assignment.repository')>()).PhoneNumberOtherTenantError,
   tenantPhoneAssignmentRepository: {
     findByPhoneNumberId: mocks.findByPhoneNumberId,
-    assign: vi.fn(),
+    assign: mocks.assign,
     unassign: mocks.unassign,
     findByTenantId: vi.fn().mockResolvedValue([]),
     findTagsForAssignment: vi.fn().mockResolvedValue([]),
   },
+}));
+
+vi.mock('@magick-agency/db/repositories/telephony-credential.repository', () => ({
+  telephonyCredentialRepository: { findById: mocks.findCredentialById },
 }));
 
 vi.mock('@magick-agency/db', () => ({
@@ -178,8 +185,8 @@ describe('phone-number pool_eligible passthrough (removed in agency)', () => {
     });
   });
 
-  it('POST /phone-numbers refuses an inactive provider (plivo, before its dial path ships)', async () => {
-    mocks.findProviderById.mockResolvedValue({ id: 'prov-2', name: 'plivo', status: 'inactive' });
+  it('POST /phone-numbers refuses an inactive provider', async () => {
+    mocks.findProviderById.mockResolvedValue({ id: 'prov-2', name: 'voicelink', status: 'inactive' });
     const app = await buildApp();
     const res = await app.inject({
       method: 'POST',
@@ -265,14 +272,66 @@ describe('telephony-provider CRUD (writes removed; the list is kept)', () => {
   // POST /phone-numbers.
   it('GET /telephony-providers lists the providers and forwards ?status', async () => {
     const app = await buildApp();
-    mocks.findAllProviders.mockResolvedValue([{ id: 'tp-1', name: 'voicelink' }]);
+    mocks.findAllProviders.mockResolvedValue([{ id: 'tp-1', name: 'voicelink' }, { id: 'tp-2', name: 'plivo' }]);
     const all = await app.inject({ method: 'GET', url: '/super-admin/telephony-providers' });
     const active = await app.inject({ method: 'GET', url: '/super-admin/telephony-providers?status=active' });
 
     expect(all.statusCode).toBe(200);
-    expect(all.json()).toEqual({ providers: [{ id: 'tp-1', name: 'voicelink' }] });
+    // Which carriers take tenant credentials (their numbers are synced, never added by
+    // hand) comes from the credential specs, not the name.
+    expect(all.json()).toEqual({ providers: [
+      { id: 'tp-1', name: 'voicelink', takes_tenant_credentials: false },
+      { id: 'tp-2', name: 'plivo', takes_tenant_credentials: true },
+    ] });
     expect(mocks.findAllProviders).toHaveBeenNthCalledWith(1, undefined);
     expect(mocks.findAllProviders).toHaveBeenNthCalledWith(2, 'active');
     expect(active.statusCode).toBe(200);
+  });
+});
+
+describe('numbers on a tenant\'s own carrier account (B18): synced, never added or reassigned by hand', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const TENANT_A = '11111111-1111-4111-8111-111111111111';
+  const TENANT_B = '44444444-4444-4444-8444-444444444444';
+
+  it('POST /phone-numbers refuses a carrier that takes tenant credentials (its numbers come from a sync)', async () => {
+    mocks.findProviderById.mockResolvedValue({ id: 'prov-2', name: 'plivo', status: 'active' });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/super-admin/phone-numbers',
+      payload: { phone_number: '+12025550102', provider_id: '22222222-2222-2222-2222-222222222222', max_concurrent_calls: 1 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toMatch(/sync them from its credential/);
+    expect(mocks.createPhone).not.toHaveBeenCalled();
+  });
+
+  it('a synced number is assigned only to its credential\'s tenant (the repository refuses; the route says why)', async () => {
+    mocks.findPhoneById.mockResolvedValue({ id: 'pn-1', status: 'active', telephony_credential_id: 'cred-a' });
+    const { PhoneNumberOtherTenantError } = await import('@magick-agency/db/repositories/tenant-phone-assignment.repository');
+    mocks.assign.mockImplementation(async (tenantId: string, id: string) => {
+      if (tenantId !== TENANT_A) throw new PhoneNumberOtherTenantError(id, tenantId);
+      return { id: 'asg-1' };
+    });
+    const app = await buildApp();
+
+    const refused = await app.inject({ method: 'POST', url: '/super-admin/phone-numbers/pn-1/assign', payload: { tenant_id: TENANT_B } });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().message).toMatch(/synced from another tenant’s carrier account/);
+
+    const allowed = await app.inject({ method: 'POST', url: '/super-admin/phone-numbers/pn-1/assign', payload: { tenant_id: TENANT_A } });
+    expect(allowed.statusCode).toBe(201);
+    expect(mocks.assign).toHaveBeenCalledWith(TENANT_A, 'pn-1', false, 'super-1');
+  });
+
+  it('a number on the service\'s own account is assignable to any tenant, with no credential read', async () => {
+    mocks.findPhoneById.mockResolvedValue({ id: 'pn-2', status: 'active', telephony_credential_id: null });
+    mocks.assign.mockResolvedValue({ id: 'asg-2' });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'POST', url: '/super-admin/phone-numbers/pn-2/assign', payload: { tenant_id: TENANT_B } });
+    expect(res.statusCode).toBe(201);
+    expect(mocks.findCredentialById).not.toHaveBeenCalled();
   });
 });

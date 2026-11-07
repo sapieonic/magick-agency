@@ -72,9 +72,9 @@ describe('the Do Not Call entry', () => {
   });
 
   it('is not offered as the answer to "compliance"', () => {
-    // The misreading: this list binds agency dialing only, so presenting it to
+    // The misreading: this list binds agency dialling only, so presenting it to
     // someone asking a wider compliance question tells them every kind of call
-    // honours it. Only agency dialing does.
+    // honours it. Only agency dialling does.
     const dialog = openPalette();
     search(dialog, 'compliance');
     expect(within(dialog).queryByText('Agency Do Not Call')).toBeNull();

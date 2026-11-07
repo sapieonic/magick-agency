@@ -44,6 +44,7 @@ import type {
   TelephonyCredentialDetailResponse,
   TelephonyCredentialProvidersResponse,
   TelephonyCredentialResponse,
+  TelephonyCredentialSyncNumbersResponse,
   TelephonyCredentialsResponse,
   UpdateTelephonyCredentialBody,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
@@ -392,6 +393,11 @@ export interface TelephonyProvider {
   name: string;
   display_name: string;
   status: 'active' | 'inactive';
+  /**
+   * Dialled on tenants' own carrier accounts: its numbers come from a credential's
+   * "Sync numbers" and cannot be added by hand. Optional: an older server omits it.
+   */
+  takes_tenant_credentials?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -536,4 +542,16 @@ export async function enableTelephonyCredential(id: string): Promise<TelephonyCr
 /** Terminal. Refused while a campaign dials on it. */
 export async function revokeTelephonyCredential(id: string): Promise<TelephonyCredential> {
   return credentialAction(id, 'revoke');
+}
+
+/**
+ * Read the carrier account's numbers and make its voice numbers the tenant's: added,
+ * reactivated, taken over from a revoked credential of the same account, retired (never
+ * deleted), and the conflicts left alone. Only an `active`
+ * credential syncs (409 `credential_not_active`).
+ */
+export async function syncTelephonyCredentialNumbers(id: string): Promise<TelephonyCredentialSyncNumbersResponse> {
+  return saFetch<TelephonyCredentialSyncNumbersResponse>(`${SA_BASE}/telephony-credentials/${id}/sync-numbers`, {
+    method: 'POST',
+  });
 }

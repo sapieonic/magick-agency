@@ -19,7 +19,7 @@ import { DataTable } from '@magick-agency/web-ui/components/DataTable';
 import type { Column } from '@magick-agency/web-ui/components/DataTable';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
-import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { operatorCarrierName } from '../../utils/carrierName';
 import { TenantFeatureFlags } from '../../components/super-admin/TenantFeatureFlags';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { TenantServiceTab } from './tenant-detail/TenantServiceTab';
@@ -170,7 +170,7 @@ export default function SATenantDetailPage() {
     {
       key: 'provider',
       label: 'Provider',
-      render: p => telephonyProviderAlias(p.provider_name, p.provider_display_name),
+      render: p => operatorCarrierName(p.provider_name, p.provider_display_name),
     },
     { key: 'label', label: 'Label', render: p => p.label || '--' },
     { key: 'is_default', label: 'Default', render: p => (p.is_default ? 'Yes' : '--') },
@@ -341,7 +341,7 @@ export default function SATenantDetailPage() {
                 .filter(pn => !tenantPhones.some(tp => tp.phone_number_id === pn.id))
                 .map(pn => (
                   <option key={pn.id} value={pn.id}>
-                    {pn.phone_number} ({telephonyProviderAlias(pn.provider_name, pn.provider_display_name)}){pn.label ? ` - ${pn.label}` : ''}
+                    {pn.phone_number} ({operatorCarrierName(pn.provider_name, pn.provider_display_name)}){pn.label ? ` - ${pn.label}` : ''}
                   </option>
                 ))}
             </select>

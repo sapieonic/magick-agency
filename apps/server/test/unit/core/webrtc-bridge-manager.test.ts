@@ -394,8 +394,10 @@ describe('WebRtcBridgeManager dial — a failure before the carrier leg is place
     ['the adapter lookup', (mgr: any) => {
       mgr.telephonyRegistry.get = () => { throw new Error('Unknown telephony provider: nope'); };
     }],
-    // An empty base: `buildCarrierUrls` builds the media URL with `new URL('')`, which throws.
-    ['the carrier URLs', (mgr: any) => { mgr.webhookUrls.baseUrl = () => ''; }],
+    // A base that is not a URL: `buildCarrierUrls` builds the media URL with `new URL(…)`,
+    // which throws. (An EMPTY base, the carrier's optional base left unset, is the
+    // carrier's configuration refusing every dial: `carrier_dial_not_sent`, below.)
+    ['the carrier URLs', (mgr: any) => { mgr.webhookUrls.baseUrl = () => 'not a url'; }],
   ])('a throw building the carrier request (%s) is a failure before the carrier: no `ended`, BRIDGE_SETUP_FAILED, everything released', async (_what, breakIt) => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
@@ -419,6 +421,29 @@ describe('WebRtcBridgeManager dial — a failure before the carrier leg is place
     expect(mgr.heldLeases()).toEqual([]);
     expect(browser.listeners()).toBe(0);
     expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('an empty webhook base (unset for the carrier) is a dial not sent: carrier_dial_not_sent, no `ended`, everything released', async () => {
+    const cm = makeCallManager();
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    (mgr as any).webhookUrls.baseUrl = () => '';
+    const browser = countingWs();
+
+    const err = await dial(mgr, VL_PARAMS, browser).then(() => null, (e: unknown) => e);
+
+    expect(err).toBeInstanceOf(WebRtcCallError);
+    expect((err as WebRtcCallError).code).toBe('carrier_dial_not_sent');
+    expect(mockAdapter.initiateCall).not.toHaveBeenCalled();
+    const terminal = mockRepo.update.mock.calls.filter((c: any[]) => c[1]?.ended_at !== undefined);
+    expect(terminal).toEqual([['call-1', expect.objectContaining({
+      status: 'failed', outcome: 'carrier_dial_not_sent', error_code: 'CARRIER_DIAL_NOT_SENT',
+    })]]);
+    expect(events).toEqual([]);
+    expect(mgr.getActiveCallIds()).toEqual([]);
+    expect(mgr.heldLeases()).toEqual([]);
+    expect(browser.listeners()).toBe(0);
   });
 
   it('a teardown while the token store is in flight does not dial: one `ended`, no carrier request', async () => {
@@ -806,6 +831,20 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
     // Never marked failed / stamped with a telephony error for an answered call.
     expect(persisted.some((u: any) => u.status === 'failed')).toBe(false);
     expect(persisted.some((u: any) => u.error_code === 'TELEPHONY_ERROR')).toBe(false);
+  });
+
+  it('a carrier that declares no ring timeout (VoiceLink) gets no ring deadline: an unanswered call keeps only its max duration', async () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+      await dial(mgr, VL_PARAMS);
+      // Long past any ring deadline (VoiceLink reports its terminal at dial+45–75 s).
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(mgr.getSession('call-1')).toBeDefined();
+      expect(mockAdapter.endCall).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('finalizes and settles once when the carrier confirmation times out (45s)', async () => {

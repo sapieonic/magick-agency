@@ -31,7 +31,8 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 }));
 
 // `voicelinkRecording.allowedHosts`: the recording route hands `proxyCallRecording`
-// the allow-list from config. Asserted in "streams through the authenticated proxy…".
+// the access resolver built from config. Asserted in "streams through the authenticated proxy…".
+import type { RecordingAccessResolver } from '../../../src/telephony/recording-access.js';
 const { RECORDING_HOSTS } = vi.hoisted(() => ({ RECORDING_HOSTS: ['recordings.voicelink.test'] }));
 vi.mock('../../../src/config/index.js', () => ({
   config: { redis: { keyPrefix: '' }, telephony: {}, voicelinkRecording: { allowedHosts: RECORDING_HOSTS } },
@@ -375,9 +376,13 @@ describe('agency call read — recording streaming', () => {
     expect(res.statusCode).toBe(200);
     expect(proxySpy).toHaveBeenCalledTimes(1);
     expect((proxySpy.mock.calls[0]![0] as { id: string }).id).toBe('call-1');
-    // The configured allow-list is the one handed over, by identity — not a copy,
-    // not a default (`proxyCallRecording` refuses every host on an empty list).
-    expect((proxySpy.mock.calls[0] as unknown[])[3]).toBe(RECORDING_HOSTS);
+    // The proxy gets the process's recording access resolver, and its VoiceLink entry
+    // is the configured allow-list by identity — not a copy, not a default
+    // (`proxyCallRecording` refuses every host on an empty list).
+    const resolve = (proxySpy.mock.calls[0] as unknown[])[3] as RecordingAccessResolver;
+    const access = await resolve({ provider: 'voicelink', telephony_credential_id: null, tenant_id: 't' });
+    expect(access.allowedHosts).toBe(RECORDING_HOSTS);
+    expect(access.headers).toEqual({});
     await app.close();
   });
 

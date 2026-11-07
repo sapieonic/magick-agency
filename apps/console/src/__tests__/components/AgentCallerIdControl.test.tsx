@@ -139,7 +139,7 @@ describe('the caller ID on each staffed agent', () => {
     renderPanel();
     const flag = await screen.findByTestId('caller-id-stale-u-asha');
     expect(flag.textContent).toBe(
-      'No longer one of this campaign’s caller IDs, so their calls use the shared rotation.',
+      'No longer a caller ID this campaign can dial from, so their calls use the shared rotation.',
     );
     expect(screen.queryByTestId('caller-id-stale-u-ravi')).toBeNull();
   });
@@ -312,7 +312,7 @@ describe('refusals, in words', () => {
   it('caller_id_not_in_campaign', async () => {
     mocks.setAgentCallerId.mockRejectedValueOnce(refusal(409, 'caller_id_not_in_campaign', { caller_ids: [N1, N2] }));
     expect((await dedicateN3ToMeera()).textContent)
-      .toBe('That number is no longer one of this campaign’s caller IDs. Refresh and pick another.');
+      .toBe('That number is no longer a caller ID this campaign can dial from. Refresh and pick another.');
   });
 
   it('agent_not_staffed', async () => {

@@ -286,6 +286,35 @@ describe('GenerationTtlCache', () => {
     expect(c.get('never-invalidated')).toBeUndefined();
   });
 
+  it('bounded: an expired entry is dropped when looked up; a full cache drops every expired entry before any live one', () => {
+    const clock = { t: 0 };
+    const c = new GenerationTtlCache<number>(100, () => clock.t, 10, 3);
+    clock.t = 950; c.setIf('live-old', c.generation('live-old'), 1);
+    clock.t = 800; c.setIf('stale-1', c.generation('stale-1'), 2);
+    clock.t = 850; c.setIf('stale-2', c.generation('stale-2'), 3);
+    clock.t = 1_000; c.setIf('new', c.generation('new'), 4);
+    expect(c.size).toBe(2);
+    expect(c.get('live-old')).toBe(1);
+    expect(c.get('new')).toBe(4);
+    clock.t = 1_100;
+    expect(c.get('new')).toBeUndefined();
+    expect(c.size).toBe(1);
+  });
+
+  it('bounded: with nothing expired a full cache drops the oldest stored (a rewrite is the newest)', () => {
+    const clock = { t: 0 };
+    const c = new GenerationTtlCache<number>(1_000, () => clock.t, 10, 2);
+    const put = (k: string, v: number, t: number) => { clock.t = t; c.setIf(k, c.generation(k), v); };
+    put('first', 1, 0);
+    put('second', 2, 1);
+    put('first', 10, 2);
+    put('third', 3, 3);
+    expect(c.size).toBe(2);
+    expect(c.get('second')).toBeUndefined();
+    expect(c.get('first')).toBe(10);
+    expect(c.get('third')).toBe(3);
+  });
+
   it('`fresh` reads through and still stores', async () => {
     const c = new GenerationTtlCache<number>(10_000);
     await c.getOrLoad('k', async () => 1);

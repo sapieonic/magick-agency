@@ -2,7 +2,9 @@
  * Audio that can be checked for order and loss after it has been through the bridge's
  * real codec.
  *
- * The relay transcodes in both directions (A-law 8 kHz ⇄ PCM16 16 kHz, with stateful
+ * Shared by both mock carriers (VoiceLink A-law, Plivo μ-law).
+ *
+ * The relay transcodes in both directions (A-law or μ-law 8 kHz ⇄ PCM16 16 kHz, with stateful
  * FIR filters), so no byte of a frame survives the trip and a sequence number cannot
  * ride in the payload. What does survive is loudness: every frame is either a 1 kHz
  * tone ("loud") or silence ("quiet"), and a seeded bit pattern decides which. On the
@@ -14,7 +16,7 @@
  * 20 ms frame comes out at RMS ≈ 4100–4250 and a quiet one at ≤ ~950 (the FIR tail of a
  * loud predecessor), so anything between is a wide margin.
  */
-import { decodeAlaw, encodeAlaw } from '../../../src/utils/audio.js';
+import { decodeAlaw, decodeMulaw, encodeAlaw, encodeMulaw } from '../../../src/utils/audio.js';
 
 /** Samples per 20 ms frame at the carrier's 8 kHz. */
 export const ALAW_FRAME_SAMPLES = 160;
@@ -40,6 +42,11 @@ export function alawFrame(index: number, loud: boolean): Buffer {
   return encodeAlaw(tone(ALAW_FRAME_SAMPLES, 8000, index * ALAW_FRAME_SAMPLES, loud));
 }
 
+/** One 20 ms μ-law frame (what the mock Plivo carrier sends). */
+export function mulawFrame(index: number, loud: boolean): Buffer {
+  return encodeMulaw(tone(ALAW_FRAME_SAMPLES, 8000, index * ALAW_FRAME_SAMPLES, loud));
+}
+
 /** One 20 ms PCM16 16 kHz frame (what the agent's browser sends). */
 export function pcm16kFrame(index: number, loud: boolean): Buffer {
   const pcm = tone(PCM16K_FRAME_SAMPLES, 16000, index * PCM16K_FRAME_SAMPLES, loud);
@@ -62,6 +69,11 @@ export function isLoudPcm16(frame: Buffer): boolean {
 /** Loud/quiet of an A-law frame the bridge relayed to the carrier. */
 export function isLoudAlaw(frame: Buffer): boolean {
   return rms(decodeAlaw(frame)) > LOUD_RMS_THRESHOLD;
+}
+
+/** Loud/quiet of a μ-law frame the bridge relayed to the carrier (Plivo's `playAudio`). */
+export function isLoudMulaw(frame: Buffer): boolean {
+  return rms(decodeMulaw(frame)) > LOUD_RMS_THRESHOLD;
 }
 
 /** `true`/`false` → `1`/`0`, for readable failure diffs. */

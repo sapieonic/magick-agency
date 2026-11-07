@@ -1,10 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, extname, join, relative } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ORIGINATOR } from '../../config';
 import { brand } from '../../brand';
 import { PARENT_BRAND } from '../helpers/parentBrand';
+import { shippedFiles, stripComments } from './sourceScan';
 
 /**
  * Magick Agency ships no link to, and no visible mention of, the parent product
@@ -29,68 +30,10 @@ const appRoot = dirname(srcRoot);
 
 const SCANNED_EXT = new Set(['.ts', '.tsx', '.css', '.json', '.html']);
 
-type Mode = 'code' | 'line' | 'block' | 'single' | 'double' | 'template';
-
-/**
- * Remove `//` and slash-star comments (and HTML comments), keep string literals
- * and line numbers. Same state machine as `agencyShellBoundary.test.ts`; CSS has
- * no `//` comment, but a `//` outside a string in CSS is never product text.
- */
-function stripComments(source: string): string {
-  const noHtml = source.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ''));
-  let out = '';
-  let mode: Mode = 'code';
-  let i = 0;
-  while (i < noHtml.length) {
-    const ch = noHtml[i]!;
-    const pair = noHtml.slice(i, i + 2);
-    if (mode === 'code') {
-      // `://` is a URL scheme, not a comment — unquoted URLs live in JSX prose,
-      // CSS `url(...)` and unquoted attributes, and must stay visible.
-      if (pair === '//' && (i === 0 || noHtml[i - 1] !== ':')) { mode = 'line'; i += 2; continue; }
-      if (pair === '/*') { mode = 'block'; i += 2; continue; }
-      if (ch === "'") mode = 'single';
-      else if (ch === '"') mode = 'double';
-      else if (ch === '`') mode = 'template';
-      out += ch;
-      i += 1;
-      continue;
-    }
-    if (mode === 'line') {
-      if (ch === '\n') { mode = 'code'; out += ch; }
-      i += 1;
-      continue;
-    }
-    if (mode === 'block') {
-      if (pair === '*/') { mode = 'code'; i += 2; continue; }
-      if (ch === '\n') out += ch;
-      i += 1;
-      continue;
-    }
-    if (ch === '\\') { out += noHtml.slice(i, i + 2); i += 2; continue; }
-    const closer = mode === 'single' ? "'" : mode === 'double' ? '"' : '`';
-    // A newline ends a quote that JSX prose opened ("don't"), so one apostrophe
-    // cannot swallow the rest of the file; template literals may span lines.
-    if (ch === closer || (ch === '\n' && mode !== 'template')) mode = 'code';
-    out += ch;
-    i += 1;
-  }
-  return out;
-}
-
-function walk(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return entry === '__tests__' ? [] : walk(path);
-    if (/\.test\.tsx?$/.test(entry)) return [];
-    return SCANNED_EXT.has(extname(entry)) ? [path] : [];
-  });
-}
-
-function shippedFiles(): string[] {
+function shipped(): string[] {
   return [
-    ...walk(srcRoot),
-    ...walk(join(appRoot, 'brands')),
+    ...shippedFiles(srcRoot, SCANNED_EXT),
+    ...shippedFiles(join(appRoot, 'brands'), SCANNED_EXT),
     join(appRoot, 'index.html'),
     join(appRoot, 'vite.config.ts'),
   ];
@@ -98,7 +41,7 @@ function shippedFiles(): string[] {
 
 /** `path:line` for every mention of the parent brand left after comments are stripped. */
 function parentBrandMentions(): string[] {
-  return shippedFiles().flatMap((path) => {
+  return shipped().flatMap((path) => {
     const rel = relative(appRoot, path);
     return stripComments(readFileSync(path, 'utf8'))
       .split('\n')

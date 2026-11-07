@@ -13,7 +13,8 @@ vi.mock('../../../src/cluster/socket-pause.js', async (importOriginal) => ({
   probeSocketReadStop: vi.fn(async () => { probe.calls++; return probe.ok; }),
 }));
 
-const { prepareMediaPrimary } = await import('../../../src/cluster/primary.js');
+const { prepareMediaPrimary, relayDialableInvalidations } = await import('../../../src/cluster/primary.js');
+const { invalidateDialableCallerIds } = await import('../../../src/agency/campaign-dialability.js');
 
 function ctx(mediaWorkers: number): AppContext {
   return {
@@ -53,5 +54,23 @@ describe('prepareMediaPrimary', () => {
     expect(cluster?.count).toBe(3);
     expect(probe.calls).toBe(1);
     expect(forkChild).not.toHaveBeenCalled();
+  });
+});
+
+describe('relayDialableInvalidations', () => {
+  it('sends every dialable caller-ID clear made in the primary to the workers, until unsubscribed (PL13)', () => {
+    const cluster = { invalidateDialableCallerIds: vi.fn() };
+    const off = relayDialableInvalidations(cluster);
+    invalidateDialableCallerIds();
+    expect(cluster.invalidateDialableCallerIds).toHaveBeenCalledTimes(1);
+    off();
+    invalidateDialableCallerIds();
+    expect(cluster.invalidateDialableCallerIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('a relay that throws never fails the clear made here', () => {
+    const off = relayDialableInvalidations({ invalidateDialableCallerIds: () => { throw new Error('channel closed'); } });
+    expect(() => invalidateDialableCallerIds()).not.toThrow();
+    off();
   });
 });

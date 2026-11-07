@@ -173,7 +173,7 @@ export type AgencySupervisorAgentRow =
 /**
  * ─── THE HEALTH STRIP'S DIAGNOSES ────────────────────────────────────
  *
- * The health strip ranks eight conditions and shows the first that matches. The
+ * The health strip ranks its conditions and shows the first that matches. The
  * ranking is by **what a supervisor should do about it**, not by severity: a
  * compliance stop outranks a staffing problem, which outranks a capacity one,
  * because acting on the wrong one wastes the minutes the strip exists to save.
@@ -184,6 +184,21 @@ export type AgencySupervisorAgentRow =
 export type AgencyStallCode =
   /** 1. Auto-paused by the abandonment guardrail. */
   | 'auto_paused_abandonment'
+  /**
+   * 1a. Auto-paused because its carrier account cannot dial: any reason in
+   * {@link CARRIER_ACCOUNT_PAUSE_REASONS}, carried as `reason`.
+   */
+  | 'auto_paused_carrier'
+  /**
+   * 1b. Running on a tenant's own carrier account with none of its caller IDs still
+   * active on it (decision PL13): it dials nothing until one is chosen or comes back.
+   */
+  | 'no_dialable_caller_ids'
+  /**
+   * 1c. Running on an account whose per-carrier concurrency gives its carrier no lines
+   * (decision PL14): every dial is refused. Support adds the capacity.
+   */
+  | 'no_carrier_capacity'
   /** 2. The DNC check is unavailable, so dialing fails CLOSED (DNC is tenant-wide). */
   | 'dnc_unavailable'
   /** 3. Nobody is available to take a call. */
@@ -209,6 +224,9 @@ export type AgencyStallCode =
  */
 export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
   'auto_paused_abandonment',
+  'auto_paused_carrier',
+  'no_dialable_caller_ids',
+  'no_carrier_capacity',
   'dnc_unavailable',
   'no_agents_available',
   'concurrency_saturated',
@@ -224,6 +242,15 @@ export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
  * against it. `credits_low` is absent (no billing in v1); it would return with
  * metering, if at all, as an additive member with a real producer.
  */
+
+/**
+ * The pauses the dialler makes when a campaign's carrier account cannot dial
+ * (`carrier-account-pause.ts`), the single list: the server's pause-reason type is held
+ * equal to it, the health strip's `auto_paused_carrier` carries one, and the console's
+ * copy is a table keyed by it. A new automatic carrier pause is added here.
+ */
+export const CARRIER_ACCOUNT_PAUSE_REASONS = ['carrier_auth', 'carrier_account_unavailable', 'carrier_refusing_calls'] as const;
+export type CarrierAccountPauseReason = (typeof CARRIER_ACCOUNT_PAUSE_REASONS)[number];
 
 /**
  * A diagnosis together with the evidence for it.
@@ -245,6 +272,20 @@ export type AgencyStall =
       measured_pct: number;
       ceiling_pct: number;
       paused_at: string;
+    }
+  | {
+      code: 'auto_paused_carrier';
+      /** Which carrier-account pause: the console's copy is keyed by it. */
+      reason: CarrierAccountPauseReason;
+      paused_at: string;
+    }
+  | {
+      code: 'no_dialable_caller_ids';
+      /** How many caller IDs the campaign stores, none of them dialable now. */
+      caller_ids_stored: number;
+    }
+  | {
+      code: 'no_carrier_capacity';
     }
   | {
       code: 'dnc_unavailable';

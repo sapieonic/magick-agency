@@ -143,7 +143,7 @@ export function describeRail(input: {
     return {
       tone: 'danger',
       label: 'Your station moved to another window',
-      detail: 'You opened the dialer somewhere else. Only one can take calls.',
+      detail: 'You opened the dialler somewhere else. Only one can take calls.',
     };
   }
   if (connection === 'session_gone') {

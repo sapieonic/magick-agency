@@ -6,11 +6,11 @@ import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/
 
 /*
  * `GET /phone-numbers`, the caller-ID list, and the only route here:
- *  - No bring-your-own-carrier numbers yet: every assignable number is on an active
- *    provider (number creation refuses an inactive one, and Plivo stays inactive
- *    until its dial path ships), so there is no second list to merge, `is_byoc` is not on the row
- *    (`@magick-agency/contracts`'s `TenantPhoneAssignment` does not carry it), and
- *    the console's `CallerIdPicker.tsx` shows no own-carrier badge.
+ *  - One list: numbers on the service's own account and numbers synced from the
+ *    tenant's own carrier accounts (B18) come from the same assignment model. A synced
+ *    number carries its `telephony_credential_id` (null on the service's), which is
+ *    what tells the console which carrier account a caller ID dials on; there is no
+ *    separate `is_byoc` flag.
  *  - No number administration (account tags, account defaults) or inbound config:
  *    number assignment is the super-admin's (`super-admin-phone.routes.ts`), and
  *    there is no AI inbound routing.
