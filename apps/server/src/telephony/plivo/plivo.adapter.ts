@@ -27,6 +27,7 @@ import type {
   MediaStreamConfig,
   OutboundCallRequest,
   ProviderCallStatus,
+  ProviderCapabilities,
   TelephonyProvider,
 } from '../types.js';
 import type { AppConfig } from '../../config/index.js';
@@ -177,9 +178,11 @@ export class PlivoAdapter implements TelephonyProvider {
   /**
    * `cancelRinging`: a ringing call is cancelled by its request id
    * (`cancelDialRequest`) and, once Plivo has named it, hung up by its call id.
-   * The create-call places the call at once: nothing is queued.
+   * The create-call places the call at once: nothing is queued. `ringTimeoutSeconds`: the
+   * `ring_timeout` every dial carries (`PLIVO_RING_TIMEOUT_SECONDS`), so the bridge ends a
+   * call whose answer and terminal callbacks never arrived soon after it.
    */
-  readonly capabilities = { cancelRinging: true, queuesOutboundDials: false } as const;
+  readonly capabilities: ProviderCapabilities;
 
   private readonly authId: string;
   private readonly authToken: Secret<string>;
@@ -195,6 +198,7 @@ export class PlivoAdapter implements TelephonyProvider {
     this.authId = opts.authId;
     this.authToken = opts.authToken;
     this.previousAuthTokens = opts.previousAuthTokens ?? [];
+    this.capabilities = { cancelRinging: true, queuesOutboundDials: false, ringTimeoutSeconds: opts.ringTimeoutSeconds };
     this.settings = {
       webhookBaseUrl: opts.webhookBaseUrl,
       callsPerSecond: opts.callsPerSecond,

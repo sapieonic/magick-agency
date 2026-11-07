@@ -64,8 +64,9 @@ vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
 const { plivoAdapter, registry } = vi.hoisted(() => {
   const plivoAdapter = {
     name: 'plivo',
-    capabilities: { cancelRinging: true, queuesOutboundDials: false },
+    capabilities: { cancelRinging: true, queuesOutboundDials: false, ringTimeoutSeconds: 45 },
     initiateCall: vi.fn(),
+    getCallStatus: vi.fn().mockResolvedValue({ status: 'unknown' }),
     endCall: vi.fn().mockResolvedValue(undefined),
     cancelDialRequest: vi.fn().mockResolvedValue('canceled'),
     generateAnswerResponse: vi.fn().mockReturnValue('<Response/>'),
@@ -179,6 +180,7 @@ beforeEach(() => {
   }));
   plivoAdapter.initiateCall.mockResolvedValue({ providerCallId: '', providerRequestId: 'req-1' });
   plivoAdapter.cancelDialRequest.mockResolvedValue('canceled');
+  plivoAdapter.getCallStatus.mockResolvedValue({ status: 'unknown' });
 });
 
 async function dial(mgr = new WebRtcBridgeManager(makeGuardHost() as any, null)) {
@@ -730,5 +732,90 @@ describe('carrierCallbackAdapter — what a Plivo callback is checked against', 
     mockRepo.findById.mockResolvedValueOnce({ id: CALL_ID, provider: 'plivo', tenant_id: 't', telephony_credential_id: 'cred-1' });
     registry.getForCredentialId.mockRejectedValueOnce(new Error('revoked'));
     expect(await mgr.carrierCallbackAdapter(CALL_ID, 'plivo')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The ring deadline: Plivo's own ring timeout (45 s here) plus a 30 s margin. A call whose
+// answer and terminal callbacks both went missing is not held to its max duration (600 s).
+// ---------------------------------------------------------------------------
+describe('a Plivo call whose callbacks never arrive is ended soon after Plivo`s own ring timeout', () => {
+  const terminalWrites = () => mockRepo.update.mock.calls.filter((c: any[]) => c[1]?.ended_at !== undefined);
+
+  async function withFakeTimers(body: () => Promise<void>) {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await body();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('no callback at all: held until 45 + 30 s, then ended `no_answer`, its dial cancelled by request id', async () => {
+    await withFakeTimers(async () => {
+      const host = makeGuardHost();
+      const mgr = new WebRtcBridgeManager(host as any, null);
+      mgr.onLifecycle((e) => lifecycle.push(e));
+      await mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any });
+      await vi.advanceTimersByTimeAsync(74_000);
+      expect(mgr.getSession(CALL_ID)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(mgr.getSession(CALL_ID)).toBeUndefined();
+      expect(terminalWrites()).toEqual([[CALL_ID, expect.objectContaining({ status: 'no_answer', outcome: 'ring_deadline_passed' })]]);
+      // No call id was ever named, so there is nothing to ask the carrier about: cancelled by the request id.
+      expect(plivoAdapter.getCallStatus).not.toHaveBeenCalled();
+      expect(plivoAdapter.cancelDialRequest).toHaveBeenCalledWith('req-1');
+      expect(host.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+      expect(lifecycle.filter((e) => e.phase === 'ended')).toHaveLength(1);
+    });
+  });
+
+  it('named by its ring, the carrier says it ended (no-answer): settled as it ended, nothing sent', async () => {
+    await withFakeTimers(async () => {
+      plivoAdapter.getCallStatus.mockResolvedValue({ status: 'no-answer' });
+      const mgr = await dial();
+      await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+      await vi.advanceTimersByTimeAsync(76_000);
+      expect(plivoAdapter.getCallStatus).toHaveBeenCalledWith('uuid-1');
+      expect(mgr.getSession(CALL_ID)).toBeUndefined();
+      expect(terminalWrites()).toEqual([[CALL_ID, expect.objectContaining({ status: 'no_answer', outcome: 'ring_deadline_carrier_ended' })]]);
+      expect(plivoAdapter.cancelDialRequest).not.toHaveBeenCalled();
+      expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    });
+  });
+
+  it('the carrier says it is live (answered, its answer callback lost): ended and hung up by the call id', async () => {
+    await withFakeTimers(async () => {
+      plivoAdapter.getCallStatus.mockResolvedValue({ status: 'in-progress' });
+      plivoAdapter.cancelDialRequest.mockResolvedValue('not_found');
+      const mgr = await dial();
+      await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+      await vi.advanceTimersByTimeAsync(76_000);
+      expect(mgr.getSession(CALL_ID)).toBeUndefined();
+      expect(terminalWrites()).toEqual([[CALL_ID, expect.objectContaining({ status: 'no_answer', outcome: 'ring_deadline_passed' })]]);
+      expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1');
+    });
+  });
+
+  it('an answered call is not touched by it', async () => {
+    await withFakeTimers(async () => {
+      const mgr = await dial();
+      expect(await mgr.answerCarrierCall(CALL_ID, plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo')).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(mgr.getSession(CALL_ID)).toBeDefined();
+      expect(plivoAdapter.getCallStatus).not.toHaveBeenCalled();
+      expect(terminalWrites()).toEqual([]);
+    });
+  });
+
+  it('a terminal callback that arrives first settles the call; the deadline then does nothing', async () => {
+    await withFakeTimers(async () => {
+      const mgr = await dial();
+      await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'busy', CallUUID: 'uuid-1', HangupCauseName: 'Busy Line' }), 'plivo');
+      expect(mgr.getSession(CALL_ID)).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(terminalWrites()).toHaveLength(1);
+      expect(plivoAdapter.getCallStatus).not.toHaveBeenCalled();
+    });
   });
 });

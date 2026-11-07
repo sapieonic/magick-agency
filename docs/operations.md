@@ -210,7 +210,7 @@ production.
 | `PLIVO_CALLS_PER_SECOND` | `2` (1–100) | New calls a second per Plivo account (Plivo's account default), counted across every process in Redis (a sliding 1000 ms window per account: no 1000 ms span admits more). One value for every tenant's account: raise it only when every Plivo account in use allows more |
 | `PLIVO_DIAL_RATE_MAX_WAIT_MS` | `5000` (0–60000) | The longest a dial waits for a calls-per-second slot; then it is refused unsent (`carrier_rate_limited`), a retryable refusal the dialler treats as back-pressure |
 | `PLIVO_REQUEST_TIMEOUT_MS` | `15000` (1000–120000) | Each Plivo REST request (create-call, cancel, hangup, number sync). A timed-out create-call may have placed the call: never retried, the contact's redial deferred 15 min as for VoiceLink |
-| `PLIVO_RING_TIMEOUT_SECONDS` | `45` (5–120) | How long Plivo lets a dial ring (`ring_timeout`) |
+| `PLIVO_RING_TIMEOUT_SECONDS` | `45` (5–120) | How long Plivo lets a dial ring (`ring_timeout`). A call with no answer or terminal callback 30 s past it is ended by the bridge (`ring_deadline_passed`), so a lost callback does not hold its slots and agent to the max duration |
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
 | `CONCURRENCY_RECONCILE_INTERVAL_MS` | `300000` | Self-heal reconcile cadence |
 | `STALE_CALL_SWEEP_MINUTES` | `30` | Stale bridged-call sweep |

@@ -320,6 +320,8 @@ export class WebRtcBridgeSession {
   droppedPstnMediaFrames: number = 0;
 
   private maxDurationTimer: NodeJS.Timeout | null = null;
+  /** The ring deadline (`setRingDeadlineTimer`): cleared by the answer and by teardown. */
+  private ringDeadlineTimer: NodeJS.Timeout | null = null;
   private readonly log;
 
   constructor(params: {
@@ -407,6 +409,8 @@ export class WebRtcBridgeSession {
   markAnswered(): boolean {
     if (this.answeredAt === null) {
       this.answeredAt = new Date();
+      // Answered: the ring deadline no longer applies.
+      this.clearRingDeadlineTimer();
       return true;
     }
     return false;
@@ -480,6 +484,25 @@ export class WebRtcBridgeSession {
     if (this.maxDurationTimer) {
       clearTimeout(this.maxDurationTimer);
       this.maxDurationTimer = null;
+    }
+  }
+
+  /**
+   * Arm the pre-answer deadline: `onTimeout` runs `seconds` from now unless the call is
+   * answered ({@link markAnswered}) or torn down first. Idempotent.
+   */
+  setRingDeadlineTimer(seconds: number, onTimeout: () => void): void {
+    this.clearRingDeadlineTimer();
+    this.ringDeadlineTimer = setTimeout(() => {
+      this.ringDeadlineTimer = null;
+      onTimeout();
+    }, seconds * 1000);
+  }
+
+  clearRingDeadlineTimer(): void {
+    if (this.ringDeadlineTimer) {
+      clearTimeout(this.ringDeadlineTimer);
+      this.ringDeadlineTimer = null;
     }
   }
 
@@ -606,6 +629,7 @@ export class WebRtcBridgeSession {
    */
   destroy(): void {
     this.clearMaxDurationTimer();
+    this.clearRingDeadlineTimer();
     this.clearEndConfirmationTimer();
     // A call that ends for any other reason while a dropped socket is still
     // inside its window must not fire a hangup afterwards.

@@ -833,6 +833,20 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
     expect(persisted.some((u: any) => u.error_code === 'TELEPHONY_ERROR')).toBe(false);
   });
 
+  it('a carrier that declares no ring timeout (VoiceLink) gets no ring deadline: an unanswered call keeps only its max duration', async () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+      await dial(mgr, VL_PARAMS);
+      // Long past any ring deadline (VoiceLink reports its terminal at dial+45–75 s).
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(mgr.getSession('call-1')).toBeDefined();
+      expect(mockAdapter.endCall).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('finalizes and settles once when the carrier confirmation times out (45s)', async () => {
     vi.useFakeTimers();
     try {

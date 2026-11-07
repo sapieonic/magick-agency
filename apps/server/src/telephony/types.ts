@@ -181,7 +181,25 @@ export interface ProviderCapabilities {
    * the call keeps dispatch-anchored deadlines.
    */
   readonly queuesOutboundDials?: boolean;
+  /**
+   * How long the carrier itself lets an unanswered dial ring before it gives up, in seconds,
+   * when the adapter sets that limit on every dial (Plivo's `ring_timeout`). The bridge then
+   * holds no unanswered call much past it: if neither an answer nor the carrier's terminal has
+   * been seen {@link RING_DEADLINE_MARGIN_SECONDS} after it (a lost callback), it asks the
+   * carrier for the call's state and ends it (`WebRtcBridgeManager`'s ring deadline).
+   *
+   * Optional, and absent means no such deadline (VoiceLink: its `add_lead` only queues the
+   * dial, and its terminal webhook is the end); such a call keeps only the max duration.
+   */
+  readonly ringTimeoutSeconds?: number;
 }
+
+/**
+ * How long past a carrier's own ring timeout ({@link ProviderCapabilities.ringTimeoutSeconds})
+ * the bridge waits for the answer or the carrier's terminal before it ends the call itself:
+ * room for the create-call's own latency and a terminal callback in flight.
+ */
+export const RING_DEADLINE_MARGIN_SECONDS = 30;
 
 /**
  * Fail-closed read of {@link ProviderCapabilities.cancelRinging}.

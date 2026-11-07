@@ -27,7 +27,7 @@ import {
   trackWebrtcCallInitiated, trackWebrtcCallCompleted,
   type WebrtcCallEndedBy,
 } from '../analytics/posthog.js';
-import { canCancelRinging } from '../telephony/types.js';
+import { canCancelRinging, RING_DEADLINE_MARGIN_SECONDS } from '../telephony/types.js';
 import { findCarrierModule } from '../telephony/carrier-modules.js';
 import type { CarrierEventFacts } from '../telephony/carrier-module.js';
 import type { TelephonyGuardHost } from './telephony-guard-host.js';
@@ -212,6 +212,22 @@ const DEFAULT_WEBRTC_MAX_DURATION_SECONDS = 1800;
  */
 /** How many calls {@link WebRtcBridgeManager}'s carrier-leg memo remembers; the oldest is forgotten first. */
 const CARRIER_LEGS_SETTLED_MAX = 10_000;
+
+/**
+ * A carrier's call state (`getCallStatus`, lower-cased) that says the call is over, and the
+ * status the row settles as when the ring deadline finds it so (`ringDeadlinePassed`). Never
+ * answered here, so a `completed` is read as unanswered too.
+ */
+const RING_DEADLINE_CARRIER_ENDED: Readonly<Record<string, WebRtcCallStatus>> = {
+  'busy': 'busy',
+  'failed': 'failed',
+  'no-answer': 'no_answer',
+  'no_answer': 'no_answer',
+  'timeout': 'no_answer',
+  'cancel': 'no_answer',
+  'canceled': 'no_answer',
+  'completed': 'no_answer',
+};
 
 export class WebRtcBridgeManager {
   private readonly sessions = new Map<string, WebRtcBridgeSession>();
@@ -811,6 +827,7 @@ export class WebRtcBridgeManager {
       });
       session.providerCallId = result.providerCallId || null;
       session.providerRequestId = result.providerRequestId || null;
+      this.armRingDeadline(session, adapter);
     } catch (err) {
       // Torn down while the dial waited to be sent, and the adapter sent nothing: the leg
       // was never placed. The teardown has already settled the call (terminal row, `ended`,
@@ -2330,6 +2347,59 @@ export class WebRtcBridgeManager {
   }
 
   /**
+   * The pre-answer deadline, for a carrier that limits how long its dials ring
+   * (`ProviderCapabilities.ringTimeoutSeconds`; none for one that does not, whose call keeps
+   * only the max duration). Without it, a call whose answer and terminal callbacks were both
+   * lost (refused for a rotated token, a forward to a media worker failing, and the carrier
+   * not retrying) held its session, its concurrency slots and the reserved agent until the
+   * max duration, 10 to 30 minutes on, long after the carrier had stopped ringing it.
+   */
+  private armRingDeadline(session: WebRtcBridgeSession, adapter: TelephonyProvider): void {
+    const ringTimeout = adapter.capabilities?.ringTimeoutSeconds;
+    if (typeof ringTimeout !== 'number' || !(ringTimeout > 0)) return;
+    if (session.endHandled || session.answeredAt !== null) return;
+    session.setRingDeadlineTimer(ringTimeout + RING_DEADLINE_MARGIN_SECONDS, () => {
+      this.inBackground(this.ringDeadlinePassed(session.callId, adapter), session.callId, 'Error ending a call past its ring deadline');
+    });
+  }
+
+  /**
+   * The ring deadline passed with no answer and no terminal seen here. The carrier is asked
+   * for the call's state when it can say (`getCallStatus`, by the call id it named): one it
+   * reports ended is settled as it ended, with nothing sent; anything else (still ringing,
+   * answered with no stream, unknown, or no call id yet) is ended `no_answer` and the leg
+   * hung up or its dial cancelled, as any local teardown does.
+   */
+  private async ringDeadlinePassed(callId: string, adapter: TelephonyProvider): Promise<void> {
+    const live = () => {
+      const s = this.sessions.get(callId);
+      return s && !s.isTearingDown && s.answeredAt === null ? s : null;
+    };
+    const session = live();
+    if (!session) return;
+    const carrierCallId = session.carrierCallId || session.providerCallId || null;
+    let carrierStatus = 'unknown';
+    if (carrierCallId) {
+      try {
+        carrierStatus = (await adapter.getCallStatus(carrierCallId)).status || 'unknown';
+      } catch (err) {
+        log.warn({ err, callId, provider: session.provider }, 'Could not read the call`s state from the carrier at its ring deadline');
+      }
+    }
+    if (!live()) return;
+    const ended = Object.hasOwn(RING_DEADLINE_CARRIER_ENDED, carrierStatus) ? RING_DEADLINE_CARRIER_ENDED[carrierStatus] : undefined;
+    log.warn(
+      { callId, provider: session.provider, carrierCallId, providerRequestId: session.providerRequestId, carrierStatus },
+      ended
+        ? 'No answer or terminal callback by the ring deadline; the carrier says the call ended — settling it'
+        : 'No answer or terminal callback by the ring deadline — ending the call and its carrier leg',
+    );
+    await this.endCall(callId, ended
+      ? { status: ended, outcome: 'ring_deadline_carrier_ended', hangupProvider: false }
+      : { status: 'no_answer', outcome: 'ring_deadline_passed', hangupProvider: true });
+  }
+
+  /**
    * Tear down a registered session whose carrier leg was never placed: a throw in
    * {@link placeOutboundLeg} between registering the session and the carrier request.
    * The full {@link endCall} (terminal row, timers, the borrowed socket detached, slots,
@@ -2394,6 +2464,7 @@ export class WebRtcBridgeManager {
     if (session.endHandled) return;
     session.endHandled = true;
     session.clearMaxDurationTimer();
+    session.clearRingDeadlineTimer();
     // A dial still waiting to be sent is called off (`OutboundCallRequest.signal`).
     session.dialAbort?.abort();
 

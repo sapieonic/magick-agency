@@ -641,7 +641,14 @@ every account the caller belongs to (CH2) where every internal handler is single
     …/Request/{request_uuid}/`, `cancelDialRequest`); after it, hangs up by the call id (`DELETE
     …/Call/{call_uuid}/`); neither with an empty or malformed id (PL8). So a soft-phone hang-up
     while a Plivo call rings stops the ringing; a VoiceLink one cannot (SP3). The live soft-phone
-    call carries which (`can_cancel_ringing`), and the console and the agent app warn only on the latter.
+    call carries which (`can_cancel_ringing`), and the console and the agent app warn only on the latter. A
+    hangup claim is taken only once the adapter is resolved, and given back if the hangup fails (unless
+    Plivo's terminal arrived meanwhile), so a later callback for the leg can still hang it up.
+    The ring deadline: an adapter that declares its carrier's ring timeout
+    (`capabilities.ringTimeoutSeconds`, Plivo's `PLIVO_RING_TIMEOUT_SECONDS`) has a call with
+    neither its answer nor its terminal seen 30 s past it ended here (`ringDeadlinePassed`):
+    the carrier's state asked first by the call id when named, settled as it ended, else ended
+    `no_answer` and cancelled or hung up (PL8). VoiceLink declares none.
   - *Automatic pauses* (`agency/carrier-account-pause.ts`). A campaign dial refused
     `carrier_auth_rejected` pauses the campaign `carrier_auth`; one refused
     `telephony_credential_unavailable` pauses it `carrier_account_unavailable`. Running campaigns
