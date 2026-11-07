@@ -184,13 +184,6 @@
   font-size: 12px;
 }
 
-.providerMeta {
-  margin-top: 2px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
 .providerWarning {
   margin-top: 4px;
   color: var(--warning);

@@ -4,12 +4,16 @@
  * SINGLE SOURCE OF TRUTH — edit this map to rename a carrier everywhere in the
  * UI (customer pages, super-admin telephony screens, charts, and copy).
  *
+ * The tenant console shows the alias alone. The super-admin console shows the alias
+ * with the vendor in parentheses, "Pravah (Plivo)", through its `operatorCarrierName`
+ * (decision PL16): its operators sign in to the vendor's own console.
+ *
  * Keys are the provider identifiers the API uses (`vobiz`, `twilio`, …).
  * Lookups are case-insensitive and tolerate spaces/hyphens, so `"VoBiz"` and
  * `"generic sip"` resolve the same as `"vobiz"` / `"generic_sip"`.
  *
- * Vendor names (Twilio, VoBiz, VoiceLink, Plivo, …) must not appear in the UI
- * for mapped providers. Unmapped providers fall back to the API display name
+ * Vendor names (Twilio, VoBiz, VoiceLink, Plivo, …) must not appear in the tenant
+ * console for mapped providers. Unmapped providers fall back to the API display name
  * when one is supplied, then the trimmed slug.
  */
 

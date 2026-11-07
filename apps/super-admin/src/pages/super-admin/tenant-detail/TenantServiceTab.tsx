@@ -11,7 +11,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
-import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { operatorCarrierName } from '../../../utils/carrierName';
 import { AccountSettingsPanel } from './AccountSettingsPanel';
 import { carrierAllocationGaps } from './carrierAllocationGaps';
 import styles from '../SATenantDetailPage.module.css';
@@ -296,7 +296,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
                           <div className={styles.providerSummary}>
                             {acc.concurrency.providers.map(row => (
                               <span key={row.provider}>
-                                {telephonyProviderAlias(row.provider)}: {row.max_concurrent_calls}
+                                {operatorCarrierName(row.provider)}: {row.max_concurrent_calls}
                               </span>
                             ))}
                           </div>
@@ -466,8 +466,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
                     return (
                       <tr key={name}>
                         <td>
-                          <strong>{telephonyProviderAlias(name)}</strong>
-                          <div className={styles.providerMeta}>{name}</div>
+                          <strong>{operatorCarrierName(name)}</strong>
                         </td>
                         <td>
                           <input
@@ -481,7 +480,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
                               setProviderConcurrencyEdits(current => ({ ...current, [name]: value }));
                               setProviderConcurrencyError(null);
                             }}
-                            aria-label={`Concurrency allocated to ${telephonyProviderAlias(name)}`}
+                            aria-label={`Concurrency allocated to ${operatorCarrierName(name)}`}
                           />
                         </td>
                         <td>{utilization?.in_use === null || utilization === undefined ? 'Unknown' : utilization.in_use}</td>

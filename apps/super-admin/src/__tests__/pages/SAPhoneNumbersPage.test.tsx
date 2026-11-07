@@ -95,7 +95,7 @@ describe('SAPhoneNumbersPage — provider picker', () => {
     expect(options).toContain('prov-1');
     expect(options).not.toContain('prov-byoc');
     expect(scope.getByTestId('synced-carriers-hint').textContent)
-      .toBe('Numbers on Pravah come from a tenant’s own carrier account: use Sync numbers on its credential under Telephony credentials.');
+      .toBe('Numbers on Pravah (Plivo) come from a tenant’s own carrier account: use Sync numbers on its credential under Telephony credentials.');
   });
 
   it('still offers the provider when the inventory is empty (no free-text id)', async () => {

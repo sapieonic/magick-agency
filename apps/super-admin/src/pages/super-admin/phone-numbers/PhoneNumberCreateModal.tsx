@@ -4,7 +4,7 @@ import type { TelephonyProvider } from '../../../api/super-admin';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { HelpTooltip } from '@magick-agency/web-ui/components/HelpTooltip';
 import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
-import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { operatorCarrierName } from '../../../utils/carrierName';
 import { AdvancedSection } from '../../../components/common';
 import styles from '../SAPhoneNumbersPage.module.css';
 
@@ -96,12 +96,12 @@ export function PhoneNumberCreateModal({ open, providers, onClose, onCreated }: 
           >
             <option value="">Select provider…</option>
             {offered.map(p => (
-              <option key={p.id} value={p.id}>{telephonyProviderAlias(p.name, p.display_name)}</option>
+              <option key={p.id} value={p.id}>{operatorCarrierName(p.name, p.display_name)}</option>
             ))}
           </select>
           {synced.length > 0 && (
             <p className={styles.fieldHint} data-testid="synced-carriers-hint">
-              {`Numbers on ${synced.map(p => telephonyProviderAlias(p.name, p.display_name)).join(', ')} come from a tenant’s own carrier account: use Sync numbers on its credential under Telephony credentials.`}
+              {`Numbers on ${synced.map(p => operatorCarrierName(p.name, p.display_name)).join(', ')} come from a tenant’s own carrier account: use Sync numbers on its credential under Telephony credentials.`}
             </p>
           )}
         </div>

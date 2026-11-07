@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { operatorCarrierName } from '../../utils/carrierName';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
@@ -188,9 +188,9 @@ describe('SATenantDetailPage — provider concurrency', () => {
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
 
     await waitFor(() => expect(screen.getByText(/Total user concurrency/i)).toBeTruthy());
-    expect((screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`) as HTMLInputElement).value).toBe('30');
-    expect((screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('voicelink')}`) as HTMLInputElement).value).toBe('20');
-    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`), {
+    expect((screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`) as HTMLInputElement).value).toBe('30');
+    expect((screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`) as HTMLInputElement).value).toBe('20');
+    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`), {
       target: { value: '35' },
     });
     fireEvent.change(screen.getByLabelText('Change reason'), {
@@ -250,12 +250,12 @@ describe('SATenantDetailPage — provider concurrency', () => {
 
     resolveSupport(detail('a-2', 7));
     await waitFor(() => expect((
-      screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`) as HTMLInputElement
+      screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`) as HTMLInputElement
     ).value).toBe('7'));
     resolveSales(detail('a-1', 30));
     await Promise.resolve();
 
-    expect((screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`) as HTMLInputElement).value).toBe('7');
+    expect((screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`) as HTMLInputElement).value).toBe('7');
   });
 
   it('renders unavailable provider utilization as unknown, never zero', async () => {
@@ -345,8 +345,8 @@ describe('SATenantDetailPage — provider concurrency', () => {
     fireEvent.click(screen.getByRole('tab', { name: /service/i }));
     await screen.findByRole('cell', { name: 'Sales' });
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
-    await waitFor(() => screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('voicelink')}`));
-    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('voicelink')}`), { target: { value: '30' } });
+    await waitFor(() => screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`));
+    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`), { target: { value: '30' } });
     fireEvent.change(screen.getByLabelText('Change reason'), { target: { value: 'Purchased capacity' } });
     const confirmation = screen.getByLabelText(/I reviewed active usage/i);
     fireEvent.click(confirmation);
@@ -398,12 +398,12 @@ describe('SATenantDetailPage — provider concurrency', () => {
     await screen.findByRole('cell', { name: 'Sales' });
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
 
-    const input = (name: string) => screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias(name, name)}`) as HTMLInputElement;
+    const input = (name: string) => screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName(name)}`) as HTMLInputElement;
     await waitFor(() => input('voicelink'));
     expect(input('voicelink').value).toBe('0');
     expect(input('vobiz').value).toBe('0');
     expect(input('old-carrier').value).toBe('7');
-    expect(screen.queryByLabelText(`Concurrency allocated to ${telephonyProviderAlias('spare-inactive', 'spare-inactive')}`)).toBeNull();
+    expect(screen.queryByLabelText(`Concurrency allocated to ${operatorCarrierName('spare-inactive')}`)).toBeNull();
     expect(mocks.listProviders).toHaveBeenCalled();
   });
 });

@@ -32,6 +32,7 @@ import { StatCard } from '../../components/common';
 import { TenantPicker } from '../../components/super-admin/TenantPicker';
 import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
+import { operatorCarrierName } from '../../utils/carrierName';
 import styles from './SATelephonyCredentialsPage.module.css';
 
 /**
@@ -121,7 +122,10 @@ export default function SATelephonyCredentialsPage() {
 
   // Status actions
   const [confirm, setConfirm] = useState<{ cred: TelephonyCredential; action: CredentialAction } | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // The row an action is running on, and which action: only that action's button says it
+  // is working (a Verify must not relabel Sync "Syncing…"); every action on the row waits.
+  const [busy, setBusy] = useState<{ id: string; action: CredentialAction | 'sync' } | null>(null);
+  const busyId = busy?.id ?? null;
   const [sync, setSync] = useState<SyncOutcome | null>(null);
 
   // Only the latest load may write: changing a filter while a load is in flight must
@@ -249,7 +253,7 @@ export default function SATelephonyCredentialsPage() {
   };
 
   const runAction = async (cred: TelephonyCredential, action: CredentialAction) => {
-    setBusyId(cred.id);
+    setBusy({ id: cred.id, action });
     setError(null);
     try {
       const row = await ACTIONS[action](cred.id);
@@ -258,13 +262,13 @@ export default function SATelephonyCredentialsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to ${action} credential`);
     } finally {
-      setBusyId(null);
+      setBusy(null);
       setConfirm(null);
     }
   };
 
   const runSync = async (cred: TelephonyCredential) => {
-    setBusyId(cred.id);
+    setBusy({ id: cred.id, action: 'sync' });
     setSync(null);
     try {
       const res = await syncTelephonyCredentialNumbers(cred.id);
@@ -273,7 +277,7 @@ export default function SATelephonyCredentialsPage() {
     } catch (err) {
       setSync({ id: cred.id, error: syncRefusal(err) });
     } finally {
-      setBusyId(null);
+      setBusy(null);
     }
   };
 
@@ -355,7 +359,7 @@ export default function SATelephonyCredentialsPage() {
                     </button>
                   </td>
                   <td>{tenantName.get(c.tenant_id) ?? <span className={styles.mono}>{c.tenant_id}</span>}</td>
-                  <td><span className={styles.providerBadge}>{providerOf(c.provider)?.display_name ?? c.provider}</span></td>
+                  <td><span className={styles.providerBadge}>{operatorCarrierName(c.provider, providerOf(c.provider)?.display_name)}</span></td>
                   <td className={styles.mono}>{c.account_ref}</td>
                   <td className={styles.mono}>{c.secret_hint ? `••••${c.secret_hint}` : '—'} <span className={styles.muted}>v{c.secret_version}</span></td>
                   <td>
@@ -368,7 +372,7 @@ export default function SATelephonyCredentialsPage() {
                     <td colSpan={7} className={styles.detailCell}>
                       <dl className={styles.detailGrid}>
                         <div className={styles.detailItem}><dt>ID</dt><dd className={styles.mono}>{c.id}</dd></div>
-                        <div className={styles.detailItem}><dt>Campaigns dialling on it</dt><dd>{usage ? usage.campaigns : '…'}</dd></div>
+                        <div className={styles.detailItem}><dt>Campaigns using it (not finished)</dt><dd>{usage ? usage.campaigns : '…'}</dd></div>
                         <div className={styles.detailItem}><dt>Calls in flight</dt><dd>{usage ? usage.in_flight_calls : '…'}</dd></div>
                         <div className={styles.detailItem}><dt>Last error</dt><dd>{c.last_error ?? 'None'}</dd></div>
                         <div className={styles.detailItem}><dt>Updated</dt><dd>{fmt(c.updated_at)}</dd></div>
@@ -377,11 +381,11 @@ export default function SATelephonyCredentialsPage() {
                       {c.status !== 'revoked' && (
                         <div className={styles.detailActions} onClick={(e) => e.stopPropagation()}>
                           <button className="btn-secondary" disabled={busyId === c.id} onClick={() => void runAction(c, 'verify')}>
-                            <ShieldCheck size={14} /> Verify now
+                            <ShieldCheck size={14} /> {busy?.id === c.id && busy.action === 'verify' ? 'Verifying…' : 'Verify now'}
                           </button>
                           {c.status === 'active' && (
                             <button className="btn-secondary" disabled={busyId === c.id} onClick={() => void runSync(c)}>
-                              <PhoneIncoming size={14} /> {busyId === c.id ? 'Syncing…' : 'Sync numbers'}
+                              <PhoneIncoming size={14} /> {busy?.id === c.id && busy.action === 'sync' ? 'Syncing…' : 'Sync numbers'}
                             </button>
                           )}
                           <button className="btn-secondary" onClick={() => { setRotateTarget(c); setRotateFields({}); setModalError(null); }}>
@@ -415,7 +419,7 @@ export default function SATelephonyCredentialsPage() {
                 <td colSpan={7}>
                   <EmptyState
                     title="No telephony credentials"
-                    description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s own carrier account. Campaigns can dial on it once that carrier’s dial path ships.'}
+                    description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s own carrier account. Sync its numbers, then the tenant’s campaigns and soft phone can dial on it.'}
                   />
                 </td>
               </tr>
@@ -458,7 +462,7 @@ export default function SATelephonyCredentialsPage() {
               onChange={(e) => setCreateForm((f) => ({ ...f, provider: e.target.value, fields: {} }))}
               required
             >
-              {providers.map((p) => <option key={p.provider} value={p.provider}>{p.display_name}</option>)}
+              {providers.map((p) => <option key={p.provider} value={p.provider}>{operatorCarrierName(p.provider, p.display_name)}</option>)}
             </select>
           </div>
           <div className={styles.field}>
@@ -467,7 +471,7 @@ export default function SATelephonyCredentialsPage() {
               id="credential-label"
               value={createForm.label}
               onChange={(e) => setCreateForm((f) => ({ ...f, label: e.target.value }))}
-              placeholder="e.g. Acme main Plivo account"
+              placeholder="e.g. Acme main account"
               maxLength={100}
               required
             />
@@ -549,7 +553,9 @@ export default function SATelephonyCredentialsPage() {
         message={
           confirm?.action === 'revoke'
             ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed two hours after its last call ends, once the carrier’s late callbacks are in. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first.`
-            : `“${confirm?.cred.label ?? ''}” stops placing new calls. Calls already in progress finish normally. You can enable it again.`
+            : `“${confirm?.cred.label ?? ''}” stops placing new calls. Calls already in progress finish normally. `
+              + 'Running campaigns on it pause automatically, and stay paused after you enable it again '
+              + 'until a supervisor resumes each one.'
         }
         confirmLabel={confirm?.action === 'revoke' ? 'Revoke' : 'Disable'}
         danger

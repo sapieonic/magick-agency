@@ -367,6 +367,30 @@ export class TelephonyCredentialRepository {
     return result.rowCount ?? 0;
   }
 
+  /**
+   * The campaigns that can still dial pinned to it (what blocks a revoke), named for the
+   * operator: at most `limit`, running first, then by tenant, account and campaign name.
+   * `account_name` is null for an account that no longer exists.
+   */
+  async liveCampaigns(id: string, limit: number): Promise<Array<{
+    id: string; name: string; status: string; tenant_name: string; account_name: string | null;
+  }>> {
+    const result = await getPool().query<{
+      id: string; name: string; status: string; tenant_name: string; account_name: string | null;
+    }>(
+      `SELECT c.id, c.name, c.status, t.name AS tenant_name, a.name AS account_name
+         FROM agency_campaigns c
+         JOIN tenants t ON t.id = c.tenant_id
+         LEFT JOIN accounts a ON a.id = c.account_id
+        WHERE c.telephony_credential_id = $1 AND c.status IN ${LIVE_CAMPAIGN}
+        ORDER BY CASE c.status WHEN 'running' THEN 0 WHEN 'stopping' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,
+                 t.name, a.name NULLS LAST, c.name, c.id
+        LIMIT $2`,
+      [id, limit],
+    );
+    return result.rows;
+  }
+
   /** How many campaigns that can still dial pin it, and how many calls are in flight on it. */
   async usage(id: string): Promise<{ campaigns: number; inFlightCalls: number }> {
     const result = await getPool().query<{ campaigns: number; in_flight: number }>(

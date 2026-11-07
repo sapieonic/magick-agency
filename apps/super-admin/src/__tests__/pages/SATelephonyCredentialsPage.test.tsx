@@ -61,7 +61,8 @@ describe('SATelephonyCredentialsPage', () => {
     expect(await screen.findByText('Acme main')).toBeTruthy();
     expect(await screen.findByText('Acme')).toBeTruthy();
     expect(screen.getByText('••••ab12')).toBeTruthy();
-    expect(screen.getByText('Plivo')).toBeTruthy();
+    // PL16: the alias, then the vendor operators need to find the account in its own console.
+    expect(screen.getByText('Pravah (Plivo)')).toBeTruthy();
   });
 
   it('renders the secret field as a password input and sends the provider fields on create', async () => {
@@ -250,5 +251,63 @@ describe('Sync numbers', () => {
     await openRow();
     expect(await screen.findByRole('button', { name: /verify now/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /sync numbers/i })).toBeNull();
+  });
+});
+
+describe('what the page says while an action runs, and before one', () => {
+  it('Verify says it is verifying and never relabels Sync numbers "Syncing…"', async () => {
+    let answer!: (v: TelephonyCredential) => void;
+    mocks.verifyTelephonyCredential.mockImplementation(() => new Promise((r) => { answer = r; }));
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    fireEvent.click(await screen.findByRole('button', { name: /verify now/i }));
+    expect(await screen.findByRole('button', { name: /verifying…/i })).toBeTruthy();
+    const sync = screen.getByRole('button', { name: /sync numbers/i }) as HTMLButtonElement;
+    expect(sync.textContent).not.toMatch(/Syncing/);
+    // Every action on the row waits while one runs.
+    expect(sync.disabled).toBe(true);
+    answer(makeCred());
+    await waitFor(() => expect(screen.getByRole('button', { name: /verify now/i })).toBeTruthy());
+  });
+
+  it('Enable relabels neither Verify nor anything else', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([makeCred({ status: 'disabled' })]);
+    let answer!: (v: TelephonyCredential) => void;
+    mocks.enableTelephonyCredential.mockImplementation(() => new Promise((r) => { answer = r; }));
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    fireEvent.click(await screen.findByRole('button', { name: /^enable$/i }));
+    await waitFor(() => expect(mocks.enableTelephonyCredential).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: /verify now/i })).toBeTruthy();
+    expect(screen.queryByText(/Syncing|Verifying/)).toBeNull();
+    answer(makeCred());
+  });
+
+  it('the disable confirmation says running campaigns pause and a supervisor resumes them', async () => {
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    fireEvent.click(await screen.findByRole('button', { name: /^disable$/i }));
+    expect(await screen.findByText(/Running campaigns on it pause automatically, and stay paused after you enable it again until a supervisor resumes each one\./)).toBeTruthy();
+  });
+
+  it('the usage count does not call a draft "dialling"', async () => {
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    expect(await screen.findByText('Campaigns using it (not finished)')).toBeTruthy();
+    expect(screen.queryByText(/Campaigns dialling/)).toBeNull();
+  });
+
+  it('the empty state no longer says the dial path has not shipped', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([]);
+    render(<SATelephonyCredentialsPage />);
+    expect(await screen.findByText(/Sync its numbers, then the tenant’s campaigns and soft phone can dial on it\./)).toBeTruthy();
+    expect(screen.queryByText(/dial path ships/)).toBeNull();
+  });
+
+  it('names the carrier as alias (vendor) in the picker; our own placeholder names no vendor (PL16)', async () => {
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /add credential/i }));
+    expect(screen.getByRole('option', { name: 'Pravah (Plivo)' })).toBeTruthy();
+    expect((screen.getByLabelText('Label') as HTMLInputElement).placeholder).toBe('e.g. Acme main account');
   });
 });

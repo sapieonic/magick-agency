@@ -114,6 +114,11 @@ class FakeRepo implements CredentialRepo {
     return before - this.secrets.length;
   }
   async usage(id: string) { return { campaigns: this.campaigns.get(id) ?? 0, inFlightCalls: this.inFlight.get(id) ?? 0 }; }
+  async liveCampaigns(id: string, limit: number) {
+    return Array.from({ length: Math.min(limit, this.campaigns.get(id) ?? 0) }, (_, i) => ({
+      id: `camp-${i}`, name: `Campaign ${i + 1}`, status: i === 0 ? 'running' : 'draft', tenant_name: 'Acme', account_name: i === 1 ? null : 'Main',
+    }));
+  }
 }
 
 const keyring = `v1:${crypto.randomBytes(32).toString('base64')}`;
@@ -513,12 +518,26 @@ describe('verify, disable, enable, revoke', () => {
     expect(repo.rows.get(row.id)!.status).toBe('active');
   });
 
-  it('refuses to revoke while a campaign dials on it', async () => {
+  it('refuses to revoke while a campaign dials on it, naming the campaigns', async () => {
     const row = await createOk();
     repo.campaigns.set(row.id, 2);
     const r = await svc.revoke(row.id, ADMIN);
     expect(!r.ok && r.code).toBe('in_use');
+    expect(!r.ok && r.message).toBe(
+      '2 campaigns that are not finished still use this credential: “Campaign 1” (Acme / Main, running) and '
+      + '“Campaign 2” (Acme / a removed account, draft). Move them to another carrier account, or stop them, first.');
     expect(repo.rows.get(row.id)!.status).toBe('active');
+  });
+
+  it('names at most five campaigns, then how many more; never calls a draft "dialling"', async () => {
+    const row = await createOk();
+    repo.campaigns.set(row.id, 8);
+    const r = await svc.revoke(row.id, ADMIN);
+    const message = !r.ok ? r.message : '';
+    expect(message).toMatch(/^8 campaigns that are not finished still use this credential: /);
+    expect(message.match(/“Campaign \d”/g)).toHaveLength(5);
+    expect(message).toContain(' and 3 more. ');
+    expect(message).not.toMatch(/dial/i);
   });
 
   it('revokes with a live call still hanging up on it, and shreds once the call ends', async () => {

@@ -41,7 +41,7 @@ const OPEN_CACHE_MAX = 256;
 
 export type CredentialRepo = Pick<TelephonyCredentialRepository,
   | 'create' | 'findById' | 'findOpenableSecrets' | 'findOpenableVersions' | 'list' | 'updateLabel' | 'rotateSecret'
-  | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'distinctKekIds'
+  | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'liveCampaigns' | 'distinctKekIds'
   | 'findRevokedUnshredded' | 'pruneRetiredSecrets'>;
 
 export interface TenantLookup {
@@ -54,6 +54,27 @@ export type NumberSyncRepo = Pick<PhoneNumberRepository, 'syncForCredential' | '
 export type ServiceResult<T> =
   | { ok: true; value: T }
   | { ok: false; code: TelephonyCredentialErrorCode; message: string; details?: Array<{ path: string; message: string }> };
+
+/** How many of the campaigns blocking a revoke its refusal names. */
+export const REVOKE_REFUSAL_CAMPAIGNS_NAMED = 5;
+
+/**
+ * The revoke refusal while campaigns that can still dial (draft, running, paused or
+ * stopping) are pinned to the credential: each named with its tenant, account and status,
+ * at most {@link REVOKE_REFUSAL_CAMPAIGNS_NAMED}, then how many more.
+ */
+export function revokeInUseMessage(
+  total: number,
+  named: ReadonlyArray<{ name: string; status: string; tenant_name: string; account_name: string | null }>,
+): string {
+  const items = named.map((c) => `“${c.name}” (${c.tenant_name} / ${c.account_name ?? 'a removed account'}, ${c.status})`);
+  const more = total - named.length;
+  if (more > 0) items.push(`${more} more`);
+  const list = items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  const them = total === 1 ? 'it' : 'them';
+  return `${total === 1 ? '1 campaign that is not finished still uses' : `${total} campaigns that are not finished still use`} `
+    + `this credential: ${list}. Move ${them} to another carrier account, or stop ${them}, first.`;
+}
 
 const fail = (code: TelephonyCredentialErrorCode, message: string, details?: Array<{ path: string; message: string }>): ServiceResult<never> =>
   ({ ok: false, code, message, ...(details ? { details } : {}) });
@@ -361,16 +382,12 @@ export class TelephonyCredentialService {
     if (!current) return fail('not_found', 'Credential not found');
     if (current.status === 'revoked') return fail('invalid_transition', 'The credential is already revoked');
     const usage = await this.deps.repo.usage(id);
-    if (usage.campaigns > 0) {
-      return fail('in_use', `${usage.campaigns} campaign(s) still dial on this credential; move them to another first`);
-    }
+    if (usage.campaigns > 0) return this.inUse(id, usage.campaigns);
     const row = await this.deps.repo.revoke(id, adminId);
     if (!row) {
       // Pinned between the check above and the revoke, or revoked concurrently.
       const raced = await this.deps.repo.usage(id);
-      if (raced.campaigns > 0) {
-        return fail('in_use', `${raced.campaigns} campaign(s) still dial on this credential; move them to another first`);
-      }
+      if (raced.campaigns > 0) return this.inUse(id, raced.campaigns);
       return this.transitionRefused(id, 'The credential is already revoked');
     }
     this.forget(id);
@@ -446,6 +463,12 @@ export class TelephonyCredentialService {
 
   async get(id: string): Promise<TelephonyCredentialRecord | null> {
     return this.deps.repo.findById(id);
+  }
+
+  /** The `in_use` revoke refusal, naming the campaigns that block it. */
+  private async inUse(id: string, total: number): Promise<ServiceResult<never>> {
+    const named = await this.deps.repo.liveCampaigns(id, REVOKE_REFUSAL_CAMPAIGNS_NAMED);
+    return fail('in_use', revokeInUseMessage(total, named));
   }
 
   async usage(id: string) {
