@@ -313,7 +313,7 @@ or four times its compute time.
 | `dnc_marked` | agent DNC entries scoped to the campaign, created in range (`idx_dnc_entries_tenant_created`) |
 | `trends.buckets`, `best_hours` | the rollup's `trends` read; `agents_online_peak` from `agentsOnlinePeak`, joined on the bucket label |
 | `health.abandonment.rolling_24h` | the guardrail's window for this campaign (`abandonmentWindowStatement`: ended, answered in the last 24 h; read as a day of the campaign's dials) |
-| `health.abandonment.auto_pauses` | the guardrail's `agency_campaign.auto_paused` audit rows in range (at most 200) |
+| `health.abandonment.auto_pauses` | the guardrail's `agency_campaign.auto_paused` audit rows in range (at most 200): reason `abandonment_ceiling`, or none (its oldest rows); the carrier-account pause's rows (`carrier_auth`, `carrier_account_unavailable`) share the event and are left out |
 | `predial_blocks`, `concurrency_limit_minutes`, `our_fault_retired`, `stalls`, `pacing_history_since` | `pacingHistory` |
 | `caller_ids`, `carrier_failures`, `recording` | the rollup |
 | `health.analysis` | null: not served (no index-driven read of a range's analysed calls exists; a rollup facet or an index on `agency_calls (campaign_id, created_at)` would make one) |

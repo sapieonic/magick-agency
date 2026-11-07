@@ -227,6 +227,10 @@ async function seed(): Promise<{ sessions: string[] }> {
   await q(`INSERT INTO audit_logs (tenant_id, account_id, event_type, event_category, severity, actor, event_data, timestamp)
            VALUES ($1, $2, 'agency_campaign.auto_paused', 'call', 'error', 'system:abandonment-guardrail', $3::jsonb, $4)`,
     [floor.tenant, floor.account, JSON.stringify({ campaign_id: campaignId, reason: 'abandonment_ceiling', measured_pct: 3.4, ceiling_pct: 3 }), at(70)]);
+  // A carrier-account pause: the same event, not the guardrail's, so not in `health.abandonment.auto_pauses`.
+  await q(`INSERT INTO audit_logs (tenant_id, account_id, event_type, event_category, severity, actor, event_data, timestamp)
+           VALUES ($1, $2, 'agency_campaign.auto_paused', 'call', 'error', 'system:carrier-auth', $3::jsonb, $4)`,
+    [floor.tenant, floor.account, JSON.stringify({ campaign_id: campaignId, reason: 'carrier_auth', telephony_provider: 'plivo', telephony_credential_id: randomUUID() }), at(75)]);
   const { rows: [soft] } = await q(
     `INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state, kind, joined_at, left_at)
      VALUES ($1, $2, NULL, $3, 'offline', 'softphone', $4, $5) RETURNING id`, [floor.tenant, floor.account, agent(2).id, at(1), at(2)]);
@@ -411,6 +415,7 @@ describe('the range reads', () => {
     expect(h.stalls.episodes_truncated).toBe(false);
     expect(h.concurrency_limit_minutes).toBe(1);
     expect(h.predial_blocks.dnc).toBe(1);
+    // The guardrail's pause only: the carrier-account pause at(75) is the same event, not listed.
     expect(h.abandonment.auto_pauses).toEqual([{ at: at(70).toISOString(), measured_pct: 3.4, ceiling_pct: 3 }]);
     expect(h.abandonment.rolling_24h.answered).toBeGreaterThan(h.abandonment.rolling_24h.abandoned);
     expect(h.caller_ids.reduce((s: number, c: { dials: number }) => s + c.dials, 0)).toBe((responses['activity'] as any).calls.dials);
