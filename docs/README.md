@@ -2,13 +2,14 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-06.
+are as of 2026-11-07.
 
 ## What Magick Agency is
 
 Magick Agency is an outbound power dialer for human agents. Supervisors load campaigns, the dialer
 paces calls to the number of available agents, and each answered call is bridged to an agent's
-browser over WebRTC and VoiceLink, with the contact's details already on screen. It is one
+browser over WebRTC and VoiceLink (or a tenant's own Plivo account), with the contact's details
+already on screen. It is one
 self-contained application: a Fastify server, a Postgres database, Redis, an agent and supervisor
 console, and a super-admin console, depending only on vendors (VoiceLink, Firebase Authentication,
 Mailjet, S3, Gemini / OpenAI, PostHog).
@@ -36,6 +37,10 @@ CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; consol
 (2026-11-06: one number searched across the tenant's campaigns, CH1–CH13, reviewed and fixed the
 same day; a search measured at 15 ms median on a 1M-contact tenant) is built on the server, the
 console and the app; its test counts are in `status.md`, and the app's Dart side has not run yet.
+Plivo on tenants' own accounts (B18–B22, PL1–PL10: credentials super-admins add, campaigns pinned
+to one, number sync, signed callbacks, two automatic pauses) is built through step 4 (2026-11-07)
+and tested end to end against a mock Plivo carrier: server 8582 unit / 2075 integration + 9
+expected fail; step 5, a real Plivo call, needs a Plivo account.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
