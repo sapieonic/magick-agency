@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, extname, join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { TELEPHONY_PROVIDER_ALIASES } from '@magick-agency/web-ui/telephonyProviders';
 import { operatorCarrierName } from '../../utils/carrierName';
+import { shippedFiles, stripComments } from './sourceScan';
 
 /**
  * How the super-admin console names a carrier (decision PL16): "Alias (Vendor)", through
@@ -21,26 +22,7 @@ const srcRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const HELPER = join('utils', 'carrierName.ts');
 const VENDOR = /twilio|plivo|exotel|vobiz|telnyx|voice\s?link/i;
 
-function shippedFiles(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) {
-      if (name !== '__tests__') shippedFiles(path, out);
-    } else if (['.ts', '.tsx'].includes(extname(name)) && !/\.test\.tsx?$/.test(name)) {
-      out.push(path);
-    }
-  }
-  return out;
-}
-
-/** Block and line comments out; a `//` right after `:` is a URL scheme and stays. */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ''))
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
-
-const files = shippedFiles(srcRoot).map((path) => ({
+const files = shippedFiles(srcRoot, new Set(['.ts', '.tsx'])).map((path) => ({
   rel: relative(srcRoot, path),
   code: stripComments(readFileSync(path, 'utf8')),
 }));

@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, extname, join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { shippedFiles, stripComments } from './sourceScan';
 
 /**
  * User-facing copy is British English (root CLAUDE.md): dialled, dialling, dialler,
@@ -16,28 +17,12 @@ import { describe, expect, it } from 'vitest';
 const srcRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const AMERICAN = /\b(dialing|dialed|dialer|dialers|redialing|redialed|canceled|canceling|utilization|recognize|recognized|organization|organizations|behavior)\b/i;
 const PRODUCT = /agency dialer/gi;
-
-function shipped(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) {
-      if (name !== '__tests__') shipped(path, out);
-    } else if (['.ts', '.tsx'].includes(extname(name)) && !/\.test\.tsx?$/.test(name)) {
-      out.push(path);
-    }
-  }
-  return out;
-}
-
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ''))
-    .replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
-}
+const SCANNED_EXT = new Set(['.ts', '.tsx']);
 
 const LITERAL = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g;
 const JSX_TEXT = />([^<>{}]*[A-Za-z][^<>{}]*)</g;
 
+/** The copy in `code` (comments already stripped): prose-like string literals, and JSX text. */
 function prose(code: string, tsx: boolean): string[] {
   const out: string[] = [];
   for (const m of code.matchAll(LITERAL)) {
@@ -50,10 +35,18 @@ function prose(code: string, tsx: boolean): string[] {
 }
 
 describe('user-facing copy is British English', () => {
-  const files = shipped(srcRoot);
+  const files = shippedFiles(srcRoot, SCANNED_EXT);
 
   it('scans the shipped sources', () => {
     expect(files.length).toBeGreaterThan(20);
+  });
+
+  it('sees a string that holds `//`, and not a comment', () => {
+    const americanIn = (source: string) => prose(stripComments(source), true).some((t) => AMERICAN.test(t));
+    expect(americanIn("const s = 'Skipped // the dialer will retry';")).toBe(true);
+    expect(americanIn("const s = 'See https://example.com, then the dialer retries';")).toBe(true);
+    expect(americanIn('const s = 1; // the dialer retries')).toBe(false);
+    expect(americanIn('/* the dialer retries */ const s = 1;')).toBe(false);
   });
 
   it('no American spelling in a string or JSX text', () => {
