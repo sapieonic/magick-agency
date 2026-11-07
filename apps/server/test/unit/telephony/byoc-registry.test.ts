@@ -197,6 +197,32 @@ describe('TelephonyProviderRegistry.getForCredentialId', () => {
   });
 });
 
+describe('TelephonyProviderRegistry.recordCredentialRefused', () => {
+  it('records the refusal against the credential and the secret version the adapter was built with', async () => {
+    let version = 3;
+    const c = { ...creds(() => resolved({ version })), recordCarrierRefusal: vi.fn(async () => ({ id: 'cred-1' })) };
+    const factory = vi.fn((cred: ResolvedCredential) => fakeAdapter(`v${cred.version}`));
+    const r = registry(c, new Map([['plivo', factory]]));
+    const adapter = await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');
+    version = 4; // rotated after the dial was placed: the verdict is still the old secret's
+    const at = { tenantId: 't1', accountId: 'a1', callId: 'call-1' };
+    expect(await r.recordCredentialRefused(adapter, 'refused', at)).toBe(true);
+    expect(c.recordCarrierRefusal).toHaveBeenCalledWith('cred-1', 3, 'refused', at);
+  });
+
+  it('the service`s own account, an adapter it did not build, or a verdict not written: false; a throwing resolver: false', async () => {
+    const c = { ...creds(() => resolved()), recordCarrierRefusal: vi.fn(async () => null) };
+    const r = registry(c, new Map([['plivo', vi.fn(() => fakeAdapter('x'))]]));
+    const at = { tenantId: 't1', accountId: 'a1' };
+    expect(await r.recordCredentialRefused(fakeAdapter('stranger'), 'refused', at)).toBe(false);
+    expect(c.recordCarrierRefusal).not.toHaveBeenCalled();
+    const adapter = await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');
+    expect(await r.recordCredentialRefused(adapter, 'refused', at)).toBe(false);
+    c.recordCarrierRefusal.mockRejectedValueOnce(new Error('boom'));
+    expect(await r.recordCredentialRefused(adapter, 'refused', at)).toBe(false);
+  });
+});
+
 describe('the registered BYOC adapters', () => {
   it('builds a PlivoAdapter on the pinned credential, holding the grace tokens for call control only', async () => {
     const c = creds((purpose) => resolved({

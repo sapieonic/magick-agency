@@ -45,7 +45,7 @@ import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
-import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import { carrierAuthRejectionReason, isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
@@ -773,6 +773,16 @@ export class WebRtcBridgeManager {
       const unplaced = carrierUnplacedRefusal(err);
       if (unplaced) {
         log.warn({ err, callId: record.id, code: unplaced.code }, 'WebRTC outbound dial refused before the carrier placed it');
+        // The carrier refused the credential itself: every further dial on it would be
+        // refused too, so the verdict goes on the credential (`invalid`), as a verify's
+        // would, against the secret version this adapter holds. Nothing for the service's
+        // own account (its adapter holds no credential). Never throws.
+        const refusedCredential = carrierAuthRejectionReason(err);
+        if (refusedCredential && session.telephonyCredentialId) {
+          await this.telephonyRegistry.recordCredentialRefused(adapter, refusedCredential, {
+            tenantId: params.tenantId, accountId: params.accountId, callId: record.id,
+          });
+        }
         await this.abortUnplacedLeg(record.id, err, unplaced);
         throw unplacedRefusalError(unplaced, err);
       }

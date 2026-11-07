@@ -138,6 +138,22 @@ export function isCarrierAuthRejected(err: unknown): boolean {
   return causeChainHas(err, 'carrierAuthRejected');
 }
 
+/**
+ * What `last_error` says when the carrier refused a credential on a dial: the
+ * {@link CarrierAuthRejectedError} in `err`'s `cause` chain, in words. Null when there is none.
+ */
+export function carrierAuthRejectionReason(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (typeof current === 'object' && (current as Record<string, unknown>)['carrierAuthRejected'] === true) {
+      const status = (current as { httpStatus?: unknown }).httpStatus;
+      return `The carrier refused the credential on a dial${typeof status === 'number' ? ` (HTTP ${status})` : ''}`;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
 /** Whether `err`, or an error in its `cause` chain, is a {@link CarrierRateLimitedError}. */
 export function isCarrierRateLimited(err: unknown): boolean {
   return causeChainHas(err, 'carrierRateLimited');

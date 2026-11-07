@@ -19,6 +19,7 @@ import {
 } from '../../../src/telephony/credentials/credential-service.js';
 import type { FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../../../src/telephony/webhook-grace.js';
+import { auditLogger } from '../../../src/audit/audit-logger.js';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const ADMIN = '99999999-9999-4999-8999-999999999999';
@@ -535,5 +536,70 @@ describe('verify, disable, enable, revoke', () => {
     expect(new Set(repo.holds)).toEqual(new Set([WEBHOOK_TOKEN_POST_END_GRACE_SECONDS]));
     expect(repo.secrets.filter((s) => s.credential_id === row.id)).toEqual([]);
     await expect(svc.resolve(row.id, 'call_control')).rejects.toBeInstanceOf(CredentialUnavailableError);
+  });
+});
+
+describe('recordCarrierRefusal (the carrier refused the credential on a dial)', () => {
+  const AT = { tenantId: TENANT, accountId: '22222222-2222-4222-8222-222222222222', callId: '33333333-3333-4333-8333-333333333333' };
+  const REASON = 'The carrier refused the credential on a dial (HTTP 401)';
+
+  it('marks an active credential invalid with the reason, so it no longer dials; audited once as a system action, no secret', async () => {
+    const audit = vi.spyOn(auditLogger, 'log').mockImplementation(() => {});
+    audit.mockClear();
+    const row = await createOk();
+    const written = await svc.recordCarrierRefusal(row.id, 1, REASON, AT);
+    expect(written).toMatchObject({ id: row.id, status: 'invalid', last_error: REASON });
+    await expect(svc.resolve(row.id, 'dial')).rejects.toMatchObject({ kind: 'status' });
+    // Calls already placed on it still hang up and check webhooks.
+    await expect(svc.resolve(row.id, 'call_control')).resolves.toMatchObject({ id: row.id });
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: TENANT, accountId: AT.accountId, callId: AT.callId,
+      eventType: 'telephony_credential.carrier_refused', actor: 'system:carrier-auth',
+      eventData: expect.objectContaining({ telephony_credential_id: row.id, secret_version: 1, status: 'invalid', account_ref: AUTH_ID }),
+    }));
+    expect(JSON.stringify(audit.mock.calls)).not.toContain(CANARY);
+    // A second refusal (another call refused at the same moment) writes and audits nothing.
+    expect(await svc.recordCarrierRefusal(row.id, 1, REASON, AT)).toBeNull();
+    expect(audit).toHaveBeenCalledTimes(1);
+  });
+
+  it('is never written over a rotation that committed meanwhile (B20): the new secret stays active', async () => {
+    const audit = vi.spyOn(auditLogger, 'log').mockImplementation(() => {});
+    audit.mockClear();
+    const row = await createOk();
+    const rotated = await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    expect(rotated.ok).toBe(true);
+    // The dial that was refused ran on version 1.
+    expect(await svc.recordCarrierRefusal(row.id, 1, REASON, AT)).toBeNull();
+    expect(await repo.findById(row.id)).toMatchObject({ status: 'active', last_error: null, secret_version: 2 });
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('a verify that passes, or a rotation, brings it back to active', async () => {
+    vi.spyOn(auditLogger, 'log').mockImplementation(() => {});
+    const row = await createOk();
+    await svc.recordCarrierRefusal(row.id, 1, REASON, AT);
+    carrier.status = 200;
+    const v = await svc.verify(row.id, ADMIN);
+    expect(v.ok && v.value).toMatchObject({ status: 'active', last_error: null });
+    await svc.recordCarrierRefusal(row.id, 1, REASON, AT);
+    const r = await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    expect(r.ok && r.value).toMatchObject({ status: 'active', last_error: null, secret_version: 2 });
+  });
+
+  it('on a disabled credential (disabled while the dial was in flight): recorded, so enable brings it back invalid', async () => {
+    vi.spyOn(auditLogger, 'log').mockImplementation(() => {});
+    const row = await createOk();
+    await svc.disable(row.id, ADMIN);
+    expect(await svc.recordCarrierRefusal(row.id, 1, REASON, AT)).toMatchObject({ status: 'disabled', last_error: REASON });
+    const e = await svc.enable(row.id, ADMIN);
+    expect(e.ok && e.value.status).toBe('invalid');
+  });
+
+  it('never throws: a repository failure is null', async () => {
+    const row = await createOk();
+    vi.spyOn(repo, 'setStatus').mockRejectedValueOnce(new Error('db down'));
+    expect(await svc.recordCarrierRefusal(row.id, 1, REASON, AT)).toBeNull();
   });
 });

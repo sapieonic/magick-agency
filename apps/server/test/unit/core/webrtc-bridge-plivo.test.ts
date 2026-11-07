@@ -76,6 +76,7 @@ const { plivoAdapter, registry } = vi.hoisted(() => {
     registry: {
       get: vi.fn((provider: string) => { throw new Error(`Unknown telephony provider: ${provider}`); }),
       getForCredentialId: vi.fn(async (_p: string, _id: string | null, _purpose: string, _t: string) => plivoAdapter),
+      recordCredentialRefused: vi.fn(async (_a: unknown, _reason: string, _at: unknown) => true),
     },
   };
 });
@@ -85,6 +86,7 @@ vi.mock('../../../src/telephony/factory.js', () => ({
     getForCredentialId(p: string, id: string | null, purpose: string, t: string) {
       return registry.getForCredentialId(p, id, purpose, t);
     }
+    recordCredentialRefused(a: unknown, reason: string, at: unknown) { return registry.recordCredentialRefused(a, reason, at); }
   },
 }));
 
@@ -266,6 +268,16 @@ describe('a Plivo dial places the leg on the call`s own credential', () => {
     expect(mockRepo.update).toHaveBeenCalledWith(CALL_ID, expect.objectContaining({ status: 'failed', error_code: errorCode }));
     expect(plivoAdapter.cancelDialRequest).not.toHaveBeenCalled();
     expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    // Only the carrier refusing the credential is a verdict on it; a rate limit says nothing.
+    if (code === 'carrier_auth_rejected') {
+      expect(registry.recordCredentialRefused).toHaveBeenCalledTimes(1);
+      expect(registry.recordCredentialRefused).toHaveBeenCalledWith(
+        plivoAdapter, 'The carrier refused the credential on a dial (HTTP 401)',
+        { tenantId: 'tenant-a', accountId: 'a1', callId: CALL_ID },
+      );
+    } else {
+      expect(registry.recordCredentialRefused).not.toHaveBeenCalled();
+    }
   });
 
   it('a media worker places a Plivo dial with its slot in every URL Plivo gets: answer, status, recording and the stream', async () => {

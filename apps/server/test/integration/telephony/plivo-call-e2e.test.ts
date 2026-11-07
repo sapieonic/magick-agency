@@ -14,7 +14,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *      call hangup; a late answer is answered with the hangup XML;
  *  (c) a callback signed with no, a forged, or ANOTHER tenant's Plivo token is refused and
  *      changes nothing; a valid one after them still works;
- *  (d) a dial Plivo refuses 401 pauses the campaign `carrier_auth`, audited;
+ *  (d) a dial Plivo refuses 401 pauses the campaign `carrier_auth`, audited, and marks the
+ *      credential `invalid` (a resume is refused until a verify or rotation clears it);
  *  (e) after a rotation, a callback signed with the previous token inside the grace is
  *      accepted, and the REST hangup goes out on the new token;
  *  (g) a credential disabled while its campaign runs: the dial is refused before the carrier
@@ -40,6 +41,7 @@ const { env } = vi.hoisted(() => {
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { getAgencyRuntime } from '../../../src/bootstrap/agency.js';
 import { auditLogger } from '../../../src/audit/audit-logger.js';
+import { campaignCredentialStartRefusal } from '../../../src/agency/campaign-carrier.js';
 import { PLIVO_HANGUP_XML } from '../../../src/telephony/plivo/plivo.adapter.js';
 import { bits, isLoudMulaw, isLoudPcm16 } from '../../mocks/voicelink/audio-pattern.js';
 import type { PlivoCall, PlivoCallScript } from '../../mocks/plivo/index.js';
@@ -250,6 +252,25 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     });
     expect(contact).toEqual({ state: 'pending', due: true, our_fault_attempts: 0 });
     expect(r.carrier.callOrder).toHaveLength(0);
+
+    // The carrier's verdict is on the credential too: `invalid`, so a resume is refused
+    // until a super-admin verifies or rotates it, rather than dialling into the same 401.
+    const credential = await waitFor('the credential marked invalid', async () => {
+      const row = await r.credentials.get(r.credentialId);
+      return row?.status === 'invalid' ? row : null;
+    });
+    expect(credential).toMatchObject({ secret_version: 1, last_error: 'The carrier refused the credential on a dial (HTTP 401)' });
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'telephony_credential.carrier_refused', actor: 'system:carrier-auth',
+      eventData: expect.objectContaining({ telephony_credential_id: r.credentialId, secret_version: 1, status: 'invalid' }),
+    }));
+    expect(JSON.stringify(audit.mock.calls)).not.toContain(r.carrier.authToken);
+    expect(await campaignCredentialStartRefusal({ telephony_credential_id: r.credentialId }))
+      .toMatchObject({ code: 'telephony_credential_not_active' });
+    // A verify the carrier accepts brings it back.
+    const verified = await r.credentials.verify(r.credentialId, ADMIN);
+    expect(verified.ok && verified.value).toMatchObject({ status: 'active', last_error: null });
+    expect(await campaignCredentialStartRefusal({ telephony_credential_id: r.credentialId })).toBeNull();
   }, 60_000);
 
   it('(g) a credential disabled while its campaign runs pauses it `carrier_account_unavailable`; nothing reaches the carrier', async () => {

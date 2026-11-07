@@ -38,6 +38,13 @@ export class ByocCredentialUnavailableError extends Error {
 export interface CredentialResolver {
   peek(credentialId: string, purpose: ResolvePurpose): Promise<CredentialPeek>;
   resolve(credentialId: string, purpose: ResolvePurpose): Promise<ResolvedCredential>;
+  /** The carrier refused a credential on a call: record that verdict (`TelephonyCredentialService`). Never throws. */
+  recordCarrierRefusal?(
+    credentialId: string,
+    secretVersion: number,
+    reason: string,
+    at: { tenantId: string; accountId: string; callId?: string },
+  ): Promise<unknown>;
 }
 
 /** Builds an adapter on a tenant's own carrier account. */
@@ -108,6 +115,8 @@ export class TelephonyProviderRegistry {
   private providers = new Map<string, TelephonyProvider>();
   /** BYOC adapters, keyed `credentialId:purpose` and tagged with the versions `peek` listed when built. */
   private byoc = new Map<string, { fingerprint: string; adapter: TelephonyProvider }>();
+  /** Which credential, at which secret version, each BYOC adapter this registry built holds. */
+  private readonly byocOrigin = new WeakMap<TelephonyProvider, { credentialId: string; secretVersion: number }>();
   private readonly config: AppConfig;
   private readonly credentials: (() => CredentialResolver) | null;
   private readonly byocAdapters: ReadonlyMap<string, ByocAdapterFactory>;
@@ -206,10 +215,36 @@ export class TelephonyProviderRegistry {
       throw new ByocCredentialUnavailableError(credentialId, 'credential changed while it was resolved');
     }
     const adapter = factory(resolved, this.config);
+    this.byocOrigin.set(adapter, { credentialId: resolved.id, secretVersion: resolved.version });
     this.byoc.delete(slot);
     if (this.byoc.size >= BYOC_CACHE_MAX) this.byoc.delete(this.byoc.keys().next().value!);
     this.byoc.set(slot, { fingerprint, adapter });
     return adapter;
+  }
+
+  /**
+   * The carrier refused the credential `adapter` holds (HTTP 401 on a dial): record that
+   * verdict on the credential through the credential service, against the secret
+   * version this adapter was built with, so a rotation since is never marked by an old
+   * secret's refusal (B20). An adapter on the service's own account, or one this registry
+   * did not build, has no credential and records nothing. Never throws.
+   *
+   * @returns whether the verdict was written.
+   */
+  async recordCredentialRefused(
+    adapter: TelephonyProvider,
+    reason: string,
+    at: { tenantId: string; accountId: string; callId?: string },
+  ): Promise<boolean> {
+    const origin = this.byocOrigin.get(adapter);
+    if (!origin || !this.credentials) return false;
+    try {
+      const written = await this.credentials().recordCarrierRefusal?.(origin.credentialId, origin.secretVersion, reason, at);
+      return written !== null && written !== undefined;
+    } catch {
+      // The credential service logs its own failures; a resolver that threw says nothing more.
+      return false;
+    }
   }
 
   /** Run a credential-service call; a credential that cannot serve drops its adapters. */
