@@ -130,6 +130,24 @@ describe('filtering by the campaign’s carrier account', () => {
   });
 });
 
+describe('a carrier account that is not active (PL4: its numbers are not listed)', () => {
+  const OFF: CarrierChoice = { telephony_provider: 'plivo', telephony_credential_id: '33333333-3333-4333-8333-333333333333' };
+
+  it('names the account as the cause, by its label, and sends the operator to support', () => {
+    render(<CallerIdPicker selected={[]} onChange={vi.fn()} carrier={OFF} carrierLabel="Acme spare" carrierActive={false} />);
+    expect(screen.getByText('This campaign’s carrier account, Pravah (Acme spare), is not active.')).toBeTruthy();
+    expect(document.body.textContent).toMatch(/Contact support to have it\s+re-enabled, or choose another carrier\./);
+    expect(screen.queryByText(/are assigned to this account/)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/plivo|administrator/i);
+  });
+
+  it('without its label (no longer listed) names the carrier only, never "your own account"', () => {
+    render(<CallerIdPicker selected={[]} onChange={vi.fn()} carrier={OFF} carrierActive={false} />);
+    expect(screen.getByText('This campaign’s Pravah carrier account is not active.')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/your own account/);
+  });
+});
+
 describe('a change of carrier', () => {
   it('drops the selected numbers that are not on the new carrier account, and only on a change', () => {
     const onChange = vi.fn();

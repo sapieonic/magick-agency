@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactElement } from 'react';
+import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { usePhoneNumbers } from '../../hooks/usePhoneNumbers';
 import { carrierKey, carrierName, numberOnCarrier, type CarrierChoice } from '../../utils/agencyCarriers';
 import styles from './CallerIdPicker.module.css';
@@ -13,6 +14,12 @@ export interface CallerIdPickerProps {
   carrier: CarrierChoice;
   /** The carrier account's label, for a tenant's own account (`AgencyCarrier.label`). */
   carrierLabel?: string | null;
+  /**
+   * False when the carriers list no longer offers this carrier account (disabled, invalid
+   * or revoked: `carrierActive`). Its numbers drop out of the list then, and the empty
+   * state names the account as the cause rather than a missing number.
+   */
+  carrierActive?: boolean;
   disabled?: boolean;
 }
 
@@ -44,6 +51,7 @@ export function CallerIdPicker({
   onChange,
   carrier,
   carrierLabel = null,
+  carrierActive = true,
   disabled = false,
 }: CallerIdPickerProps) {
   const { phoneNumbers, loading, error } = usePhoneNumbers();
@@ -112,6 +120,25 @@ export function CallerIdPicker({
 
   if (loading) return <p className={styles.status}>Loading your numbers…</p>;
   if (error) return <p className={styles.error}>{error}</p>;
+
+  if (onCarrier.length === 0 && !carrierActive) {
+    // PL4: an account that is not active offers no numbers, so the fix is the account.
+    return withUnavailable(
+      <div className={styles.empty}>
+        <p className={styles.emptyTitle}>
+          {carrierLabel
+            ? `This campaign’s carrier account, ${name}, is not active.`
+            // No longer listed, so its label is not known here: never "your own account".
+            : `This campaign’s ${telephonyProviderAlias(provider)} carrier account is not active.`}
+        </p>
+        <p className={styles.emptyBody}>
+          It has been disabled, or the carrier no longer accepts its credentials, so its numbers
+          cannot be used and the campaign cannot dial on it. Contact support to have it
+          re-enabled, or choose another carrier.
+        </p>
+      </div>,
+    );
+  }
 
   if (onCarrier.length === 0) {
     return withUnavailable(

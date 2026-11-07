@@ -8,7 +8,8 @@ import { useModalFocus } from '../../hooks/useModalFocus';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CallerIdPicker } from '../../pages/agency/CallerIdPicker';
-import { carrierOfCampaign } from '../../utils/agencyCarriers';
+import { carrierActive, carrierOfCampaign, sameCarrier } from '../../utils/agencyCarriers';
+import { useAgencyCarriers } from '../../hooks/useAgencyCarriers';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from './HoldToConfirmButton';
 import {
   defaultRetryName,
@@ -368,6 +369,10 @@ export function AgencyRetryDialog({
   // component renders a different number of hooks when closed, and React tears
   // the tree down on the next open with "Rendered fewer hooks than expected".
   useModalFocus(open, dialogRef);
+  // The parent's carrier account by its label, and whether it is still active, for the
+  // caller-ID picker. Read only while open.
+  const { carriers } = useAgencyCarriers({ enabled: open });
+  const parentCarrier = carrierOfCampaign(campaign);
 
   if (!open) return null;
 
@@ -565,7 +570,9 @@ export function AgencyRetryDialog({
               <CallerIdPicker
                 selected={callerIds}
                 onChange={setCallerIds}
-                carrier={carrierOfCampaign(campaign)}
+                carrier={parentCarrier}
+                carrierLabel={carriers?.find((c) => sameCarrier(c, parentCarrier))?.label ?? null}
+                carrierActive={carrierActive(carriers, parentCarrier)}
                 disabled={submitting}
               />
               <div className={styles.windowRow}>

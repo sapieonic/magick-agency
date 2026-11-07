@@ -5,6 +5,7 @@ import {
   CARRIER_REFUSAL_COPY,
   CarrierRefusalError,
   SERVICE_CARRIER,
+  carrierActive,
   carrierName,
   carrierOfCampaign,
   carrierOptions,
@@ -46,6 +47,14 @@ describe('carrierOfCampaign', () => {
   });
 });
 
+describe('carrierActive', () => {
+  it('is whether the list still offers the account, and true while the list is unknown', () => {
+    expect(carrierActive([SERVICE, OWN_A], { telephony_provider: 'plivo', telephony_credential_id: CRED_A })).toBe(true);
+    expect(carrierActive([SERVICE], { telephony_provider: 'plivo', telephony_credential_id: CRED_A })).toBe(false);
+    expect(carrierActive(null, { telephony_provider: 'plivo', telephony_credential_id: CRED_A })).toBe(true);
+  });
+});
+
 describe('carrierOptions', () => {
   it('lists the carriers in order and adds the campaign’s own when the list lacks it', () => {
     expect(carrierOptions([SERVICE, OWN_A], SERVICE_CARRIER).map((o) => o.name)).toEqual(['Swar', 'Pravah (Acme main)']);
@@ -53,7 +62,7 @@ describe('carrierOptions', () => {
     const options = carrierOptions([SERVICE], gone);
     expect(options.map((o) => [o.name, o.unavailable])).toEqual([
       ['Swar', false],
-      ['Pravah (your own account), not active', true],
+      ['Pravah (account no longer active)', true],
     ]);
   });
 });

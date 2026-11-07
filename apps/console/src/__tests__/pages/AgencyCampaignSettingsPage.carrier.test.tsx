@@ -230,8 +230,12 @@ describe('campaign settings — carrier', () => {
     renderPage();
     const select = (await screen.findByLabelText(/^Carrier/)) as HTMLSelectElement;
     expect(select.value).toBe(`plivo:${CRED_OLD}`);
-    expect(Array.from(select.options).map((o) => o.textContent)).toContain('Pravah (your own account), not active');
+    expect(Array.from(select.options).map((o) => o.textContent)).toContain('Pravah (account no longer active)');
     expect(screen.getByTestId('carrier-unavailable').textContent).toMatch(/no longer active/);
+    // Its numbers dropped out of the list with it: the caller-ID empty state names the
+    // account as the cause, not a missing number assignment.
+    expect(screen.getByText('This campaign’s Pravah carrier account is not active.')).toBeTruthy();
+    expect(screen.queryByText(/are assigned to this account/)).toBeNull();
 
     fireEvent.click(saveButton());
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());

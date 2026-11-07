@@ -68,6 +68,15 @@ export function numberOnCarrier(
   );
 }
 
+/**
+ * Whether the carriers list still offers `carrier` (only active carrier accounts are
+ * listed). `true` while the list is unknown (not read yet, or unreadable), so nothing is
+ * called inactive on a guess.
+ */
+export function carrierActive(listed: readonly AgencyCarrier[] | null | undefined, carrier: CarrierChoice): boolean {
+  return !listed || listed.some((c) => sameCarrier(c, carrier));
+}
+
 export interface CarrierOption extends CarrierChoice {
   key: string;
   name: string;
@@ -95,7 +104,11 @@ export function carrierOptions(
     options.push({
       ...current,
       key: carrierKey(current),
-      name: `${carrierName(current)}, not active`,
+      // The list no longer has it, so neither its label nor its state is known here:
+      // say only that it is no longer active, never "your own account" as if a label.
+      name: current.telephony_credential_id === null
+        ? `${carrierName(current)}, not active`
+        : `${telephonyProviderAlias(current.telephony_provider)} (account no longer active)`,
       unavailable: true,
     });
   }

@@ -51,6 +51,7 @@ import { CampaignCarrierField } from '../../components/agency/CampaignCarrierFie
 import { useAgencyCarriers } from '../../hooks/useAgencyCarriers';
 import {
   SERVICE_CARRIER,
+  carrierActive,
   carrierOfCampaign,
   carrierName,
   carrierOptions,
@@ -472,6 +473,7 @@ export function AgencyCampaignSettingsPage() {
             onChange={setCallerIds}
             carrier={carrier}
             carrierLabel={carrierLabel}
+            carrierActive={carrierActive(carriers, carrier)}
             disabled={!canEdit}
           />
           {fieldErrors['caller_ids'] && (
