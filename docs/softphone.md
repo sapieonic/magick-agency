@@ -23,6 +23,12 @@ Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"); the app's are 
 | SP6 | Does a soft-phone outcome change the roster contact? | **Yes** | When the number is on the tagged campaign's roster the call claims the contact and its outcome settles it (§5) |
 | SP7 | Swap from a running campaign | Agents can break from a campaign and use the soft phone, and back; audited | §4.2 |
 
+SP3 is about VoiceLink, the service's own carrier, and stands. A call on a tenant's own Plivo
+account (decisions B18–B22, PL8) can be cancelled while it rings: the bridge's teardown before the
+answer cancels the dial by its request id, so the ringing stops. The console and the agent app do
+not tell the carriers apart yet: the SP3 warning and the hold-to-confirm hang-up show for every
+ringing call (§8).
+
 ## 2. Shape
 
 - **The soft phone is a break.** While on the soft phone an agent's session is in `break` with the
@@ -126,8 +132,9 @@ Owned by `AgencyRuntime`. One call at a time per session.
    `+44 (0)20…` → `+4420…`, a soft-phone-local step; then `normalizePhoneToE164` then `normalizeE164`; the schema has no account country, so the default
    region is the platform's, `DEFAULT_PHONE_COUNTRY_CODE`, `+91` by default); caller ID in the
    allowed set (tagged: the campaign's `caller_ids`, default the pool's round-robin pick as pacing
-   dials; untagged: the account's assigned numbers, `findAvailableForAccount`, default the
-   settings' `default_caller_id` while still assigned, else the account's default number); roster
+   dials; untagged: the account's assigned numbers, `findAvailableForAccount`, which offers a number
+   synced from a tenant's own carrier account only while its credential is `active` (PL4), default
+   the settings' `default_caller_id` while still assigned, else the account's default number); roster
    guard, one live call per number across the account (decisions MC4) — tagged, the match on the
    tag (`campaign_id` + phone digits, the existing index), and a contact `in_flight` refuses
    `contact_in_flight` with no override; then, tagged or untagged, the number `in_flight` on ANY
@@ -151,10 +158,16 @@ Owned by `AgencyRuntime`. One call at a time per session.
 4. **Dial agent first**: `createBridgedCall` with the session's station socket and the
    correlation `{ kind: 'manual', manualCallId }`, `browserCloseGraceMs: 0` before answer (the
    bridge honours the grace on a manual leg only once answered; after the answer the
-   deferred-hangup window applies, so a wifi blip mid-conversation survives). `ringing` is
+   deferred-hangup window applies, so a wifi blip mid-conversation survives), on a carrier account
+   `softphoneCarrier` (`manual-predial.ts`) picks: tagged, the campaign's carrier and pinned
+   credential; untagged, the carrier and credential of the chosen caller ID's number (a number
+   synced from a tenant's Plivo account dials on that account; the service's own numbers on the
+   service's carrier). `ringing` is
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
    (`concurrency_limit`, a dead socket, or `dial_failed` for a refusal the soft phone does not
-   name, and for any failure inside the bridge before the carrier is asked: the row INSERT, the
+   name, such as a carrier account that cannot dial (`telephony_credential_unavailable`,
+   `carrier_auth_rejected`) or a calls-per-second limit (`carrier_rate_limited`), which pause
+   nothing here, and for any failure inside the bridge before the carrier is asked: the row INSERT, the
    carrier tokens, the carrier request's inputs such as the webhook base or the provider's
    adapter, which the bridge tears down with no `ended`) or the carrier refuses outright is
    ended `failed` and **unplaced**: `dialed_at` (stamped by
@@ -554,6 +567,8 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
 ## 8. Not built (yet)
 
 Call details in the analysis prompt (needs a `context_pending` job hold), a callbacks list, DTMF,
-per-campaign call fields, a "every call must be tagged" setting, cancel-while-ringing (Plivo),
-transfer and conference. The agent app has no DTMF and no recordings either; the supervisor's
+per-campaign call fields, a "every call must be tagged" setting, transfer and conference.
+Cancel-while-ringing works on Plivo on the server side (§1, after the table), but neither app tells
+the agent: the SP3 warning, which names VoiceLink, and the hold-to-confirm hang-up show for a
+ringing Plivo call too. The agent app has no DTMF and no recordings either; the supervisor's
 lists and Settings → Soft phone stay on the console.
