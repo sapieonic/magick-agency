@@ -271,12 +271,17 @@ describe('telephony-provider CRUD (writes removed; the list is kept)', () => {
   // POST /phone-numbers.
   it('GET /telephony-providers lists the providers and forwards ?status', async () => {
     const app = await buildApp();
-    mocks.findAllProviders.mockResolvedValue([{ id: 'tp-1', name: 'voicelink' }]);
+    mocks.findAllProviders.mockResolvedValue([{ id: 'tp-1', name: 'voicelink' }, { id: 'tp-2', name: 'plivo' }]);
     const all = await app.inject({ method: 'GET', url: '/super-admin/telephony-providers' });
     const active = await app.inject({ method: 'GET', url: '/super-admin/telephony-providers?status=active' });
 
     expect(all.statusCode).toBe(200);
-    expect(all.json()).toEqual({ providers: [{ id: 'tp-1', name: 'voicelink' }] });
+    // Which carriers take tenant credentials (their numbers are synced, never added by
+    // hand) comes from the credential specs, not the name.
+    expect(all.json()).toEqual({ providers: [
+      { id: 'tp-1', name: 'voicelink', takes_tenant_credentials: false },
+      { id: 'tp-2', name: 'plivo', takes_tenant_credentials: true },
+    ] });
     expect(mocks.findAllProviders).toHaveBeenNthCalledWith(1, undefined);
     expect(mocks.findAllProviders).toHaveBeenNthCalledWith(2, 'active');
     expect(active.statusCode).toBe(200);

@@ -393,6 +393,11 @@ export interface TelephonyProvider {
   name: string;
   display_name: string;
   status: 'active' | 'inactive';
+  /**
+   * Dialled on tenants' own carrier accounts: its numbers come from a credential's
+   * "Sync numbers" and cannot be added by hand. Optional: an older server omits it.
+   */
+  takes_tenant_credentials?: boolean;
   created_at: string;
   updated_at: string;
 }

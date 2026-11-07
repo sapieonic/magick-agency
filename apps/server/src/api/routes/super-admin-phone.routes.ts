@@ -55,12 +55,18 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
 
   /**
    * GET /super-admin/telephony-providers
-   * List all telephony providers. Optional ?status=active filter.
+   * List all telephony providers. Optional ?status=active filter. Each carries
+   * `takes_tenant_credentials`: whether it is dialled on tenants' own accounts, whose
+   * numbers come from a credential's sync and cannot be added by hand (`POST
+   * /phone-numbers` below refuses them), so the console can leave it out of "Add number".
    */
   app.get('/telephony-providers', async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as Record<string, string>;
     const status = query['status'] || undefined;
-    const providers = await telephonyProviderRepository.findAll(status);
+    const providers = (await telephonyProviderRepository.findAll(status)).map((p) => ({
+      ...p,
+      takes_tenant_credentials: findCredentialSpec(p.name) !== undefined,
+    }));
     return reply.send({ providers });
   });
 

@@ -22,7 +22,9 @@ const EMPTY_FORM = {
 /**
  * "Add phone number". Stays mounted while closed, so a half-filled form and
  * its last error survive closing and reopening; a successful add resets it.
- * Only ACTIVE providers are offered.
+ * Only ACTIVE providers are offered, and never one dialled on tenants' own carrier
+ * accounts (`takes_tenant_credentials`): the server refuses those, because their numbers
+ * come from a credential's "Sync numbers", which the form points to instead.
  */
 export function PhoneNumberCreateModal({ open, providers, onClose, onCreated }: {
   open: boolean;
@@ -34,6 +36,9 @@ export function PhoneNumberCreateModal({ open, providers, onClose, onCreated }: 
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const active = providers.filter(p => p.status === 'active');
+  const offered = active.filter(p => !p.takes_tenant_credentials);
+  const synced = active.filter(p => p.takes_tenant_credentials);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,10 +95,15 @@ export function PhoneNumberCreateModal({ open, providers, onClose, onCreated }: 
             required
           >
             <option value="">Select provider…</option>
-            {providers.filter(p => p.status === 'active').map(p => (
+            {offered.map(p => (
               <option key={p.id} value={p.id}>{telephonyProviderAlias(p.name, p.display_name)}</option>
             ))}
           </select>
+          {synced.length > 0 && (
+            <p className={styles.fieldHint} data-testid="synced-carriers-hint">
+              {`Numbers on ${synced.map(p => telephonyProviderAlias(p.name, p.display_name)).join(', ')} come from a tenant’s own carrier account: use Sync numbers on its credential under Telephony credentials.`}
+            </p>
+          )}
         </div>
         <div className={styles.field}>
           <label>Label (optional)</label>
