@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0016_agent_caller_ids.sql (docs/decisions.md, DN1). globalSetup has
+// Real Postgres: migrations/0018_agent_caller_ids.sql (docs/decisions.md, DN1). globalSetup has
 // applied every migration. Pins the table's two uniqueness rules (one number per agent per
 // campaign, one agent per number per campaign; the same number free on another campaign), the
 // trimmed-number CHECK, the cascades (tenant, user) and SET NULL (the supervisor), the index the
@@ -20,7 +20,7 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {} });
 
-const FILE = '0016_agent_caller_ids.sql';
+const FILE = '0018_agent_caller_ids.sql';
 const TABLE = 'agency_campaign_agent_caller_ids';
 
 async function indexDef(name: string): Promise<string | undefined> {
@@ -47,7 +47,7 @@ function dedicate(s: Awaited<ReturnType<typeof seed>>, o: Record<string, unknown
   return insertRow(TABLE, { tenant_id: s.tenant, account_id: s.account, set_by_user_id: s.supervisor, ...o });
 }
 
-describe('0016 — agency_campaign_agent_caller_ids', () => {
+describe('0018 — agency_campaign_agent_caller_ids', () => {
   it('one number per agent per campaign, one agent per number per campaign; free on another campaign', async () => {
     const s = await seed();
     const campaign = randomUUID();
@@ -105,7 +105,7 @@ describe('0016 — agency_campaign_agent_caller_ids', () => {
     await migrate('down', files.length - files.indexOf(FILE));
     try {
       const ledger = await pool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1');
-      expect(ledger.rows[0]!.name).toBe('0015_multiple_running_campaigns');
+      expect(ledger.rows[0]!.name).toBe('0017_customer_history_contacts_index');
       expect(await tableExists()).toBe(false);
     } finally {
       await migrate('up');

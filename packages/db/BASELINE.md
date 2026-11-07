@@ -120,7 +120,7 @@ Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `s3_key`, `file_name`, 
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `user_id`, `assigned_by`, `assigned_at`, `unassigned_at`, `created_at`, `updated_at`.
 
-**`agency_campaign_agent_caller_ids`** (0016). Dedicated caller IDs: one of a campaign's caller IDs given to an agent, so every dial to a contact they own on it goes out from that number (see below).
+**`agency_campaign_agent_caller_ids`** (0018). Dedicated caller IDs: one of a campaign's caller IDs given to an agent, so every dial to a contact they own on it goes out from that number (see below).
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `user_id`, `caller_id`, `set_by_user_id`, `set_at`.
 
@@ -226,8 +226,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_agency_manual_call_unsettled` (0005) | `agency_manual_calls` |
 | `uq_agency_softphone_settings_account` (0005) | `agency_softphone_settings` |
 | `uq_agency_attempt_redial_of` (0008) | `agency_call_attempts` |
-| `uq_agency_agent_caller_id_agent` (0016) | `agency_campaign_agent_caller_ids` |
-| `uq_agency_agent_caller_id_number` (0016) | `agency_campaign_agent_caller_ids` |
+| `uq_agency_agent_caller_id_agent` (0018) | `agency_campaign_agent_caller_ids` |
+| `uq_agency_agent_caller_id_number` (0018) | `agency_campaign_agent_caller_ids` |
 
 ## Triggers and functions
 
@@ -770,7 +770,46 @@ otherwise it drops the live-number index and recreates `uq_agency_campaign_runni
 index's definition and that the planner uses it for the probe, the refused down, down then up), the
 `uq_agency_campaign_running` case in `baseline.test.ts`, and the down → up suite.
 
-### 0016 — `migrations/0016_agent_caller_ids.sql`
+### 0016 — `migrations/0016_customer_history_indexes.sql`
+
+Customer history: one number searched across the tenant's campaigns (`docs/customer-history.md`,
+CH9).
+
+- **`idx_agency_manual_calls_destination`** `(tenant_id, account_id, destination_e164,
+  created_at DESC, id DESC)`: every soft-phone call to one number in the accounts the caller can
+  see, logged to a campaign or not (an untagged call has no contact, only `destination_e164`).
+  The history's timeline walks it once per visible account, keyset on `(created_at, id)` with the
+  cursor in the index condition and no sort (`CUSTOMER_HISTORY_SQL.pageManualCalls`; pinned by
+  `test/integration/db/customer-history-indexes-migration.test.ts` and EXPLAINed whole by the
+  server's `test/integration/api/customer-history.test.ts`). `destination_e164` is already
+  normalised to E.164 at pre-dial, the form the search produces.
+- **Locking.** Plain `CREATE INDEX` (SHARE on `agency_manual_calls`, one scan); one transaction, at
+  container start.
+
+**Down** drops the index. **Tests**: `test/integration/db/customer-history-indexes-migration.test.ts`
+(definition, the planner using it for the history's read, down then up) and the down → up suite.
+
+### 0017 — `migrations/0017_customer_history_contacts_index.sql`
+
+Customer history: every read bounded to a number's newest 2,000 roster rows
+(`docs/customer-history.md`, CH9 and CH14).
+
+- **`idx_agency_contacts_customer_history`** `(tenant_id, account_id, phone_e164, created_at DESC,
+  id DESC) INCLUDE (campaign_id)`: a placeholder number pasted down a roster made every
+  customer-history read O(roster rows). The history now covers the newest
+  `CUSTOMER_HISTORY_MAX_CONTACT_ROWS` (2,000) rows of the number in the visible accounts, chosen by
+  walking this index once per account newest first under a `LIMIT` (`newestContacts`,
+  `CUSTOMER_HISTORY_SQL`): the walk stops at the cap, with no sort of every match. `campaign_id` is
+  included so the walk can be answered from the index. `idx_agency_contacts_phone` stays (the DNC
+  sweeps and the dialer's cross-campaign lookups).
+- **Locking.** Plain `CREATE INDEX` (SHARE on `agency_contacts`, one scan); one transaction, at
+  container start.
+
+**Down** drops the index. **Tests**: `test/integration/db/customer-history-contacts-index-migration.test.ts`
+(definition, the walk stopping at the cap on a 5,000-row placeholder among 200,000 rows, down then
+up) and the down → up suite.
+
+### 0018 — `migrations/0018_agent_caller_ids.sql`
 
 Dedicated caller ID per agent on a campaign (`docs/decisions.md`, "Dedicated caller ID per agent",
 DN1–DN10).

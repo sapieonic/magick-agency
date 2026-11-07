@@ -13,6 +13,22 @@ import {
 import type * as Core from '../src/agency';
 import { AgencyApi } from '../src/index';
 import type { Equals } from './type-equals';
+import {
+  CUSTOMER_CALLBACK_STATUSES,
+  CUSTOMER_HISTORY_ERROR_CODES,
+  CUSTOMER_RECORDING_STATES,
+  CUSTOMER_SEARCH_BYS,
+  CUSTOMER_SEARCH_NUMBER_ERRORS,
+  CUSTOMER_TIMELINE_CHANNELS,
+  CUSTOMER_TIMELINE_KINDS,
+  type CustomerCallbackStatus,
+  type CustomerHistoryErrorCode,
+  type CustomerRecordingState,
+  type CustomerSearchBy,
+  type CustomerSearchNumberError,
+  type CustomerTimelineChannel,
+  type CustomerTimelineKind,
+} from '../src/api/agency/customer-history';
 
 /**
  * SNAPSHOT — written out by hand, deliberately not derived from the list under test.
@@ -166,4 +182,50 @@ describe('soft-phone codes', () => {
     const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
     for (const code of AGENCY_SOFTPHONE_ERROR_CODES) expect(action.has(code), code).toBe(false);
   });
+});
+
+// ── Customer history (src/api/agency/customer-history.ts): each list is exactly its union, both
+//    ways (the module's own `AllListed` guards are one-sided: a stray listed value would pass them).
+const _chCodesExact: Equals<(typeof CUSTOMER_HISTORY_ERROR_CODES)[number], CustomerHistoryErrorCode> = true;
+const _chNumberExact: Equals<(typeof CUSTOMER_SEARCH_NUMBER_ERRORS)[number], CustomerSearchNumberError> = true;
+const _chBysExact: Equals<(typeof CUSTOMER_SEARCH_BYS)[number], CustomerSearchBy> = true;
+const _chChannelsExact: Equals<(typeof CUSTOMER_TIMELINE_CHANNELS)[number], CustomerTimelineChannel> = true;
+const _chKindsExact: Equals<(typeof CUSTOMER_TIMELINE_KINDS)[number], CustomerTimelineKind> = true;
+const _chRecordingExact: Equals<(typeof CUSTOMER_RECORDING_STATES)[number], CustomerRecordingState> = true;
+const _chCallbackExact: Equals<(typeof CUSTOMER_CALLBACK_STATUSES)[number], CustomerCallbackStatus> = true;
+void [_chCodesExact, _chNumberExact, _chBysExact, _chChannelsExact, _chKindsExact, _chRecordingExact, _chCallbackExact];
+
+describe('customer-history codes', () => {
+  it('the refusal codes equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...CUSTOMER_HISTORY_ERROR_CODES]).toEqual([
+      'invalid_number',
+      'invalid_search_request',
+      'invalid_cursor',
+      'search_expired',
+    ]);
+    expectUnique(CUSTOMER_HISTORY_ERROR_CODES);
+  });
+
+  it('the number refusals equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...CUSTOMER_SEARCH_NUMBER_ERRORS]).toEqual([
+      'empty',
+      'invalid_characters',
+      'spreadsheet_number',
+      'too_short',
+      'invalid_for_country',
+    ]);
+    expectUnique(CUSTOMER_SEARCH_NUMBER_ERRORS);
+  });
+
+  it('the vocabularies the app switches on equal their snapshots (SNAPSHOT, written out by hand)', () => {
+    expect([...CUSTOMER_SEARCH_BYS]).toEqual(['phone']);
+    expect([...CUSTOMER_TIMELINE_CHANNELS]).toEqual(['campaign', 'softphone']);
+    expect([...CUSTOMER_TIMELINE_KINDS]).toEqual(['campaign_call', 'softphone_call', 'callback', 'dnc_mark', 'roster_entry']);
+    expect([...CUSTOMER_RECORDING_STATES]).toEqual(['available', 'not_recorded', 'expired', 'no_call']);
+    expect([...CUSTOMER_CALLBACK_STATUSES]).toEqual(['kept', 'late', 'missed', 'upcoming', 'due']);
+    for (const list of [CUSTOMER_SEARCH_BYS, CUSTOMER_TIMELINE_CHANNELS, CUSTOMER_TIMELINE_KINDS, CUSTOMER_RECORDING_STATES, CUSTOMER_CALLBACK_STATUSES]) {
+      expectUnique(list);
+    }
+  });
+
 });

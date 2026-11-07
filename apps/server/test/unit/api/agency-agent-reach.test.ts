@@ -100,6 +100,7 @@ vi.mock('../../../src/services/tenant-name-resolver.js', () => ({
 import Fastify from 'fastify';
 import { buildApp } from '../../../src/app.js';
 import { agencyPlugin, AGENCY_ROUTE_PREFIXES } from '../../../src/api/agency.plugin.js';
+import { registerRateLimit } from '../../../src/api/middleware/rate-limit.middleware.js';
 
 const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/my-assignment',
@@ -148,6 +149,13 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/softphone/calls/:id/dnc',
   'POST /proxy/agency/softphone/calls/:id/hangup',
   'POST /proxy/agency/softphone/sessions',
+  // Customer history (docs/customer-history.md CH1): `agency.customer_history.read` floors at
+  // `agent`. What an agent sees there is cut to their own visibility (CH8): no call page, no
+  // other agents' notes, no DNC reasons.
+  'GET /proxy/agency/customers/options',
+  'POST /proxy/agency/customers/export',
+  'POST /proxy/agency/customers/search',
+  'POST /proxy/agency/customers/timeline',
 ].sort();
 
 /**
@@ -185,6 +193,9 @@ beforeAll(async () => {
     for (const m of methods) if (m !== 'HEAD' && m !== 'OPTIONS') pluginRoutes.push({ method: m, url: r.url });
     if ((r as { websocket?: boolean }).websocket === true) wsRoutes.push(`GET ${r.url}`);
   });
+  // The limiter first, as `app.ts` registers it: the customer-history search cap is built on it,
+  // and refuses to register without it.
+  await registerRateLimit(bare, null);
   await bare.register(agencyPlugin, { ctx: null });
   await bare.ready();
   await bare.close();

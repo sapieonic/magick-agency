@@ -347,8 +347,9 @@ void main() {
   });
 
   group('sign-out', () {
-    test('explicit sign-out clears scope, the remembered account and Firebase', () async {
+    test('explicit sign-out clears scope, the remembered account, recent searches and Firebase', () async {
       signedIn();
+      h.store.values[SessionStore.recentSearchesKey] = '[{"e164":"+919876543210","display":"+91 98765 43210"}]';
       final c = h.container();
       await startGate(c);
       await c.read(appGateProvider.notifier).signOut();
@@ -356,8 +357,25 @@ void main() {
       expect(c.read(requestScopeProvider).isSet, isFalse);
       expect(c.read(readyAccountProvider), isNull);
       expect(await SessionStore(h.store).readLastAccount(), isNull);
+      expect(h.store.values.containsKey(SessionStore.recentSearchesKey), isFalse);
       expect(h.auth.signOuts, 1);
       expect(h.auth.currentUser, isNull);
+    });
+
+    const searched = '[{"e164":"+919876543210","display":"+91 98765 43210"}]';
+
+    test('nobody signed in at start-up: recent searches left on the phone are forgotten', () async {
+      h.store.values[SessionStore.recentSearchesKey] = searched;
+      expect(await startGate(h.container()), const GateSignedOut());
+      expect(h.store.values.containsKey(SessionStore.recentSearchesKey), isFalse);
+    });
+
+    test('a session refused at start-up signs out and forgets the recent searches', () async {
+      h.server.json('POST', '/auth/session', {'error': 'Bad Request', 'message': 'Refused'}, status: 400);
+      signedIn();
+      h.store.values[SessionStore.recentSearchesKey] = searched;
+      expect(await startGate(h.container()), isA<GateSignedOut>());
+      expect(h.store.values.containsKey(SessionStore.recentSearchesKey), isFalse);
     });
 
     test('a 401 reported anywhere signs out with the expiry notice', () async {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.11.0...contracts-v0.12.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,mobile:** customer history, one number across the tenant's campaigns ([#50](https://github.com/sapieonic/magick-agency/issues/50)) ([d1c9f78](https://github.com/sapieonic/magick-agency/commit/d1c9f786476a8f287248126ff98c93a9458aab9e))
+
 ## [0.11.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.10.0...contracts-v0.11.0) (2026-11-06)
 
 

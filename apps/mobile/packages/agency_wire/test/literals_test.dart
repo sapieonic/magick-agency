@@ -63,6 +63,14 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'my_contact_buckets': MyContactBucket.values,
   'agent_retry_blocks': AgentRetryBlock.values,
   'agent_retry_error_codes': AgentRetryErrorCode.values,
+  // Customer history.
+  'customer_search_bys': CustomerSearchBy.values,
+  'customer_timeline_channels': CustomerTimelineChannel.values,
+  'customer_timeline_kinds': CustomerTimelineKind.values,
+  'customer_recording_states': CustomerRecordingState.values,
+  'customer_callback_statuses': CustomerCallbackStatus.values,
+  'customer_search_number_errors': CustomerSearchNumberError.values,
+  'customer_history_error_codes': CustomerHistoryErrorCode.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
@@ -106,6 +114,13 @@ final Map<String, List<WireEnum>> appSends = {
   'my_contact_buckets': [
     for (final b in MyContactBucket.values)
       if (!b.isUnknown) b,
+  ],
+  // The customer search's `by`, and the timeline's `channel` filter. Its
+  // `outcomes` filter is any attempt outcome (`attempt_outcomes` above).
+  'customer_search_bys': [CustomerSearchBy.phone],
+  'customer_timeline_channels': [
+    for (final c in CustomerTimelineChannel.values)
+      if (!c.isUnknown) c,
   ],
 };
 
@@ -231,6 +246,12 @@ void main() {
     }
     for (final v in ts('queue_idle_reasons')) {
       expect(QueueIdleReason.fromWire(v).wire, v);
+    }
+    for (final v in ts('customer_callback_statuses')) {
+      expect(CustomerCallbackStatus.fromWire(v).wire, v);
+    }
+    for (final v in ts('customer_timeline_kinds')) {
+      expect(CustomerTimelineKind.fromWire(v).wire, v);
     }
   });
 

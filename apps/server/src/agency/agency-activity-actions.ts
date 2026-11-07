@@ -71,7 +71,10 @@ export type ActivityActionOption =
 type CampaignScopedAuditAction = Exclude<
   Extract<PlatformAuditAction, `agency_${string}` | `dnc_${string}`>,
   // The account's soft-phone settings are account-wide: no row of it carries a campaign.
-  'agency_softphone_settings.updated'
+  | 'agency_softphone_settings.updated'
+  // A customer-history search or export reads one number across the tenant (CH10): no campaign.
+  | 'agency_customer_history.searched'
+  | 'agency_customer_history.exported'
 >;
 
 /**

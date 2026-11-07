@@ -132,6 +132,13 @@ describe('heuristic hero selection', () => {
     expect(resolved.hero.map((f) => f.label)).toEqual(['City']);
   });
 
+  it('pins nothing when nothing is configured and nothing matches a bucket (no first-columns fallback)', () => {
+    // The panel lists every column under the heroes, so it does not pin columns nobody chose.
+    const resolved = resolveContextFields({ Remarks: 'x', Source: 'web' }, {});
+    expect(resolved.hero).toEqual([]);
+    expect(resolved.fields.map((f) => f.label)).toEqual(['Remarks', 'Source']);
+  });
+
   it('never guesses when the operator configured heroes', () => {
     const resolved = resolveContextFields(CONTEXT, { hero: ['Branch'] });
     expect(resolved.hero.map((f) => f.label)).toEqual(['Branch']);

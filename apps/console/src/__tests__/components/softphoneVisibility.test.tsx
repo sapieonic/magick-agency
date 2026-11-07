@@ -36,7 +36,10 @@ describe('the agent nav', () => {
     as('agent', true);
     render(<MemoryRouter><AgentNav current="campaigns" /></MemoryRouter>);
     const ids = screen.getAllByTestId(/^agent-nav-/).map((el) => el.getAttribute('data-testid'));
-    expect(ids).toEqual(['agent-nav-campaigns', 'agent-nav-phone', 'agent-nav-performance', 'agent-nav-attempts']);
+    // Customer history (`agent-nav-customers`) closes the list for every agent (CH1).
+    expect(ids).toEqual([
+      'agent-nav-campaigns', 'agent-nav-phone', 'agent-nav-performance', 'agent-nav-attempts', 'agent-nav-customers',
+    ]);
     expect(screen.getByTestId('agent-nav-phone').getAttribute('href')).toBe('/dialer/phone');
   });
 
@@ -50,11 +53,23 @@ describe('the agent nav', () => {
     as(undefined, true);
     render(<MemoryRouter><AgentNav current="campaigns" /></MemoryRouter>);
     expect(screen.queryByTestId('agent-nav-phone')).toBeNull();
+    expect(screen.queryByTestId('agent-nav-customers')).toBeNull();
+  });
+
+  it('offers customer history to an agent, at /dialer/customers, flag or not', () => {
+    as('agent', false);
+    render(<MemoryRouter><AgentNav current="campaigns" /></MemoryRouter>);
+    const link = screen.getByTestId('agent-nav-customers');
+    expect(link.getAttribute('href')).toBe('/dialer/customers');
+    expect(link.textContent).toContain('Search a number');
   });
 
   it('keeps the fixed three as the map the station pins its links against', () => {
     expect(agentSurfacesFor({ softphone: false })).toBe(AGENT_SURFACES);
     expect(agentSurfacesFor({ softphone: true }).map((s) => s.id)).toEqual(['campaigns', 'phone', 'performance', 'attempts']);
+    expect(agentSurfacesFor({ softphone: false, customers: true }).map((s) => s.id)).toEqual([
+      'campaigns', 'performance', 'attempts', 'customers',
+    ]);
   });
 });
 

@@ -4,8 +4,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../telemetry/log.dart';
 
-/// The little the app keeps on the device: which account was last used and
-/// the agent's local preferences. Nothing about contacts or calls, ever.
+/// The little the app keeps on the device: which account was last used, the
+/// agent's local preferences, and the last few numbers they searched in
+/// Customer history (as the console keeps them; cleared by "Clear" and on
+/// sign-out). Nothing else about contacts or calls, ever.
 abstract interface class KeyValueStore {
   Future<String?> getString(String key);
   Future<void> setString(String key, String value);
@@ -100,6 +102,12 @@ class SessionStore {
   Future<void> clearLastAccount() async {
     await Future.wait([_kv.remove(tenantKey), _kv.remove(accountKey)]);
   }
+
+  /// Customer history's recent searches (`features/customers/recent_searches.dart`):
+  /// the last five numbers searched on this device. Signing out forgets them.
+  static const recentSearchesKey = 'customer_history.recent_searches';
+
+  Future<void> clearRecentSearches() => _kv.remove(recentSearchesKey);
 }
 
 final sessionStoreProvider = Provider<SessionStore>((ref) => SessionStore(ref.watch(keyValueStoreProvider)));

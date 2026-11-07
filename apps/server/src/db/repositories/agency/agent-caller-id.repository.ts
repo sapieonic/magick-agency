@@ -1,6 +1,6 @@
 /**
  * Dedicated caller IDs (decisions DN1–DN10): `agency_campaign_agent_caller_ids`, one number per
- * agent per campaign and one agent per number per campaign (migration 0016).
+ * agent per campaign and one agent per number per campaign (migration 0018).
  *
  *  - {@link EFFECTIVE_DEDICATION_SQL} is THE definition of a dedication that counts (DN1): its
  *    agent has an ACTIVE staffing row on the campaign, and the row was set at or after that

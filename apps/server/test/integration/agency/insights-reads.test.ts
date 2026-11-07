@@ -386,7 +386,9 @@ describe('the running headline\'s pace', () => {
          SELECT $1, c.id, $2, $3, 1, '+919000000001', 'ended', now() - make_interval(mins => right(c.phone_e164, 4)::int * 8) FROM c`,
         [id, DEFAULTS.tenantId, DEFAULTS.accountId]);
       const { text, values } = repo.dialPaceStatement(id);
-      const p = await plan(text, values, undefined, false, ['agency_call_attempts']);
+      // Both sides of the join analysed on this seed: the contacts side otherwise plans on whatever
+      // statistics earlier files left.
+      const p = await plan(text, values, undefined, false, ['agency_call_attempts', 'agency_contacts']);
       // The hour is the index condition, beside the campaign: idx_agency_attempts_campaign_dialed
       // (campaign, dialed_at), or idx_agency_attempts_billing (dialed_at, campaign) when this
       // test DB's few campaigns make the cross-campaign range as cheap; never a scan of the

@@ -82,3 +82,52 @@ describe('agency campaign routes', () => {
     }
   });
 });
+
+/**
+ * Customer history (`docs/customer-history.md` §5, CH6): served at
+ * `/agency/customers` in the agency shell and at `/dialer/customers` for an agent,
+ * and neither path has a parameter, because the number never travels in a URL.
+ */
+describe('customer history routes', () => {
+  const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+
+  /** The `/agency` block: its children are relative paths inside `AgencyLayout`. */
+  const agencyBlock = (() => {
+    const start = app.indexOf('path="/agency"');
+    const end = app.indexOf('<Route path="/app"');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return app.slice(start, end);
+  })();
+
+  it('declares customers inside the agency shell, as the page component', () => {
+    expect(agencyBlock).toContain('<Route path="customers" element={<CustomerHistoryPage />} />');
+    expect(app).toContain("import('./pages/agency/CustomerHistoryPage')");
+  });
+
+  it('declares /dialer/customers for agents, gated like the other agent surfaces', () => {
+    const start = app.indexOf('path="/dialer/customers"');
+    expect(start).toBeGreaterThan(-1);
+    // Route elements are flat: the text up to the next `<Route` is this route alone.
+    const next = app.indexOf('<Route', start);
+    expect(next).toBeGreaterThan(start);
+    const block = app.slice(start, next);
+    expect(block).toContain('<RequireAuth>');
+    expect(block).toContain('capability="agency"');
+    expect(block).toContain('flag="agency_dialer_enabled"');
+    expect(block).toContain('<AgentCustomerHistoryPage />');
+    // Outside the agency shell: an agent renders nothing in it.
+    expect(agencyBlock).not.toContain('path="/dialer/customers"');
+  });
+
+  it('takes no parameter on either path, so no number can be put in the URL', () => {
+    const paths = [...app.matchAll(/path="([^"]*customers[^"]*)"/g)].map((m) => m[1]!);
+    expect(paths.sort()).toEqual(['/dialer/customers', 'customers']);
+    for (const path of paths) expect(path).not.toContain(':');
+  });
+
+  it('resolves /customers to the page and not to anything with a parameter', () => {
+    const declared = [...app.matchAll(/<Route\s+path="([^"/][^"]*)"/g)].map((m) => ({ path: m[1]! }));
+    expect(matchRoutes(declared, '/customers')?.[0]?.route.path).toBe('customers');
+  });
+});

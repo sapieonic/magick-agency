@@ -1,4 +1,4 @@
--- 0016_agent_caller_ids.sql — a dedicated caller ID per agent on a campaign (docs/decisions.md,
+-- 0018_agent_caller_ids.sql — a dedicated caller ID per agent on a campaign (docs/decisions.md,
 -- "Dedicated caller ID per agent", DN1–DN10).
 --
 -- A supervisor dedicates one of a campaign's `caller_ids` to an agent staffed on it; every dial

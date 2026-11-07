@@ -15,6 +15,7 @@ import { proxyAgencyCampaignsRoutes } from './routes/proxy-agency-campaigns.rout
 import { proxyAgencyStaffingRoutes } from './routes/proxy-agency-staffing.routes.js';
 import { proxyAgencyAssignmentRoutes } from './routes/proxy-agency-assignment.routes.js';
 import { proxyAgencyInsightsRoutes } from './routes/proxy-agency-insights.routes.js';
+import { proxyAgencyCustomersRoutes } from './routes/proxy-agency-customers.routes.js';
 import { proxyAgencyPerformanceRoutes } from './routes/proxy-agency-performance.routes.js';
 import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
 import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
@@ -132,6 +133,13 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   // ── Campaign insights (its own 404 for `:id`, `proxy-agency-insights.routes.ts`) ────
   await app.register(async (scope) => {
     await scope.register(proxyAgencyInsightsRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── Customer history (`proxy-agency-customers.routes.ts`, docs/customer-history.md) ──
+  // No path params: the search is named by a `search_id` in the body. Gets the context for its
+  // config and its Redis search store.
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyCustomersRoutes, { prefix: P.proxyAgency, ctx });
   });
 
   // ── Agent performance (its own 400 for `:userId`) ──────────────────────────────────

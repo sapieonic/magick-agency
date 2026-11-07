@@ -30,6 +30,9 @@ const AGENCY_PERMISSIONS: Permission[] = [
   // An action on the caller's own contacts (the subject is the session's user, never a
   // parameter), like the five above.
   'agency.contacts.own',
+  // Customer history (CH1: everyone can search). A read of one number the caller typed in
+  // full, with supervise-only media and other agents' notes withheld (CH8).
+  'agency.customer_history.read',
 ];
 
 /**
@@ -108,7 +111,7 @@ describe('agent role — grants nothing that predates the Agency Dialer', () => 
     expect(hasPermission('agent', 'tenant.read')).toBe(false);
   });
 
-  it('resolves to exactly the six agency action permissions plus the flag map, and nothing else', () => {
+  it('resolves to exactly the six agency action permissions, the customer history and the flag map, and nothing else', () => {
     const granted = ALL_PERMISSIONS.filter((p) => hasPermission('agent', p)).sort();
     expect(granted).toEqual([...AGENT_PERMISSIONS].sort());
   });

@@ -21,16 +21,15 @@ async function indexDef(name: string): Promise<string | undefined> {
  * The plan for `sql` with sequential scans priced out, so the test's near-empty tables do not
  * make a scan cheaper than any index. What remains is whether the index is USABLE for the
  * predicate — the property a partial index can silently lack.
- *
- * `without`: indexes dropped for this plan only (the transaction rolls back), for a query that
- * another index serves as well. On a near-empty table the planner's pick between two usable
- * indexes turns on whatever rows earlier files left, so the test would assert a coin toss.
  */
-async function planOf(sql: string, without: readonly string[] = []): Promise<string> {
+async function planOf(sql: string, without: string[] = []): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
     await client.query('BEGIN');
     await client.query('SET LOCAL enable_seqscan = off');
+    // An equally usable index the test does not ask about, dropped inside the rolled-back
+    // transaction: on a near-empty table the two tie, and the planner's pick follows whatever
+    // rows earlier files left.
     for (const index of without) await client.query(`DROP INDEX ${index}`);
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
@@ -47,20 +46,18 @@ describe('0003 — agency attempt and contact indexes', () => {
     expect(await indexDef('idx_agency_attempts_live')).toMatch(
       /ON public\.agency_call_attempts USING btree \(campaign_id\) WHERE \(\(state\)::text <> 'ended'::text\)/,
     );
-    // 0005's idx_agency_attempts_account_live has the same predicate, so it can serve both
-    // queries too (filtering on campaign_id); it is set aside so the plan shows whether THIS
-    // index is usable.
-    const otherLive = ['idx_agency_attempts_account_live'];
-    // countLive's own text (AgencyAttemptRepository.countLive).
+    // countLive's own text (AgencyAttemptRepository.countLive). 0005's account-wide live index
+    // carries the same predicate and ties with this one on the test's near-empty table.
+    const tie = ['idx_agency_attempts_account_live'];
     expect(await planOf(
       `SELECT COUNT(*)::text AS n FROM agency_call_attempts WHERE campaign_id = ${CAMPAIGN} AND state <> 'ended'`,
-      otherLive,
+      tie,
     )).toContain('idx_agency_attempts_live');
     // The reaper's `state = ANY(<live states>)` implies the new predicate too.
     expect(await planOf(
       `SELECT * FROM agency_call_attempts WHERE campaign_id = ${CAMPAIGN}
           AND state = ANY('{queued,dialing,ringing,answered,bridged}'::varchar[])`,
-      otherLive,
+      tie,
     )).toContain('idx_agency_attempts_live');
   });
 

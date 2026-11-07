@@ -485,5 +485,66 @@
       "dial_failed",
       "feature_disabled"
     ]
+  },
+  "customer_search_bys": {
+    "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_SEARCH_BYS",
+    "values": [
+      "phone"
+    ]
+  },
+  "customer_timeline_channels": {
+    "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_TIMELINE_CHANNELS",
+    "values": [
+      "campaign",
+      "softphone"
+    ]
+  },
+  "customer_timeline_kinds": {
+    "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_TIMELINE_KINDS",
+    "values": [
+      "campaign_call",
+      "softphone_call",
+      "callback",
+      "dnc_mark",
+      "roster_entry"
+    ]
+  },
+  "customer_recording_states": {
+    "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_RECORDING_STATES",
+    "values": [
+      "available",
+      "not_recorded",
+      "expired",
+      "no_call"
+    ]
+  },
+  "customer_callback_statuses": {
+    "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_CALLBACK_STATUSES",
+    "values": [
+      "kept",
+      "late",
+      "missed",
+      "upcoming",
+      "due"
+    ]
+  },
+  "customer_search_number_errors": {
+    "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_SEARCH_NUMBER_ERRORS",
+    "values": [
+      "empty",
+      "invalid_characters",
+      "spreadsheet_number",
+      "too_short",
+      "invalid_for_country"
+    ]
+  },
+  "customer_history_error_codes": {
+    "source": "packages/contracts/src/api/agency/customer-history.ts#CUSTOMER_HISTORY_ERROR_CODES",
+    "values": [
+      "invalid_number",
+      "invalid_search_request",
+      "invalid_cursor",
+      "search_expired"
+    ]
   }
 }

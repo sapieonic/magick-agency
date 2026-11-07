@@ -29,7 +29,8 @@ apps/mobile/
       flags/            the client flag map (`GET /feature-flags`), per workspace, fail-closed
     features/           one folder per screen family: auth, join, accounts, campaigns, preflight,
                         station, softphone (the Phone tab), performance, calls, contacts
-                        (My contacts: contact assignment), settings
+                        (My contacts: contact assignment), customers (Customer history: search
+                        one number from the Calls tab, docs/customer-history.md), settings
     ui/                 shared primitives (pills, cards, the live dot)
   packages/
     agency_wire/        wire types for the API and the station socket, hand-written against

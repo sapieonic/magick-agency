@@ -13,6 +13,8 @@ import '../features/auth/verify_email_screen.dart';
 import '../features/calls/calls_screen.dart';
 import '../features/campaigns/campaigns_screen.dart';
 import '../features/contacts/my_contacts_screen.dart';
+import '../features/customers/customer_history_screen.dart';
+import '../features/customers/customer_search_screen.dart';
 import '../features/join/invite_screen.dart';
 import '../features/performance/performance_screen.dart';
 import '../features/preflight/preflight_screen.dart';
@@ -192,7 +194,19 @@ final routerProvider = Provider<GoRouter>(
           // it as a tab only while the soft phone is available (AppShell).
           StatefulShellBranch(routes: [GoRoute(path: Routes.phone, builder: (_, _) => const PhoneScreen())]),
           StatefulShellBranch(routes: [GoRoute(path: Routes.performance, builder: (_, _) => const PerformanceScreen())]),
-          StatefulShellBranch(routes: [GoRoute(path: Routes.calls, builder: (_, _) => const CallsScreen())]),
+          StatefulShellBranch(routes: [
+            GoRoute(
+              path: Routes.calls,
+              builder: (_, _) => const CallsScreen(),
+              routes: [
+                GoRoute(
+                  path: 'customer',
+                  builder: (_, _) => const CustomerSearchScreen(),
+                  routes: [GoRoute(path: 'results', builder: (_, _) => const CustomerHistoryScreen())],
+                ),
+              ],
+            ),
+          ]),
           StatefulShellBranch(routes: [GoRoute(path: Routes.me, builder: (_, _) => const MeScreen())]),
         ],
       ),
