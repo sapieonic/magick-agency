@@ -563,6 +563,8 @@ every account the caller belongs to (CH2) where every internal handler is single
     `campaign_caller_ids_unavailable` while none of its caller IDs is still on the account. At the dial `agency/campaign-dialability.ts` narrows the pool to the stored
     numbers still active on the credential and available to the account (PL13; cached 15 s,
     cleared by a sync, retire, delete or unassign); a service-account campaign is not read.
+    That narrowed pool is what the dedicated caller-ID rule (`resolveCallerId`, DN2) decides
+    over on every dial path, so a retired dedicated number falls back to the rotation.
     Start and resume also answer 409 `carrier_capacity_unallocated` when the account splits its
     concurrency by carrier and gives the campaign's carrier no lines (PL14), any carrier.
     The campaign health strip (`agency/campaign-health.ts`) names an automatic carrier pause

@@ -44,7 +44,10 @@ console 5434.
 Plivo on tenants' own accounts (B18–B22, PL1–PL16: credentials super-admins add, campaigns pinned
 to one, number sync, signed callbacks, two automatic pauses) is built through step 4 (2026-11-07)
 and tested end to end against a mock Plivo carrier: server 8582 unit / 2075 integration + 9
-expected fail; step 5, a real Plivo call, needs a Plivo account.
+expected fail; step 5, a real Plivo call, needs a Plivo account. Merged with `main` the same day:
+the dedicated caller ID decides over the campaign's dialable numbers (PL13's addendum), and this
+branch's migrations are 0019–0021 after `main`'s 0018; server 8837 unit / 2150 + 15 integration
++ 9 expected fail, db 428 / 612, console 5685 (`status.md`, "Test counts").
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
