@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-06.
+"is it done". As of 2026-11-07.
 
 ## Summary
 
@@ -39,9 +39,9 @@ super-admins add (not env). Built in steps:
 |---|---|---|
 | 1 Carrier modules | Done | The bridge asks a per-carrier module (media protocol, hangup style) instead of `provider === 'voicelink'`; `carrier-modules.test.ts`, mutation-checked against the bridge suites |
 | 2 Credential store | Done | Migration `0002_telephony_credentials.sql`; envelope sealer and env keyring; credential service and `getForCredentialId`; super-admin API and Telephony Credentials screen; unit tests and a real-Postgres repository suite, guards mutation-checked; keyring and sweep metrics with alerts `agy-credential-keyring-missing-keys` and `agy-credential-sweep-failing` (`voice-credential-housekeeping.test.ts`) |
-| 3 Plivo adapter | Not started | Dial (`request_uuid`), answer XML with `<Stream>`, μ-law media, cancel vs hangup by id, V3 webhook signatures checked against the pinned credential, `time_limit` on every dial, per-credential calls-per-second limit, recording fetch on per-provider hosts |
-| 4 Dialler integration | Not started | Campaigns pin a credential; caller IDs limited to the credential's synced numbers; pause on carrier 401; `plivo` concurrency allocations; activate the `plivo` provider row (seeded inactive by 0002). Obligations the step-2 code leaves to this step: dial through `getForCredentialId(provider, id, 'dial', tenantId)`; insert the call row in a statement that re-checks the credential is `active` (revoke and shred lock the credential row, which waits out an insert in flight but cannot stop one that starts after them); pin a campaign only to an `active` credential; persist the dial's `providerRequestId` (Plivo `request_uuid`) to `provider_request_id` and the session, and give the hangup a way to cancel by it: `TelephonyProvider.endCall` takes only `providerCallId`, and `hangupProviderLeg` returns without a carrier call when that is empty, so a pre-answer teardown of a Plivo call does not reach the carrier today |
-| 5 Live check | Not started | One real Plivo call and one recording analysed (needs a Plivo account) |
+| 3 Plivo adapter | Done | `feat(server): Plivo carrier module (adapter, μ-law media, callbacks, V3 signatures)` and `feat(server): fetch BYOC recordings on the tenant's credential (B21)`. Dial on the fixed API host returning the `request_uuid`, `time_limit` on every dial, cancel by request id and hang up by call id (an empty or malformed id refused before any URL is built), answer XML with a session `<Record>` and a bidirectional μ-law `<Stream>`, V3 signatures against the current and grace tokens, a per-account calls-per-second gate in Redis, `carrier_dial_refusals_total`; recordings through `telephony/recording-access.ts` (Plivo: `media.plivo.com` exactly, the credential on the first request only). Tests: `test/unit/telephony/plivo/` (`plivo.adapter`, `plivo-signature`, `plivo-dial-rate`, `plivo-config`, and `plivo-carrier.fixture.test.ts` over `plivo-carrier.fixture.json`), `audio-fir-mulaw.test.ts`, `carrier-errors.test.ts`, `recording-access.test.ts`, `recording-proxy.test.ts`, `recording-fetcher.test.ts` |
+| 4 Dialler integration | Done | `feat(server,console,contracts,db,domain): pin campaigns to a tenant carrier credential and sync its numbers` (migration `0018_plivo_numbers_and_carrier_pause.sql`: the `plivo` provider row active, `phone_numbers.telephony_credential_id`, pause reason `carrier_auth`); `feat(server): dial Plivo on the campaign's credential through the bridge`; `feat(server): serve Plivo's answer, status and recording callbacks`; `feat(server): forward Plivo callbacks to the media worker that holds the call`; `feat(console,super-admin): choose the campaign's carrier and sync a credential's numbers`; `fix(db): offer no caller ID from a carrier credential that cannot dial`; `feat(server,console,contracts,db): pause a campaign whose carrier account is no longer active` (migration `0019_carrier_account_unavailable_pause.sql`). Every step-2 obligation is met: the bridge dials through `getForCredentialId(provider, id, 'dial', tenantId)`; the call row's INSERT re-checks the credential is `active` (`credential-call-insert.repository.test.ts`); a campaign pins only an `active` credential of its tenant; the dial's `request_uuid` is persisted to `provider_request_id` and a teardown before the answer cancels by it. Tests: `campaign-carrier-pinning.test.ts` (integration), `dialer-carrier-refusals.test.ts`, `webrtc-bridge-plivo.test.ts`, `plivo-webhooks.test.ts`, `plivo-callback-forwarding.test.ts`, `credential-number-sync.test.ts`, `proxy-agency-carriers.test.ts`, the db suites `plivo-numbers-migration`, `carrier-account-unavailable-migration` and `phone-number-sync.repository`, the console's `CampaignBuilderPage.carrier`, `AgencyCampaignSettingsPage.carrier` and `agencyCarriers`. End to end against the scriptable mock carrier (`apps/server/test/mocks/plivo/`, checked by `test/unit/load/mock-plivo-carrier.test.ts`, which runs the real `PlivoAdapter` against it): `test/integration/telephony/plivo-call-e2e.test.ts` (a full call; cancelled while ringing; unsigned, forged and other-tenant callbacks refused; a 401 pausing `carrier_auth`; a disabled credential pausing `carrier_account_unavailable`; the previous token accepted inside the rotation grace) and `plivo-cluster-forwarding.test.ts` (callbacks forwarded to a media worker and verified there), in the rest lane. `plivo` concurrency allocations needed no code: an account on a per-carrier breakdown needs a `plivo` row, set in the super-admin console (`operations.md`, "Enabling Plivo for a tenant") |
+| 5 Live check | Not started | Needs a Plivo account. To check: one real call end to end (dial, answer XML, stream, hangup) and one recording analysed; the cause codes real hangup callbacks carry, added to `plivo-carrier.fixture.json`; the recording host and whether a recording fetch redirects (the fetch sends the credential to `media.plivo.com` only and never follows a redirect with it); and the assumption that a 403 on create-call is a geo-permission refusal of the destination, not an auth failure |
 
 ### Tidy-up 2026-10-16/17
 
@@ -218,7 +218,8 @@ onto it (the re-attach window, never lapsed for a ring drop), so its answer conn
 suite demanded `abandoned`; forcing an early return reproduces CI's failure every run.
 
 **Not built** (`softphone.md` §8): call details in the analysis prompt, a callbacks list, DTMF,
-per-campaign call fields, "every call must be logged to a campaign", cancel while ringing (Plivo),
+per-campaign call fields, "every call must be logged to a campaign", cancel while ringing (Plivo;
+the server side came with Plivo step 4, above: a hang-up while a Plivo call rings cancels the dial),
 transfer and conference. Seen and left: light-theme `<select>` elements show no arrow app-wide
 (`packages/web-ui/src/global.css`), and the station shows campaign numbers unformatted.
 
@@ -938,7 +939,24 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
 
 ## Test counts
 
-Latest run, 2026-11-06, the customer-history branch after its PR #50 review fixes. The agent app's
+Latest run, 2026-11-07, Plivo steps 3 and 4 on `f465fdf`, from inside each package:
+`pnpm test:grafana` 33 and `pnpm test:release` 10 pass. `packages/web-ui`, `packages/domain` and
+`packages/observability` were not rerun; their rows are the 2026-11-06 run's. No `apps/mobile`
+row: nothing in the agent app changed (the Insights paused reason gained a value the mobile wire
+types do not mirror).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 8582 passed + 1 expected fail + 42 skipped (428 files) | rest lane 2075 passed + 9 expected fail + 1 skipped (208 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 601 (60 files) |
+| `apps/console` | 5534 (290 files) | — |
+| `apps/super-admin` | 454 (33 files) | — |
+| `packages/contracts` | 332 (10 files) | — |
+| `packages/web-ui` | 235 (20 files), 2026-11-06 | — |
+| `packages/domain` | 137 (8 files), 2026-11-06 | — |
+| `packages/observability` | 14 (3 files), 2026-11-06 | — |
+
+Run of 2026-11-06, the customer-history branch after its PR #50 review fixes. The agent app's
 Dart suites cannot run where it was built (no SDK), so there is no `apps/mobile` row for this run.
 The mobile CI job on PR #50 ran them before the review fixes, green (`flutter analyze`,
 `flutter test`, `agency_wire` `dart test` 493, `agent_audio` 124, the Android build); the review
@@ -1215,7 +1233,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused; when built, it also clears the owner of every contact it retires (CA11, "Contact assignment" above) |
 | Scaling defaults (2026-11-02/03) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial (now charged to the our-fault ledger, so its bound retires a contact), a dial failed before the carrier (uncharged, redial after 60 s), Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default; and D13 (the `/readyz?detail=1` token, the 1 s readiness cache, the 5 s loop window) |
-| Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
+| Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; a real Plivo call and recording (Plivo step 5, above; needs a Plivo account); launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
@@ -1226,6 +1244,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
 | Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
+| Plivo on tenants' own accounts | Ratify PL1–PL10 (`decisions.md` §4, "Plivo on tenants' own accounts"): a 403 on dial read as a geo-permission refusal; the two automatic pauses (`carrier_auth`, `carrier_account_unavailable`); numbers of a credential that cannot dial not offered; synced numbers tenant-wide; recordings from `media.plivo.com` only; the calls-per-second default of 2 per account; the carrier choice shown only with more than one carrier account |
 
 ## Deployment invariants
 
@@ -1351,6 +1370,10 @@ account their browser last had open. Every signed-in console page is now served 
       names the app's origin, and the mobile app's link host is the console's name.
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,
       `VOICELINK_WEBHOOK_BASE_URL` reachable by the carrier.
+- [ ] Plivo (only if a tenant dials on its own Plivo account): `TELEPHONY_CREDENTIAL_KEYS` and
+      `TELEPHONY_CREDENTIAL_ACTIVE_KEY` set and backed up apart from the database;
+      `PLIVO_WEBHOOK_BASE_URL` the public https origin plus `/api/v1/webhooks/plivo`
+      (`operations.md`, "Enabling Plivo for a tenant").
 - [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `node dist/create-super-admin.js`
       inside the server container (`operations.md` "First super-admin").
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
@@ -1375,7 +1398,8 @@ account their browser last had open. Every signed-in console page is now served 
    Encrypt certificate for its domain. Left: the Grafana Cloud token, and running the stack there
    through `DEPLOYMENT.md` section 9 with the vendor accounts from step 2.
 4. **Real-world checks:** one real VoiceLink sandbox call; one real recording analysed; the
-   Playwright happy path against real Firebase.
+   Playwright happy path against real Firebase; Plivo step 5 on a tenant's Plivo account (one
+   call, one recording analysed, the checks listed in the Plivo table above).
 5. **Parity check and dark pilot** on a staging copy and an internal tenant.
 6. **Launch:** write and rehearse the import gate queries and copy scripts, the DNC mirror, the
    link from the previous platform and the dashboards, then go live environment by environment.
