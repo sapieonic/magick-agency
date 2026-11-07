@@ -5,10 +5,20 @@ import type { AgencyCampaignRecord, CarrierAccountPauseReason } from '../db/mode
 
 const log = createChildLogger({ component: 'agency-carrier-account-pause' });
 
-const PAUSE_LOG_LINE: Record<CarrierAccountPauseReason, string> = {
-  carrier_auth: 'Agency campaign auto-paused — the carrier refused its carrier-account credential',
-  carrier_account_unavailable: 'Agency campaign auto-paused — its carrier-account credential is no longer active',
-  carrier_refusing_calls: 'Agency campaign auto-paused — the carrier refused its dials several times in a row',
+/** Per pause reason: the ERROR line it logs and the audit row's `actor`. */
+const PAUSES: Record<CarrierAccountPauseReason, { logLine: string; actor: string }> = {
+  carrier_auth: {
+    logLine: 'Agency campaign auto-paused — the carrier refused its carrier-account credential',
+    actor: 'system:carrier-auth',
+  },
+  carrier_account_unavailable: {
+    logLine: 'Agency campaign auto-paused — its carrier-account credential is no longer active',
+    actor: 'system:carrier-account',
+  },
+  carrier_refusing_calls: {
+    logLine: 'Agency campaign auto-paused — the carrier refused its dials several times in a row',
+    actor: 'system:carrier-refusals',
+  },
 };
 
 /**
@@ -56,7 +66,7 @@ export async function pauseCampaignForCarrierAccount(
         telephonyCredentialId: campaign.telephony_credential_id,
         reason,
       },
-      PAUSE_LOG_LINE[reason],
+      PAUSES[reason].logLine,
     );
     auditLogger.log({
       tenantId: paused.tenant_id,
@@ -64,8 +74,7 @@ export async function pauseCampaignForCarrierAccount(
       eventType: 'agency_campaign.auto_paused',
       eventCategory: 'call',
       severity: 'error',
-      actor: reason === 'carrier_auth' ? 'system:carrier-auth'
-        : reason === 'carrier_refusing_calls' ? 'system:carrier-refusals' : 'system:carrier-account',
+      actor: PAUSES[reason].actor,
       eventData: {
         campaign_id: campaign.id,
         reason,
