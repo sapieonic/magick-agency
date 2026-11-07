@@ -124,6 +124,9 @@ describe('filtering by the campaign’s carrier account', () => {
     );
     expect(screen.getByText('No numbers on Pravah (Acme spare) are assigned to this account.')).toBeTruthy();
     expect(shown()).toEqual([]);
+    // PL15: number assignment is support's to do, not the tenant's administrator's.
+    expect(document.body.textContent).toMatch(/Contact support to have one assigned\./);
+    expect(document.body.textContent).not.toMatch(/administrator/i);
   });
 });
 

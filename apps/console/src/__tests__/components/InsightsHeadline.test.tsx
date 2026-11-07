@@ -157,7 +157,7 @@ describe('paused', () => {
     s.headline.paused = { ...s.headline.paused!, reason: 'carrier_auth', actor: null, abandonment_rate_pct_at_pause: null, callbacks_missed_while_paused: 0 };
     renderHeadline(s);
     expect(kpi('kpi-paused-by')).toContain('The carrier');
-    expect(kpi('kpi-paused-by')).toContain('Paused: the carrier refused this account’s credentials. Ask your administrator to check them.');
+    expect(kpi('kpi-paused-by')).toContain('Paused: the carrier refused this account’s credentials. Contact support to have them checked.');
     expect(kpi('kpi-paused-by')).not.toContain('Supervisor pause');
   });
 
@@ -166,7 +166,7 @@ describe('paused', () => {
     s.headline.paused = { ...s.headline.paused!, reason: 'carrier_account_unavailable', actor: null, abandonment_rate_pct_at_pause: null, callbacks_missed_while_paused: 0 };
     renderHeadline(s);
     expect(kpi('kpi-paused-by')).toContain('The dialler');
-    expect(kpi('kpi-paused-by')).toContain('Paused: this campaign’s carrier account is no longer active. Ask your administrator to re-enable it, or choose another carrier.');
+    expect(kpi('kpi-paused-by')).toContain('Paused: this campaign’s carrier account is no longer active. Contact support to have it re-enabled, or choose another carrier.');
     expect(kpi('kpi-paused-by')).not.toContain('Supervisor pause');
     expect(kpi('kpi-paused-by')).not.toContain('refused');
   });

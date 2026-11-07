@@ -92,11 +92,11 @@ function transitionBy(t: AgencyInsightsTransition): string {
   if (t.reason === 'abandonment_ceiling') return 'by the abandonment guardrail';
   // Nobody pressed Pause: the dialler stopped because the carrier refused the account.
   if (t.reason === CARRIER_AUTH_PAUSE_REASON) {
-    return 'automatically: the carrier refused this account’s credentials. Ask your administrator to check them.';
+    return 'automatically: the carrier refused this account’s credentials. Contact support to have them checked.';
   }
   // Nobody pressed Pause: the campaign's carrier account was disabled or revoked meanwhile.
   if (t.reason === CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON) {
-    return 'automatically: this campaign’s carrier account is no longer active. Ask your administrator to re-enable it, or choose another carrier.';
+    return 'automatically: this campaign’s carrier account is no longer active. Contact support to have it re-enabled, or choose another carrier.';
   }
   return `by ${actorName(t.actor, 'the dialler')}`;
 }

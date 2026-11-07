@@ -451,7 +451,7 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
   });
 
   it.each([
-    ['resume', 'paused', 'Resume', 409, 'telephony_credential_not_active', /carrier account is not active.*Ask your administrator to re-enable it/],
+    ['resume', 'paused', 'Resume', 409, 'telephony_credential_not_active', /carrier account is not active.*Contact support to have it re-enabled/],
     ['start', 'draft', 'Start dialing', 404, 'telephony_credential_not_found', /carrier account no longer exists/],
   ] as const)('says what to do when %s is refused for the campaign’s carrier account', async (
     _action, status, button, statusCode, code, copy,

@@ -109,13 +109,14 @@ export type CarrierRefusalCode = 'telephony_credential_not_found' | 'telephony_c
 /**
  * The campaign routes' carrier refusals (create, save, start, resume), said in words an
  * operator can act on. The server's own message names the account's state; these say
- * who can fix it.
+ * who can fix it: support, never "your administrator" (PL15: a tenant's admins cannot see
+ * or change a carrier account; only the service's operators can).
  */
 export const CARRIER_REFUSAL_COPY: Record<CarrierRefusalCode, string> = {
   telephony_credential_not_active:
     'This campaign’s carrier account is not active: it has been disabled, or the carrier no '
-    + 'longer accepts its credentials. Calls cannot be placed on it. Ask your administrator to '
-    + 're-enable it, or choose another carrier for this campaign.',
+    + 'longer accepts its credentials. Calls cannot be placed on it. Contact support to have it '
+    + 're-enabled, or choose another carrier for this campaign.',
   telephony_credential_not_found:
     'This campaign’s carrier account no longer exists. Choose another carrier for this campaign.',
 };
@@ -150,7 +151,7 @@ export const CARRIER_AUTH_PAUSE_REASON = 'carrier_auth';
 
 /** What a `carrier_auth` pause says, wherever a pause reason is shown. */
 export const CARRIER_AUTH_PAUSE_COPY =
-  'Paused: the carrier refused this account’s credentials. Ask your administrator to check them.';
+  'Paused: the carrier refused this account’s credentials. Contact support to have them checked.';
 
 /**
  * The pause reason the dialler writes when the campaign's carrier account is no longer
@@ -160,7 +161,7 @@ export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON = 'carrier_account_unavail
 
 /** What a `carrier_account_unavailable` pause says, wherever a pause reason is shown. */
 export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY =
-  'Paused: this campaign’s carrier account is no longer active. Ask your administrator to re-enable it, or choose another carrier.';
+  'Paused: this campaign’s carrier account is no longer active. Contact support to have it re-enabled, or choose another carrier.';
 
 /**
  * The copy for a pause the dialler made because the campaign's carrier account cannot

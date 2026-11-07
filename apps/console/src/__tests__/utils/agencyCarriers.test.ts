@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY,
+  CARRIER_AUTH_PAUSE_COPY,
   CARRIER_REFUSAL_COPY,
   CarrierRefusalError,
   SERVICE_CARRIER,
@@ -69,6 +71,18 @@ describe('carrier refusals', () => {
     expect((wrapped as Error).message).toBe(CARRIER_REFUSAL_COPY.telephony_credential_not_active);
     const other = apiError('campaign_roster_empty');
     expect(withCarrierRefusalCopy(other)).toBe(other);
+  });
+
+  /**
+   * PL15: a tenant's admins cannot see or fix a carrier account, so the copy never sends a
+   * supervisor to "your administrator"; it says to contact support (B17's phrase).
+   */
+  it('sends the operator to support, never to an administrator', () => {
+    const all = [...Object.values(CARRIER_REFUSAL_COPY), CARRIER_AUTH_PAUSE_COPY, CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY];
+    for (const copy of all) expect(copy).not.toMatch(/administrator/i);
+    expect(CARRIER_REFUSAL_COPY.telephony_credential_not_active).toMatch(/Contact support/);
+    expect(CARRIER_AUTH_PAUSE_COPY).toMatch(/Contact support/);
+    expect(CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY).toMatch(/Contact support/);
   });
 
   it('is British English and names no carrier', () => {

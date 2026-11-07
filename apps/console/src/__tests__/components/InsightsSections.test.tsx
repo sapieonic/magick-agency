@@ -339,7 +339,7 @@ describe('the settings panel', () => {
     }} />);
     const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
     expect(items[0]).toMatch(/by the abandonment guardrail$/);
-    expect(items[1]).toMatch(/automatically: the carrier refused this account’s credentials\. Ask your administrator to check them\.$/);
+    expect(items[1]).toMatch(/automatically: the carrier refused this account’s credentials\. Contact support to have them checked\.$/);
     expect(items[1]).not.toMatch(/by the dialler/);
   });
 
@@ -350,7 +350,7 @@ describe('the settings panel', () => {
       transitions: [{ to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_account_unavailable' }],
     }} />);
     const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
-    expect(items[0]).toMatch(/automatically: this campaign’s carrier account is no longer active\. Ask your administrator to re-enable it, or choose another carrier\.$/);
+    expect(items[0]).toMatch(/automatically: this campaign’s carrier account is no longer active\. Contact support to have it re-enabled, or choose another carrier\.$/);
   });
 });
 

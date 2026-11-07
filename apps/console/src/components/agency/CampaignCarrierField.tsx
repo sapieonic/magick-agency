@@ -65,7 +65,7 @@ export function CampaignCarrierField(props: {
       {current?.unavailable && (
         <p className={styles.notice} role="note" data-testid="carrier-unavailable">
           This carrier account is no longer active, so the campaign cannot dial on it. Choose
-          another carrier, or ask your administrator to re-enable it.
+          another carrier, or contact support to have it re-enabled.
         </p>
       )}
       {notice && (

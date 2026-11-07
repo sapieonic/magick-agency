@@ -43,7 +43,7 @@ type CodedRefusal = Extract<CampaignCarrierRefusal, { kind: 'coded' }>;
 
 const notActive = (status: string): CodedRefusal => ({
   kind: 'coded', status: 409, code: 'telephony_credential_not_active',
-  message: `The carrier account this campaign would dial on is ${status}, so it cannot be used. A platform administrator can re-enable it, or choose another carrier account.`,
+  message: `The carrier account this campaign would dial on is ${status}, so it cannot be used. Contact support to have it re-enabled, or choose another carrier account.`,
 });
 
 const notFound: CodedRefusal = {
@@ -157,6 +157,6 @@ export async function campaignCredentialStartRefusal(
   if (credential.status === 'active') return null;
   return {
     kind: 'coded', status: 409, code: 'telephony_credential_not_active',
-    message: `This campaign dials on a carrier account that is ${credential.status}. A platform administrator can re-enable it, or move the campaign to another carrier account before starting it.`,
+    message: `This campaign dials on a carrier account that is ${credential.status}. Contact support to have it re-enabled, or move the campaign to another carrier account before starting it.`,
   };
 }

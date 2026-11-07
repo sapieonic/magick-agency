@@ -213,7 +213,7 @@ describe('the builder’s carrier choice', () => {
     save();
     const alert = await screen.findByTestId('builder-error');
     expect(alert.textContent).toMatch(/carrier account is not active/);
-    expect(alert.textContent).toMatch(/Ask your administrator to re-enable it/);
+    expect(alert.textContent).toMatch(/Contact support to have it re-enabled/);
     expect(screen.getByTestId('builder-step').getAttribute('data-step')).toBe('basics');
   });
 });

@@ -127,7 +127,7 @@ export function CallerIdPicker({
               those cannot be used with {name}.
             </>
           )}{' '}
-          Ask an administrator to assign one.
+          Contact support to have one assigned.
         </p>
       </div>,
     );
