@@ -31,7 +31,8 @@ export interface AgencyAgentCallerId {
   caller_id: string;
   /**
    * False when the number is no longer among the campaign's usable caller IDs (a direct DB
-   * write): the dial path then uses the rotation, and the console flags the row.
+   * write) or, on a campaign pinned to a tenant's own carrier account, no longer active on it
+   * (PL13): the dial path then uses the rotation, and the console flags the row.
    */
   in_campaign: boolean;
   set_at: string;
@@ -42,7 +43,10 @@ export interface AgencyAgentCallerId {
 /** `GET /campaigns/:id/agent-caller-ids`. */
 export interface AgencyAgentCallerIds {
   campaign_id: string;
-  /** The campaign's usable caller IDs, in stored order. */
+  /**
+   * The campaign's usable caller IDs, in stored order; on a campaign pinned to a tenant's own
+   * carrier account, only those still active on it (PL13), the pool the dial paths use.
+   */
   caller_ids: string[];
   /** Every dedicated number on the campaign, by agent name then user id. */
   dedicated: AgencyAgentCallerId[];
@@ -71,7 +75,10 @@ export type AgencyAgentCallerIdErrorCode =
   | 'campaign_not_found'
   /** 404. The agent has no active staffing row on the campaign (PUT only). */
   | 'agent_not_staffed'
-  /** 409. The number is not one of the campaign's caller IDs (`details.caller_ids`). */
+  /**
+   * 409. The number is not one of the campaign's caller IDs, or (a pinned campaign, PL13) no
+   * longer active on its carrier account (`details.caller_ids`: the ones it can be set to).
+   */
   | 'caller_id_not_in_campaign'
   /** 409. The number is dedicated to another agent on this campaign (`details.user_id`, `details.agent_name`). */
   | 'caller_id_taken';

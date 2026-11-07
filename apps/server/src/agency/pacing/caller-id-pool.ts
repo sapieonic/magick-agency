@@ -10,6 +10,14 @@
  * decides from is read through `DedicatedCallerIdCache` (`dedicated-caller-ids.ts`), whose
  * `callerIdForContact` is this rule for one contact; a dial path never calls `pickCallerId` over
  * a campaign's numbers itself.
+ *
+ * **The `usable` a dial path hands {@link resolveCallerId} is the campaign's DIALABLE caller IDs**
+ * (`dialableCallerIds`, `campaign-dialability.ts`, PL13): {@link usableCallerIds} on the service's
+ * own carrier account, and on a tenant's own account only those still active on its credential.
+ * So the one rule covers both: a dedicated number is used only while it is dialable (a retired or
+ * revoked one falls back to the rotation), and the rotation is the dialable pool minus the
+ * dedicated numbers. Pacing passes the tick's dialable pool; `callerIdForContact` reads it
+ * itself; the tagged soft phone narrows the tag's `caller_ids` to it before `selectCallerId`.
  */
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 

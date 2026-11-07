@@ -437,3 +437,76 @@ async function superAdminToken(): Promise<string> {
   expect(res.statusCode, res.body).toBe(200);
   return res.json().token as string;
 }
+
+/**
+ * A campaign pinned to the tenant's own carrier account (PL13 with DN2): the routes treat its
+ * DIALABLE caller IDs as the campaign's, the pool every dial path decides over. A number the
+ * account no longer lists (retired by a sync) cannot be dedicated; one dedicated before it was
+ * retired is listed `in_campaign: false`, is left out of the rotation and is not the agent's
+ * number in My contacts; and removing it from the campaign is refused, naming it (DN6).
+ * A campaign of its own: campaign B's row copied under a new id.
+ */
+describe('a campaign pinned to the tenant\'s carrier account (PL13)', () => {
+  it('dedicates only a dialable number, and a dedicated number retired since stops counting', async () => {
+    const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
+    const { invalidateDialableCallerIds } = await import('../../../src/agency/campaign-dialability.js');
+    const campaign = randomUUID();
+    await getTestPool().query(
+      `INSERT INTO agency_campaigns
+       SELECT (jsonb_populate_record(NULL::agency_campaigns, to_jsonb(c)
+         || jsonb_build_object('id', $2::uuid, 'name', 'Pinned', 'root_campaign_id', NULL, 'parent_campaign_id', NULL))).*
+       FROM agency_campaigns c WHERE c.id = $1`,
+      [B(), campaign]);
+    const holder = agent(2);
+    const asOther = (method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, actor: Actor = sup(), body?: unknown) =>
+      call(app(), method, url, actor, floor, body);
+    await getTestPool().query(
+      `INSERT INTO telephony_providers (name, display_name, status) VALUES ('plivo', 'Plivo', 'active') ON CONFLICT (name) DO NOTHING`);
+    const { rows: [cred] } = await getTestPool().query<{ id: string }>(
+      `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref) VALUES ($1, 'plivo', 'Own', $2) RETURNING id`,
+      [floor.tenant, `MA${randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`]);
+    const credId = cred!.id;
+    // X, Y and Z synced; then Z retired by a sync that no longer lists it.
+    await phoneNumberRepository.syncForCredential(credId, POOL.map((n) => ({ phone_number: n, label: null })), null);
+    await phoneNumberRepository.syncForCredential(credId, [X, Y].map((n) => ({ phone_number: n, label: null })), null);
+    await getTestPool().query(
+      `UPDATE agency_campaigns SET caller_ids = $2, telephony_provider = 'plivo', telephony_credential_id = $3 WHERE id = $1`,
+      [campaign, POOL, credId]);
+    invalidateDialableCallerIds();
+    const staffed = await asOther('POST', `/proxy/agency/campaigns/${campaign}/agents`, sup(), { user_id: holder.id });
+    expect(staffed.statusCode, staffed.body).toBe(201);
+
+    // The retired number is stored but not dialable: listed out, and not dedicable.
+    const listed = await asOther('GET', listUrl(campaign));
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect(listed.json()).toMatchObject({ caller_ids: [X, Y], rotation: [X, Y], dedicated: [] });
+    const retired = await asOther('PUT', agentUrl(holder.id, campaign), sup(), { caller_id: Z });
+    expect(retired.statusCode, retired.body).toBe(409);
+    expect(retired.json()).toEqual({
+      error: 'Conflict', code: 'caller_id_not_in_campaign', message: expect.stringMatching(/carrier account/),
+      details: { caller_ids: [X, Y] },
+    });
+
+    // A live one is dedicated and is the agent's number.
+    const set = await asOther('PUT', agentUrl(holder.id, campaign), sup(), { caller_id: X });
+    expect(set.statusCode, set.body).toBe(200);
+    const summary = () => asOther('GET', `/proxy/agency/my-contacts/summary?campaign_id=${campaign}`, holder);
+    expect((await summary()).json().caller_id).toBe(X);
+
+    // X retired since (a sync that no longer lists it; the sync route clears the dialable cache).
+    await phoneNumberRepository.syncForCredential(credId, [{ phone_number: Y, label: null }], null);
+    invalidateDialableCallerIds();
+    const after = await asOther('GET', listUrl(campaign));
+    expect(after.json()).toMatchObject({
+      caller_ids: [Y], rotation: [Y], all_dedicated: false,
+      dedicated: [{ user_id: holder.id, caller_id: X, in_campaign: false }],
+    });
+    expect((await summary()).json().caller_id).toBeNull();
+
+    // Removing the retired, still dedicated number is refused with the dedicated-number answer
+    // (DN6), which names it, so the supervisor releases it first ("Use shared rotation").
+    const drop = await asOther('PATCH', `/proxy/agency/campaigns/${campaign}`, sup(), { caller_ids: [Y, Z] });
+    expect(drop.statusCode, drop.body).toBe(409);
+    expect(drop.json()).toMatchObject({ code: 'caller_id_dedicated', details: { caller_ids: [X] } });
+  });
+});

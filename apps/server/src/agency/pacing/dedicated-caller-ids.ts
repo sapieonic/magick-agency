@@ -29,7 +29,8 @@
  *    paths call: a dedication stops counting when its staffing row closes,
  *    `EFFECTIVE_DEDICATION_SQL`). Nothing else changes the map: a re-staffing never revives an
  *    older row (DN1), the campaign PATCH cannot drop a dedicated number (DN6) and the map does
- *    not depend on `caller_ids` anyway (each dial path filters by the campaign row it read), and
+ *    not depend on `caller_ids` anyway (each dial path filters by the campaign's dialable caller
+ *    IDs, `dialableCallerIds`, which a number sync, retire or unassign clears, PL13), and
  *    a user delete's cascade has no route (a raw delete is covered by the TTL).
  *  - The generation guard keeps a load that an invalidation overtook from being stored: a
  *    dial uses a released dedication only if its read started before the release committed,
