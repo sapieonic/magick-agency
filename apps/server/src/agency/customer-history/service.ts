@@ -13,7 +13,7 @@ import {
   type CustomerHistoryPageQuery,
   type CustomerHistoryScope,
 } from '../../db/repositories/agency.repository.js';
-import { namesIn } from '../insights/shared.js';
+import { agentNamesOrNone } from '../agency-agent-identity.js';
 import { buildViewer, isTenantWide, membershipAccountIds, type CustomerHistoryViewer } from './visibility.js';
 import {
   buildSummary,
@@ -84,10 +84,10 @@ export async function loadCustomerSummary(
   const [bookingRows, uploads, names] = await Promise.all([
     repo.latestBookings(scope, awaiting),
     repo.uploads(scope, [...uploadCampaigns]),
-    namesIn(userIds, tenantId),
+    agentNamesOrNone(userIds, tenantId, 'customer history'),
   ]);
   const bookings = new Map(bookingRows.map((b) => [b.contact_id, b.booked_by_user_id]));
-  // The bookers' names come with their bookings (same rule as `namesIn`): no second lookup.
+  // The bookers' names come with their bookings (same rule as `agentNamesOrNone`): no second lookup.
   for (const b of bookingRows) {
     if (b.booked_by_user_id && !names.has(b.booked_by_user_id)) names.set(b.booked_by_user_id, b.booked_by_name);
   }
@@ -150,7 +150,7 @@ export async function loadTimelinePage(
     repo.mediaLegs(scope, legIds),
     repo.uploads(scope, rows.contacts.map((c) => c.campaign_id)),
     repo.callbackNext(scope, phone, rows.callbacks.map((c) => ({ id: c.id, at: c.booked_at }))),
-    namesIn(pageUserIds(rows), tenantId),
+    agentNamesOrNone(pageUserIds(rows), tenantId, 'customer history'),
   ]);
 
   const entries = buildTimeline({

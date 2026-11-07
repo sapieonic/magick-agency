@@ -1,10 +1,10 @@
 /**
- * What the insights sections share: the catalog's codes, the user references and their names,
- * and the reconciliation entry. Part of `src/agency/insights/` (docs/insights.md "API").
+ * What the insights sections share: the catalog's codes, the user references (their names come
+ * from `agentNamesOrNone`) and the reconciliation entry. Part of `src/agency/insights/`
+ * (docs/insights.md "API").
  */
 import type { AgencyDisposition } from '@magick-agency/contracts/agency';
 import type { AgencyInsightsActor, AgencyInsightsReconciliation } from '@magick-agency/contracts/api/agency/insights';
-import { agentNamesOrNone } from '../agency-agent-identity.js';
 import { UUID_RE } from '../../utils/uuid.js';
 
 /** The catalog's `is_success` codes (the stats' `successDispositionSql` reads the same flag). */
@@ -35,14 +35,6 @@ export function userIdOf(ref: string | null | undefined): string | null {
   if (typeof ref !== 'string') return null;
   const raw = ref.startsWith('user:') ? ref.slice('user:'.length) : ref;
   return UUID_RE.test(raw) ? raw.toLowerCase() : null;
-}
-
-/**
- * Display names for `ids` in the tenant (display name, else email), one query. A lookup that
- * fails degrades to no names, never to a failed read: a name is an improvement on the id.
- */
-export function namesIn(ids: Iterable<string | null>, tenantId: string): Promise<Map<string, string | null>> {
-  return agentNamesOrNone(ids, tenantId, 'insights');
 }
 
 /** `{ user_id, name }`, or null for no user (the system). */
