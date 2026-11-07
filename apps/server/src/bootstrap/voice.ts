@@ -17,6 +17,7 @@ import { reapDecodeScratchDirs } from '../audio/decode.js';
 import { getDecodeGateStats } from '../utils/decode-gate.js';
 import { shutdownAnalytics } from '../analytics/posthog.js';
 import { getTelephonyCredentialService } from '../telephony/credentials/index.js';
+import { RedisPlivoDialRateLimiter, setPlivoDialRateLimiter } from '../telephony/plivo/plivo-dial-rate.js';
 
 /**
  * The voice engine's background work and process-wide singletons.
@@ -48,6 +49,10 @@ export function ensureVoiceEngine(redis: Redis | null, opts: { carrierRouteHint?
   guardHost.registerWebrtcActiveIdsProvider(() => bridge.getActiveCallIds());
   // The super-admin concurrency writes reach the guards through this seam.
   setConcurrencyControl(createConcurrencyControl(guardHost));
+  // Plivo's per-account calls-per-second gate counts in Redis, so every process that
+  // dials (the primary and each media worker) shares one window per account. The client
+  // applies the key prefix. Without Redis it stays in-memory, per process.
+  if (redis) setPlivoDialRateLimiter(new RedisPlivoDialRateLimiter(redis, ''));
   engine = { guardHost, bridge };
   return engine;
 }

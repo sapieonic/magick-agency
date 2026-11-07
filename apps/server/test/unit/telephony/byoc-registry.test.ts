@@ -13,6 +13,8 @@ import {
 import { Secret } from '../../../src/telephony/credentials/secret.js';
 import { findCredentialSpec, PLIVO_API_BASE, type FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
 import type { TelephonyProvider } from '../../../src/telephony/types.js';
+import { PlivoAdapter } from '../../../src/telephony/plivo/plivo.adapter.js';
+import { computePlivoV3Signature } from '../../../src/telephony/plivo/plivo-signature.js';
 
 const CONFIG = {
   telephony: {
@@ -192,6 +194,30 @@ describe('TelephonyProviderRegistry.getForCredentialId', () => {
     version = 1;
     expect(await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).toBe(a);
     expect(factory).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the registered BYOC adapters', () => {
+  it('builds a PlivoAdapter on the pinned credential, holding the grace tokens for call control only', async () => {
+    const c = creds((purpose) => resolved({
+      accountRef: 'MAABCDEFGHIJKLMNOPQR',
+      version: 2,
+      previous: purpose === 'call_control' ? [{ version: 1, secret: new Secret({ auth_token: 'old' }) }] : [],
+    }));
+    // No `byocAdapters` override: the registry's own `BYOC_ADAPTERS`.
+    const r = new TelephonyProviderRegistry(CONFIG, { credentials: () => c });
+    const control = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
+    const dial = await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');
+    expect(control).toBeInstanceOf(PlivoAdapter);
+    expect(dial).toBeInstanceOf(PlivoAdapter);
+    const url = 'https://srv.test/api/v1/webhooks/plivo/webrtc-status/c1';
+    const req = (token: string) => ({
+      method: 'POST' as const, url, params: { CallStatus: 'ringing' },
+      headers: { 'x-plivo-signature-v3': computePlivoV3Signature(token, 'POST', url, { CallStatus: 'ringing' }, 'n'), 'x-plivo-signature-v3-nonce': 'n' },
+    });
+    expect(control.verifyCarrierRequest!(req('tok'))).toBe(true);
+    expect(control.verifyCarrierRequest!(req('old'))).toBe(true);
+    expect(dial.verifyCarrierRequest!(req('old'))).toBe(false);
   });
 });
 

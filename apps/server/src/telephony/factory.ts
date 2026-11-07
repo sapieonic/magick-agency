@@ -1,13 +1,11 @@
 // Two kinds of adapter. The service's own carrier accounts (VoiceLink) are built from
 // env by `buildProviderConfig` + `instantiate`; any other name there throws `Unknown
 // telephony provider: <name>`. A tenant's own carrier account (BYOC, decision B18) is
-// built by `BYOC_ADAPTERS` from a credential the credential service resolves; no BYOC
-// adapter is registered yet (Plivo's lands with its adapter), so such a credential
-// passes its row checks and then throws `ByocCredentialUnavailableError`, with no
-// secret opened.
+// built by `BYOC_ADAPTERS` from a credential the credential service resolves (Plivo).
 import type { TelephonyProvider } from './types.js';
 import type { AppConfig } from '../config/index.js';
 import { VoicelinkAdapter } from './voicelink/voicelink.adapter.js';
+import { createPlivoAdapter } from './plivo/plivo.adapter.js';
 import {
   CredentialUnavailableError,
   type CredentialPeek,
@@ -48,7 +46,9 @@ export type ByocAdapterFactory = (credential: ResolvedCredential, config: AppCon
  * here**, its credential spec (`credentials/credential-specs.ts`) and its carrier
  * module (`carrier-modules.ts`).
  */
-const BYOC_ADAPTERS: ReadonlyMap<string, ByocAdapterFactory> = new Map();
+const BYOC_ADAPTERS: ReadonlyMap<string, ByocAdapterFactory> = new Map<string, ByocAdapterFactory>([
+  ['plivo', createPlivoAdapter],
+]);
 
 /** The providers a tenant credential can dial on. The carrier-module guard reads it. */
 export function byocProviderNames(): string[] {
@@ -137,7 +137,7 @@ export class TelephonyProviderRegistry {
     return provider;
   }
 
-  /** Get the default provider: always VoiceLink, the only carrier. */
+  /** Get the default provider: VoiceLink, the service's own account (BYOC carriers have no default). */
   getDefault(): TelephonyProvider {
     return this.get('voicelink');
   }

@@ -83,6 +83,66 @@ export function isDialOutcomeUnknown(err: unknown): boolean {
   return false;
 }
 
+/**
+ * The carrier refused our credential on a dial (HTTP 401): every further dial on that
+ * credential will be refused too, so the caller stops dialling on it rather than charging
+ * each contact a failed attempt. Nothing was placed.
+ */
+export class CarrierAuthRejectedError extends Error {
+  readonly carrierAuthRejected = true;
+  constructor(
+    /** The provider name, e.g. `plivo`. */
+    readonly provider: string,
+    readonly httpStatus: number,
+  ) {
+    super(`${provider} refused the credential (HTTP ${httpStatus})`);
+    this.name = 'CarrierAuthRejectedError';
+  }
+}
+
+/**
+ * The dial could not be sent for now because of a calls-per-second limit, and was not
+ * placed: retry it shortly, it says nothing about the contact.
+ *
+ *  - `local_gate`: our own per-account gate could not admit the dial in time; nothing
+ *    reached the carrier.
+ *  - `carrier`: the carrier answered 429 and placed nothing.
+ */
+export class CarrierRateLimitedError extends Error {
+  readonly carrierRateLimited = true;
+  constructor(
+    readonly provider: string,
+    readonly source: 'local_gate' | 'carrier',
+    /** How long the dial waited for a slot before giving up (0 for `carrier`). */
+    readonly waitedMs: number,
+  ) {
+    super(source === 'local_gate'
+      ? `${provider} dial not sent: the account's calls-per-second limit gave no slot within ${waitedMs} ms`
+      : `${provider} refused the dial for its rate limit (HTTP 429)`);
+    this.name = 'CarrierRateLimitedError';
+  }
+}
+
+/** Whether `err`, or an error in its `cause` chain, carries `flag: true`. Bounded walk. */
+function causeChainHas(err: unknown, flag: string): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (typeof current === 'object' && (current as Record<string, unknown>)[flag] === true) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** Whether `err`, or an error in its `cause` chain, is a {@link CarrierAuthRejectedError}. */
+export function isCarrierAuthRejected(err: unknown): boolean {
+  return causeChainHas(err, 'carrierAuthRejected');
+}
+
+/** Whether `err`, or an error in its `cause` chain, is a {@link CarrierRateLimitedError}. */
+export function isCarrierRateLimited(err: unknown): boolean {
+  return causeChainHas(err, 'carrierRateLimited');
+}
+
 /** True for the error `fetch` rejects with when an `AbortSignal.timeout` fires. */
 export function isAbortTimeout(err: unknown): boolean {
   const name = (err as { name?: unknown } | null)?.name;

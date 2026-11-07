@@ -5,9 +5,10 @@
 // equal.
 import type { CarrierModule } from './carrier-module.js';
 import { voicelinkCarrier } from './voicelink/voicelink.media.js';
+import { plivoCarrier } from './plivo/plivo.media.js';
 
 const MODULES: ReadonlyMap<string, CarrierModule> = new Map(
-  [voicelinkCarrier].map((m) => [m.name, m]),
+  [voicelinkCarrier, plivoCarrier].map((m) => [m.name, m]),
 );
 
 /** The module for a provider name, or undefined for a name no carrier answers to. */

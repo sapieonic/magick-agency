@@ -1,0 +1,633 @@
+{
+  "description": "Plivo carrier fixture: callback params -> normalizePlivoCallback / plivoCallEvent / classifyPlivoOutcome. The parameter names are Plivo's callback parameters; the values are illustrative until a live call is captured (docs/status.md, Plivo step 5), when entries recorded from it are to be added. A change to the normaliser or classifier that alters any mapping reds its test.",
+  "eventNullMeans": "plivoCallEvent returned null (a recording callback, or a status Plivo does not document)",
+  "dispositionNullMeans": "the metadata key is absent",
+  "classificationNullMeans": "not a terminal status callback; classifyPlivoOutcome is not run",
+  "entries": [
+    {
+      "name": "answer",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "answer",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "StartApp",
+        "CallStatus": "in-progress",
+        "CallerName": "",
+        "BillRate": "0.0085",
+        "SessionStart": "2026-11-07 10:00:05.123456"
+      },
+      "normalized": {
+        "kind": "answer",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "in-progress",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "wasAnswered": true
+      },
+      "event": {
+        "eventType": "answer",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": null,
+        "dispositionCause": null
+      },
+      "classification": null
+    },
+    {
+      "name": "ringing",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Ring",
+        "CallStatus": "ringing"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "ringing",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "ringing",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": null,
+        "dispositionCause": null
+      },
+      "classification": null
+    },
+    {
+      "name": "completed-answered",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "completed",
+        "HangupCause": "NORMAL_CLEARING",
+        "HangupCauseName": "Normal Hangup",
+        "HangupCauseCode": "4000",
+        "HangupSource": "Callee",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "2026-11-07 10:00:05",
+        "Duration": "26",
+        "BillDuration": "60",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "completed",
+        "hangupCause": "Normal Hangup",
+        "hangupCauseCode": "4000",
+        "hangupSource": "Callee",
+        "durationSec": 26,
+        "answeredAt": "2026-11-07 10:00:05",
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": true
+      },
+      "event": {
+        "eventType": "hangup",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "completed",
+        "dispositionCause": "Normal Hangup"
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "completed|normal hangup|4000|callee"
+      }
+    },
+    {
+      "name": "completed-bill-duration-only",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "completed",
+        "HangupCause": "NORMAL_CLEARING",
+        "HangupCauseName": "Normal Hangup",
+        "HangupCauseCode": "4000",
+        "HangupSource": "Caller",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "Duration": "0",
+        "BillDuration": "60",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "completed",
+        "hangupCause": "Normal Hangup",
+        "hangupCauseCode": "4000",
+        "hangupSource": "Caller",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": true
+      },
+      "event": {
+        "eventType": "hangup",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "completed",
+        "dispositionCause": "Normal Hangup"
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "completed|normal hangup|4000|caller"
+      }
+    },
+    {
+      "name": "completed-never-answered",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "completed",
+        "HangupCause": "",
+        "HangupCauseName": "",
+        "HangupCauseCode": "",
+        "HangupSource": "",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "completed",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "failed",
+        "dispositionCause": null
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "completed",
+        "rawCause": "completed"
+      }
+    },
+    {
+      "name": "busy",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "busy",
+        "HangupCause": "USER_BUSY",
+        "HangupCauseName": "Busy Line",
+        "HangupCauseCode": "3010",
+        "HangupSource": "Callee",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "busy",
+        "hangupCause": "Busy Line",
+        "hangupCauseCode": "3010",
+        "hangupSource": "Callee",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "busy",
+        "dispositionCause": "Busy Line"
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "busy",
+        "rawCause": "busy|busy line|3010|callee"
+      }
+    },
+    {
+      "name": "no-answer",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "no-answer",
+        "HangupCause": "NO_ANSWER",
+        "HangupCauseName": "No Answer",
+        "HangupCauseCode": "3070",
+        "HangupSource": "Callee",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "no-answer",
+        "hangupCause": "No Answer",
+        "hangupCauseCode": "3070",
+        "hangupSource": "Callee",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "No Answer"
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no-answer|no answer|3070|callee"
+      }
+    },
+    {
+      "name": "timeout",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "timeout",
+        "HangupCause": "ALLOTTED_TIMEOUT",
+        "HangupCauseName": "Ring Timeout Reached",
+        "HangupCauseCode": "3050",
+        "HangupSource": "Plivo",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "timeout",
+        "hangupCause": "Ring Timeout Reached",
+        "hangupCauseCode": "3050",
+        "hangupSource": "Plivo",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "Ring Timeout Reached"
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "timeout|ring timeout reached|3050|plivo"
+      }
+    },
+    {
+      "name": "cancel",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "cancel",
+        "HangupCause": "ORIGINATOR_CANCEL",
+        "HangupCauseName": "Cancelled",
+        "HangupCauseCode": "3000",
+        "HangupSource": "API Request",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "cancel",
+        "hangupCause": "Cancelled",
+        "hangupCauseCode": "3000",
+        "hangupSource": "API Request",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "canceled",
+        "dispositionCause": "Cancelled"
+      },
+      "classification": {
+        "status": "canceled",
+        "outcome": "canceled",
+        "rawCause": "cancel|cancelled|3000|api request"
+      }
+    },
+    {
+      "name": "failed-rejected",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "failed",
+        "HangupCause": "CALL_REJECTED",
+        "HangupCauseName": "Rejected",
+        "HangupCauseCode": "3020",
+        "HangupSource": "Callee",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "failed",
+        "hangupCause": "Rejected",
+        "hangupCauseCode": "3020",
+        "hangupSource": "Callee",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "canceled",
+        "dispositionCause": "Rejected"
+      },
+      "classification": {
+        "status": "canceled",
+        "outcome": "canceled",
+        "rawCause": "failed|rejected|3020|callee"
+      }
+    },
+    {
+      "name": "failed",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "failed",
+        "HangupCause": "UNALLOCATED_NUMBER",
+        "HangupCauseName": "Unknown Destination",
+        "HangupCauseCode": "3040",
+        "HangupSource": "Carrier",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "failed",
+        "hangupCause": "Unknown Destination",
+        "hangupCauseCode": "3040",
+        "hangupSource": "Carrier",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "failed",
+        "dispositionCause": "Unknown Destination"
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "failed|unknown destination|3040|carrier",
+        "rawCause": "failed|unknown destination|3040|carrier"
+      }
+    },
+    {
+      "name": "failed-no-cause",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Event": "Hangup",
+        "CallStatus": "failed",
+        "HangupCause": "",
+        "HangupCauseName": "",
+        "HangupCauseCode": "",
+        "HangupSource": "",
+        "StartTime": "2026-11-07 09:59:58",
+        "EndTime": "2026-11-07 10:00:31",
+        "AnswerTime": "",
+        "Duration": "0",
+        "BillDuration": "0",
+        "BillRate": "0.0085",
+        "TotalCost": "0.00000"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "failed",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "durationSec": 0,
+        "endedAt": "2026-11-07 10:00:31",
+        "wasAnswered": false
+      },
+      "event": {
+        "eventType": "error",
+        "providerCallId": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "dispositionStatus": "failed",
+        "dispositionCause": null
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "failed",
+        "rawCause": "failed"
+      }
+    },
+    {
+      "name": "recording",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "recording",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RecordUrl": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/2f3e4d5c-6b7a-4891-8a7b-6c5d4e3f2a1b.mp3",
+        "RecordingID": "2f3e4d5c-6b7a-4891-8a7b-6c5d4e3f2a1b",
+        "RecordingDuration": "25",
+        "RecordingDurationMs": "25340",
+        "RecordingStartMs": "1794045605123",
+        "RecordingEndMs": "1794045630463"
+      },
+      "normalized": {
+        "kind": "recording",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "",
+        "callStatus": "",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "recordingUrl": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/2f3e4d5c-6b7a-4891-8a7b-6c5d4e3f2a1b.mp3",
+        "recordingId": "2f3e4d5c-6b7a-4891-8a7b-6c5d4e3f2a1b",
+        "recordingDurationSec": 25,
+        "wasAnswered": false
+      },
+      "event": null,
+      "classification": null
+    },
+    {
+      "name": "undocumented-status",
+      "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "kind": "status",
+      "params": {
+        "CallUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "RequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "Direction": "outbound",
+        "From": "918035550100",
+        "To": "919812345678",
+        "ALegUUID": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "ALegRequestUUID": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "CallStatus": "queued"
+      },
+      "normalized": {
+        "kind": "status",
+        "callUuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "requestUuid": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+        "callStatus": "queued",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "wasAnswered": false
+      },
+      "event": null,
+      "classification": null
+    }
+  ]
+}

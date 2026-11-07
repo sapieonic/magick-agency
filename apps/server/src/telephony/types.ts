@@ -56,6 +56,22 @@ export interface AnswerResponseOptions {
    * hours) aren't silently truncated mid-recording.
    */
   recordingMaxLengthSeconds?: number;
+  /**
+   * The call's max duration in seconds. A carrier that streams via answer XML bounds
+   * the stream by it, beside the dial's own time limit. Omitted: the carrier's default.
+   */
+  maxDurationSeconds?: number;
+}
+
+/** A carrier's own HTTP request to us, as needed to verify its signature. */
+export interface CarrierHttpRequest {
+  method: 'GET' | 'POST';
+  /** The full public URL the carrier called (our env webhook origin + path + query). */
+  url: string;
+  /** Parsed form/body params (string values). */
+  params: Record<string, string>;
+  /** Request headers; looked up case-insensitively. */
+  headers: Record<string, string | undefined>;
 }
 
 export interface CallEvent {
@@ -203,6 +219,18 @@ export interface TelephonyProvider {
   getCallStatus(providerCallId: string): Promise<ProviderCallStatus>;
   getRecordingUrl(providerCallId: string): Promise<string | null>;
   validateWebhookSignature(rawBody: string, signature: string): boolean;
+  /**
+   * Cancel a dial the far end has not answered, by the dial REQUEST id
+   * ({@link InitiateCallResult.providerRequestId}). Optional: a carrier whose dial
+   * returns the call id at once hangs up a ringing leg with `endCall`.
+   * `not_found`: the carrier no longer holds the request (answered, ended or never queued).
+   */
+  cancelDialRequest?(providerRequestId: string): Promise<'canceled' | 'not_found'>;
+  /**
+   * Verify a carrier callback's signature against this adapter's secret(s). Optional:
+   * absent means the carrier signs nothing and the URL token is the only check.
+   */
+  verifyCarrierRequest?(req: CarrierHttpRequest): boolean;
 }
 
 export interface MediaStreamConfig {

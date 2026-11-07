@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
 import { carrierModuleNames, findCarrierModule } from '../../../src/telephony/carrier-modules.js';
 import { byocProviderNames } from '../../../src/telephony/factory.js';
 import { findCredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
-import { encodeAlaw } from '../../../src/utils/audio.js';
+import { decodeMulaw, encodeAlaw, encodeMulaw } from '../../../src/utils/audio.js';
 
 /** The provider names `factory.ts`'s `instantiate` switch can construct. */
 function adapterRegistryNames(): string[] {
@@ -114,5 +114,75 @@ describe('voicelink carrier module', () => {
     const back = codec.pcm16kToCarrier(Buffer.alloc(640));
     expect(back.length).toBeGreaterThan(0);
     expect(back.length).toBeLessThanOrEqual(160);
+  });
+});
+
+describe('plivo carrier module', () => {
+  const pl = findCarrierModule('plivo')!;
+  const start = (mediaFormat: unknown, extra: Record<string, unknown> = {}) => ({
+    event: 'start',
+    start: { callId: 'call-uuid-1', streamId: 'stream-1', accountId: 'MA1', tracks: ['inbound'], mediaFormat, ...extra },
+  });
+
+  it('hangs up over REST and takes the stream URL from the answer XML, not the dial', () => {
+    expect(pl.answeredHangup).toBe('rest');
+    expect(pl.mediaUrlInDialRequest).toBe(false);
+    expect(pl.media.negotiatesOnStart).toBe(true);
+    // No browser leg speaks μ-law: every leg transcodes.
+    expect(pl.media.wireFormat).toBeNull();
+    expect(pl.media.formatLabel).toBe('μ-law 8kHz');
+  });
+
+  it('accepts a μ-law 8 kHz start and captures Plivo’s call and stream ids', () => {
+    expect(pl.media.parseStart(start({ encoding: 'audio/x-mulaw', sampleRate: 8000 })))
+      .toEqual({ ok: true, carrierCallId: 'call-uuid-1', streamId: 'stream-1' });
+    expect(pl.media.parseStart({ event: 'start', streamId: 's-top', start: { mediaFormat: { encoding: 'AUDIO/X-MULAW', sampleRate: '8000' } } }))
+      .toEqual({ ok: true, carrierCallId: null, streamId: 's-top' });
+  });
+
+  it.each([
+    [{ encoding: 'audio/x-l16', sampleRate: 8000 }, 'audio/x-l16', '8000'],
+    [{ encoding: 'audio/x-mulaw', sampleRate: 16000 }, 'audio/x-mulaw', '16000'],
+    [{ encoding: 'audio/alaw', sampleRate: 8000 }, 'audio/alaw', '8000'],
+    [undefined, '', ''],
+  ])('refuses any other format (%j)', (fmt, encoding, rate) => {
+    expect(pl.media.parseStart(start(fmt))).toEqual({ ok: false, encoding, rate });
+  });
+
+  it('refuses a missing or VoiceLink-shaped start frame', () => {
+    expect(pl.media.parseStart(null)).toEqual({ ok: false, encoding: '', rate: '' });
+    expect(pl.media.parseStart({ start: { media_format: { encoding: 'audio/x-mulaw', sample_rate: '8000' } } }))
+      .toEqual({ ok: false, encoding: '', rate: '' });
+  });
+
+  it('frames outbound audio as playAudio with its content type and rate', () => {
+    expect(pl.media.frameOutbound('QUJD', 'stream-1')).toEqual({
+      event: 'playAudio',
+      media: { contentType: 'audio/x-mulaw', sampleRate: 8000, payload: 'QUJD' },
+    });
+  });
+
+  it('encodes a clip to μ-law 8 kHz at one byte per sample', () => {
+    const clip = pl.media.encodeClip(Buffer.alloc(16000 * 2), 16000)!;
+    expect(clip.byteRate).toBe(8000);
+    expect(clip.buffer.length).toBe(8000);
+    expect(pl.media.encodeClip(Buffer.alloc(0), 16000)).toBeNull();
+  });
+
+  it('transcodes μ-law 8 kHz to PCM16 16 kHz and back, keeping a tone’s level', () => {
+    const codec = pl.media.createCodec();
+    const tone = new Int16Array(160 * 10);
+    for (let i = 0; i < tone.length; i++) tone[i] = Math.round(8000 * Math.sin((2 * Math.PI * 440 * i) / 8000));
+    const mulaw = encodeMulaw(tone);
+    const pcm: Buffer[] = [];
+    for (let f = 0; f < 10; f++) pcm.push(codec.carrierToPcm16k(mulaw.subarray(f * 160, (f + 1) * 160)));
+    const pcm16k = Buffer.concat(pcm);
+    expect(pcm16k.length % 2).toBe(0);
+    const back = Buffer.concat(Array.from({ length: 10 }, (_, f) => codec.pcm16kToCarrier(pcm16k.subarray(f * 640, (f + 1) * 640))));
+    expect(back.length).toBeGreaterThan(1200);
+    const decoded = decodeMulaw(back.subarray(400, 1200));
+    const peak = decoded.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    expect(peak).toBeGreaterThan(7000);
+    expect(peak).toBeLessThan(9000);
   });
 });
