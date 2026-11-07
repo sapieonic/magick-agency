@@ -1001,7 +1001,27 @@ caller ID per agent". Server, db, contracts and console.
 
 ## Test counts
 
-Latest run, 2026-11-07, the Plivo branch after merging `main` (#51 dedicated caller IDs, #53
+Latest run, 2026-11-07, the eight PR #56 review fixes on top of `8423bae` (the PL11 breaker counts
+4xx only, a sync takes over a revoked same-account credential's numbers, the dialable caller-ID
+cache's in-flight race and its media-worker invalidation, an unsent dial no longer resets the
+streak, a keyring fault is a bridge failure, the Plivo CDR's `call_state`, the breaker's `DEL`
+memo), from inside each package, with no other run sharing this worktree's database: `pnpm lint`
+clean in 8 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass; `pnpm build` clean;
+`contracts-literals --check` up to date (51 vocabularies). `apps/mobile` with Flutter 3.47.7:
+`flutter test` 1466, `agency_wire` `dart test` 510 (a platform contract type changed).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 8883 passed + 1 expected fail + 42 skipped (443 files) | rest lane 2151 passed + 9 expected fail + 1 skipped (213 files + 1 skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 614 (62 files) |
+| `apps/console` | 5685 (294 files) | — |
+| `apps/super-admin` | 471 (35 files) | — |
+| `packages/contracts` | 335 (11 files) | — |
+| `packages/web-ui` | 237 (20 files) | — |
+| `packages/domain` | 137 (8 files) | — |
+| `packages/observability` | 14 (3 files) | — |
+
+Previous run, 2026-11-07, the Plivo branch after merging `main` (#51 dedicated caller IDs, #53
 Insights tabs) and integrating the two caller-ID rules, from inside each package, with no other
 run sharing this worktree's database: `pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
 `pnpm test:release` 10 pass; `pnpm build` clean; `contracts-literals --check` up to date (51

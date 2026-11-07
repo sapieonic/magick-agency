@@ -224,8 +224,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/canceled-outcome-ledger.test.ts` | 11 |
 | `apps/server/test/unit/agency/contact-overrides.test.ts` | 15 |
 | `apps/server/test/unit/agency/dial-dispatcher.test.ts` | 7 |
-| `apps/server/test/unit/agency/dialer-carrier-refusals.test.ts` | ~17 |
-| `apps/server/test/unit/agency/carrier-refusal-breaker.test.ts` | ~12 |
+| `apps/server/test/unit/agency/dialer-carrier-refusals.test.ts` | 22 |
+| `apps/server/test/unit/agency/carrier-refusal-breaker.test.ts` | 20 |
 | `apps/server/test/unit/agency/disposition-policy.test.ts` | 90 |
 | `apps/server/test/unit/agency/disposition-route.test.ts` | 43 |
 | `apps/server/test/unit/agency/disposition.test.ts` | 21 |
@@ -250,7 +250,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 90 |
 | `apps/server/test/unit/agency/pacing-round.test.ts` | ~31 |
-| `apps/server/test/unit/agency/pacing-skip.test.ts` | 52 |
+| `apps/server/test/unit/agency/pacing-skip.test.ts` | 54 |
 | `apps/server/test/unit/agency/pre-dial-gates-hours-override.test.ts` | 13 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
@@ -323,7 +323,7 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 | `apps/server/test/integration/agency/softphone-agent-claim.test.ts` | 8 |
 | `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 17 |
 | `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | ~15 |
-| `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
+| `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 11 |
 | `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 21 |
 | `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | ~50 |
 
@@ -687,7 +687,7 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 16 |
-| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | ~12 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 13 |
 | `apps/server/test/unit/cluster/lease-snapshot-window.test.ts` | 2 |
 | `apps/server/test/unit/cluster/loop-sampler.test.ts` | 5 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 15 |
@@ -774,7 +774,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
-| `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | ~26 |
+| `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | 63 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-manual-correlation.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 4 |
@@ -954,7 +954,7 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/telephony/byoc-factory.test.ts` | 7 |
-| `apps/server/test/unit/telephony/byoc-registry.test.ts` | ~24 |
+| `apps/server/test/unit/telephony/byoc-registry.test.ts` | 27 |
 | `apps/server/test/unit/telephony/carrier-errors.test.ts` | ~4 |
 | `apps/server/test/unit/telephony/carrier-modules.test.ts` | ~25 |
 | `apps/server/test/unit/telephony/provider-capabilities.test.ts` | ~7 |
@@ -965,11 +965,11 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | `apps/server/test/unit/telephony/voicelink/voicelink.adapter.edge-cases.test.ts` | 14 |
 | `apps/server/test/unit/telephony/voicelink/voicelink.adapter.test.ts` | 38 |
 | `apps/server/test/unit/telephony/voicelink/voicelink.webhook.test.ts` | 125 |
-| `apps/server/test/unit/telephony/plivo/plivo-carrier.fixture.test.ts` | ~7 |
+| `apps/server/test/unit/telephony/plivo/plivo-carrier.fixture.test.ts` | 55 |
 | `apps/server/test/unit/telephony/plivo/plivo-config.test.ts` | ~4 |
 | `apps/server/test/unit/telephony/plivo/plivo-dial-rate.test.ts` | ~15 |
 | `apps/server/test/unit/telephony/plivo/plivo-signature.test.ts` | ~5 |
-| `apps/server/test/unit/telephony/plivo/plivo.adapter.test.ts` | ~40 |
+| `apps/server/test/unit/telephony/plivo/plivo.adapter.test.ts` | 89 |
 
 ### `apps/server/src/telephony/credentials/`
 
@@ -979,7 +979,7 @@ Files: `credential-sealer.ts`, `credential-service.ts`, `credential-specs.ts`, `
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/telephony/credential-number-sync.test.ts` | ~15 |
+| `apps/server/test/unit/telephony/credential-number-sync.test.ts` | 46 |
 | `apps/server/test/unit/telephony/credential-sealer.test.ts` | 30 |
 | `apps/server/test/unit/telephony/credential-service.test.ts` | 49 |
 
@@ -1085,7 +1085,7 @@ a WebSocket *client*, which a stub server cannot be.
 | Test file | Cases | Guards |
 |---|---|---|
 | `apps/server/test/unit/load/load-scale.test.ts` | 3 | The shared PRNG is deterministic and in bounds |
-| `apps/server/test/unit/load/mock-plivo-carrier.test.ts` | ~9 | The mock Plivo carrier itself, driven by the real `PlivoAdapter`: auth, faults, signed callbacks, the answer XML and media stream |
+| `apps/server/test/unit/load/mock-plivo-carrier.test.ts` | 15 | The mock Plivo carrier itself, driven by the real `PlivoAdapter`: auth, faults, signed callbacks, the answer XML and media stream |
 | `apps/server/test/unit/load/mock-voicelink-carrier.test.ts` | 6 | The mock carrier itself: URL rewrite, auth and 422, fault ordering, a `start` the product parses, audio surviving the real codec |
 | `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 22 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; a hung `add_lead` or login is abandoned at its timeout (the former 2 `it.fails`), a timed-out or unreadable `add_lead` is outcome-unknown and never retried; a CDR lookup's 401 retry gets its own deadline |
 | `apps/server/test/unit/load/bridge-row-write-order.test.ts` | 1 | No live status lands over a terminal one, 200 calls with shuffled ringing / answered / terminal |
@@ -1266,7 +1266,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/credential-call-insert.repository.test.ts` | ~7 |
 | `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~10 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
-| `packages/db/test/integration/repositories/phone-number-sync.repository.test.ts` | ~10 |
+| `packages/db/test/integration/repositories/phone-number-sync.repository.test.ts` | 18 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
