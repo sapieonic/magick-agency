@@ -242,6 +242,30 @@ void main() {
       expect(call('bootstrap_enabled').versionKey, '1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d@2026-11-01T08:02:11.004Z');
     });
 
+    test('can_cancel_ringing: read when the live call carries it, null when absent', () {
+      // The bootstrap's ringing call says its carrier cannot cancel it; the station
+      // frame's says it can (station_test); a list row never carries the key.
+      expect(call('bootstrap_enabled').canCancelRinging, isFalse);
+      final ringing = sp('bootstrap_enabled')['call']! as Map<String, Object?>;
+      expect(ManualCall.fromJson({...ringing, 'can_cancel_ringing': true}).canCancelRinging, isTrue);
+      expect(ManualCall.fromJson({...ringing}..remove('can_cancel_ringing')).canCancelRinging, isNull);
+      expect(ManualCall.fromJson({...ringing, 'can_cancel_ringing': null}).canCancelRinging, isNull);
+      expect(decodeManualCallsPage(sp('calls_page')).rows.map((r) => r.canCancelRinging), [null, null]);
+      expect(
+        () => ManualCall.fromJson({...ringing, 'can_cancel_ringing': 'yes'}),
+        throwsA(isA<WireFormatException>()),
+      );
+      expect(ManualCall.tryFromJson({...ringing, 'can_cancel_ringing': 'yes'}), isNull);
+    });
+
+    test('two copies that differ only in can_cancel_ringing are not equal', () {
+      final ringing = sp('bootstrap_enabled')['call']! as Map<String, Object?>;
+      final cannot = ManualCall.fromJson({...ringing, 'can_cancel_ringing': false});
+      expect(cannot, ManualCall.fromJson({...ringing, 'can_cancel_ringing': false}));
+      expect(cannot == ManualCall.fromJson({...ringing, 'can_cancel_ringing': true}), isFalse);
+      expect(cannot == ManualCall.fromJson({...ringing}..remove('can_cancel_ringing')), isFalse);
+    });
+
     test('tryFromJson is null for anything that is not a readable row', () {
       expect(ManualCall.tryFromJson(null), isNull);
       expect(ManualCall.tryFromJson('x'), isNull);

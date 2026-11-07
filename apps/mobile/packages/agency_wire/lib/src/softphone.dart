@@ -160,6 +160,7 @@ class ManualCall {
     this.dispositionedAt,
     required this.dispositionedOnBehalf,
     this.webrtcCallId,
+    this.canCancelRinging,
     this.dialedAt,
     this.answeredAt,
     this.bridgedAt,
@@ -206,6 +207,7 @@ class ManualCall {
       dispositionedAt: f.dispositionedAt,
       dispositionedOnBehalf: f.dispositionedOnBehalf,
       webrtcCallId: f.webrtcCallId,
+      canCancelRinging: f.canCancelRinging,
       dialedAt: f.dialedAt,
       answeredAt: f.answeredAt,
       bridgedAt: f.bridgedAt,
@@ -294,6 +296,13 @@ class ManualCall {
 
   /// The media leg (`agency_calls.id`).
   final String? webrtcCallId;
+
+  /// Hanging up while the call rings stops the customer's phone ringing: the
+  /// media leg's carrier cancels a ringing call (SP3). On the live call only
+  /// (the frame, the call routes' answers, bootstrap, the `manual_call_live`
+  /// refusal); null on a list row. False before the leg is placed and for a
+  /// carrier that cannot. Anything but `true`: warn before a ringing hang-up.
+  final bool? canCancelRinging;
   final DateTime? dialedAt;
   final DateTime? answeredAt;
 
@@ -353,6 +362,7 @@ class ManualCall {
       o.dispositionedAt == dispositionedAt &&
       o.dispositionedOnBehalf == dispositionedOnBehalf &&
       o.webrtcCallId == webrtcCallId &&
+      o.canCancelRinging == canCancelRinging &&
       o.dialedAt == dialedAt &&
       o.answeredAt == answeredAt &&
       o.bridgedAt == bridgedAt &&
@@ -398,6 +408,7 @@ final class _ManualCallFields {
       dispositionedAt = j.timeOrNull('dispositioned_at'),
       dispositionedOnBehalf = j.boolOrNull('dispositioned_on_behalf') ?? false,
       webrtcCallId = j.strOrNull('webrtc_call_id'),
+      canCancelRinging = j.boolOrNull('can_cancel_ringing'),
       dialedAt = j.timeOrNull('dialed_at'),
       answeredAt = j.timeOrNull('answered_at'),
       bridgedAt = j.timeOrNull('bridged_at'),
@@ -442,6 +453,7 @@ final class _ManualCallFields {
   final DateTime? dispositionedAt;
   final bool dispositionedOnBehalf;
   final String? webrtcCallId;
+  final bool? canCancelRinging;
   final DateTime? dialedAt;
   final DateTime? answeredAt;
   final DateTime? bridgedAt;
@@ -1298,6 +1310,7 @@ final class ManualCallListRow extends ManualCall {
     super.dispositionedAt,
     required super.dispositionedOnBehalf,
     super.webrtcCallId,
+    super.canCancelRinging,
     super.dialedAt,
     super.answeredAt,
     super.bridgedAt,
@@ -1341,6 +1354,7 @@ final class ManualCallListRow extends ManualCall {
       dispositionedAt: c.dispositionedAt,
       dispositionedOnBehalf: c.dispositionedOnBehalf,
       webrtcCallId: c.webrtcCallId,
+      canCancelRinging: c.canCancelRinging,
       dialedAt: c.dialedAt,
       answeredAt: c.answeredAt,
       bridgedAt: c.bridgedAt,
