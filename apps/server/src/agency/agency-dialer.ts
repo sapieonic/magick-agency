@@ -36,10 +36,10 @@ import type {
   AgencyAbandonReason,
 } from '@magick-agency/contracts/agency';
 import type { WrapupManager } from './wrapup-manager.js';
-import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
+import { isCampaignSession, type AgencyCampaignRecord, type CarrierAccountPauseReason } from '../db/models/agency.model.js';
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
-import { pauseCampaignForCarrierAuth } from './carrier-auth-pause.js';
+import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -118,6 +118,15 @@ const CAPACITY_REFUSALS: ReadonlySet<string> = new Set([
   // slot: nothing was placed and it says nothing about the contact. Back-pressure too: the
   // gate bounds the rate, so the next tick's dial is the retry.
   'carrier_rate_limited',
+]);
+
+/**
+ * The dial refusals that say the campaign's carrier account cannot dial, and the pause
+ * reason each writes (`carrier-account-pause.ts`).
+ */
+const CARRIER_ACCOUNT_PAUSES: ReadonlyMap<string, CarrierAccountPauseReason> = new Map([
+  ['carrier_auth_rejected', 'carrier_auth'],
+  ['telephony_credential_unavailable', 'carrier_account_unavailable'],
 ]);
 
 /**
@@ -582,13 +591,16 @@ export class AgencyDialer {
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
           ? 'reservation_expired'
           : 'failed';
-      // The carrier refused the campaign's credential (HTTP 401): every further dial on it
-      // would be refused too, so the campaign is paused before this attempt is settled.
-      // Nothing was placed and the contact did nothing wrong: it goes back at once,
-      // uncharged, and waits for the resume.
-      const carrierAuthRejected = err instanceof WebRtcCallError && err.code === 'carrier_auth_rejected';
-      if (carrierAuthRejected) await pauseCampaignForCarrierAuth(cmd.campaign);
-      const capacityRefused = err instanceof WebRtcCallError && (CAPACITY_REFUSALS.has(err.code) || carrierAuthRejected);
+      // The campaign's carrier account cannot dial: the carrier refused its credential
+      // (HTTP 401, `carrier_auth`), or the credential is no longer active (disabled,
+      // invalid, revoked or unopenable since the campaign started, refused before the
+      // carrier: `carrier_account_unavailable`). Every further dial on it would be refused
+      // too, so the campaign is paused before this attempt is settled. Nothing was placed
+      // and the contact did nothing wrong: it goes back at once, uncharged, and waits for
+      // the resume.
+      const carrierPause = err instanceof WebRtcCallError ? CARRIER_ACCOUNT_PAUSES.get(err.code) : undefined;
+      if (carrierPause) await pauseCampaignForCarrierAccount(cmd.campaign, carrierPause);
+      const capacityRefused = err instanceof WebRtcCallError && (CAPACITY_REFUSALS.has(err.code) || carrierPause !== undefined);
       log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
       await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused);
       return;

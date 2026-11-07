@@ -1,6 +1,6 @@
 import { formatDate } from '@magick-agency/web-ui/format';
 import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
-import { CARRIER_AUTH_PAUSE_COPY, CARRIER_AUTH_PAUSE_REASON } from './agencyCarriers';
+import { carrierAccountPauseCopy } from './agencyCarriers';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that
@@ -214,8 +214,10 @@ export function activityDetailSummary(row: ActivityRow): string | null {
   const detail = row.detail ?? {};
 
   if (row.action === 'agency_campaign.auto_paused') {
-    // The carrier refused the account's credentials: what to do is the whole content.
-    if (detail['reason'] === CARRIER_AUTH_PAUSE_REASON) return CARRIER_AUTH_PAUSE_COPY;
+    // The carrier refused the account's credentials, or the carrier account is no longer
+    // active: what to do is the whole content.
+    const carrierCopy = carrierAccountPauseCopy(str(detail['reason']));
+    if (carrierCopy) return carrierCopy;
     const measured = num(detail['measured_pct']);
     const ceiling = num(detail['ceiling_pct']);
     if (measured !== null && ceiling !== null) {

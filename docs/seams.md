@@ -91,7 +91,8 @@ tenant's own account, the credential (`telephonyCredentialId`, decisions B18–B
 pins it on the call row (an insert that re-checks it is `active`) and dials on it, never on the
 service's own account. The refusals with nothing placed at the carrier each have their own
 `WebRtcRejectReason` and emit no `ended`: the admission refusals, `station_socket_unavailable`,
-`telephony_credential_unavailable` (the credential cannot dial), `carrier_rate_limited` (a
+`telephony_credential_unavailable` (the credential cannot dial; the dialer pauses the campaign
+`carrier_account_unavailable`), `carrier_rate_limited` (a
 calls-per-second limit) and `carrier_auth_rejected` (the carrier refused the credential, HTTP
 401; the dialer pauses the campaign `carrier_auth`). `telephony_init_failed` is the carrier
 refusing a dial: it ends the call first, with an `ended`.

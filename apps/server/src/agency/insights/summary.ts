@@ -117,7 +117,7 @@ export async function computeSummary(campaign: AgencyCampaignRecord, deps: Summa
   };
   // The headline's actor and instants need the transitions and names read above.
   // An automatic pause (the guardrail, or the carrier refusing the credential) has no actor.
-  if (headline.paused) headline.paused.actor = campaign.pause_reason === 'abandonment_ceiling' || campaign.pause_reason === 'carrier_auth' ? null : transitionActor;
+  if (headline.paused) headline.paused.actor = campaign.pause_reason === 'abandonment_ceiling' || campaign.pause_reason === 'carrier_auth' || campaign.pause_reason === 'carrier_account_unavailable' ? null : transitionActor;
   if (headline.stopping) {
     const pressed = [...transitions].reverse().find((t) => t.to_status === 'stopping');
     headline.stopping.actor = transitionActor;

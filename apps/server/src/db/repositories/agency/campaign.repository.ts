@@ -9,6 +9,7 @@ import {
   AGENCY_CAMPAIGN_TERMINAL_STATUSES,
   type AgencyCampaignDependent,
   type AgencyCampaignRecord,
+  type CarrierAccountPauseReason,
 } from '../../models/agency.model.js';
 import type {
   AgencyAssignmentMode,
@@ -606,9 +607,10 @@ export class AgencyCampaignRepository {
   }
 
   /**
-   * Pause a RUNNING campaign because its carrier refused the campaign's carrier-account
-   * credential on a dial (HTTP 401, `pause_reason = 'carrier_auth'`): every further dial
-   * on that credential would be refused too. Like the abandonment guardrail's pause, it
+   * Pause a RUNNING campaign because its carrier account cannot dial: the carrier refused
+   * the campaign's credential on a dial (HTTP 401, `carrier_auth`), or the credential is
+   * no longer active (`carrier_account_unavailable`). Every further dial on that credential
+   * would be refused too. Like the abandonment guardrail's pause, it
    * has no human behind it, so the transition actor is cleared, and it never resumes on
    * its own: a supervisor resumes once the credential is fixed (resume refuses a
    * credential that is not `active`). `pause_abandonment_rate_pct` is cleared: it is the
@@ -617,11 +619,11 @@ export class AgencyCampaignRepository {
    * Zero rows (null) when the campaign is not running: already paused (by this or anything
    * else), stopping or terminal. The caller then writes no audit row.
    */
-  async pauseForCarrierAuth(campaignId: string): Promise<AgencyCampaignRecord | null> {
+  async pauseForCarrierAccount(campaignId: string, reason: CarrierAccountPauseReason): Promise<AgencyCampaignRecord | null> {
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `UPDATE agency_campaigns
           SET status = 'paused',
-              pause_reason = 'carrier_auth',
+              pause_reason = $2::varchar,
               paused_at = now(),
               pause_abandonment_rate_pct = NULL,
               last_transition_by_user_id = NULL,
@@ -629,7 +631,7 @@ export class AgencyCampaignRepository {
               updated_at = now()
         WHERE id = $1 AND status = 'running'
       RETURNING *`,
-      [campaignId],
+      [campaignId, reason],
     );
     announceCampaignChanged(rows[0]);
     return rows[0] ?? null;

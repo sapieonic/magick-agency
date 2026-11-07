@@ -149,6 +149,11 @@ describe('activityDetailSummary', () => {
       .toBe('Paused: the carrier refused this account’s credentials. Ask your administrator to check them.');
   });
 
+  it('says what to do when the campaign’s carrier account is no longer active', () => {
+    expect(activityDetailSummary(row({ detail: { reason: 'carrier_account_unavailable' } })))
+      .toBe('Paused: this campaign’s carrier account is no longer active. Ask your administrator to re-enable it, or choose another carrier.');
+  });
+
   it('names a move to another carrier account in a config change', () => {
     expect(activityDetailSummary(row({
       action: 'agency_campaign.config_changed',

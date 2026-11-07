@@ -57,6 +57,9 @@ import type {
  * **3. A `null` outcome is possible** and is not the same as `failed`: an attempt
  * can end before it was ever classified. Key the policy defensively.
  */
+/** The pauses the dialler makes when a campaign's carrier account cannot dial (`carrier-account-pause.ts`). */
+export type CarrierAccountPauseReason = 'carrier_auth' | 'carrier_account_unavailable';
+
 export type AgencyRetryPolicy = Partial<
   Record<AgencyAttemptOutcome, { delay_minutes?: number; max_attempts: number }>
 >;
@@ -125,12 +128,13 @@ export interface AgencyCampaignRecord {
   /**
    * Why the campaign is currently paused, or NULL when it is not paused.
    *
-   * Three values are writable (CHECK-constrained): `supervisor`,
-   * `abandonment_ceiling`, and (0018) `carrier_auth`: the carrier refused the
-   * campaign's credential. The WS enum's `auto_paused` is deliberately absent —
-   * its two emit sites are transient broadcasts that write no row.
+   * Four values are writable (CHECK-constrained): `supervisor`,
+   * `abandonment_ceiling`, (0018) `carrier_auth`: the carrier refused the
+   * campaign's credential, and (0019) `carrier_account_unavailable`: the campaign's
+   * credential is no longer active. The WS enum's `auto_paused` is deliberately
+   * absent — its two emit sites are transient broadcasts that write no row.
    */
-  pause_reason: 'supervisor' | 'abandonment_ceiling' | 'carrier_auth' | null;
+  pause_reason: 'supervisor' | 'abandonment_ceiling' | CarrierAccountPauseReason | null;
   /** When the current pause began. Cleared on resume/start. */
   paused_at: Date | null;
   /**

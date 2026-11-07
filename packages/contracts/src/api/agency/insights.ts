@@ -171,8 +171,12 @@ export interface AgencyInsightsHeadline {
   paused: null | {
     paused_at: string;
     actor: AgencyInsightsActor | null;
-    /** `carrier_auth`: the carrier refused the campaign's carrier-account credential. */
-    reason: 'supervisor' | 'abandonment_ceiling' | 'carrier_auth';
+    /**
+     * `carrier_auth`: the carrier refused the campaign's carrier-account credential.
+     * `carrier_account_unavailable`: that credential is no longer active (disabled,
+     * invalid, revoked or unopenable since the campaign started).
+     */
+    reason: 'supervisor' | 'abandonment_ceiling' | 'carrier_auth' | 'carrier_account_unavailable';
     /** The 24 h abandonment rate the guardrail measured, for an auto-pause. */
     abandonment_rate_pct_at_pause: number | null;
     calls_finishing: number;

@@ -151,3 +151,23 @@ export const CARRIER_AUTH_PAUSE_REASON = 'carrier_auth';
 /** What a `carrier_auth` pause says, wherever a pause reason is shown. */
 export const CARRIER_AUTH_PAUSE_COPY =
   'Paused: the carrier refused this account’s credentials. Ask your administrator to check them.';
+
+/**
+ * The pause reason the dialler writes when the campaign's carrier account is no longer
+ * active (disabled, invalid or revoked since the campaign started).
+ */
+export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON = 'carrier_account_unavailable';
+
+/** What a `carrier_account_unavailable` pause says, wherever a pause reason is shown. */
+export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY =
+  'Paused: this campaign’s carrier account is no longer active. Ask your administrator to re-enable it, or choose another carrier.';
+
+/**
+ * The copy for a pause the dialler made because the campaign's carrier account cannot
+ * dial, or `null` for any other pause reason.
+ */
+export function carrierAccountPauseCopy(reason: string | null | undefined): string | null {
+  if (reason === CARRIER_AUTH_PAUSE_REASON) return CARRIER_AUTH_PAUSE_COPY;
+  if (reason === CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON) return CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY;
+  return null;
+}

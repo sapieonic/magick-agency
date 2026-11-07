@@ -16,7 +16,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *      changes nothing; a valid one after them still works;
  *  (d) a dial Plivo refuses 401 pauses the campaign `carrier_auth`, audited;
  *  (e) after a rotation, a callback signed with the previous token inside the grace is
- *      accepted, and the REST hangup goes out on the new token.
+ *      accepted, and the REST hangup goes out on the new token;
+ *  (g) a credential disabled while its campaign runs: the dial is refused before the carrier
+ *      and the campaign is paused `carrier_account_unavailable`, audited, the contact
+ *      returned uncharged (not held and cycled).
  */
 
 const { env } = vi.hoisted(() => {
@@ -247,6 +250,32 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     });
     expect(contact).toEqual({ state: 'pending', due: true, our_fault_attempts: 0 });
     expect(r.carrier.callOrder).toHaveLength(0);
+  }, 60_000);
+
+  it('(g) a credential disabled while its campaign runs pauses it `carrier_account_unavailable`; nothing reaches the carrier', async () => {
+    const r = rig!;
+    const audit = vi.spyOn(auditLogger, 'log');
+    const { campaignId, contactId } = await plivoCampaign(r);
+    const disabled = await r.credentials.disable(r.credentialId, ADMIN);
+    expect(disabled.ok).toBe(true);
+    station = await joinAgent(r, campaignId);
+    await waitFor('campaign paused', async () => (await campaignRow(campaignId)).status === 'paused');
+    expect(await campaignRow(campaignId)).toEqual({ status: 'paused', pause_reason: 'carrier_account_unavailable' });
+    expect(r.carrier.requestsTo('create_call')).toEqual([]);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'agency_campaign.auto_paused',
+      eventData: expect.objectContaining({ campaign_id: campaignId, reason: 'carrier_account_unavailable', telephony_credential_id: r.credentialId }),
+    }));
+    const contact = await waitFor('the contact returned', async () => {
+      const { rows } = await getTestPool().query<{ state: string; due: boolean; our_fault_attempts: number }>(
+        `SELECT state, next_attempt_at <= now() + interval '1 second' AS due, our_fault_attempts
+           FROM agency_contacts WHERE id = $1`, [contactId]);
+      return rows[0]!.state === 'pending' ? rows[0] : null;
+    });
+    expect(contact).toEqual({ state: 'pending', due: true, our_fault_attempts: 0 });
+    // One refused attempt, not a roster cycled through refusals.
+    const { rows } = await getTestPool().query<{ n: number }>('SELECT count(*)::int AS n FROM agency_call_attempts WHERE campaign_id = $1', [campaignId]);
+    expect(rows[0]!.n).toBe(1);
   }, 60_000);
 
   it('(e) after a rotation, a callback signed with the previous token inside the grace is accepted; the hangup uses the new token', async () => {

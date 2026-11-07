@@ -342,6 +342,16 @@ describe('the settings panel', () => {
     expect(items[1]).toMatch(/automatically: the carrier refused this account’s credentials\. Ask your administrator to check them\.$/);
     expect(items[1]).not.toMatch(/by the dialler/);
   });
+
+  it('says a carrier_account_unavailable pause was the carrier account going away, not a person', () => {
+    const base = summary();
+    show(<CampaignSettingsPanel summary={{
+      ...base,
+      transitions: [{ to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_account_unavailable' }],
+    }} />);
+    const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
+    expect(items[0]).toMatch(/automatically: this campaign’s carrier account is no longer active\. Ask your administrator to re-enable it, or choose another carrier\.$/);
+  });
 });
 
 describe('health and compliance', () => {

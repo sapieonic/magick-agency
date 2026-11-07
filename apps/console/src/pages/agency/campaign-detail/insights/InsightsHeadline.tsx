@@ -29,7 +29,7 @@ import {
 import { rosterBucketLink } from '../../../../utils/agency/insights/links';
 import { CountLink, Kpi, Panel, rateFigure } from './InsightsParts';
 import styles from './Insights.module.css';
-import { CARRIER_AUTH_PAUSE_COPY, CARRIER_AUTH_PAUSE_REASON } from '../../../../utils/agencyCarriers';
+import { CARRIER_AUTH_PAUSE_REASON, carrierAccountPauseCopy } from '../../../../utils/agencyCarriers';
 
 /**
  * The status-aware block at the top of the Insights tab: one component per
@@ -236,17 +236,20 @@ export function PausedHeadline({
   const auto = paused.reason === 'abandonment_ceiling';
   // The carrier refused the account's credentials and the dialler paused the campaign:
   // nobody pressed Pause, and the fix is an administrator's, not a supervisor's.
-  const carrierAuth = paused.reason === CARRIER_AUTH_PAUSE_REASON;
+  // Or the campaign's carrier account is no longer active (disabled or revoked meanwhile).
+  const carrierCopy = carrierAccountPauseCopy(paused.reason);
   return (
     <Panel id="headline" title="Paused" sub={`Paused for ${longDuration(secondsSince(paused.paused_at, now))}`} testId="headline-paused">
       <div className={styles.kpis}>
         <Kpi
           label="Paused by"
-          value={auto ? 'The abandonment guardrail' : carrierAuth ? 'The carrier' : actorName(paused.actor)}
+          value={auto ? 'The abandonment guardrail'
+            : paused.reason === CARRIER_AUTH_PAUSE_REASON ? 'The carrier'
+              : carrierCopy ? 'The dialler' : actorName(paused.actor)}
           sub={auto
             ? `Abandonment reached ${paused.abandonment_rate_pct_at_pause === null ? 'the ceiling' : pct(paused.abandonment_rate_pct_at_pause)} (ceiling ${ceilingPctText(summary.settings.abandonment_ceiling_pct)}), ${formatZoned(paused.paused_at, zone)}`
-            : carrierAuth
-              ? `${CARRIER_AUTH_PAUSE_COPY} ${formatZoned(paused.paused_at, zone)}`
+            : carrierCopy
+              ? `${carrierCopy} ${formatZoned(paused.paused_at, zone)}`
               : `Supervisor pause, ${formatZoned(paused.paused_at, zone)}`}
           testId="kpi-paused-by"
         />

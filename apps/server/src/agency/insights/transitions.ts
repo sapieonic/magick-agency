@@ -11,7 +11,7 @@
  * | console `agency_campaign.paused` | paused | the user | `supervisor` |
  * | console `agency_campaign.resumed` | running | the user | `supervisor` |
  * | console `agency_campaign.stopped` (Stop pressed: the campaign drains) | stopping | the user | `supervisor` |
- * | dialer `agency_campaign.auto_paused` | paused | system | the row's `detail.reason`: `carrier_auth` (the carrier refused the campaign's credential, `carrier-auth-pause.ts`), else `abandonment_ceiling` |
+ * | dialer `agency_campaign.auto_paused` | paused | system | the row's `detail.reason`: `carrier_auth` (the carrier refused the campaign's credential) or `carrier_account_unavailable` (the credential is no longer active), both `carrier-account-pause.ts`, else `abandonment_ceiling` |
  * | dialer `agency_campaign.stopped` (the drain finished) | stopped | system | `calls_drained` |
  * | dialer `agency_campaign.completed` | completed | system | `completed_by_dialler` |
  *
@@ -50,9 +50,12 @@ export function transitionOf(row: Pick<ActivityRow, 'source' | 'action' | 'at' |
   }
   switch (row.action) {
     // Two writers: the abandonment guardrail (no `reason` on its oldest rows, and
-    // `abandonment_ceiling` since) and the carrier-auth pause, which says `carrier_auth`.
-    case 'agency_campaign.auto_paused':
-      return make('paused', row.detail?.['reason'] === 'carrier_auth' ? 'carrier_auth' : 'abandonment_ceiling', null);
+    // `abandonment_ceiling` since) and the carrier-account pause, which says
+    // `carrier_auth` or `carrier_account_unavailable`.
+    case 'agency_campaign.auto_paused': {
+      const reason = row.detail?.['reason'];
+      return make('paused', reason === 'carrier_auth' || reason === 'carrier_account_unavailable' ? reason : 'abandonment_ceiling', null);
+    }
     case 'agency_campaign.stopped': return make('stopped', 'calls_drained', null);
     case 'agency_campaign.completed': return make('completed', 'completed_by_dialler', null);
     default: return null;

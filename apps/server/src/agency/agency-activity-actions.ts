@@ -96,9 +96,9 @@ type CampaignScopedAuditAction = Exclude<
  *    transitions, `completed` (a running campaign that ran out of work) and
  *    `stopped` (a stopping campaign whose attempts drained). Nothing else writes
  *    them — the leader is their single writer.
- *  - `abandonment-guardrail.ts` and `carrier-auth-pause.ts` write
+ *  - `abandonment-guardrail.ts` and `carrier-account-pause.ts` write
  *    `agency_campaign.auto_paused`; its `reason` says which (`abandonment_ceiling`,
- *    `carrier_auth`).
+ *    `carrier_auth`, `carrier_account_unavailable`).
  *
  * `paused` and `stopped` are also in the `platform_audit_log` catalog; both
  * stores carrying one action name is the design, not a duplicate (`source` tells

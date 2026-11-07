@@ -16,7 +16,8 @@ import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js
  *  - its caller IDs must be active numbers synced from that credential;
  *  - start and resume are refused while the pinned credential is not active;
  *  - a retry inherits the pin;
- *  - a carrier 401 pauses a running campaign `carrier_auth` (`pauseForCarrierAuth`).
+ *  - a carrier 401 pauses a running campaign `carrier_auth`, a credential no longer active
+ *    `carrier_account_unavailable` (`pauseForCarrierAccount`).
  */
 
 vi.mock('@magick-agency/db', async (importOriginal) => ({
@@ -279,33 +280,33 @@ describe('retry of a pinned campaign', () => {
   });
 });
 
-describe('agencyCampaignRepository.pauseForCarrierAuth — the carrier refused the pinned credential', () => {
-  it('pauses a running campaign `carrier_auth`, clears the actor and the abandonment evidence, and then refuses a second time', async () => {
+describe('agencyCampaignRepository.pauseForCarrierAccount — the pinned credential cannot dial', () => {
+  it.each(['carrier_auth', 'carrier_account_unavailable'] as const)('pauses a running campaign `%s`, clears the actor and the abandonment evidence, and then refuses a second time', async (reason) => {
     const campaign = await plivoCampaign({
       status: 'running', last_transition_by_name: 'Asha', pause_abandonment_rate_pct: 7.5,
     });
-    const paused = await agencyCampaignRepository.pauseForCarrierAuth(campaign.id);
+    const paused = await agencyCampaignRepository.pauseForCarrierAccount(campaign.id, reason);
     expect(paused).toMatchObject({
-      id: campaign.id, status: 'paused', pause_reason: 'carrier_auth',
+      id: campaign.id, status: 'paused', pause_reason: reason,
       pause_abandonment_rate_pct: null, last_transition_by_user_id: null, last_transition_by_name: null,
     });
     expect(paused!.paused_at).toBeInstanceOf(Date);
     // Already paused: nothing more is written (the caller writes no second audit row).
-    expect(await agencyCampaignRepository.pauseForCarrierAuth(campaign.id)).toBeNull();
+    expect(await agencyCampaignRepository.pauseForCarrierAccount(campaign.id, 'carrier_auth')).toBeNull();
     const { rows } = await (await pool()).query('SELECT status, pause_reason FROM agency_campaigns WHERE id = $1', [campaign.id]);
-    expect(rows[0]).toEqual({ status: 'paused', pause_reason: 'carrier_auth' });
+    expect(rows[0]).toEqual({ status: 'paused', pause_reason: reason });
   });
 
   it.each(['draft', 'stopping', 'stopped', 'completed'])('leaves a %s campaign alone', async (status) => {
     const campaign = await plivoCampaign({ status });
-    expect(await agencyCampaignRepository.pauseForCarrierAuth(campaign.id)).toBeNull();
+    expect(await agencyCampaignRepository.pauseForCarrierAccount(campaign.id, 'carrier_account_unavailable')).toBeNull();
     const { rows } = await (await pool()).query('SELECT status, pause_reason FROM agency_campaigns WHERE id = $1', [campaign.id]);
     expect(rows[0]).toEqual({ status, pause_reason: null });
   });
 
   it('a supervisor`s pause is not rewritten', async () => {
     const campaign = await plivoCampaign({ status: 'paused', pause_reason: 'supervisor', paused_at: new Date() });
-    expect(await agencyCampaignRepository.pauseForCarrierAuth(campaign.id)).toBeNull();
+    expect(await agencyCampaignRepository.pauseForCarrierAccount(campaign.id, 'carrier_account_unavailable')).toBeNull();
     const { rows } = await (await pool()).query('SELECT pause_reason FROM agency_campaigns WHERE id = $1', [campaign.id]);
     expect(rows[0]!.pause_reason).toBe('supervisor');
   });

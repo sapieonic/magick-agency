@@ -7,7 +7,7 @@ import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../util
 import { settingsLink } from '../../../../utils/agency/insights/links';
 import { Panel } from './InsightsParts';
 import styles from './Insights.module.css';
-import { CARRIER_AUTH_PAUSE_REASON } from '../../../../utils/agencyCarriers';
+import { CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON, CARRIER_AUTH_PAUSE_REASON } from '../../../../utils/agencyCarriers';
 
 const STATUS_WORDS: Record<string, string> = {
   draft: 'Created',
@@ -93,6 +93,10 @@ function transitionBy(t: AgencyInsightsTransition): string {
   // Nobody pressed Pause: the dialler stopped because the carrier refused the account.
   if (t.reason === CARRIER_AUTH_PAUSE_REASON) {
     return 'automatically: the carrier refused this account’s credentials. Ask your administrator to check them.';
+  }
+  // Nobody pressed Pause: the campaign's carrier account was disabled or revoked meanwhile.
+  if (t.reason === CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON) {
+    return 'automatically: this campaign’s carrier account is no longer active. Ask your administrator to re-enable it, or choose another carrier.';
   }
   return `by ${actorName(t.actor, 'the dialler')}`;
 }
