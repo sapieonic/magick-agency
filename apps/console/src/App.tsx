@@ -85,6 +85,10 @@ const AgencyCampaignManualCallsPage = lazy(() => import('./pages/agency/AgencyCa
 const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
 const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
 const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
+const CustomerHistoryPage = lazy(() => import('./pages/agency/CustomerHistoryPage'));
+const AgentCustomerHistoryPage = lazy(() =>
+  import('./pages/agency/CustomerHistoryPage').then((m) => ({ default: m.AgentCustomerHistoryPage })),
+);
 
 export default function App() {
   return (
@@ -431,6 +435,32 @@ export default function App() {
                     </RequireAuth>
                   }
                 />
+                {/*
+                  `/dialer/customers` — customer history for an agent
+                  (`docs/customer-history.md` §5): every agent may search a number
+                  (CH1), and the agency shell, whose top bar carries the box, renders
+                  nothing for an agent. The same page as `/agency/customers`, in the
+                  agent's own frame (`AgentSurfaceShell`). Gated as its siblings are;
+                  the page checks `agency.customer_history.read` itself. The URL never
+                  carries the number (CH6): the search id travels in history state.
+                */}
+                <Route
+                  path="/dialer/customers"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          {/* Full-viewport and outside both shells, so the product
+                              dimension has no layout to come from — see
+                              `analytics/ProductSurface`. */}
+                          <ProductSurface product="agency">
+                            <AgentCustomerHistoryPage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
+                />
                 {/* The Agency workspace — its own shell, same auth tree.
                     Gated once here rather than per-route: `AgencyLayout` renders
                     nothing but agency surfaces, so a per-child gate would repeat
@@ -549,6 +579,13 @@ export default function App() {
                   */}
                   <Route path="analytics" element={<AgencyAnalyticsPage />} />
                   <Route path="dnc" element={<DncPage />} />
+                  {/*
+                    Customer history (`docs/customer-history.md`): one number, every
+                    interaction with it. No number in the URL (CH6): the search box
+                    navigates here with only the search id in history state. The page
+                    checks `agency.customer_history.read`; the server enforces it.
+                  */}
+                  <Route path="customers" element={<CustomerHistoryPage />} />
                   {/*
                     The soft phone's supervisor surfaces (`docs/softphone.md` §7):
                     the account's soft-phone calls, one call's detail, and a

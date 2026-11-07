@@ -3,7 +3,7 @@
 Every decision that shapes Magick Agency, by ID, in one place. Read it when you need to know
 whether something is settled, why the code is built the way it is, or what is still waiting on
 someone. Source comments cite entries here by ID ("decision B8", "Q6 (Manas, 2026-10-09)"), so
-IDs are never renumbered or reused. As of 2026-11-04.
+IDs are never renumbered or reused. As of 2026-11-06.
 
 Status words: **settled** (a founding product decision, not reopened here); **default, pending
 Manas** (built with the recommended option, not yet ratified); **open** (no default yet; a launch
@@ -383,6 +383,35 @@ zero capacity until a super admin allocates it (AA4).
 | AA5 | Audit | A tenant admin's create writes `account.created` to `platform_audit_log`, filed under the new account (`account_id`, `resource_type` `account`), so its own trail opens with its creation; a super admin's writes `create_account` to `super_admin_audit_log` | **default, pending Manas** |
 | AA6 | Account order | `GET /accounts`, `/accounts/mine`, the session settings map and the super-admin list are oldest first (`created_at`, then `id`). The console selects the first account when it has no saved choice, so the tenant's original account stays where a fresh sign-in lands; newest first would move every such sign-in into whatever account was created last | **default, pending Manas** |
 
+Customer history, 2026-11-06 (ClickUp "Customer history: search one phone number and see every
+interaction across the tenant's campaigns"). One phone number searched across every campaign and
+the soft phone in the accounts the caller can see, with its owners, DNC status, open items and one
+timeline. Manas's five decisions on the task are CH1–CH5; CH6–CH14 are the build's own calls,
+revised the same day after a review (DNC scoping, keyset paging per source, the server-served
+country default). The full table, the API, the measured performance and the v2 key-column design
+are in [`customer-history.md`](customer-history.md). Migrations `0016_customer_history_indexes.sql` and
+`0017_customer_history_contacts_index.sql`;
+wire `packages/contracts/src/api/agency/customer-history.ts`; number rule
+`packages/domain/src/customer-search-number.ts`; hero fields `packages/domain/src/context-hero.ts`;
+permission `agency.customer_history.read` (floored at `agent`).
+
+| ID | Decision | Status |
+|---|---|---|
+| CH1 | Everyone can search: `agency.customer_history.read` floored at `agent` | **Decided** (Manas) |
+| CH2 | Scoped by account inside the query; a tenant-level member sees every account; other accounts' rows are left out, never counted. A campaign DNC mark (stored with no account) belongs to its campaign's account; only an entry with neither an account nor a campaign is tenant-wide; a roster import belongs to its campaign's account | **Decided** (Manas) |
+| CH3 | v1 by phone only; the request is `{ by, value }` and the page does not assume a phone key (v2 design in `customer-history.md` §6) | **Decided** (Manas) |
+| CH4 | Full numbers only; never a suffix search. Validity is judged on length (and a leading 0), not on a mobile prefix | **Decided** (Manas) |
+| CH5 | The box explains the input (country picker, helper text, live preview, refusals that say what to do); one rule for preview and server, one shared test table. The picker starts on the platform default, served by `GET /proxy/agency/customers/options` (`DEFAULT_PHONE_COUNTRY_CODE`), +91 until it answers | **Decided** (Manas) |
+| CH6 | The number never in a URL or a log: `POST` with the number in the body, a 30-minute `search_id` bound to the tenant and the user for paging and export | **default, pending Manas** |
+| CH7 | A retry chain is one contact row; household lines stay separate rows | **default, pending Manas** |
+| CH8 | Notes and call fields need `agency.campaigns.read` (or the caller's own call); the call page needs `agency.supervise`; DNC who/why need `agency.dnc.read` in the account the entry belongs to (a tenant-wide entry: the caller's highest role) | **default, pending Manas** |
+| CH9 | Every read on an index (0016 adds the soft-phone destination index, 0017 the roster index that walks a number's newest rows per account); each timeline page is one keyset query per source with the cursor and `LIMIT n + 1`; asserted with `EXPLAIN` on analysed bulk data with nothing disabled, and measured on a 1M-contact tenant (a search, summary and first page, 15 ms median for a tenant-level owner) | **default, pending Manas** |
+| CH10 | Every successful search and export audited (`agency_customer_history.searched` / `.exported`, with the E.164, result count and account context), zero results included; refusals, timeline pages and the options read are not; best-effort like every platform audit row | **default, pending Manas** |
+| CH11 | 30 searches and exports a minute per user (`AGENCY_CUSTOMER_SEARCH_PER_MINUTE`), its own bucket; the server's 429 says "You've searched a lot of numbers in a short time. Try again in N seconds." | **default, pending Manas** |
+| CH12 | DNC removals are not shown (hard delete, the audit row has no number); the upload file is inferred from the import window; no contact is ever "removed from roster" (B15); the ingest keeps a bracketed trunk `(0)` the search drops, so such a row is not found (pinned `it.fails`) | (b)–(d) **default, pending Manas**; (a) removals and (e) the ingest trunk **open** |
+| CH13 | The CSV export is the console's only in v1: the agent app has no file-sharing plugin, and adding one is a dependency change not made while the app could not be built | **default, pending Manas** |
+| CH14 | The history covers a number's newest 2,000 roster rows (summary, totals, timeline, export and audit count alike), chosen by an index walk per visible account that stops at the cap, so a placeholder on 200,000 rows costs what 2,000 do; past it the clients say "This number is on more than 2,000 roster rows. This history covers the 2,000 most recent." Soft-phone calls dialled to the number are all still included | **default, pending Manas** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
@@ -406,5 +435,7 @@ zero capacity until a super admin allocates it (AA4).
 | MC3 | Several campaigns of one account under two leading processes | While two processes lead campaigns of one account (a leader failover, or a deploy overlap; an old leader learns it lost a lease only at its next renewal), each splits the account's database headroom among its own campaigns (the open split, the claim lock and the pending-dial ledger are per process), so live attempt rows can exceed `max_concurrent_calls`; the account concurrency guard refuses the excess calls at admission, the same exposure one campaign has in split-brain. Close it with an account-level lease or a Redis reservation of the account's slots, or accept it? | Manas |
 | AC1–AC3 | Abandonment ceiling defaults | Built, pending ratification (§4, "Abandonment ceiling in the console"): the console range 0.5–10%, a warning but no role gate above 3% | Manas (ratify) |
 | AA1 (tenant-wide seat), AA2, AA3, AA5, AA6 | Account creation defaults | Built, pending ratification (§4, "Account creation"): a tenant admin needs a tenant-wide seat; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first. AA4 (zero call capacity until a super admin allocates) is decided | Manas (ratify) |
+| CH6–CH11, CH12 b–d, CH13, CH14 | Customer history defaults | Built, pending ratification (§4, "Customer history"): the 30-minute search id, the retry-chain grouping, what each role is shown, the audit coverage, 30 searches a minute per user, the inferred upload file, export in the console only, the history bounded to a number's newest 2,000 roster rows | Manas (ratify) |
+| CH12 a, CH12 e | Customer history: what the schema cannot show | (a) Must DNC removals appear in a number's history? They would need the number kept on removal, today deliberately not recorded. (e) Should the roster ingest drop a bracketed trunk `(0)` as the soft phone and the search do? It changes what existing rosters dedupe on | Manas |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |

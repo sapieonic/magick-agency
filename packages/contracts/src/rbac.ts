@@ -32,10 +32,12 @@ export type MembershipRole = Role;
  * `viewer`. The hierarchy is linear and PERMISSION_MATRIX maps each permission
  * to a *minimum* role, so a floor of `viewer` (10) or higher is unreachable at
  * level 5. Every permission that predates the agency feature floors at `viewer`
- * or above, which means an `agent` membership grants access to exactly the five
- * agent-floored `agency.*` action permissions below (the four station ones and
- * `agency.softphone.dial`), PLUS `agency.flags.read`, and to nothing else — no campaign list, no analytics, no contacts, no recordings, and no
- * other `/proxy/*` route. That is the design, not an oversight: agent actions
+ * or above, which means an `agent` membership grants access to exactly the six
+ * agent-floored `agency.*` action permissions below (the four station ones,
+ * `agency.softphone.dial` and `agency.contacts.own`), PLUS `agency.flags.read` and
+ * `agency.customer_history.read` (one number's history, with media, other agents' notes and
+ * DNC reasons withheld; see its matrix entry), and to nothing else — no campaign list, no
+ * analytics, no contacts beyond the agent's own, no recordings, and no other `/proxy/*` route. That is the design, not an oversight: agent actions
  * get agency-native routes that can additionally verify the caller is the
  * reserved agent for the attempt.
  *
@@ -122,7 +124,9 @@ export type Permission =
   | 'agency.softphone.dial'
   // Contact assignment: read and retry the contacts assigned to the caller.
   | 'agency.contacts.own'
-  | 'agency.softphone.manage';
+  | 'agency.softphone.manage'
+  // Customer history: search one number across the tenant's campaigns, in the caller's accounts.
+  | 'agency.customer_history.read';
 
 /** Minimum role required for each permission */
 export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
@@ -265,6 +269,18 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // contact the agent was not given. Every route it guards also requires the
   // `agency_contact_assignment_enabled` flag.
   'agency.contacts.own': 'agent',
+  // ── Customer history: one number across the tenant's campaigns ───────────
+  // Floors at `agent`: everyone can search (decision CH1, Manas 2026-11-06). Its own permission
+  // rather than riding on another, so a tenant can later raise its floor without a code change
+  // to the routes. It is a READ of one number the caller typed in full (CH4: never a suffix), and
+  // what it shows follows the screens the caller can already open (CH8): the accounts the caller
+  // belongs to only (CH2, scoped inside the query); notes and call fields only to a caller with
+  // `agency.campaigns.read` in that account or on the caller's own calls; the call page
+  // (recording, transcript, analysis) only with `agency.supervise`; who added a DNC entry and why
+  // only with `agency.dnc.read`. So an agent sees that the number was called, when, by whom and
+  // with what outcome, which is what they need before calling a customer back, and nothing of the
+  // supervise-only media. Every search and export is audited, and searches are capped per user.
+  'agency.customer_history.read': 'agent',
 };
 
 /** Every permission, for enumeration (tests, route tables, admin screens). */

@@ -65,6 +65,7 @@ export type {
   PacingMinuteRow,
 } from './agency/insights-pacing.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
+export { callbackCodes } from './agency/assignment-sql.js';
 export { AgencyAssignmentRepository, agencyAssignmentRepository, planCtes } from './agency/assignment.repository.js';
 export type {
   AssignmentCampaignScope,
@@ -76,6 +77,7 @@ export {
   agencyAssignmentReadRepository,
   emptyBucketCounts,
   heroColumns,
+  isOverrideUnspent,
 } from './agency/assignment-reads.repository.js';
 export type { MyContactsTally, OwnerTally, ProgressRaw } from './agency/assignment-reads.repository.js';
 export { agentAbsent } from './agency/assignment-reads.repository.js';
@@ -151,3 +153,26 @@ export type {
   InsightsCallbackClass,
   InsightsCallbackTiming,
 } from './agency/insights-range-reads.js';
+export {
+  AgencyCustomerHistoryRepository,
+  agencyCustomerHistoryRepository,
+  CUSTOMER_HISTORY_MAX_CONTACT_ROWS,
+  CUSTOMER_HISTORY_SQL,
+  UUID_MAX,
+  UUID_NIL,
+} from './agency/customer-history.repository.js';
+export type {
+  CustomerHistoryAttemptRow,
+  CustomerHistoryCallbackRow,
+  CustomerHistoryCallStatsRow,
+  CustomerHistoryCampaignRow,
+  CustomerHistoryContactRow,
+  CustomerHistoryDncRow,
+  CustomerHistoryLastPlacedRow,
+  CustomerHistoryLiveCallRow,
+  CustomerHistoryManualCallRow,
+  CustomerHistoryPageQuery,
+  CustomerHistoryScope,
+  CustomerHistorySummaryContactRow,
+  CustomerHistoryUploadRow,
+} from './agency/customer-history.repository.js';

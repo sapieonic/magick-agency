@@ -30,9 +30,25 @@ const insightsRollupSchema = z.object({
   batchSize: z.coerce.number().int().min(1).max(5000).default(200),
 });
 
+/**
+ * `customerHistory`: the customer-history search (`docs/customer-history.md`, CH6 and CH11).
+ *  - `searchesPerMinute` (`AGENCY_CUSTOMER_SEARCH_PER_MINUTE`, default 30): searches and exports a
+ *    minute per user, their own bucket (`chs:<user id>`) besides the general per-user one.
+ *  - `searchTtlMinutes` (`AGENCY_CUSTOMER_SEARCH_TTL_MINUTES`, default 30): how long a `search_id`
+ *    names its search for the timeline pages and the export.
+ *  - `exportMaxRows` (`AGENCY_CUSTOMER_EXPORT_MAX_ROWS`, default 10000): the export's row cap;
+ *    past it the CSV is cut and answers `X-Export-Truncated: true`.
+ */
+const customerHistorySchema = z.object({
+  searchesPerMinute: z.coerce.number().int().min(1).max(10_000).default(30),
+  searchTtlMinutes: z.coerce.number().int().min(1).max(24 * 60).default(30),
+  exportMaxRows: z.coerce.number().int().min(1).max(100_000).default(10_000),
+});
+
 const agencySchema = z.object({
   rosterReplaceEnabled: envBoolean.default(false),
   insightsRollup: insightsRollupSchema.default({}),
+  customerHistory: customerHistorySchema.default({}),
 });
 
 export const agencyConfigSchema = z.object({
@@ -46,6 +62,11 @@ export function readAgencyEnv(env: Env): Record<string, unknown> {
       insightsRollup: {
         intervalMs: env['AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS'],
         batchSize: env['AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE'],
+      },
+      customerHistory: {
+        searchesPerMinute: env['AGENCY_CUSTOMER_SEARCH_PER_MINUTE'],
+        searchTtlMinutes: env['AGENCY_CUSTOMER_SEARCH_TTL_MINUTES'],
+        exportMaxRows: env['AGENCY_CUSTOMER_EXPORT_MAX_ROWS'],
       },
     },
   };

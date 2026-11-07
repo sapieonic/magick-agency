@@ -70,6 +70,8 @@ const FLOORS: ReadonlyArray<{
   { permission: 'agency.softphone.manage', floor: 'account_admin', masterName: null, masterLine: null },
   // Contact assignment: the caller's own contacts, at the agent floor.
   { permission: 'agency.contacts.own', floor: 'agent', masterName: null, masterLine: null },
+  // Customer history: everyone can search one number (CH1).
+  { permission: 'agency.customer_history.read', floor: 'agent', masterName: null, masterLine: null },
 ];
 
 describe('permission floors', () => {
@@ -98,11 +100,12 @@ describe('permission floors', () => {
 });
 
 describe('the agent role', () => {
-  it('reaches exactly the six action permissions plus the flag map', () => {
+  it('reaches exactly the six action permissions, the flag map and the customer history', () => {
     expect(PERMISSIONS.filter((p) => hasPermission('agent', p)).sort()).toEqual([
       'agency.attempts.dispose',
       'agency.attempts.handle',
       'agency.contacts.own',
+      'agency.customer_history.read',
       'agency.dnc.write',
       'agency.flags.read',
       'agency.softphone.dial',

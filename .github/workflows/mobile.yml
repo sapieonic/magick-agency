@@ -3,12 +3,15 @@ name: Mobile
 # The agent app (apps/mobile, Flutter). Path-filtered: a server-only change does not pay for it.
 # packages/contracts is in the filter because the app's wire types are checked against its
 # fixtures and literal unions (packages/contracts/fixtures/agent, tooling/contracts-literals.mjs).
+# packages/domain/src/customer-search-number.ts is in it because agency_wire's
+# customer_search_number.dart is a hand port of it, held to the same table (docs/customer-history.md).
 on:
   pull_request:
     paths:
       - apps/mobile/**
       - packages/contracts/**
       - tooling/contracts-literals.mjs
+      - packages/domain/src/customer-search-number.ts
       - .github/workflows/mobile.yml
   push:
     branches: [main]
@@ -16,6 +19,7 @@ on:
       - apps/mobile/**
       - packages/contracts/**
       - tooling/contracts-literals.mjs
+      - packages/domain/src/customer-search-number.ts
       - .github/workflows/mobile.yml
 
 env:

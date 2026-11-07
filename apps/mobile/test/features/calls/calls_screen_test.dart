@@ -35,6 +35,12 @@ void main() {
     expect(api.queries, hasLength(1)); // last page: nothing to prefetch
   });
 
+  testWidgets('the app bar offers Customer history ("Search a number")', (tester) async {
+    await open(tester);
+    expect(find.byKey(const Key('customer-search-open')), findsOneWidget);
+    expect(find.byTooltip('Search a number'), findsOneWidget);
+  });
+
   testWidgets('a short page with more behind it fetches the next one straight away', (tester) async {
     await open(tester);
     api.answer(0, page([1, 2, 3, 4, 5], next: 'cur-1'));

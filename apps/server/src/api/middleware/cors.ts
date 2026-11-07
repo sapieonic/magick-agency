@@ -55,6 +55,9 @@ export const CORS_EXPOSED_HEADERS = [
   'x-export-rows',
   'x-export-truncated',
   'x-export-truncated-reason',
+  // The customer-history export's file name (`proxy-agency-customers/export.ts`): the console
+  // names the download from it (it carries the date, never the number).
+  'content-disposition',
 ] as const;
 
 /** Every method a console route uses. */

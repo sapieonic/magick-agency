@@ -17,6 +17,7 @@ only; never cite another system, repo or external design doc.
 | `docs/seams.md` | you move a file, add config, a route plugin, a bootstrap or touch a seam |
 | `docs/softphone.md`, `docs/mobile.md` | you work on the soft phone or the agent app |
 | `docs/insights.md` | you work on the campaign Insights tab, its rollup or the pacing history |
+| `docs/customer-history.md` | you work on the customer-history search (one number across campaigns) |
 | `docs/operations.md`, `DEPLOYMENT.md` | you run, release or deploy it |
 
 ## Layout
@@ -104,7 +105,7 @@ The mobile app builds with Flutter, not pnpm: see `apps/mobile/CLAUDE.md`.
 
 CI: `.github/workflows/ci.yml` (lint, unit, grafana, release guard, build; integration as three
 parallel jobs: db, server, server wall-clock), `mobile.yml` (path-filtered on `apps/mobile`,
-`packages/contracts` and the literal extractor), `pr-title.yml`, `release-please.yml`.
+`packages/contracts`, the literal extractor and the number rule the Dart port mirrors), `pr-title.yml`, `release-please.yml`.
 
 The repo's `.mcp.json` adds the Grafana Cloud MCP server (stack `sapieonic`) for live metrics,
 logs and alerts.

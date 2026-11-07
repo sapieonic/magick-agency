@@ -731,3 +731,158 @@ enum AgentRetryBlock implements WireEnum {
   static final _byWire = wireIndex(values);
   static AgentRetryBlock fromWire(String? raw) => _byWire[raw] ?? unknown;
 }
+
+// ─── Customer history (`api/agency/customer-history.ts`) ────────────────────
+
+/// What a customer search is keyed by. v1: the phone number only (CH3). The
+/// app sends `phone`.
+///
+/// Contract: `CustomerSearchBy` / `CUSTOMER_SEARCH_BYS`.
+enum CustomerSearchBy implements WireEnum {
+  phone('phone'),
+  unknown('');
+
+  const CustomerSearchBy(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CustomerSearchBy fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Which channel a call to the number came through. The app sends these as
+/// the timeline's `channel` filter.
+///
+/// Contract: `CustomerTimelineChannel` / `CUSTOMER_TIMELINE_CHANNELS`.
+enum CustomerTimelineChannel implements WireEnum {
+  campaign('campaign'),
+  softphone('softphone'),
+  unknown('');
+
+  const CustomerTimelineChannel(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CustomerTimelineChannel fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// What one timeline entry is. An entry of a kind this build does not know
+/// decodes as `CustomerTimelineUnknownEntry`, never an error.
+///
+/// Contract: `CustomerTimelineKind` / `CUSTOMER_TIMELINE_KINDS`.
+enum CustomerTimelineKind implements WireEnum {
+  campaignCall('campaign_call'),
+  softphoneCall('softphone_call'),
+  callback('callback'),
+  dncMark('dnc_mark'),
+  rosterEntry('roster_entry'),
+  unknown('');
+
+  const CustomerTimelineKind(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CustomerTimelineKind fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// What a call's recording looks like from the history. `expired` is
+/// "Recording expired" (deleted by retention), never a broken player.
+///
+/// Contract: `CustomerRecordingState` / `CUSTOMER_RECORDING_STATES`.
+enum CustomerRecordingState implements WireEnum {
+  available('available'),
+  notRecorded('not_recorded'),
+  expired('expired'),
+
+  /// Nothing was placed (no media leg).
+  noCall('no_call'),
+  unknown('');
+
+  const CustomerRecordingState(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CustomerRecordingState fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Whether a booked callback was kept: judged by the next call placed to the
+/// number after it was booked, with a 15-minute window.
+///
+/// Contract: `CustomerCallbackStatus` / `CUSTOMER_CALLBACK_STATUSES`.
+enum CustomerCallbackStatus implements WireEnum {
+  /// Dialled within 15 minutes of its time.
+  kept('kept'),
+
+  /// `late`, a built-in identifier in Dart: dialled, but more than 15 minutes
+  /// after its time.
+  keptLate('late'),
+
+  /// Not dialled, and more than 15 minutes past its time.
+  missed('missed'),
+
+  /// Not yet due.
+  upcoming('upcoming'),
+
+  /// Due now: within 15 minutes after its time.
+  due('due'),
+  unknown('');
+
+  const CustomerCallbackStatus(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CustomerCallbackStatus fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Why a searched number was refused (`400 invalid_number`'s `number_error`,
+/// and the app's own preview, `parseSearchNumber`).
+///
+/// Contract: `CustomerSearchNumberError` / `CUSTOMER_SEARCH_NUMBER_ERRORS`.
+enum CustomerSearchNumberError implements WireEnum {
+  empty('empty'),
+  invalidCharacters('invalid_characters'),
+
+  /// Excel's scientific notation (`9.18765E+11`).
+  spreadsheetNumber('spreadsheet_number'),
+
+  /// Shorter than the country's national number: full numbers only (CH4).
+  tooShort('too_short'),
+  invalidForCountry('invalid_for_country'),
+  unknown('');
+
+  const CustomerSearchNumberError(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CustomerSearchNumberError fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// The customer-history routes' refusal codes (`400` unless noted).
+///
+/// Contract: `CustomerHistoryErrorCode` / `CUSTOMER_HISTORY_ERROR_CODES`.
+enum CustomerHistoryErrorCode implements WireEnum {
+  /// The number could not be read; `number_error` says why.
+  invalidNumber('invalid_number'),
+
+  /// A malformed body (an unknown `by`, a bad filter, a `limit` out of range).
+  invalidSearchRequest('invalid_search_request'),
+
+  /// A `cursor` this server did not mint.
+  invalidCursor('invalid_cursor'),
+
+  /// `404`: the `search_id` is unknown, expired, or another user's. Search again.
+  searchExpired('search_expired'),
+  unknown('');
+
+  const CustomerHistoryErrorCode(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CustomerHistoryErrorCode fromWire(String? raw) => _byWire[raw] ?? unknown;
+}

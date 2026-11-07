@@ -211,6 +211,9 @@ describe('who calls it', () => {
     'AgentAttemptsPage',
     // `/dialer/phone`, the soft phone: full-viewport for the station's reason.
     'SoftphonePage',
+    // `/dialer/customers`, customer history for an agent, outside the agency shell
+    // because that shell renders nothing for an agent.
+    'AgentCustomerHistoryPage',
     'AgencyJoinPage',
   ];
 

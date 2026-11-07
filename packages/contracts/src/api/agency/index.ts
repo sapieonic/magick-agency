@@ -21,4 +21,5 @@ export * from './attempt-call';
 export * from './softphone';
 export * from './assignment';
 export * from './insights';
+export * from './customer-history';
 export * from './shared';
