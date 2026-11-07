@@ -74,17 +74,39 @@ export class CarrierDialOutcomeUnknownError extends Error {
   }
 }
 
+/** How many links of a `cause` chain are read, so a cyclic `cause` cannot loop. */
+const CAUSE_CHAIN_DEPTH = 5;
+
+/**
+ * The first link of `err`'s `cause` chain (`err` itself first) that `predicate` accepts, or
+ * undefined. Links that are not objects are skipped. Bounded walk
+ * ({@link CAUSE_CHAIN_DEPTH} links), so a cyclic `cause` cannot loop.
+ */
+export function findInCauseChain(
+  err: unknown,
+  predicate: (link: Record<string, unknown>) => boolean,
+): Record<string, unknown> | undefined {
+  let current: unknown = err;
+  for (let depth = 0; depth < CAUSE_CHAIN_DEPTH && current; depth++) {
+    if (typeof current === 'object' && predicate(current as Record<string, unknown>)) {
+      return current as Record<string, unknown>;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/** Whether `err`, or an error in its `cause` chain, carries `flag: true`. Bounded walk. */
+function causeChainHas(err: unknown, flag: string): boolean {
+  return findInCauseChain(err, (link) => link[flag] === true) !== undefined;
+}
+
 /**
  * Whether `err`, or any error in its `cause` chain, says the carrier may have queued the
  * dial. Bounded walk, so a cyclic `cause` cannot loop.
  */
 export function isDialOutcomeUnknown(err: unknown): boolean {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current; depth++) {
-    if (typeof current === 'object' && (current as { dialOutcomeUnknown?: unknown }).dialOutcomeUnknown === true) return true;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return false;
+  return causeChainHas(err, 'dialOutcomeUnknown');
 }
 
 /**
@@ -171,16 +193,6 @@ export class CarrierRateLimitedError extends Error {
   }
 }
 
-/** Whether `err`, or an error in its `cause` chain, carries `flag: true`. Bounded walk. */
-function causeChainHas(err: unknown, flag: string): boolean {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current; depth++) {
-    if (typeof current === 'object' && (current as Record<string, unknown>)[flag] === true) return true;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return false;
-}
-
 /** Whether `err`, or an error in its `cause` chain, is a {@link CarrierAuthRejectedError}. */
 export function isCarrierAuthRejected(err: unknown): boolean {
   return causeChainHas(err, 'carrierAuthRejected');
@@ -191,15 +203,10 @@ export function isCarrierAuthRejected(err: unknown): boolean {
  * {@link CarrierAuthRejectedError} in `err`'s `cause` chain, in words. Null when there is none.
  */
 export function carrierAuthRejectionReason(err: unknown): string | null {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current; depth++) {
-    if (typeof current === 'object' && (current as Record<string, unknown>)['carrierAuthRejected'] === true) {
-      const status = (current as { httpStatus?: unknown }).httpStatus;
-      return `The carrier refused the credential on a dial${typeof status === 'number' ? ` (HTTP ${status})` : ''}`;
-    }
-    current = (current as { cause?: unknown }).cause;
-  }
-  return null;
+  const rejected = findInCauseChain(err, (link) => link['carrierAuthRejected'] === true);
+  if (!rejected) return null;
+  const status = rejected['httpStatus'];
+  return `The carrier refused the credential on a dial${typeof status === 'number' ? ` (HTTP ${status})` : ''}`;
 }
 
 /** Whether `err`, or an error in its `cause` chain, is a {@link CarrierDialAbortedError}. */
@@ -212,15 +219,9 @@ export function isCarrierDialAborted(err: unknown): boolean {
  * `cause` chain, or null when there is none. Bounded walk.
  */
 export function carrierDialNotSentReason(err: unknown): CarrierDialNotSentReason | null {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current; depth++) {
-    if (typeof current === 'object' && (current as Record<string, unknown>)['carrierDialNotSent'] === true) {
-      const reason = (current as { reason?: unknown }).reason;
-      return reason === 'destination' || reason === 'network' ? reason : 'configuration';
-    }
-    current = (current as { cause?: unknown }).cause;
-  }
-  return null;
+  const notSent = findInCauseChain(err, (link) => link['carrierDialNotSent'] === true);
+  if (!notSent) return null;
+  return notSent['reason'] === 'destination' || notSent['reason'] === 'network' ? notSent['reason'] : 'configuration';
 }
 
 /** Whether `err`, or an error in its `cause` chain, is a {@link CarrierRateLimitedError}. */
@@ -247,13 +248,7 @@ const CONNECT_PHASE_ERROR_CODES: ReadonlySet<string> = new Set([
  * the carrier.
  */
 export function isConnectPhaseFailure(err: unknown): boolean {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current; depth++) {
-    const code = typeof current === 'object' ? (current as { code?: unknown }).code : undefined;
-    if (typeof code === 'string' && CONNECT_PHASE_ERROR_CODES.has(code)) return true;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return false;
+  return findInCauseChain(err, (link) => typeof link['code'] === 'string' && CONNECT_PHASE_ERROR_CODES.has(link['code'])) !== undefined;
 }
 
 /** True for the error `fetch` rejects with when an `AbortSignal.timeout` fires. */
