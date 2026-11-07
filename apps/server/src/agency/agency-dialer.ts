@@ -104,6 +104,26 @@ export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
 export const PRE_CARRIER_FAILURE_REDIAL_DELAY_MS = 60_000;
 
 /**
+ * What becomes of the contact of a dial abandoned before it was placed
+ * (`AgencyDialer.abandonBeforeDial`), decided once by the caller. A wrap-up redial's
+ * contact is parked for the outcome its agent still owes whatever the fate; only
+ * `hold_unknown` changes its reopened wrap-up (no further redial is offered).
+ *
+ *  - `hold_unknown`: the carrier may have queued the failed dial. The contact is held back
+ *    {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
+ *    (`holdOutcomeUnknownContact`).
+ *  - `suppress_invalid`: the carrier will never dial this contact's number
+ *    (`carrier_dial_not_sent`, `destination`). Suppressed `invalid`, uncharged, as the
+ *    pre-dial gate's `phone_invalid` does.
+ *  - `return_now`: back dialable at once, uncharged: a dial called off before it
+ *    (`reservation_expired`), refused admission or a calls-per-second slot, or refused for
+ *    the campaign's carrier account, which pauses the campaign.
+ *  - `return_delayed`: back uncharged after {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS}: a
+ *    dial that failed in the bridge before the carrier was asked (`failed`).
+ */
+type AbandonedContactFate = 'hold_unknown' | 'suppress_invalid' | 'return_now' | 'return_delayed';
+
+/**
  * How long a `released` the agent never saw is kept for them to collect on
  * reconnect. Generous relative to the deferred-hangup window on purpose: the
  * agent who missed it is by definition the one whose network just failed, and a
@@ -314,7 +334,7 @@ export class AgencyDialer {
     const socket = this.stations.socketFor(sessionId);
     if (!socket || socket.readyState !== 1 /* OPEN */) {
       log.warn({ attemptId, sessionId, lateBinding }, 'Agent socket gone before dial — releasing');
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
 
@@ -376,7 +396,7 @@ export class AgencyDialer {
       const delivered = this.stations.send(sessionId, { event: 'reserved', attempt });
       if (!delivered) {
         log.warn({ attemptId, sessionId }, 'Could not deliver reserved frame — releasing');
-        await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+        await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
         return;
       }
       panelDelivered = true;
@@ -400,7 +420,7 @@ export class AgencyDialer {
         { attemptId, sessionId },
         'Station socket went away while the dial was being prepared — abandoning before placing an unbound call nobody is watching',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
     // Two short writes (the lease CAS, the `dialing` stamp) still sit between this
@@ -411,7 +431,7 @@ export class AgencyDialer {
         { attemptId, sessionId, campaignId: cmd.campaignId },
         'Pacing stopped or lost the campaign lease while the dial was being prepared — abandoning before the carrier is contacted',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
 
@@ -437,7 +457,7 @@ export class AgencyDialer {
         { attemptId, sessionId },
         'Lost the agent lease before dialing — abandoning rather than calling with no agent',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
     this.startLeaseRenewal(attemptId, sessionId, 'reserved');
@@ -527,7 +547,7 @@ export class AgencyDialer {
         { attemptId, sessionId },
         'Station socket went away while the dial was being prepared — abandoning before placing an unbound call nobody is watching',
       );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered, 'return_now');
       return;
     }
 
@@ -591,9 +611,13 @@ export class AgencyDialer {
       // The carrier cannot dial this contact's number at all (it passed our E.164 gate but
       // not the carrier's own check): terminal for the contact, as the pre-dial gate's
       // `phone_invalid` is, never a minute's hold that repeats for as long as the campaign runs.
-      const invalidDestination = refusal.kind === 'not_sent' && refusal.reason === 'destination';
-      log.warn({ err, attemptId, outcomeUnknown, invalidDestination }, 'Agency dial failed');
-      await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused, invalidDestination);
+      const fate: AbandonedContactFate =
+        refusal.kind === 'not_sent' && refusal.reason === 'destination' ? 'suppress_invalid'
+          : outcomeUnknown ? 'hold_unknown'
+            : reason !== 'failed' || capacityRefused ? 'return_now'
+              : 'return_delayed';
+      log.warn({ err, attemptId, outcomeUnknown, fate }, 'Agency dial failed');
+      await this.abandonBeforeDial(cmd, reason, panelDelivered, fate);
       return;
     }
     live.placing = false;
@@ -660,26 +684,11 @@ export class AgencyDialer {
     cmd: DialCommand,
     reason: AgencyReleaseReason,
     notifyAgent: boolean,
-    /**
-     * The carrier may have queued the failed dial: the contact is held back
-     * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
-     * (`holdOutcomeUnknownContact`). Otherwise it goes back uncharged: after
-     * {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS} for a dial that failed in the bridge
-     * (`failed`), at once for a dial called off before it (`reservation_expired`), refused
-     * admission or a calls-per-second slot, or refused by the carrier for the campaign's
-     * credential, which pauses the campaign (`capacityRefused`).
-     */
-    dialOutcomeUnknown = false,
-    capacityRefused = false,
-    /**
-     * The carrier will never dial this contact's number (`carrier_dial_not_sent`,
-     * `destination`): the contact is suppressed `invalid`, uncharged, as the pre-dial
-     * gate's `phone_invalid` does. A wrap-up redial is parked as usual (the agent still owes
-     * the outcome of the conversation they had).
-     */
-    invalidDestination = false,
+    /** What becomes of the contact ({@link AbandonedContactFate}). */
+    fate: AbandonedContactFate,
   ): Promise<void> {
     const outcome = reason === 'failed' ? 'failed' : 'orphaned';
+    const dialOutcomeUnknown = fate === 'hold_unknown';
     /**
      * ── Seat time on the abandon-before-dial paths (added by review) ─────────
      *
@@ -726,12 +735,12 @@ export class AgencyDialer {
       // never claims, so no paced dial follows it. But the carrier may still ring the
       // customer, so the reopened wrap-up offers NO further redial (below).
       await parkRedialContact(cmd, outcome);
-    } else if (invalidDestination) {
+    } else if (fate === 'suppress_invalid') {
       // Terminal and uncharged: no dial was placed, so no `bump_attempt` (see the pacing
       // engine's `suppress` gate, which this mirrors).
       await agencyContactRepository.markState(cmd.contactId, 'suppressed', { suppressed_reason: 'invalid' })
         .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to suppress a contact the carrier cannot dial'));
-    } else if (dialOutcomeUnknown) {
+    } else if (fate === 'hold_unknown') {
       // Not to be dialled again yet, and counted: the hold and the our-fault charge are
       // one statement, so a contact whose dials keep ending this way is retired at the
       // our-fault bound rather than redialled every 15 minutes for ever.
@@ -744,8 +753,8 @@ export class AgencyDialer {
       // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's (except
       // the two that placed nothing, a rate limit and a refused credential, which the bridge
       // rejects with no `ended`). An admission or rate-limit refusal is back-pressure, not a
-      // failure, and a refused credential paused the campaign: at once (`capacityRefused`).
-      const notBefore = reason === 'failed' && !capacityRefused
+      // failure, and a refused credential paused the campaign: at once (`return_now`).
+      const notBefore = fate === 'return_delayed'
         ? new Date(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS)
         : new Date();
       await agencyContactRepository.unclaim(cmd.contactId, notBefore)
@@ -775,7 +784,7 @@ export class AgencyDialer {
    * as a dial that failed before the carrier. For `wrapup-redial.ts` only.
    */
   async abandonUndispatchedRedial(cmd: DialCommand): Promise<void> {
-    await this.abandonBeforeDial(cmd, 'failed', true);
+    await this.abandonBeforeDial(cmd, 'failed', true, 'return_delayed');
   }
 
   /**
