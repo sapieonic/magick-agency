@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.0](https://github.com/sapieonic/magick-agency/compare/db-v0.11.0...db-v0.12.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,super-admin,contracts,db,mobile:** Plivo on tenants' own carrier accounts ([#56](https://github.com/sapieonic/magick-agency/issues/56)) ([1b3384a](https://github.com/sapieonic/magick-agency/commit/1b3384a05e9906efec2e9be5631f192115d4cd4e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.14.0
+    * @magick-agency/domain bumped to 0.6.0
+    * @magick-agency/observability bumped to 0.8.0
+
 ## [0.11.0](https://github.com/sapieonic/magick-agency/compare/db-v0.10.0...db-v0.11.0) (2026-11-07)
 
 
