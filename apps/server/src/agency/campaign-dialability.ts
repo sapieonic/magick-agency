@@ -1,8 +1,16 @@
 /*
  * Whether a campaign can place a call on its carrier account right now, beyond its own
- * row: the caller IDs that are still dialable (PL13) and the carrier's concurrency
- * allocation (PL14). Read at the dial (pacing, the agent's own dials, the soft phone),
- * at start and resume (a refusal a supervisor can act on), and by the health strip.
+ * row: its carrier can dial from this server at all (PL12), the caller IDs that are still
+ * dialable (PL13) and the carrier's concurrency allocation (PL14). Read at the dial
+ * (pacing, the agent's own dials, the soft phone), at start and resume (a refusal a
+ * supervisor can act on, {@link campaignDialBlockers}), and by the health strip.
+ *
+ * ── PL12: a tenant-account carrier that cannot dial from this server ─────────────────
+ *
+ * A campaign pinned to a tenant carrier account whose carrier cannot place calls from this
+ * server (`carrierDialReady`: its webhook base is not configured) would have every dial
+ * refused before the carrier, so it is not started. The service's own account is not
+ * judged here: its base is required at load.
  *
  * ── PL13: a stored caller ID is dialled only while the carrier account still has it ──
  *
@@ -20,7 +28,9 @@
  *
  * The read is cached per campaign, credential and pool for {@link DIALABLE_CACHE_TTL_MS},
  * so a pacing tick costs nothing between reads; a sync, retire or unassign clears the
- * cache ({@link invalidateDialableCallerIds}) so the very next dial sees it.
+ * cache ({@link invalidateDialableCallerIds}) so the very next dial sees it. A lookup that
+ * finds an entry expired deletes it, and a full cache drops its expired entries before
+ * its oldest.
  *
  * ── PL14: a carrier with no allocation on a per-carrier breakdown cannot dial ─────────
  *
@@ -36,6 +46,9 @@
 import { providerConcurrencyRepository } from '@magick-agency/db/repositories/provider-concurrency.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
+import { carrierDialReady } from '../telephony/carrier-dial-readiness.js';
+import { ExpiringCache } from '../utils/expiring-cache.js';
+import { DEFAULT_CAMPAIGN_PROVIDER } from './campaign-carrier.js';
 import { usableCallerIds } from './pacing/caller-id-pool.js';
 
 /** How long one read of a campaign's dialable caller IDs is reused. */
@@ -44,7 +57,7 @@ const DIALABLE_CACHE_MAX_ENTRIES = 5_000;
 
 type DialabilityCampaign = Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'caller_ids' | 'telephony_credential_id'>;
 
-const cache = new Map<string, { numbers: string[]; expiresAt: number }>();
+const cache = new ExpiringCache<string[]>({ ttlMs: DIALABLE_CACHE_TTL_MS, maxEntries: DIALABLE_CACHE_MAX_ENTRIES });
 
 /** Forget every cached read: a number was synced, retired, unassigned or re-tagged. */
 export function invalidateDialableCallerIds(): void {
@@ -61,14 +74,13 @@ export async function dialableCallerIds(campaign: DialabilityCampaign, now = Dat
   const credentialId = campaign.telephony_credential_id;
   if (!credentialId || pool.length === 0) return pool;
   const key = `${campaign.id}|${credentialId}|${pool.join(',')}`;
-  const hit = cache.get(key);
-  if (hit && hit.expiresAt > now) return hit.numbers;
+  const hit = cache.get(key, now);
+  if (hit) return hit;
   const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
     campaign.tenant_id, campaign.account_id, credentialId, pool,
   ));
   const numbers = pool.filter((n) => allowed.has(n));
-  if (cache.size >= DIALABLE_CACHE_MAX_ENTRIES) cache.clear();
-  cache.set(key, { numbers, expiresAt: now + DIALABLE_CACHE_TTL_MS });
+  cache.set(key, numbers, now);
   return numbers;
 }
 
@@ -87,37 +99,79 @@ export async function carrierCapacityMissing(
   campaign: Pick<AgencyCampaignRecord, 'tenant_id' | 'account_id' | 'telephony_provider'>,
 ): Promise<boolean> {
   const allocation = await providerConcurrencyRepository.getProviderLimit(
-    campaign.tenant_id, campaign.account_id, (campaign.telephony_provider || 'voicelink').toLowerCase(),
+    campaign.tenant_id, campaign.account_id, (campaign.telephony_provider || DEFAULT_CAMPAIGN_PROVIDER).toLowerCase(),
   );
   return allocation.mode === 'provider_breakdown' && (allocation.limit ?? 0) <= 0;
 }
 
-export type DialabilityRefusalCode = 'campaign_caller_ids_unavailable' | 'carrier_capacity_unallocated';
+export type CampaignDialBlockerCode = 'carrier_not_ready' | 'campaign_caller_ids_unavailable' | 'carrier_capacity_unallocated';
+
+/** A reason the campaign's carrier account cannot place a call now: its start or resume refusal. */
+export interface CampaignDialBlocker {
+  status: 409;
+  code: CampaignDialBlockerCode;
+  message: string;
+}
+
+const CARRIER_NOT_READY: CampaignDialBlocker = {
+  status: 409,
+  code: 'carrier_not_ready',
+  message: 'This campaign’s carrier account cannot place calls yet: the platform is not set up to receive its call updates. Contact support to finish setting it up, or move the campaign to another carrier account.',
+};
+
+const CALLER_IDS_UNAVAILABLE: CampaignDialBlocker = {
+  status: 409,
+  code: 'campaign_caller_ids_unavailable',
+  message: 'None of this campaign’s caller IDs is available on its carrier account any more, so it cannot place calls. '
+    + 'Choose numbers that are still available in the campaign’s settings, or contact support if numbers are missing.',
+};
+
+const CARRIER_CAPACITY_UNALLOCATED: CampaignDialBlocker = {
+  status: 409,
+  code: 'carrier_capacity_unallocated',
+  message: 'This account has no call capacity on this campaign’s carrier, so it cannot place calls. '
+    + 'Contact support to add capacity for this carrier, or move the campaign to another carrier.',
+};
 
 /**
- * Why a campaign may not start or resume for what its carrier account can dial now, or
- * null. Checked after `campaignCredentialStartRefusal` (an inactive account is the first
- * thing to fix).
+ * The PL12 check alone: a campaign pinned to a tenant carrier account whose carrier cannot
+ * dial from this server, or null (never for the service's own account). No read.
  */
-export async function campaignDialabilityStartRefusal(
+export function carrierNotReadyBlocker(
+  campaign: Pick<AgencyCampaignRecord, 'telephony_provider' | 'telephony_credential_id'>,
+): CampaignDialBlocker | null {
+  return campaign.telephony_credential_id && !carrierDialReady(campaign.telephony_provider) ? CARRIER_NOT_READY : null;
+}
+
+/**
+ * What blocks the campaign from placing a call now, in the order start and resume answer
+ * them (PL12, PL13, PL14), or `[]`. Checked after `campaignCredentialStartRefusal` (an
+ * inactive account is the first thing to fix). Vendor-free: it reaches the console.
+ *
+ * The reads run in parallel; the list is read in order. A read that fails rejects, unless an
+ * earlier check already blocks: then the list ends there, so the first blocker is the answer
+ * the checks run one after another would give.
+ */
+export async function campaignDialBlockers(
   campaign: DialabilityCampaign & Pick<AgencyCampaignRecord, 'telephony_provider'>,
-): Promise<{ status: 409; code: DialabilityRefusalCode; message: string } | null> {
-  if (campaign.telephony_credential_id && usableCallerIds(campaign as AgencyCampaignRecord).length > 0
-    && (await dialableCallerIds(campaign)).length === 0) {
-    return {
-      status: 409,
-      code: 'campaign_caller_ids_unavailable',
-      message: 'None of this campaign’s caller IDs is available on its carrier account any more, so it cannot place calls. '
-        + 'Choose numbers that are still available in the campaign’s settings, or contact support if numbers are missing.',
-    };
+): Promise<CampaignDialBlocker[]> {
+  const checks: Array<[CampaignDialBlocker, Promise<boolean>]> = [
+    [CARRIER_NOT_READY, Promise.resolve(carrierNotReadyBlocker(campaign) !== null)],
+    [CALLER_IDS_UNAVAILABLE, campaign.telephony_credential_id && usableCallerIds(campaign as AgencyCampaignRecord).length > 0
+      ? dialableCallerIds(campaign).then((numbers) => numbers.length === 0)
+      : Promise.resolve(false)],
+    [CARRIER_CAPACITY_UNALLOCATED, carrierCapacityMissing(campaign)],
+  ];
+  // Each read is awaited below, or its failure is moot once an earlier check blocks.
+  for (const [, blocked] of checks) blocked.catch(() => undefined);
+  const blockers: CampaignDialBlocker[] = [];
+  for (const [blocker, blocked] of checks) {
+    try {
+      if (await blocked) blockers.push(blocker);
+    } catch (err) {
+      if (blockers.length === 0) throw err;
+      break;
+    }
   }
-  if (await carrierCapacityMissing(campaign)) {
-    return {
-      status: 409,
-      code: 'carrier_capacity_unallocated',
-      message: 'This account has no call capacity on this campaign’s carrier, so it cannot place calls. '
-        + 'Contact support to add capacity for this carrier, or move the campaign to another carrier.',
-    };
-  }
-  return null;
+  return blockers;
 }

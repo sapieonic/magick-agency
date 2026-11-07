@@ -15,7 +15,7 @@ const cfg = vi.hoisted(() => ({
 vi.mock('../../../src/config/index.js', () => cfg);
 
 import { carrierDialReady } from '../../../src/telephony/carrier-dial-readiness.js';
-import { campaignCarrierNotReady } from '../../../src/agency/campaign-carrier-readiness.js';
+import { carrierNotReadyBlocker } from '../../../src/agency/campaign-dialability.js';
 
 describe('carrierDialReady', () => {
   it('a carrier with a module and a configured webhook base can dial', () => {
@@ -35,23 +35,23 @@ describe('carrierDialReady', () => {
   });
 });
 
-describe('campaignCarrierNotReady', () => {
+describe('carrierNotReadyBlocker', () => {
   const pinned = { telephony_provider: 'plivo', telephony_credential_id: 'cred-1' };
 
   it('refuses a pinned campaign whose carrier cannot dial, with a vendor-free message', () => {
     cfg.config.telephony.plivo.webhookBaseUrl = '';
     try {
-      const refusal = campaignCarrierNotReady(pinned);
+      const refusal = carrierNotReadyBlocker(pinned);
       expect(refusal).toMatchObject({ status: 409, code: 'carrier_not_ready' });
       expect(refusal!.message).not.toMatch(/plivo|voicelink|PLIVO_/i);
       // The service's own account is not judged here (its base is required at load).
-      expect(campaignCarrierNotReady({ telephony_provider: 'voicelink', telephony_credential_id: null })).toBeNull();
+      expect(carrierNotReadyBlocker({ telephony_provider: 'voicelink', telephony_credential_id: null })).toBeNull();
     } finally {
       cfg.config.telephony.plivo.webhookBaseUrl = 'https://server.test/api/v1/webhooks/plivo';
     }
   });
 
   it('lets a pinned campaign start when its carrier can dial', () => {
-    expect(campaignCarrierNotReady(pinned)).toBeNull();
+    expect(carrierNotReadyBlocker(pinned)).toBeNull();
   });
 });
