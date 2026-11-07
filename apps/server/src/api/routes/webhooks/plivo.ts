@@ -9,10 +9,12 @@
 // in its URL (`?token=`, as VoiceLink's status webhook), AND Plivo's V3 signature against
 // the account the call was placed on (the credential pinned on it, resolved for
 // `call_control`; for a callback after teardown, read off the call row). The signature
-// covers the exact URL Plivo was given, so it is rebuilt from env
-// (`PLIVO_WEBHOOK_BASE_URL`'s origin) and the request's own path and query, never from a
-// Host header. A refused answer callback is answered with a hangup, so a call we will not
-// bridge is put down rather than left on the line.
+// covers the exact URL Plivo was given, so it is rebuilt by the function that built that
+// URL at dial time (`carrierCallbackUrl`, `core/bridge/carrier-urls.ts`): env's
+// `PLIVO_WEBHOOK_BASE_URL` as written, the route's own suffix and call id, and the
+// request's query. Never from a Host header, and never from the path the request arrived
+// on (a reverse proxy may strip a prefix of it). A refused answer callback is answered
+// with a hangup, so a call we will not bridge is put down rather than left on the line.
 //
 // With media workers (`docs/scaling.md` §3.2) a callback whose URL carries `w` runs in the
 // worker that slot names, where the call lives: the route hands its parsed input to the
@@ -23,6 +25,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../../../config/index.js';
 import type { WebRtcBridgeManager } from '../../../core/webrtc-bridge-manager.js';
+import { carrierCallbackUrl, type CarrierCallbackRoute } from '../../../core/bridge/carrier-urls.js';
 import { PLIVO_HANGUP_XML } from '../../../telephony/plivo/plivo.adapter.js';
 import { PLIVO_SIGNATURE_V3_HEADER, PLIVO_SIGNATURE_V3_NONCE_HEADER } from '../../../telephony/plivo/plivo-signature.js';
 import {
@@ -40,7 +43,7 @@ export interface PlivoCallbackInput {
   callId: string;
   /** The `token` query parameter. */
   token: string | undefined;
-  /** The public URL Plivo called (our env origin + the request's path and query): the signature's subject. */
+  /** The public URL Plivo called (`carrierCallbackUrl`: env base, route, call id, query): the signature's subject. */
   url: string;
   /** The form params, one string per key. */
   params: Record<string, string>;
@@ -170,14 +173,32 @@ function formParams(body: unknown): Record<string, string> {
   return out;
 }
 
-/** The public origin Plivo calls, from env; null when `PLIVO_WEBHOOK_BASE_URL` is unset or malformed. */
-function publicOrigin(base: string): string | null {
+/** Each callback kind's route under the Plivo namespace, as the dial named it. */
+const ROUTE_OF: Record<PlivoCallbackKind, CarrierCallbackRoute> = {
+  answer: 'webrtc-answer',
+  status: 'webrtc-status',
+  recording: 'webrtc-recording',
+};
+
+/**
+ * The URL Plivo was handed for this callback, and so the one it signed: rebuilt from env's
+ * base by the dial's own builder, with the request's query as it arrived. Null when
+ * `PLIVO_WEBHOOK_BASE_URL` is unset or not an absolute URL (no dial could have named it).
+ */
+export function plivoCallbackPublicUrl(
+  base: string,
+  kind: PlivoCallbackKind,
+  callId: string,
+  requestUrl: string,
+): string | null {
   if (!base) return null;
   try {
-    return new URL(base).origin;
+    new URL(base);
   } catch {
     return null;
   }
+  const q = requestUrl.indexOf('?');
+  return carrierCallbackUrl(base, ROUTE_OF[kind], callId, q >= 0 ? requestUrl.slice(q) : '');
 }
 
 export function registerPlivoWebhookRoutes(
@@ -200,8 +221,8 @@ export function registerPlivoWebhookRoutes(
       const { callId } = request.params;
       const bridge = opts.webrtcBridge;
       if (!bridge) return send(refuse(kind));
-      const origin = publicOrigin(baseUrl());
-      if (!origin) {
+      const url = plivoCallbackPublicUrl(baseUrl(), kind, callId, request.url);
+      if (!url) {
         log.error({ callId, kind }, 'PLIVO_WEBHOOK_BASE_URL is not set: a Plivo callback cannot be verified — refusing');
         return send(refuse(kind));
       }
@@ -209,7 +230,7 @@ export function registerPlivoWebhookRoutes(
         kind,
         callId,
         token: request.query?.token,
-        url: `${origin}${request.url}`,
+        url,
         params: formParams(request.body),
         headers: signatureHeaders(request.headers),
       };
@@ -218,7 +239,7 @@ export function registerPlivoWebhookRoutes(
       return send(forwarded ?? await handlePlivoCallback(bridge, input));
     });
   };
-  route('answer', '/plivo/webrtc-answer/:callId');
-  route('status', '/plivo/webrtc-status/:callId');
-  route('recording', '/plivo/webrtc-recording/:callId');
+  route('answer', `/plivo/${ROUTE_OF.answer}/:callId`);
+  route('status', `/plivo/${ROUTE_OF.status}/:callId`);
+  route('recording', `/plivo/${ROUTE_OF.recording}/:callId`);
 }

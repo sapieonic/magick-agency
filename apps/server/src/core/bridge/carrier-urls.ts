@@ -16,7 +16,29 @@
  * so nothing can race it. It is routing, never authority: the token is still what the
  * owning worker verifies. Absent (one process) the URLs carry no hint.
  */
+import { normalizeWebhookBase } from '../../utils/webhook-base.js';
+
 export const CARRIER_ROUTE_HINT_PARAM = 'w';
+
+/** The callback routes a carrier is handed, under its webhook namespace. */
+export type CarrierCallbackRoute = 'webrtc-answer' | 'webrtc-status' | 'webrtc-recording';
+
+/**
+ * One carrier callback URL: the provider's webhook base as configured (only trailing
+ * slashes stripped, by `normalizeWebhookBase`; host case, an explicit port and any path
+ * prefix are kept as written), then the route, the call id and `query` (`?…`, or '').
+ *
+ * The one construction of these URLs. The dial builds them here ({@link buildCarrierUrls}),
+ * and a carrier that signs the URL it called (Plivo's V3 signature) is verified over this
+ * same string, rebuilt from the same base and the request's query, so what is checked is
+ * byte for byte what the carrier was handed. Rebuilding it from the request instead (an
+ * origin parsed out of the base, plus the path the request arrived on) would lower-case
+ * the host, drop a default port, and lose a path prefix a reverse proxy strips: every
+ * callback refused.
+ */
+export function carrierCallbackUrl(base: string, route: CarrierCallbackRoute, callId: string, query = ''): string {
+  return `${normalizeWebhookBase(base)}/${route}/${callId}${query}`;
+}
 
 export interface CarrierUrls {
   /** The media stream URL for the dial request; set only when the carrier takes it there. */
@@ -46,9 +68,9 @@ export function buildCarrierUrls(input: {
     : undefined;
   // A provider with no carrier module gets untokenized callbacks (and no hint: nothing
   // routes them but their call id).
-  const callback = (route: string): string => (input.webhookToken
-    ? `${input.base}/${route}/${input.callId}?token=${input.webhookToken}${hint}`
-    : `${input.base}/${route}/${input.callId}`);
+  const callback = (route: CarrierCallbackRoute): string => carrierCallbackUrl(
+    input.base, route, input.callId, input.webhookToken ? `?token=${input.webhookToken}${hint}` : '',
+  );
   return {
     mediaStreamUrl: input.mediaUrlInDialRequest ? streamUrl : undefined,
     answerStreamUrl: input.mediaUrlInDialRequest ? undefined : streamUrl,

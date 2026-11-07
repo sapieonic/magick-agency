@@ -23,6 +23,9 @@ import { DEFAULT_PLIVO_SETTINGS, PlivoAdapter, PLIVO_HANGUP_XML } from '../../..
 import { computePlivoV3Signature } from '../../../../src/telephony/plivo/plivo-signature.js';
 import { Secret } from '../../../../src/telephony/credentials/secret.js';
 import { budgetFor } from '../../../../src/api/middleware/rate-limit.middleware.js';
+import { config } from '../../../../src/config/index.js';
+import { buildCarrierUrls } from '../../../../src/core/bridge/carrier-urls.js';
+import { normalizeWebhookBase } from '../../../../src/utils/webhook-base.js';
 
 const TOKEN = 'plivo-auth-token-current';
 const CALL_ID = '1b4e28ba-2fa1-41d2-883f-0016d3cca427';
@@ -238,6 +241,91 @@ describe('POST /plivo/webrtc-recording/:callId', () => {
     const app = await buildApp(bridge);
     expect((await post(app, recPath, REC, { unsigned: true })).statusCode).toBe(403);
     expect(bridge.handleCarrierRecording).not.toHaveBeenCalled();
+  });
+});
+
+// The signature covers the URL the dial handed Plivo, byte for byte. These bases are what
+// an operator may well write: a host in capitals with an explicit default port (`URL`
+// would lower-case the one and drop the other), a trailing slash, and a path prefix a
+// reverse proxy strips before the request reaches us. Each callback is signed over the
+// URL `buildCarrierUrls` built from that base, exactly as the dial sends it.
+describe('the signed URL is the one the dial handed Plivo', () => {
+  const cases: Array<{ name: string; base: string; arrivesAt: (path: string) => string }> = [
+    {
+      name: 'a host in capitals with an explicit :443',
+      base: 'https://Dialer.example.com:443/api/v1/webhooks/plivo',
+      arrivesAt: (p) => p,
+    },
+    {
+      name: 'a trailing slash on the base',
+      base: 'https://dialer.example.com/api/v1/webhooks/plivo/',
+      arrivesAt: (p) => p,
+    },
+    {
+      name: 'a path prefix the reverse proxy strips (`/dialer`)',
+      base: 'https://Dialer.example.com:443/dialer/api/v1/webhooks/plivo',
+      arrivesAt: (p) => p.replace(/^\/dialer/, ''),
+    },
+  ];
+
+  it.each(cases)('$name: answer, status and recording callbacks all verify', async ({ base, arrivesAt }) => {
+    config.telephony.plivo.webhookBaseUrl = base;
+    try {
+      const urls = buildCarrierUrls({
+        base: normalizeWebhookBase(base), callId: CALL_ID, mediaUrlInDialRequest: false,
+        providerToken: 'prov', webhookToken: 'wh', routeHint: '3',
+      });
+      const app = await buildApp(bridge);
+      const nonce = '98765432109876543210';
+      const send = (handed: string, params: Record<string, string>) => app.inject({
+        method: 'POST',
+        url: arrivesAt(handed.slice(handed.indexOf('/', 'https://'.length))),
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          host: 'internal-host:3021',
+          'x-plivo-signature-v3': computePlivoV3Signature(TOKEN, 'POST', handed, params, nonce),
+          'x-plivo-signature-v3-nonce': nonce,
+        },
+        payload: querystring.stringify(params),
+      });
+      const answer = await send(urls.answerUrl, ANSWER);
+      expect(answer.body).toContain('<Stream');
+      const status = await send(urls.statusCallbackUrl, { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' });
+      expect(status.statusCode).toBe(200);
+      const rec = await send(urls.recordingCallbackUrl, { RecordUrl: 'https://media.plivo.com/v1/Account/MAXX/Recording/r.mp3', CallUUID: 'uuid-1' });
+      expect(rec.statusCode).toBe(200);
+      expect(bridge.handleCarrierStatus).toHaveBeenCalledTimes(1);
+      expect(bridge.handleCarrierRecording).toHaveBeenCalledTimes(1);
+    } finally {
+      config.telephony.plivo.webhookBaseUrl = PLIVO_BASE;
+    }
+  });
+
+  it('a signature over the normalised origin instead (lower-cased host, no port) is refused', async () => {
+    const base = 'https://Dialer.example.com:443/api/v1/webhooks/plivo';
+    config.telephony.plivo.webhookBaseUrl = base;
+    try {
+      const app = await buildApp(bridge);
+      const path = `/webrtc-status/${CALL_ID}?token=wh`;
+      const res = await post(app, path, { CallStatus: 'ringing', CallUUID: 'uuid-1' }, {
+        signUrl: `https://dialer.example.com/api/v1/webhooks/plivo${path}`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(bridge.handleCarrierStatus).not.toHaveBeenCalled();
+    } finally {
+      config.telephony.plivo.webhookBaseUrl = PLIVO_BASE;
+    }
+  });
+
+  it('no base configured: refused, the bridge not asked', async () => {
+    config.telephony.plivo.webhookBaseUrl = '';
+    try {
+      const app = await buildApp(bridge);
+      expect((await post(app, `/webrtc-status/${CALL_ID}?token=wh`, { CallStatus: 'ringing' })).statusCode).toBe(403);
+      expect(bridge.verifyWsToken).not.toHaveBeenCalled();
+    } finally {
+      config.telephony.plivo.webhookBaseUrl = PLIVO_BASE;
+    }
   });
 });
 

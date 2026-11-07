@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCarrierUrls } from '../../../src/core/bridge/carrier-urls.js';
+import { buildCarrierUrls, carrierCallbackUrl } from '../../../src/core/bridge/carrier-urls.js';
 
 /*
  * The URLs the carrier is handed per dial. Without a route hint (one process) the
@@ -47,5 +47,21 @@ describe('buildCarrierUrls', () => {
     expect(urls.mediaStreamUrl).toBe('wss://agency.example.com/api/v1/webrtc-call/c1/pstn-stream?token=p&w=2');
     expect(urls.statusCallbackUrl).toBe(`${base}/webrtc-status/c1?token=w&w=2`);
     expect(urls.answerUrl).toBe(`${base}/webrtc-answer/c1?token=w&w=2`);
+  });
+});
+
+describe('carrierCallbackUrl (the dial`s URLs and the signature check`s subject)', () => {
+  it('keeps the base as written: host case, an explicit default port, a path prefix; strips only trailing slashes', () => {
+    expect(carrierCallbackUrl('https://Dialer.example.com:443/x/api/v1/webhooks/plivo//', 'webrtc-status', 'c1', '?token=w&w=2'))
+      .toBe('https://Dialer.example.com:443/x/api/v1/webhooks/plivo/webrtc-status/c1?token=w&w=2');
+  });
+
+  it('is what buildCarrierUrls hands the carrier', () => {
+    const raw = 'https://Dialer.example.com:443/api/v1/webhooks/plivo';
+    const urls = buildCarrierUrls({ base: raw, callId: 'c1', mediaUrlInDialRequest: false, providerToken: 'p', webhookToken: 'w', routeHint: '2' });
+    expect(urls.answerUrl).toBe(carrierCallbackUrl(raw, 'webrtc-answer', 'c1', '?token=w&w=2'));
+    expect(urls.statusCallbackUrl).toBe(carrierCallbackUrl(raw, 'webrtc-status', 'c1', '?token=w&w=2'));
+    expect(urls.recordingCallbackUrl).toBe(carrierCallbackUrl(raw, 'webrtc-recording', 'c1', '?token=w&w=2'));
+    expect(urls.statusCallbackUrl.startsWith('https://Dialer.example.com:443/')).toBe(true);
   });
 });

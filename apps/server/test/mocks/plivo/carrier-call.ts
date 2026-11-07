@@ -241,9 +241,14 @@ export class PlivoCall {
 
   /** POST one callback as Plivo does: form params, V3-signed over the public URL. */
   async callback(to: CallbackTarget, params: Record<string, string>, sign: SignMode = 'valid', tokenOverride?: string): Promise<CallbackResult> {
-    const publicUrl = new URL(this.targetUrl(to));
-    if (tokenOverride !== undefined) publicUrl.searchParams.set('token', tokenOverride);
-    const url = publicUrl.toString();
+    // The URL exactly as our dial (or answer XML) wrote it: Plivo signs what it was handed,
+    // so it is never re-serialised (`URL` would lower-case the host and drop a `:443`).
+    let url = this.targetUrl(to);
+    if (tokenOverride !== undefined) {
+      const publicUrl = new URL(url);
+      publicUrl.searchParams.set('token', tokenOverride);
+      url = publicUrl.toString();
+    }
     const headers: Record<string, string> = {};
     if (sign !== 'none') {
       const nonce = plivoNonce();
