@@ -31,7 +31,8 @@ import { AGENCY_UNASSIGNED_FILTER } from '@magick-agency/contracts/api/agency/ag
  *
  * ── An agent's own performance has no URL ───────────────────────────────────
  * The analytics page holds its selected agent in component state, so there is no
- * link to "agent X". {@link agentLink} goes to the campaign's Agents tab instead.
+ * link to "agent X". An agent's row on the Agents tab is plain text: the tab it
+ * would link to is the one it is on.
  */
 
 export type InsightsWaiting = 'due_now' | 'retry' | 'callback';
@@ -107,11 +108,6 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
 /** The campaign's Agents tab. */
 export function agentsLink(campaignId: string): string {
   return `${campaignBase(campaignId)}/agents`;
-}
-
-/** Where an agent's row leads: their performance view if it had a URL, so the Agents tab. */
-export function agentLink(campaignId: string, _agentUserId: string): string {
-  return agentsLink(campaignId);
 }
 
 /** The campaign's Settings tab, Contacts upload, and the ingest job's rejected-rows path. */

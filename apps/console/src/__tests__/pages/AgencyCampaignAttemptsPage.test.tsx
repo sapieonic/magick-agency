@@ -30,6 +30,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
+vi.mock('../../api/agencyInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
+  getInsightsAllocation: () => new Promise(() => {}),
+}));
 vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: mocks.isEnabled, loading: false, map: {}, refresh: vi.fn() }),
 }));
@@ -449,13 +454,13 @@ describe('the campaign section bar', () => {
     expect(tab.getAttribute('aria-current')).toBe('page');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
-    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
   });
 });
 
 /**
  * ── The filters live in the URL (the Insights drill-downs, docs/insights.md WS F) ──
- * A number on the Insights tab opens this list with its filters in the query string. Every
+ * A number on the campaign's analytic tabs opens this list with its filters in the query string. Every
  * one is read, sent, shown as a removable chip and written back; the list asks for the
  * exact total so the count on screen is the number that was clicked.
  */

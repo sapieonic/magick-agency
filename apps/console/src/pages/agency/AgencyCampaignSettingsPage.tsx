@@ -51,6 +51,7 @@ import { CallerIdPicker, AGENCY_TELEPHONY_PROVIDER } from './CallerIdPicker';
 import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
@@ -558,6 +559,14 @@ export function AgencyCampaignSettingsPage() {
           {block !== null && <p className={styles.blockCopy}>{CONFIG_BLOCK_COPY[block]}</p>}
         </div>
       )}
+
+      {/*
+        The lifecycle and the upload history (decision IN13), which used to sit
+        at the bottom of the Insights scroll: they are about how this campaign
+        was set up and run, so they live with its settings. Both reads are floored
+        at `agency.supervise`, so a role below it is not shown a pair of 403s.
+      */}
+      {hasPermission(role, 'agency.supervise') ? <CampaignHistory campaignId={campaign.id} /> : null}
     </div>
   );
 }

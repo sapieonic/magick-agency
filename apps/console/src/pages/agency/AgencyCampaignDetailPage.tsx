@@ -58,10 +58,10 @@ export function AgencyCampaignDetailPage() {
   const { showToast, showErrorToast } = useToast();
 
   /*
-    Which of this page's two panels is on screen, read from the URL rather
-    than held in state: `…/insights` and `…/agents` both mount this component,
-    so a section survives a refresh and can be sent to a colleague. See
-    `campaignPanelFromPath`.
+    Which of this page's panels is on screen, read from the URL rather than held
+    in state: `…/overview`, `…/calls`, `…/agents`, `…/callbacks` and `…/health`
+    all mount this component, so a section survives a refresh and can be sent to
+    a colleague. See `campaignPanelFromPath`.
   */
   const panel = campaignPanelFromPath(pathname);
 
@@ -80,8 +80,10 @@ export function AgencyCampaignDetailPage() {
   const [busy, setBusy] = useState<Action | null>(null);
   const [confirming, setConfirming] = useState<Action | null>(null);
   const [retryOpen, setRetryOpen] = useState(false);
-  /** Bumped by the Refresh control so the Insights sections re-read too. */
+  /** Bumped by the Refresh control so the analytic tabs' range reads re-read too. */
   const [insightsRefresh, setInsightsRefresh] = useState(0);
+  /** Overdue callbacks as of now, reported by the insights panel: the Callbacks tab's badge. */
+  const [callbacksOverdue, setCallbacksOverdue] = useState<number | null>(null);
 
   /**
    * Synchronous with the click. `setBusy` is a render, so two Start clicks in
@@ -305,7 +307,7 @@ export function AgencyCampaignDetailPage() {
         onRefresh={() => {
           void load();
           /*
-            The Insights range sections fetch separately and deliberately do
+            The analytic tabs' range reads fetch separately and deliberately do
             not poll, so without this Refresh moved the counters and the
             "Updated" stamp while those sections silently kept showing the
             older read. Bumped only here — never on the 10s poll, which must
@@ -365,27 +367,8 @@ export function AgencyCampaignDetailPage() {
         */
         liveAgentCount={stats?.agents ? stats.agents.length : null}
         campaignStatus={campaign.status}
+        callbacksOverdue={callbacksOverdue}
       />
-
-      {/*
-        Insights (decision IN1): the one analytic surface, which replaced
-        Overview and Performance. Its reads are floored at `agency.supervise`, so
-        a role below it that arrives on the URL by hand is sent to Agents rather
-        than shown a panel of 403s.
-      */}
-      {panel === 'insights' && (canControl ? (
-        <InsightsPanel
-          campaignId={campaign.id}
-          canRetry={canRetry}
-          onRetry={() => setRetryOpen(true)}
-          refreshToken={insightsRefresh}
-          shellStatus={campaign.status}
-        />
-      ) : role === undefined ? (
-        <LoadingSpinner />
-      ) : (
-        <Navigate to={`/agency/campaigns/${campaign.id}/agents`} replace />
-      ))}
 
       {/*
         The floor and the roster together, because the question they answer is a
@@ -440,6 +423,31 @@ export function AgencyCampaignDetailPage() {
         */}
         {canControl && assignmentEnabled ? <CampaignAssignmentProgress campaignId={campaign.id} /> : null}
       </div>
+      )}
+
+      {/*
+        The analytic tabs (decisions IN1, IN13): Overview, Calls, Callbacks and
+        Health, plus the performance half of Agents beneath the floor. ONE
+        element in one place for all five, so moving between them keeps its
+        reads and its range instead of loading them again. Its reads are floored
+        at `agency.supervise`: a role below it sees the floor and staffing on
+        Agents, and is sent there from any other analytic tab rather than shown
+        a panel of 403s.
+      */}
+      {canControl ? (
+        <InsightsPanel
+          campaignId={campaign.id}
+          canRetry={canRetry}
+          onRetry={() => setRetryOpen(true)}
+          refreshToken={insightsRefresh}
+          shellStatus={campaign.status}
+          view={panel}
+          onCallbacksOverdue={setCallbacksOverdue}
+        />
+      ) : panel === 'agents' ? null : role === undefined ? (
+        <LoadingSpinner />
+      ) : (
+        <Navigate to={`/agency/campaigns/${campaign.id}/agents`} replace />
       )}
 
       {confirming && confirmCopy && (

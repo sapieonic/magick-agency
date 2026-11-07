@@ -12,6 +12,7 @@ import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import {
   CountLink,
   CsvButton,
+  Disclosure,
   InsightsTable,
   Panel,
   ReconciliationChips,
@@ -137,6 +138,18 @@ export function AllocationSection({
 
   const online = allocation.agents.filter((a) => a.state !== 'offline').length;
   const lastOp = allocation.history[0];
+  const poolOnly = allocation.totals.allocated > 0 && allocation.unassigned.allocated === allocation.totals.allocated;
+  const table = (
+    <InsightsTable
+      caption="Allocation by agent, with the unassigned pool and the total"
+      columns={columns}
+      rows={allocation.agents}
+      rowKey={(row) => row.agent_user_id}
+      footer={footer}
+      sortable
+      testId="allocation-table"
+    />
+  );
 
   return (
     <Panel
@@ -147,15 +160,21 @@ export function AllocationSection({
         <CsvButton filename={insightsCsvFilename(campaignName, 'allocation', campaignId)} build={() => tableCsv(columns, allocation.agents, footer)} />
       }
     >
-      <InsightsTable
-        caption="Allocation by agent, with the unassigned pool and the total"
-        columns={columns}
-        rows={allocation.agents}
-        rowKey={(row) => row.agent_user_id}
-        footer={footer}
-        sortable
-        testId="allocation-table"
-      />
+      {/*
+        Nobody owns a contact (a shared pool with nothing assigned): every agent
+        row is a line of zeros, so say that in one sentence and keep the table a
+        click away rather than as the widest thing on the tab.
+      */}
+      {poolOnly ? (
+        <>
+          <p className={styles.muted} data-testid="allocation-pool-only">
+            {`No contact is assigned to an agent: all ${formatCount(allocation.unassigned.allocated)} sit in the shared pool, and the next free agent takes the next one due. ${formatCount(allocation.unassigned.not_attempted)} have not been dialled yet.`}
+          </p>
+          <Disclosure label={['Show the table', 'Hide the table']}>{table}</Disclosure>
+        </>
+      ) : (
+        table
+      )}
 
       <ul className={styles.callouts} aria-label="Allocation warnings">
         {allocation.at_risk.held_by_absent.map((held) => (

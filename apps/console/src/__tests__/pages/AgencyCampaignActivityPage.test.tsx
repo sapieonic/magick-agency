@@ -26,6 +26,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
+vi.mock('../../api/agencyInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
+  getInsightsAllocation: () => new Promise(() => {}),
+}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
@@ -904,7 +909,7 @@ describe('the campaign section bar', () => {
     expect(tab.getAttribute('aria-current')).toBe('page');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
-    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
   });
 });
 

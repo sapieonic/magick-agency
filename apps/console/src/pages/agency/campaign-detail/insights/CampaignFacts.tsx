@@ -1,11 +1,13 @@
+import { useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import type { AgencyInsightsSummary } from '../../../../types/agency-insights';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
+import { useTenant } from '../../../../contexts/TenantContext';
+import { getInsightsSummary, getInsightsUploads } from '../../../../api/agencyInsights';
+import type { AgencyInsightsSummary, AgencyInsightsUploads } from '../../../../types/agency-insights';
 import { formatCount } from '../../../../utils/format/number';
-import { ceilingPctText } from '../../../../utils/agency/abandonmentCeiling';
-import { describeIsoDays, hhmm } from '../../../../utils/format/weekdays';
 import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../utils/agency/insights/copy';
-import { settingsLink } from '../../../../utils/agency/insights/links';
-import { Panel } from './InsightsParts';
+import { Panel, SectionBody } from './InsightsParts';
+import { UploadsSection } from './UploadsSection';
 import styles from './Insights.module.css';
 
 const STATUS_WORDS: Record<string, string> = {
@@ -42,46 +44,80 @@ export function CampaignMeta({ summary }: { summary: AgencyInsightsSummary }) {
   );
 }
 
-/** The settings the numbers were produced under, and every lifecycle transition. */
-export function CampaignSettingsPanel({ summary }: { summary: AgencyInsightsSummary }) {
-  const s = summary.settings;
-  const zone = s.timezone;
-  const rows: Array<[string, string]> = [
-    ['Calling hours', `${hhmm(s.calling_window_start)}–${hhmm(s.calling_window_end)}, ${describeIsoDays(s.calling_days) ?? 'no days'}${s.calling_hours_default ? ' (the default)' : ''}`],
-    ['Time zone', zone],
-    ['Caller IDs', s.caller_ids.length ? s.caller_ids.join(', ') : 'None'],
-    ['Attempts per contact', formatCount(s.max_attempts)],
-    ['Wrap-up', s.wrapup_seconds === null ? 'No limit' : `${formatCount(s.wrapup_seconds)} s${s.wrapup_auto_return ? ', then back to available' : ''}`],
-    ['Wrap-up redial', s.allow_wrapup_redial ? `On, up to ${formatCount(s.wrapup_redial_limit)} per call` : 'Off'],
-    ['Agent retry', s.allow_agent_retry ? `On, ${formatCount(s.agent_retry_rounds)} rounds, ${formatCount(s.agent_retry_cooldown_minutes)} min apart` : 'Off'],
-    ['Outcome overrides', s.override_outcomes.length ? s.override_outcomes.map((o) => o.label).join(', ') : 'None'],
-    ['Recording', s.record_calls ? 'On' : 'Off'],
-    ['Call analysis', s.analysis_profile ? (s.analysis_profile.name ?? 'On') : 'Off'],
-    ['Abandonment ceiling', ceilingPctText(s.abandonment_ceiling_pct)],
-    ['Assignment', ASSIGNMENT_MODE_LABELS[s.assignment_mode]],
-  ];
+/**
+ * Every lifecycle transition, oldest first. On the Settings tab since IN13: the
+ * settings themselves are the form above it, so the panel that repeated them on
+ * Insights is gone, and what it carried besides them lives here.
+ */
+export function LifecyclePanel({ summary }: { summary: AgencyInsightsSummary }) {
+  const zone = summary.settings.timezone;
   return (
-    <Panel id="settings" title="Settings and lifecycle" sub="What these numbers were produced under" actions={<Link to={settingsLink(summary.campaign_id)} className={styles.fixLink}>Edit settings</Link>}>
-      <dl className={styles.kpis} style={{ margin: 0 }}>
-        {rows.map(([label, value]) => (
-          <div key={label} className={styles.kpi}>
-            <dt className={styles.kpiLabel}>{label}</dt>
-            <dd className={styles.kpiSub} style={{ margin: 0 }}>{value}</dd>
-          </div>
-        ))}
-      </dl>
+    <Panel id="lifecycle" title="Lifecycle">
+      <CampaignMeta summary={summary} />
       {summary.transitions.length > 0 ? (
-        <>
-          <h4 className={styles.subTitle}>Lifecycle</h4>
-          <ol className={styles.callouts} data-testid="insights-transitions">
-            {summary.transitions.map((t) => (
-              <li key={`${t.to_status}-${t.at}`} className={styles.callout}>
-                {`${STATUS_WORDS[t.to_status] ?? t.to_status} ${formatZoned(t.at, zone)} by ${t.reason === 'abandonment_ceiling' ? 'the abandonment guardrail' : actorName(t.actor, 'the dialler')}`}
-              </li>
-            ))}
-          </ol>
-        </>
-      ) : null}
+        <ol className={styles.callouts} data-testid="insights-transitions">
+          {summary.transitions.map((t) => (
+            <li key={`${t.to_status}-${t.at}`} className={styles.callout}>
+              {`${STATUS_WORDS[t.to_status] ?? t.to_status} ${formatZoned(t.at, zone)} by ${t.reason === 'abandonment_ceiling' ? 'the abandonment guardrail' : actorName(t.actor, 'the dialler')}`}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className={styles.muted}>Not started yet.</p>
+      )}
     </Panel>
+  );
+}
+
+/**
+ * The Settings tab's history half: the lifecycle and the upload history. Read
+ * once on arrival, never polled: neither moves while the form is being edited.
+ * The caller mounts it for `agency.supervise` only, the floor of both reads.
+ */
+export function CampaignHistory({ campaignId }: { campaignId: string }) {
+  const { tenantId, accountId } = useTenant();
+  const ready = Boolean(tenantId && accountId);
+  const t = tenantId ?? undefined;
+  const a = accountId ?? undefined;
+  const fetchSummary = useCallback(() => getInsightsSummary(campaignId, t, a), [campaignId, t, a]);
+  const fetchUploads = useCallback(() => getInsightsUploads(campaignId, t, a), [campaignId, t, a]);
+  const summary = useAsyncResource<AgencyInsightsSummary | null>(fetchSummary, {
+    initialData: null,
+    enabled: ready,
+    errorMessage: 'Could not load the lifecycle.',
+  });
+  const uploads = useAsyncResource<AgencyInsightsUploads | null>(fetchUploads, {
+    initialData: null,
+    enabled: ready,
+    errorMessage: 'Could not load the upload history.',
+  });
+  const zone = summary.data?.settings.timezone ?? null;
+
+  return (
+    <div className={styles.root} data-testid="campaign-history">
+      {summary.data ? (
+        <LifecyclePanel summary={summary.data} />
+      ) : (
+        <Panel id="lifecycle" title="Lifecycle">
+          <SectionBody resource={summary}>{() => null}</SectionBody>
+        </Panel>
+      )}
+      {uploads.data && summary.data && zone ? (
+        <UploadsSection
+          campaignId={campaignId}
+          campaignName={summary.data.name}
+          uploads={uploads.data}
+          timezone={zone}
+          tenantId={tenantId}
+          accountId={accountId}
+        />
+      ) : (
+        <Panel id="uploads" title="Upload history">
+          {/* The table needs the campaign's name and zone too, so a summary that failed says so here. */}
+          {/* Two elements, not one with a chosen resource: the two reads have different types. */}
+          {uploads.data ? <SectionBody resource={summary}>{() => null}</SectionBody> : <SectionBody resource={uploads}>{() => null}</SectionBody>}
+        </Panel>
+      )}
+    </div>
   );
 }
