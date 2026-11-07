@@ -171,7 +171,8 @@ Owned by `AgencyRuntime`. One call at a time per session.
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
    (`429 concurrency_limit` for a busy line or a calls-per-second limit, `carrier_rate_limited`:
    retry in a moment; `409 carrier_account_unavailable` for a carrier account that cannot dial,
-   `telephony_credential_unavailable` or `carrier_auth_rejected`: not retryable, the agent is told
+   `telephony_credential_unavailable`, `carrier_auth_rejected`, or `carrier_dial_not_sent` for the
+   carrier's configuration (no webhook base, a caller ID the carrier cannot take): not retryable, the agent is told
    to contact support or use another caller ID, and nothing is paused here; a dead socket; or
    `dial_failed` for a refusal the soft phone does not name, and for any failure inside the bridge
    before the carrier is asked: the row INSERT, the

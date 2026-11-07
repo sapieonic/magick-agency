@@ -21,6 +21,6 @@ export function campaignCarrierNotReady(
   return {
     status: 409,
     code: 'carrier_not_ready',
-    message: 'This campaign’s carrier account cannot place calls yet: the platform is not set up to receive its call updates. Ask your platform administrator to finish setting it up, or move the campaign to another carrier account.',
+    message: 'This campaign’s carrier account cannot place calls yet: the platform is not set up to receive its call updates. Contact support to finish setting it up, or move the campaign to another carrier account.',
   };
 }

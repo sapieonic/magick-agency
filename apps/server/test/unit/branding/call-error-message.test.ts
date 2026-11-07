@@ -46,6 +46,8 @@ describe('a failed call`s error, as a tenant sees it', () => {
     expect(shown).not.toBe(raw);
     expect(shown).not.toMatch(VENDOR);
     expect(shown).not.toMatch(AMERICAN);
+    // PL15: a carrier account is the service's to fix, so never "ask your administrator".
+    expect(shown).not.toMatch(/administrator/i);
     // The code itself is a wire identifier and still goes out as is.
     expect(formatWebRtcCallResponse(row(code, raw), '/rec').error_code).toBe(code);
   });

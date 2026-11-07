@@ -73,6 +73,15 @@ describe('manualDialFailureFor — what a dial the bridge refused before the car
     expect(manualDialFailureFor(refused('carrier_auth_rejected', 502))).toBe('carrier_account_unavailable');
   });
 
+  it('a dial not sent for the carrier`s configuration is the carrier account`s; for the number or the network, dial_failed', async () => {
+    const { CarrierDialNotSentError } = await import('../../../../src/telephony/carrier-errors.js');
+    const notSent = (reason: 'configuration' | 'destination' | 'network') =>
+      Object.assign(refused('carrier_dial_not_sent', 503), { cause: new CarrierDialNotSentError('plivo', reason, 'x') });
+    expect(manualDialFailureFor(notSent('configuration'))).toBe('carrier_account_unavailable');
+    expect(manualDialFailureFor(notSent('destination'))).toBe('dial_failed');
+    expect(manualDialFailureFor(notSent('network'))).toBe('dial_failed');
+  });
+
   it('a missing station is the station; anything else is the platform\'s dial_failed', () => {
     expect(manualDialFailureFor(refused('station_socket_unavailable'))).toBe('station_unavailable');
     expect(manualDialFailureFor(refused('something_new'))).toBe('dial_failed');

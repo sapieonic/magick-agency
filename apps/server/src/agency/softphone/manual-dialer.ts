@@ -45,7 +45,7 @@ import type {
   AgencyPriorAttempt,
 } from '@magick-agency/contracts/agency';
 import { WebRtcCallError } from '../../core/webrtc-bridge-manager.js';
-import { DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isDialOutcomeUnknown } from '../../telephony/carrier-errors.js';
+import { carrierDialNotSentReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isDialOutcomeUnknown } from '../../telephony/carrier-errors.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../../core/webrtc-bridge-manager.js';
 import {
   agencyAttemptRepository,
@@ -93,6 +93,13 @@ export function manualDialFailureFor(err: unknown): ManualDialFailure {
   if (err.code === 'station_socket_unavailable') return 'station_unavailable';
   if (CONCURRENCY_REFUSALS.has(err.code)) return 'concurrency_limit';
   if (CARRIER_ACCOUNT_REFUSALS.has(err.code)) return 'carrier_account_unavailable';
+  // A dial the carrier adapter would not send for the carrier's configuration (no webhook
+  // base, a caller ID the carrier cannot take): every retry would be refused the same way,
+  // as for an account that cannot dial. Not sent for the contact's number or the network:
+  // the platform's `dial_failed`.
+  if (err.code === 'carrier_dial_not_sent' && carrierDialNotSentReason(err) === 'configuration') {
+    return 'carrier_account_unavailable';
+  }
   return 'dial_failed';
 }
 
