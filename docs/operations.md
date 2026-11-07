@@ -508,7 +508,10 @@ Then per tenant:
    inventory, pinned to the credential and assigned to the tenant for every account. The summary
    says what was added, reactivated, retired, unchanged or skipped, and any conflict (a number
    already registered elsewhere is never taken over). Run it again after numbers change on the
-   Plivo account. Plivo numbers cannot be added by hand.
+   Plivo account. Plivo numbers cannot be added by hand: "Add number" on the phone numbers page
+   does not offer a carrier that takes tenant credentials (`takes_tenant_credentials` on
+   `GET /super-admin/telephony-providers`) and points here instead. The super-admin console names
+   carriers "Alias (Vendor)", e.g. "Pravah (Plivo)" (PL16).
 3. **Concurrency.** An account on a single total needs nothing: Plivo calls count against it. An
    account on a per-carrier breakdown (tenant → Service → the account's provider concurrency) needs
    a `plivo` allocation (shown by its alias), or every Plivo dial is refused for capacity
@@ -536,6 +539,12 @@ resumes the campaign by itself:
   `agy-credential-keyring-missing-keys`). Resume answers 409 `telephony_credential_not_active` until
   a super-admin re-enables or fixes the credential (or restores the key), or the campaign is moved
   to another carrier account in its settings.
+
+The console tells supervisors to contact support for either (PL15): a tenant's own admins cannot
+see or fix a carrier account. A soft-phone call on such an account is refused `409
+carrier_account_unavailable` and pauses nothing. A revoke is refused while a campaign that is not
+finished (draft, running, paused or stopping) is pinned to the credential; the refusal names up to
+five of them (tenant / account, status).
 
 `carrier_dial_refusals_total{provider="plivo",kind}` counts create-calls that placed no known call
 (`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`). A steady `rate_limited` means the
