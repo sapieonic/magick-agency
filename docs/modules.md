@@ -1044,7 +1044,7 @@ service over a test keyring) against the mock Plivo carrier; `plivo-rig.ts` buil
 | `apps/server/test/unit/scenarios/voicelink-webrtc-lifecycle-scenarios.test.ts` | 3 |
 | `apps/server/test/unit/test-redis-guard.test.ts` | 7 |
 | `apps/server/test/integration/telephony/plivo-call-e2e.test.ts` | ~6 |
-| `apps/server/test/integration/telephony/plivo-cluster-forwarding.test.ts` | ~2 |
+| `apps/server/test/integration/telephony/plivo-cluster-forwarding.test.ts` | ~3 |
 | `apps/server/test/integration/telephony/plivo-dial-rate.test.ts` | ~5 |
 
 ### Load, soak and scenario suites (`apps/server`, 2026-10-23)

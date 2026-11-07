@@ -8,7 +8,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * IPC handler decodes the request with the real decoder and runs the real
  * `handlePlivoCallback` on that engine's bridge. Everything else is `plivo-rig.ts`: real
  * Postgres and Redis, pacing, the bridge, the adapter, the credential service, the mock
- * Plivo carrier.
+ * Plivo carrier. With two workers (the engine built as slot 1), each callback reaches the
+ * worker its `w` names and never the other.
  *
  * What it shows: the answer XML a worker renders crosses back to Plivo (its `<Stream>`
  * keeps the `w`), every callback's V3 signature still verifies in the worker over the URL
@@ -46,25 +47,37 @@ import {
 let rig: PlivoRig | null = null;
 let station: Station | null = null;
 let cluster: MediaCluster | null = null;
+/** The fake media workers, by slot. */
+let workers: FakeChildProcess[] = [];
+/** The worker that holds the call (the rig's route hint). */
 let worker: FakeChildProcess | null = null;
 
-beforeAll(() => { initPlivoDb(); });
-beforeEach(async () => {
-  rig = await startPlivoRig({ carrierRouteHint: '0' });
+/**
+ * The rig's voice engine is built as media worker `owner` builds it (every URL Plivo gets
+ * carries `&w=<owner>`), behind a cluster of `count` fake workers. Only the owner serves
+ * `carrier.plivo_callback` (the real decoder and handler on that engine's bridge): it is
+ * the one holding the call. Any other worker has no handler for it, so a callback
+ * forwarded there would go unanswered.
+ */
+async function startCluster(count: number, owner: number): Promise<void> {
+  rig = await startPlivoRig({ carrierRouteHint: String(owner) });
   const bridge = rig.bridge;
+  workers = [];
   cluster = new MediaCluster({
-    count: 1,
+    count,
     fork: (slot) => {
       const child = new FakeChildProcess('media', slot);
       child.handlers.set('reaper.snapshot', () => EMPTY_SNAPSHOT);
       // The worker's side of the request, as `media-child.ts` serves it after its channel decoded it.
-      child.handlers.set('carrier.plivo_callback', (raw) => {
-        const body = IPC_REQUEST_DECODERS['carrier.plivo_callback'].req(JSON.parse(JSON.stringify(raw)));
-        if (!body) return Promise.reject(new Error('malformed'));
-        const { token, ...input } = body;
-        return handlePlivoCallback(bridge, { ...input, token: token ?? undefined });
-      });
-      worker = child;
+      if (slot === owner) {
+        child.handlers.set('carrier.plivo_callback', (raw) => {
+          const body = IPC_REQUEST_DECODERS['carrier.plivo_callback'].req(JSON.parse(JSON.stringify(raw)));
+          if (!body) return Promise.reject(new Error('malformed'));
+          const { token, ...input } = body;
+          return handlePlivoCallback(bridge, { ...input, token: token ?? undefined });
+        });
+      }
+      workers[slot] = child;
       setImmediate(() => child.ready());
       return child.asChild();
     },
@@ -73,8 +86,11 @@ beforeEach(async () => {
     readyTimeoutMs: 2_000,
   });
   await cluster.start();
+  worker = workers[owner] ?? null;
   setPlivoCallbackForwarder(cluster.plivoCallbackForwarder);
-});
+}
+
+beforeAll(() => { initPlivoDb(); });
 afterEach(async () => {
   setPlivoCallbackForwarder(null);
   await station?.close();
@@ -82,12 +98,16 @@ afterEach(async () => {
   await rig?.carrier.settled();
   await cluster?.stop(1_000);
   cluster = null;
+  workers = [];
+  worker = null;
   await rig?.stop();
   rig = null;
 });
 afterAll(closePlivoDb);
 
 describe('media workers: Plivo`s callbacks reach the worker that placed the call', () => {
+  beforeEach(() => startCluster(1, 0));
+
   it('ring, answer (the worker`s XML), stream, REST hangup, hangup and recording callbacks: all forwarded, all verified there', async () => {
     const r = rig!;
     const pattern = Array.from({ length: 10 }, (_, i) => i % 2 === 0);
@@ -151,5 +171,36 @@ describe('media workers: Plivo`s callbacks reach the worker that placed the call
     done = true;
     await r.carrier.settled();
     expect(call.statusesFor('hangup')).toEqual([200]);
+  }, 60_000);
+});
+
+describe('several media workers: a callback reaches the worker its route hint names, and no other', () => {
+  beforeEach(() => startCluster(2, 1));
+
+  it('a call placed by worker 1: ring, answer and hangup forwarded to worker 1, none to worker 0', async () => {
+    const r = rig!;
+    r.carrier.setScript(() => ({
+      name: 'answered via worker 1',
+      steps: [{ do: 'ring' }, { do: 'answer' }, { do: 'connect' }, { do: 'start' }, { do: 'hangup' }],
+    }));
+    const { campaignId } = await plivoCampaign(r);
+    station = await joinAgent(r, campaignId);
+    const call = await waitFor('the dial', () => r.carrier.callOrder[0]);
+    expect(call.request.answer_url).toMatch(/&w=1$/);
+    expect(call.request.hangup_url).toMatch(/&w=1$/);
+    await r.carrier.settled();
+
+    expect(call.errors).toEqual([]);
+    expect(call.callbacks.map((c) => [c.to, c.status])).toEqual([['ring', 200], ['answer', 200], ['hangup', 200]]);
+    // The answer XML came from worker 1, with its hint in the stream URL.
+    expect(call.streamUrl).toMatch(/\/pstn-stream\?token=[0-9a-f-]{36}&w=1$/);
+    const kinds = (w: FakeChildProcess) => w.requests('carrier.plivo_callback').map((q) => (q.body as { kind: string }).kind);
+    expect(kinds(workers[1]!)).toEqual(['status', 'answer', 'status']);
+    expect(kinds(workers[0]!)).toEqual([]);
+    const row = await waitFor('terminal', async () => {
+      const x = await callRow(call.callId);
+      return x?.ended_at ? x : null;
+    });
+    expect(row).toMatchObject({ provider_call_id: call.callUuid, telephony_credential_id: r.credentialId });
   }, 60_000);
 });

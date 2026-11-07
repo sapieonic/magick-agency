@@ -874,7 +874,7 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
   fixed, so tests reach the mock through `setPlivoTransportForTests`, which accepts only that
   host; no env or config can point the adapter elsewhere. `plivo-call-e2e.test.ts` covers a full
   call, a cancel while ringing, refused callbacks, both automatic pauses and the rotation grace;
-  `plivo-cluster-forwarding.test.ts` the forwarding to a media worker.
+  `plivo-cluster-forwarding.test.ts` the forwarding to a media worker (and, with two, to the one its route hint names).
 - **End to end**: `runtime-e2e.test.ts` (real app, station socket, real bridge, fake carrier,
   through disposition, analysis and completion) and `runtime-boot-order.test.ts`.
 - **Contract and guard tests**: route tables enumerated from `onRoute`
