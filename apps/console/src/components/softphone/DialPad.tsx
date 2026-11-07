@@ -12,9 +12,13 @@ import type { ServerClock } from '../../hooks/useServerClock';
 import type { SoftphoneState } from '../../hooks/useSoftphone';
 import styles from './SoftphoneView.module.css';
 
-/** VoiceLink cannot cancel a ringing call (SP3): what the agent must know before they hang up. */
+/**
+ * A carrier that cannot cancel a ringing call (SP3): what the agent must know before they
+ * hang up. Shown while ringing unless the call says its carrier can stop it
+ * (`can_cancel_ringing`). Names no carrier: the UI never shows a vendor.
+ */
 export const RINGING_HANGUP_WARNING =
-  'VoiceLink cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
+  'This carrier cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
 
 const STATUS_LABEL = {
   dialing: 'Dialing',
@@ -78,7 +82,7 @@ export function DialPad({
           </div>
         </div>
         {sp.finishNotice ? <FinishNotice text={sp.finishNotice} /> : null}
-        {phase === 'ringing' ? (
+        {phase === 'ringing' && call.can_cancel_ringing !== true ? (
           <p className={styles.ringWarning} data-testid="ringing-warning">
             {RINGING_HANGUP_WARNING}
           </p>

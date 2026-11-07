@@ -416,7 +416,7 @@ export class SoftphoneService {
 
   /**
    * Hang up the call, while ringing too (SP3: VoiceLink cannot stop the customer's
-   * phone ringing). Idempotent: a call that already ended answers its row. Answers
+   * phone ringing, Plivo can; the call's `can_cancel_ringing` tells the agent). Idempotent: a call that already ended answers its row. Answers
    * the row as read right after the hangup was issued — the `manual_call` frame is
    * the authority for "over". A live call this process does not hold (a crash's
    * leftover) answers its row unchanged; the orphan sweep ends it. `hungUp` is true

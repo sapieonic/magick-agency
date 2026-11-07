@@ -10,6 +10,7 @@ import { VoicelinkAdapter } from '../../../src/telephony/voicelink/voicelink.ada
 import { byocProviderNames } from '../../../src/telephony/factory.js';
 import { PlivoAdapter, DEFAULT_PLIVO_SETTINGS } from '../../../src/telephony/plivo/plivo.adapter.js';
 import { Secret } from '../../../src/telephony/credentials/secret.js';
+import { findCarrierModule } from '../../../src/telephony/carrier-modules.js';
 
 /**
  * `ProviderCapabilities` **substitutes for the compiler**, and that is the whole
@@ -89,6 +90,15 @@ describe('TelephonyProvider capabilities — every adapter in the registry decla
     '%s: canCancelRinging agrees with its declaration',
     (_name, entry) => {
       expect(canCancelRinging(entry.provider)).toBe(entry.cancelRinging);
+    },
+  );
+
+  it.each(ADAPTERS.map((a) => [a.name, a] as const))(
+    '%s: its carrier module states the same cancelRinging (read where no adapter is built)',
+    (name, entry) => {
+      // The soft phone's `can_cancel_ringing` comes from the module, not an adapter (one
+      // on a tenant's account opens its secrets): the two must never disagree.
+      expect(findCarrierModule(name)?.cancelsRinging).toBe(canCancelRinging(entry.provider));
     },
   );
 

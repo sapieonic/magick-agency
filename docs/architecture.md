@@ -517,7 +517,8 @@ every account the caller belongs to (CH2) where every internal handler is single
 - **Carrier modules** (`telephony/carrier-modules.ts`). Each carrier declares its media-stream
   protocol (start negotiation, codec, wire format, framing, clip encoding), its hangup style, where
   the stream URL goes (`mediaUrlInDialRequest`: in the dial for VoiceLink, in the answer XML for
-  Plivo) and a `lifecycle` reader of its status events; the bridge asks the session's module
+  Plivo), whether a hang-up stops a ringing call (`cancelsRinging`, the adapter's `cancelRinging`
+  stated where no adapter is built; the soft phone's `can_cancel_ringing` reads it) and a `lifecycle` reader of its status events; the bridge asks the session's module
   rather than branching on a provider name (B18), and reads every carrier's ring, answer,
   terminal and recording events through `lifecycle` (`handleCarrierStatus`, late terminals,
   `finalizeEnding`).
@@ -598,7 +599,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   - *Ending.* Before the answer a teardown cancels the dial by its request id (`DELETE
     …/Request/{request_uuid}/`, `cancelDialRequest`); after it, hangs up by the call id (`DELETE
     …/Call/{call_uuid}/`); neither with an empty or malformed id (PL8). So a soft-phone hang-up
-    while a Plivo call rings stops the ringing; a VoiceLink one cannot (SP3).
+    while a Plivo call rings stops the ringing; a VoiceLink one cannot (SP3). The live soft-phone
+    call carries which (`can_cancel_ringing`), and the console warns only on the latter.
   - *Automatic pauses* (`agency/carrier-account-pause.ts`). A campaign dial refused
     `carrier_auth_rejected` pauses the campaign `carrier_auth`; one refused
     `telephony_credential_unavailable` pauses it `carrier_account_unavailable`. Running campaigns

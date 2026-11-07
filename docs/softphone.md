@@ -25,9 +25,13 @@ Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"); the app's are 
 
 SP3 is about VoiceLink, the service's own carrier, and stands. A call on a tenant's own Plivo
 account (decisions B18–B22, PL8) can be cancelled while it rings: the bridge's teardown before the
-answer cancels the dial by its request id, so the ringing stops. The console and the agent app do
-not tell the carriers apart yet: the SP3 warning and the hold-to-confirm hang-up show for every
-ringing call (§8).
+answer cancels the dial by its request id, so the ringing stops. The live call says which it is:
+`AgencyManualCall.can_cancel_ringing`, the media leg's carrier module's `cancelsRinging` (true for
+Plivo, false for VoiceLink, and false before the leg is placed), held equal to the adapter's
+`capabilities.cancelRinging` by `provider-capabilities.test.ts`. The console shows the SP3 warning
+only when it is not `true`, and the warning names no carrier ("This carrier cannot stop a ringing
+call…"). Hang-up while ringing stays hold-to-confirm on every carrier. The agent app shows the
+same vendor-free warning on every ringing call; it does not read the field yet (§8).
 
 ## 2. Shape
 
@@ -420,8 +424,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   media"), the same as a campaign call. The ringback
   is generated in the browser (400 + 450 Hz, ring-ring). While ringing, Mute silences only the
   ringback ("Mute ring"); the microphone's mute is separate, and answering with the microphone
-  muted is announced assertively. The SP3 warning shows while ringing; hang-up is hold-to-confirm
-  (or `E` twice).
+  muted is announced assertively. The SP3 warning shows while ringing unless the call's
+  `can_cancel_ringing` is `true` (§1); hang-up is hold-to-confirm (or `E` twice).
 - **Outcome.** The outcome pad uses the tagged campaign's catalog (from `taggable_campaigns`,
   else bootstrap's `call_campaign` for a campaign that can no longer be tagged), else the
   soft-phone catalog, else the built-ins, with the station's rules (keys 1–9, required notes,
@@ -568,7 +572,9 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
 
 Call details in the analysis prompt (needs a `context_pending` job hold), a callbacks list, DTMF,
 per-campaign call fields, a "every call must be tagged" setting, transfer and conference.
-Cancel-while-ringing works on Plivo on the server side (§1, after the table), but neither app tells
-the agent: the SP3 warning, which names VoiceLink, and the hold-to-confirm hang-up show for a
-ringing Plivo call too. The agent app has no DTMF and no recordings either; the supervisor's
+Cancel-while-ringing on Plivo is told to the console (§1, after the table: `can_cancel_ringing`,
+no warning on a ringing Plivo call, and the warning names no carrier). The agent app still shows the
+SP3 warning, now vendor-free, on every ringing call, Plivo included: its wire type
+(`apps/mobile/packages/agency_wire`, `ManualCall`) does not decode `can_cancel_ringing` yet and
+ignores the key. The agent app has no DTMF and no recordings either; the supervisor's
 lists and Settings → Soft phone stay on the console.

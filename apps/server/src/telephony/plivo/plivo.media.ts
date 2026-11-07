@@ -79,5 +79,7 @@ export const plivoCarrier: CarrierModule = {
   answeredHangup: 'rest',
   // The stream URL goes in the answer XML Plivo fetches on answer, not in the dial.
   mediaUrlInDialRequest: false,
+  // A ringing dial is cancelled by its request id (`DELETE /Request/{id}/`).
+  cancelsRinging: true,
   lifecycle: plivoLifecycle,
 };

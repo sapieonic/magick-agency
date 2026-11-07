@@ -485,6 +485,29 @@ describe('AgencyManualCallRepository (integration)', () => {
       expect(wire!.outcome_due_at).toBeNull();
     });
 
+    it('findWireById: can_cancel_ringing from the media leg\'s carrier; false with no leg or another account\'s; absent on list rows', async () => {
+      const session = await insertSoftphoneSession();
+      const plivoLeg = await insertWebrtcCall({ campaign_id: null, provider: 'plivo' });
+      const voicelinkLeg = await insertWebrtcCall({ campaign_id: null, provider: 'voicelink' });
+      const foreignPlivoLeg = await insertWebrtcCall({ campaign_id: null, provider: 'plivo', account_id: OTHER_ACCOUNT });
+      const ringing = { state: 'ringing', dialed_at: new Date() };
+      const onPlivo = await insertManualCall(session, { ...ringing, webrtc_call_id: plivoLeg.id });
+      const onVoicelink = await insertManualCall(await insertSoftphoneSession(), { ...ringing, webrtc_call_id: voicelinkLeg.id });
+      const noLeg = await insertManualCall(await insertSoftphoneSession(), { state: 'dialing', dialed_at: new Date() });
+      const foreign = await insertManualCall(await insertSoftphoneSession(), { ...ringing, webrtc_call_id: foreignPlivoLeg.id });
+
+      expect((await repo.findWireById(onPlivo.id, SCOPE))!.can_cancel_ringing).toBe(true);
+      expect((await repo.findWireById(onPlivo.id, SCOPE, { withContext: true }))!.can_cancel_ringing).toBe(true);
+      expect((await repo.findWireById(onVoicelink.id, SCOPE))!.can_cancel_ringing).toBe(false);
+      // Fail closed: no leg yet, or a leg the call's account does not own, reads as unable.
+      expect((await repo.findWireById(noLeg.id, SCOPE))!.can_cancel_ringing).toBe(false);
+      expect((await repo.findWireById(foreign.id, SCOPE))!.can_cancel_ringing).toBe(false);
+
+      const page = await repo.listForAgent({ ...SCOPE, agentUserId: session.agent_user_id, filters: {}, limit: 5 });
+      expect(page.rows.map((r) => r.id)).toEqual([onPlivo.id]);
+      expect(page.rows[0]).not.toHaveProperty('can_cancel_ringing');
+    });
+
     it('findUnsettledForSession returns the live-or-awaiting call only', async () => {
       const session = await insertSoftphoneSession();
       await endedCall({ session, extra: { settled_at: new Date() } });

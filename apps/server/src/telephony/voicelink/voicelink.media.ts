@@ -73,5 +73,7 @@ export const voicelinkCarrier: CarrierModule = {
   answeredHangup: 'close_media',
   // `add_lead` carries the `websocket_url` VoiceLink dials out to; there is no answer XML.
   mediaUrlInDialRequest: true,
+  // No hangup endpoint either for a leg still ringing: it rings on (SP3).
+  cancelsRinging: false,
   lifecycle: voicelinkLifecycle,
 };

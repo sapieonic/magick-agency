@@ -218,9 +218,9 @@ onto it (the re-attach window, never lapsed for a ring drop), so its answer conn
 suite demanded `abandoned`; forcing an early return reproduces CI's failure every run.
 
 **Not built** (`softphone.md` §8): call details in the analysis prompt, a callbacks list, DTMF,
-per-campaign call fields, "every call must be logged to a campaign", cancel while ringing (Plivo;
-the server side came with Plivo step 4, above: a hang-up while a Plivo call rings cancels the dial),
-transfer and conference. Seen and left: light-theme `<select>` elements show no arrow app-wide
+per-campaign call fields, "every call must be logged to a campaign", the agent app telling the
+agent a ringing Plivo call can be cancelled (the console does: `can_cancel_ringing`, and the
+SP3 warning names no carrier), transfer and conference. Seen and left: light-theme `<select>` elements show no arrow app-wide
 (`packages/web-ui/src/global.css`), and the station shows campaign numbers unformatted.
 
 ### Agent mobile app 2026-11-01 (V1)

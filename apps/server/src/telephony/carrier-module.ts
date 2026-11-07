@@ -116,6 +116,15 @@ export interface CarrierModule {
    */
   readonly mediaUrlInDialRequest: boolean;
   /**
+   * Whether hanging up a call the far end has NOT answered stops it ringing: the
+   * module-level statement of the adapter's `ProviderCapabilities.cancelRinging`, read
+   * where no adapter is at hand (one on a tenant's account opens its secrets). The soft
+   * phone tells the agent with it whether a hang-up while ringing leaves the customer's
+   * phone ringing (`AgencyManualCall.can_cancel_ringing`, SP3). Held equal to the
+   * adapter's declaration by `test/unit/telephony/provider-capabilities.test.ts`.
+   */
+  readonly cancelsRinging: boolean;
+  /**
    * How the bridge reads this carrier's lifecycle events (status callbacks). Optional:
    * a carrier without it drives no status handling, and its events are refused.
    */

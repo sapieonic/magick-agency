@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { carrierModuleNames, findCarrierModule } from '../../../src/telephony/carrier-modules.js';
+import { carrierCancelsRinging, carrierModuleNames, findCarrierModule } from '../../../src/telephony/carrier-modules.js';
 import { byocProviderNames } from '../../../src/telephony/factory.js';
 import { findCredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
 import { decodeMulaw, encodeAlaw, encodeMulaw } from '../../../src/utils/audio.js';
@@ -46,7 +46,17 @@ describe('carrier-module registry', () => {
       expect(typeof m.media.negotiatesOnStart).toBe('boolean');
       expect(m.media.formatLabel.length).toBeGreaterThan(0);
       expect([null, 'alaw8']).toContain(m.media.wireFormat);
+      expect(typeof m.cancelsRinging).toBe('boolean');
     }
+  });
+
+  it('carrierCancelsRinging reads the module and fails closed', () => {
+    expect(carrierCancelsRinging('plivo')).toBe(true);
+    expect(carrierCancelsRinging('voicelink')).toBe(false);
+    // No leg yet, or a name no carrier answers to: unable, so the agent is warned.
+    expect(carrierCancelsRinging(null)).toBe(false);
+    expect(carrierCancelsRinging(undefined)).toBe(false);
+    expect(carrierCancelsRinging('nope')).toBe(false);
   });
 });
 

@@ -328,7 +328,8 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   (the ringback only, reset for each call); otherwise it is the microphone, and answering with the
   microphone muted is announced assertively. A campaign attempt always wins the audio. CallKit and
   the notification's Hang up end a soft-phone call at once; in the app hang-up is
-  hold-to-confirm, with the SP3 warning while ringing. A system hang-up the server refused shows on
+  hold-to-confirm, with the SP3 warning (which names no carrier) on every ringing call: the app
+  does not read `can_cancel_ringing` yet (`softphone.md` §8). A system hang-up the server refused shows on
   the soft phone, and a call CallKit already ended on its side is reported to it again. CallKit
   names the call by the matched contact, else the number.
 - **My calls.** A "Soft-phone calls" segment shows where the Phone tab shows, or when a `limit=1`

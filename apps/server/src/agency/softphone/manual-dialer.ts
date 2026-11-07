@@ -387,8 +387,8 @@ export class ManualDialer {
 
   /**
    * Hang up a live call (SP3: a ringing VoiceLink call may keep ringing at the
-   * customer's end; the console says so). `false` when this process holds no such
-   * live call.
+   * customer's end; the console says so unless the call's `can_cancel_ringing` is
+   * true). `false` when this process holds no such live call.
    */
   async hangup(manualCallId: string, requestedBy: EndRequester): Promise<boolean> {
     const entry = this.live.get(manualCallId);

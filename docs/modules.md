@@ -146,7 +146,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
 | `apps/server/test/integration/agency/softphone-contact-settlement.test.ts` | ~42 |
-| `apps/server/test/integration/agency/softphone-manual-call-repository.test.ts` | ~32 |
+| `apps/server/test/integration/agency/softphone-manual-call-repository.test.ts` | 33 |
 | `apps/server/test/integration/agency/softphone-mixed-data-reads.test.ts` | 5 |
 | `apps/server/test/integration/agency/softphone-session-join.test.ts` | 10 |
 | `apps/server/test/integration/agency/softphone-session-route.test.ts` | 1 |
@@ -1615,7 +1615,7 @@ Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeCol
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | 43 |
+| `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | 46 |
 
 `SoftphoneView.test.tsx` drives the view through `useSoftphone` with a fake station socket (`__tests__/helpers/fakeSocket.ts`, `__tests__/helpers/softphone.ts`): Ready, refusals and overrides, the call from `manual_call` frames, the outcome window, finish mode, keys on a focused select, the ringback, mute and reconnect. `SoftphoneCallsList` is tested through `SoftphoneSupervisor.test.tsx` and `AgentAttemptsPage.softphone.test.tsx` (`pages/`).
 

@@ -285,6 +285,9 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
       'SELECT origin, manual_call_id, campaign_id, agency_attempt_id FROM agency_calls WHERE id = $1', [webrtcCallId]);
     expect(leg).toEqual({ origin: 'manual', manual_call_id: callId, campaign_id: null, agency_attempt_id: null });
     await waitFor('ringing frame', () => lastCall(station)?.state === 'ringing');
+    // VoiceLink cannot stop a ringing call: the console warns before a hang-up (SP3).
+    expect(lastCall(station)?.can_cancel_ringing).toBe(false);
+    expect(placed.call.can_cancel_ringing).toBe(false);
 
     answer(webrtcCallId);
     await waitFor('bridged frame', () => lastCall(station)?.state === 'bridged' && lastCall(station)?.bridged_at);
@@ -869,6 +872,12 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     expect(fakePlivo.initiateCall).toHaveBeenCalledWith(expect.objectContaining({ callId: webrtcCallId, from: PLIVO_NUMBER }));
     expect(fakePlivo.resolved).toContainEqual(['plivo', cred!.id, 'dial', TENANT]);
     expect(fakeAdapter.initiateCall).not.toHaveBeenCalledWith(expect.objectContaining({ callId: webrtcCallId }));
+    // The ringing frame says a hang-up stops it ringing, so the console does not warn.
+    const ringing = await waitFor('ringing frame', () => {
+      const c = lastCall(stations.at(-1)!);
+      return c?.state === 'ringing' ? c : null;
+    });
+    expect(ringing.can_cancel_ringing).toBe(true);
 
     // Hung up while ringing: cancelled at the carrier by the dial's request id.
     expect((await runtime.softphone.hangup(actor(agent), placed.call.id)).ok).toBe(true);

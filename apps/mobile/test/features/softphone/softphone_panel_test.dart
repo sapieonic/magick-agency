@@ -256,7 +256,7 @@ void main() {
       expect(find.text('Mute ring'), findsOneWidget);
       expect(find.text('Mute'), findsNothing);
       expect(find.byKey(const Key('ringing-warning')), findsOneWidget);
-      expect(find.textContaining('VoiceLink cannot stop a ringing call'), findsOneWidget);
+      expect(find.textContaining('This carrier cannot stop a ringing call'), findsOneWidget);
       await tester.tap(find.byKey(const Key('softphone-mute')));
       expect(h.actions.calls, ['toggleMute']);
       await h.setView(callView(SoftphonePhase.ringing, muted: true));
@@ -350,7 +350,7 @@ void main() {
       tester.semantics.tap(find.semantics.byLabel('Hang up'));
       await settle(tester);
       expect(find.text('End this call?'), findsOneWidget);
-      expect(find.descendant(of: find.byType(AlertDialog), matching: find.textContaining('VoiceLink cannot stop')), findsOneWidget);
+      expect(find.descendant(of: find.byType(AlertDialog), matching: find.textContaining('This carrier cannot stop')), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Hang up'));
       await settle(tester);
       expect(h.actions.count('hangUp'), 1);
