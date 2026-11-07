@@ -563,8 +563,10 @@ every account the caller belongs to (CH2) where every internal handler is single
     it is `active` (`EXISTS … FOR SHARE`), resolves the adapter with
     `getForCredentialId(provider, id, 'dial', tenantId)`, and asks `PlivoAdapter.initiateCall`.
     The adapter takes a slot from the per-account calls-per-second gate (`plivo-dial-rate.ts`: a
-    fixed one-second window in Redis keyed by the account's auth id, shared by every process; in
-    memory while Redis errors), then POSTs create-call to the fixed API host with Basic auth, no
+    sliding 1000 ms window, an atomic Lua script over a ZSET of admission times in Redis keyed by
+    the account's auth id, shared by every process and expiring once the account is idle; a
+    refused dial sleeps until the oldest admission ages out; in memory, same window, while Redis
+    errors), then POSTs create-call to the fixed API host with Basic auth, no
     redirects and `PLIVO_REQUEST_TIMEOUT_MS`, numbers as digits only, `time_limit` (the call's max
     duration) and `ring_timeout`, and answer, ring and hangup URLs that must be on
     `PLIVO_WEBHOOK_BASE_URL`'s origin. Plivo answers only a `request_uuid`, which the bridge keeps
