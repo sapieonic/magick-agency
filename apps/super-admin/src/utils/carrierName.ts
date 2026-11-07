@@ -1,6 +1,6 @@
 import {
-  normalizeTelephonyProviderKey,
   telephonyProviderAlias,
+  telephonyProviderVendorName,
 } from '@magick-agency/web-ui/telephonyProviders';
 
 /**
@@ -12,27 +12,14 @@ import {
  * The tenant console never names a vendor (`telephonyProviderAlias` alone).
  */
 
-/** The vendors' own names, for an API row that carries only the slug. */
-const VENDOR_NAMES: Record<string, string> = {
-  twilio: 'Twilio',
-  plivo: 'Plivo',
-  exotel: 'Exotel',
-  vobiz: 'VoBiz',
-  telnyx: 'Telnyx',
-  voicelink: 'VoiceLink',
-  z99: 'Z99',
-  generic_sip: 'Generic SIP',
-};
-
 /**
  * "Alias (Vendor)" for `provider` (the API slug). `vendorName` is the API's display
- * name when the row has one; otherwise the vendor's name comes from the slug. A carrier
+ * name when the row has one; otherwise the vendor's name comes from the slug
+ * (`TELEPHONY_PROVIDER_VENDOR_NAMES`, beside the aliases in `packages/web-ui`). A carrier
  * with no alias reads as its vendor name alone.
  */
 export function operatorCarrierName(provider: string | null | undefined, vendorName?: string | null): string {
-  const key = provider == null ? '' : normalizeTelephonyProviderKey(provider);
-  const vendor = vendorName?.trim()
-    || (key && Object.hasOwn(VENDOR_NAMES, key) ? VENDOR_NAMES[key]! : (provider ?? '').trim());
+  const vendor = vendorName?.trim() || telephonyProviderVendorName(provider) || (provider ?? '').trim();
   const alias = telephonyProviderAlias(provider, vendor);
   if (!vendor || alias.toLowerCase() === vendor.toLowerCase()) return alias || vendor;
   return `${alias} (${vendor})`;

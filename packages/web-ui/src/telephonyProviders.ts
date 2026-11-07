@@ -36,11 +36,34 @@ export const TELEPHONY_PROVIDER_ALIASES: Record<string, string> = {
   generic_sip: 'Sanchar',
 };
 
+/**
+ * The vendors' own names, by the same keys, for the super-admin console's "Alias (Vendor)"
+ * when an API row carries only the slug (its `operatorCarrierName`, PL16). The tenant console
+ * never reads this: it shows the alias alone.
+ */
+export const TELEPHONY_PROVIDER_VENDOR_NAMES: Record<string, string> = {
+  twilio: 'Twilio',
+  plivo: 'Plivo',
+  exotel: 'Exotel',
+  vobiz: 'VoBiz',
+  telnyx: 'Telnyx',
+  voicelink: 'VoiceLink',
+  z99: 'Z99',
+  generic_sip: 'Generic SIP',
+};
+
 // There is no BYOC marker copy: BYOC is not supported.
 
 /** Normalise an API slug or vendor display name into a map key. */
 export function normalizeTelephonyProviderKey(provider: string): string {
   return provider.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+/** The vendor's own name for `provider` (slug or display name), or `null` when it is not mapped. */
+export function telephonyProviderVendorName(provider: string | null | undefined): string | null {
+  if (provider == null) return null;
+  const key = normalizeTelephonyProviderKey(provider);
+  return key !== '' && Object.hasOwn(TELEPHONY_PROVIDER_VENDOR_NAMES, key) ? TELEPHONY_PROVIDER_VENDOR_NAMES[key]! : null;
 }
 
 /** True when `provider` has a mapped customer alias (not a fallback). */

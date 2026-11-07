@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { telephonyProviderVendorName } from '@magick-agency/web-ui/telephonyProviders';
 import { operatorCarrierName } from '../../utils/carrierName';
 
 const mocks = vi.hoisted(() => ({
@@ -52,8 +53,9 @@ function renderPage(entry = '/tenants/t-1') {
   );
 }
 
-const provider = (name: string, status: 'active' | 'inactive' = 'active') => ({
-  id: `prov-${name}`, name, display_name: name, status,
+// The display name the catalog carries (`telephony_providers.display_name`): the vendor's own.
+const provider = (name: string, status: 'active' | 'inactive' = 'active', displayName = telephonyProviderVendorName(name) ?? name) => ({
+  id: `prov-${name}`, name, display_name: displayName, status,
   created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
 });
 
@@ -405,6 +407,27 @@ describe('SATenantDetailPage — provider concurrency', () => {
     expect(input('old-carrier').value).toBe('7');
     expect(screen.queryByLabelText(`Concurrency allocated to ${operatorCarrierName('spare-inactive')}`)).toBeNull();
     expect(mocks.listProviders).toHaveBeenCalled();
+  });
+
+  it('names a carrier in the editor by the catalog’s display name', async () => {
+    mocks.listProviders.mockResolvedValue([provider('voicelink'), provider('acme_tel', 'active', 'Acme Tel')]);
+    mocks.getAccounts.mockResolvedValue([{
+      id: 'a-1', name: 'Sales', slug: 'sales', status: 'active', max_concurrent_calls: 7,
+    }]);
+    mocks.getAccountConcurrency.mockResolvedValue({
+      allocation: { tenant_id: 't-1', account_id: 'a-1', mode: 'legacy_total', version: 1, total_concurrency: 7, providers: [] },
+      utilization: null,
+    });
+
+    renderPage();
+    await waitFor(() => screen.getByRole('heading', { name: 'Acme' }));
+    fireEvent.click(screen.getByRole('tab', { name: /service/i }));
+    await screen.findByRole('cell', { name: 'Sales' });
+    fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
+
+    // A carrier the alias map does not know: only the catalog can name it.
+    expect(await screen.findByLabelText('Concurrency allocated to Acme Tel')).toBeTruthy();
+    expect(screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`)).toBeTruthy();
   });
 });
 
