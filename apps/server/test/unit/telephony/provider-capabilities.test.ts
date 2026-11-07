@@ -1,12 +1,16 @@
 // The registry is the `instantiate` switch (the service's own accounts) plus
-// `BYOC_ADAPTERS` (tenant credentials); today that is VoiceLink alone, so the
-// cancel-capable cohort is the empty set. There is no transfer gate (no escalation).
+// `BYOC_ADAPTERS` (tenant credentials): VoiceLink and Plivo. Plivo can cancel a ringing
+// leg (by its request id, then its call id); VoiceLink cannot. There is no transfer gate
+// (no escalation).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { canCancelRinging, queuesOutboundDials, type TelephonyProvider } from '../../../src/telephony/types.js';
 import { VoicelinkAdapter } from '../../../src/telephony/voicelink/voicelink.adapter.js';
 import { byocProviderNames } from '../../../src/telephony/factory.js';
+import { PlivoAdapter, DEFAULT_PLIVO_SETTINGS } from '../../../src/telephony/plivo/plivo.adapter.js';
+import { Secret } from '../../../src/telephony/credentials/secret.js';
+import { findCarrierModule } from '../../../src/telephony/carrier-modules.js';
 
 /**
  * `ProviderCapabilities` **substitutes for the compiler**, and that is the whole
@@ -39,6 +43,18 @@ const ADAPTERS: ReadonlyArray<{ name: string; provider: TelephonyProvider; cance
       baseUrl: 'https://voicelink.test', username: 'u', password: 'p',
       webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink',
       defaultCountryCode: '91',
+    }),
+  },
+  {
+    name: 'plivo',
+    // A ringing dial is cancelled by its request id (`DELETE /Request/{id}/`), an
+    // answered one hung up by its call id (`DELETE /Call/{id}/`).
+    cancelRinging: true,
+    provider: new PlivoAdapter({
+      ...DEFAULT_PLIVO_SETTINGS,
+      webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo',
+      authId: 'MAABCDEFGHIJKLMNOPQR',
+      authToken: new Secret('token'),
     }),
   },
 ];
@@ -77,6 +93,15 @@ describe('TelephonyProvider capabilities — every adapter in the registry decla
     },
   );
 
+  it.each(ADAPTERS.map((a) => [a.name, a] as const))(
+    '%s: its carrier module states the same cancelRinging (read where no adapter is built)',
+    (name, entry) => {
+      // The soft phone's `can_cancel_ringing` comes from the module, not an adapter (one
+      // on a tenant's account opens its secrets): the two must never disagree.
+      expect(findCarrierModule(name)?.cancelsRinging).toBe(canCancelRinging(entry.provider));
+    },
+  );
+
   it('fails closed for a provider that has not answered the question', () => {
     // The state a newly-added adapter is in before someone reads its `endCall`.
     // Unable-to-cancel is the conservative reading: the bridge then warns rather
@@ -94,12 +119,19 @@ describe('TelephonyProvider capabilities — every adapter in the registry decla
     expect(queuesOutboundDials({ capabilities: undefined })).toBe(false);
   });
 
-  it('no carried adapter claims it can cancel a ringing leg', () => {
+  it('only plivo can cancel a ringing leg', () => {
     // Stated as a set as well as per adapter, so a flip is visible as a change
     // to the platform's cancel-capable cohort — which is what the later
     // predictive-pacing work gates on (the capability, never the provider name).
-    // VoiceLink cannot cancel a ringing leg, so the cohort is empty.
-    expect(ADAPTERS.filter((a) => a.cancelRinging).map((a) => a.name).sort())
-      .toEqual([]);
+    expect(ADAPTERS.filter((a) => canCancelRinging(a.provider)).map((a) => a.name).sort())
+      .toEqual(['plivo']);
+  });
+
+  it('every adapter that can cancel a ringing leg before the carrier names the call has cancelDialRequest', () => {
+    // Plivo's dial returns only a request id; `cancelRinging` is true only because
+    // `cancelDialRequest` can recall the dial before the call id exists.
+    const plivo = ADAPTERS.find((a) => a.name === 'plivo')!.provider;
+    expect(typeof plivo.cancelDialRequest).toBe('function');
+    expect(typeof plivo.verifyCarrierRequest).toBe('function');
   });
 });

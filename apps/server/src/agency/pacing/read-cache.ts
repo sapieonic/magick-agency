@@ -13,6 +13,10 @@
  *
  * The TTL is the backstop for an invalidation that never arrives (a lost event, a
  * raw SQL write): no entry is served older than `ttlMs`.
+ *
+ * Optionally bounded (`maxEntries`): a store into a full cache first drops every expired
+ * entry, then the oldest stored, until there is room. A lookup that finds an entry expired
+ * drops it either way.
  */
 /**
  * How long a cached campaign row, account limit or dedicated caller-ID map may be served
@@ -44,6 +48,8 @@ export class GenerationTtlCache<V> {
     private readonly ttlMs: number,
     private readonly now: () => number = Date.now,
     private readonly maxTrackedGenerations = MAX_TRACKED_GENERATIONS,
+    /** The most entries held; unbounded when absent. */
+    private readonly maxEntries = Number.POSITIVE_INFINITY,
   ) {}
 
   /** The current generation of `key`: read it BEFORE starting a load, pass it to {@link setIf}. */
@@ -70,8 +76,24 @@ export class GenerationTtlCache<V> {
   /** Store `value` only if nothing invalidated `key` since `generation` was read. */
   setIf(key: string, generation: number, value: V): boolean {
     if (this.generation(key) !== generation) return false;
-    this.entries.set(key, { value, storedAt: this.now() });
+    const now = this.now();
+    // A rewrite makes the key the newest.
+    this.entries.delete(key);
+    if (this.entries.size >= this.maxEntries) this.evict(now);
+    this.entries.set(key, { value, storedAt: now });
     return true;
+  }
+
+  /** Make room for one entry: every expired entry first, then the oldest stored. */
+  private evict(now: number): void {
+    for (const [key, e] of this.entries) {
+      if (now - e.storedAt >= this.ttlMs) this.entries.delete(key);
+    }
+    while (this.entries.size >= this.maxEntries) {
+      const oldest = this.entries.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
   }
 
   /**

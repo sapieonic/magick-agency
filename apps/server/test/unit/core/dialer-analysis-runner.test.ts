@@ -21,7 +21,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 /*
  * The call fixture is an `agency_calls` row. One case pins that the fetch is handed
  * the VoiceLink recording-host allow-list (and an unconfigured runner hands it an
- * empty one, i.e. fails closed).
+ * empty one, i.e. fails closed). The B21 suite runs a Plivo call through the real
+ * carrier table: Basic auth to the exact media host, and a revoked credential ending
+ * the analysis (on the first fetch and on a resumed run's audio re-fetch).
  */
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -90,6 +92,9 @@ import { DialerAnalysisRunner, toAnalysisEntries, type DialerAnalysisConfig } fr
 import { TranscriptionError } from '../../../src/transcription/types.js';
 import { RecordingByteBudget } from '../../../src/core/recording-byte-budget.js';
 import { AiError } from '../../../src/ai/index.js';
+import { createRecordingAccessResolver } from '../../../src/telephony/recording-access.js';
+import { CredentialUnavailableError, type CredentialUnavailableKind } from '../../../src/telephony/credentials/credential-service.js';
+import { Secret } from '../../../src/telephony/credentials/secret.js';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
 import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.model';
 import type { CallAnalysisResult } from '@magick-agency/db/models/call.model';
@@ -258,6 +263,75 @@ describe('DialerAnalysisRunner.run', () => {
       transcriber: makeTranscriber() as never, analysisService: makeAnalysisService() as never, config: CFG,
     }).run(makeJob());
     expect(mockFetchRecordingBytes).toHaveBeenLastCalledWith('https://rec/call-1.wav', expect.objectContaining({ allowedHosts: [] }));
+  });
+
+  describe('a BYOC (Plivo) recording on the tenant credential (B21)', () => {
+    const AUTH = `Basic ${Buffer.from('MAXXXXXXXXXXXXXXXXXX:tok_abcdefghijklmnop').toString('base64')}`;
+    const plivoCall = (over: Partial<WebRtcCallRecord> = {}) => makeCall({
+      provider: 'plivo', telephony_credential_id: 'cred-1',
+      recording_url: 'https://media.plivo.com/v1/Account/MAXXXXXXXXXXXXXXXXXX/Recording/r.mp3', ...over,
+    });
+    function credentials(kind: CredentialUnavailableKind | null = null) {
+      return {
+        resolve: vi.fn(async (id: string) => {
+          if (kind) throw new CredentialUnavailableError(id, kind, kind);
+          return {
+            id, tenantId: 'ten-1', provider: 'plivo', accountRef: 'MAXXXXXXXXXXXXXXXXXX', publicConfig: {},
+            version: 1, secret: new Secret({ auth_token: 'tok_abcdefghijklmnop' }), previous: [],
+          };
+        }),
+      };
+    }
+    const runner = (creds: ReturnType<typeof credentials>, analysisService: object = makeAnalysisService()) =>
+      new DialerAnalysisRunner({
+        transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG,
+        resolveRecordingAccess: createRecordingAccessResolver({ voicelinkHosts: ['rec'], credentials: () => creds }),
+      });
+
+    it('fetches with Basic auth to exactly media.plivo.com, the credential resolved for recording', async () => {
+      mockWebrtcRepo.findById.mockResolvedValue(plivoCall());
+      const creds = credentials();
+      expect(await runner(creds).run(makeJob())).toBe('completed');
+      expect(creds.resolve).toHaveBeenCalledWith('cred-1', 'recording');
+      expect(mockFetchRecordingBytes.mock.calls[0]![1]).toEqual({
+        allowedHosts: ['media.plivo.com'], headers: { Authorization: AUTH }, exactHosts: true,
+        maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs,
+      });
+    });
+
+    it('a revoked credential ends the analysis: failed at once, nothing fetched, no retry', async () => {
+      mockWebrtcRepo.findById.mockResolvedValue(plivoCall());
+      expect(await runner(credentials('status')).run(makeJob())).toBe('failed');
+      expect(mockFetchRecordingBytes).not.toHaveBeenCalled();
+      expect(mockJobRepo.markFailed).toHaveBeenCalledWith('job-1', 'call-1', 5, 'TRANSCRIPTION_FAILED', expect.stringContaining('credential_unavailable'));
+      expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    });
+
+    it('a credential revoked before the audio re-fetch of a resumed run ends it too', async () => {
+      mockWebrtcRepo.findById.mockResolvedValue(plivoCall({
+        conversation_log: [{ role: 'agent', content: 'prior' }],
+        transcript_meta: { provider: 'gemini', model: 'm', detected_language: 'en', duration_seconds: 90, turn_count: 1, latency_ms: 1, transcribed_at: new Date().toISOString() },
+      }));
+      const analysisService = { ...makeAnalysisService(), needsAudio: true };
+      expect(await runner(credentials('status'), analysisService).run(makeJob())).toBe('failed');
+      expect(mockFetchRecordingBytes).not.toHaveBeenCalled();
+      expect(analysisService.analyze).not.toHaveBeenCalled();
+    });
+
+    it('a Plivo call with no pinned credential fails without asking the store (no fallback, B20)', async () => {
+      mockWebrtcRepo.findById.mockResolvedValue(plivoCall({ telephony_credential_id: null }));
+      const creds = credentials();
+      expect(await runner(creds).run(makeJob())).toBe('failed');
+      expect(creds.resolve).not.toHaveBeenCalled();
+      expect(mockFetchRecordingBytes).not.toHaveBeenCalled();
+    });
+
+    it('a keyring fault (unopenable) is retried, not failed: an operator can fix it', async () => {
+      mockWebrtcRepo.findById.mockResolvedValue(plivoCall());
+      expect(await runner(credentials('unopenable')).run(makeJob())).toBe('retry');
+      expect(mockJobRepo.requeueForRetry).toHaveBeenCalledOnce();
+      expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
+    });
   });
 
   it('persists the transcript BEFORE calling analyze', async () => {

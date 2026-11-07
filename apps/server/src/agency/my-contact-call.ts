@@ -230,7 +230,8 @@ export async function startMyContactCall(
 
   // ── 4. Where the call goes from ───────────────────────────────────────────
   // The contact's owner's dedicated number, else the rotation (DN2): the same rule as pacing.
-  // The agent dials their own contact, so the owner is the agent.
+  // The agent dials their own contact, so the owner is the agent. Both over the campaign's
+  // DIALABLE caller IDs (PL13): a dedicated number its carrier account no longer has is not used.
   const [ownerReplica, callerId] = await Promise.all([
     deps.stations.ownerOf(sessionId),
     deps.callerIds.callerIdForContact(campaign, contact.assigned_user_id),

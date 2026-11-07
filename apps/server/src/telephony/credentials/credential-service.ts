@@ -14,12 +14,17 @@ import type {
   TelephonyCredentialRecord,
   TelephonyCredentialSecretRecord,
 } from '@magick-agency/db/models/telephony-credential.model';
-import type { TelephonyCredentialErrorCode } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
+import type { PhoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
+import type {
+  TelephonyCredentialErrorCode,
+  TelephonyCredentialNumberSync,
+} from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { CredentialSealer, CredentialSealError, type SealContext } from './credential-sealer.js';
 import { findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
 import { Secret, secretHint } from './secret.js';
 import { safeIssues } from './safe-issues.js';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../webhook-grace.js';
+import { auditLogger } from '../../audit/audit-logger.js';
 import type { ZodIssue } from 'zod';
 
 const log = createChildLogger({ component: 'telephony-credentials' });
@@ -36,16 +41,40 @@ const OPEN_CACHE_MAX = 256;
 
 export type CredentialRepo = Pick<TelephonyCredentialRepository,
   | 'create' | 'findById' | 'findOpenableSecrets' | 'findOpenableVersions' | 'list' | 'updateLabel' | 'rotateSecret'
-  | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'distinctKekIds'
+  | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'liveCampaigns' | 'distinctKekIds'
   | 'findRevokedUnshredded' | 'pruneRetiredSecrets'>;
 
 export interface TenantLookup {
   findById(id: string): Promise<{ id: string } | null>;
 }
 
+/** The phone inventory write the number sync makes (`phoneNumberRepository`). */
+export type NumberSyncRepo = Pick<PhoneNumberRepository, 'syncForCredential' | 'findCampaignsHoldingInactiveNumbers'>;
+
 export type ServiceResult<T> =
   | { ok: true; value: T }
   | { ok: false; code: TelephonyCredentialErrorCode; message: string; details?: Array<{ path: string; message: string }> };
+
+/** How many of the campaigns blocking a revoke its refusal names. */
+export const REVOKE_REFUSAL_CAMPAIGNS_NAMED = 5;
+
+/**
+ * The revoke refusal while campaigns that can still dial (draft, running, paused or
+ * stopping) are pinned to the credential: each named with its tenant, account and status,
+ * at most {@link REVOKE_REFUSAL_CAMPAIGNS_NAMED}, then how many more.
+ */
+export function revokeInUseMessage(
+  total: number,
+  named: ReadonlyArray<{ name: string; status: string; tenant_name: string; account_name: string | null }>,
+): string {
+  const items = named.map((c) => `“${c.name}” (${c.tenant_name} / ${c.account_name ?? 'a removed account'}, ${c.status})`);
+  const more = total - named.length;
+  if (more > 0) items.push(`${more} more`);
+  const list = items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  const them = total === 1 ? 'it' : 'them';
+  return `${total === 1 ? '1 campaign that is not finished still uses' : `${total} campaigns that are not finished still use`} `
+    + `this credential: ${list}. Move ${them} to another carrier account, or stop ${them}, first.`;
+}
 
 const fail = (code: TelephonyCredentialErrorCode, message: string, details?: Array<{ path: string; message: string }>): ServiceResult<never> =>
   ({ ok: false, code, message, ...(details ? { details } : {}) });
@@ -98,6 +127,18 @@ export interface CredentialPeek {
 export type CredentialUnavailableKind =
   | 'store_unconfigured' | 'not_found' | 'shredded' | 'status' | 'no_current_secret' | 'unopenable';
 
+/**
+ * Whether `kind` is a fault in this server's keyring rather than in the credential: no
+ * keyring configured (`store_unconfigured`), or a secret that would not open (`unopenable`:
+ * its master key missing from the keyring). An operator fixes it in the environment, and the
+ * credential serves again unchanged; every other kind needs the credential or the data
+ * changed. The one reading of this distinction (the recording fetch's `permanent`, the dial
+ * path's refusal, `ByocCredentialUnavailableError.keyringFault`).
+ */
+export function isKeyringFaultKind(kind: CredentialUnavailableKind | undefined): boolean {
+  return kind === 'store_unconfigured' || kind === 'unopenable';
+}
+
 /** Thrown by `resolve` and `peek` when a credential cannot serve the purpose. Carries no secret. */
 export class CredentialUnavailableError extends Error {
   constructor(readonly credentialId: string, readonly kind: CredentialUnavailableKind, readonly reason: string) {
@@ -133,6 +174,8 @@ export class TelephonyCredentialService {
     /** Null when no keyring is configured: every write is refused, every resolve fails closed. */
     sealer: CredentialSealer | null;
     fetchImpl?: FetchLike;
+    /** The phone inventory, for `syncNumbers`. */
+    numbers?: NumberSyncRepo;
   }) {}
 
   get storeAvailable(): boolean {
@@ -261,10 +304,67 @@ export class TelephonyCredentialService {
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
     const secretVersion = row.secret_version;
     const written = check.result === 'rejected'
-      ? await this.deps.repo.setStatus(id, 'invalid', ['active', 'invalid'], { updatedBy: adminId, lastError: check.reason, secretVersion })
-        ?? await this.deps.repo.setStatus(id, 'disabled', ['disabled'], { updatedBy: adminId, lastError: check.reason, secretVersion })
+      ? await this.writeRefusal(id, secretVersion, check.reason, adminId, ['active', 'invalid'])
       : await this.deps.repo.markVerified(id, secretVersion, adminId);
     return written ? { ok: true, value: written } : this.verdictLost(id, secretVersion);
+  }
+
+  /**
+   * The carrier refused the credential while a call was placed on it (HTTP 401 on a
+   * dial). The verdict `verify` records for a refusal, by the same write: an active
+   * credential becomes `invalid` with `reason` in `last_error`, so new dials and a
+   * campaign's start and resume refuse it (`telephony_credential_not_active`) until a
+   * super-admin rotates the secret or a verify passes; a disabled one keeps its status
+   * and records the refusal, so `enable` brings it back `invalid`.
+   *
+   * Pinned to `secretVersion`, the version the refused call used (B20): a rotation that
+   * committed meanwhile is a newer secret this refusal says nothing about, and nothing is
+   * written. An `invalid` credential is not written again, so of several calls refused at
+   * once only the first records and audits.
+   *
+   * Audited as a system action (`telephony_credential.carrier_refused`, actor
+   * `system:carrier-auth`) under the refused call's tenant and account: ids, provider,
+   * account ref and version, never secret material. Never throws: it runs on a dial's
+   * failure path. Returns the row written, or null when nothing was.
+   */
+  async recordCarrierRefusal(
+    id: string,
+    secretVersion: number,
+    reason: string,
+    at: { tenantId: string; accountId: string; callId?: string },
+  ): Promise<TelephonyCredentialRecord | null> {
+    try {
+      const written = await this.writeRefusal(id, secretVersion, reason, null, ['active']);
+      if (!written) {
+        log.info({ credentialId: id, secretVersion }, 'Carrier refusal not recorded: the credential is already invalid, revoked or rotated since');
+        return null;
+      }
+      log.error(
+        { credentialId: id, tenantId: written.tenant_id, provider: written.provider, secretVersion, status: written.status },
+        'The carrier refused a tenant credential on a dial — marked so no dial uses it until it is rotated or verified',
+      );
+      auditLogger.log({
+        tenantId: at.tenantId,
+        accountId: at.accountId,
+        ...(at.callId ? { callId: at.callId } : {}),
+        eventType: 'telephony_credential.carrier_refused',
+        eventCategory: 'telephony',
+        severity: 'error',
+        actor: 'system:carrier-auth',
+        eventData: {
+          telephony_credential_id: written.id,
+          provider: written.provider,
+          account_ref: written.account_ref,
+          secret_version: secretVersion,
+          status: written.status,
+          reason,
+        },
+      });
+      return written;
+    } catch (err) {
+      log.error({ err, credentialId: id, secretVersion }, 'Failed to record the carrier`s refusal of a tenant credential');
+      return null;
+    }
   }
 
   async disable(id: string, adminId: string): Promise<ServiceResult<TelephonyCredentialRecord>> {
@@ -294,16 +394,12 @@ export class TelephonyCredentialService {
     if (!current) return fail('not_found', 'Credential not found');
     if (current.status === 'revoked') return fail('invalid_transition', 'The credential is already revoked');
     const usage = await this.deps.repo.usage(id);
-    if (usage.campaigns > 0) {
-      return fail('in_use', `${usage.campaigns} campaign(s) still dial on this credential; move them to another first`);
-    }
+    if (usage.campaigns > 0) return this.inUse(id, usage.campaigns);
     const row = await this.deps.repo.revoke(id, adminId);
     if (!row) {
       // Pinned between the check above and the revoke, or revoked concurrently.
       const raced = await this.deps.repo.usage(id);
-      if (raced.campaigns > 0) {
-        return fail('in_use', `${raced.campaigns} campaign(s) still dial on this credential; move them to another first`);
-      }
+      if (raced.campaigns > 0) return this.inUse(id, raced.campaigns);
       return this.transitionRefused(id, 'The credential is already revoked');
     }
     this.forget(id);
@@ -311,8 +407,81 @@ export class TelephonyCredentialService {
     return { ok: true, value: { credential: shredded ? (await this.deps.repo.findById(id))! : row, shredded } };
   }
 
+  /**
+   * Make the tenant's numbers on this carrier match the carrier account's voice numbers
+   * (see `phoneNumberRepository.syncForCredential` for what is written). Only an `active`
+   * credential syncs, checked here and again under a row lock in the write, so a disable
+   * or revoke landing while the carrier answers writes nothing. Nothing is changed when
+   * the carrier refuses, cannot be reached, or lists more numbers than one sync reads (a
+   * partial list would retire numbers still on the account). A refusal here does not
+   * mark the credential invalid: that is `verify`'s verdict.
+   */
+  async syncNumbers(id: string, adminId: string): Promise<ServiceResult<{ credential: TelephonyCredentialRecord; sync: TelephonyCredentialNumberSync }>> {
+    const numbersRepo = this.deps.numbers;
+    if (!numbersRepo) throw new Error('TelephonyCredentialService was built without the phone number repository');
+    const current = await this.deps.repo.findById(id);
+    if (!current) return fail('not_found', 'Credential not found');
+    if (current.status !== 'active') {
+      return fail('credential_not_active', `Numbers are synced only from an active credential; this one is ${current.status}`);
+    }
+    const spec = findCredentialSpec(current.provider);
+    if (!spec?.listNumbers) return fail('unknown_provider', 'This provider’s numbers cannot be synced');
+    let opened: { row: TelephonyCredentialRecord; secret: Secret<Record<string, string>> };
+    try {
+      opened = await this.openCurrent(id, 'dial');
+    } catch (err) {
+      if (!(err instanceof CredentialUnavailableError)) throw err;
+      if (err.kind === 'status') {
+        return fail('credential_not_active', 'Numbers are synced only from an active credential');
+      }
+      return this.unavailable(err);
+    }
+    const list = await spec.listNumbers(opened.row.public_config as Record<string, string>, opened.secret.reveal(), this.deps.fetchImpl);
+    if (list.result === 'rejected') return fail('carrier_rejected', list.reason);
+    if (list.result === 'unreachable') return fail('carrier_unreachable', list.reason);
+    if (list.result === 'too_many') return fail('too_many_numbers', list.reason);
+    const written = await numbersRepo.syncForCredential(id, list.numbers, adminId);
+    if (!written) {
+      return fail('credential_not_active', 'The credential stopped being active while the carrier was answering; nothing was changed');
+    }
+    // After the write, so a number this sync retired is counted: those campaigns' dials
+    // skip it (PL13), and the operator is told which to raise with the tenant.
+    const holding = await numbersRepo.findCampaignsHoldingInactiveNumbers(id);
+    return {
+      ok: true,
+      value: {
+        credential: opened.row,
+        sync: {
+          listed: list.listed,
+          added: written.added,
+          reactivated: written.reactivated,
+          taken_over: written.taken_over,
+          unchanged: written.unchanged,
+          retired: written.retired,
+          skipped: list.skipped,
+          conflicts: written.conflicts,
+          active_numbers: written.active,
+          campaigns_holding_retired: holding.map((c) => ({
+            campaign_id: c.campaign_id,
+            campaign_name: c.campaign_name,
+            account_id: c.account_id,
+            account_name: c.account_name,
+            status: c.status,
+            retired_caller_ids: c.caller_ids,
+          })),
+        },
+      },
+    };
+  }
+
   async get(id: string): Promise<TelephonyCredentialRecord | null> {
     return this.deps.repo.findById(id);
+  }
+
+  /** The `in_use` revoke refusal, naming the campaigns that block it. */
+  private async inUse(id: string, total: number): Promise<ServiceResult<never>> {
+    const named = await this.deps.repo.liveCampaigns(id, REVOKE_REFUSAL_CAMPAIGNS_NAMED);
+    return fail('in_use', revokeInUseMessage(total, named));
   }
 
   async usage(id: string) {
@@ -436,6 +605,23 @@ export class TelephonyCredentialService {
       case 'no_current_secret': return fail('secret_unavailable', 'The credential has no stored current secret; rotate it');
       case 'unopenable': return fail('secret_unavailable', 'The stored secret cannot be opened with this server’s keyring; restore its master key or rotate the secret');
     }
+  }
+
+  /**
+   * Record the carrier's refusal of the secret at `secretVersion`: `invalid` out of
+   * `from`, else, on a disabled credential, the refusal in `last_error` (so `enable`
+   * brings it back `invalid`). Both writes are pinned to the version; null when neither
+   * landed (rotated, revoked, or in no status `from` allows).
+   */
+  private async writeRefusal(
+    id: string,
+    secretVersion: number,
+    reason: string,
+    updatedBy: string | null,
+    from: ReadonlyArray<'active' | 'invalid'>,
+  ): Promise<TelephonyCredentialRecord | null> {
+    return await this.deps.repo.setStatus(id, 'invalid', from, { updatedBy, lastError: reason, secretVersion })
+      ?? await this.deps.repo.setStatus(id, 'disabled', ['disabled'], { updatedBy, lastError: reason, secretVersion });
   }
 
   /** A verify whose version-pinned write matched no row: say why, on a fresh read. */

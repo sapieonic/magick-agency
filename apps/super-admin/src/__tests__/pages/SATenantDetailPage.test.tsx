@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { telephonyProviderVendorName } from '@magick-agency/web-ui/telephonyProviders';
+import { operatorCarrierName } from '../../utils/carrierName';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   listProviders: vi.fn(),
   updateProviderConcurrency: vi.fn(),
   getAccountSettings: vi.fn(),
+  listCredentials: vi.fn(),
 }));
 
 vi.mock('../../hooks/useSuperAdminTenant', () => ({ useSuperAdminTenant: mocks.useTenant }));
@@ -29,6 +31,7 @@ vi.mock('../../api/super-admin', () => ({
   listTelephonyProviders: mocks.listProviders,
   updateProviderConcurrency: mocks.updateProviderConcurrency,
   getAccountSettings: mocks.getAccountSettings,
+  listTelephonyCredentials: mocks.listCredentials,
   updateAccountSettings: vi.fn(), changeMembershipRole: vi.fn(), revokeMembership: vi.fn(),
   putFeatureFlagOverride: vi.fn(), deleteFeatureFlagOverride: vi.fn(),
 }));
@@ -50,8 +53,9 @@ function renderPage(entry = '/tenants/t-1') {
   );
 }
 
-const provider = (name: string, status: 'active' | 'inactive' = 'active') => ({
-  id: `prov-${name}`, name, display_name: name, status,
+// The display name the catalog carries (`telephony_providers.display_name`): the vendor's own.
+const provider = (name: string, status: 'active' | 'inactive' = 'active', displayName = telephonyProviderVendorName(name) ?? name) => ({
+  id: `prov-${name}`, name, display_name: displayName, status,
   created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
 });
 
@@ -74,6 +78,7 @@ beforeEach(() => {
   });
   mocks.listProviders.mockResolvedValue([provider('vobiz'), provider('voicelink')]);
   mocks.updateProviderConcurrency.mockResolvedValue({});
+  mocks.listCredentials.mockResolvedValue([]);
   mocks.getAccountSettings.mockResolvedValue({ settings: {
     tenant_id: 't-1', account_id: 'a-1', allow_recording: false, analyze_calls: false,
     max_concurrent_calls: 5, webrtc_max_duration_seconds: 1800, updated_at: '2026-10-08T00:00:00.000Z',
@@ -185,9 +190,9 @@ describe('SATenantDetailPage — provider concurrency', () => {
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
 
     await waitFor(() => expect(screen.getByText(/Total user concurrency/i)).toBeTruthy());
-    expect((screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`) as HTMLInputElement).value).toBe('30');
-    expect((screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('voicelink')}`) as HTMLInputElement).value).toBe('20');
-    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`), {
+    expect((screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`) as HTMLInputElement).value).toBe('30');
+    expect((screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`) as HTMLInputElement).value).toBe('20');
+    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`), {
       target: { value: '35' },
     });
     fireEvent.change(screen.getByLabelText('Change reason'), {
@@ -247,15 +252,15 @@ describe('SATenantDetailPage — provider concurrency', () => {
 
     resolveSupport(detail('a-2', 7));
     await waitFor(() => expect((
-      screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`) as HTMLInputElement
+      screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`) as HTMLInputElement
     ).value).toBe('7'));
     resolveSales(detail('a-1', 30));
     await Promise.resolve();
 
-    expect((screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('vobiz')}`) as HTMLInputElement).value).toBe('7');
+    expect((screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`) as HTMLInputElement).value).toBe('7');
   });
 
-  it('renders unavailable provider utilization as unknown, never zero', async () => {
+  it('renders unavailable provider utilisation as unknown, never zero', async () => {
     mocks.listProviders.mockResolvedValue([provider('vobiz')]);
     mocks.getAccounts.mockResolvedValue([{
       id: 'a-1', name: 'Sales', slug: 'sales', status: 'active', max_concurrent_calls: 30,
@@ -283,7 +288,7 @@ describe('SATenantDetailPage — provider concurrency', () => {
     await screen.findByRole('cell', { name: 'Sales' });
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
 
-    await waitFor(() => expect(screen.getByText(/Live utilization is unavailable/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Live utilisation is unavailable/i)).toBeTruthy());
     expect(screen.getAllByText('Unknown')).toHaveLength(2);
   });
 
@@ -342,8 +347,8 @@ describe('SATenantDetailPage — provider concurrency', () => {
     fireEvent.click(screen.getByRole('tab', { name: /service/i }));
     await screen.findByRole('cell', { name: 'Sales' });
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
-    await waitFor(() => screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('voicelink')}`));
-    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias('voicelink')}`), { target: { value: '30' } });
+    await waitFor(() => screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`));
+    fireEvent.change(screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`), { target: { value: '30' } });
     fireEvent.change(screen.getByLabelText('Change reason'), { target: { value: 'Purchased capacity' } });
     const confirmation = screen.getByLabelText(/I reviewed active usage/i);
     fireEvent.click(confirmation);
@@ -395,13 +400,34 @@ describe('SATenantDetailPage — provider concurrency', () => {
     await screen.findByRole('cell', { name: 'Sales' });
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
 
-    const input = (name: string) => screen.getByLabelText(`Concurrency allocated to ${telephonyProviderAlias(name, name)}`) as HTMLInputElement;
+    const input = (name: string) => screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName(name)}`) as HTMLInputElement;
     await waitFor(() => input('voicelink'));
     expect(input('voicelink').value).toBe('0');
     expect(input('vobiz').value).toBe('0');
     expect(input('old-carrier').value).toBe('7');
-    expect(screen.queryByLabelText(`Concurrency allocated to ${telephonyProviderAlias('spare-inactive', 'spare-inactive')}`)).toBeNull();
+    expect(screen.queryByLabelText(`Concurrency allocated to ${operatorCarrierName('spare-inactive')}`)).toBeNull();
     expect(mocks.listProviders).toHaveBeenCalled();
+  });
+
+  it('names a carrier in the editor by the catalog’s display name', async () => {
+    mocks.listProviders.mockResolvedValue([provider('voicelink'), provider('acme_tel', 'active', 'Acme Tel')]);
+    mocks.getAccounts.mockResolvedValue([{
+      id: 'a-1', name: 'Sales', slug: 'sales', status: 'active', max_concurrent_calls: 7,
+    }]);
+    mocks.getAccountConcurrency.mockResolvedValue({
+      allocation: { tenant_id: 't-1', account_id: 'a-1', mode: 'legacy_total', version: 1, total_concurrency: 7, providers: [] },
+      utilization: null,
+    });
+
+    renderPage();
+    await waitFor(() => screen.getByRole('heading', { name: 'Acme' }));
+    fireEvent.click(screen.getByRole('tab', { name: /service/i }));
+    await screen.findByRole('cell', { name: 'Sales' });
+    fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
+
+    // A carrier the alias map does not know: only the catalog can name it.
+    expect(await screen.findByLabelText('Concurrency allocated to Acme Tel')).toBeTruthy();
+    expect(screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('voicelink')}`)).toBeTruthy();
   });
 });
 
@@ -486,5 +512,46 @@ describe('SATenantDetailPage — legacy concurrency "Saved" note', () => {
 
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('the Service tab warns of a carrier with no allocation (PL14)', () => {
+  const breakdown = (id: string, name: string, providers: Array<{ provider: string; max_concurrent_calls: number }>) => ({
+    id, name, slug: name.toLowerCase(), status: 'active', max_concurrent_calls: 10,
+    concurrency: {
+      tenant_id: 't-1', account_id: id, mode: 'provider_breakdown' as const, version: 1, total_concurrency: 10, providers,
+    },
+  });
+
+  it('names each breakdown account with no allocation for a carrier the tenant has an active carrier account on', async () => {
+    mocks.getAccounts.mockResolvedValue([
+      breakdown('a-1', 'Sales', [{ provider: 'voicelink', max_concurrent_calls: 10 }]),
+      breakdown('a-2', 'Collections', [{ provider: 'voicelink', max_concurrent_calls: 5 }, { provider: 'plivo', max_concurrent_calls: 5 }]),
+      { id: 'a-3', name: 'Legacy', slug: 'legacy', status: 'active', max_concurrent_calls: 10,
+        concurrency: { tenant_id: 't-1', account_id: 'a-3', mode: 'legacy_total' as const, version: 1, total_concurrency: 10, providers: [] } },
+    ]);
+    mocks.listCredentials.mockResolvedValue([
+      { id: 'cred-1', provider: 'plivo', status: 'active' },
+      { id: 'cred-2', provider: 'plivo', status: 'disabled' },
+    ]);
+
+    renderPage();
+    await waitFor(() => screen.getByRole('heading', { name: 'Acme' }));
+    fireEvent.click(screen.getByRole('tab', { name: /service/i }));
+    const warning = await screen.findByTestId('carrier-allocation-gaps');
+    expect(mocks.listCredentials).toHaveBeenCalledWith({ tenant_id: 't-1' });
+    const items = within(warning).getAllByRole('listitem').map((li) => li.textContent);
+    expect(items).toEqual([`Sales: no allocation for ${operatorCarrierName('plivo')}`]);
+  });
+
+  it('says nothing when the tenant has no active carrier account', async () => {
+    mocks.getAccounts.mockResolvedValue([breakdown('a-1', 'Sales', [{ provider: 'voicelink', max_concurrent_calls: 10 }])]);
+    mocks.listCredentials.mockResolvedValue([{ id: 'cred-2', provider: 'plivo', status: 'disabled' }]);
+    renderPage();
+    await waitFor(() => screen.getByRole('heading', { name: 'Acme' }));
+    fireEvent.click(screen.getByRole('tab', { name: /service/i }));
+    await screen.findByRole('cell', { name: 'Sales' });
+    await waitFor(() => expect(mocks.listCredentials).toHaveBeenCalled());
+    expect(screen.queryByTestId('carrier-allocation-gaps')).toBeNull();
   });
 });

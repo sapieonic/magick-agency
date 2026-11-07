@@ -220,6 +220,7 @@ void main() {
       );
       expect(call.isLive, isTrue);
       expect(call.isUnsettled, isTrue);
+      expect(call.canCancelRinging, isTrue, reason: 'its carrier cancels a ringing call (SP3)');
       expect(identical(f.manualCall, f.manualCall), isTrue, reason: 'decoded at construction, not per read');
 
       final owed = sample<ManualCallFrame>('manual_call_owed').manualCall!;

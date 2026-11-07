@@ -3,6 +3,7 @@ import { config } from '../../config/index.js';
 import { keyringEntries } from '../../config/blocks/voice.js';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
+import { phoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
 import { CredentialSealer, EnvKeyringWrapper } from './credential-sealer.js';
 import { TelephonyCredentialService } from './credential-service.js';
 
@@ -26,6 +27,7 @@ export function getTelephonyCredentialService(): TelephonyCredentialService {
       repo: telephonyCredentialRepository,
       tenants: tenantRepository,
       sealer: buildSealerFromConfig(config.telephonyCredentials),
+      numbers: phoneNumberRepository,
     });
   }
   return service;

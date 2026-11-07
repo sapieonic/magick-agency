@@ -601,7 +601,10 @@ export class AgencyManualCallRepository {
    * One call as the wire row `AgencyManualCall` (`projectManualCallRow`): the tag's
    * name and the contact's current state joined; `agent_name` null (the public API
    * layer fills it). `withContext` adds the contact's `context`, for the live call
-   * and the detail only; `prior_attempts` is the caller's to add.
+   * and the detail only; `prior_attempts` is the caller's to add. The media leg's
+   * carrier is joined for `can_cancel_ringing` (a LEFT JOIN on the row's own
+   * `webrtc_call_id`, bound to the same tenant and account, as the list's): every
+   * live-call surface reads its call here.
    */
   async findWireById(
     id: string,
@@ -610,8 +613,10 @@ export class AgencyManualCallRepository {
   ): Promise<AgencyManualCall | null> {
     if (!isUuid(id)) return null;
     const { rows } = await getPool().query<AgencyManualCallJoinedRow>(
-      `SELECT ${WIRE_SELECT_SQL}${opts.withContext ? ', ct.context AS contact_context' : ''}
+      `SELECT ${WIRE_SELECT_SQL}, ac.provider AS call_provider${opts.withContext ? ', ct.context AS contact_context' : ''}
          FROM ${WIRE_FROM_SQL}
+         LEFT JOIN agency_calls ac
+           ON ac.id = m.webrtc_call_id AND ac.tenant_id = m.tenant_id AND ac.account_id = m.account_id
         WHERE m.id = $1 AND m.tenant_id = $2 AND m.account_id = $3`,
       [id, scope.tenantId, scope.accountId],
     );

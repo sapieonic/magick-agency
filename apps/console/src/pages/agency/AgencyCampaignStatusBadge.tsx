@@ -14,12 +14,12 @@ const STATUS_META: Record<AgencyCampaignStatus, { label: string; color: string; 
   draft: {
     label: 'Draft',
     color: 'var(--text-muted)',
-    tooltip: 'Not started. Nothing is being dialed.',
+    tooltip: 'Not started. Nothing is being dialled.',
   },
   running: {
     label: 'Running',
     color: 'var(--success)',
-    tooltip: 'Dialing now, within the campaign’s calling hours.',
+    tooltip: 'Dialling now, within the campaign’s calling hours.',
   },
   paused: {
     label: 'Paused',
@@ -39,7 +39,7 @@ const STATUS_META: Record<AgencyCampaignStatus, { label: string; color: string; 
   completed: {
     label: 'Completed',
     color: 'var(--accent)',
-    tooltip: 'Every contact has been dialed or exhausted its retries.',
+    tooltip: 'Every contact has been dialled or exhausted its retries.',
   },
 };
 

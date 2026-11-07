@@ -359,7 +359,7 @@ export function AgencyAnalyticsPage() {
         pageKey="agency-analytics"
         description={
           'Every campaign’s numbers side by side, so you can see which one needs you without opening each in turn.\n' +
-          'Health warnings appear only for campaigns that are running, paused or stopping — a campaign that isn’t dialing has nothing to diagnose.'
+          'Health warnings appear only for campaigns that are running, paused or stopping — a campaign that isn’t dialling has nothing to diagnose.'
         }
         tips={[
           'Open a campaign’s name for its contacts, attempts and the agents currently on it.',
@@ -407,7 +407,7 @@ export function AgencyAnalyticsPage() {
             <EmptyState
               icon={<ChartNoAxesCombined size={28} />}
               title="No campaigns yet"
-              description="Numbers appear here once a campaign exists and has started dialing."
+              description="Numbers appear here once a campaign exists and has started dialling."
               action={
                 canCreate ? (
                   <Link to="/agency/campaigns/new" className="btn-primary">

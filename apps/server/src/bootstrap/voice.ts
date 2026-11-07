@@ -1,7 +1,10 @@
 import type Redis from 'ioredis';
 import { logger } from '@magick-agency/observability';
 import {
+  primeTelephonyCredentialSweeps,
   setDecodeGateStatsProvider,
+  trackTelephonyCredentialMissingKeyIds,
+  trackTelephonyCredentialSweep,
   trackTelephonyLeaseRelease,
   trackTtsClipCacheSweep,
 } from '@magick-agency/observability/metrics/voice';
@@ -17,6 +20,8 @@ import { reapDecodeScratchDirs } from '../audio/decode.js';
 import { getDecodeGateStats } from '../utils/decode-gate.js';
 import { shutdownAnalytics } from '../analytics/posthog.js';
 import { getTelephonyCredentialService } from '../telephony/credentials/index.js';
+import type { TelephonyCredentialService } from '../telephony/credentials/credential-service.js';
+import { RedisPlivoDialRateLimiter, setPlivoDialRateLimiter } from '../telephony/plivo/plivo-dial-rate.js';
 
 /**
  * The voice engine's background work and process-wide singletons.
@@ -48,6 +53,10 @@ export function ensureVoiceEngine(redis: Redis | null, opts: { carrierRouteHint?
   guardHost.registerWebrtcActiveIdsProvider(() => bridge.getActiveCallIds());
   // The super-admin concurrency writes reach the guards through this seam.
   setConcurrencyControl(createConcurrencyControl(guardHost));
+  // Plivo's per-account calls-per-second gate counts in Redis, so every process that
+  // dials (the primary and each media worker) shares one window per account. The client
+  // applies the key prefix. Without Redis it stays in-memory, per process.
+  if (redis) setPlivoDialRateLimiter(new RedisPlivoDialRateLimiter(redis, ''));
   engine = { guardHost, bridge };
   return engine;
 }
@@ -60,6 +69,63 @@ export function getVoiceEngine(): VoiceEngine | null {
 /** Tests only. */
 export function resetVoiceEngineForTests(): void {
   engine = null;
+}
+
+/** What the credential housekeeping needs of the credential service. */
+export type CredentialHousekeepingService = Pick<TelephonyCredentialService, 'missingKeyIds' | 'sweep'>;
+
+/**
+ * Tenant carrier credentials' housekeeping (B19–B20): a keyring check and a sweep at boot,
+ * then both again every {@link CREDENTIAL_SWEEP_INTERVAL_MS}. Main process only.
+ *
+ * The keyring check: a stored secret wrapped under a key id the keyring no longer holds can
+ * never be opened, so say so loudly (ERROR, and `telephony_credential_missing_key_ids` for
+ * `agy-credential-keyring-missing-keys`). Boot carries on (the service's own VoiceLink account
+ * is unaffected); calls on those credentials fail closed until the key is restored. A check
+ * that throws leaves the gauge at its last value.
+ *
+ * The sweep shreds revoked credentials once their calls have ended and drops secret versions
+ * past the rotation grace window; each pass counts in `telephony_credential_sweeps_total`
+ * (`agy-credential-sweep-failing`). A pass never starts while the previous one runs.
+ *
+ * Resolves once the boot keyring check has answered; the boot sweep runs on in the background.
+ * Returns the stop function.
+ */
+export async function startCredentialHousekeeping(
+  credentials: CredentialHousekeepingService,
+  intervalMs = CREDENTIAL_SWEEP_INTERVAL_MS,
+): Promise<() => void> {
+  const checkKeyring = async (): Promise<void> => {
+    try {
+      const missing = await credentials.missingKeyIds();
+      trackTelephonyCredentialMissingKeyIds(missing.length);
+      if (missing.length > 0) {
+        logger.error({ kekIds: missing }, 'Telephony credential secrets are sealed under keys missing from TELEPHONY_CREDENTIAL_KEYS — those credentials cannot dial');
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Telephony credential keyring check failed');
+    }
+  };
+  const sweep = async (): Promise<void> => {
+    try {
+      const r = await credentials.sweep();
+      trackTelephonyCredentialSweep('ok', r.shredded);
+      if (r.shredded || r.pruned) logger.info(r, 'Telephony credential sweep');
+    } catch (err) {
+      trackTelephonyCredentialSweep('failed');
+      logger.warn({ err }, 'Telephony credential sweep failed');
+    }
+  };
+
+  primeTelephonyCredentialSweeps();
+  await checkKeyring();
+  let running: Promise<void> | null = sweep().finally(() => { running = null; });
+  const timer = setInterval(() => {
+    if (running) return;
+    running = sweep().then(checkKeyring).finally(() => { running = null; });
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 /**
@@ -128,34 +194,11 @@ export async function startVoice(ctx: AppContext): Promise<() => Promise<void>> 
   await guardHost.runSelfHealSweep('startup');
   guardHost.wakeSelfHeal();
 
-  // Tenant carrier credentials (B19). A stored secret wrapped under a key id the
-  // keyring no longer holds can never be opened: say so loudly at boot. Boot carries
-  // on (the service's own VoiceLink account is unaffected); calls on those
-  // credentials fail closed until the key is restored.
-  const credentials = getTelephonyCredentialService();
-  try {
-    const missing = await credentials.missingKeyIds();
-    if (missing.length > 0) {
-      logger.error({ kekIds: missing }, 'Telephony credential secrets are sealed under keys missing from TELEPHONY_CREDENTIAL_KEYS — those credentials cannot dial');
-    }
-  } catch (err) {
-    logger.warn({ err }, 'Telephony credential keyring check failed');
-  }
-  // Shred revoked credentials once their calls have ended, and drop secret versions
-  // past the rotation grace window.
-  const sweepCredentials = (): void => {
-    credentials.sweep().then(
-      (r) => { if (r.shredded || r.pruned) logger.info(r, 'Telephony credential sweep'); },
-      (err: unknown) => logger.warn({ err }, 'Telephony credential sweep failed'),
-    );
-  };
-  sweepCredentials();
-  const credentialSweepTimer = setInterval(sweepCredentials, CREDENTIAL_SWEEP_INTERVAL_MS);
-  credentialSweepTimer.unref();
+  const stopCredentialHousekeeping = await startCredentialHousekeeping(getTelephonyCredentialService());
 
   return async () => {
     if (ttsCacheSweepTimer) clearInterval(ttsCacheSweepTimer);
-    clearInterval(credentialSweepTimer);
+    stopCredentialHousekeeping();
     // End active WebRTC bridge calls (hang up carrier leg, release slots) before
     // tearing down shared infra — they live in their own session map.
     await bridge.gracefulShutdown().catch((err) => logger.error({ err }, 'webrtc-bridge shutdown failed'));

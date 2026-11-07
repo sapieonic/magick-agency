@@ -567,6 +567,8 @@ SoftphoneView callView(
   bool requiredFieldsMissing = false,
   bool finishOnly = false,
   bool hangingUp = false,
+  // Null: the carrier cannot cancel a ringing call, so the warning shows while ringing.
+  bool? warnRingingHangUp,
   NotesView notes = const NotesView(),
   bool dncEnabled = true,
   String? dncOutcome,
@@ -625,6 +627,7 @@ SoftphoneView callView(
     muteEnabled: live,
     audio: audio,
     canHangUp: live,
+    warnRingingHangUp: warnRingingHangUp ?? phase == SoftphonePhase.ringing,
     hangingUp: hangingUp,
     dncEnabled: dncEnabled,
     dncScopeLabel: 'for Q4 Renewals',

@@ -110,7 +110,8 @@ union stay declared in `api/agency/agency.ts`.
 ## 4. Console wire types with no dialer-contract counterpart
 
 Shapes the public API layer owns outright: the campaign object (`AgencyCampaign`; the internal
-handlers serialise it in `apps/server/src/api/responses/agency-campaign.response.ts`), ingest
+handlers serialise it in `apps/server/src/api/responses/agency-campaign.response.ts`), the carriers a
+campaign may dial on (`AgencyCarrier`, `AgencyCarriersResponse`; served by the public layer itself), ingest
 (`AgencyIngest*`, `AgencyUploadResponse`, `AgencyColumn*`), retry policy
 (`AgencyRetryOutcome` / `Policy` / `Rule`), `AGENCY_RETRY_REFUSAL_CODES`, staffing
 (`AgencyMyAssignment(s)`, `AgencyAssignment`, `AgencyAssignedAgent`, `AgencyAgentAssignment`,

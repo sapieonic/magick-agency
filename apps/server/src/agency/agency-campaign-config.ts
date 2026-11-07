@@ -656,7 +656,7 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   if (record['retry_policy'] !== undefined) {
     issues.push(...validateRetryPolicy(record['retry_policy']));
   }
-  // Automatic outcomes for unanswered calls (0019): the internal handler's rule, imported.
+  // Automatic outcomes for unanswered calls (0022): the internal handler's rule, imported.
   // This layer does not hold the stored campaign (no base), so the map is checked against
   // a catalog only when the body carries both (the console's save always does); the
   // internal handler checks every body against the stored pair.

@@ -170,8 +170,10 @@ Future<void> showSoftphoneAudioSheet(BuildContext context) async {
 
 /// Hold-to-hang-up, the station's gesture unchanged: 500 ms, firing with the
 /// finger still down, a dialog for a screen reader. While the customer's
-/// phone rings the SP3 warning sits above it: the carrier cannot stop a ringing
-/// call, so hanging up then leaves the customer's phone ringing for a while.
+/// phone rings on a carrier that cannot stop a ringing call, the SP3 warning
+/// sits above it (hanging up then leaves the customer's phone ringing for a
+/// while) and is the dialog's text; on a carrier that can, hanging up while it
+/// rings just cancels the call, with no warning ([SoftphoneView.warnRingingHangUp]).
 class SoftphoneHangUp extends ConsumerWidget {
   const SoftphoneHangUp({super.key});
 
@@ -179,7 +181,7 @@ class SoftphoneHangUp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(
       softphoneViewProvider.select(
-        (v) => (ringing: v.phase == SoftphonePhase.ringing, can: v.canHangUp, busy: v.hangingUp, failure: v.hangupFailure),
+        (v) => (warn: v.warnRingingHangUp, can: v.canHangUp, busy: v.hangingUp, failure: v.hangupFailure),
       ),
     );
     final t = context.tokens;
@@ -188,7 +190,7 @@ class SoftphoneHangUp extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (s.ringing) ...[
+        if (s.warn) ...[
           Text(
             SoftphoneCopy.ringingHangupWarning,
             key: const Key('ringing-warning'),
@@ -217,7 +219,7 @@ class SoftphoneHangUp extends ConsumerWidget {
           enabled: s.can,
           busy: s.busy,
           onConfirmed: () => ref.read(softphoneActionsProvider).hangUp(),
-          confirmAccessibly: (context) => _confirmHangUp(context, ringing: s.ringing),
+          confirmAccessibly: (context) => _confirmHangUp(context, warnRinging: s.warn),
         ),
       ],
     );
@@ -225,12 +227,12 @@ class SoftphoneHangUp extends ConsumerWidget {
 }
 
 /// The screen-reader path of hold-to-hang-up. Closes with the call it asked about.
-Future<bool> _confirmHangUp(BuildContext context, {required bool ringing}) {
+Future<bool> _confirmHangUp(BuildContext context, {required bool warnRinging}) {
   final view = ProviderScope.containerOf(context, listen: false).read(softphoneViewProvider);
   return softphoneConfirm(
     context,
     title: SoftphoneCopy.hangUpConfirmTitle,
-    message: ringing ? SoftphoneCopy.ringingHangupWarning : SoftphoneCopy.hangUpConfirmBody,
+    message: warnRinging ? SoftphoneCopy.ringingHangupWarning : SoftphoneCopy.hangUpConfirmBody,
     confirm: SoftphoneCopy.hangUp,
     cancel: SoftphoneCopy.keepCall,
     danger: true,

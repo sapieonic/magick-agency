@@ -384,9 +384,9 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
                    $10,$11,$12::jsonb,$13::jsonb,
                    $14::jsonb,$15::jsonb,$16,$17,$18,
                    $19,$20,$21,
-                   $22,$23,$24,$25,$26,$27,$28,$29::jsonb,
-                   $30,$31,$32,$33::jsonb,
-                   $34)
+                   $22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb,
+                   $31,$32,$33,$34::jsonb,
+                   $35)
            RETURNING *`,
         [
           input.parent.tenant_id, input.parent.account_id, input.name,
@@ -405,7 +405,10 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
           input.config.callback_owner_grace_minutes, input.config.callback_fallback,
           input.config.allow_agent_retry, input.config.agent_retry_rounds,
           input.config.agent_retry_cooldown_minutes,
-          // Automatic outcomes (0019): the parent's map, with the parent's catalog above.
+          // The carrier credential, inherited like the provider it belongs to (the
+          // composite FK holds the pair together).
+          input.config.telephony_credential_id,
+          // Automatic outcomes (0022): the parent's map, with the parent's catalog above.
           JSON.stringify(input.config.outcome_dispositions ?? {}),
           input.parent.id,
           // The chain head. A generation-0 parent carries NULL here (it

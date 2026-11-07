@@ -46,6 +46,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { WebRtcCallError } from '../../core/webrtc-bridge-manager.js';
 import { DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isDialOutcomeUnknown } from '../../telephony/carrier-errors.js';
+import { classifyDialRefusal } from '../../core/bridge/dial-refusals.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../../core/webrtc-bridge-manager.js';
 import {
   agencyAttemptRepository,
@@ -63,13 +64,36 @@ import { applyNoOutcomeSettlement, noOutcomeSettlementFor } from './manual-settl
 
 const log = createChildLogger({ component: 'agency-softphone' });
 
-/** Bridge refusals that mean "no line free" (`concurrency_limit`). */
-const CONCURRENCY_REFUSALS = new Set([
-  'global_concurrency_limit',
-  'account_concurrency_limit',
-  'provider_concurrency_limit',
-  'provider_concurrency_unavailable',
-]);
+/**
+ * What a dial the bridge rejected before the carrier placed anything answers the agent
+ * (`classifyDialRefusal`). Anything this does not name is the platform's (`dial_failed`,
+ * 503, retry): not a missing station, which would tell them to check a connection that is
+ * fine.
+ */
+export function manualDialFailureFor(err: unknown): ManualDialFailure {
+  const refusal = classifyDialRefusal(err);
+  switch (refusal.kind) {
+    case 'station_unavailable':
+      return 'station_unavailable';
+    // "No line free, try again in a moment": the concurrency guards, and the carrier
+    // account's calls-per-second limit (nothing was placed; back-pressure, PL7).
+    case 'capacity':
+      return 'concurrency_limit';
+    // The caller ID's carrier account cannot dial: the credential is no longer active (PL3)
+    // or the carrier refused it (401, PL2). Retrying cannot help until it is fixed, so these
+    // are not the retryable `dial_failed`.
+    case 'carrier_account':
+      return 'carrier_account_unavailable';
+    // A dial the carrier adapter would not send for the carrier's configuration (no webhook
+    // base, a caller ID the carrier cannot take): every retry would be refused the same way,
+    // as for an account that cannot dial. Not sent for the contact's number or the network:
+    // the platform's `dial_failed`.
+    case 'not_sent':
+      return refusal.reason === 'configuration' ? 'carrier_account_unavailable' : 'dial_failed';
+    default:
+      return 'dial_failed';
+  }
+}
 
 /** Bridge outcomes that are not a hang-up by either party: the call was ended FOR them. */
 const SYSTEM_ENDS = new Set(['service_shutdown', 'system_rebooted', 'stuck_active_call', 'max_duration_reached']);
@@ -126,7 +150,7 @@ interface LiveManualCall {
   dialSettled: Promise<boolean>;
 }
 
-export type ManualDialFailure = 'concurrency_limit' | 'station_unavailable' | 'dial_failed';
+export type ManualDialFailure = 'concurrency_limit' | 'station_unavailable' | 'carrier_account_unavailable' | 'dial_failed';
 
 export class ManualDialer {
   /** manualCallId → the call, from the dial until its `ended` is handled. */
@@ -257,10 +281,14 @@ export class ManualDialer {
    * socket. Resolves once the bridge has accepted (or refused) the dial: `ok` means
    * the call is in the bridge's hands (or the carrier refused it and it has
    * already ended `failed`, settled by its own `ended`).
+   *
+   * `provider` and `telephonyCredentialId` name the carrier account the call is placed
+   * on (`softphone-service.ts` decides them: the tag's, else the caller ID's number's).
+   * Absent: the service's own account.
    */
   async dial(
     call: AgencyManualCallRecord,
-    opts: { socket: WebSocket; provider?: string },
+    opts: { socket: WebSocket; provider?: string; telephonyCredentialId?: string | null },
   ): Promise<{ ok: true } | { ok: false; failure: ManualDialFailure }> {
     // Registered before the first await: a hang-up (or the reconnect, or the orphan
     // sweep's live set) arriving while the priors load must find the call.
@@ -314,6 +342,7 @@ export class ManualDialer {
         callerId: call.caller_id,
         destinationPhone: call.destination_e164,
         ...(opts.provider ? { provider: opts.provider } : {}),
+        ...(opts.telephonyCredentialId ? { telephonyCredentialId: opts.telephonyCredentialId } : {}),
         record: call.recording_requested,
         analysisProfileId: call.analysis_profile_id,
         initiatedBy: call.session_id,
@@ -347,10 +376,7 @@ export class ManualDialer {
       // (the row INSERT, the carrier tokens, the carrier request's own inputs: the
       // bridge's `abortUnplacedLeg`, no `ended`), so nothing was dialled and the
       // reviewed `dial_failed` (503, retry) is the true answer, not a masked 500.
-      const failure: ManualDialFailure =
-        err instanceof WebRtcCallError && err.code === 'station_socket_unavailable' ? 'station_unavailable'
-          : err instanceof WebRtcCallError && CONCURRENCY_REFUSALS.has(err.code) ? 'concurrency_limit'
-            : 'dial_failed';
+      const failure = manualDialFailureFor(err);
       if (!(err instanceof WebRtcCallError)) {
         log.error({ err, manualCallId: call.id }, 'Soft-phone dial failed in the bridge before the carrier');
       } else {
@@ -375,8 +401,8 @@ export class ManualDialer {
 
   /**
    * Hang up a live call (SP3: a ringing VoiceLink call may keep ringing at the
-   * customer's end; the console says so). `false` when this process holds no such
-   * live call.
+   * customer's end; the console says so unless the call's `can_cancel_ringing` is
+   * true). `false` when this process holds no such live call.
    */
   async hangup(manualCallId: string, requestedBy: EndRequester): Promise<boolean> {
     const entry = this.live.get(manualCallId);

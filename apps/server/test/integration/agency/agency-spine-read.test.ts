@@ -145,7 +145,7 @@ describe('attempts: the rows a naive join drops', () => {
 
 describe('the automatic outcome (OD1–OD8), on every attempt read', () => {
   /**
-   * An unanswered attempt the campaign labelled (`auto_disposition_code`, migration 0019),
+   * An unanswered attempt the campaign labelled (`auto_disposition_code`, 0022),
    * reserved to the seed's agent so the agent-scoped spine sees it too, and a second, busy,
    * attempt on the same contact that carries none. Written straight to the row: the stamping
    * is the dialer's, these are the reads.

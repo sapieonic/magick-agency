@@ -1789,12 +1789,189 @@
       "description": "Recording, clip and contact-list storage: operations by result, and p95 duration."
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Tenant carrier credentials (B19\u2013B20), from the main process's housekeeping: a keyring check and a sweep at boot, then hourly. `missing key ids`: master key ids stored secrets are sealed under that TELEPHONY_CREDENTIAL_KEYS does not hold; every credential sealed under one cannot dial, hang up or check a webhook until the key is restored (0 is healthy; absent until the first check answers). `sweep ok` / `sweep failed`: sweep passes (shred revoked credentials whose calls have ended, drop secret versions past the rotation grace). `shredded`: credentials a sweep shredded. `agy-credential-keyring-missing-keys` pages on any missing key id, `agy-credential-sweep-failing` warns at 2+ failed sweeps in 3h.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "missing key ids"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sweep failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 90
+      },
+      "id": 122,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Carrier Credentials \u2014 Keyring and Sweeps",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max(telephony_credential_missing_key_ids{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "missing key ids",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (increase(telephony_credential_sweeps_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "sweep {{result}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(telephony_credentials_shredded_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "shredded",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Dials a carrier adapter gave up on after its own pre-send checks, by provider and kind (Plivo today). `auth_rejected`: the carrier refused the tenant's credential (401); every dial on it fails until a super-admin rotates or re-verifies it. `rate_limited`: the account's calls-per-second gate gave no slot in time, or the carrier answered 429; nothing was placed. `outcome_unknown`: a timeout, or a 2xx with no readable request id; the call may be placed, so the contact waits before its next dial. `refused`: any other non-2xx (403 is a destination outside the account's geo permissions). Empty is healthy.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* auth_rejected"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 90
+      },
+      "id": 123,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Carrier Dial Refusals",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (provider, kind) (increase(carrier_dial_refusals_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{provider}} {{kind}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 98
       },
       "id": 3,
       "title": "Identity and mail",
@@ -1831,7 +2008,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 91
+        "y": 99
       },
       "id": 103,
       "options": {
@@ -1889,7 +2066,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 91
+        "y": 99
       },
       "id": 104,
       "options": {
@@ -1929,7 +2106,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 99
+        "y": 107
       },
       "id": 4,
       "title": "Analysis",
@@ -1997,7 +2174,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 100
+        "y": 108
       },
       "id": 68,
       "options": {
@@ -2061,7 +2238,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 100
+        "y": 108
       },
       "id": 69,
       "options": {
@@ -2137,7 +2314,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 108
+        "y": 116
       },
       "options": {
         "legend": {
@@ -2219,7 +2396,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 108
+        "y": 116
       },
       "options": {
         "legend": {
@@ -2266,7 +2443,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 116
+        "y": 124
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -2303,7 +2480,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 117
+        "y": 125
       },
       "id": 106,
       "options": {
@@ -2367,7 +2544,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 117
+        "y": 125
       },
       "id": 107,
       "options": {
@@ -2425,7 +2602,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 117
+        "y": 125
       },
       "id": 108,
       "options": {
@@ -2485,7 +2662,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 125
+        "y": 133
       },
       "id": 87,
       "options": {
@@ -2542,7 +2719,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 125
+        "y": 133
       },
       "id": 74,
       "options": {
@@ -2600,7 +2777,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 133
+        "y": 141
       },
       "id": 50,
       "options": {
@@ -2638,7 +2815,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 141
+        "y": 149
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -2675,7 +2852,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 142
+        "y": 150
       },
       "id": 112,
       "options": {
@@ -2733,7 +2910,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 142
+        "y": 150
       },
       "id": 113,
       "options": {
@@ -2791,7 +2968,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 150
+        "y": 158
       },
       "id": 114,
       "options": {
@@ -2849,7 +3026,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 150
+        "y": 158
       },
       "id": 115,
       "options": {

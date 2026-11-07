@@ -54,7 +54,7 @@ const PARENT = {
 } as unknown as AgencyCampaignRecord;
 
 const CONFIG: AgencyCampaignConfigColumns = {
-  caller_ids: PARENT.caller_ids, telephony_provider: PARENT.telephony_provider,
+  caller_ids: PARENT.caller_ids, telephony_provider: PARENT.telephony_provider, telephony_credential_id: null,
   calling_window_start: PARENT.calling_window_start, calling_window_end: PARENT.calling_window_end,
   calling_days: PARENT.calling_days, default_timezone: PARENT.default_timezone,
   wrapup_seconds: PARENT.wrapup_seconds, wrapup_auto_return: PARENT.wrapup_auto_return,

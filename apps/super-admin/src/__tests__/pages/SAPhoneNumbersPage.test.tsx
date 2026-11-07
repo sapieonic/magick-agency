@@ -55,6 +55,7 @@ beforeEach(() => {
   mocks.listTelephonyProviders.mockResolvedValue([
     { id: 'prov-1', name: 'voicelink', display_name: 'VoiceLink', status: 'active', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
     { id: 'prov-old', name: 'retired-carrier', display_name: 'Retired', status: 'inactive', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+    { id: 'prov-byoc', name: 'plivo', display_name: 'Plivo', status: 'active', takes_tenant_credentials: true, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
   ]);
   mocks.createPhoneNumber.mockResolvedValue(makePhone({}));
   mocks.updatePhoneNumber.mockResolvedValue(makePhone({}));
@@ -83,6 +84,18 @@ describe('SAPhoneNumbersPage — provider picker', () => {
     const body = mocks.createPhoneNumber.mock.calls[0]![0];
     expect(body).toEqual(expect.objectContaining({ phone_number: '+910000000009', provider_id: 'prov-1' }));
     expect(body).not.toHaveProperty('pool_eligible');
+  });
+
+  it('never offers a carrier dialled on tenants\' own accounts, and points to Sync numbers instead', async () => {
+    render(<SAPhoneNumbersPage />);
+    await waitFor(() => screen.getByText('+918046733449'));
+    fireEvent.click(screen.getByRole('button', { name: /add number/i }));
+    const scope = within(screen.getByRole('dialog'));
+    const options = scope.getAllByRole('option').map((o) => o.getAttribute('value'));
+    expect(options).toContain('prov-1');
+    expect(options).not.toContain('prov-byoc');
+    expect(scope.getByTestId('synced-carriers-hint').textContent)
+      .toBe('Numbers on Pravah (Plivo) come from a tenant’s own carrier account: use Sync numbers on its credential under Telephony credentials.');
   });
 
   it('still offers the provider when the inventory is empty (no free-text id)', async () => {

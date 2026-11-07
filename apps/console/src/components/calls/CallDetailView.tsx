@@ -641,7 +641,7 @@ function RecordingSection({
   if (!hasRecording) {
     return note(
       "A recording was requested for this call but isn't available yet. It can take a short "
-      + 'while to finalize after the call ends — check back soon.',
+      + 'while to finalise after the call ends — check back soon.',
     );
   }
 

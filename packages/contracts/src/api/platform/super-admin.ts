@@ -256,14 +256,19 @@ export interface PhoneNumber {
   max_concurrent_calls: number;
   status: 'active' | 'retired' | 'deleted';
   notes: string | null;
+  /**
+   * The tenant carrier credential the number was synced from (BYOC, B18), or null for
+   * a number on the service's own account. Optional: older servers do not send it.
+   */
+  telephony_credential_id?: string | null;
   created_at: string;
   updated_at: string;
   assignment_count?: number;
 }
 
 /**
- * There is no `is_byoc`: bring-your-own carrier is out of scope (VoiceLink is
- * the only carrier).
+ * There is no `is_byoc`: a number on a tenant's own carrier account (B18) is the one
+ * with a non-null `telephony_credential_id`.
  */
 export interface TenantPhoneAssignment {
   id: string;
@@ -271,6 +276,12 @@ export interface TenantPhoneAssignment {
   phone_number_id: string;
   provider_name: string;
   provider_display_name: string;
+  /**
+   * The tenant carrier credential the number was synced from, or null for the
+   * service's own account: a call from this number dials on that account. Optional:
+   * older servers do not send it.
+   */
+  telephony_credential_id?: string | null;
   label: string | null;
   is_default: boolean;
   max_concurrent_calls: number;

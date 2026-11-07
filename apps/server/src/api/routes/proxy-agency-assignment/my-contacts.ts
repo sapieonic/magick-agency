@@ -22,6 +22,7 @@ import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { agencyAgentCallerIdRepository, agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
 import { dedicatedCallerIdOf, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
+import { dialableCallerIds } from '../../../agency/campaign-dialability.js';
 import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
 import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
@@ -79,6 +80,19 @@ export function summaryCallerId(
   return dedicatedCallerIdOf(usableCallerIds(campaign), new Map([[userId, stored]]), userId);
 }
 
+/**
+ * The agent's stored dedicated number, kept only while the campaign can still dial it: on a
+ * campaign pinned to a tenant's carrier account, a number no longer active on it is not used
+ * (PL13), so the summary does not name it. The service's own account: no extra read.
+ */
+export async function dialableStoredCallerId(
+  campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'caller_ids' | 'telephony_credential_id'>,
+  stored: string | null,
+): Promise<string | null> {
+  if (stored === null || !campaign.telephony_credential_id) return stored;
+  return (await dialableCallerIds(campaign)).includes(stored) ? stored : null;
+}
+
 export async function registerMyContactRoutes(app: FastifyInstance): Promise<void> {
   /** GET /my-contacts/summary?campaign_id= — the caller's contacts on a campaign, in counts. */
   app.get('/my-contacts/summary', {
@@ -96,7 +110,8 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
     const [tallyRead, queueRead, callerIdRead] = await Promise.allSettled([
       agencyAssignmentReadRepository.myTally(campaign, userId),
       readAgentQueueState(campaign, userId, now),
-      agencyAgentCallerIdRepository.findForAgent(campaign.id, userId),
+      agencyAgentCallerIdRepository.findForAgent(campaign.id, userId)
+        .then((stored) => dialableStoredCallerId(campaign, stored)),
     ]);
     const tally = settledValue(tallyRead);
     // The queue pacing and the station read (strict / preferred); pool mode has none of its own.

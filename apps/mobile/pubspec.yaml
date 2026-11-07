@@ -2,7 +2,7 @@ name: magick_agency_agent
 description: "Magick Agency agent app: Android and iOS, one codebase."
 publish_to: 'none'
 # Owned by release-please (component "mobile"); store build numbers come from CI.
-version: 0.6.0+7
+version: 0.7.0+8
 
 environment:
   sdk: ^3.13.0

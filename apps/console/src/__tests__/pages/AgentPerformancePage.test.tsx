@@ -749,7 +749,7 @@ describe('AgentPerformancePage — the staffing history', () => {
 
     const ended = await screen.findByTestId('history-row-camp-2');
     expect(within(ended).getByText('No longer assigned')).toBeTruthy();
-    expect(within(ended).getByText(/every contact has been dialled/i)).toBeTruthy();
+    expect(within(ended).getByText(/^Finished — every contact has been dialled/i)).toBeTruthy();
     expect(screen.getByTestId('staffing-summary').textContent).toContain('2 in total');
     expect(screen.getByTestId('staffing-summary').textContent).toContain('1 finished');
   });

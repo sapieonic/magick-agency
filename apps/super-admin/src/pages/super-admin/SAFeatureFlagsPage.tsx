@@ -349,7 +349,7 @@ export default function SAFeatureFlagsPage() {
                     </td>
                     <td
                       className={styles.defaultsCell}
-                      title="Value used when no global override is set. The catalog does not report whether this flag's environment variable is configured, so this is the env value if one is set and the registry default otherwise."
+                      title="Value used when no global override is set. The catalogue does not report whether this flag's environment variable is configured, so this is the env value if one is set and the registry default otherwise."
                     >
                       <strong>{String(inheritedDefault(entry) ?? '—')}</strong>
                     </td>

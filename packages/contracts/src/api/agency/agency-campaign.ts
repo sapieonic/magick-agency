@@ -420,13 +420,27 @@ export interface AgencyCampaign {
    */
   caller_ids?: string[];
   /**
-   * The carrier the campaign dials through.
-   *
-   * The dialer runtime defaults this to `'vobiz'`, so it must be sent explicitly — agency
-   * campaigns are VoiceLink-only, and a campaign left to the default would try
-   * to dial a VoiceLink caller-ID pool through vobiz.
+   * The carrier the campaign dials through: an active carrier from
+   * `GET /proxy/agency/carriers` (`AgencyCarrier.telephony_provider`). Omitted on create,
+   * it is `'voicelink'`, the service's own account (the column default). Named on a
+   * create or PATCH, it must be an active carrier, or the write is a 400.
    */
   telephony_provider?: string;
+  /**
+   * The tenant's own carrier account the campaign dials on (decisions B18–B22), or
+   * `null` for the service's own account. Required, and must be `active`, for a carrier
+   * dialled on the tenant's account (`AgencyCarrier.telephony_credential_id` non-null);
+   * must be `null` otherwise. With one, every `caller_ids` entry a write ADDS must be an
+   * active number synced from that account (on the same account, numbers already stored
+   * may stay: the dial skips one no longer active, PL13). Refusals: 400 (shape, pairing,
+   * caller IDs), 404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`;
+   * start and resume answer that 409 too once the account stops being active, and 409
+   * `campaign_caller_ids_unavailable` when none of the caller IDs is dialable, or
+   * `carrier_capacity_unallocated` when the account's per-carrier concurrency gives the
+   * carrier no lines (PL14). A PATCH that moves
+   * the campaign to the service's carrier sends `telephony_credential_id: null` with it.
+   */
+  telephony_credential_id?: string | null;
   sip_connection_id?: string | null;
   disposition_catalog?: AgencyDispositionEntry[];
   retry_policy?: AgencyRetryPolicy;
@@ -600,6 +614,32 @@ export interface AgencyCampaign {
    * narrowing it here would invite a consumer to trust the shape.
    */
   retry_selector?: unknown | null;
+}
+
+// ── Carriers a campaign may dial on ───────────────────────────
+
+/**
+ * One carrier account the tenant's campaigns may dial on: the service's own account
+ * on a carrier (`telephony_credential_id: null`), or one of the tenant's own carrier
+ * accounts (decisions B18–B22). Only active carriers and active credentials are listed.
+ * Never carries the carrier's account id or any secret.
+ *
+ * A campaign sends `telephony_provider` and `telephony_credential_id` as listed here.
+ * The console names the carrier with its own aliases (`telephonyProviders.ts` in
+ * `packages/web-ui`), never `telephony_provider` raw; `label` is the name a platform
+ * administrator gave the tenant's account, null for the service's own.
+ */
+export interface AgencyCarrier {
+  telephony_provider: string;
+  telephony_credential_id: string | null;
+  label: string | null;
+  /** Always `active` today: an inactive carrier or credential is not listed. */
+  status: 'active';
+}
+
+/** `GET /proxy/agency/carriers` (`agency.campaigns.read`): the service's carriers first, then the tenant's accounts by label. */
+export interface AgencyCarriersResponse {
+  carriers: AgencyCarrier[];
 }
 
 // ── Retry campaigns — the three routes' wire shapes ───────────

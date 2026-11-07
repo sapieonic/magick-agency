@@ -1,5 +1,6 @@
-// The PSTN media leg `GET /:id/pstn-stream`: VoiceLink dials into it with the
-// purpose-bound provider token, which `attachPstnLegVerified` checks. There is no
+// The PSTN media leg `GET /:id/pstn-stream`: the carrier connects to it with the
+// purpose-bound provider token, which `attachPstnLegVerified` checks (VoiceLink from the URL
+// in its dial request, Plivo from the URL in our answer XML). There is no
 // browser leg route — every agency browser leg is a borrowed station socket bound
 // in-process — and no call control API. `bridge` may be null when the app is
 // built without storage (route-table tests); a connect then is refused by
@@ -26,9 +27,10 @@ export async function webrtcCallRoutes(
 
   // ─── Media-stream WebSocket legs (no header auth) ──────────────────────────
 
-  // PSTN leg — the provider connects here. VoiceLink connects to the URL we baked
-  // into its add_lead request, which carries a purpose-bound `token` — verify it
-  // so a leaked call id alone can't hijack the provider socket.
+  // PSTN leg — the provider connects here: VoiceLink to the URL we baked into its
+  // add_lead request, Plivo to the one our answer XML names. Either carries a
+  // purpose-bound `token` — verify it so a leaked call id alone can't hijack the
+  // provider socket.
   // With media workers, the primary hands this upgrade to the slot its URL's `w` names
   // (`core/bridge/carrier-urls.ts`, `docs/scaling.md` §2.5); in one process it is unused.
   app.get('/:id/pstn-stream', { websocket: true, config: { wsOwner: { by: 'carrier_hint', param: 'id' } } }, (socket: WebSocket, request: FastifyRequest<{

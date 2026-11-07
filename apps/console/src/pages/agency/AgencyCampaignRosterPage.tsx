@@ -571,7 +571,7 @@ export function AgencyCampaignRosterPage() {
             So the tip now says the reason is per-contact and that some were
             worked first, which covers both populations.
           */
-          'Suppressed contacts are listed with the reason — some were never dialed, others were '
+          'Suppressed contacts are listed with the reason — some were never dialled, others were '
           + 'worked first and then closed.',
           'Open a contact to see every attempt against it and the columns from your uploaded file.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
@@ -849,7 +849,7 @@ export function AgencyCampaignRosterPage() {
                       <td>
                         {contact.last_outcome
                           ? attemptOutcomeLabel(contact.last_outcome)
-                          : <span className={styles.mutedCell}>Never dialed</span>}
+                          : <span className={styles.mutedCell}>Never dialled</span>}
                       </td>
                       <td>
                         {dispositionLabel(contact.last_disposition, campaign?.disposition_catalog)

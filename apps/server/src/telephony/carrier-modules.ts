@@ -5,15 +5,22 @@
 // equal.
 import type { CarrierModule } from './carrier-module.js';
 import { voicelinkCarrier } from './voicelink/voicelink.media.js';
+import { plivoCarrier } from './plivo/plivo.media.js';
 
 const MODULES: ReadonlyMap<string, CarrierModule> = new Map(
-  [voicelinkCarrier].map((m) => [m.name, m]),
+  [voicelinkCarrier, plivoCarrier].map((m) => [m.name, m]),
 );
 
 /** The module for a provider name, or undefined for a name no carrier answers to. */
 export function findCarrierModule(provider: string): CarrierModule | undefined {
   return MODULES.get(provider);
 }
+
+/**
+ * Whether a hang-up stops a call on this carrier ringing ({@link CarrierModule.cancelsRinging}),
+ * from the codec-free registry of each carrier's own declaration (`carrier-ringing.ts`).
+ */
+export { carrierCancelsRinging } from './carrier-ringing.js';
 
 /** Every registered carrier name. */
 export function carrierModuleNames(): string[] {

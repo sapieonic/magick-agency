@@ -328,7 +328,10 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   (the ringback only, reset for each call); otherwise it is the microphone, and answering with the
   microphone muted is announced assertively. A campaign attempt always wins the audio. CallKit and
   the notification's Hang up end a soft-phone call at once; in the app hang-up is
-  hold-to-confirm, with the SP3 warning while ringing. A system hang-up the server refused shows on
+  hold-to-confirm. While the call rings the SP3 warning (which names no carrier) sits above it, and
+  is the screen reader's confirm text, only when the call's `can_cancel_ringing` is not `true`, as
+  on the console (`softphone.md` §1); on a carrier that cancels a ringing call, hanging up while it
+  rings just cancels it. A system hang-up the server refused shows on
   the soft phone, and a call CallKit already ended on its side is reported to it again. CallKit
   names the call by the matched contact, else the number.
 - **My calls.** A "Soft-phone calls" segment shows where the Phone tab shows, or when a `limit=1`
@@ -480,5 +483,5 @@ packages/
 - **iOS has not compiled yet.** CI's first iOS build (on `main`, 2026-11-01) stopped at package resolution: `firebase_core` 5.1.0 needs `gtm-session-fetcher` 4–6 and `google_sign_in_ios` 6.3.8 needs 3.x. The Firebase pin ("Builds and releases", iOS) fixes the resolution: SwiftPM reproduced the conflict with the plugins' constraints and resolved them with the pin. That check ran on Linux, so no Swift or Objective-C was compiled. The next `main` build is the first compile, and the Swift engine and CallKit code (the Swift ringback written to the shared vectors and CallKit for soft-phone calls included) is reviewed against the SDK headers only until it passes.
 - **Customer history (2026-11-06) has not run under Dart or Flutter.** The wire types, the number-rule port, the controller and the two screens were written, reviewed and then fixed (the filters sheet, the copy button, the options read, the three wire additions) in an environment without the SDK; no `dart test`, `flutter test` or `flutter analyze` ran. A Python transcription of the port passed every row of the shared table. The mobile CI job (path-filtered on `apps/mobile`, `packages/contracts` and `packages/domain/src/customer-search-number.ts`) is the first run.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
-- **A network change while a soft-phone call rings ends it** (no grace before the answer), and with SP3 the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
+- **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.

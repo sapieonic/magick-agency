@@ -59,10 +59,10 @@ function dedupeNote(analysis: AgencyColumnAnalysis, state: MappingState, phone: 
     case 'column':
       return [
         uniquenessLine(analysis, state.dedupe.column),
-        'Rows that share a phone number are all kept. The dialer never calls one number twice at the same time.',
+        'Rows that share a phone number are all kept. The dialler never calls one number twice at the same time.',
       ].filter(Boolean).join(' ');
     case 'none':
-      return 'Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row is skipped. The dialer never calls one number twice at the same time.';
+      return 'Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row is skipped. The dialler never calls one number twice at the same time.';
   }
 }
 
@@ -204,7 +204,7 @@ export function ColumnMapper({
         ) : (
           <p className={styles.countryNote} data-testid="country-code-note">
             {state.defaultCountryCode
-              ? `A number written without a country code will be dialed as +${state.defaultCountryCode.replace(/^\+/, '')}…. The percentage above was worked out before you set this, so the real accepted count may differ.`
+              ? `A number written without a country code will be dialled as +${state.defaultCountryCode.replace(/^\+/, '')}…. The percentage above was worked out before you set this, so the real accepted count may differ.`
               : 'Numbers already written with a + keep their own country. Everything else gets the platform default — India (+91) — so set this if your list is not Indian.'}
           </p>
         )}

@@ -15,6 +15,9 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { campaignOf, ownedCampaign } from './guards.js';
+import { campaignCredentialStartRefusal } from '../../../agency/campaign-carrier.js';
+import { campaignDialBlockers } from '../../../agency/campaign-dialability.js';
+import { sendRefusal } from '../helpers/refusal.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
@@ -156,6 +159,24 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
     // After the transition guard, so a campaign in the wrong status still gets the
     // transition error rather than a roster error it cannot act on yet.
     if (opts.requireRoster && await rosterRejected(reply, campaign)) return reply;
+
+    // Into `running` (start, resume) only while the carrier account it is pinned to is
+    // active: a disabled, invalid or revoked credential would fail every dial (the call
+    // insert re-checks it), so the supervisor is told now, with what to do about it.
+    // Nor while its carrier cannot dial from this server at all (PL12), none of its caller
+    // IDs is still available on the account (PL13), or the account gives its carrier no
+    // lines (PL14): a campaign that would run and place nothing is refused while a
+    // supervisor is here to read why. The reads run together; the first refusal in that
+    // order is the answer (a later read's failure is moot once an earlier one refuses).
+    if (to === 'running') {
+      const credentialRead = campaignCredentialStartRefusal(campaign);
+      const blockersRead = campaignDialBlockers(campaign);
+      blockersRead.catch(() => undefined);
+      const refusal = await credentialRead;
+      if (refusal) return sendRefusal(reply, refusal.status, refusal.code, refusal.message);
+      const [blocker] = await blockersRead;
+      if (blocker) return sendRefusal(reply, blocker.status, blocker.code, blocker.message);
+    }
 
     // Several campaigns of one account may be `running` at once (decisions MC6: migration 0015
     // dropped `uq_agency_campaign_running`, and `another_campaign_running` is retired). The

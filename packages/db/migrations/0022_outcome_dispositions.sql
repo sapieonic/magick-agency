@@ -1,4 +1,4 @@
--- 0019_outcome_dispositions.sql — automatic outcomes for unanswered calls (docs/decisions.md,
+-- 0022_outcome_dispositions.sql — automatic outcomes for unanswered calls (docs/decisions.md,
 -- "Automatic outcomes for unanswered calls", OD1–OD8).
 --
 -- A campaign maps each outcome a call ends with when nobody spoke to the customer (no answer,

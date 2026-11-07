@@ -366,7 +366,7 @@ export function dispositionOverrideIssues(
   if (!allowed) {
     return [{
       field,
-      message: "Overrides are a campaign feature: the soft phone's outcome catalog cannot grant one.",
+      message: "Overrides are a campaign feature: the soft phone's outcome catalogue cannot grant one.",
     }];
   }
   if (override === null || typeof override !== 'object' || Array.isArray(override)) {

@@ -87,8 +87,9 @@ INTEGRATION_LANE=rest pnpm test:integration        # skip the ~4.5 min wall-cloc
 - **Chaos suites:** `test/integration/agency/chaos/`, run with integration.
 - **Load, soak and scenario suites:** `test/{unit,integration}/load/` and `test/unit/scenarios/`.
   `LOAD_SCALE` multiplies their sizes for a deliberate soak; `LOAD_SEED` reproduces a red run
-  (`test/helpers/load-scale.ts`). Mocks in `test/mocks/`: a scriptable VoiceLink carrier and a
-  simulated station fleet. Open defects are pinned as `it.fails`: when you fix one, flip it to
+  (`test/helpers/load-scale.ts`). Mocks in `test/mocks/`: scriptable VoiceLink and Plivo
+  carriers and a simulated station fleet. Plivo's REST host is fixed: tests reach the mock
+  through `setPlivoTransportForTests(carrier.fetch)`, never a configurable host. Open defects are pinned as `it.fails`: when you fix one, flip it to
   `it` and say so.
 - `test/unit/audio/decode.test.ts` needs `mpg123` and `sndfile-programs` installed; it fails
   rather than skips in CI without them.

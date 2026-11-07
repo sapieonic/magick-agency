@@ -12,9 +12,13 @@ import type { ServerClock } from '../../hooks/useServerClock';
 import type { SoftphoneState } from '../../hooks/useSoftphone';
 import styles from './SoftphoneView.module.css';
 
-/** VoiceLink cannot cancel a ringing call (SP3): what the agent must know before they hang up. */
+/**
+ * A carrier that cannot cancel a ringing call (SP3): what the agent must know before they
+ * hang up. Shown while ringing unless the call says its carrier can stop it
+ * (`can_cancel_ringing`). Names no carrier: the UI never shows a vendor.
+ */
 export const RINGING_HANGUP_WARNING =
-  'VoiceLink cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
+  'This carrier cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
 
 /** The tagged call's default "Call from" (DN4): the server picks the number. */
 export const AUTOMATIC_CALLER_ID_LABEL = 'Automatic';
@@ -46,7 +50,7 @@ export function callerIdHint(
 }
 
 const STATUS_LABEL = {
-  dialing: 'Dialing',
+  dialing: 'Dialling',
   ringing: 'Ringing',
   on_call: 'Connected',
   outcome: 'Ended',
@@ -107,14 +111,14 @@ export function DialPad({
           </div>
         </div>
         {sp.finishNotice ? <FinishNotice text={sp.finishNotice} /> : null}
-        {phase === 'ringing' ? (
+        {phase === 'ringing' && call.can_cancel_ringing !== true ? (
           <p className={styles.ringWarning} data-testid="ringing-warning">
             {RINGING_HANGUP_WARNING}
           </p>
         ) : null}
         {phase === 'outcome' ? (
           <p className={styles.hint} data-testid="outcome-closes">
-            Dialing is blocked until this call has an outcome.
+            Dialling is blocked until this call has an outcome.
             {call.outcome_due_at ? <OutcomeCloses dueAt={call.outcome_due_at} clock={clock} /> : null}
           </p>
         ) : null}

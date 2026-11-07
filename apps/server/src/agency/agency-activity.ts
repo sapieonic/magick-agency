@@ -696,9 +696,9 @@ export function buildActivityCsvPreamble(input: ActivityCsvPreambleInput): strin
     // Absent or unreadable, and said so rather than left out — silence here
     // reads as "no limit", which is the one thing it must never be mistaken
     // for on a compliance export.
-    ? 'unknown — the dialer\'s retention horizon could not be determined for this export'
+    ? 'unknown — the dialler\'s retention horizon could not be determined for this export'
     : input.retention.source === 'unbounded'
-      ? 'unbounded — the dialer reports no retention horizon for this campaign'
+      ? 'unbounded — the dialler reports no retention horizon for this campaign'
       : input.retention.earliest_retained_at !== null
         ? `records retained from ${sanitizePreambleValue(input.retention.earliest_retained_at)} onward `
           + `(source: ${sanitizePreambleValue(input.retention.source)})`
@@ -719,7 +719,7 @@ export function buildActivityCsvPreamble(input: ActivityCsvPreambleInput): strin
     preambleLine(`Retention: ${retention}`),
     preambleLine(
       "Source column — 'master' rows are recorded by the console (a person acted); 'core' rows are "
-      + "recorded by the dialer (what the campaign did). The same action can appear from both — e.g. a "
+      + "recorded by the dialler (what the campaign did). The same action can appear from both — e.g. a "
       + 'pause a supervisor pressed and the pause the campaign then made.',
     ),
     preambleLine(

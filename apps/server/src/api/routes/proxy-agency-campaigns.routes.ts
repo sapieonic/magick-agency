@@ -9,6 +9,7 @@ import { registerCampaignSpineRoutes } from './proxy-agency-campaigns/spine.js';
 import { registerCampaignLifecycleRoutes } from './proxy-agency-campaigns/lifecycle.js';
 import { registerCampaignRetryRoutes } from './proxy-agency-campaigns/retry.js';
 import { registerCampaignIngestRoutes } from './proxy-agency-campaigns/ingest.js';
+import { registerCarrierRoutes } from './proxy-agency-campaigns/carriers.js';
 
 /**
  * Campaign CRUD and roster ingest.
@@ -112,4 +113,5 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   await registerCampaignLifecycleRoutes(app);
   await registerCampaignRetryRoutes(app);
   await registerCampaignIngestRoutes(app);
+  await registerCarrierRoutes(app);
 }

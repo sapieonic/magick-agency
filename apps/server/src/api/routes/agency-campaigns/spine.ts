@@ -280,14 +280,12 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
             : 'No call was placed for this attempt',
         });
       }
-      // Dynamic import keeps the config-loading recording-proxy module out of this
-      // route module's import graph.
+      // Dynamic imports keep the config-loading recording modules out of this route
+      // module's import graph. The call row's provider, pinned credential and tenant
+      // decide the hosts and any credential (`telephony/recording-access.ts`, B21).
       const { proxyCallRecording } = await import('../../../utils/recording-proxy.js');
-      // `proxyCallRecording` takes the recording-host allow-list as a parameter
-      // (`config.voicelinkRecording.allowedHosts`, from `VOICELINK_RECORDING_HOSTS`).
-      // Same dynamic-import posture for the config.
-      const { config } = await import('../../../config/index.js');
-      return proxyCallRecording(found.call, request, reply, config.voicelinkRecording.allowedHosts);
+      const { getRecordingAccessResolver } = await import('../../../telephony/recording-access.js');
+      return proxyCallRecording(found.call, request, reply, await getRecordingAccessResolver());
     },
   );
 

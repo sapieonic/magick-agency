@@ -4,7 +4,8 @@ The module boundaries inside `apps/server` and the fixed interfaces between them
 each module area owns, which config keys each declares, where shared infrastructure lives, and the
 two cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
-Checked against the tree on 2026-10-09; §3.1 on 2026-10-30.
+Checked against the tree on 2026-10-09; §3.1 on 2026-10-30; §3.1, §3.4, §4 and §5 on 2026-11-07
+(Plivo steps 3 and 4).
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -86,6 +87,20 @@ export interface WebRtcLifecycleEvent {}
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 ```
 
+`WebRtcOutboundParams` names the carrier (`provider`) and, for a carrier dialled on a
+tenant's own account, the credential (`telephonyCredentialId`, decisions B18–B20): the bridge
+pins it on the call row (an insert that re-checks it is `active`) and dials on it, never on the
+service's own account. The refusals with nothing placed at the carrier each have their own
+`WebRtcRejectReason` and emit no `ended`: the admission refusals, `station_socket_unavailable`,
+`telephony_credential_unavailable` (the credential cannot dial; the dialer pauses the campaign
+`carrier_account_unavailable`), `carrier_rate_limited` (a
+calls-per-second limit) and `carrier_auth_rejected` (the carrier refused the credential, HTTP
+401; the bridge marks the credential `invalid` against the secret version that dialled, and
+the dialer pauses the campaign `carrier_auth`) and `carrier_dial_not_sent` (the adapter
+would not send the dial: no webhook base, a malformed number or caller ID, the carrier's API
+unreachable; `CarrierDialNotSentError`). `telephony_init_failed` is the carrier refusing a
+dial: it ends the call first, with an `ended`.
+
 `correlation` says what a leg belongs to: a campaign attempt (the dialer) or a soft-phone call
 (`agency_manual_calls`, `docs/softphone.md` §4.3). The `agency_calls` insert writes `campaign_id` +
 `agency_attempt_id` with `origin = 'campaign'` for an attempt, and `origin = 'manual'` +
@@ -145,7 +160,20 @@ bootstrap must start (it is built lazily from the `telephonyCredentials` config 
 shared repository, so it works the same before and after voice bootstrap), and the only
 background work, the hourly sweep, is started from `bootstrap/voice.ts`. Route tests inject a
 fake through the plugin's `service` option. If the service ever gains state that needs
-bootstrap ordering, move it behind a seam like §3.3.
+bootstrap ordering, move it behind a seam like §3.3. Number sync
+(`POST /super-admin/telephony-credentials/:id/sync-numbers`, `syncNumbers`) goes the same way.
+
+The other readers of the credential store outside the voice area import it directly too, for the
+same reason (no bootstrap state), and none of them opens a secret except through the service:
+
+- campaign management (`agency/campaign-carrier.ts`) reads the voice area's credential specs
+  (`findCredentialSpec`: does a carrier take tenant credentials) and the shared credential
+  repository, to check a campaign's carrier, credential and caller IDs;
+- the super-admin phone routes read the same two to refuse hand-added numbers on a
+  tenant-credential carrier and a synced number assigned to another tenant;
+- every recording fetch (the attempt and soft-phone recording proxies, signed playback, the
+  analysis runner) asks `telephony/recording-access.ts` for the call's hosts and headers, which
+  resolves the pinned credential through the service lazily (`getRecordingAccessResolver`).
 
 ## 4. Shared infrastructure
 
@@ -156,7 +184,10 @@ Read or written by more than one module area, so it has one home (decision B10):
   `agency-campaign-agent.repository.ts` (staffing; membership revocation calls `closeAllForUser`);
   `feature-flag.repository.ts`; the two audit repositories; `telephony-credential.repository.ts`
   (voice resolves credentials through it; the super-admin routes manage them through the voice
-  service, §3.4).
+  service, §3.4); `phone-number.repository.ts` and `tenant-phone-assignment.repository.ts` (the
+  phone and super-admin routes, the voice area's number sync, and the agency area's caller-ID
+  checks and soft phone, through `findAvailableForAccount`, which offers a synced number only while
+  its credential is `active`).
 - `apps/server/src/feature-flags/`: the flag service, with the registry in
   `@magick-agency/contracts/flags`. The super-admin override routes are built on it.
 - `apps/server/src/audit/`: `auditLogger` (→ `audit_logs`, the "Dialer" half of the activity trail)
@@ -167,3 +198,5 @@ Read or written by more than one module area, so it has one home (decision B10):
 
 - **One real call on a VoiceLink sandbox** and **one real recording analysed** need vendor accounts
   that have not been provisioned. Not attempted. See [`status.md`](status.md).
+- **One real Plivo call and recording** (Plivo step 5) needs a tenant's Plivo account. Every Plivo
+  path has run only against the mock carrier (`apps/server/test/mocks/plivo/`).

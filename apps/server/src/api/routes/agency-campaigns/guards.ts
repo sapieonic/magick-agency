@@ -12,6 +12,7 @@ import { preflightAnalysisProfile } from '../../../analysis/profile-preflight.js
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { issuesToDetails, validateAgencyCampaignConfig, type CampaignConfigBase } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
+import { campaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
 
 /**
  * Every route is behind the flag — **except the two that reduce activity**.
@@ -70,8 +71,9 @@ export async function gate(request: FastifyRequest, reply: FastifyReply): Promis
  * one, which is a genuinely confusing thing to hand an operator. `caller_ids:
  * [123]` would be stored as-is and reach the dial.
  *
- * Deliberately shape-only. Ownership against the tenant's own numbers is NOT
- * validated here. Recorded rather than silently skipped.
+ * Deliberately shape-only. Ownership is checked by `carrierRejected` for a campaign on
+ * a tenant's own carrier account (its caller IDs must be that account's synced numbers);
+ * a campaign on the service's own account is not checked against the tenant's numbers.
  *
  * Returns the reason it is bad, or null when it is fine.
  */
@@ -144,6 +146,39 @@ export function configRejected(
   const issues = validateAgencyCampaignConfig(body, base);
   if (issues.length === 0) return false;
   replyValidationFailed(reply, issuesToDetails(issues));
+  return true;
+}
+
+/**
+ * Refuse a write that would leave the campaign on a carrier account it may not dial on
+ * (`campaignCarrierRefusal`: the carrier active, a tenant-account carrier pinned to an
+ * active credential of this tenant, its caller IDs that credential's numbers). `effective`
+ * is the campaign after the write; `body` is what the caller sent, which decides what is
+ * judged; `stored` is the campaign before it (null on a create), so caller IDs already in
+ * its pool on the same carrier account are not re-judged. Returns false only when it has
+ * already replied.
+ */
+export async function carrierRejected(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  body: Record<string, unknown>,
+  effective: { telephony_provider: unknown; telephony_credential_id: unknown; caller_ids: readonly string[] },
+  stored: { telephony_provider: string | null; telephony_credential_id: string | null; caller_ids: readonly string[] } | null = null,
+): Promise<boolean> {
+  const refusal = await campaignCarrierRefusal(
+    { tenantId: getTenantId(request), accountId: getAccountId(request) },
+    effective,
+    { provider: 'telephony_provider' in body, credential: 'telephony_credential_id' in body, callerIds: 'caller_ids' in body },
+    stored,
+  );
+  if (!refusal) return false;
+  if (refusal.kind === 'validation') {
+    replyValidationFailed(reply, refusal.details);
+  } else {
+    reply.code(refusal.status).send({
+      error: refusal.status === 404 ? 'Not Found' : 'Conflict', code: refusal.code, message: refusal.message,
+    });
+  }
   return true;
 }
 

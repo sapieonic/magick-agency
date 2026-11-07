@@ -383,7 +383,7 @@ describe('handleTimeReadout', () => {
      * a flat contradiction on one card, and the caveat is the one that survives.
      */
     const measured = handleTimeReadout(stats({ aht_seconds: 134 }));
-    expect(measured.denominator).toEqual({ lead: null, rest: 'Voicemail excluded — the dialer’s own figure' });
+    expect(measured.denominator).toEqual({ lead: null, rest: 'Voicemail excluded — the dialler’s own figure' });
 
     const unmeasured = handleTimeReadout(
       stats({ aht_seconds: 134, machine_connects: 0, machine_connects_available: false }),

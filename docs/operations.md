@@ -179,7 +179,8 @@ production.
 | `MAILJET_API_KEY`, `MAILJET_API_SECRET` | Invite and completion mail | `MAILJET_FROM_EMAIL` default `noreply@sapionic.ai`, `MAILJET_FROM_NAME` default `Sapionic` |
 | `CONSOLE_BASE_URL` | Invite links | e.g. `https://<console host>` |
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. Caller IDs are per campaign (`caller_ids`), not env. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
-| `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one). Back it up separately from the database: losing it makes every stored credential unopenable |
+| `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one, and `telephony_credential_missing_key_ids` pages through `agy-credential-keyring-missing-keys`). Back it up separately from the database: losing it makes every stored credential unopenable |
+| `PLIVO_WEBHOOK_BASE_URL` (+ the keyring above) | Calls on tenants' own Plivo accounts (B18) | This server's public https origin plus `/api/v1/webhooks/plivo`: Plivo fetches the answer XML and posts status and recording callbacks under it, and opens the media socket on its host. Env only, never tenant data. Unset: every Plivo dial is refused before anything is sent. No Plivo account is configured in env; super-admins add each tenant's as a credential ("Enabling Plivo for a tenant") |
 | `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
 | `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; 8 analysis slots (`DIALER_ANALYSIS_CONCURRENCY`; sizing below), a 512 MiB recording memory budget, a sweep every 60 s. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
@@ -206,6 +207,10 @@ production.
 | `REDIS_COMMAND_TIMEOUT_MS`, `REDIS_MAX_RETRIES_PER_REQUEST`, `REDIS_CONNECT_TIMEOUT_MS` | `2000`, `1`, `2000` | Redis client bounds: a Redis that is gone or stalled fails each command within the timeout (a rejection, so call tokens fail open per Q6, and the agent lease renewer keeps renewing through it). ioredis's defaults took ~10 s to show on `/readyz` and held some requests ~30 s |
 | `MAX_CONCURRENT_CALLS` | `1000` | Global guard ceiling: call legs holding a slot, ringing and `ending` included (a 500-call floor holds ~860 at peak; sizing in `config/blocks/voice.ts`). Per-account limits come from super-admin settings, default 5 |
 | `VOICELINK_LOGIN_TIMEOUT_MS`, `VOICELINK_ADD_LEAD_TIMEOUT_MS` | `10000`, `15000` | VoiceLink REST timeouts, per request (a 401's retry gets a fresh one; the `add_lead` value also bounds a CDR lookup). A timed-out `add_lead` fails the dial (agent and slots released at once) but may have queued the lead: never retried, the contact's redial deferred 15 min, a late carrier media connect refused and hung up (`voicelink.adapter.ts`, `post`) |
+| `PLIVO_CALLS_PER_SECOND` | `2` (1–100) | New calls a second per Plivo account (Plivo's account default), counted across every process in Redis (a sliding 1000 ms window per account: no 1000 ms span admits more). One value for every tenant's account: raise it only when every Plivo account in use allows more |
+| `PLIVO_DIAL_RATE_MAX_WAIT_MS` | `5000` (0–60000) | The longest a dial waits for a calls-per-second slot; then it is refused unsent (`carrier_rate_limited`), a retryable refusal the dialler treats as back-pressure |
+| `PLIVO_REQUEST_TIMEOUT_MS` | `15000` (1000–120000) | Each Plivo REST request (create-call, cancel, hangup, number sync). A timed-out create-call may have placed the call: never retried, the contact's redial deferred 15 min as for VoiceLink |
+| `PLIVO_RING_TIMEOUT_SECONDS` | `45` (5–120) | How long Plivo lets a dial ring (`ring_timeout`). A call with no answer or terminal callback 30 s past it is ended by the bridge (`ring_deadline_passed`), so a lost callback does not hold its slots and agent to the max duration |
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
 | `CONCURRENCY_RECONCILE_INTERVAL_MS` | `300000` | Self-heal reconcile cadence |
 | `STALE_CALL_SWEEP_MINUTES` | `30` | Stale bridged-call sweep |
@@ -480,6 +485,92 @@ any soft-phone session exists, rather than deleting soft-phone calls' audit trai
 `campaign_id NOT NULL`. Run it the same way outside the image. Future
 schema changes go in new numbered files; never edit or renumber an applied migration.
 
+## Enabling Plivo for a tenant
+
+Plivo is dialled only on a tenant's own Plivo account (decisions B18–B22, PL1–PL16); the
+service's own carrier stays VoiceLink. How a Plivo call flows: [`architecture.md`](architecture.md),
+"The voice engine". Once per deployment:
+
+1. `TELEPHONY_CREDENTIAL_KEYS` and `TELEPHONY_CREDENTIAL_ACTIVE_KEY` set ("Optional blocks"), the
+   keyring backed up apart from the database.
+2. `PLIVO_WEBHOOK_BASE_URL=https://<public host>/api/v1/webhooks/plivo`, the same public host the
+   carrier reaches for VoiceLink (nginx already sends `/api/*` to the server). Restart the server.
+   Nothing needs setting on Plivo's side: each dial names its own answer and callback URLs. It
+   must be an absolute `https:` URL with no query or fragment, or the server does not start.
+   While it is unset, Plivo accounts are not offered for campaigns, start and resume of a campaign
+   pinned to one answer 409 `carrier_not_ready`, and any Plivo dial is refused before it is sent
+   (`carrier_dial_not_sent`, PL12).
+
+Then per tenant:
+
+1. **Add the credential.** Super-admin console → Telephony Credentials → add, for the tenant, the
+   Plivo Auth ID and Auth Token. It is checked with Plivo before it is stored and becomes `active`.
+   The tenant's Plivo account must allow the destinations it will call (Plivo's geo permissions): a
+   dial to a country it does not allow is refused (a 403, which ends that call `failed` and pauses
+   nothing, PL1).
+2. **Sync numbers.** "Sync numbers" on the credential copies the account's numbers into the number
+   inventory, pinned to the credential and assigned to the tenant for every account. The summary
+   says what was added, reactivated, taken over, retired, unchanged or skipped, and any conflict (a
+   number already registered elsewhere is never taken over, except from a revoked credential of
+   the same tenant and the same Plivo account: re-adding an account after revoking its credential
+   moves its numbers to the new one, PL5). Run it again after numbers change on the Plivo account.
+   Calls placed on the revoked credential keep it, so their recordings are fetched with it until it
+   is shredded (no call within the post-call hold), after which they cannot be played. Plivo numbers cannot be added by hand: "Add number" on the phone numbers page
+   does not offer a carrier that takes tenant credentials (`takes_tenant_credentials` on
+   `GET /super-admin/telephony-providers`) and points here instead. The super-admin console names
+   carriers "Alias (Vendor)", e.g. "Pravah (Plivo)" (PL16).
+3. **Concurrency.** An account on a single total needs nothing: Plivo calls count against it. An
+   account on a per-carrier breakdown (tenant → Service → the account's provider concurrency) needs
+   a `plivo` allocation (shown by its alias), or every Plivo dial is refused for capacity
+   (`provider_concurrency_limit`, logged "No concurrency is allocated to telephony provider
+   'plivo'"): the campaign does not pause, it places no calls. A Plivo call is admitted like any other: global, account and provider
+   scopes (B22).
+4. **The campaign.** In the console's campaign builder or settings, "Carrier" appears once the
+   tenant has more than one carrier account; pick the Plivo account (its alias plus the
+   credential's label). The caller IDs offered are then that account's synced numbers. The soft
+   phone's untagged calls dial on the carrier account of the caller ID chosen.
+
+**Automatic pauses.** Three reasons on a campaign's pause say its carrier account cannot dial. The
+first two are set on the first refused dial, the third after five in a row; each is written to the activity trail as "Auto-paused" with the reason,
+shown on the Insights headline, and logged at ERROR; the contact goes back uncharged. Nothing
+resumes the campaign by itself:
+
+- `carrier_auth`: Plivo refused the credential (HTTP 401): its Auth Token was changed or the
+  account suspended at Plivo. The refusal also marks the credential `invalid` with its
+  `last_error` (only if the secret version that was refused is still the current one), audited
+  `telephony_credential.carrier_refused`, so resume answers 409 `telephony_credential_not_active`
+  until a super-admin rotates the credential's secret to the current token, or verifies it once
+  Plivo accepts it again; both bring it back to `active`. Then a supervisor resumes the campaign.
+- `carrier_account_unavailable`: the pinned credential is no longer `active`: disabled, marked
+  invalid or revoked. Resume answers 409 `telephony_credential_not_active` until a super-admin
+  re-enables or fixes the credential, or the campaign is moved to another carrier account in its
+  settings. A keyring fault (no keyring configured, or a secret whose master key is missing,
+  `agy-credential-keyring-missing-keys`) pauses nothing: the credential is fine, so each dial on it
+  fails as the platform's own failure (the contact is retried a minute later, the soft phone says
+  to try again) until the key is restored. Restore the key; nothing needs resuming.
+- `carrier_refusing_calls`: the carrier refused five of the campaign's dials in a row with none
+  placed in between (PL11): a 4xx other than 401 and 429 (a 403 for a destination the account's
+  geo permissions do not enable, an account out of credit, a caller ID it rejects), or a dial not
+  sent for the carrier's configuration (`PLIVO_WEBHOOK_BASE_URL` unset). A 5xx from Plivo (an
+  outage on its platform) never counts: those dials fail and their contacts are retried, and no
+  campaign is paused for it. The refusals are on the
+  call rows (`error_code`) and in the `Plivo create call error` / `Plivo dial not sent` log lines.
+  Fix the account at Plivo (or the server's configuration), then a supervisor resumes; the
+  credential stays `active`, so nothing refuses the resume.
+
+The console tells supervisors to contact support for either (PL15): a tenant's own admins cannot
+see or fix a carrier account. A soft-phone call on such an account is refused `409
+carrier_account_unavailable` and pauses nothing. A revoke is refused while a campaign that is not
+finished (draft, running, paused or stopping) is pinned to the credential; the refusal names up to
+five of them (tenant / account, status).
+
+`carrier_dial_refusals_total{provider="plivo",kind}` counts create-calls that placed no known call
+(`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`, and `not_sent` for a dial refused
+before anything was sent: no webhook base, a malformed number or caller ID, the API unreachable).
+A steady `rate_limited` means the dial rate is above `PLIVO_CALLS_PER_SECOND`; dials then wait and
+retry on the next pacing tick. A steady `not_sent` is configuration or network: read the
+`Plivo dial not sent` log lines.
+
 ## Recordings
 
 VoiceLink recordings are public MP3s on the carrier's host. The fetcher accepts only `https` URLs
@@ -501,6 +592,14 @@ Check the host with `SELECT DISTINCT split_part(recording_url, '/', 3) FROM agen
 recording_url IS NOT NULL;`, confirm with VoiceLink that it is theirs, and set the list. Setting it
 replaces the default, so keep `recording.app.voicelink.co.in` in it:
 `VOICELINK_RECORDING_HOSTS=recording.app.voicelink.co.in,<other host>`. Restart; it is read at boot.
+
+Plivo recordings stay on the tenant's Plivo account and are fetched on demand with its credential
+(B21): only from `media.plivo.com` (an exact match, not configurable), with HTTP Basic on the first
+request only; a redirect hop carries no credential, for any carrier. A call whose credential is
+revoked, shredded, another tenant's or unopenable cannot be fetched: playback answers 404
+`recording_unavailable`, and its analysis job fails at once, not retried (a missing keyring key is
+retried, and recovers once the key is restored). Revoking a credential therefore ends playback and
+analysis of that tenant's earlier recordings on it.
 
 ## Postgres TLS
 
@@ -553,7 +652,7 @@ per process, per export interval), which keep their own histogram and are not to
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page. The insights rules first: a stale or holed Insights page costs no
+warn (Slack) and never page, and for the carrier credential rules. The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -674,6 +773,38 @@ supervisors to run no more campaigns at once than the account has lines, pausing
 can wait; nothing is broken. Otherwise file it with the campaign and account ids and what the logs
 show. A burst of withheld slots with live calls on the campaign is the share rule working, not
 this alert.
+
+### `agy-credential-keyring-missing-keys`
+
+This one pages. **Means:** `telephony_credential_missing_key_ids` is above 0: stored tenant
+carrier credential secrets (B19) are sealed under master key ids that `TELEPHONY_CREDENTIAL_KEYS`
+does not hold, so they cannot be opened. Every call on an affected credential fails closed, and so
+do the hangups and webhook checks of its calls already in flight; a running campaign pinned to
+one pauses `carrier_account_unavailable` at its next dial ("Enabling Plivo for a tenant"). Nothing
+falls back to the service's VoiceLink account (B20), whose own calls are unaffected. The main process sets the gauge
+at boot and after each hourly sweep (`startCredentialHousekeeping`, `apps/server/src/bootstrap/voice.ts`).
+
+**Check:** the boot ERROR "Telephony credential secrets are sealed under keys missing from
+TELEPHONY_CREDENTIAL_KEYS", whose `kekIds` names the missing ids, against the deploy's
+`TELEPHONY_CREDENTIAL_KEYS`. A keyring unset altogether reads every stored key id as missing.
+
+**Do:** restore the missing `id:key` entries from the keyring backup (kept apart from the
+database) and restart; the gauge reads 0 from the next boot. A key that is truly lost never opens
+its secrets again: a super-admin rotates each affected credential's secret, which reseals it under
+`TELEPHONY_CREDENTIAL_ACTIVE_KEY`. Either way, supervisors then resume the campaigns it paused.
+
+### `agy-credential-sweep-failing`
+
+**Means:** 2+ failed credential sweeps in 3 hours (`telephony_credential_sweeps_total{result="failed"}`;
+the sweep runs at boot and hourly). The sweep shreds revoked credentials once every call pinned to
+them is terminal and ended more than 2 h ago, and drops secret versions past the 24 h rotation
+grace. Nothing dials on a revoked credential either way; the cost is sealed secrets kept past the
+retention B20 promises.
+
+**Check:** the WARN "Telephony credential sweep failed" for the error. It is almost always
+Postgres or its pool; a lock wait on a credential row being revoked or rotated clears on its own.
+
+**Do:** fix Postgres. The sweep is idempotent: the next hourly pass, or a restart, catches up.
 
 ## Releases and versioning
 

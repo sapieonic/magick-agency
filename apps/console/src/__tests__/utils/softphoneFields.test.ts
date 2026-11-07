@@ -178,6 +178,14 @@ describe('refusal copy', () => {
     expect(refusalCopy({ code: 'unknown', raw_code: 'boom', status: 500, message: 'The server’s words' }, 'status')).toBe('The server’s words');
   });
 
+  it('a carrier account that cannot dial says support, not "try again", and names no vendor', () => {
+    const copy = refusalCopy({ code: 'carrier_account_unavailable', status: 409, message: 'x' });
+    expect(copy).toMatch(/carrier account.*Contact support/);
+    expect(copy).not.toMatch(/try again|in a moment|plivo|voicelink|administrator/i);
+    // A calls-per-second limit answers concurrency_limit: retry in a moment.
+    expect(SOFTPHONE_REFUSAL_COPY.concurrency_limit).toMatch(/Try again in a moment/);
+  });
+
   it('has a sentence for every soft-phone code', () => {
     for (const code of AGENCY_SOFTPHONE_ERROR_CODES) {
       expect(SOFTPHONE_REFUSAL_COPY[code], code).toMatch(/\S/);

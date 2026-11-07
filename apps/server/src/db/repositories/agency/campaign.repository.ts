@@ -11,6 +11,7 @@ import {
   AGENCY_CAMPAIGN_TERMINAL_STATUSES,
   type AgencyCampaignDependent,
   type AgencyCampaignRecord,
+  type CarrierAccountPauseReason,
 } from '../../models/agency.model.js';
 import type {
   AgencyAssignmentMode,
@@ -43,10 +44,14 @@ function announceCampaignChanged(row: AgencyCampaignRecord | null | undefined): 
  */
 const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   'name', 'caller_ids', 'telephony_provider',
+  // The tenant carrier credential (0002). Patchable with the provider, and `null`
+  // legitimately moves the campaign back to the service's own account. The PATCH route
+  // judges the pair (`carrierRejected`); the composite FK refuses a mismatched one.
+  'telephony_credential_id',
   'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'break_reasons',
-  // Automatic outcomes for unanswered calls (0019). An operator setting, patchable at any
+  // Automatic outcomes for unanswered calls (0022). An operator setting, patchable at any
   // status; the dialer reads it from the campaign row it settles with.
   'outcome_dispositions',
   // Wrap-up redial (0008). An operator setting like `wrapup_auto_return`, so it is
@@ -110,6 +115,8 @@ export class AgencyCampaignRepository {
   async create(input: {
     tenant_id: string; account_id: string; name: string; caller_ids: string[];
     telephony_provider?: string;
+    /** The tenant carrier credential it dials on; null/omitted = the service's own account. */
+    telephony_credential_id?: string | null;
     calling_window_start?: string; calling_window_end?: string;
     calling_days?: number[]; default_timezone?: string;
     wrapup_seconds?: number; wrapup_auto_return?: boolean; allow_wrapup_redial?: boolean;
@@ -164,7 +171,7 @@ export class AgencyCampaignRepository {
                $19, $20, COALESCE($21,false),
                COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
                COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
-               COALESCE($28::integer,30),COALESCE($29::jsonb,'{}'::jsonb))
+               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb))
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -191,7 +198,9 @@ export class AgencyCampaignRepository {
         input.callback_owner_grace_minutes ?? null, input.callback_fallback ?? null,
         input.allow_agent_retry ?? null, input.agent_retry_rounds ?? null,
         input.agent_retry_cooldown_minutes ?? null,
-        // Automatic outcomes (0019). Omitted ⇒ `{}`, the column DEFAULT: nothing mapped.
+        // The tenant carrier credential it dials on (0002); NULL = the service's own account.
+        input.telephony_credential_id ?? null,
+        // Automatic outcomes (0022). Omitted ⇒ `{}`, the column DEFAULT: nothing mapped.
         input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
       ],
     );
@@ -634,6 +643,38 @@ export class AgencyCampaignRepository {
         WHERE id = $1 AND status = 'running'
       RETURNING *`,
       [campaignId, measuredPct],
+    );
+    announceCampaignChanged(rows[0]);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Pause a RUNNING campaign because its carrier account cannot dial: the carrier refused
+   * the campaign's credential on a dial (HTTP 401, `carrier_auth`), the credential is
+   * no longer active (`carrier_account_unavailable`), or the carrier refused its dials
+   * several times in a row (`carrier_refusing_calls`, PL11). Every further dial on that
+   * credential would likely be refused too. Like the abandonment guardrail's pause, it
+   * has no human behind it, so the transition actor is cleared, and it never resumes on
+   * its own: a supervisor resumes once the account is fixed (resume refuses a
+   * credential that is not `active`). `pause_abandonment_rate_pct` is cleared: it is the
+   * evidence of an abandonment pause only.
+   *
+   * Zero rows (null) when the campaign is not running: already paused (by this or anything
+   * else), stopping or terminal. The caller then writes no audit row.
+   */
+  async pauseForCarrierAccount(campaignId: string, reason: CarrierAccountPauseReason): Promise<AgencyCampaignRecord | null> {
+    const { rows } = await getPool().query<AgencyCampaignRecord>(
+      `UPDATE agency_campaigns
+          SET status = 'paused',
+              pause_reason = $2::varchar,
+              paused_at = now(),
+              pause_abandonment_rate_pct = NULL,
+              last_transition_by_user_id = NULL,
+              last_transition_by_name = NULL,
+              updated_at = now()
+        WHERE id = $1 AND status = 'running'
+      RETURNING *`,
+      [campaignId, reason],
     );
     announceCampaignChanged(rows[0]);
     return rows[0] ?? null;

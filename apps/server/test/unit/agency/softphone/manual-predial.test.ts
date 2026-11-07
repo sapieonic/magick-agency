@@ -7,6 +7,7 @@ import {
   selectCallerId,
   validateOverrideNote,
   type ManualPredialInput,
+  softphoneCarrier,
 } from '../../../../src/agency/softphone/manual-predial.js';
 import { SOFTPHONE_SETTINGS_DEFAULTS } from '../../../../src/db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../../../../src/db/models/agency.model.js';
@@ -519,5 +520,29 @@ describe('what the dial uses', () => {
     expect(r.ok && r.plan).toMatchObject({ recordingRequested: true, analysisProfileId: 'prof-set', contact: null });
     const bare = await runManualPredial(input({ tag: null, accountNumbers: ['+15550000001'] }), deps());
     expect(bare.ok && bare.plan).toMatchObject({ recordingRequested: false, analysisProfileId: null });
+  });
+});
+
+describe('softphoneCarrier — the carrier account a soft-phone call is placed on', () => {
+  const numbers = [
+    { phone_number: '+919000000001', provider_name: 'voicelink', telephony_credential_id: null },
+    { phone_number: '+14155550111', provider_name: 'plivo', telephony_credential_id: 'cred-1' },
+  ];
+
+  it('tagged: the campaign`s carrier and pinned credential, whatever the number list says', () => {
+    expect(softphoneCarrier({ telephony_provider: 'plivo', telephony_credential_id: 'cred-9' }, numbers, '+919000000001'))
+      .toEqual({ provider: 'plivo', telephonyCredentialId: 'cred-9' });
+    expect(softphoneCarrier({ telephony_provider: 'voicelink', telephony_credential_id: null }, [], '+919000000001'))
+      .toEqual({ provider: 'voicelink', telephonyCredentialId: null });
+  });
+
+  it('untagged: the chosen caller ID`s number decides: a synced number dials its own credential', () => {
+    expect(softphoneCarrier(null, numbers, '+14155550111')).toEqual({ provider: 'plivo', telephonyCredentialId: 'cred-1' });
+    expect(softphoneCarrier(null, numbers, '+919000000001')).toEqual({ provider: 'voicelink', telephonyCredentialId: null });
+  });
+
+  it('untagged, a caller ID not among the numbers (or with no carrier): nothing named, the bridge default', () => {
+    expect(softphoneCarrier(null, numbers, '+447700900000')).toEqual({});
+    expect(softphoneCarrier(null, [{ phone_number: '+447700900000' }], '+447700900000')).toEqual({});
   });
 });

@@ -12,15 +12,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { repo } = vi.hoisted(() => ({ repo: { mapForCampaign: vi.fn() } }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({ agencyAgentCallerIdRepository: repo }));
+// PL13: which of a pinned campaign's stored caller IDs are still active on its carrier account.
+const { phoneAssignments } = vi.hoisted(() => ({ phoneAssignments: { findCredentialNumbersForAccount: vi.fn() } }));
+vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () => ({
+  tenantPhoneAssignmentRepository: phoneAssignments,
+}));
 
 import { DedicatedCallerIdCache } from '../../../src/agency/pacing/dedicated-caller-ids.js';
 import { PACING_CACHE_TTL_MS } from '../../../src/agency/pacing/read-cache.js';
+import { invalidateDialableCallerIds } from '../../../src/agency/campaign-dialability.js';
 
 const POOL = ['+14155550100', '+14155550101', '+14155550102'];
-const CAMPAIGN = { id: 'camp-1', caller_ids: POOL };
+const CAMPAIGN = { id: 'camp-1', tenant_id: 't1', account_id: 'a1', telephony_credential_id: null, caller_ids: POOL };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  invalidateDialableCallerIds();
   repo.mapForCampaign.mockResolvedValue(new Map());
 });
 
@@ -121,11 +128,53 @@ describe('DedicatedCallerIdCache.callerIdForContact (DN2)', () => {
   it('a number the campaign no longer has is ignored; no usable caller ID at all is null', async () => {
     repo.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550999']]));
     expect(POOL).toContain(await cache.callerIdForContact(CAMPAIGN, 'u1'));
-    expect(await cache.callerIdForContact({ id: 'camp-1', caller_ids: [' '] }, 'u1')).toBeNull();
+    expect(await cache.callerIdForContact({ ...CAMPAIGN, caller_ids: [' '] }, 'u1')).toBeNull();
   });
 
   it('a failed read rejects (the caller answers an error, never a rotation number)', async () => {
     repo.mapForCampaign.mockRejectedValueOnce(new Error('connection reset'));
     await expect(cache.callerIdForContact(CAMPAIGN, 'u1')).rejects.toThrow('connection reset');
+  });
+});
+
+/**
+ * The agent's own call and the wrap-up redial (`callerIdForContact`) decide over the campaign's
+ * DIALABLE caller IDs (PL13): on a campaign pinned to a tenant's carrier account, a dedicated or
+ * sticky number the account no longer has is not used, and the rotation is the dialable pool
+ * minus the dedicated numbers.
+ */
+describe('DedicatedCallerIdCache.callerIdForContact over the dialable pool (DN2 with PL13)', () => {
+  const cache = new DedicatedCallerIdCache();
+  const CRED = '11111111-1111-4111-8111-111111111111';
+  const PINNED = { ...CAMPAIGN, telephony_credential_id: CRED };
+
+  it('a pinned campaign whose dedicated number was retired: the owner\'s contact dials from the rotation', async () => {
+    repo.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
+    phoneAssignments.findCredentialNumbersForAccount.mockResolvedValue(['+14155550100', '+14155550102']);
+    expect(['+14155550100', '+14155550102']).toContain(await cache.callerIdForContact(PINNED, 'u1'));
+    // The wrap-up redial's sticky number, retired too, is not reused.
+    invalidateDialableCallerIds();
+    phoneAssignments.findCredentialNumbersForAccount.mockResolvedValue(['+14155550102']);
+    expect(await cache.callerIdForContact(PINNED, 'u2', { sticky: '+14155550100' })).toBe('+14155550102');
+    expect(phoneAssignments.findCredentialNumbersForAccount).toHaveBeenCalledWith('t1', 'a1', CRED, POOL);
+  });
+
+  it('a pinned campaign whose dedicated number is live: the owner\'s contact dials from it, others never do', async () => {
+    repo.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
+    phoneAssignments.findCredentialNumbersForAccount.mockResolvedValue(['+14155550101', '+14155550102']);
+    expect(await cache.callerIdForContact(PINNED, 'u1')).toBe('+14155550101');
+    expect(await cache.callerIdForContact(PINNED, 'u2')).toBe('+14155550102');
+  });
+
+  it('a pinned campaign with nothing dialable left: null (the path refuses `no_caller_id`)', async () => {
+    repo.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
+    phoneAssignments.findCredentialNumbersForAccount.mockResolvedValue([]);
+    expect(await cache.callerIdForContact(PINNED, 'u1')).toBeNull();
+  });
+
+  it('a service-account campaign is unchanged: the dedicated number while stored, no carrier-account read', async () => {
+    repo.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
+    expect(await cache.callerIdForContact(CAMPAIGN, 'u1')).toBe('+14155550101');
+    expect(phoneAssignments.findCredentialNumbersForAccount).not.toHaveBeenCalled();
   });
 });

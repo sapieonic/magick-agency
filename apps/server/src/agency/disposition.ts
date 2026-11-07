@@ -160,7 +160,7 @@ export function dispositionErrorMessage(code: AgencyActionErrorCode): string {
     case 'not_your_attempt':
       return 'This call was handled by another agent.';
     case 'unknown_disposition_code':
-      return 'That disposition code is not in this campaign\'s catalog.';
+      return 'That disposition code is not in this campaign\'s catalogue.';
     case 'invalid_dnc_scope':
       return 'The do-not-call scope must be "campaign" or "tenant".';
     case 'note_required':

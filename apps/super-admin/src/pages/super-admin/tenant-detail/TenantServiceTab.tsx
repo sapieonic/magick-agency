@@ -1,17 +1,20 @@
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Gauge, PhoneOff, Save, SlidersHorizontal } from 'lucide-react';
 import {
   updateAccountConcurrency, getAccountConcurrency, listTelephonyProviders, updateProviderConcurrency,
+  listTelephonyCredentials,
 } from '../../../api/super-admin';
 import type {
   AccountConcurrencyDetail, TenantAccountWithConcurrency,
 } from '@magick-agency/contracts/api/platform/super-admin';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
-import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { operatorCarrierName } from '../../../utils/carrierName';
 import { AccountSettingsPanel } from './AccountSettingsPanel';
+import { carrierAllocationGaps } from './carrierAllocationGaps';
 import styles from '../SATenantDetailPage.module.css';
 
 /** The legacy flat totals, by account id, that the inputs start from. */
@@ -40,6 +43,8 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
   const [concurrencyTarget, setConcurrencyTarget] = useState<TenantAccountWithConcurrency | null>(null);
   const [concurrencyDetail, setConcurrencyDetail] = useState<AccountConcurrencyDetail | null>(null);
   const [providerConcurrencyEdits, setProviderConcurrencyEdits] = useState<Record<string, number>>({});
+  // The catalog's display names, by provider, for the allocation editor's carrier names.
+  const [providerDisplayNames, setProviderDisplayNames] = useState<Record<string, string>>({});
   const [concurrencyDetailLoading, setConcurrencyDetailLoading] = useState(false);
   const [savingProviderConcurrency, setSavingProviderConcurrency] = useState(false);
   const [providerConcurrencyError, setProviderConcurrencyError] = useState<string | null>(null);
@@ -55,6 +60,15 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
     const timers = savedNoteTimers.current;
     return () => { Object.values(timers).forEach(clearTimeout); };
   }, []);
+
+  // The carriers this tenant dials on with its own active carrier accounts, for the
+  // missing-allocation warning (PL14). Best effort: a failed read shows no warning.
+  const fetchCredentials = useCallback(() => listTelephonyCredentials({ tenant_id: tenantId }), [tenantId]);
+  const credentials = useAsyncResource(fetchCredentials, { initialData: [] });
+  const credentialProviders = credentials.error
+    ? []
+    : credentials.data.filter((c) => c.status === 'active').map((c) => c.provider);
+  const allocationGaps = carrierAllocationGaps(accounts, credentialProviders);
 
   // Re-seed the legacy-total inputs on every (re)load of the accounts, during
   // render rather than in an effect, so no edit can land between the new
@@ -124,6 +138,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
       catalog.filter(p => p.status === 'active').forEach(p => { edits[p.name] = 0; });
       detail.allocation.providers.forEach(row => { edits[row.provider] = row.max_concurrent_calls; });
       setProviderConcurrencyEdits(edits);
+      setProviderDisplayNames(Object.fromEntries(catalog.map(p => [p.name, p.display_name])));
     } catch (err) {
       if (requestSequence !== concurrencyRequestSequence.current) return;
       setProviderConcurrencyError(err instanceof Error ? err.message : 'Failed to load provider allocations');
@@ -235,6 +250,22 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
           Allocate concurrency by provider. The account total is the sum of provider allocations,
           while legacy accounts retain their existing flat limit until migrated.
         </p>
+        {allocationGaps.length > 0 && (
+          <div className={styles.error} role="alert" data-testid="carrier-allocation-gaps">
+            <p>
+              These accounts have no capacity on a carrier this tenant has an active carrier account on.
+              Their campaigns on that carrier cannot start, and the tenant is told to contact support.
+              Add an allocation for the carrier, or move the account to a legacy total.
+            </p>
+            <ul>
+              {allocationGaps.map((gap) => (
+                <li key={`${gap.accountId}:${gap.provider}`}>
+                  {gap.accountName}: no allocation for {operatorCarrierName(gap.provider)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {accountsLoading ? (
             <LoadingSpinner size="sm" />
           ) : accounts.length === 0 ? (
@@ -261,7 +292,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
                           <div className={styles.providerSummary}>
                             {acc.concurrency.providers.map(row => (
                               <span key={row.provider}>
-                                {telephonyProviderAlias(row.provider)}: {row.max_concurrent_calls}
+                                {operatorCarrierName(row.provider)}: {row.max_concurrent_calls}
                               </span>
                             ))}
                           </div>
@@ -410,7 +441,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
             )}
             {concurrencyDetail.utilization?.status === 'unavailable' && (
               <div className={styles.warningBox} role="status">
-                Live utilization is unavailable. Capacity is shown as unknown and saving should be deferred until telemetry recovers.
+                Live utilisation is unavailable. Capacity is shown as unknown and saving should be deferred until telemetry recovers.
               </div>
             )}
             <div className={styles.table}>
@@ -431,8 +462,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
                     return (
                       <tr key={name}>
                         <td>
-                          <strong>{telephonyProviderAlias(name)}</strong>
-                          <div className={styles.providerMeta}>{name}</div>
+                          <strong>{operatorCarrierName(name, providerDisplayNames[name])}</strong>
                         </td>
                         <td>
                           <input
@@ -446,7 +476,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
                               setProviderConcurrencyEdits(current => ({ ...current, [name]: value }));
                               setProviderConcurrencyError(null);
                             }}
-                            aria-label={`Concurrency allocated to ${telephonyProviderAlias(name)}`}
+                            aria-label={`Concurrency allocated to ${operatorCarrierName(name, providerDisplayNames[name])}`}
                           />
                         </td>
                         <td>{utilization?.in_use === null || utilization === undefined ? 'Unknown' : utilization.in_use}</td>

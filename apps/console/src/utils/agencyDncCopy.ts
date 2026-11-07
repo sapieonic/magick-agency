@@ -97,9 +97,9 @@ export function dncTenantConfirmHint(phoneE164: string): string {
 export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): string {
   if (scope === 'campaign') {
     if (response.dnc_recorded) {
-      return `${response.phone_e164} won’t be dialed again by this campaign. It’s on this campaign’s Do Not Call list.`;
+      return `${response.phone_e164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.`;
     }
-    return `${response.phone_e164} won’t be dialed again by this campaign’s current contacts. We’re still adding it to this campaign’s Do Not Call list — until that lands a new upload could bring the number back, so check the list.`;
+    return `${response.phone_e164} won’t be dialled again by this campaign’s current contacts. We’re still adding it to this campaign’s Do Not Call list — until that lands a new upload could bring the number back, so check the list.`;
   }
   if (response.dnc_recorded) {
     /*
@@ -113,7 +113,7 @@ export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): st
     */
     return `${response.phone_e164} is on your Do Not Call list. No agency campaign in this workspace will dial it again.`;
   }
-  return `${response.phone_e164} won’t be dialed again by this campaign. We’re still adding it to your workspace Do Not Call list — check the list if you need to be sure.`;
+  return `${response.phone_e164} won’t be dialled again by this campaign. We’re still adding it to your workspace Do Not Call list — check the list if you need to be sure.`;
 }
 
 /**

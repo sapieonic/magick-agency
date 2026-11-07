@@ -525,7 +525,7 @@ export function AgencyCampaignAttemptsPage() {
           description={
             filtered
               ? 'Widen the date range or clear the filters to see every attempt.'
-              : 'This campaign has not dialed anyone yet. Attempts appear here as they are placed, '
+              : 'This campaign has not dialled anyone yet. Attempts appear here as they are placed, '
                 + 'including the ones that never reach an agent.'
           }
         />

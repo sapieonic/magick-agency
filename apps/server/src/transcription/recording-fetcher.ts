@@ -1,6 +1,7 @@
 /*
- * The recording fetch is unauthenticated and gated by the VoiceLink recording-host
- * allow-list.
+ * The recording fetch is gated by a recording-host allow-list and carries the headers
+ * the call's carrier needs (`telephony/recording-access.ts`, B21): none for VoiceLink,
+ * the tenant's credential for a BYOC carrier, sent to the first URL only.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import { fetchWithAllowedRedirects, RecordingHostRefusedError } from '../utils/recording-proxy.js';
@@ -14,12 +15,17 @@ export interface FetchRecordingOptions {
   /** Overall request timeout (ms). */
   timeoutMs: number;
   /**
-   * VoiceLink recording hosts this fetch may touch. The URL's PARSED
-   * hostname must be exact-or-subdomain of an entry; an empty list refuses every
-   * fetch. Required rather than defaulted: a default that type-checks everywhere
-   * audits nowhere, and the wrong default here is an SSRF.
+   * Recording hosts this fetch may touch (the call's `RecordingAccess`). The URL's
+   * PARSED hostname must be exact-or-subdomain of an entry (exact only with
+   * `exactHosts`); an empty list refuses every fetch. Required rather than defaulted: a
+   * default that type-checks everywhere audits nowhere, and the wrong default here is
+   * an SSRF.
    */
   allowedHosts: readonly string[];
+  /** Headers for the first request only (a BYOC credential); a redirect hop never gets them. */
+  headers?: Readonly<Record<string, string>>;
+  /** Match hosts exactly, no subdomains (set whenever `headers` carries a credential). */
+  exactHosts?: boolean;
 }
 
 export interface FetchedRecording {
@@ -33,13 +39,14 @@ export interface FetchedRecording {
  * Every other recording path *streams* to a client (`proxyCallRecording` returns
  * `upstream.body`). This is the one buffering consumer, so it must be defensive:
  *
- *  - Sends NO credentials: a VoiceLink recording is a public carrier-hosted MP3.
- *    Instead, the URL's parsed hostname must be on the
- *    configured VoiceLink recording-host allow-list — `recording_url` is persisted
- *    from an unauthenticated carrier webhook, so it is attacker-reachable and an
- *    unchecked fetch would be an SSRF. A host off the list is a PERMANENT failure.
- *    Redirects are followed by hand (max 3), each hop re-checked: `redirect: 'follow'`
- *    would let an allow-listed host bounce the fetch to an internal address.
+ *  - Sends only the headers the call's access gives it (none for VoiceLink, whose
+ *    recordings are public carrier-hosted MP3s; the tenant's credential for a BYOC
+ *    carrier), to the first URL only. The URL's parsed hostname must be on the
+ *    access's allow-list: `recording_url` is persisted from a carrier webhook, so it
+ *    is attacker-reachable and an unchecked fetch would be an SSRF. A host off the
+ *    list is a PERMANENT failure. Redirects are followed by hand (max 3), each hop
+ *    re-checked and stripped of every header but Range: `redirect: 'follow'` would
+ *    let an allow-listed host bounce the fetch (and the credential) elsewhere.
  *  - Streams the body with a running byte count and ABORTS the moment `maxBytes`
  *    is exceeded — never `await res.arrayBuffer()` on an unbounded remote response.
  *  - Uses `AbortSignal.timeout(timeoutMs)` so a hung upstream can't stall a worker.
@@ -67,13 +74,17 @@ export async function fetchRecordingBytes(
     // Allow-list checked on the first URL AND every redirect hop (SSRF).
     res = await fetchWithAllowedRedirects(
       recordingUrl,
-      { signal: AbortSignal.timeout(opts.timeoutMs) },
+      {
+        signal: AbortSignal.timeout(opts.timeoutMs),
+        ...(opts.headers ? { headers: { ...opts.headers } } : {}),
+      },
       opts.allowedHosts,
+      { exactHosts: opts.exactHosts === true },
     );
   } catch (err) {
     if (err instanceof RecordingHostRefusedError) {
       // Non-retryable: no number of attempts makes an off-list host acceptable.
-      log.warn({ host: err.host, reason: err.reason, hop: err.hop }, 'Recording URL is not on the VoiceLink recording-host allow-list; refusing to fetch');
+      log.warn({ host: err.host, reason: err.reason, hop: err.hop }, 'Recording URL is not on the recording-host allow-list; refusing to fetch');
       throw new TranscriptionError('TRANSCRIPTION_FAILED', err.message, false);
     }
     // AbortSignal.timeout rejects with a TimeoutError (name === 'TimeoutError').

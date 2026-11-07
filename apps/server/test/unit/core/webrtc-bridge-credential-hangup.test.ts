@@ -10,9 +10,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // the teardown logs, the row is finalized, and the customer's phone keeps ringing.
 // A null id stays on `get(provider)`, so today's VoiceLink calls are unchanged.
 //
-// A carrier module with `answeredHangup: 'rest'` is registered under `plivo` here
-// (no such module exists yet); it reuses VoiceLink's media protocol, which these
-// cases never exercise past session construction.
+// A carrier module with `answeredHangup: 'rest'` and no stream negotiation is registered
+// under `plivo` here; it reuses VoiceLink's media protocol, which these cases never
+// exercise past session construction. The real Plivo module's dial and teardown are
+// `webrtc-bridge-plivo.test.ts`'s.
 //
 // Mock harness mirrors webrtc-bridge-ring-cancel.test.ts (project convention: no
 // shared test utilities).
@@ -31,6 +32,7 @@ vi.mock('../../../src/config/index.js', () => ({
     redis: { keyPrefix: '' },
     telephony: {
       voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
+      plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
     },
     telephonyCredentials: { keyring: '', activeKeyId: '' },
   },
@@ -178,10 +180,10 @@ describe('hangupProviderLeg resolves the account the call was placed on', () => 
 
     expect(registry.getForCredentialId).toHaveBeenCalledWith('plivo', 'cred-1', 'call_control', 'tenant-a');
     expect(byocAdapter.endCall).toHaveBeenCalledWith('pcid-1');
-    // The hangup never went to the service's own account.
+    // The hangup never went to the service's own account, and neither did the dial.
     expect(envAdapter.endCall).not.toHaveBeenCalled();
-    // The dial's own lookup only (dialing on a credential is not built yet).
-    expect(registry.get).toHaveBeenCalledTimes(1);
+    expect(registry.getForCredentialId).toHaveBeenCalledWith('plivo', 'cred-1', 'dial', 'tenant-a');
+    expect(registry.get).not.toHaveBeenCalled();
     expect(mgr.getSession('call-1')).toBeUndefined();
   });
 
@@ -200,9 +202,10 @@ describe('hangupProviderLeg resolves the account the call was placed on', () => 
 
   it('a credential that does not resolve is logged at ERROR and never falls back to the service`s own account', async () => {
     rowCredentialId = 'cred-1';
-    registry.getForCredentialId.mockRejectedValueOnce(new Error('Telephony credential cred-1 could not be resolved'));
     const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
     await mgr.createBridgedCall({ ...BRIDGED, provider: 'plivo', browserSocket: fakeWs() as any });
+    // The dial resolved; the credential stops resolving before the teardown.
+    registry.getForCredentialId.mockRejectedValueOnce(new Error('Telephony credential cred-1 could not be resolved'));
 
     await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
 

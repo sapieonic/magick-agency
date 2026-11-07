@@ -7,7 +7,10 @@
  *    (`abandonmentWindow`: ended calls answered in the last 24 h, the guardrail's predicate);
  *    `ceiling_pct` the campaign's; `auto_pauses` the guardrail's `agency_campaign.auto_paused`
  *    audit rows in range with the rate it measured and the ceiling it held (at most
- *    {@link AUTO_PAUSES_MAX}, oldest first).
+ *    {@link AUTO_PAUSES_MAX}, oldest first). The carrier-account pause writes the same event
+ *    (`carrier-account-pause.ts`, reason `carrier_auth`, `carrier_account_unavailable` or
+ *    `carrier_refusing_calls`); its rows are not the guardrail's and are left out
+ *    ({@link isGuardrailPause}).
  *  - `predial_blocks`, `concurrency_limit_minutes`, `our_fault_retired`, `stalls`,
  *    `pacing_history_since`: `pacingHistory` (the stall rule is its module header). It starts the
  *    day the pacing history shipped; `pacing_history_since` says when.
@@ -32,6 +35,17 @@ export const AUTO_PAUSES_MAX = 200;
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+/**
+ * Whether an `agency_campaign.auto_paused` row is the abandonment guardrail's: reason
+ * `abandonment_ceiling`, or no reason at all (the guardrail's oldest rows predate it). Any other
+ * reason is another writer's (the carrier-account pause), which measured no rate and held no
+ * ceiling.
+ */
+export function isGuardrailPause(eventData: Record<string, unknown>): boolean {
+  const reason = eventData['reason'];
+  return reason === undefined || reason === null || reason === 'abandonment_ceiling';
+}
+
 /** The guardrail's auto-pauses in `[from, to)`, oldest first (`audit_logs`, the activity trail's own read). */
 async function autoPauses(campaign: AgencyCampaignRecord, range: ServedInsightsRange): Promise<AgencyInsightsHealth['abandonment']['auto_pauses']> {
   const { rows } = await auditRepository.findFiltered({
@@ -47,10 +61,12 @@ async function autoPauses(campaign: AgencyCampaignRecord, range: ServedInsightsR
   return rows
     // `findFiltered`'s `to` is inclusive; the range is not.
     .filter((r) => new Date(r.timestamp).getTime() < range.to.getTime())
-    .map((r) => {
-      const data = (r.event_data ?? {}) as Record<string, unknown>;
-      return { at: new Date(r.timestamp).toISOString(), measured_pct: num(data['measured_pct']), ceiling_pct: num(data['ceiling_pct']) };
-    })
+    // The carrier-account pauses share the event type. They are filtered here, after the limit:
+    // each one waits on a supervisor's resume, so a range never holds enough to crowd the
+    // guardrail's out of AUTO_PAUSES_MAX.
+    .map((r) => ({ at: new Date(r.timestamp).toISOString(), data: (r.event_data ?? {}) as Record<string, unknown> }))
+    .filter((r) => isGuardrailPause(r.data))
+    .map(({ at, data }) => ({ at, measured_pct: num(data['measured_pct']), ceiling_pct: num(data['ceiling_pct']) }))
     .sort((a, b) => a.at.localeCompare(b.at));
 }
 

@@ -8,7 +8,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  * The defect this closes: the index used to be a fixed
  * `<Navigate to="/agency/campaigns">`, and that list floors at
  * `agency.campaigns.read` (`viewer`, 10). An `agent` is level 5, so the one
- * role the dialer was built for opened the dialer's own workspace and got a
+ * role the dialer was built for opened the dialler's own workspace and got a
  * permission error.
  */
 

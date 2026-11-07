@@ -277,7 +277,7 @@ export const SPINE_PRIVACY_NOTE =
 /** What the attempts view is, in one line, for the page description. */
 export const ATTEMPTS_DESCRIPTION =
   'Every dial this campaign placed, newest first — including the ones that never reached an agent. '
-  + 'This is the operational record: what was dialed, to whom, and what happened.';
+  + 'This is the operational record: what was dialled, to whom, and what happened.';
 
 /**
  * ── "Never dialed because they were suppressed" ─────────────────────────────
@@ -299,4 +299,4 @@ export const ATTEMPTS_DESCRIPTION =
  */
 export const ROSTER_DESCRIPTION =
   'Every contact on this campaign and where each one got to — including the ones nothing will '
-  + 'dial again, whether they were closed by an agent or never dialed at all.';
+  + 'dial again, whether they were closed by an agent or never dialled at all.';

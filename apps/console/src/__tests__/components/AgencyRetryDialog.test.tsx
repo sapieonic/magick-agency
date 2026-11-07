@@ -22,6 +22,7 @@ import type { AgencyRetrySelector } from '../../types/agency-spine';
  *    never call one customer at the same time.
  */
 
+const carrierMocks = vi.hoisted(() => ({ listAgencyCarriers: vi.fn(async () => [] as unknown[]) }));
 const mocks = vi.hoisted(() => ({
   retryPreview: vi.fn(),
   createRetry: vi.fn(),
@@ -34,6 +35,9 @@ vi.mock('../../api/agencyCampaigns', () => ({
   createRetry: mocks.createRetry,
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The dialog reads the carriers list for the parent's carrier account (its label, and
+// whether it is still active).
+vi.mock('../../api/agencyCarriers', () => ({ listAgencyCarriers: carrierMocks.listAgencyCarriers }));
 // The caller-ID override renders `CallerIdPicker`, which reads the account's
 // numbers. Mocked at the hook so the dialog's own behaviour is what is under
 // test — the picker has its own suite.
@@ -586,7 +590,7 @@ describe('the outcome breakdown never shows a raw bucket key', () => {
     renderDialog();
     const block = await screen.findByTestId('retry-by-outcome');
     expect(block.textContent).not.toContain('__none__');
-    expect(block.textContent).toContain('Never dialed');
+    expect(block.textContent).toContain('Never dialled');
   });
 
   it('still shows the raw key nowhere else in the dialog', async () => {
@@ -640,5 +644,26 @@ describe('the caller-ID picker cannot be emptied into a silent inheritance', () 
       expect(button.getAttribute('aria-disabled')).toBe('true');
     });
     expect(document.body.textContent).toContain('Choose at least one caller ID');
+  });
+});
+
+describe('the parent’s carrier account in the caller-ID picker', () => {
+  const CRED = '44444444-4444-4444-8444-444444444444';
+  const pinned = { telephony_provider: 'plivo', telephony_credential_id: CRED };
+
+  it('is named by its label from the carriers list', async () => {
+    carrierMocks.listAgencyCarriers.mockResolvedValueOnce([
+      { telephony_provider: 'plivo', telephony_credential_id: CRED, label: 'Acme main', status: 'active' },
+    ]);
+    renderDialog({ campaign: pinned });
+    expect(await screen.findByText('No numbers on Pravah (Acme main) are assigned to this account.')).toBeTruthy();
+  });
+
+  it('says the account is not active when the list no longer offers it', async () => {
+    carrierMocks.listAgencyCarriers.mockResolvedValueOnce([
+      { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' },
+    ]);
+    renderDialog({ campaign: pinned });
+    expect(await screen.findByText('This campaign’s Pravah carrier account is not active.')).toBeTruthy();
   });
 });

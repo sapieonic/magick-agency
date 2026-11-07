@@ -322,7 +322,7 @@ export const OUR_FAULT_RETRY_COPY =
  */
 export const OUR_FAULT_ZERO_WARNING =
   'With 0, one of these before the call connects retires the contact permanently — it is '
-  + 'never dialed again, and the customer’s own retry allowance is left unused.';
+  + 'never dialled again, and the customer’s own retry allowance is left unused.';
 
 export const FIXED_ZERO_COPY: Record<'invalid' | 'connected', string> = {
   invalid: 'An invalid number does not become valid on a retry.',

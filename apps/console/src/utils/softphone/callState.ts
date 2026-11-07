@@ -191,7 +191,7 @@ export function describeSoftphoneRail(input: {
     case 'dialing':
       return {
         tone: 'warning',
-        label: `Dialing ${number}`,
+        label: `Dialling ${number}`,
         detail: `${capitalise(from)} · connecting your line first`,
         timerFrom: call?.dialed_at ?? null,
       };
@@ -231,7 +231,7 @@ export function describeSoftphoneRail(input: {
         tone: 'info',
         label: 'Ready to dial',
         detail: fromCampaign
-          ? `${lastLine}Type a number or redial a recent call. Soft-phone calls are not paced, and the campaign's dialer does not reserve you here.`
+          ? `${lastLine}Type a number or redial a recent call. Soft-phone calls are not paced, and the campaign's dialler does not reserve you here.`
           : `${lastLine}Type a number or redial a recent call.`,
         timerFrom: null,
       };

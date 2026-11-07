@@ -71,6 +71,7 @@ import { LeaderLease, LEADER_RENEW_MS } from './pacing/leader-lease.js';
 import { InFlight } from './pacing/in-flight.js';
 import { resolveCallerId, usableCallerIds, type DedicatedCallerIds } from './pacing/caller-id-pool.js';
 import { DedicatedCallerIdCache } from './pacing/dedicated-caller-ids.js';
+import { dialableCallerIds } from './campaign-dialability.js';
 import { CampaignAnnouncer } from './pacing/campaign-announcer.js';
 import {
   getPacingInvalidationBus,
@@ -1409,6 +1410,21 @@ export class PacingEngine {
         idle = 'no_caller_ids';
         return;
       }
+      // The pool the dials rotate (PL13): on a tenant's own carrier account, only the
+      // stored numbers still active on it and available to the account. A service-account
+      // campaign's is `usableCallerIds`, unread. Before reserving, so a failed read here
+      // has nothing to unwind.
+      const dialPool = campaign.status === 'running' ? await dialableCallerIds(campaign) : [];
+      if (campaign.status === 'running' && dialPool.length === 0) {
+        // Same shape as the empty pool: nothing to dial until a number comes back (a sync,
+        // which the safety tick picks up) or the supervisor edits the pool. The health
+        // strip names it (`no_dialable_caller_ids`).
+        this.recordIdle(campaign.id, campaign.tenant_id, 'no_caller_ids');
+        this.noteMisconfigured(campaign, 'has no caller ID still available on its carrier account — every tick will dial nothing until one is');
+        quiescent = true;
+        idle = 'no_caller_ids';
+        return;
+      }
       // Reached only when the pool is genuinely usable, so this cannot wipe the
       // latch out from under a campaign that is still broken.
       this.clearStuck(campaign);
@@ -1444,7 +1460,7 @@ export class PacingEngine {
           // up in that window. Reserving and dialing past this point would place
           // calls without a lease.
           if (!this.mayDial(campaignId)) return;
-          const dialed = await this.dialUpTo(campaign, plan, hold, round.fresh);
+          const dialed = await this.dialUpTo(campaign, plan, hold, dialPool, round.fresh);
           if (dialed > 0) return; // did work; completion is only checked on an idle tick
         } else if (plan.idle === 'nothing_due' || plan.idle === 'no_contacts') {
           // Agents are available and nothing is due for them: time passing makes contacts
@@ -1971,7 +1987,13 @@ export class PacingEngine {
    * **The dedicated caller IDs are read before either** (step 0): a read that fails then
    * costs nothing to unwind. `fresh` (a forced tick) reads them through the cache.
    */
-  private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan, hold: DialHold, fresh: boolean): Promise<number> {
+  private async dialUpTo(
+    campaign: AgencyCampaignRecord,
+    plan: TickPlan,
+    hold: DialHold,
+    dialPool: readonly string[],
+    fresh: boolean,
+  ): Promise<number> {
     // ── 0. The campaign's dedicated caller IDs (DN4): read ONCE per dialling batch, from the
     //       cache (`pacing/dedicated-caller-ids.ts`; invalidated by `dedications_changed`, so
     //       the read is a database round trip only after a PUT, a DELETE, an unstaff or the
@@ -1979,6 +2001,10 @@ export class PacingEngine {
     //       else the rotation's: `resolveCallerId` per contact below (DN2), the rule the other
     //       dial paths apply through `DedicatedCallerIdCache.callerIdForContact`; pacing applies
     //       it itself because the batch shares one read and the round-robin offset moves.
+    //       The pool it decides over is `dialPool`, the tick's DIALABLE caller IDs (PL13: on a
+    //       tenant's own carrier account, only the stored numbers still active on it), so a
+    //       dedicated number the account no longer has falls back to the rotation, and the
+    //       rotation is that pool minus the dedicated numbers (DN2/DN3 over PL13).
     //
     //       BEFORE any agent is reserved or contact claimed: a failed read (a database blip)
     //       dials nothing, as dialling an owned contact from a rotation number would break the
@@ -2059,8 +2085,6 @@ export class PacingEngine {
     }
     const contacts = pairs.map((p) => p.contact);
     const sessions = pairs.map((p) => p.sessionId);
-    const usable = usableCallerIds(campaign);
-
     let dialed = 0;
 
     for (const [index, { sessionId, contact }] of pairs.entries()) {
@@ -2136,7 +2160,7 @@ export class PacingEngine {
       // pool cannot be answered for this contact and cannot be answered for the ones
       // claimed alongside it either, so the whole remainder is returned rather than
       // half of it being carried out by a throw.
-      const callerId = resolveCallerId({ usable, dedicated, ownerUserId: contact.assigned_user_id, offset: dialed });
+      const callerId = resolveCallerId({ usable: dialPool, dedicated, ownerUserId: contact.assigned_user_id, offset: dialed });
       if (!callerId) {
         await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         // Latched, like the top-of-tick guard: this branch is only reachable if the

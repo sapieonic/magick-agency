@@ -193,6 +193,7 @@
       "dispositioned_at": null,
       "dispositioned_on_behalf": false,
       "webrtc_call_id": "7f8e9d0c-1b2a-4c3d-8e4f-5a6b7c8d9e0f",
+      "can_cancel_ringing": false,
       "dialed_at": "2026-11-01T08:02:11.000Z",
       "answered_at": null,
       "bridged_at": null,

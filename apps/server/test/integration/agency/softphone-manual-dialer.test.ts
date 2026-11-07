@@ -153,6 +153,18 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
   });
 
+  it.each([
+    ['carrier_rate_limited', 503, 'concurrency_limit'],
+    ['telephony_credential_unavailable', 409, 'carrier_account_unavailable'],
+    ['carrier_auth_rejected', 502, 'carrier_account_unavailable'],
+  ] as const)('a %s refusal answers %s and is no dial: the claim back to pending uncharged', async (code, status, failure) => {
+    const { contact, call } = await claimedCall({ contact: { attempt_count: 1 } });
+    bridge.createBridgedCall.mockRejectedValueOnce(new WebRtcCallError('refused', code, status));
+    expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: false, failure });
+    expect(await callRow(call.id as string)).toMatchObject({ state: 'ended', outcome: 'failed', dialed_at: null });
+    expect(await contactRow(contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 1, our_fault_attempts: 0 });
+  });
+
   /**
    * The bridge's real order for a dial that fails before the carrier is asked (the row
    * INSERT, the carrier tokens, the carrier request's own inputs: a missing webhook base, a

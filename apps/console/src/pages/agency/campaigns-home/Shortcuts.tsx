@@ -35,7 +35,7 @@ const SHORTCUTS: Shortcut[] = [
   },
   {
     label: 'Do Not Call',
-    hint: 'Numbers that are never dialed',
+    hint: 'Numbers that are never dialled',
     to: '/agency/dnc',
     icon: PhoneOff,
     permission: 'agency.dnc.read',
@@ -89,7 +89,7 @@ export function Shortcuts({ role }: { role: Parameters<typeof hasPermission>[0] 
 }
 
 const RULES = [
-  'A campaign starts as a draft. Nothing is dialed until you start it.',
+  'A campaign starts as a draft. Nothing is dialled until you start it.',
   'Several campaigns can run at once. They share your account’s lines.',
   'Stopping a campaign lets calls already in progress finish.',
 ];

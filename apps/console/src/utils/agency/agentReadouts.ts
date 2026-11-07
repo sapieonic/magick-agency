@@ -115,7 +115,7 @@ export function headlineTrio(totals: AgencyAgentStatsTotals | undefined): Headli
         the agent — so an agent reading the old clause would reasonably conclude
         the tile was counting calls that came in.
       */
-      hint: 'Calls the dialer placed and handed to you, whether or not anyone picked up.',
+      hint: 'Calls the dialler placed and handed to you, whether or not anyone picked up.',
       value: agentCount(totals?.attempts),
       known: typeof totals?.attempts === 'number',
     },

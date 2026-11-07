@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { AppContext } from '../app-context.js';
 import { webrtcRecordingsRoutes } from './routes/webrtc-recordings.routes.js';
+import { createRecordingAccessResolver, processCredentialSource } from '../telephony/recording-access.js';
 
 /**
  * The analysis HTTP surface.
@@ -22,6 +23,14 @@ export interface AnalysisPluginOptions {
 export const analysisPlugin: FastifyPluginAsync<AnalysisPluginOptions> = async (app, opts) => {
   await app.register(webrtcRecordingsRoutes, {
     prefix: '/api/v1/webrtc-recordings',
-    allowedHosts: opts.ctx?.config.voicelinkRecording.allowedHosts ?? [],
+    // No ctx (a routing-only app): the route's own refuse-all default.
+    ...(opts.ctx
+      ? {
+        resolveRecordingAccess: createRecordingAccessResolver({
+          voicelinkHosts: opts.ctx.config.voicelinkRecording.allowedHosts,
+          credentials: processCredentialSource,
+        }),
+      }
+      : {}),
   });
 };

@@ -1,4 +1,4 @@
-// Real Postgres: migrations/0019_outcome_dispositions.sql (docs/decisions.md, OD1–OD8).
+// Real Postgres: migrations/0022_outcome_dispositions.sql (docs/decisions.md, OD1–OD8).
 // globalSetup has applied every migration. Pins the campaign mapping column (an object,
 // `{}` by default, so an existing campaign maps nothing), the attempt's automatic-outcome
 // column (only on an unanswered outcome, beside a write-up's own code), the attempts CHECK
@@ -19,7 +19,7 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {} });
 
-const FILE = '0019_outcome_dispositions.sql';
+const FILE = '0022_outcome_dispositions.sql';
 
 async function column(table: string, name: string) {
   const { rows } = await pool().query<{ data_type: string; is_nullable: string; column_default: string | null; character_maximum_length: number | null }>(
@@ -31,7 +31,7 @@ async function column(table: string, name: string) {
   return rows[0];
 }
 
-describe('0019 — automatic outcomes for unanswered calls', () => {
+describe('0022 — automatic outcomes for unanswered calls', () => {
   it('agency_campaigns.outcome_dispositions is JSONB NOT NULL DEFAULT {}: an existing campaign maps nothing', async () => {
     expect(await column('agency_campaigns', 'outcome_dispositions')).toMatchObject({
       data_type: 'jsonb', is_nullable: 'NO', column_default: "'{}'::jsonb",
@@ -107,7 +107,7 @@ describe('0019 — automatic outcomes for unanswered calls', () => {
     await migrate('down', files.length - files.indexOf(FILE));
     try {
       const ledger = await pool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1');
-      expect(ledger.rows[0]!.name).toBe('0018_agent_caller_ids');
+      expect(ledger.rows[0]!.name).toBe(files[files.indexOf(FILE) - 1]!.replace(/\.sql$/, ''));
       expect(await column('agency_campaigns', 'outcome_dispositions')).toBeUndefined();
       expect(await column('agency_call_attempts', 'auto_disposition_code')).toBeUndefined();
     } finally {

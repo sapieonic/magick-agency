@@ -635,7 +635,7 @@ describe('the CSV preamble', () => {
 
   it.each([
     ['partition_bound' as const, '2026-05-01T00:00:00.000Z', 'records retained from 2026-05-01T00:00:00.000Z onward (source: partition_bound)'],
-    ['unbounded' as const, null, 'unbounded — the dialer reports no retention horizon for this campaign'],
+    ['unbounded' as const, null, 'unbounded — the dialler reports no retention horizon for this campaign'],
     ['unknown' as const, null, 'unknown (source: unknown)'],
   ])('renders the %s retention source', (source, earliestRetainedAt, expectedText) => {
     const lines = buildActivityCsvPreamble(preambleInput({
@@ -652,14 +652,14 @@ describe('the CSV preamble', () => {
   it('says retention is unknown rather than omitting the line when the dialer side carried none', () => {
     const lines = buildActivityCsvPreamble(preambleInput({ retention: null })).join('');
 
-    expect(lines).toContain('Retention: unknown — the dialer\'s retention horizon could not be determined');
+    expect(lines).toContain('Retention: unknown — the dialler\'s retention horizon could not be determined');
   });
 
   it('explains the source column legend', () => {
     const lines = buildActivityCsvPreamble(preambleInput()).join('');
 
     expect(lines).toContain("'master' rows are recorded by the console");
-    expect(lines).toContain("'core' rows are recorded by the dialer");
+    expect(lines).toContain("'core' rows are recorded by the dialler");
   });
 
   it('names its own RFC 4180 tradeoff and how to opt out', () => {

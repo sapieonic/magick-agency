@@ -173,7 +173,7 @@ describe('the merged trail', () => {
     expect(row('master:m-disp').getByText('Disposition filed')).toBeTruthy();
     expect(row('core:c-auto').getByText('Auto-paused')).toBeTruthy();
     expect(row('master:m-disp').getByText('Console')).toBeTruthy();
-    expect(row('core:c-auto').getByText('Dialer')).toBeTruthy();
+    expect(row('core:c-auto').getByText('Dialler')).toBeTruthy();
   });
 
   /**
@@ -240,7 +240,7 @@ describe('stating what is missing', () => {
     renderPage();
 
     const line = await screen.findByTestId('activity-retention');
-    expect(line.textContent).toMatch(/The dialer’s records go back to/);
+    expect(line.textContent).toMatch(/The dialler’s records go back to/);
     expect(line.textContent).toMatch(/2026/);
     // Scoped, not blanket: the horizon is derived from the dialer's partitions
     // and says nothing about how long the console keeps its own records.

@@ -409,6 +409,17 @@ its body parsed in P. Then:
   With no live session it can only take the late-terminal path
   (`persistLateVoicelinkTerminal`), which is correct: a call whose worker is gone has ended.
 
+Plivo's answer, status and recording callbacks (`POST /api/v1/webhooks/plivo/webrtc-{answer,
+status,recording}/:callId`, `api/routes/webhooks/plivo.ts`) are routed the same way, by
+`carrier.plivo_callback {kind, callId, token, url, params, headers}`: `url` is the public URL
+Plivo called (rebuilt by the dial's own builder, `carrierCallbackUrl`: the env base as written,
+the route, the call id and the request's query), `headers` only the two V3 signature headers, so
+W*k* runs `handlePlivoCallback` (token, then signature, then the bridge) on exactly what Plivo
+signed. The answer is `{statusCode, contentType, body}`, so the answer callback's XML crosses
+back. No hint: run in P. The worker gone: an answer callback is answered with the hangup XML
+(nothing can stream the call), a status or recording runs in P (the late path off the call
+row). A forwarded callback that fails or misses the 10 s deadline is a hangup (answer) or 503.
+
 ### 3.3 Answered, bridged, ended: back to pacing and the stats
 
 Everything the call does after the dial happens in W*k*, in process, as today:
@@ -521,9 +532,11 @@ runs. The worker trusts a command only from its parent channel.
 | `pacing.revoke` | event | `{campaignId \| null, upTo}` | — |
 | `core.inject` | req | `{method, url, headers, payload?}` | 15 s, then 504 |
 | `carrier.webhook` | req | `{callId, token, body}` | 10 s, then 503 |
+| `carrier.plivo_callback` | req | `{kind, callId, token, url, params, headers}` → `{statusCode, contentType, body}` | 10 s, then hangup XML (answer) or 503 |
 | `agent.return_reserved` | req | `{sessionId}` | 5 s, then `offline` write in P |
 | `station.broadcast` | event | `{campaignId, frame}` | — |
 | `concurrency.invalidate` | event | `{tenantId, accountId}`: drop the provider guard's 5 s `limitCache` and the degraded-mode local cache, as the seam does in P | — |
+| `dialable.invalidate` | event | `{}`: drop the worker's 15 s dialable caller-ID cache (PL13, `campaign-dialability.ts`), sent on every `invalidateDialableCallerIds` in P (a number synced, retired, deleted or unassigned) | — |
 | `reaper.snapshot` | req | `{}` → `{activeAttemptIds, unrecordedEnds: [{attemptId, dialOutcomeUnknown}], manualActiveIds, activeCallIds}` | 5 s, then **skip the sweep** (fail closed) |
 | `reaper.forget_unrecorded` | event | `{attemptIds}` | — |
 | `softphone.closed_by_sweep` | req | `{rows}` (sent to each row's session slot) | 10 s |

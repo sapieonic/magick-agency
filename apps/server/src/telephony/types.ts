@@ -18,6 +18,14 @@ export interface OutboundCallRequest {
   machineDetection?: boolean;
   enableRecording?: boolean;
   headers?: Record<string, string>;
+  /**
+   * Aborted when the dial is no longer wanted: the call was torn down while the dial was
+   * still on its way out. An adapter that can hold a dial before sending it (a
+   * calls-per-second gate) checks it before the carrier request and then sends nothing,
+   * rejecting with `CarrierDialAbortedError` (an unplaced leg). An adapter that sends at
+   * once may ignore it: the bridge hangs up whatever was placed once the dial returns.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -56,6 +64,22 @@ export interface AnswerResponseOptions {
    * hours) aren't silently truncated mid-recording.
    */
   recordingMaxLengthSeconds?: number;
+  /**
+   * The call's max duration in seconds. A carrier that streams via answer XML bounds
+   * the stream by it, beside the dial's own time limit. Omitted: the carrier's default.
+   */
+  maxDurationSeconds?: number;
+}
+
+/** A carrier's own HTTP request to us, as needed to verify its signature. */
+export interface CarrierHttpRequest {
+  method: 'GET' | 'POST';
+  /** The full public URL the carrier called (our env webhook origin + path + query). */
+  url: string;
+  /** Parsed form/body params (string values). */
+  params: Record<string, string>;
+  /** Request headers; looked up case-insensitively. */
+  headers: Record<string, string | undefined>;
 }
 
 export interface CallEvent {
@@ -157,7 +181,25 @@ export interface ProviderCapabilities {
    * the call keeps dispatch-anchored deadlines.
    */
   readonly queuesOutboundDials?: boolean;
+  /**
+   * How long the carrier itself lets an unanswered dial ring before it gives up, in seconds,
+   * when the adapter sets that limit on every dial (Plivo's `ring_timeout`). The bridge then
+   * holds no unanswered call much past it: if neither an answer nor the carrier's terminal has
+   * been seen {@link RING_DEADLINE_MARGIN_SECONDS} after it (a lost callback), it asks the
+   * carrier for the call's state and ends it (`WebRtcBridgeManager`'s ring deadline).
+   *
+   * Optional, and absent means no such deadline (VoiceLink: its `add_lead` only queues the
+   * dial, and its terminal webhook is the end); such a call keeps only the max duration.
+   */
+  readonly ringTimeoutSeconds?: number;
 }
+
+/**
+ * How long past a carrier's own ring timeout ({@link ProviderCapabilities.ringTimeoutSeconds})
+ * the bridge waits for the answer or the carrier's terminal before it ends the call itself:
+ * room for the create-call's own latency and a terminal callback in flight.
+ */
+export const RING_DEADLINE_MARGIN_SECONDS = 30;
 
 /**
  * Fail-closed read of {@link ProviderCapabilities.cancelRinging}.
@@ -203,6 +245,18 @@ export interface TelephonyProvider {
   getCallStatus(providerCallId: string): Promise<ProviderCallStatus>;
   getRecordingUrl(providerCallId: string): Promise<string | null>;
   validateWebhookSignature(rawBody: string, signature: string): boolean;
+  /**
+   * Cancel a dial the far end has not answered, by the dial REQUEST id
+   * ({@link InitiateCallResult.providerRequestId}). Optional: a carrier whose dial
+   * returns the call id at once hangs up a ringing leg with `endCall`.
+   * `not_found`: the carrier no longer holds the request (answered, ended or never queued).
+   */
+  cancelDialRequest?(providerRequestId: string): Promise<'canceled' | 'not_found'>;
+  /**
+   * Verify a carrier callback's signature against this adapter's secret(s). Optional:
+   * absent means the carrier signs nothing and the URL token is the only check.
+   */
+  verifyCarrierRequest?(req: CarrierHttpRequest): boolean;
 }
 
 export interface MediaStreamConfig {

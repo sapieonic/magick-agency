@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { manualEndReasonFor } from '../../../../src/agency/softphone/manual-dialer.js';
+import { manualDialFailureFor, manualEndReasonFor } from '../../../../src/agency/softphone/manual-dialer.js';
+import { WebRtcCallError } from '../../../../src/core/webrtc-bridge-manager.js';
+import { softphoneRefusalMessage } from '../../../../src/agency/softphone/types.js';
 import { DncRegistry } from '../../../../src/agency/dnc-registry.js';
 
 describe('manualEndReasonFor — why a manual call ended', () => {
@@ -55,5 +57,48 @@ describe('DncRegistry.checkEntry — the entry behind a suppression (SP1)', () =
     expect(await throwing.checkEntry('t1', '+919811100001', { accountId: null, campaignId: null })).toEqual({ result: 'unavailable' });
     const bare = new DncRegistry({ findSuppressed: vi.fn() });
     expect(await bare.checkEntry('t1', '+919811100001', { accountId: null, campaignId: null })).toEqual({ result: 'unavailable' });
+  });
+});
+
+describe('manualDialFailureFor — what a dial the bridge refused before the carrier answers the agent', () => {
+  const refused = (code: string, status = 409) => new WebRtcCallError('refused', code as never, status);
+
+  it('a calls-per-second limit is a busy line: retryable in a moment (PL7)', () => {
+    expect(manualDialFailureFor(refused('carrier_rate_limited', 503))).toBe('concurrency_limit');
+    expect(manualDialFailureFor(refused('account_concurrency_limit', 429))).toBe('concurrency_limit');
+  });
+
+  it('a carrier account that cannot dial is its own, non-retryable answer (PL2, PL3)', () => {
+    expect(manualDialFailureFor(refused('telephony_credential_unavailable'))).toBe('carrier_account_unavailable');
+    expect(manualDialFailureFor(refused('carrier_auth_rejected', 502))).toBe('carrier_account_unavailable');
+  });
+
+  it('a keyring fault is the platform`s temporary failure (dial_failed), not an unavailable carrier account (PL3 addendum)', () => {
+    // The bridge rethrows it as it came from the registry: not a WebRtcCallError.
+    const keyring = Object.assign(new Error('Telephony credential cred-1 could not be resolved: no credential keyring is configured'), {
+      credentialUnavailable: true, keyringFault: true, credentialKind: 'store_unconfigured',
+    });
+    expect(manualDialFailureFor(keyring)).toBe('dial_failed');
+  });
+
+  it('a dial not sent for the carrier`s configuration is the carrier account`s; for the number or the network, dial_failed', async () => {
+    const { CarrierDialNotSentError } = await import('../../../../src/telephony/carrier-errors.js');
+    const notSent = (reason: 'configuration' | 'destination' | 'network') =>
+      Object.assign(refused('carrier_dial_not_sent', 503), { cause: new CarrierDialNotSentError('plivo', reason, 'x') });
+    expect(manualDialFailureFor(notSent('configuration'))).toBe('carrier_account_unavailable');
+    expect(manualDialFailureFor(notSent('destination'))).toBe('dial_failed');
+    expect(manualDialFailureFor(notSent('network'))).toBe('dial_failed');
+  });
+
+  it('a missing station is the station; anything else is the platform\'s dial_failed', () => {
+    expect(manualDialFailureFor(refused('station_socket_unavailable'))).toBe('station_unavailable');
+    expect(manualDialFailureFor(refused('something_new'))).toBe('dial_failed');
+    expect(manualDialFailureFor(new TypeError('Invalid URL'))).toBe('dial_failed');
+  });
+
+  it('the carrier-account refusal says support, never "try again", and names no vendor', () => {
+    const message = softphoneRefusalMessage({ code: 'carrier_account_unavailable' });
+    expect(message).toMatch(/Contact support/);
+    expect(message).not.toMatch(/try again|plivo|voicelink/i);
   });
 });

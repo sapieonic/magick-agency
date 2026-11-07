@@ -256,12 +256,21 @@ void main() {
       expect(find.text('Mute ring'), findsOneWidget);
       expect(find.text('Mute'), findsNothing);
       expect(find.byKey(const Key('ringing-warning')), findsOneWidget);
-      expect(find.textContaining('VoiceLink cannot stop a ringing call'), findsOneWidget);
+      expect(find.textContaining('This carrier cannot stop a ringing call'), findsOneWidget);
       await tester.tap(find.byKey(const Key('softphone-mute')));
       expect(h.actions.calls, ['toggleMute']);
       await h.setView(callView(SoftphonePhase.ringing, muted: true));
       expect(find.text('Ring muted'), findsOneWidget);
       expect(find.textContaining('Outcomes open when the customer answers.'), findsOneWidget);
+    });
+
+    testWidgets('ringing on a carrier that cancels a ringing call: no SP3 warning', (tester) async {
+      await pumpSoftphone(tester, callView(SoftphonePhase.ringing, warnRingingHangUp: false));
+      expect(find.text('Ringing +91 98123 45678'), findsOneWidget);
+      expect(find.text('Mute ring'), findsOneWidget);
+      expect(find.byKey(const Key('softphone-hang-up')), findsOneWidget);
+      expect(find.byKey(const Key('ringing-warning')), findsNothing);
+      expect(find.textContaining('This carrier cannot stop a ringing call'), findsNothing);
     });
 
     testWidgets('on call: Mute is the microphone, the talk timer runs, no SP3 warning', (tester) async {
@@ -350,7 +359,22 @@ void main() {
       tester.semantics.tap(find.semantics.byLabel('Hang up'));
       await settle(tester);
       expect(find.text('End this call?'), findsOneWidget);
-      expect(find.descendant(of: find.byType(AlertDialog), matching: find.textContaining('VoiceLink cannot stop')), findsOneWidget);
+      expect(find.descendant(of: find.byType(AlertDialog), matching: find.textContaining('This carrier cannot stop')), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Hang up'));
+      await settle(tester);
+      expect(h.actions.count('hangUp'), 1);
+      semantics.dispose();
+    });
+
+    testWidgets('on a carrier that cancels a ringing call the screen-reader confirm does not warn', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final h = await pumpSoftphone(tester, callView(SoftphonePhase.ringing, warnRingingHangUp: false));
+      tester.semantics.tap(find.semantics.byLabel('Hang up'));
+      await settle(tester);
+      expect(find.text('End this call?'), findsOneWidget);
+      final dialog = find.byType(AlertDialog);
+      expect(find.descendant(of: dialog, matching: find.text('The customer will be disconnected.')), findsOneWidget);
+      expect(find.descendant(of: dialog, matching: find.textContaining('This carrier cannot stop')), findsNothing);
       await tester.tap(find.widgetWithText(FilledButton, 'Hang up'));
       await settle(tester);
       expect(h.actions.count('hangUp'), 1);

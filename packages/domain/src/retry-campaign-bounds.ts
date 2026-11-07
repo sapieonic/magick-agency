@@ -112,6 +112,9 @@ export const PRIOR_ATTEMPT_LIMIT = 20;
  */
 export const RETRY_INHERITED_CONFIG_KEYS = [
   'caller_ids', 'telephony_provider', 'sip_connection_id',
+  // The tenant carrier credential (BYOC, B18): the child dials on the parent's carrier
+  // account, held to its provider by the composite foreign key.
+  'telephony_credential_id',
   'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'context_display', 'break_reasons', 'record_calls', 'analysis_profile_id',
@@ -121,7 +124,7 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
   // retry allowance. Inherited like every other way the parent dials.
   'assignment_mode', 'on_unstaff', 'callback_owner_grace_minutes', 'callback_fallback',
   'allow_agent_retry', 'agent_retry_rounds', 'agent_retry_cooldown_minutes',
-  // Automatic outcomes for unanswered calls (0019): they name codes of the catalog the
+  // Automatic outcomes for unanswered calls (0022): they name codes of the catalog the
   // child inherits beside them.
   'outcome_dispositions',
 ] as const;

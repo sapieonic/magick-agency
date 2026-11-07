@@ -388,6 +388,15 @@ export interface AgencyManualCall {
   dispositioned_on_behalf: boolean;
   /** The media leg (`agency_calls.id`). No FK: not a promise the call row still exists. */
   webrtc_call_id: string | null;
+  /**
+   * Whether hanging up while the call rings stops the customer's phone ringing: the
+   * carrier of the media leg can cancel a ringing call (SP3). Rides on the live call
+   * only (the `manual_call` frame, the call routes' answers, bootstrap, the
+   * `manual_call_live` refusal), never on a list row. False before the media leg is
+   * placed and for a carrier that cannot. Absent or false: warn the agent that the
+   * customer's phone may keep ringing.
+   */
+  can_cancel_ringing?: boolean;
   // ISO-8601 timestamps.
   dialed_at: string | null;
   answered_at: string | null;

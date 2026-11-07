@@ -9,6 +9,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  * off. The rest of the dialog is `AgencyRetryDialog.test.tsx`'s.
  */
 
+const carrierMocks = vi.hoisted(() => ({ listAgencyCarriers: vi.fn(async () => [] as unknown[]) }));
 const mocks = vi.hoisted(() => ({
   retryPreview: vi.fn(),
   createRetry: vi.fn(),
@@ -21,6 +22,9 @@ vi.mock('../../api/agencyCampaigns', () => ({
   createRetry: mocks.createRetry,
 }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+// The dialog reads the carriers list for the parent's carrier account (its label, and
+// whether it is still active).
+vi.mock('../../api/agencyCarriers', () => ({ listAgencyCarriers: carrierMocks.listAgencyCarriers }));
 vi.mock('../../hooks/usePhoneNumbers', () => ({
   usePhoneNumbers: () => ({
     phoneNumbers: [{

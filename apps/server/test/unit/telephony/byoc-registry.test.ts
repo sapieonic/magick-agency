@@ -13,6 +13,8 @@ import {
 import { Secret } from '../../../src/telephony/credentials/secret.js';
 import { findCredentialSpec, PLIVO_API_BASE, type FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
 import type { TelephonyProvider } from '../../../src/telephony/types.js';
+import { PlivoAdapter } from '../../../src/telephony/plivo/plivo.adapter.js';
+import { computePlivoV3Signature } from '../../../src/telephony/plivo/plivo-signature.js';
 
 const CONFIG = {
   telephony: {
@@ -71,6 +73,22 @@ describe('TelephonyProviderRegistry.getForCredentialId', () => {
     expect((err as Error).message).toMatch(/status disabled/);
     expect(c.peek).toHaveBeenCalledWith('cred-1', 'dial');
     expect(c.resolve).not.toHaveBeenCalled();
+  });
+
+  it('says whether the refusal is a keyring fault (the credential fine, the server`s key missing) or the credential`s own', async () => {
+    const run = async (kind: 'unopenable' | 'store_unconfigured' | 'status' | 'shredded' | 'not_found') => {
+      const c = creds(() => { throw new CredentialUnavailableError('cred-1', kind, kind); });
+      return registry(c, new Map([['plivo', () => fakeAdapter('a')]])).getForCredentialId('plivo', 'cred-1', 'dial', 't1').catch((e: unknown) => e);
+    };
+    for (const kind of ['unopenable', 'store_unconfigured'] as const) {
+      expect(await run(kind)).toMatchObject({ credentialUnavailable: true, keyringFault: true, credentialKind: kind });
+    }
+    for (const kind of ['status', 'shredded', 'not_found'] as const) {
+      expect(await run(kind)).toMatchObject({ credentialUnavailable: true, keyringFault: false, credentialKind: kind });
+    }
+    // No credential store on this mount at all: a keyring fault too.
+    expect(await registry(null).getForCredentialId('plivo', 'cred-1', 'dial', 't1').catch((e: unknown) => e))
+      .toMatchObject({ keyringFault: true, credentialKind: 'store_unconfigured' });
   });
 
   it('refuses a credential of another tenant without opening its secret', async () => {
@@ -192,6 +210,56 @@ describe('TelephonyProviderRegistry.getForCredentialId', () => {
     version = 1;
     expect(await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).toBe(a);
     expect(factory).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TelephonyProviderRegistry.recordCredentialRefused', () => {
+  it('records the refusal against the credential and the secret version the adapter was built with', async () => {
+    let version = 3;
+    const c = { ...creds(() => resolved({ version })), recordCarrierRefusal: vi.fn(async () => ({ id: 'cred-1' })) };
+    const factory = vi.fn((cred: ResolvedCredential) => fakeAdapter(`v${cred.version}`));
+    const r = registry(c, new Map([['plivo', factory]]));
+    const adapter = await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');
+    version = 4; // rotated after the dial was placed: the verdict is still the old secret's
+    const at = { tenantId: 't1', accountId: 'a1', callId: 'call-1' };
+    expect(await r.recordCredentialRefused(adapter, 'refused', at)).toBe(true);
+    expect(c.recordCarrierRefusal).toHaveBeenCalledWith('cred-1', 3, 'refused', at);
+  });
+
+  it('the service`s own account, an adapter it did not build, or a verdict not written: false; a throwing resolver: false', async () => {
+    const c = { ...creds(() => resolved()), recordCarrierRefusal: vi.fn(async () => null) };
+    const r = registry(c, new Map([['plivo', vi.fn(() => fakeAdapter('x'))]]));
+    const at = { tenantId: 't1', accountId: 'a1' };
+    expect(await r.recordCredentialRefused(fakeAdapter('stranger'), 'refused', at)).toBe(false);
+    expect(c.recordCarrierRefusal).not.toHaveBeenCalled();
+    const adapter = await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');
+    expect(await r.recordCredentialRefused(adapter, 'refused', at)).toBe(false);
+    c.recordCarrierRefusal.mockRejectedValueOnce(new Error('boom'));
+    expect(await r.recordCredentialRefused(adapter, 'refused', at)).toBe(false);
+  });
+});
+
+describe('the registered BYOC adapters', () => {
+  it('builds a PlivoAdapter on the pinned credential, holding the grace tokens for call control only', async () => {
+    const c = creds((purpose) => resolved({
+      accountRef: 'MAABCDEFGHIJKLMNOPQR',
+      version: 2,
+      previous: purpose === 'call_control' ? [{ version: 1, secret: new Secret({ auth_token: 'old' }) }] : [],
+    }));
+    // No `byocAdapters` override: the registry's own `BYOC_ADAPTERS`.
+    const r = new TelephonyProviderRegistry(CONFIG, { credentials: () => c });
+    const control = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
+    const dial = await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');
+    expect(control).toBeInstanceOf(PlivoAdapter);
+    expect(dial).toBeInstanceOf(PlivoAdapter);
+    const url = 'https://srv.test/api/v1/webhooks/plivo/webrtc-status/c1';
+    const req = (token: string) => ({
+      method: 'POST' as const, url, params: { CallStatus: 'ringing' },
+      headers: { 'x-plivo-signature-v3': computePlivoV3Signature(token, 'POST', url, { CallStatus: 'ringing' }, 'n'), 'x-plivo-signature-v3-nonce': 'n' },
+    });
+    expect(control.verifyCarrierRequest!(req('tok'))).toBe(true);
+    expect(control.verifyCarrierRequest!(req('old'))).toBe(true);
+    expect(dial.verifyCarrierRequest!(req('old'))).toBe(false);
   });
 });
 

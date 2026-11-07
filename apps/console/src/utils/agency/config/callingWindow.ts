@@ -57,7 +57,7 @@ export function callingWindowEcho(state: CallingWindowState, now: Date = new Dat
 
   const open = isWithinWindow(local, state, wraps);
   return `${base} Right now it is ${local.time} there — the campaign ${
-    open ? 'would be dialing' : 'would not be dialing'
+    open ? 'would be dialling' : 'would not be dialling'
   }.`;
 }
 

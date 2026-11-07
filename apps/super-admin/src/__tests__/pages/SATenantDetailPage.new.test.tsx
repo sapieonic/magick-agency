@@ -137,7 +137,7 @@ describe('SATenantDetailPage — account settings', () => {
   it('surfaces a server refusal', async () => {
     mocks.updateAccountSettings.mockRejectedValue(new Error('Account not found'));
     await openSettings();
-    fireEvent.click(screen.getByLabelText('Analyze calls'));
+    fireEvent.click(screen.getByLabelText('Analyse calls'));
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByText('Account not found');
   });

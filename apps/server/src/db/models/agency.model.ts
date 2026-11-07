@@ -28,7 +28,18 @@ import type {
   AgencyOnUnstaff,
   AgencyOutcomeDispositions,
   AgencyOverrideKind,
+  CarrierAccountPauseReason,
 } from '@magick-agency/contracts/agency';
+
+/**
+ * The pauses the dialler makes when a campaign's carrier account cannot dial, or keeps
+ * refusing its dials (`carrier-account-pause.ts`): `carrier_auth` (0019), the carrier
+ * refused the credential; `carrier_account_unavailable` (0020), the credential is no longer
+ * active; `carrier_refusing_calls` (0021, PL11), the carrier refused several dials in a row.
+ * The contract's single list (`CARRIER_ACCOUNT_PAUSE_REASONS`), re-exported for the
+ * model's importers.
+ */
+export type { CarrierAccountPauseReason };
 
 /**
  * Retry policy keyed by outcome. No `machine` key — AMD is out.
@@ -58,6 +69,7 @@ import type {
  * **3. A `null` outcome is possible** and is not the same as `failed`: an attempt
  * can end before it was ever classified. Key the policy defensively.
  */
+
 export type AgencyRetryPolicy = Partial<
   Record<AgencyAttemptOutcome, { delay_minutes?: number; max_attempts: number }>
 >;
@@ -69,6 +81,12 @@ export interface AgencyCampaignRecord {
   name: string;
   caller_ids: string[];
   telephony_provider: string;
+  /**
+   * The tenant carrier credential the campaign dials on (0002; decisions B18–B22), or
+   * null for the service's own account. Held to `telephony_provider` and the tenant by a
+   * composite FK; a pinned credential must be active to start or resume.
+   */
+  telephony_credential_id: string | null;
   calling_window_start: string;
   calling_window_end: string;
   calling_days: number[];
@@ -103,7 +121,7 @@ export interface AgencyCampaignRecord {
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /**
-   * Automatic outcomes for unanswered calls (0019, OD1–OD8): outcome → a catalog code the
+   * Automatic outcomes for unanswered calls (0022, OD1–OD8): outcome → a catalog code the
    * dialer stamps on the attempt as `auto_disposition_code`. A label only. `{}` maps nothing.
    */
   outcome_dispositions: AgencyOutcomeDispositions;
@@ -125,11 +143,14 @@ export interface AgencyCampaignRecord {
   /**
    * Why the campaign is currently paused, or NULL when it is not paused.
    *
-   * Only two values are writable (CHECK-constrained): `supervisor` and
-   * `abandonment_ceiling`. The WS enum's `auto_paused` is deliberately absent —
-   * its two emit sites are transient broadcasts that write no row.
+   * Five values are writable (CHECK-constrained): `supervisor`,
+   * `abandonment_ceiling`, (0019) `carrier_auth`: the carrier refused the
+   * campaign's credential, (0020) `carrier_account_unavailable`: the campaign's
+   * credential is no longer active, and (0021) `carrier_refusing_calls`: the carrier
+   * refused the campaign's dials several times in a row (PL11). The WS enum's `auto_paused` is deliberately
+   * absent — its two emit sites are transient broadcasts that write no row.
    */
-  pause_reason: 'supervisor' | 'abandonment_ceiling' | null;
+  pause_reason: 'supervisor' | 'abandonment_ceiling' | CarrierAccountPauseReason | null;
   /** When the current pause began. Cleared on resume/start. */
   paused_at: Date | null;
   /**
@@ -270,6 +291,7 @@ export type AgencyCampaignConfigColumns = Pick<
   AgencyCampaignRecord,
   | 'caller_ids'
   | 'telephony_provider'
+  | 'telephony_credential_id'
   | 'calling_window_start'
   | 'calling_window_end'
   | 'calling_days'
@@ -456,7 +478,7 @@ export interface AgencyCallAttemptRecord {
   state: AgencyAttemptState;
   outcome: AgencyAttemptOutcome | null;
   disposition_code: string | null;
-  /** The campaign's automatic outcome for an unanswered attempt (migration 0019, OD1–OD8); not a write-up. */
+  /** The campaign's automatic outcome for an unanswered attempt (0022, OD1–OD8); not a write-up. */
   auto_disposition_code: string | null;
   notes: string | null;
   callback_at: Date | null;
