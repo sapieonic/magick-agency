@@ -10,8 +10,8 @@
  * partitions, retention, the clip cache sweep, the credential shred, the analysis slots.
  *
  * Its IPC surface (`ipc-protocol.ts`): it serves `dial.execute`, `core.inject`,
- * `carrier.webhook`, `agent.return_reserved`, `reaper.snapshot`, `softphone.closed_by_sweep`,
- * `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`, `station.send`,
+ * `carrier.webhook`, `carrier.plivo_callback`, `agent.return_reserved`, `reaper.snapshot`,
+ * `softphone.closed_by_sweep`, `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`, `station.send`,
  * `concurrency.invalidate` and `reaper.forget_unrecorded`, and tells the primary
  * `ready`, `station.attached` / `.detached` / `.snapshot`, `pacing.invalidate`,
  * `voice.wake_self_heal` and `analysis.wake`.
@@ -26,6 +26,7 @@ import { setPacingInvalidationBus, type PacingInvalidationBus } from '../agency/
 import { queuedBreakReleaseOf, returnReservedAgent } from '../agency/reserved-agent.js';
 import { injectLocal, type CoreInjectArgs } from '../api/core-dispatch.js';
 import { handleVoicelinkStatusWebhook } from '../api/routes/webhooks.routes.js';
+import { handlePlivoCallback } from '../api/routes/webhooks/plivo.js';
 import type { IpcChannel } from './ipc-channel.js';
 import type { HealthBody } from './ipc-protocol.js';
 import { DialGrants } from './ipc-dial-dispatcher.js';
@@ -140,6 +141,9 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   });
   channel.handle('carrier.webhook', async ({ callId, token, body }) =>
     handleVoicelinkStatusWebhook(bridge, callId, token ?? undefined, body));
+  // The same checks as in one process (token, then signature over the URL Plivo called).
+  channel.handle('carrier.plivo_callback', async ({ token, ...input }) =>
+    handlePlivoCallback(bridge, { ...input, token: token ?? undefined }));
 
   // ── What the primary's sweeps need to know ───────────────────────────────
   // Synchronous on purpose: answered in the turn it is computed, so the primary's lease

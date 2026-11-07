@@ -6,7 +6,7 @@
  * needs (`socket-pause.ts`; without it the server runs as one process and says so), builds
  * the {@link MediaCluster}, and installs its adapters where the single-process code looks
  * them up: the agency runtime's stations, dispatcher, reserved-agent return and reaper
- * inputs; `callCore`'s injector; the carrier webhook forwarder.
+ * inputs; `callCore`'s injector; the carrier webhook forwarders (VoiceLink, Plivo).
  *
  * After the bootstraps (the startup reap has run, with no worker alive, so its "every
  * non-terminal row is dead" premise holds): {@link startMediaWorkers} binds what only
@@ -23,7 +23,7 @@ import { AgentStateMachine } from '../agency/agent-state-machine.js';
 import { configureAgencyRuntime, getAgencyRuntime } from '../bootstrap/agency.js';
 import { getVoiceEngine } from '../bootstrap/voice.js';
 import { setCoreInjector } from '../api/core-dispatch.js';
-import { setVoicelinkWebhookForwarder } from '../api/routes/webhooks.routes.js';
+import { setPlivoCallbackForwarder, setVoicelinkWebhookForwarder } from '../api/routes/webhooks.routes.js';
 import { getConcurrencyControl, setConcurrencyControl, type ConcurrencyControl } from '../seams/concurrency-control.js';
 import { releaseTelephonyLease } from '../core/telephony-release.js';
 import { agencyCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
@@ -100,6 +100,7 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
   });
   setCoreInjector(cluster.coreInjector);
   setVoicelinkWebhookForwarder(cluster.webhookForwarder);
+  setPlivoCallbackForwarder(cluster.plivoCallbackForwarder);
   return cluster;
 }
 

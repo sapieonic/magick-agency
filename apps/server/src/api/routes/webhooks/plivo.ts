@@ -13,11 +13,18 @@
 // (`PLIVO_WEBHOOK_BASE_URL`'s origin) and the request's own path and query, never from a
 // Host header. A refused answer callback is answered with a hangup, so a call we will not
 // bridge is put down rather than left on the line.
+//
+// With media workers (`docs/scaling.md` §3.2) a callback whose URL carries `w` runs in the
+// worker that slot names, where the call lives: the route hands its parsed input to the
+// forwarder (`cluster/media-cluster.ts`, IPC `carrier.plivo_callback`) and answers with
+// what the worker answered, XML included. No hint, or a worker gone, runs it here on the
+// session-less bridge (a status or recording then takes the late path off the call row).
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../../../config/index.js';
 import type { WebRtcBridgeManager } from '../../../core/webrtc-bridge-manager.js';
 import { PLIVO_HANGUP_XML } from '../../../telephony/plivo/plivo.adapter.js';
+import { PLIVO_SIGNATURE_V3_HEADER, PLIVO_SIGNATURE_V3_NONCE_HEADER } from '../../../telephony/plivo/plivo-signature.js';
 import {
   normalizePlivoCallback, plivoCallEvent, type PlivoCallbackKind,
 } from '../../../telephony/plivo/plivo.webhook.js';
@@ -37,6 +44,7 @@ export interface PlivoCallbackInput {
   url: string;
   /** The form params, one string per key. */
   params: Record<string, string>;
+  /** Only the two V3 signature headers ({@link signatureHeaders}). */
   headers: Record<string, string | undefined>;
 }
 
@@ -47,10 +55,39 @@ export interface PlivoCallbackAnswer {
   body: string;
 }
 
-const HANGUP: PlivoCallbackAnswer = { statusCode: 200, contentType: 'text/xml', body: PLIVO_HANGUP_XML };
+/** The answer callback's refusal: hang the call up. */
+export const PLIVO_HANGUP_ANSWER: PlivoCallbackAnswer = { statusCode: 200, contentType: 'text/xml', body: PLIVO_HANGUP_XML };
+const HANGUP = PLIVO_HANGUP_ANSWER;
 const OK: PlivoCallbackAnswer = { statusCode: 200, contentType: 'application/json', body: '{"status":true}' };
 const FORBIDDEN: PlivoCallbackAnswer = { statusCode: 403, contentType: 'application/json', body: '{"status":false}' };
 const UNAVAILABLE: PlivoCallbackAnswer = { statusCode: 503, contentType: 'application/json', body: '{"status":false}' };
+
+/**
+ * A callback that could not be processed: the answer callback hangs the call up (no XML
+ * would leave Plivo to its own fallback), the others are 503, never a 200 for a post
+ * that was not processed.
+ */
+export function plivoCallbackUnavailable(kind: PlivoCallbackKind): PlivoCallbackAnswer {
+  return kind === 'answer' ? HANGUP : UNAVAILABLE;
+}
+
+/**
+ * With media workers: run a callback in the worker its URL's `w` names. Returns null to
+ * handle it in this process instead (no hint). Unset in one process.
+ */
+export type PlivoCallbackForwarder = (
+  input: PlivoCallbackInput & { hint: string | undefined },
+) => Promise<PlivoCallbackAnswer | null>;
+
+/** The headers the signature check reads, and no other (they are what crosses to a worker). */
+export function signatureHeaders(headers: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of [PLIVO_SIGNATURE_V3_HEADER, PLIVO_SIGNATURE_V3_NONCE_HEADER]) {
+    const v = headers[name];
+    if (typeof v === 'string') out[name] = v;
+  }
+  return out;
+}
 
 /** A refusal: the answer callback hangs the call up, the others are 403. */
 function refuse(kind: PlivoCallbackKind): PlivoCallbackAnswer {
@@ -118,7 +155,7 @@ export async function handlePlivoCallback(
     }
   } catch (err) {
     log.error({ err, callId, kind }, 'Plivo callback failed');
-    return kind === 'answer' ? HANGUP : UNAVAILABLE;
+    return plivoCallbackUnavailable(kind);
   }
 }
 
@@ -147,11 +184,8 @@ export function registerPlivoWebhookRoutes(
   app: FastifyInstance,
   opts: {
     webrtcBridge: WebRtcBridgeManager | null | undefined;
-    /**
-     * True when callbacks may belong to a media worker (`webhookForwarder` set: the
-     * server runs as several processes). Plivo callbacks are not forwarded yet.
-     */
-    forwardsToMediaWorkers: () => boolean;
+    /** The media-worker forwarder, read per request (set once the cluster starts); null in one process. */
+    forwarder: () => PlivoCallbackForwarder | null;
     /** `PLIVO_WEBHOOK_BASE_URL`; read per request (tests set it). */
     webhookBaseUrl?: () => string;
   },
@@ -166,27 +200,22 @@ export function registerPlivoWebhookRoutes(
       const { callId } = request.params;
       const bridge = opts.webrtcBridge;
       if (!bridge) return send(refuse(kind));
-      // TODO(plivo part 2): forward to the media worker the URL's `w` names, with the URL
-      // and headers the signature needs, and let the IPC answer carry XML. Until then a
-      // media worker refuses Plivo dials before the carrier (the bridge's step 5b), so a
-      // hinted callback here names no live call.
-      if (opts.forwardsToMediaWorkers() && request.query?.w) {
-        log.error({ callId, kind, hint: request.query.w }, 'Plivo callbacks are not forwarded to media workers yet — refusing');
-        return send(kind === 'answer' ? HANGUP : UNAVAILABLE);
-      }
       const origin = publicOrigin(baseUrl());
       if (!origin) {
         log.error({ callId, kind }, 'PLIVO_WEBHOOK_BASE_URL is not set: a Plivo callback cannot be verified — refusing');
         return send(refuse(kind));
       }
-      return send(await handlePlivoCallback(bridge, {
+      const input: PlivoCallbackInput = {
         kind,
         callId,
         token: request.query?.token,
         url: `${origin}${request.url}`,
         params: formParams(request.body),
-        headers: request.headers as Record<string, string | undefined>,
-      }));
+        headers: signatureHeaders(request.headers),
+      };
+      const forwarder = opts.forwarder();
+      const forwarded = forwarder ? await forwarder({ ...input, hint: request.query?.w }) : null;
+      return send(forwarded ?? await handlePlivoCallback(bridge, input));
     });
   };
   route('answer', '/plivo/webrtc-answer/:callId');

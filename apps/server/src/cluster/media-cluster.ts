@@ -7,7 +7,8 @@
  *    `slotFor(sessionId)`, the carrier's stream to the slot its URL's `w` names;
  *  - pacing's {@link StationDirectory}, {@link IpcDialDispatcher} and reserved-agent return;
  *  - `callCore`'s injector: a session-owned internal handler runs in the session's worker;
- *  - the carrier webhook forwarder: a status post runs in the worker its `w` names;
+ *  - the carrier webhook forwarders: a VoiceLink status post, and a Plivo answer, status
+ *    or recording callback, runs in the worker its `w` names;
  *  - the reaper's liveness inputs (the workers' live attempts, unrecorded ends, live
  *    soft-phone calls) and the guard host's live call ids, refreshed by `reaper.snapshot`;
  *  - the relay of the workers' events into this process (the pacing bus, the guard's
@@ -28,6 +29,9 @@ import {
 import type { CoreInjectArgs, CoreInjectResult, CoreInjector } from '../api/core-dispatch.js';
 import { resolveCoreRoute } from '../api/core-owners.js';
 import type { VoicelinkWebhookForwarder } from '../api/routes/webhooks.routes.js';
+import {
+  PLIVO_HANGUP_ANSWER, plivoCallbackUnavailable, type PlivoCallbackForwarder,
+} from '../api/routes/webhooks/plivo.js';
 import { getDialerAnalysisWorker } from '../core/dialer-analysis-worker-handle.js';
 import { ChildSupervisor } from './child-supervisor.js';
 import { IpcRequestError, type IpcChannel } from './ipc-channel.js';
@@ -298,6 +302,38 @@ export class MediaCluster implements WsHandoffTarget {
     } catch (err) {
       log.warn({ err, slot, callId }, 'Forwarded carrier webhook failed — answering 503 so it is not taken as processed');
       return { statusCode: 503, body: { status: false } };
+    }
+  };
+
+  /**
+   * Plivo's answer, status and recording callbacks, routed by `w` as the VoiceLink status
+   * post is. The worker runs `handlePlivoCallback` (token, signature, bridge) on exactly
+   * the URL, params and signature headers the primary received, and its answer (the answer
+   * XML included) is Plivo's reply. No hint: null, run here. The worker gone: an answer
+   * callback is hung up here (its call went with the worker; nothing could stream it),
+   * a status or recording is run here (the late path off the call row). A forwarded
+   * callback that fails (deadline, the worker exiting) is unavailable: a hangup for the
+   * answer, 503 for the others.
+   */
+  readonly plivoCallbackForwarder: PlivoCallbackForwarder = async ({ hint, ...input }) => {
+    const slot = this.slotFromHint(hint);
+    if (slot === null) return null;
+    const channel = this.supervisor.channel(slot);
+    if (!channel) return input.kind === 'answer' ? PLIVO_HANGUP_ANSWER : null;
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(input.headers)) if (typeof v === 'string') headers[k] = v;
+    try {
+      return await channel.request('carrier.plivo_callback', {
+        kind: input.kind,
+        callId: input.callId,
+        token: input.token ?? null,
+        url: input.url,
+        params: input.params,
+        headers,
+      }, { deadlineMs: WEBHOOK_DEADLINE_MS });
+    } catch (err) {
+      log.warn({ err, slot, callId: input.callId, kind: input.kind }, 'Forwarded Plivo callback failed — answering it as unavailable');
+      return plivoCallbackUnavailable(input.kind);
     }
   };
 

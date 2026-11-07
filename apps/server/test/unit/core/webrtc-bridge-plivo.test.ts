@@ -268,12 +268,17 @@ describe('a Plivo dial places the leg on the call`s own credential', () => {
     expect(plivoAdapter.endCall).not.toHaveBeenCalled();
   });
 
-  it('a media worker refuses a Plivo dial before the carrier: its callbacks are not forwarded to workers yet', async () => {
+  it('a media worker places a Plivo dial with its slot in every URL Plivo gets: answer, status, recording and the stream', async () => {
+    plivoAdapter.initiateCall.mockResolvedValueOnce({ providerCallId: '', providerRequestId: 'req-1' });
     const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null, { carrierRouteHint: '1' });
-    const err = await mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any }).catch((e) => e);
-    expect(String(err.message)).toMatch(/not forwarded to media workers yet/);
-    expect(plivoAdapter.initiateCall).not.toHaveBeenCalled();
-    expect(mgr.getActiveCallIds()).toEqual([]);
+    await mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any });
+    expect(plivoAdapter.initiateCall).toHaveBeenCalledTimes(1);
+    const req = plivoAdapter.initiateCall.mock.calls[0]![0];
+    expect(req.webhookUrl).toMatch(/\/webrtc-answer\/.+\?token=[0-9a-f-]{36}&w=1$/);
+    expect(req.statusCallbackUrl).toMatch(/\/webrtc-status\/.+\?token=[0-9a-f-]{36}&w=1$/);
+    const session = mgr.getSession(CALL_ID)!;
+    expect(session.recordingCallbackUrl).toMatch(/\/webrtc-recording\/.+\?token=[0-9a-f-]{36}&w=1$/);
+    expect(session.answerStreamUrl).toMatch(/\/pstn-stream\?token=[0-9a-f-]{36}&w=1$/);
   });
 });
 

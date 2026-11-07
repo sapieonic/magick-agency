@@ -692,14 +692,6 @@ export class WebRtcBridgeManager {
       // `base` is the provider's own webhook namespace (…/webhooks/voicelink,
       // …/webhooks/plivo), so `${base}/webrtc-status/${id}` resolves to its own route.
       const base = this.webhookUrls.baseUrl(provider);
-      // TODO(plivo part 2): forward the answer, status and recording callbacks of a
-      // carrier that streams via its answer response to the media worker that holds the
-      // call (`cluster/media-cluster.ts`, IPC `carrier.webhook`), then drop this refusal.
-      // Until then such a call is refused here, before the carrier, in a media worker:
-      // its answer would reach the primary, which holds no session and hangs it up.
-      if (this.options.carrierRouteHint && session.carrier && !session.carrier.mediaUrlInDialRequest) {
-        throw new Error(`${provider} callbacks are not forwarded to media workers yet: the dial is refused before the carrier`);
-      }
       // The account the leg is placed on: the tenant credential pinned on the row,
       // resolved for `dial` (active only, and of this tenant and provider), or, when it
       // is null, the service's own account through the synchronous lookup (which knows

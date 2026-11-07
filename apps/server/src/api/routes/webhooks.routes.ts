@@ -9,7 +9,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { parseVoicelinkWebhook } from '../../telephony/voicelink/voicelink.webhook.js';
 import type { VoicelinkWebhookBody } from '../../telephony/voicelink/voicelink.types.js';
 import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
-import { registerPlivoWebhookRoutes } from './webhooks/plivo.js';
+import { registerPlivoWebhookRoutes, type PlivoCallbackForwarder } from './webhooks/plivo.js';
 
 const log = createChildLogger({ component: 'webhooks-routes' });
 
@@ -30,6 +30,13 @@ let webhookForwarder: VoicelinkWebhookForwarder | null = null;
 
 export function setVoicelinkWebhookForwarder(forwarder: VoicelinkWebhookForwarder | null): void {
   webhookForwarder = forwarder;
+}
+
+/** The same for Plivo's callbacks (`webhooks/plivo.ts`): a hinted one runs in its worker. */
+let plivoForwarder: PlivoCallbackForwarder | null = null;
+
+export function setPlivoCallbackForwarder(forwarder: PlivoCallbackForwarder | null): void {
+  plivoForwarder = forwarder;
 }
 
 export async function webhooksRoutes(
@@ -78,8 +85,8 @@ export async function webhooksRoutes(
 
   // ─── Plivo (tenants' own accounts) ───────────────────────────────────────
   // POST /api/v1/webhooks/plivo/webrtc-{answer,status,recording}/:callId?token=<webhook token>
-  // Not forwarded to media workers yet: with a forwarder set, a hinted callback is refused.
-  registerPlivoWebhookRoutes(app, { webrtcBridge, forwardsToMediaWorkers: () => webhookForwarder !== null });
+  // With media workers a hinted callback runs in its worker (`setPlivoCallbackForwarder`).
+  registerPlivoWebhookRoutes(app, { webrtcBridge, forwarder: () => plivoForwarder });
 }
 
 /** What the status webhook answers: the HTTP status and body the carrier gets. */

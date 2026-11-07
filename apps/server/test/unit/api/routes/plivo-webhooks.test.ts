@@ -18,7 +18,7 @@ vi.mock('../../../../src/config/index.js', () => ({
 
 import Fastify, { type FastifyInstance } from 'fastify';
 import querystring from 'node:querystring';
-import { webhooksRoutes, setVoicelinkWebhookForwarder } from '../../../../src/api/routes/webhooks.routes.js';
+import { webhooksRoutes, setPlivoCallbackForwarder, setVoicelinkWebhookForwarder } from '../../../../src/api/routes/webhooks.routes.js';
 import { DEFAULT_PLIVO_SETTINGS, PlivoAdapter, PLIVO_HANGUP_XML } from '../../../../src/telephony/plivo/plivo.adapter.js';
 import { computePlivoV3Signature } from '../../../../src/telephony/plivo/plivo-signature.js';
 import { Secret } from '../../../../src/telephony/credentials/secret.js';
@@ -81,6 +81,7 @@ const answerPath = `/webrtc-answer/${CALL_ID}?token=wh&w=3`;
 let bridge: ReturnType<typeof makeBridge>;
 beforeEach(() => {
   setVoicelinkWebhookForwarder(null);
+  setPlivoCallbackForwarder(null);
   bridge = makeBridge();
 });
 
@@ -153,16 +154,30 @@ describe('POST /plivo/webrtc-answer/:callId', () => {
     expect(bridge.verifyWsToken).not.toHaveBeenCalled();
   });
 
-  it('with media workers, a hinted callback is refused with the hangup XML (not forwarded yet)', async () => {
-    setVoicelinkWebhookForwarder(async () => null);
-    try {
-      const app = await buildApp(bridge);
-      const res = await post(app, answerPath, ANSWER);
-      expect(res.body).toBe(PLIVO_HANGUP_XML);
-      expect(bridge.verifyWsToken).not.toHaveBeenCalled();
-    } finally {
-      setVoicelinkWebhookForwarder(null);
-    }
+  it('with media workers: a callback goes to the forwarder with the public URL, its params, the token, the hint and ONLY the signature headers; its answer is Plivo`s reply', async () => {
+    const forwarder = vi.fn().mockResolvedValue({ statusCode: 200, contentType: 'text/xml', body: '<Response><Stream>from-worker</Stream></Response>' });
+    setPlivoCallbackForwarder(forwarder);
+    const app = await buildApp(bridge);
+    const res = await post(app, answerPath, ANSWER);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^text\/xml/);
+    expect(res.body).toBe('<Response><Stream>from-worker</Stream></Response>');
+    expect(forwarder).toHaveBeenCalledTimes(1);
+    const input = forwarder.mock.calls[0]![0];
+    expect(input).toMatchObject({ kind: 'answer', callId: CALL_ID, token: 'wh', hint: '3', url: `${PLIVO_BASE}${answerPath}`, params: ANSWER });
+    expect(Object.keys(input.headers).sort()).toEqual(['x-plivo-signature-v3', 'x-plivo-signature-v3-nonce']);
+    // Nothing ran in this process.
+    expect(bridge.verifyWsToken).not.toHaveBeenCalled();
+  });
+
+  it('with media workers: a callback the forwarder hands back (no hint) runs here, on the same signature headers', async () => {
+    const forwarder = vi.fn().mockResolvedValue(null);
+    setPlivoCallbackForwarder(forwarder);
+    const app = await buildApp(bridge);
+    const res = await post(app, `/webrtc-answer/${CALL_ID}?token=wh`, ANSWER);
+    expect(forwarder.mock.calls[0]![0].hint).toBeUndefined();
+    expect(res.body).toContain('<Stream');
+    expect(bridge.answerCarrierCall).toHaveBeenCalledTimes(1);
   });
 });
 

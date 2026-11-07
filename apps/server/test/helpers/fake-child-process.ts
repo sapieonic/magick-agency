@@ -36,7 +36,18 @@ export class FakeChildProcess extends EventEmitter {
       const id = m.id;
       setImmediate(() => {
         if (!this.connected) return;
-        this.emit('message', { v: 1, kind: 'res', id, ok: true, body: handler(m.body) });
+        const body = handler(m.body);
+        // A handler may answer later (a promise); a synchronous one answers in this turn.
+        if (body instanceof Promise) {
+          void body.then(
+            (b) => { if (this.connected) this.emit('message', { v: 1, kind: 'res', id, ok: true, body: b }); },
+            (err: unknown) => {
+              if (this.connected) this.emit('message', { v: 1, kind: 'res', id, ok: false, error: { code: 'handler_error', message: String(err) } });
+            },
+          );
+          return;
+        }
+        this.emit('message', { v: 1, kind: 'res', id, ok: true, body });
       });
     }
     return true;
