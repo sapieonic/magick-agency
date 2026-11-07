@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/sapieonic/magick-agency/compare/console-v0.14.0...console-v0.15.0) (2026-11-07)
+
+
+### Features
+
+* **console:** split campaign Insights into Overview, Calls, Agents, Callbacks and Health tabs ([#53](https://github.com/sapieonic/magick-agency/issues/53)) ([5f3b6a1](https://github.com/sapieonic/magick-agency/commit/5f3b6a1048371a711ce181dac6c8167921af5c59))
+
 ## [0.14.0](https://github.com/sapieonic/magick-agency/compare/console-v0.13.0...console-v0.14.0) (2026-11-07)
 
 
