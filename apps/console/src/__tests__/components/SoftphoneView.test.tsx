@@ -18,6 +18,7 @@ import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import {
   AUTOMATIC_CALLER_ID_HINT,
   RINGING_HANGUP_WARNING,
+  callerIdHint,
   pickedCallerIdHint,
 } from '../../components/softphone/DialPad';
 import { formatDialNumber } from '../../utils/softphone/phoneInput';
@@ -268,6 +269,34 @@ describe('Ready', () => {
       expect(api.placeManualCall.mock.calls[0]![0]).toEqual({
         session_id: 'sess-sp', to: '9820461733', caller_id: '+912248901121', campaign_id: 'camp-1',
       });
+    });
+
+    it('a picked number’s hint only while the setup is editable: none once Call is pressed', async () => {
+      let answer: (value: unknown) => void = () => {};
+      api.placeManualCall.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      await mount();
+      fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
+      fireEvent.change(caller(), { target: { value: '+912248901121' } });
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(pickedCallerIdHint(CAMPAIGN.campaign_name));
+      fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+      // In flight: the pick is no longer the agent's to change, so no "wins / gives way".
+      act(() => {
+        fireEvent.click(screen.getByTestId('dial-call'));
+      });
+      expect(screen.queryByTestId('caller-id-hint')).toBeNull();
+      await act(async () => {
+        answer({ ok: true, value: tagged({ caller_id: '+912248901121' }) });
+      });
+      expect(screen.queryByText(/gives way to the rotation/)).toBeNull();
+    });
+
+    it('callerIdHint: none for a placed call, whose number is final; the pick’s while editing', () => {
+      const campaign = CAMPAIGN;
+      // A placed tagged call: Automatic is off and the setup fixed (useSoftphone).
+      expect(callerIdHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: false, campaign })).toBeNull();
+      expect(callerIdHint({ callerIdAutomatic: false, callerId: '+912248901121', setupEditable: true, campaign }))
+        .toBe(pickedCallerIdHint(CAMPAIGN.campaign_name));
+      expect(callerIdHint({ callerIdAutomatic: true, callerId: null, setupEditable: true, campaign })).toBe(AUTOMATIC_CALLER_ID_HINT);
     });
 
     it('once placed, shows the number the server dialled, not the draft', async () => {

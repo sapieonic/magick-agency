@@ -32,6 +32,19 @@ export function pickedCallerIdHint(campaignName: string | null): string {
     : 'From the numbers assigned to your account';
 }
 
+/**
+ * The hint under "Call from": Automatic's while it is the choice; a picked number's
+ * only while the setup is editable. Once Call is pressed the pick is no longer the
+ * agent's to change, and once placed the number is the call's own and final, so
+ * "wins / gives way" would tell them it might still change: no hint then.
+ */
+export function callerIdHint(
+  sp: Pick<SoftphoneState, 'callerIdAutomatic' | 'callerId' | 'setupEditable' | 'campaign'>,
+): string | null {
+  if (sp.callerIdAutomatic && sp.callerId === null) return AUTOMATIC_CALLER_ID_HINT;
+  return sp.setupEditable ? pickedCallerIdHint(sp.campaign?.campaign_name ?? null) : null;
+}
+
 const STATUS_LABEL = {
   dialing: 'Dialing',
   ringing: 'Ringing',
@@ -128,6 +141,7 @@ export function DialPad({
   const blockCopy = sp.number.length > 0 && sp.dialBlock ? DIAL_BLOCK_COPY[sp.dialBlock] : null;
   const reason = sp.dialUnavailableReason ?? blockCopy;
   const disabled = !sp.setupEditable;
+  const callerHint = callerIdHint(sp);
 
   return (
     <form
@@ -212,11 +226,11 @@ export function DialPad({
             </option>
           ))}
         </select>
-        <p className={styles.hint} data-testid="caller-id-hint">
-          {sp.callerIdAutomatic && sp.callerId === null
-            ? AUTOMATIC_CALLER_ID_HINT
-            : pickedCallerIdHint(sp.campaign?.campaign_name ?? null)}
-        </p>
+        {callerHint ? (
+          <p className={styles.hint} data-testid="caller-id-hint">
+            {callerHint}
+          </p>
+        ) : null}
       </div>
 
       <button
