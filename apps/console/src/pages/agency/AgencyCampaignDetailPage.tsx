@@ -429,6 +429,8 @@ export function AgencyCampaignDetailPage() {
             through as `null` and the list claims nothing.
           */
           liveAgentUserIds={stats?.agents ? stats.agents.map((a) => a.agent_user_id) : null}
+          // Each row's dedicated caller ID, behind the contact-assignment flag.
+          assignmentEnabled={assignmentEnabled}
         />
 
         {/*

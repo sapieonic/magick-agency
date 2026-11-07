@@ -56,7 +56,7 @@ import {
 import { countCustomerEntries, resolveViewer } from '../../../src/agency/customer-history/service.js';
 import { entryCount } from '../../../src/agency/customer-history/assemble.js';
 import { buildViewer } from '../../../src/agency/customer-history/visibility.js';
-import { namesIn } from '../../../src/agency/insights/shared.js';
+import { agentNamesOrNone } from '../../../src/agency/agency-agent-identity.js';
 
 const SEARCH_MAX = 40;
 const EXPORT_MAX = 15;
@@ -485,7 +485,7 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
     }
   });
 
-  it('the booker\'s name comes with the booking, by namesIn\'s rule: display name, else email; never a deleted user or a stranger to the tenant', async () => {
+  it('the booker\'s name comes with the booking, by agentNamesOrNone\'s rule: display name, else email; never a deleted user or a stranger to the tenant', async () => {
     const booker = async (userId: string) => {
       await q('UPDATE agency_call_attempts SET dispositioned_by_user_id = $2 WHERE id = $1', [ids.a3, userId]);
       return (await repo.latestBookings(onlyA(), [ids.cAr]))[0];
@@ -504,7 +504,7 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
       expect(await booker(gone.id)).toMatchObject({ booked_by_user_id: gone.id, booked_by_name: null });
       expect(await booker(stranger)).toMatchObject({ booked_by_user_id: stranger, booked_by_name: null });
       // The same answers as the name lookup the rest of the search uses.
-      expect(await namesIn([blank.id, gone.id, stranger], floor.tenant)).toEqual(new Map([[blank.id, `${blank.uid}@load.example.com`]]));
+      expect(await agentNamesOrNone([blank.id, gone.id, stranger], floor.tenant, 'customer history')).toEqual(new Map([[blank.id, `${blank.uid}@load.example.com`]]));
       // The search names the booker from the booking alone (no second lookup).
       const body = await search(sup());
       expect(body.summary.open.callbacks[0].booked_by).toEqual({ user_id: stranger, name: null });

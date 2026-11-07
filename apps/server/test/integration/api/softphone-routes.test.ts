@@ -1250,6 +1250,64 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     }
   }, 30_000);
 
+  it('DN4: a tagged call goes out from the contact owner\'s dedicated number; another agent\'s number is never used for a contact not theirs', async () => {
+    const owner = await user(tenant, account, 'agent');
+    const holder = await user(tenant, account, 'agent');
+    const dialler = await user(tenant, account, 'agent');
+    const ROTATION = '+919000000011';
+    const OWNERS = '+919000000012';
+    const HOLDERS = '+919000000013';
+    const campaign = await insertAgencyCampaign({
+      status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: CATALOG,
+      caller_ids: [ROTATION, OWNERS, HOLDERS], assignment_mode: 'pool',
+    });
+    for (const who of [owner, holder, dialler]) await staff(campaign.id, who.id);
+    // Set after the staffing began, so both dedications are effective (DN1).
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agent_caller_ids (tenant_id, account_id, campaign_id, user_id, caller_id, set_at)
+       VALUES ($1, $2, $3, $4, $5, clock_timestamp()), ($1, $2, $3, $6, $7, clock_timestamp())`,
+      [tenant, account, campaign.id, owner.id, OWNERS, holder.id, HOLDERS],
+    );
+    const owned = await insertAgencyContact(campaign.id, {
+      tenant_id: tenant, account_id: account, phone_e164: '+919811209101', assigned_user_id: owner.id, assigned_at: new Date(),
+    });
+    const unowned = await insertAgencyContact(campaign.id, { tenant_id: tenant, account_id: account, phone_e164: '+919811209102' });
+    const { sessionId, station } = await openSoftphone(dialler);
+
+    /** Place, check what was dialled (response, call row, carrier), then settle the call. */
+    async function dialAndSettle(to: string, requested: string, expected: string, contactId: string) {
+      const placed = await post('/proxy/agency/softphone/calls', dialler, {
+        session_id: sessionId, to, campaign_id: campaign.id, caller_id: requested,
+      });
+      expect(placed.statusCode, placed.body).toBe(201);
+      const call = placed.json();
+      expect(call).toMatchObject({ caller_id: expected, contact: { contact_id: contactId } });
+      expect((await manualRow(call.id)).caller_id).toBe(expected);
+      const leg = await legOf(call.id);
+      expect(mocks.fakeAdapter.initiateCall).toHaveBeenCalledWith(expect.objectContaining({ callId: leg, from: expected }));
+      answer(leg);
+      await waitFor('bridged', () => lastCall(station)?.state === 'bridged');
+      expect((await post(`/proxy/agency/softphone/calls/${call.id}/hangup`, dialler)).statusCode).toBe(200);
+      await carrierEnded(leg);
+      await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+      const outcome = await post(`/proxy/agency/softphone/calls/${call.id}/disposition`, dialler, { code: 'interested' });
+      expect(outcome.statusCode, outcome.body).toBe(200);
+    }
+
+    // The owner's contact, a rotation number requested: the owner's number wins.
+    await dialAndSettle('+919811209101', ROTATION, OWNERS, owned.id as string);
+    // An unowned contact, another agent's dedicated number requested: the rotation instead.
+    await dialAndSettle('+919811209102', HOLDERS, ROTATION, unowned.id as string);
+
+    // Outside the campaign's caller IDs: still refused, with the set.
+    const outside = await post('/proxy/agency/softphone/calls', dialler, {
+      session_id: sessionId, to: '+919811209102', campaign_id: campaign.id, caller_id: accountNumber,
+    });
+    expect(outside.statusCode, outside.body).toBe(400);
+    expect(outside.json()).toMatchObject({ code: 'caller_id_not_allowed', allowed_codes: [ROTATION, OWNERS, HOLDERS] });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, dialler)).statusCode).toBe(200);
+  }, 40_000);
+
   // ── Finding 1, the restart variant: last in the file, because it restarts the runtime ──
   //
   // The same owed outcome across a server restart: the old process's station closes, the

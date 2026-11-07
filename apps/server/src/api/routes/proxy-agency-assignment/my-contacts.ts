@@ -17,8 +17,11 @@ import {
   type AgencyMyContactBucket,
   type AgencyMyContactsSummary,
 } from '@magick-agency/contracts/api/agency/assignment';
+import { createChildLogger } from '@magick-agency/observability';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
+import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
+import { agencyAgentCallerIdRepository, agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
+import { dedicatedCallerIdOf, usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
 import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
@@ -27,6 +30,8 @@ import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { settledValue } from '../helpers/settled.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
 import { agentRetryOpen, staffedCampaign } from './shared.js';
+
+const log = createChildLogger({ component: 'proxy-agency-my-contacts' });
 
 const campaignId = z.string().regex(UUID_RE, 'must be a campaign id');
 
@@ -49,6 +54,31 @@ function fieldError(reply: FastifyReply, field: string, message: string): Fastif
   return reply.code(400).send({ error: 'Validation Error', details: { formErrors: [], fieldErrors: { [field]: [message] } } });
 }
 
+/**
+ * The summary's `caller_id`: the agent's dedicated number on the campaign by the dial path's
+ * own rule, `dedicatedCallerIdOf` (DN2: the stored number counts only while it is still one of
+ * the campaign's usable caller IDs; otherwise their contacts use the rotation). A failed read is
+ * not the summary's failure: it answers `caller_id: null`, as for an agent with no number, with
+ * a warning, so a dedication read blip never takes the agent's whole My contacts panel down.
+ */
+export function summaryCallerId(
+  campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'caller_ids'>,
+  userId: string,
+  read: PromiseSettledResult<string | null>,
+): string | null {
+  if (read.status === 'rejected') {
+    const err = read.reason;
+    log.warn(
+      { tenantId: campaign.tenant_id, campaignId: campaign.id, userId, err: err instanceof Error ? err.message : String(err) },
+      'My contacts summary: the dedicated caller ID read failed; answering caller_id: null',
+    );
+    return null;
+  }
+  const stored = read.value;
+  if (stored === null) return null;
+  return dedicatedCallerIdOf(usableCallerIds(campaign), new Map([[userId, stored]]), userId);
+}
+
 export async function registerMyContactRoutes(app: FastifyInstance): Promise<void> {
   /** GET /my-contacts/summary?campaign_id= — the caller's contacts on a campaign, in counts. */
   app.get('/my-contacts/summary', {
@@ -63,13 +93,15 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
 
     const now = new Date();
     // Independent reads, started together; a throw is rethrown in this order.
-    const [tallyRead, queueRead] = await Promise.allSettled([
+    const [tallyRead, queueRead, callerIdRead] = await Promise.allSettled([
       agencyAssignmentReadRepository.myTally(campaign, userId),
       readAgentQueueState(campaign, userId, now),
+      agencyAgentCallerIdRepository.findForAgent(campaign.id, userId),
     ]);
     const tally = settledValue(tallyRead);
     // The queue pacing and the station read (strict / preferred); pool mode has none of its own.
     const queue = settledValue(queueRead) ?? poolModeQueueState(campaign, tally.pool.next_open_at, now);
+    const callerId = summaryCallerId(campaign, userId, callerIdRead);
     const body: AgencyMyContactsSummary = {
       campaign_id: campaign.id,
       assignment_mode: campaign.assignment_mode,
@@ -78,6 +110,7 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
       due_now: tally.own.due_now,
       queue,
       unassigned_open: campaign.assignment_mode === 'strict' ? tally.pool.open ?? 0 : 0,
+      caller_id: callerId,
       retry: {
         // Off on a finished campaign too: the retry route would refuse `campaign_not_running`.
         allowed: agentRetryOpen(campaign),

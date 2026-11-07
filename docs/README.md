@@ -36,6 +36,10 @@ CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; consol
 (2026-11-06: one number searched across the tenant's campaigns, CH1–CH13, reviewed and fixed the
 same day; a search measured at 15 ms median on a 1M-contact tenant) is built on the server, the
 console and the app; its test counts are in `status.md`, and the app's Dart side has not run yet.
+A dedicated caller ID per agent (2026-11-06, behind the contact-assignment flag: a supervisor gives
+a staffed agent one of the campaign's caller IDs and every dial to a contact they own goes out from
+it, decisions DN1–DN10) leaves server 8207 unit / 2037 integration + 9 expected fail; db 428 / 573;
+console 5434.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)

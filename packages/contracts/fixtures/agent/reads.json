@@ -253,6 +253,7 @@
       "next_due_at": "2026-11-03T15:00:00.000Z"
     },
     "unassigned_open": 4,
+    "caller_id": "+918041234567",
     "retry": {
       "allowed": true,
       "rounds": 1,

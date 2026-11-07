@@ -1,6 +1,6 @@
 /**
  * A small TTL cache whose writes are guarded by a per-key GENERATION, for the pacing
- * engine's campaign rows and account limits.
+ * engine's campaign rows, account limits and dedicated caller-ID maps.
  *
  * The generation is what makes invalidation safe against a load in flight. Without
  * it the classic race reinstates a stale value for a whole TTL: a tick starts
@@ -14,6 +14,14 @@
  * The TTL is the backstop for an invalidation that never arrives (a lost event, a
  * raw SQL write): no entry is served older than `ttlMs`.
  */
+/**
+ * How long a cached campaign row, account limit or dedicated caller-ID map may be served
+ * without an invalidation. The backstop for a write that published nothing (raw SQL, a lost
+ * event); every write through the repositories and the concurrency seam publishes. Campaign
+ * rows are also re-primed by every supervise pass (`findActive`, 2 s).
+ */
+export const PACING_CACHE_TTL_MS = 2_000;
+
 /** Keys whose generation is remembered before the map is folded into the floor. */
 export const MAX_TRACKED_GENERATIONS = 10_000;
 

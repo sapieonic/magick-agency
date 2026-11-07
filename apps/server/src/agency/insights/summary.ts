@@ -46,12 +46,13 @@ import {
   agencyInsightsReadRepository,
   type RosterCounts,
 } from '../../db/repositories/agency.repository.js';
+import { agentNamesOrNone } from '../agency-agent-identity.js';
 import { windowEndToday } from '../calling-hours.js';
 import { RETRY_NO_OUTCOME } from '../spine-filters.js';
 import { computeReadiness } from './readiness.js';
 import { readRoster, rosterWire } from './roster.js';
 import { insightsSettings } from './settings.js';
-import { actorOf, iso, namesIn, userIdOf } from './shared.js';
+import { actorOf, iso, userIdOf } from './shared.js';
 import { campaignTransitions } from './transitions.js';
 
 /** The console's `DEFAULT_RETRY_SELECTOR` (`apps/console/src/utils/agencyRetrySelector.ts`). */
@@ -107,7 +108,7 @@ export async function computeSummary(campaign: AgencyCampaignRecord, deps: Summa
     campaign.analysis_profile_id
       ? callAnalysisProfileRepository.findByIdScoped(campaign.analysis_profile_id, campaign.tenant_id, campaign.account_id)
       : Promise.resolve(null),
-    namesIn([creatorId, transitionBy], campaign.tenant_id),
+    agentNamesOrNone([creatorId, transitionBy], campaign.tenant_id, 'insights'),
     statusHeadline(campaign, roster, deps),
   ]);
 

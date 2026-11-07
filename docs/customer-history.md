@@ -327,7 +327,7 @@ CREATE TABLE agency_contact_keys (
   reaches a contact on a placeholder of 5,000 rows among 200,000 (seeded in a rolled-back
   transaction): the walk is a `Limit` over the index, at most the cap read, no sort of every
   match. A callback re-booked between two pages appears exactly once (both channels). The booker's
-  name comes with the booking (`latestBookings`), by `namesIn`'s rule. The dialer flag as a data boundary (CH2):
+  name comes with the booking (`latestBookings`), by `agentNamesOrNone`'s rule. The dialer flag as a data boundary (CH2):
   `test/unit/agency/customer-history/visibility.test.ts`,
   `test/unit/api/routes/customer-history-dialer-viewer.test.ts` and, on real Postgres,
   `test/integration/api/customer-history-dialer-flag.test.ts` (account B's dialer off: a

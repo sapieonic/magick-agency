@@ -29,6 +29,7 @@ const { repos, gates } = vi.hoisted(() => ({
     contact: { findById: vi.fn() },
     session: { setState: vi.fn().mockResolvedValue(undefined) },
     insightsPacing: { addToMinute: vi.fn().mockResolvedValue(undefined) },
+    callerIds: { mapForCampaign: vi.fn() },
   },
   gates: { evaluatePreDialGates: vi.fn() },
 }));
@@ -38,6 +39,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAgentSessionRepository: repos.session,
   agencyInsightsPacingRepository: repos.insightsPacing,
+  agencyAgentCallerIdRepository: repos.callerIds,
 }));
 vi.mock('../../../src/agency/pre-dial-gates.js', async (orig) => ({
   ...(await orig<typeof import('../../../src/agency/pre-dial-gates.js')>()),
@@ -46,6 +48,7 @@ vi.mock('../../../src/agency/pre-dial-gates.js', async (orig) => ({
 
 import { WrapupManager } from '../../../src/agency/wrapup-manager.js';
 import { startWrapupRedial, type WrapupRedialDeps } from '../../../src/agency/wrapup-redial.js';
+import { DedicatedCallerIdCache } from '../../../src/agency/pacing/dedicated-caller-ids.js';
 import type { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import type { StationRegistry } from '../../../src/agency/station-registry.js';
 
@@ -109,6 +112,8 @@ function harness() {
   const dispatcher = { dispatch: vi.fn(async () => undefined) };
   const deps = {
     agents, wrapup, stations, dnc: {} as never, dispatcher, dialer,
+    // Unarmed: reads through to the mocked repository, as in a media worker.
+    callerIds: new DedicatedCallerIdCache(),
   } as unknown as WrapupRedialDeps;
   return { agents, wrapup, dialer, dispatcher, deps };
 }
@@ -138,6 +143,8 @@ beforeEach(() => {
   repos.campaign.findById.mockResolvedValue(campaign);
   repos.contact.findById.mockResolvedValue({ id: 'contact-1', state: 'connected', phone_e164: '+919812340001' });
   repos.attempt.beginWrapupRedial.mockResolvedValue({ ok: true, attempt: redialRow });
+  // No dedicated caller IDs (DN1) unless a case says so: the rotation is the whole pool.
+  repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
   gates.evaluatePreDialGates.mockResolvedValue({ action: 'dial', clearance: { contactId: 'contact-1', checkedAt: new Date() } });
 });
 
@@ -305,5 +312,36 @@ describe('startWrapupRedial — a refusal at the limit is recorded (IN2)', () =>
     });
     repos.insightsPacing.addToMinute.mockRejectedValueOnce(new Error('database unavailable'));
     expect(await go(h)).toMatchObject({ ok: false, status: 409, code: 'redial_limit_reached' });
+  });
+});
+
+describe('startWrapupRedial — the caller ID (WR7 with dedicated caller IDs, DN4)', () => {
+  const POOL = ['+919000000001', '+919000000002', '+919000000003'];
+  async function redialFrom(opts: { owner: string | null; previous: string; dedicated: Array<[string, string]> }) {
+    repos.campaign.findById.mockResolvedValue({ ...campaign, caller_ids: POOL });
+    repos.attempt.findById.mockResolvedValue({ ...original, caller_id: opts.previous });
+    repos.contact.findById.mockResolvedValue({ id: 'contact-1', state: 'connected', phone_e164: '+919812340001', assigned_user_id: opts.owner });
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map(opts.dedicated));
+    const h = harness();
+    await inWrapup(h);
+    const res = await go(h);
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledWith('camp-1');
+    return repos.attempt.beginWrapupRedial.mock.calls[0]![0].callerId as string;
+  }
+
+  it('the owner\'s dedicated number wins over the number the customer just heard', async () => {
+    expect(await redialFrom({ owner: 'agent-a', previous: '+919000000001', dedicated: [['agent-a', '+919000000002']] }))
+      .toBe('+919000000002');
+  });
+
+  it('no dedication for the owner: the previous number while it is still in the rotation', async () => {
+    expect(await redialFrom({ owner: 'agent-a', previous: '+919000000003', dedicated: [['agent-b', '+919000000002']] }))
+      .toBe('+919000000003');
+  });
+
+  it('a previous number since dedicated to someone else is not reused for a contact that is not theirs', async () => {
+    const picked = await redialFrom({ owner: null, previous: '+919000000002', dedicated: [['agent-b', '+919000000002']] });
+    expect(['+919000000001', '+919000000003']).toContain(picked);
   });
 });

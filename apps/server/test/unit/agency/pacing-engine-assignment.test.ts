@@ -11,9 +11,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // `agency-agent-queue.test.ts`); this file is the tick's use of them.
 // ---------------------------------------------------------------------------
 
+const { childLog } = vi.hoisted(() => ({
+  // One logger for every child, so the engine's logs can be asserted.
+  childLog: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 vi.mock('@magick-agency/observability', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
-  createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  createChildLogger: () => childLog,
 }));
 
 const { repos, settings } = vi.hoisted(() => ({
@@ -39,6 +43,7 @@ const { repos, settings } = vi.hoisted(() => ({
       setState: vi.fn().mockResolvedValue(null),
     },
     session: { findLiveForCampaign: vi.fn().mockResolvedValue([]), setState: vi.fn().mockResolvedValue(null) },
+    callerIds: { mapForCampaign: vi.fn() },
   },
   settings: { getMaxConcurrentCalls: vi.fn().mockResolvedValue(10) },
 }));
@@ -47,6 +52,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
+  agencyAgentCallerIdRepository: repos.callerIds,
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
@@ -67,7 +73,8 @@ vi.mock('../../../src/agency/pacing/callback-fallback.js', async (importOriginal
   sweepUnstaffedOwners: fallback.unstaffed,
 }));
 
-import { PacingEngine, type PacingTickObservation } from '../../../src/agency/pacing-engine.js';
+import { DEDICATION_READ_FAILURE_LOG_MS, PacingEngine, type PacingTickObservation } from '../../../src/agency/pacing-engine.js';
+import * as metrics from '@magick-agency/observability/metrics/agency';
 import {
   getPacingInvalidationBus,
   InProcessPacingInvalidationBus,
@@ -149,6 +156,7 @@ beforeEach(() => {
   repos.contact.claimDialable.mockResolvedValue([]);
   repos.contact.claimForAgents.mockResolvedValue([]);
   repos.attempt.create.mockImplementation(async (p: any) => ({ id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1 }));
+  repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
   settings.getMaxConcurrentCalls.mockResolvedValue(10);
   fallback.sweep.mockResolvedValue(0);
   fallback.unstaffed.mockResolvedValue(0);
@@ -220,6 +228,147 @@ describe('strict / preferred: an agent with nothing due is not reserved (CA3)', 
     expect(repos.contact.probeAgentQueues).toHaveBeenCalledWith('camp-1', ['u1', 'u2', 'u3'], expect.objectContaining({
       pool: { dueCap: 3 },
     }));
+  });
+});
+
+describe('dedicated caller IDs: the contact\'s owner decides the number (DN2, DN4)', () => {
+  const POOL = ['+14155550100', '+14155550101', '+14155550102'];
+
+  it('an owned contact dials from its owner\'s number, the rest from the rotation; the map is read once per batch', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'preferred', caller_ids: POOL });
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1', 'u2', 'u3']));
+    // u1 owns theirs (dedicated); u2's is a pool contact; u3 owns theirs (no dedication).
+    repos.contact.claimForAgents.mockResolvedValue([
+      { agentUserId: 'u1', contact: contact('c-of-u1', 'u1') },
+      { agentUserId: 'u2', contact: contact('c-pool', null) },
+      { agentUserId: 'u3', contact: contact('c-of-u3', 'u3') },
+    ]);
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101'], ['u9', '+14155550102']]));
+    const { e } = engine(makeStations(['s1', 's2', 's3']), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    const byContact = new Map(repos.attempt.create.mock.calls.map((c: any[]) => [c[0].contactId, c[0].callerId]));
+    expect(byContact.get('c-of-u1')).toBe('+14155550101');
+    // The rotation is the pool minus every dedicated number: one number left.
+    expect(byContact.get('c-pool')).toBe('+14155550100');
+    expect(byContact.get('c-of-u3')).toBe('+14155550100');
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(1);
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledWith('camp-1');
+  });
+
+  it('pool mode: an owned contact still goes out from its owner\'s number, whoever takes the call', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool', caller_ids: POOL });
+    // u2's contact, dialled to s1 (u1's session): pool mode ignores the owner when pairing.
+    repos.contact.claimDialable.mockResolvedValue([contact('c-of-u2', 'u2')]);
+    repos.callerIds.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101'], ['u2', '+14155550102']]));
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0]![0]).toMatchObject({ sessionId: 's1', contactId: 'c-of-u2', callerId: '+14155550102' });
+  });
+
+  it('the map is read once per dialling batch, BEFORE any agent is reserved or contact claimed', async () => {
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1']));
+    repos.contact.claimForAgents.mockResolvedValue([]);
+    const agents = makeAgents({ s1: 'available' });
+    const { e } = engine(makeStations(['s1']), agents);
+    await e.tickOnce('camp-1');
+    // Read even though the claim then finds nothing: the read comes first.
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(1);
+    const readAt = repos.callerIds.mapForCampaign.mock.invocationCallOrder[0]!;
+    expect(readAt).toBeLessThan(agents.reserve.mock.invocationCallOrder[0]!);
+    expect(readAt).toBeLessThan(repos.contact.claimForAgents.mock.invocationCallOrder[0]!);
+  });
+
+  it('a tick that plans no dial never reads the map', async () => {
+    // u1 has nothing due: `nothing_due`, no batch.
+    repos.contact.probeAgentQueues.mockResolvedValue(probe([]));
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+    await e.tickOnce('camp-1');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(repos.callerIds.mapForCampaign).not.toHaveBeenCalled();
+  });
+
+  it('a failed read dials nothing and takes nothing: no agent reserved, no contact claimed, `dedications_unavailable` recorded', async () => {
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1', 'u2']));
+    repos.contact.claimForAgents.mockResolvedValue([
+      { agentUserId: 'u1', contact: contact('c-of-u1', 'u1') },
+      { agentUserId: 'u2', contact: contact('c-of-u2', 'u2') },
+    ]);
+    repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+    const idleInc = vi.spyOn(metrics.agencyTickIdleTotal, 'inc');
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    const { e, dispatch, ticks } = engine(makeStations(['s1', 's2']), agents);
+
+    try {
+      await e.tickOnce('camp-1');
+
+      expect(agents.reserve).not.toHaveBeenCalled();
+      expect(repos.contact.claimForAgents).not.toHaveBeenCalled();
+      expect(repos.contact.claimDialable).not.toHaveBeenCalled();
+      expect(repos.contact.unclaimMany).not.toHaveBeenCalled();
+      expect(repos.attempt.create).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(idleInc).toHaveBeenCalledWith({ campaign_id: 'camp-1', reason: 'dedications_unavailable' });
+      // Not quiescent: the next round ticks and reads again.
+      expect(ticks.at(-1)).toMatchObject({ mode: 'full', quiescent: false });
+      // Logged, with nothing to unwind first.
+      expect(childLog.error.mock.calls.filter((c) => String(c[1]).includes('dedicated caller IDs'))).toHaveLength(1);
+    } finally {
+      idleInc.mockRestore();
+    }
+  });
+
+  it('a read that keeps failing is logged once per interval, counted every tick; the recovery once', async () => {
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1']));
+    repos.contact.claimForAgents.mockResolvedValue([{ agentUserId: 'u1', contact: contact('c-of-u1', 'u1') }]);
+    repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+    const idleInc = vi.spyOn(metrics.agencyTickIdleTotal, 'inc');
+    let clock = 1_000_000;
+    const agents = makeAgents({ s1: 'available' });
+    const { e, dispatch } = engine(makeStations(['s1']), agents, undefined, () => clock);
+    const readErrors = () => childLog.error.mock.calls.filter((c) => String(c[1]).includes('dedicated caller IDs'));
+    const unavailable = () => idleInc.mock.calls.filter((c) => (c[0] as { reason: string }).reason === 'dedications_unavailable');
+
+    try {
+      for (let tick = 0; tick < 5; tick++) {
+        await e.tickOnce('camp-1');
+        clock += 250;
+      }
+      expect(readErrors()).toHaveLength(1);
+      expect(readErrors()[0]![0]).toMatchObject({ campaignId: 'camp-1', failedReads: 1, unloggedSinceLast: 0 });
+      // Every failing tick is in the metric, and none took an agent or a contact.
+      expect(unavailable()).toHaveLength(5);
+      expect(agents.reserve).not.toHaveBeenCalled();
+      expect(repos.contact.claimForAgents).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+
+      clock += DEDICATION_READ_FAILURE_LOG_MS;
+      await e.tickOnce('camp-1');
+      expect(readErrors()).toHaveLength(2);
+      expect(readErrors()[1]![0]).toMatchObject({ failedReads: 6, unloggedSinceLast: 4 });
+      expect(String(readErrors()[1]![1])).toMatch(/^Still cannot/);
+
+      repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
+      clock += 250;
+      await e.tickOnce('camp-1');
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      const recovered = childLog.info.mock.calls.filter((c) => String(c[1]).includes('can be read again'));
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0]![0]).toMatchObject({ campaignId: 'camp-1', failedReads: 6 });
+
+      // A later failure is a new run: logged at once.
+      repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+      clock += 250;
+      await e.tickOnce('camp-1');
+      expect(readErrors()).toHaveLength(3);
+      expect(readErrors()[2]![0]).toMatchObject({ failedReads: 1 });
+    } finally {
+      idleInc.mockRestore();
+    }
   });
 });
 

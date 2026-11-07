@@ -70,3 +70,11 @@ export async function retryOnStationTokenUnavailable<T>(
     }
   }
 }
+
+/** A refusal's own `details` object (`next_open_at`, `caller_ids`, ...), or `null` when it carries none. */
+export function errorDetails(err: unknown): Record<string, unknown> | null {
+  const details = (errorBody(err) as { details?: unknown } | null)?.details;
+  return details && typeof details === 'object' && !Array.isArray(details)
+    ? (details as Record<string, unknown>)
+    : null;
+}

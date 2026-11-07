@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { UserMinus, UserPlus } from 'lucide-react';
+import { AlertTriangle, UserMinus, UserPlus } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useTeam } from '../../hooks/useTeam';
@@ -7,6 +7,9 @@ import { assignAgent, listCampaignAgents, unassignAgent } from '../../api/agency
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { ROLES } from '../../config';
 import { agencyPersonaLabel } from '../../utils/agencyPersona';
+import { ALL_DEDICATED_WARNING } from '../../utils/agencyAgentCallerIdCopy';
+import { useAgentCallerIds } from '../../hooks/useAgentCallerIds';
+import { AgentCallerIdControl } from './AgentCallerIdControl';
 import type { Role } from '../../types/auth';
 import type { AgencyAssignedAgent } from '../../types/agency-campaign';
 import styles from './CampaignAgentAssignments.module.css';
@@ -73,6 +76,15 @@ export interface CampaignAgentAssignmentsProps {
    * on the page. Unknown renders no signal at all.
    */
   liveAgentUserIds: readonly string[] | null;
+  /**
+   * The `agency_contact_assignment_enabled` flag, read by the page. With it on,
+   * each row also carries the agent's dedicated caller ID and its control (DN1).
+   * With it off the dedications are still read (the list and the release are
+   * not behind the flag, only setting one is): an agent who holds a number shows
+   * it with only "Use shared rotation", and a campaign with none renders as it
+   * would without dedicated caller IDs at all.
+   */
+  assignmentEnabled?: boolean;
 }
 
 /**
@@ -89,14 +101,22 @@ export function CampaignAgentAssignments({
   campaignId,
   canSupervise,
   liveAgentUserIds,
+  assignmentEnabled = false,
 }: CampaignAgentAssignmentsProps) {
   if (!canSupervise) return null;
-  return <AssignmentPanel campaignId={campaignId} liveAgentUserIds={liveAgentUserIds} />;
+  return (
+    <AssignmentPanel
+      campaignId={campaignId}
+      liveAgentUserIds={liveAgentUserIds}
+      assignmentEnabled={assignmentEnabled}
+    />
+  );
 }
 
 function AssignmentPanel({
   campaignId,
   liveAgentUserIds,
+  assignmentEnabled = false,
 }: Omit<CampaignAgentAssignmentsProps, 'canSupervise'>) {
   const { tenantId, accountId } = useTenant();
   const { showToast, showErrorToast } = useToast();
@@ -104,6 +124,14 @@ function AssignmentPanel({
   // (`agency.station.connect` floors at `agent`), so nobody is filtered out on
   // capability — only on being assigned here already.
   const { members, error: membersError } = useTeam();
+  // Dedicated caller IDs: read whatever the flag (this panel is already behind
+  // `agency.supervise`, the routes' gate), so a dedication made while it was on
+  // can still be seen and released with it off. The PATCH refuses to drop a
+  // dedicated number, and its copy sends the supervisor here either way.
+  const callerIds = useAgentCallerIds(campaignId);
+  const reloadCallerIds = callerIds.reload;
+  /** Flag off: anything to show at all (a failed read shows nothing new). */
+  const hasDedications = (callerIds.data?.dedicated.length ?? 0) > 0;
 
   const [agents, setAgents] = useState<AgencyAssignedAgent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -163,14 +191,15 @@ function AssignmentPanel({
       try {
         await unassignAgent(campaignId, userId, tenantId, accountId);
         showToast('Removed from this campaign.', 'success');
-        await load();
+        // Taking someone off the campaign releases their dedicated number.
+        await Promise.all([load(), reloadCallerIds()]);
       } catch (err: unknown) {
         showErrorToast(err, 'Could not remove that person.');
       } finally {
         setBusyUserId(null);
       }
     },
-    [campaignId, tenantId, accountId, load, showToast, showErrorToast],
+    [campaignId, tenantId, accountId, load, showToast, showErrorToast, reloadCallerIds],
   );
 
   return (
@@ -189,6 +218,29 @@ function AssignmentPanel({
       </div>
 
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
+
+      {assignmentEnabled ? (
+        <>
+          <p className={styles.description}>
+            Give an agent one of this campaign’s caller IDs and every call to their contacts goes
+            out from it. Contacts without one rotate over the campaign’s other numbers.
+          </p>
+          {callerIds.error ? (
+            <ErrorAlert message={callerIds.error} onRetry={() => void callerIds.reload()} />
+          ) : null}
+        </>
+      ) : hasDedications ? (
+        <p className={styles.description} data-testid="caller-ids-flag-off">
+          Contact assignment is off, so no new caller IDs can be dedicated. Calls to these
+          agents’ contacts still go out from their numbers until you release them.
+        </p>
+      ) : null}
+      {(assignmentEnabled || hasDedications) && callerIds.data?.all_dedicated ? (
+        <p className={styles.warning} role="status" data-testid="caller-ids-all-dedicated">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>{ALL_DEDICATED_WARNING}</span>
+        </p>
+      ) : null}
 
       <div className={styles.assignRow}>
         <label className={styles.assignLabel} htmlFor="campaign-agent-picker">
@@ -291,6 +343,15 @@ function AssignmentPanel({
                 <UserMinus size={15} aria-hidden="true" />
                 Remove
               </button>
+              {assignmentEnabled || hasDedications ? (
+                <AgentCallerIdControl
+                  userId={agent.user_id}
+                  agentName={agent.name ?? agent.email ?? agent.user_id}
+                  resource={callerIds}
+                  releaseOnly={!assignmentEnabled}
+                  onAgentUnstaffed={load}
+                />
+              ) : null}
             </li>
           ))}
         </ul>

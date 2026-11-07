@@ -7,6 +7,7 @@ vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() })
 
 const { insertAgencyCampaign, insertAgencyContact, insertAgencyAttempt, insertAgentSession } = await import('./agency-factories.js');
 const { startMyContactCall } = await import('../../../src/agency/my-contact-call.js');
+const { DedicatedCallerIdCache } = await import('../../../src/agency/pacing/dedicated-caller-ids.js');
 
 /**
  * ─── The agent's own dial when its attempt insert is refused, on real Postgres ──
@@ -56,6 +57,7 @@ describe('startMyContactCall — a refused attempt insert (integration)', () => 
         dnc: { check: async () => 'clear' } as never,
         dispatcher: { dispatch } as never,
         dialer: { releaseAgent: vi.fn() },
+        callerIds: new DedicatedCallerIdCache(),
       },
       {
         tenantId: campaign.tenant_id, accountId: campaign.account_id, session,

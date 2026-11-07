@@ -11,6 +11,7 @@ import {
   CONTACT_ASSIGNMENT_FLAG,
   assignmentModeLocked,
 } from '../../utils/agencyAssignmentCopy';
+import { callerIdDedicatedMessage, dedicatedCallerIdsOf } from '../../utils/agencyAgentCallerIdCopy';
 import { getAgencyCampaign, updateAgencyCampaign } from '../../api/agencyCampaigns';
 import { hasPermission } from '../../utils/permissions';
 import {
@@ -287,6 +288,15 @@ export function AgencyCampaignSettingsPage() {
       // edits stay on screen.
       if (errorCode(err) === 'mode_change_requires_pause') {
         setFieldErrors({ assignment_mode: ASSIGNMENT_REFUSAL_COPY.mode_change_requires_pause });
+        return;
+      }
+      // The new caller IDs drop a number dedicated to an agent (409
+      // `caller_id_dedicated`). Said on the field, naming the numbers: its
+      // `details.caller_ids` is a list, not the per-field map
+      // `fieldErrorsFromResponse` reads.
+      const dedicated = dedicatedCallerIdsOf(err);
+      if (dedicated !== null) {
+        setFieldErrors({ caller_ids: callerIdDedicatedMessage(dedicated) });
         return;
       }
       // The server answers `{ details: { field: message } }` keyed by the body path,

@@ -255,7 +255,7 @@ export interface CustomerHistoryBookingRow {
   contact_id: string;
   booked_by_user_id: string | null;
   /**
-   * The booker's display name by `namesIn`'s rule (display name, else email; a member of the
+   * The booker's display name by `agentNamesOrNone`'s rule (display name, else email; a member of the
    * tenant, not deleted); NULL when there is no booker or they cannot be named.
    */
   booked_by_name: string | null;

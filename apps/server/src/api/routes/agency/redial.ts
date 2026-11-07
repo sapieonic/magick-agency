@@ -40,6 +40,7 @@ export async function registerRedialRoutes(sub: FastifyInstance, runtime: Agency
         dnc: runtime.dnc,
         dispatcher: runtime.dispatcher,
         dialer: runtime.dialer,
+        callerIds: runtime.dedications,
       },
       { sessionId: session.id, attemptId: body.attempt_id, actorUserId: session.agent_user_id },
     );

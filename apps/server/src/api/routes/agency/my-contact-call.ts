@@ -75,6 +75,7 @@ export async function registerMyContactCallRoutes(sub: FastifyInstance, runtime:
         dnc: runtime.dnc,
         dispatcher: runtime.dispatcher,
         dialer: runtime.dialer,
+        callerIds: runtime.dedications,
       },
       {
         tenantId: getTenantId(request),

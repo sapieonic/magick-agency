@@ -40,10 +40,11 @@ import {
   agencyInsightsReadRepository,
   agencyInsightsRollupRepository,
 } from '../../db/repositories/agency.repository.js';
+import { agentNamesOrNone } from '../agency-agent-identity.js';
 import { computeAllocation } from './allocation.js';
 import { insightsCache, insightsCacheKey } from './cache.js';
 import { campaignZone, rangeWire, type ServedInsightsRange } from './range.js';
-import { InsightsCampaignGone, namesIn, overrideCodes, successCodes, userIdOf } from './shared.js';
+import { InsightsCampaignGone, overrideCodes, successCodes, userIdOf } from './shared.js';
 
 const NO_STATE = { online_seconds: 0, available: 0, on_call: 0, wrapup: 0, break_by_reason: {} as Record<string, number> };
 
@@ -78,7 +79,11 @@ export async function computeActivity(
   const stateByAgent = new Map(states.map((s) => [s.agent_user_id, s]));
   const dialledIds = new Set(rollup.agents.map((a) => a.agent_user_id));
   const stateOnly = states.filter((s) => !dialledIds.has(s.agent_user_id));
-  const names = await namesIn([...dialledIds, ...stateOnly.map((s) => s.agent_user_id), ...dncByUser.map((r) => r.user_id)], campaign.tenant_id);
+  const names = await agentNamesOrNone(
+    [...dialledIds, ...stateOnly.map((s) => s.agent_user_id), ...dncByUser.map((r) => r.user_id)],
+    campaign.tenant_id,
+    'insights',
+  );
 
   const agentRow = (id: string | null, dials: Omit<AgencyInsightsAgentActivityRow, 'agent_user_id' | 'agent_name' | 'online_seconds' | 'state_seconds'>): AgencyInsightsAgentActivityRow => {
     const s = (id === null ? undefined : stateByAgent.get(id)) ?? NO_STATE;
