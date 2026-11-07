@@ -622,8 +622,14 @@ export class AgencyDialer {
     }
     live.placing = false;
     dialReturned(false);
-    // Placed: the carrier took the create-call, so any refusal streak is broken (PL11).
-    if (cmd.campaign.telephony_credential_id) await this.refusalBreaker.notePlaced(cmd.campaignId);
+    // Placed: the carrier took the create-call, so any refusal streak is broken (PL11). Not
+    // awaited: the reset is off the dial path. Its Redis DEL is queued on the connection
+    // before this returns, so a later refusal's INCR still lands after it. `notePlaced`
+    // never throws; the catch only makes an unhandled rejection impossible.
+    if (cmd.campaign.telephony_credential_id) {
+      void this.refusalBreaker.notePlaced(cmd.campaignId).catch((err) =>
+        log.warn({ err, campaignId: cmd.campaignId }, 'Carrier refusal streak not reset — it lapses with its TTL'));
+    }
 
     // Id only — NEVER the state. By the time this runs the carrier may already
     // have answered and `onBridgeLifecycle` may already have written `bridged`
