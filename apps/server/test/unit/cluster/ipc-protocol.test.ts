@@ -112,7 +112,15 @@ describe('body decoders', () => {
     expect(decode(roundTrip(body))).toEqual(body);
     expect(decode({ ...body, token: null })).toEqual({ ...body, token: null });
     expect(decode({ ...body, headers: {} })).toEqual({ ...body, headers: {} });
+    // The scheme's case is not the URL's: a base written `HTTPS://` (which the config accepts,
+    // and which dials and verifies in one process) crosses as written, so its signature still
+    // verifies in the worker over the same bytes.
+    const upper = { ...body, url: 'HTTPS://agency.test/api/v1/webhooks/plivo/webrtc-answer/c1?token=tok&w=1' };
+    expect(decode(roundTrip(upper))).toEqual(upper);
     for (const bad of [
+      { ...body, url: 'wss://agency.test/x' },
+      { ...body, url: 'https//agency.test/x' },
+      { ...body, url: 'not a url' },
       { ...body, kind: 'hangup' },
       { ...body, callId: '' },
       { ...body, token: 7 },

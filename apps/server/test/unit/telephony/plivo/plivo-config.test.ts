@@ -64,8 +64,10 @@ describe('telephony.plivo config', () => {
     expect(issue?.message).toMatch(/PLIVO_WEBHOOK_BASE_URL must be empty or an absolute https: URL with no query or fragment/);
   });
 
-  it('accepts PLIVO_WEBHOOK_BASE_URL empty, or an absolute https: URL (a port, a path prefix, a trailing slash)', () => {
-    for (const value of ['', 'https://srv.example.com', 'https://srv.example.com:8443/edge/api/v1/webhooks/plivo/']) {
+  it('accepts PLIVO_WEBHOOK_BASE_URL empty, or an absolute https: URL (a port, a path prefix, a trailing slash, the scheme in any case), kept as written', () => {
+    // As written: the dial's URLs and the signature check are built from the same string, and a
+    // forwarded callback's URL decodes with the scheme in any case (`ipc-protocol.test.ts`).
+    for (const value of ['', 'https://srv.example.com', 'https://srv.example.com:8443/edge/api/v1/webhooks/plivo/', 'HTTPS://Srv.example.com/api/v1/webhooks/plivo']) {
       expect(plivo({ PLIVO_WEBHOOK_BASE_URL: value })?.webhookBaseUrl).toBe(value);
     }
   });

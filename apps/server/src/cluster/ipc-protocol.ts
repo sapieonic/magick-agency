@@ -340,12 +340,25 @@ const MAX_PLIVO_URL_LENGTH = 8192;
 const MAX_PLIVO_ANSWER_BODY = 64 * 1024;
 const PLIVO_ANSWER_TYPES = ['text/xml', 'application/json'] as const;
 
+/**
+ * Whether `url` is an absolute `https:` URL, read as the dial and the config read it (`new URL`,
+ * so the scheme's case does not matter): a base written `HTTPS://…` dials and verifies in one
+ * process, so its forwarded callbacks must decode too.
+ */
+function isHttpsUrl(url: string): boolean {
+  try {
+    return new URL(url).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function parseCarrierPlivoCallback(raw: unknown): CarrierPlivoCallbackBody | null {
   if (!isRecord(raw) || !isId(raw['callId'])) return null;
   const { kind, token, url, params, headers } = raw;
   if (!(PLIVO_CALLBACK_KINDS as readonly unknown[]).includes(kind)) return null;
   if (token !== null && typeof token !== 'string') return null;
-  if (typeof url !== 'string' || !url.startsWith('https://') || url.length > MAX_PLIVO_URL_LENGTH) return null;
+  if (typeof url !== 'string' || url.length > MAX_PLIVO_URL_LENGTH || !isHttpsUrl(url)) return null;
   if (!isRecord(params)) return null;
   const entries = Object.entries(params);
   if (entries.length > MAX_PLIVO_PARAMS) return null;
