@@ -66,6 +66,8 @@ export interface PlivoNumberEntry {
   number: string;
   voice_enabled?: boolean;
   alias?: string;
+  /** The subaccount a main account transferred the number to (its auth id); null: the account's own. */
+  sub_account?: string | null;
 }
 
 export interface MockPlivoOptions {
@@ -331,7 +333,10 @@ export class MockPlivoCarrier {
     send(200, {
       api_id: randomUUID(),
       meta: { limit, offset, total_count: this.numbers.length, next: more ? `/v1/Account/${this.authId}/Number/?limit=${limit}&offset=${offset + limit}` : null, previous: null },
-      objects: page.map((n) => ({ number: n.number, voice_enabled: n.voice_enabled ?? true, alias: n.alias ?? null, country: 'United States' })),
+      objects: page.map((n) => ({
+        number: n.number, voice_enabled: n.voice_enabled ?? true, alias: n.alias ?? null, country: 'United States',
+        sub_account: n.sub_account ?? null,
+      })),
     });
   }
 

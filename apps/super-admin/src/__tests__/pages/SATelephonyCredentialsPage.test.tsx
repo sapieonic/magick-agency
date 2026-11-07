@@ -188,7 +188,10 @@ describe('Sync numbers', () => {
         reactivated: ['+14155550103'],
         unchanged: ['+14155550104'],
         retired: ['+14155550199'],
-        skipped: [{ number: '14155550105', reason: 'not_voice' }, { number: 'abc', reason: 'invalid_number' }],
+        skipped: [
+          { number: '14155550105', reason: 'not_voice' }, { number: 'abc', reason: 'invalid_number' },
+          { number: '14155550108', reason: 'other_account' },
+        ],
         conflicts: [
           { phone_number: '+14155550106', reason: 'registered_elsewhere' },
           { phone_number: '+14155550107', reason: 'deleted' },
@@ -208,6 +211,7 @@ describe('Sync numbers', () => {
     expect(result.textContent).toContain('+14155550199');
     expect(result.textContent).toContain('14155550105: cannot carry voice calls');
     expect(result.textContent).toContain('abc: not a valid phone number');
+    expect(result.textContent).toContain('14155550108: transferred to another account (a subaccount); never taken into this one');
     expect(result.textContent).toContain('+14155550106: already in the inventory on another carrier account');
     expect(result.textContent).toContain('+14155550107: deleted from the inventory; a sync does not bring it back');
   });

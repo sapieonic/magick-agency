@@ -15,7 +15,7 @@ import type { NumberSyncResult } from '@magick-agency/db/models/phone-number.mod
 import { CredentialSealer, EnvKeyringWrapper } from '../../../src/telephony/credentials/credential-sealer.js';
 import { TelephonyCredentialService, type CredentialRepo } from '../../../src/telephony/credentials/credential-service.js';
 import {
-  findCredentialSpec, plivoNumberToE164, PLIVO_API_BASE, PLIVO_NUMBERS_MAX_PAGES, PLIVO_NUMBERS_PAGE_SIZE,
+  findCredentialSpec, plivoNumberIsOnAccount, plivoNumberToE164, PLIVO_API_BASE, PLIVO_NUMBERS_MAX_PAGES, PLIVO_NUMBERS_PAGE_SIZE,
   type FetchLike,
 } from '../../../src/telephony/credentials/credential-specs.js';
 
@@ -88,6 +88,51 @@ describe('the Plivo spec\'s listNumbers', () => {
         { number: '', reason: 'not_voice' },
       ],
     });
+  });
+
+  it('a main account`s list: a number transferred to a subaccount is that account`s, skipped `other_account`; its own are kept', async () => {
+    const SUB = 'SAABCDEFGHIJKLMNOPQR';
+    const c = carrier([page([
+      num('14155550100', { sub_account: null }),
+      num('14155550101', { sub_account: SUB }),
+      num('14155550102', { sub_account: `/v1/Account/${AUTH_ID}/Subaccount/${SUB}/` }),
+      num('14155550103'),
+      // Not voice AND another account's: reported as another account's, not as ours to fix.
+      num('14155550104', { sub_account: SUB, voice_enabled: false }),
+      num('14155550105', { sub_account: { auth_id: SUB } }),
+    ])]);
+    const out = await spec.listNumbers!(pub, sec, c.fetchImpl);
+    expect(out).toEqual({
+      result: 'ok', listed: 6,
+      numbers: [{ phone_number: '+14155550100', label: null }, { phone_number: '+14155550103', label: null }],
+      skipped: [
+        { number: '14155550101', reason: 'other_account' }, { number: '14155550102', reason: 'other_account' },
+        { number: '14155550104', reason: 'other_account' }, { number: '14155550105', reason: 'other_account' },
+      ],
+    });
+  });
+
+  it('a subaccount`s own credential keeps the numbers listed as its own', async () => {
+    const SUB = 'SAABCDEFGHIJKLMNOPQR';
+    const c = carrier([page([
+      num('14155550101', { sub_account: SUB }),
+      num('14155550102', { sub_account: `/v1/Account/MAZZZZZZZZZZZZZZZZZZ/Subaccount/${SUB}/` }),
+      num('14155550103', { sub_account: 'SAOTHEROTHEROTHER000' }),
+    ])]);
+    const out = await spec.listNumbers!({ auth_id: SUB }, sec, c.fetchImpl);
+    expect(out).toEqual({
+      result: 'ok', listed: 3,
+      numbers: [{ phone_number: '+14155550101', label: null }, { phone_number: '+14155550102', label: null }],
+      skipped: [{ number: '14155550103', reason: 'other_account' }],
+    });
+  });
+
+  it.each([
+    [null, true], [undefined, true], ['', true], ['MAABCDEFGHIJKLMNOPQR', true], ['SAOTHER', false],
+    ['/v1/Account/MAX/Subaccount/MAABCDEFGHIJKLMNOPQR/', true], ['/v1/Account/MAABCDEFGHIJKLMNOPQR/Subaccount/SAX/', false],
+    [42, false], [{}, false],
+  ])('plivoNumberIsOnAccount(%j) for the account itself → %s', (sub, want) => {
+    expect(plivoNumberIsOnAccount(sub, AUTH_ID)).toBe(want);
   });
 
   it('pages by offset until a short page, and builds each URL itself (meta.next is never followed)', async () => {

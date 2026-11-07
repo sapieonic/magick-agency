@@ -123,7 +123,12 @@ export type TelephonyNumberSyncSkipReason =
   /** The carrier says the number cannot carry voice calls. */
   | 'not_voice'
   /** Not a phone number once normalised to E.164. */
-  | 'invalid_number';
+  | 'invalid_number'
+  /**
+   * On the carrier's list, but another account's: a main account lists the numbers it
+   * has transferred to its subaccounts. Never claimed by this credential.
+   */
+  | 'other_account';
 
 /** Why a listed voice number was not taken into this credential's inventory. */
 export type TelephonyNumberSyncConflictReason =

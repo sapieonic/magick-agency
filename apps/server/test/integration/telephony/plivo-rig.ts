@@ -58,6 +58,8 @@ export const ADMIN = '8b1d0c8e-3d0e-4c7a-8b44-1f6b0a0000ad';
 /** The tenant's Plivo number, as Plivo lists it and as E.164 once synced. */
 export const PLIVO_NUMBER = '14155550101';
 export const CALLER_ID = `+${PLIVO_NUMBER}`;
+/** A number the tenant's main account lists but has transferred to one of its subaccounts. */
+export const SUBACCOUNT_NUMBER = '14155550102';
 
 export const NO_RETRY = Object.fromEntries(
   ['no_answer', 'busy', 'failed', 'abandoned', 'agent_disconnected', 'orphaned', 'canceled'].map((o) => [o, { max_attempts: 0 }]),
@@ -109,7 +111,12 @@ export async function startPlivoRig(opts: {
   let origin = '';
   const carrier = new MockPlivoCarrier({
     authId: 'MAE2ETENANT000000001', authToken: 'tenantAuthToken-current-0001',
-    targetOrigin: () => origin, numbers: [{ number: PLIVO_NUMBER, alias: 'Main line' }],
+    targetOrigin: () => origin,
+    numbers: [
+      { number: PLIVO_NUMBER, alias: 'Main line' },
+      // Transferred to a subaccount: listed on the main account, but never this credential's.
+      { number: SUBACCOUNT_NUMBER, sub_account: 'SAE2ESUBACCOUNT00001' },
+    ],
   });
   const otherCarrier = new MockPlivoCarrier({
     authId: 'MAE2EOTHER0000000009', authToken: 'otherTenantAuthToken-000009',
@@ -133,6 +140,10 @@ export async function startPlivoRig(opts: {
   if (!created.ok) throw new Error(`credential create refused: ${JSON.stringify(created)}`);
   const synced = await credentials.syncNumbers(created.value.id, ADMIN);
   if (!synced.ok) throw new Error(`number sync refused: ${JSON.stringify(synced)}`);
+  const { sync } = synced.value;
+  if (sync.added.join() !== CALLER_ID || sync.skipped.map((x) => `${x.number}:${x.reason}`).join() !== `${SUBACCOUNT_NUMBER}:other_account`) {
+    throw new Error(`number sync took the wrong numbers: ${JSON.stringify(sync)}`);
+  }
   const other = await service(otherCarrier.fetch).create({
     tenantId: OTHER_TENANT, provider: 'plivo', label: 'Theirs', adminId: ADMIN,
     fields: { auth_id: otherCarrier.authId, auth_token: otherCarrier.authToken },

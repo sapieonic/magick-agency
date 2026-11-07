@@ -3,7 +3,10 @@
 // how to ask the carrier whether the credential works. VoiceLink is the service's own
 // account (env) and has no spec here.
 import { z } from 'zod';
-import type { TelephonyCredentialField } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
+import type {
+  TelephonyCredentialField,
+  TelephonyNumberSyncSkipReason,
+} from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 
 /** The carrier's verdict on a credential. */
 export type CredentialCheck =
@@ -30,7 +33,7 @@ export type CredentialNumberList =
     /** Every number listed, voice or not. */
     listed: number;
     numbers: CarrierNumber[];
-    skipped: Array<{ number: string; reason: 'not_voice' | 'invalid_number' }>;
+    skipped: Array<{ number: string; reason: TelephonyNumberSyncSkipReason }>;
   }
   | { result: 'rejected'; reason: string }
   | { result: 'unreachable'; reason: string }
@@ -143,12 +146,18 @@ const plivoSpec: CredentialSpec = {
    * response cannot steer the credential to another URL. Stops on a page shorter than
    * the limit, or when `meta.next` is null; refuses (`too_many`) when a full
    * `PLIVO_NUMBERS_MAX_PAGES` pages still leave more.
+   *
+   * A main account's (`MA…`) list includes the numbers it has transferred to its
+   * subaccounts (`sub_account` names the subaccount). Those are another account's numbers:
+   * a call from them is that subaccount's, so they are skipped (`other_account`), never
+   * claimed by the main account's credential. A subaccount's (`SA…`) own numbers carry its
+   * own id there and are kept.
    */
   async listNumbers(publicConfig, secret, fetchImpl = fetch as FetchLike) {
     const { authId, headers } = plivoAuth(publicConfig, secret);
     const base = `${PLIVO_API_BASE}/v1/Account/${encodeURIComponent(authId)}/Number/`;
     const numbers: CarrierNumber[] = [];
-    const skipped: Array<{ number: string; reason: 'not_voice' | 'invalid_number' }> = [];
+    const skipped: Array<{ number: string; reason: TelephonyNumberSyncSkipReason }> = [];
     let listed = 0;
     for (let page = 0; page < PLIVO_NUMBERS_MAX_PAGES; page++) {
       const url = `${base}?limit=${PLIVO_NUMBERS_PAGE_SIZE}&offset=${page * PLIVO_NUMBERS_PAGE_SIZE}`;
@@ -171,6 +180,10 @@ const plivoSpec: CredentialSpec = {
       for (const item of objects as Array<Record<string, unknown> | null>) {
         listed++;
         const rawNumber = typeof item?.['number'] === 'string' ? item['number'].slice(0, 32) : '';
+        if (!plivoNumberIsOnAccount(item?.['sub_account'], authId)) {
+          skipped.push({ number: rawNumber, reason: 'other_account' });
+          continue;
+        }
         if (item?.['voice_enabled'] !== true) {
           skipped.push({ number: rawNumber, reason: 'not_voice' });
           continue;
@@ -194,6 +207,20 @@ const plivoSpec: CredentialSpec = {
     };
   },
 };
+
+/**
+ * Whether a listed Plivo number belongs to the account `authId` itself, read off its
+ * `sub_account`: absent, null or empty is the listing account's own number; otherwise it
+ * names the subaccount the number was transferred to (its auth id, or a resource URI
+ * ending in it), which is this account only when that id is `authId`. Anything else is
+ * not this account's: a number is never claimed on a field that cannot be read.
+ */
+export function plivoNumberIsOnAccount(subAccount: unknown, authId: string): boolean {
+  if (subAccount === undefined || subAccount === null || subAccount === '') return true;
+  if (typeof subAccount !== 'string') return false;
+  const id = subAccount.split('/').filter(Boolean).at(-1) ?? '';
+  return id === authId;
+}
 
 const SPECS: ReadonlyMap<string, CredentialSpec> = new Map([[plivoSpec.provider, plivoSpec]]);
 

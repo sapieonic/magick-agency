@@ -58,6 +58,7 @@ const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-IN')
 const SKIP_REASON: Record<TelephonyNumberSyncSkipReason, string> = {
   not_voice: 'cannot carry voice calls',
   invalid_number: 'not a valid phone number',
+  other_account: 'transferred to another account (a subaccount); never taken into this one',
 };
 
 /** Why a listed voice number was not taken into this credential's inventory. */
