@@ -41,6 +41,7 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 
 const { agencyCampaignRoutes } = await import('../../../src/api/routes/agency-campaigns.routes.js');
 const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
+const { decodeConfigChange } = await import('../../../src/agency/campaign-config-audit.js');
 const { agencyCampaignRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { invalidateDialableCallerIds } = await import('../../../src/agency/campaign-dialability.js');
 type AgencyCampaignRouteDeps = import('../../../src/api/routes/agency-campaigns.routes.js').AgencyCampaignRouteDeps;
@@ -253,6 +254,24 @@ describe('PATCH /api/v1/agency-campaigns/:id — the carrier account', () => {
     expect(res.statusCode).toBe(404);
     const { rows } = await (await pool()).query('SELECT telephony_credential_id FROM agency_campaigns WHERE id = $1', [campaign.id]);
     expect(rows[0]!.telephony_credential_id).toBe(credA);
+  });
+});
+
+describe('PATCH — the config-change record names the carrier account by its label (IN8)', () => {
+  const changeOf = (res: { headers: Record<string, unknown> }) =>
+    decodeConfigChange(res.headers['x-mgkvc-config-change'] as string | undefined);
+
+  it('each side that is a tenant account carries its label as it was; the service account carries none', async () => {
+    const campaign = await insertAgencyCampaign();
+    const onto = await patch(campaign.id, { telephony_provider: 'plivo', telephony_credential_id: credA, caller_ids: MINE });
+    expect(onto.statusCode, onto.body).toBe(200);
+    expect(changeOf(onto)?.changes['telephony_credential_id']).toEqual({ from: null, to: credA, to_label: 'Main' });
+
+    // Revoked since: its label is still what the trail shows.
+    await (await pool()).query(`UPDATE telephony_credentials SET status = 'revoked', revoked_at = NOW() WHERE id = $1`, [credA]);
+    const off = await patch(campaign.id, { telephony_provider: 'voicelink', telephony_credential_id: null, caller_ids: ['+919000000001'] });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(changeOf(off)?.changes['telephony_credential_id']).toEqual({ from: credA, to: null, from_label: 'Main' });
   });
 });
 

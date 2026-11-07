@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { TELEPHONY_PROVIDER_ALIASES } from '@magick-agency/web-ui/telephonyProviders';
 import {
+  CONFIG_FIELD_LABEL,
   activityDetailSummary,
   formatActivityTimestamp,
   partialNotice,
@@ -161,6 +163,33 @@ describe('activityDetailSummary', () => {
     }))).toBe('Changed carrier and carrier account.');
   });
 
+  it('names the carrier by its alias and the carrier account by its label, never a vendor or an id', () => {
+    const CRED = '6f1c2a40-9d7e-4b8a-a1c3-0e5f7d2b9c11';
+    const moved = row({
+      action: 'agency_campaign.config_changed',
+      detail: {
+        fields: ['telephony_provider', 'telephony_credential_id'],
+        changes: {
+          telephony_provider: { from: 'voicelink', to: 'plivo' },
+          telephony_credential_id: { from: null, to: CRED, to_label: 'Acme main' },
+        },
+      },
+    });
+    expect(activityDetailSummary(moved))
+      .toBe('Changed carrier (Swar → Pravah) and carrier account (the default account → “Acme main”).');
+
+    const account = (change: Record<string, unknown>) => activityDetailSummary(row({
+      action: 'agency_campaign.config_changed',
+      detail: { fields: ['telephony_credential_id'], changes: { telephony_credential_id: change } },
+    }));
+    // The server found no such account when the change was made.
+    expect(account({ from: CRED, to: null, from_label: null }))
+      .toBe('Changed carrier account (an account no longer available → the default account).');
+    // A row written before labels were recorded.
+    expect(account({ from: CRED, to: null }))
+      .toBe('Changed carrier account (your own account → the default account).');
+  });
+
   /** The audit case `on_behalf` exists for is called out, not buried. */
   it('says when a disposition was filed for another agent', () => {
     const filed = row({
@@ -315,5 +344,55 @@ describe('groupActivityActions', () => {
   it('yields nothing for a missing or empty vocabulary', () => {
     expect(groupActivityActions(undefined)).toEqual([]);
     expect(groupActivityActions([])).toEqual([]);
+  });
+});
+
+/**
+ * Vendor names never reach the Activity trail (the carrier aliases, B18): every setting
+ * the summary names, with carrier values from every carrier the aliases know.
+ */
+describe('the config-change summary is vendor-free and id-free for every setting', () => {
+  const VENDOR = /twilio|plivo|exotel|vobiz|telnyx|voice\s?link|z99|generic[\s_]sip/i;
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const slugs = Object.keys(TELEPHONY_PROVIDER_ALIASES);
+  const CRED_A = '6f1c2a40-9d7e-4b8a-a1c3-0e5f7d2b9c11';
+  const CRED_B = '0b7d3e55-1a2b-4c3d-8e9f-112233445566';
+
+  /** A changed value for each field: carrier fields get the values the server stores. */
+  function changeFor(field: string, i: number): Record<string, unknown> {
+    if (field === 'telephony_provider') return { from: slugs[i % slugs.length], to: slugs[(i + 1) % slugs.length] };
+    if (field === 'telephony_credential_id') return { from: CRED_A, to: CRED_B };
+    return { from: 1, to: 2 };
+  }
+
+  for (const [i, field] of Object.keys(CONFIG_FIELD_LABEL).entries()) {
+    it(`${field}`, () => {
+      const fields = [field, 'telephony_provider', 'telephony_credential_id'];
+      for (const labels of [{}, { from_label: null, to_label: null }, { from_label: 'Main', to_label: 'Backup' }]) {
+        const summary = activityDetailSummary(row({
+          action: 'agency_campaign.config_changed',
+          detail: {
+            fields,
+            changes: Object.fromEntries(fields.map((f) => [
+              f, f === 'telephony_credential_id' ? { ...changeFor(f, i), ...labels } : changeFor(f, i),
+            ])),
+          },
+        }));
+        expect(summary).toBeTruthy();
+        expect(summary).not.toMatch(VENDOR);
+        expect(summary).not.toMatch(UUID);
+      }
+    });
+  }
+
+  it('every carrier the aliases know reads as its alias', () => {
+    for (const slug of slugs) {
+      const summary = activityDetailSummary(row({
+        action: 'agency_campaign.config_changed',
+        detail: { fields: ['telephony_provider'], changes: { telephony_provider: { from: slug, to: slug.toUpperCase() } } },
+      }));
+      const alias = TELEPHONY_PROVIDER_ALIASES[slug]!;
+      expect(summary).toBe(`Changed carrier (${alias} → ${alias}).`);
+    }
   });
 });

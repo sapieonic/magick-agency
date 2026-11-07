@@ -18,7 +18,8 @@ import type {
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
-import { campaignConfigChange, encodeConfigChange } from '../../../agency/campaign-config-audit.js';
+import { campaignConfigChange, encodeConfigChange, withCarrierAccountLabels } from '../../../agency/campaign-config-audit.js';
+import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 // How many ids one `GET /summaries` may name; the staffing `my-*` routes split
@@ -303,7 +304,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     const change = campaignConfigChange(
       request.body, formatAgencyCampaignResponse(campaign), response,
     );
-    if (change) reply.header(CONFIG_CHANGE_HEADER, encodeConfigChange(change));
+    if (change) {
+      // The carrier account by its label, never its id (read only when it changed).
+      const tenantId = getTenantId(request);
+      const labelled = await withCarrierAccountLabels(change, async (credentialId) => {
+        const credential = await telephonyCredentialRepository.findById(credentialId);
+        return credential && credential.tenant_id === tenantId ? credential.label : null;
+      });
+      reply.header(CONFIG_CHANGE_HEADER, encodeConfigChange(labelled));
+    }
     return reply.send(response);
   };
   app.patch<{ Params: { id: string } }>('/:id', { preHandler: ownedCampaign({ gated: true }) }, patchHandler);
