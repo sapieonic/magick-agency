@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readPlivoCallDetailRecord } from '../../../../src/telephony/plivo/plivo.adapter.js';
 import {
   classifyPlivoOutcome,
   normalizePlivoCallback,
@@ -34,8 +35,18 @@ interface FixtureEntry {
   classification: { status: string; outcome: string; rawCause: string } | null;
 }
 
+interface CdrEntry {
+  name: string;
+  source: string;
+  httpStatus: number;
+  body: Record<string, unknown>;
+  /** What `getCallStatus` answers (`readPlivoCallDetailRecord`). */
+  status: string;
+}
+
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../src/telephony/plivo');
-const entries = (JSON.parse(readFileSync(resolve(SRC_DIR, 'plivo-carrier.fixture.json'), 'utf8')) as { entries: FixtureEntry[] }).entries;
+const fixture = JSON.parse(readFileSync(resolve(SRC_DIR, 'plivo-carrier.fixture.json'), 'utf8')) as { entries: FixtureEntry[]; cdr: CdrEntry[] };
+const entries = fixture.entries;
 
 const isTerminal = (e: FixtureEntry) => e.kind === 'status' && PLIVO_TERMINAL_STATUSES.has(String(e.normalized['callStatus']));
 
@@ -99,5 +110,22 @@ describe('Plivo carrier fixture', () => {
       // The event carries the same classification as its disposition.
       expect(entry.event?.dispositionStatus).toBe(entry.classification!.status);
     });
+  });
+});
+
+describe('Plivo carrier fixture: the call detail record (`GET …/Call/{call_uuid}/`)', () => {
+  it('pins the CDR shape (`call_state`, not the live call`s `call_status`), each terminal state and the live 404', () => {
+    const cdr = fixture.cdr;
+    expect(new Set(cdr.map((e) => e.name)).size).toBe(cdr.length);
+    const states = new Set(cdr.map((e) => e.status));
+    for (const s of ['busy', 'no-answer', 'cancel', 'failed', 'completed', 'live']) expect(states, s).toContain(s);
+    for (const e of cdr.filter((x) => x.httpStatus === 200 && x.status !== 'unknown')) {
+      expect(Object.keys(e.body), e.name).toEqual(expect.arrayContaining(['call_uuid', 'call_state', 'hangup_cause_name', 'hangup_cause_code', 'answer_time', 'end_time']));
+      expect(e.body, e.name).not.toHaveProperty('call_status');
+    }
+  });
+
+  it.each(fixture.cdr.map((e) => [e.name, e] as const))('%s', (_name, e) => {
+    expect(readPlivoCallDetailRecord(e.httpStatus, JSON.stringify(e.body)).status).toBe(e.status);
   });
 });

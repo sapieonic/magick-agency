@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The mock Plivo carrier's own contract (`test/mocks/plivo`). The end-to-end Plivo suites
@@ -247,5 +247,39 @@ describe('a scripted call against a bare server', () => {
     expect(call.playAudio.map(isLoudMulaw)).toEqual(pattern);
     expect(Buffer.compare(call.playAudio[0]!, mulawFrame(0, true))).toBe(0);
     expect(call.closedBy).toBe('carrier');
+  });
+
+  it('the call detail record: 404 while the call is live, then its `call_state`, read by the real adapter as ended', async () => {
+    let hangUp = false;
+    carrier.setScript(() => ({
+      name: 'busy after a ring',
+      steps: [
+        { do: 'ring' },
+        { do: 'waitFor', until: () => hangUp, what: 'the test' },
+        { do: 'hangup', status: 'busy' },
+      ],
+    }));
+    const adapter = new PlivoAdapter({
+      ...DEFAULT_PLIVO_SETTINGS, webhookBaseUrl: `${PUBLIC}/api/v1/webhooks/plivo`, authId: carrier.authId,
+      authToken: new Secret(carrier.authToken), fetchImpl: carrier.fetch, rateLimiter: new InMemoryPlivoDialRateLimiter(),
+    });
+    carrier.reset();
+    await adapter.initiateCall({
+      callId: CALL_ID, to: '+919812345678', from: '+14155550001',
+      webhookUrl: `${PUBLIC}/api/v1/webhooks/plivo/webrtc-answer/${CALL_ID}?token=t&w=1`,
+      statusCallbackUrl: `${PUBLIC}/api/v1/webhooks/plivo/webrtc-status/${CALL_ID}?token=t&w=1`,
+      maxDuration: 600, enableRecording: false, machineDetection: false,
+    });
+    await carrier.waitForCalls(1);
+    const call = carrier.callOrder[0]!;
+    await vi.waitFor(() => expect(call.named).toBe(true));
+    // Still ringing: no CDR yet, which the adapter reads as not ended.
+    expect(await adapter.getCallStatus(call.callUuid)).toEqual({ status: 'live' });
+    expect(carrier.requestsTo('get_call').at(-1)).toMatchObject({ method: 'GET', status: 404, id: call.callUuid });
+    hangUp = true;
+    await carrier.settled();
+    expect(call.cdr).toMatchObject({ call_uuid: call.callUuid, call_state: 'BUSY', answer_time: null });
+    expect(await adapter.getCallStatus(call.callUuid)).toMatchObject({ status: 'busy', errorCode: '3000', errorMessage: 'User Busy' });
+    expect(carrier.requestsTo('get_call').at(-1)).toMatchObject({ status: 200 });
   });
 });

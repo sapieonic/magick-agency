@@ -629,5 +629,172 @@
       "event": null,
       "classification": null
     }
+  ],
+  "cdrNote": "cdr: how the adapter reads the call detail record (readPlivoCallDetailRecord, getCallStatus): httpStatus and body in, the status the ring deadline reads out. `live` is not an ended state.",
+  "cdr": [
+    {
+      "name": "cdr-busy",
+      "source": "Plivo's call detail record, GET /v1/Account/{auth_id}/Call/{call_uuid}/ (the SDK's RetrieveCallResponse: call_state, hangup_cause_name/code, answer_time, end_time); the field names are the SDK's, the values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "httpStatus": 200,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "call_uuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "call_direction": "outbound",
+        "from_number": "918035550100",
+        "to_number": "919812345678",
+        "initiation_time": "2026-11-07 10:00:00+05:30",
+        "parent_call_uuid": null,
+        "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b/",
+        "call_state": "BUSY",
+        "answer_time": null,
+        "end_time": "2026-11-07 10:00:06+05:30",
+        "call_duration": 0,
+        "bill_duration": 0,
+        "hangup_cause_name": "Busy Line",
+        "hangup_cause_code": 3010,
+        "hangup_source": "Callee"
+      },
+      "status": "busy"
+    },
+    {
+      "name": "cdr-no-answer",
+      "source": "Plivo's call detail record, GET /v1/Account/{auth_id}/Call/{call_uuid}/ (the SDK's RetrieveCallResponse: call_state, hangup_cause_name/code, answer_time, end_time); the field names are the SDK's, the values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "httpStatus": 200,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "call_uuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "call_direction": "outbound",
+        "from_number": "918035550100",
+        "to_number": "919812345678",
+        "initiation_time": "2026-11-07 10:00:00+05:30",
+        "parent_call_uuid": null,
+        "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b/",
+        "call_state": "NO_ANSWER",
+        "answer_time": null,
+        "end_time": "2026-11-07 10:00:45+05:30",
+        "call_duration": 0,
+        "bill_duration": 0,
+        "hangup_cause_name": "No Answer",
+        "hangup_cause_code": 3020,
+        "hangup_source": "Plivo"
+      },
+      "status": "no-answer"
+    },
+    {
+      "name": "cdr-cancel",
+      "source": "Plivo's call detail record, GET /v1/Account/{auth_id}/Call/{call_uuid}/ (the SDK's RetrieveCallResponse: call_state, hangup_cause_name/code, answer_time, end_time); the field names are the SDK's, the values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "httpStatus": 200,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "call_uuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "call_direction": "outbound",
+        "from_number": "918035550100",
+        "to_number": "919812345678",
+        "initiation_time": "2026-11-07 10:00:00+05:30",
+        "parent_call_uuid": null,
+        "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b/",
+        "call_state": "CANCEL",
+        "answer_time": null,
+        "end_time": "2026-11-07 10:00:09+05:30",
+        "call_duration": 0,
+        "bill_duration": 0,
+        "hangup_cause_name": "Cancelled",
+        "hangup_cause_code": 3000,
+        "hangup_source": "API Request"
+      },
+      "status": "cancel"
+    },
+    {
+      "name": "cdr-failed",
+      "source": "Plivo's call detail record, GET /v1/Account/{auth_id}/Call/{call_uuid}/ (the SDK's RetrieveCallResponse: call_state, hangup_cause_name/code, answer_time, end_time); the field names are the SDK's, the values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "httpStatus": 200,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "call_uuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "call_direction": "outbound",
+        "from_number": "918035550100",
+        "to_number": "919812345678",
+        "initiation_time": "2026-11-07 10:00:00+05:30",
+        "parent_call_uuid": null,
+        "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b/",
+        "call_state": "FAILED",
+        "answer_time": null,
+        "end_time": "2026-11-07 10:00:01+05:30",
+        "call_duration": 0,
+        "bill_duration": 0,
+        "hangup_cause_name": "Unknown Destination",
+        "hangup_cause_code": 3040,
+        "hangup_source": "Carrier"
+      },
+      "status": "failed"
+    },
+    {
+      "name": "cdr-answered-state-outside-vocabulary",
+      "source": "Plivo's call detail record, GET /v1/Account/{auth_id}/Call/{call_uuid}/ (the SDK's RetrieveCallResponse: call_state, hangup_cause_name/code, answer_time, end_time); the field names are the SDK's, the values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "httpStatus": 200,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "call_uuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "call_direction": "outbound",
+        "from_number": "918035550100",
+        "to_number": "919812345678",
+        "initiation_time": "2026-11-07 10:00:00+05:30",
+        "parent_call_uuid": null,
+        "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b/",
+        "call_state": "ANSWER",
+        "answer_time": "2026-11-07 10:00:07+05:30",
+        "end_time": "2026-11-07 10:02:07+05:30",
+        "call_duration": 120,
+        "bill_duration": 120,
+        "hangup_cause_name": "Normal Hangup",
+        "hangup_cause_code": 4000,
+        "hangup_source": "Callee"
+      },
+      "status": "completed"
+    },
+    {
+      "name": "cdr-unknown-state-busy-cause",
+      "source": "Plivo's call detail record, GET /v1/Account/{auth_id}/Call/{call_uuid}/ (the SDK's RetrieveCallResponse: call_state, hangup_cause_name/code, answer_time, end_time); the field names are the SDK's, the values illustrative until a live capture (docs/status.md, Plivo step 5)",
+      "httpStatus": 200,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "call_uuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "call_direction": "outbound",
+        "from_number": "918035550100",
+        "to_number": "919812345678",
+        "initiation_time": "2026-11-07 10:00:00+05:30",
+        "parent_call_uuid": null,
+        "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b/",
+        "call_state": "",
+        "answer_time": null,
+        "end_time": "2026-11-07 10:00:06+05:30",
+        "call_duration": 0,
+        "hangup_cause_name": "Busy Line",
+        "hangup_cause_code": 3010,
+        "hangup_source": "Callee"
+      },
+      "status": "busy"
+    },
+    {
+      "name": "cdr-live-call-404",
+      "source": "Plivo answers 404 for a call with no CDR yet: still live (docs/status.md, Plivo step 5)",
+      "httpStatus": 404,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "error": "call not found"
+      },
+      "status": "live"
+    },
+    {
+      "name": "cdr-live-shape-not-read",
+      "source": "the LIVE call's answer (GET …/Call/{uuid}/?status=live, the SDK's GetLiveCallResponse) carries call_status, which the CDR reader does not read",
+      "httpStatus": 200,
+      "body": {
+        "api_id": "d3f1c2b4-0000-4000-8000-00000000c0de",
+        "call_uuid": "4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b",
+        "call_status": "ringing"
+      },
+      "status": "unknown"
+    }
   ]
 }

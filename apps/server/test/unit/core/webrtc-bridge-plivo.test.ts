@@ -101,6 +101,7 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
 import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { classifyDialRefusal, dialWasSent } from '../../../src/core/bridge/dial-refusals.js';
 import { normalizePlivoCallback, plivoCallEvent } from '../../../src/telephony/plivo/plivo.webhook.js';
+import { readPlivoCallDetailRecord } from '../../../src/telephony/plivo/plivo.adapter.js';
 import {
   CarrierAuthRejectedError, CarrierDialAbortedError, CarrierDialNotSentError, CarrierRateLimitedError,
 } from '../../../src/telephony/carrier-errors.js';
@@ -825,6 +826,39 @@ describe('a Plivo call whose callbacks never arrive is ended soon after Plivo`s 
       expect(terminalWrites()).toEqual([[CALL_ID, expect.objectContaining({ status: 'no_answer', outcome: 'ring_deadline_carrier_ended' })]]);
       expect(plivoAdapter.cancelDialRequest).not.toHaveBeenCalled();
       expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each([
+    ['BUSY', 'busy'],
+    ['NO_ANSWER', 'no_answer'],
+    ['CANCEL', 'no_answer'],
+    ['FAILED', 'failed'],
+  ])('the CDR`s call_state %s, as the adapter reads it, settles the call `%s` as it ended, nothing sent', async (state, want) => {
+    await withFakeTimers(async () => {
+      // The adapter's own reading of Plivo's CDR (`GET Call/{uuid}/`), so its vocabulary is
+      // pinned to the ring deadline's.
+      plivoAdapter.getCallStatus.mockResolvedValue(readPlivoCallDetailRecord(200, JSON.stringify({
+        call_uuid: 'uuid-1', call_state: state, answer_time: null, end_time: '2026-11-07 10:00:45+05:30', hangup_cause_name: 'x', hangup_cause_code: 3000,
+      })));
+      const mgr = await dial();
+      await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+      await vi.advanceTimersByTimeAsync(76_000);
+      expect(terminalWrites()).toEqual([[CALL_ID, expect.objectContaining({ status: want, outcome: 'ring_deadline_carrier_ended' })]]);
+      expect(plivoAdapter.cancelDialRequest).not.toHaveBeenCalled();
+      expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    });
+  });
+
+  it('no CDR yet (the CDR endpoint`s 404: still live) is not ended: ended `no_answer` and hung up by the call id', async () => {
+    await withFakeTimers(async () => {
+      plivoAdapter.getCallStatus.mockResolvedValue(readPlivoCallDetailRecord(404, '{"error":"call not found"}'));
+      plivoAdapter.cancelDialRequest.mockResolvedValue('not_found');
+      const mgr = await dial();
+      await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+      await vi.advanceTimersByTimeAsync(76_000);
+      expect(terminalWrites()).toEqual([[CALL_ID, expect.objectContaining({ status: 'no_answer', outcome: 'ring_deadline_passed' })]]);
+      expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1');
     });
   });
 

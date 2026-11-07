@@ -168,6 +168,12 @@ export class PlivoCall {
   readonly cancelAttempts: number[] = [];
   /** Our REST hangup (`DELETE …/Call/{call_uuid}/`) reached this call. */
   hungUpByApi = false;
+  /**
+   * The call detail record `GET …/Call/{call_uuid}/` answers once the call has ended (null
+   * while it is live: that endpoint answers 404 then). Its fields are the SDK's
+   * `RetrieveCallResponse`, in the API's snake_case.
+   */
+  cdr: Record<string, unknown> | null = null;
 
   ws: WebSocket | null = null;
   opened = false;
@@ -294,26 +300,62 @@ export class PlivoCall {
 
   /** The terminal callback Plivo posts to `hangup_url`. Used by script steps and by the carrier on a REST hangup or cancel. */
   async postHangup(status: PlivoTerminalStatus, opts: { cause?: string; source?: string; sign?: SignMode } = {}): Promise<CallbackResult> {
-    this.ended = true;
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const answered = this.answered && status === 'completed';
-    const cause = opts.cause ?? (status === 'completed' ? 'NORMAL_CLEARING' : status === 'busy' ? 'USER_BUSY'
-      : status === 'cancel' ? 'ORIGINATOR_CANCEL' : status === 'no-answer' || status === 'timeout' ? 'NO_ANSWER' : 'CALL_REJECTED');
+    const t = this.recordEnd(status, opts);
     this.named = true;
     return this.callback('hangup', {
       ...this.baseParams(),
       CallStatus: status,
       Event: 'Hangup',
-      HangupCause: cause,
-      HangupCauseName: cause.toLowerCase().split('_').map((w) => w[0]!.toUpperCase() + w.slice(1)).join(' '),
-      HangupCauseCode: status === 'completed' ? '4000' : '3000',
-      HangupSource: opts.source ?? (this.hungUpByApi || this.canceledByApi ? 'API Request' : 'Callee'),
-      Duration: answered ? String(Math.max(1, Math.round(this.mediaSentPattern.length * 0.02))) : '0',
-      BillDuration: answered ? '60' : '0',
-      StartTime: now,
-      AnswerTime: answered ? now : '',
-      EndTime: now,
+      HangupCause: t.cause,
+      HangupCauseName: t.causeName,
+      HangupCauseCode: t.causeCode,
+      HangupSource: t.source,
+      Duration: String(t.duration),
+      BillDuration: t.answered ? '60' : '0',
+      StartTime: t.now,
+      AnswerTime: t.answered ? t.now : '',
+      EndTime: t.now,
     }, opts.sign);
+  }
+
+  /**
+   * The call ended at the carrier with `status`: marks it ended and writes its CDR, as Plivo
+   * does whether or not it posts the hangup callback. Returns what the callback carries.
+   */
+  recordEnd(status: PlivoTerminalStatus, opts: { cause?: string; source?: string } = {}) {
+    this.ended = true;
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const answered = this.answered && status === 'completed';
+    const cause = opts.cause ?? (status === 'completed' ? 'NORMAL_CLEARING' : status === 'busy' ? 'USER_BUSY'
+      : status === 'cancel' ? 'ORIGINATOR_CANCEL' : status === 'no-answer' || status === 'timeout' ? 'NO_ANSWER' : 'CALL_REJECTED');
+    const causeName = cause.toLowerCase().split('_').map((w) => w[0]!.toUpperCase() + w.slice(1)).join(' ');
+    const causeCode = status === 'completed' ? '4000' : '3000';
+    const source = opts.source ?? (this.hungUpByApi || this.canceledByApi ? 'API Request' : 'Callee');
+    const duration = answered ? Math.max(1, Math.round(this.mediaSentPattern.length * 0.02)) : 0;
+    this.cdr = {
+      call_uuid: this.callUuid,
+      // The SDK names `call_state` but not its values (Plivo step 5 confirms them): an
+      // unanswered end is its `CallStatus` in upper case, an answered one `ANSWER`, a value
+      // outside the bridge's vocabulary on purpose, so the reader's `answer_time` fallback runs.
+      call_state: answered ? 'ANSWER' : status.toUpperCase().replace('-', '_'),
+      call_direction: 'outbound',
+      from_number: this.request.from,
+      to_number: this.request.to,
+      initiation_time: now,
+      answer_time: answered ? now : null,
+      end_time: now,
+      call_duration: duration,
+      bill_duration: answered ? 60 : 0,
+      billed_duration: answered ? 60 : 0,
+      hangup_cause_name: causeName,
+      hangup_cause_code: Number(causeCode),
+      hangup_source: source,
+      parent_call_uuid: null,
+      resource_uri: `/v1/Account/${this.authId}/Call/${this.callUuid}/`,
+      total_amount: '0.00000',
+      total_rate: '0.00850',
+    };
+    return { now, answered, cause, causeName, causeCode, source, duration };
   }
 
   private async runStep(step: PlivoCallStep): Promise<void> {

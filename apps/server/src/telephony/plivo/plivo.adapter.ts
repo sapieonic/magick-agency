@@ -88,6 +88,78 @@ export const DEFAULT_PLIVO_SETTINGS: PlivoSettings = {
   ringTimeoutSeconds: 45,
 };
 
+/**
+ * The CDR's `call_state` values that already name a state in the status vocabulary the bridge
+ * reads (`getCallStatus`, its ring deadline's `RING_DEADLINE_CARRIER_ENDED`), once lower-cased
+ * with `_` and spaces read as `-` (`NO_ANSWER` → `no-answer`).
+ */
+const CDR_STATES = new Set(['busy', 'failed', 'no-answer', 'timeout', 'cancel', 'canceled', 'completed']);
+
+/**
+ * A CDR hangup cause name that says how an unanswered call ended, lower-cased: the names
+ * Plivo's hangup callbacks carry (`HangupCauseName`, `plivo-carrier.fixture.json`), the one
+ * catalogue its CDR's `hangup_cause_name` is read against.
+ */
+const CDR_CAUSES: ReadonlyMap<string, string> = new Map([
+  ['busy line', 'busy'],
+  ['no answer', 'no-answer'],
+  ['ring timeout reached', 'no-answer'],
+  ['cancelled', 'cancel'],
+  ['canceled', 'cancel'],
+  ['rejected', 'cancel'],
+]);
+
+/** A timestamp that parses and is not a zero placeholder. */
+function isCdrInstant(raw: unknown): boolean {
+  if (typeof raw !== 'string' || raw === '') return false;
+  const t = Date.parse(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+  return Number.isFinite(t) && t > 0;
+}
+
+/**
+ * Read Plivo's answer to `GET Call/{call_uuid}/` ("retrieve a call": the call detail record,
+ * the SDK's `RetrieveCallResponse`). Its state is `call_state`; `call_status` belongs to the
+ * live-call answer (`?status=live`, `GetLiveCallResponse`) and is not read here. The status is
+ * in the vocabulary the bridge reads:
+ *  - 404: no CDR, because the call is still live (or its CDR is not written yet): `live`,
+ *    which is not an ended state;
+ *  - any other non-2xx, or a body that is not a JSON object: `unknown`;
+ *  - `call_state` that names a state of the vocabulary (`CDR_STATES`): that state;
+ *  - otherwise an answered call (`answer_time` set): `completed`; an unanswered one: the state
+ *    its `hangup_cause_name` names (`CDR_CAUSES`), else `failed` when it has ended (`end_time`
+ *    or a hangup cause), else `unknown`.
+ * The SDK names the fields but not `call_state`'s values: the live check (Plivo step 5)
+ * confirms them (`docs/status.md`).
+ */
+export function readPlivoCallDetailRecord(httpStatus: number, text: string): ProviderCallStatus {
+  if (httpStatus === 404) return { status: 'live' };
+  if (httpStatus < 200 || httpStatus >= 300) return { status: 'unknown' };
+  let cdr: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { status: 'unknown' };
+    cdr = parsed as Record<string, unknown>;
+  } catch {
+    return { status: 'unknown' };
+  }
+  const str = (k: string): string => (typeof cdr[k] === 'string' ? (cdr[k] as string) : '');
+  const state = str('call_state').trim().toLowerCase().replace(/[_\s]+/g, '-');
+  const causeName = str('hangup_cause_name');
+  const causeCode = cdr['hangup_cause_code'];
+  let status: string;
+  if (CDR_STATES.has(state)) status = state;
+  else if (isCdrInstant(cdr['answer_time'])) status = 'completed';
+  else status = CDR_CAUSES.get(causeName.trim().toLowerCase())
+    ?? (isCdrInstant(cdr['end_time']) || causeName !== '' ? 'failed' : 'unknown');
+  const duration = typeof cdr['call_duration'] === 'number' ? cdr['call_duration'] : Number(str('call_duration') || NaN);
+  return {
+    status,
+    ...(Number.isFinite(duration) ? { duration } : {}),
+    ...(typeof causeCode === 'number' || (typeof causeCode === 'string' && causeCode !== '') ? { errorCode: String(causeCode) } : {}),
+    ...(causeName ? { errorMessage: causeName } : {}),
+  };
+}
+
 /** What the adapter needs from `fetch`. */
 export type PlivoFetch = (url: string, init: RequestInit) => Promise<Pick<Response, 'status' | 'text'>>;
 
@@ -475,21 +547,17 @@ export class PlivoAdapter implements TelephonyProvider {
     throw new Error('IVR not supported for plivo');
   }
 
-  /** The call's CDR. Best effort: `unknown` on a miss or any error. */
+  /**
+   * The call's state, from its CDR (`GET Call/{call_uuid}/`, read by
+   * {@link readPlivoCallDetailRecord}). Only the ring deadline asks, and only whether the call
+   * has ended and how, so the live-call endpoint (`?status=live`) is not queried: a call still
+   * live has no CDR (404, read as `live`: not ended). Best effort: `unknown` on any error.
+   */
   async getCallStatus(providerCallId: string): Promise<ProviderCallStatus> {
     if (!PLIVO_ID.test(providerCallId ?? '')) return { status: 'unknown' };
     try {
       const { status, text } = await this.send('GET', `Call/${encodeURIComponent(providerCallId)}/`, 'Plivo get call');
-      if (status < 200 || status >= 300) return { status: 'unknown' };
-      const cdr = JSON.parse(text) as {
-        call_status?: string; call_duration?: number; hangup_cause_name?: string; hangup_cause_code?: number | string;
-      };
-      return {
-        status: (cdr.call_status || 'unknown').toLowerCase(),
-        ...(typeof cdr.call_duration === 'number' ? { duration: cdr.call_duration } : {}),
-        ...(cdr.hangup_cause_code !== undefined ? { errorCode: String(cdr.hangup_cause_code) } : {}),
-        ...(cdr.hangup_cause_name ? { errorMessage: cdr.hangup_cause_name } : {}),
-      };
+      return readPlivoCallDetailRecord(status, text);
     } catch (err) {
       log.warn({ err, providerCallId }, 'Plivo CDR fetch failed');
       return { status: 'unknown' };

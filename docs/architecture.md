@@ -655,7 +655,10 @@ every account the caller belongs to (CH2) where every internal handler is single
     (`capabilities.ringTimeoutSeconds`, Plivo's `PLIVO_RING_TIMEOUT_SECONDS`) has a call with
     neither its answer nor its terminal seen 30 s past it ended here (`ringDeadlinePassed`):
     the carrier's state asked first by the call id when named, settled as it ended, else ended
-    `no_answer` and cancelled or hung up (PL8). VoiceLink declares none.
+    `no_answer` and cancelled or hung up (PL8). VoiceLink declares none. Plivo's state is its call
+    detail record (`GET Call/{call_uuid}/`, `readPlivoCallDetailRecord`): its `call_state`, else
+    `answer_time` and `hangup_cause_name`; the live-call field `call_status` is not that
+    endpoint's. A 404 there (no CDR: the call is still live) is not an end.
   - *Automatic pauses* (`agency/carrier-account-pause.ts`). A campaign dial refused
     `carrier_auth_rejected` pauses the campaign `carrier_auth`; one refused
     `telephony_credential_unavailable` pauses it `carrier_account_unavailable`. Running campaigns

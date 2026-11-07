@@ -15,6 +15,9 @@
  *  - `DELETE /v1/Account/{id}/Call/{uuid}/`      204 for a live call it has named, 404
  *    otherwise; the stream is closed and the hangup callback posted (`completed` for an
  *    answered call, `cancel` for one still ringing)
+ *  - `GET /v1/Account/{id}/Call/{uuid}/`         the call detail record (`call_state`,
+ *    `hangup_cause_name`, `answer_time`, `end_time`, …) once the call has ended; 404 while it
+ *    is live, or for a call it never named
  * A wrong auth id or token is 401. Every request is recorded (route, auth, body, the status
  * it was answered with, the fault applied).
  *
@@ -39,7 +42,7 @@ import type WebSocket from 'ws';
 import { PLIVO_API_BASE } from '../../../src/telephony/credentials/credential-specs.js';
 import { PlivoCall, type PlivoCallScript, type PlivoDialRequest } from './carrier-call.js';
 
-export type PlivoRoute = 'account' | 'numbers' | 'create_call' | 'cancel_request' | 'hangup_call' | 'unknown';
+export type PlivoRoute = 'account' | 'numbers' | 'create_call' | 'cancel_request' | 'hangup_call' | 'get_call' | 'unknown';
 
 export type PlivoFault =
   | { kind: 'latency'; ms: number }
@@ -104,6 +107,7 @@ function routeOf(method: string, path: string, authId: string): { route: PlivoRo
   if (method === 'DELETE' && m) return { route: 'cancel_request', id: m[1]! };
   m = new RegExp(`^Call/(${ID})/$`).exec(rest);
   if (method === 'DELETE' && m) return { route: 'hangup_call', id: m[1]! };
+  if (method === 'GET' && m) return { route: 'get_call', id: m[1]! };
   return { route: 'unknown', id: null };
 }
 
@@ -324,7 +328,20 @@ export class MockPlivoCarrier {
       case 'hangup_call':
         this.handleHangup(id!, send);
         return;
+      case 'get_call':
+        this.handleGetCall(id!, send);
+        return;
     }
+  }
+
+  /** The CDR of an ended call; 404 while it is live, as Plivo's CDR endpoint answers. */
+  private handleGetCall(callUuid: string, send: (s: number, p: unknown) => void): void {
+    const call = this.callOrder.find((c) => c.callUuid === callUuid && c.named);
+    if (!call?.cdr) {
+      send(404, { api_id: randomUUID(), error: 'call not found' });
+      return;
+    }
+    send(200, { api_id: randomUUID(), ...call.cdr });
   }
 
   private handleNumbers(url: URL, send: (s: number, p: unknown) => void): void {
@@ -392,6 +409,7 @@ export class MockPlivoCarrier {
     call.ended = true;
     send(204, null);
     if (this.opts.hangupCallbackOnApi !== false) this.runs.push(call.postHangup('cancel', { source: 'API Request' }));
+    else call.recordEnd('cancel', { source: 'API Request' });
   }
 
   private handleHangup(callUuid: string, send: (s: number, p: unknown) => void): void {
@@ -406,6 +424,8 @@ export class MockPlivoCarrier {
     call.closeMedia();
     if (this.opts.hangupCallbackOnApi !== false) {
       this.runs.push(call.postHangup(call.answered ? 'completed' : 'cancel', { source: 'API Request' }));
+    } else {
+      call.recordEnd(call.answered ? 'completed' : 'cancel', { source: 'API Request' });
     }
   }
 }

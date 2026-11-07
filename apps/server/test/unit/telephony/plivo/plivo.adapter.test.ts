@@ -22,6 +22,7 @@ import {
   plivoNumber,
   renderPlivoAnswerXml,
   DEFAULT_PLIVO_SETTINGS,
+  readPlivoCallDetailRecord,
   type PlivoFetch,
 } from '../../../../src/telephony/plivo/plivo.adapter.js';
 import { InMemoryPlivoDialRateLimiter, type PlivoDialRateLimiter } from '../../../../src/telephony/plivo/plivo-dial-rate.js';
@@ -474,19 +475,36 @@ describe('verifyCarrierRequest', () => {
 describe('getCallStatus and getRecordingUrl', () => {
   const CALL_UUID = '4f6a2c1e-8b3d-4e5f-9a1b-2c3d4e5f6a7b';
 
-  it('reads the CDR, and is unknown on a miss, an error or a bad id', async () => {
+  it('reads the CDR`s `call_state` (not the live call`s `call_status`); a 404 (still live) is not ended; unknown on an error or a bad id', async () => {
     const f = fakeFetch([
-      { status: 200, body: JSON.stringify({ call_status: 'Completed', call_duration: 42, hangup_cause_name: 'Normal Hangup', hangup_cause_code: 4000 }) },
-      { status: 404 },
+      { status: 200, body: JSON.stringify({ call_uuid: CALL_UUID, call_state: 'BUSY', call_duration: 0, hangup_cause_name: 'Busy Line', hangup_cause_code: 3010, end_time: '2026-11-07 10:00:05+05:30' }) },
+      { status: 404, body: '{"api_id":"x","error":"call not found"}' },
+      { status: 500 },
       new TypeError('fetch failed'),
     ]);
     const a = adapter(f.impl);
-    expect(await a.getCallStatus(CALL_UUID)).toEqual({ status: 'completed', duration: 42, errorCode: '4000', errorMessage: 'Normal Hangup' });
+    expect(await a.getCallStatus(CALL_UUID)).toEqual({ status: 'busy', duration: 0, errorCode: '3010', errorMessage: 'Busy Line' });
+    expect(await a.getCallStatus(CALL_UUID)).toEqual({ status: 'live' });
     expect(await a.getCallStatus(CALL_UUID)).toEqual({ status: 'unknown' });
     expect(await a.getCallStatus(CALL_UUID)).toEqual({ status: 'unknown' });
     expect(await a.getCallStatus('')).toEqual({ status: 'unknown' });
+    // The CDR endpoint, never the live one (`?status=live`).
     expect(f.sent[0]!.url).toBe(`https://api.plivo.com/v1/Account/${AUTH_ID}/Call/${CALL_UUID}/`);
-    expect(f.sent).toHaveLength(3);
+    expect(f.sent).toHaveLength(4);
+  });
+
+  it.each([
+    ['call_state in the vocabulary, upper case', { call_state: 'NO_ANSWER' }, 'no-answer'],
+    ['call_state CANCEL', { call_state: 'CANCEL' }, 'cancel'],
+    ['call_state FAILED', { call_state: 'FAILED', hangup_cause_name: 'Unknown Destination' }, 'failed'],
+    ['call_state outside the vocabulary, answered', { call_state: 'ANSWER', answer_time: '2026-11-07 10:00:02+05:30', end_time: '2026-11-07 10:01:00+05:30' }, 'completed'],
+    ['no known call_state, unanswered, a busy cause', { hangup_cause_name: 'Busy Line', end_time: '2026-11-07 10:00:05+05:30' }, 'busy'],
+    ['no known call_state, a ring timeout', { hangup_cause_name: 'Ring Timeout Reached', answer_time: null }, 'no-answer'],
+    ['no known call_state, ended with another cause', { hangup_cause_name: 'Network Error' }, 'failed'],
+    ['nothing that says it ended', { call_uuid: 'x' }, 'unknown'],
+    ['the live call`s `call_status` alone is not read', { call_status: 'completed' }, 'unknown'],
+  ])('a CDR with %s → %s', (_what, cdr, want) => {
+    expect(readPlivoCallDetailRecord(200, JSON.stringify(cdr)).status).toBe(want);
   });
 
   it('lists the call’s recordings and returns the first URL, else null', async () => {
