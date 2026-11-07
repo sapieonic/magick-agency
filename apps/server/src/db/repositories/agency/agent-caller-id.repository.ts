@@ -10,10 +10,14 @@
  *  - {@link AgencyAgentCallerIdRepository.mapForCampaign} is the dial paths' read: ONE indexed
  *    query (`uq_agency_agent_caller_id_agent` leads with `campaign_id`; the staffing side is the
  *    campaign's active roster, `idx_agency_campaign_agents_campaign_active`, or a probe of
- *    `uq_agency_campaign_agent_active_campaign`, as the planner picks) per dialling batch, per agent's own call, per
- *    redial and per tagged soft-phone dial. The resolver (`resolveCallerId`,
+ *    `uq_agency_campaign_agent_active_campaign`, as the planner picks). The dial paths read it
+ *    through `DedicatedCallerIdCache` (`agency/pacing/dedicated-caller-ids.ts`), cached per
+ *    campaign until a `dedications_changed` event or the TTL. The resolver (`resolveCallerId`,
  *    `agency/pacing/caller-id-pool.ts`) decides from it; a stored number the campaign no longer
  *    has is ignored there, not here.
+ *  - Every write here that changes the effective map publishes `dedications_changed` after it
+ *    commits (`set` when it changed a row, `clear` always); the unstaff path publishes its own
+ *    (`returnContactsOnUnstaff`).
  *  - {@link AgencyAgentCallerIdRepository.set} is the supervisor's PUT, one transaction:
  *    serialised per (campaign, agent) by an advisory lock, then the campaign row `FOR SHARE`
  *    (the number is validated against `caller_ids` as they stand, and a campaign PATCH, which
@@ -31,6 +35,7 @@ import { isUniqueViolation } from '@magick-agency/db/pg-errors';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import type { PoolClient } from 'pg';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
+import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import type { AgencyCampaignRecord } from '../../models/agency.model.js';
 
 type Queryable = Pick<PoolClient, 'query'>;
@@ -143,6 +148,8 @@ export class AgencyAgentCallerIdRepository {
    *  5. the agent's row (`previous`); the same number again writes nothing (`changed: false`);
    *  6. the number held by another agent → `taken`; else the UPSERT, `set_at` the
    *     `clock_timestamp()` (after step 3's lock, so never before the staffing's `assigned_at`).
+   *
+   * A write that changed the row publishes `dedications_changed` once it has committed.
    */
   async set(input: {
     tenantId: string;
@@ -153,7 +160,7 @@ export class AgencyAgentCallerIdRepository {
     setByUserId: string | null;
   }): Promise<AgentCallerIdSetOutcome> {
     try {
-      return await withTransaction(async (client, tx) => {
+      const outcome = await withTransaction(async (client, tx): Promise<AgentCallerIdSetOutcome> => {
         await client.query(AGENT_CALLER_ID_LOCK_SQL, [input.campaignId, input.userId]);
         const campaign = await client.query<Pick<AgencyCampaignRecord, 'caller_ids'>>(
           `SELECT caller_ids FROM agency_campaigns
@@ -215,6 +222,10 @@ export class AgencyAgentCallerIdRepository {
         );
         return { ok: true, row: rows[0]!, previous_caller_id: previous?.caller_id ?? null, changed: true, caller_ids: usable } as const;
       }, { pool: getPool() });
+      if (outcome.ok && outcome.changed) {
+        publishPacingInvalidation({ type: 'dedications_changed', campaignId: input.campaignId });
+      }
+      return outcome;
     } catch (err) {
       if (!isUniqueViolation(err, AGENT_CALLER_ID_NUMBER_CONSTRAINT)) throw err;
       return { ok: false, reason: 'taken', holder_user_id: await this.holderOf(input.campaignId, input.callerId) };
@@ -224,10 +235,11 @@ export class AgencyAgentCallerIdRepository {
   /**
    * Release `userId`'s number on the campaign, under the same advisory lock as {@link set}. The
    * number released, or null when none was effectively set. A stale row is deleted too, but is
-   * not reported (it was never dialled from, so nothing is audited as released).
+   * not reported (it was never dialled from, so nothing is audited as released). Publishes
+   * `dedications_changed` once it has committed, whatever it deleted.
    */
   async clear(campaignId: string, userId: string): Promise<string | null> {
-    return withTransaction(async (client) => {
+    const released = await withTransaction(async (client) => {
       await client.query(AGENT_CALLER_ID_LOCK_SQL, [campaignId, userId]);
       const { rows } = await client.query<{ caller_id: string; effective: boolean }>(
         `DELETE FROM agency_campaign_agent_caller_ids d
@@ -237,6 +249,8 @@ export class AgencyAgentCallerIdRepository {
       );
       return rows[0]?.effective ? rows[0].caller_id : null;
     }, { pool: getPool() });
+    publishPacingInvalidation({ type: 'dedications_changed', campaignId });
+    return released;
   }
 }
 

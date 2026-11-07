@@ -35,6 +35,7 @@ import { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { ManualDialer } from './softphone/manual-dialer.js';
 import { SoftphoneService } from './softphone/softphone-service.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
+import { DedicatedCallerIdCache } from './pacing/dedicated-caller-ids.js';
 import { queuedBreakReleaseOf } from './reserved-agent.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
@@ -115,6 +116,13 @@ export class AgencyRuntime {
    * (`wrapup-redial.ts`), so a redial passes the same clearance and ownership checks.
    */
   readonly dispatcher: DialDispatcher;
+  /**
+   * The campaigns' dedicated caller IDs, as every dial path reads them (DN4,
+   * `pacing/dedicated-caller-ids.ts`): pacing, the agent's own call, the wrap-up redial and the
+   * tagged soft phone. Cached while this process's pacing engine listens to the bus (it leads a
+   * campaign), read through otherwise: always, in a media worker, whose bus delivers nothing.
+   */
+  readonly dedications: DedicatedCallerIdCache;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string, options: AgencyRuntimeOptions = {}) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -161,6 +169,7 @@ export class AgencyRuntime {
     // Decision B8: the registry is one indexed read of `dnc_entries` and fails closed
     // on any read fault. The default argument is the shared `dncRepository`.
     this.dnc = new DncRegistry();
+    this.dedications = new DedicatedCallerIdCache();
     this.softphone = new SoftphoneService({
       agents: this.agents,
       stations: this.stations,
@@ -168,12 +177,14 @@ export class AgencyRuntime {
       dialer: this.dialer,
       dnc: this.dnc,
       manual: this.manualDialer,
+      dedications: this.dedications,
     });
     const dispatcher = options.dispatcher
       ?? new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
     this.dispatcher = dispatcher;
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, options.pacingStations ?? this.stations, this.agents, dispatcher, this.dnc,
+      { dedications: this.dedications },
     );
     if (options.reservedReturn) this.pacing.registerReservedReturn(options.reservedReturn);
     // The engine's "something may want to know a campaign finished" seam carries the

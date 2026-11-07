@@ -74,6 +74,7 @@ vi.mock('../../../src/agency/pacing/callback-fallback.js', async (importOriginal
 }));
 
 import { DEDICATION_READ_FAILURE_LOG_MS, PacingEngine, type PacingTickObservation } from '../../../src/agency/pacing-engine.js';
+import * as metrics from '@magick-agency/observability/metrics/agency';
 import {
   getPacingInvalidationBus,
   InProcessPacingInvalidationBus,
@@ -269,73 +270,105 @@ describe('dedicated caller IDs: the contact\'s owner decides the number (DN2, DN
     expect(dispatch.mock.calls[0]![0]).toMatchObject({ sessionId: 's1', contactId: 'c-of-u2', callerId: '+14155550102' });
   });
 
-  it('a tick that claims nothing never reads the map', async () => {
+  it('the map is read once per dialling batch, BEFORE any agent is reserved or contact claimed', async () => {
     repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1']));
     repos.contact.claimForAgents.mockResolvedValue([]);
+    const agents = makeAgents({ s1: 'available' });
+    const { e } = engine(makeStations(['s1']), agents);
+    await e.tickOnce('camp-1');
+    // Read even though the claim then finds nothing: the read comes first.
+    expect(repos.callerIds.mapForCampaign).toHaveBeenCalledTimes(1);
+    const readAt = repos.callerIds.mapForCampaign.mock.invocationCallOrder[0]!;
+    expect(readAt).toBeLessThan(agents.reserve.mock.invocationCallOrder[0]!);
+    expect(readAt).toBeLessThan(repos.contact.claimForAgents.mock.invocationCallOrder[0]!);
+  });
+
+  it('a tick that plans no dial never reads the map', async () => {
+    // u1 has nothing due: `nothing_due`, no batch.
+    repos.contact.probeAgentQueues.mockResolvedValue(probe([]));
     const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
     await e.tickOnce('camp-1');
     expect(dispatch).not.toHaveBeenCalled();
     expect(repos.callerIds.mapForCampaign).not.toHaveBeenCalled();
   });
 
-  it('a failed read returns the whole batch undialled: agents back, contacts unclaimed, no attempt', async () => {
+  it('a failed read dials nothing and takes nothing: no agent reserved, no contact claimed, `dedications_unavailable` recorded', async () => {
     repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1', 'u2']));
     repos.contact.claimForAgents.mockResolvedValue([
       { agentUserId: 'u1', contact: contact('c-of-u1', 'u1') },
       { agentUserId: 'u2', contact: contact('c-of-u2', 'u2') },
     ]);
     repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+    const idleInc = vi.spyOn(metrics.agencyTickIdleTotal, 'inc');
     const agents = makeAgents({ s1: 'available', s2: 'available' });
-    const { e, dispatch } = engine(makeStations(['s1', 's2']), agents);
+    const { e, dispatch, ticks } = engine(makeStations(['s1', 's2']), agents);
 
-    await e.tickOnce('camp-1');
+    try {
+      await e.tickOnce('camp-1');
 
-    expect(repos.attempt.create).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(repos.contact.unclaimMany).toHaveBeenCalledWith(['c-of-u1', 'c-of-u2'], expect.any(Date));
-    expect(agents.set).toHaveBeenCalledWith('s1', 'available');
-    expect(agents.set).toHaveBeenCalledWith('s2', 'available');
+      expect(agents.reserve).not.toHaveBeenCalled();
+      expect(repos.contact.claimForAgents).not.toHaveBeenCalled();
+      expect(repos.contact.claimDialable).not.toHaveBeenCalled();
+      expect(repos.contact.unclaimMany).not.toHaveBeenCalled();
+      expect(repos.attempt.create).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(idleInc).toHaveBeenCalledWith({ campaign_id: 'camp-1', reason: 'dedications_unavailable' });
+      // Not quiescent: the next round ticks and reads again.
+      expect(ticks.at(-1)).toMatchObject({ mode: 'full', quiescent: false });
+      // Logged, with nothing to unwind first.
+      expect(childLog.error.mock.calls.filter((c) => String(c[1]).includes('dedicated caller IDs'))).toHaveLength(1);
+    } finally {
+      idleInc.mockRestore();
+    }
   });
 
-  it('a read that keeps failing is logged once per interval, not every tick; the recovery once; every batch still unwinds', async () => {
+  it('a read that keeps failing is logged once per interval, counted every tick; the recovery once', async () => {
     repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1']));
     repos.contact.claimForAgents.mockResolvedValue([{ agentUserId: 'u1', contact: contact('c-of-u1', 'u1') }]);
     repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+    const idleInc = vi.spyOn(metrics.agencyTickIdleTotal, 'inc');
     let clock = 1_000_000;
     const agents = makeAgents({ s1: 'available' });
     const { e, dispatch } = engine(makeStations(['s1']), agents, undefined, () => clock);
     const readErrors = () => childLog.error.mock.calls.filter((c) => String(c[1]).includes('dedicated caller IDs'));
+    const unavailable = () => idleInc.mock.calls.filter((c) => (c[0] as { reason: string }).reason === 'dedications_unavailable');
 
-    for (let tick = 0; tick < 5; tick++) {
+    try {
+      for (let tick = 0; tick < 5; tick++) {
+        await e.tickOnce('camp-1');
+        clock += 250;
+      }
+      expect(readErrors()).toHaveLength(1);
+      expect(readErrors()[0]![0]).toMatchObject({ campaignId: 'camp-1', failedReads: 1, unloggedSinceLast: 0 });
+      // Every failing tick is in the metric, and none took an agent or a contact.
+      expect(unavailable()).toHaveLength(5);
+      expect(agents.reserve).not.toHaveBeenCalled();
+      expect(repos.contact.claimForAgents).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+
+      clock += DEDICATION_READ_FAILURE_LOG_MS;
       await e.tickOnce('camp-1');
+      expect(readErrors()).toHaveLength(2);
+      expect(readErrors()[1]![0]).toMatchObject({ failedReads: 6, unloggedSinceLast: 4 });
+      expect(String(readErrors()[1]![1])).toMatch(/^Still cannot/);
+
+      repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
       clock += 250;
+      await e.tickOnce('camp-1');
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      const recovered = childLog.info.mock.calls.filter((c) => String(c[1]).includes('can be read again'));
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0]![0]).toMatchObject({ campaignId: 'camp-1', failedReads: 6 });
+
+      // A later failure is a new run: logged at once.
+      repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+      clock += 250;
+      await e.tickOnce('camp-1');
+      expect(readErrors()).toHaveLength(3);
+      expect(readErrors()[2]![0]).toMatchObject({ failedReads: 1 });
+    } finally {
+      idleInc.mockRestore();
     }
-    expect(readErrors()).toHaveLength(1);
-    expect(readErrors()[0]![0]).toMatchObject({ campaignId: 'camp-1', failedReads: 1, unloggedSinceLast: 0 });
-    // Every failing tick still returned its batch.
-    expect(repos.contact.unclaimMany).toHaveBeenCalledTimes(5);
-    expect(dispatch).not.toHaveBeenCalled();
-
-    clock += DEDICATION_READ_FAILURE_LOG_MS;
-    await e.tickOnce('camp-1');
-    expect(readErrors()).toHaveLength(2);
-    expect(readErrors()[1]![0]).toMatchObject({ failedReads: 6, unloggedSinceLast: 4 });
-    expect(String(readErrors()[1]![1])).toMatch(/^Still cannot/);
-
-    repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
-    clock += 250;
-    await e.tickOnce('camp-1');
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    const recovered = childLog.info.mock.calls.filter((c) => String(c[1]).includes('can be read again'));
-    expect(recovered).toHaveLength(1);
-    expect(recovered[0]![0]).toMatchObject({ campaignId: 'camp-1', failedReads: 6 });
-
-    // A later failure is a new run: logged at once.
-    repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
-    clock += 250;
-    await e.tickOnce('camp-1');
-    expect(readErrors()).toHaveLength(3);
-    expect(readErrors()[2]![0]).toMatchObject({ failedReads: 1 });
   });
 });
 

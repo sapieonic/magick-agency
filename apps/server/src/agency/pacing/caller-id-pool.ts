@@ -6,7 +6,10 @@
  * dial path applies (pacing, the agent's own call, the wrap-up redial, the soft phone tagged
  * to a campaign): the contact OWNER's dedicated number while the campaign still has it, else
  * the rotation ({@link rotationCallerIds}: the usable numbers minus the dedicated ones, or all
- * of them when every one is dedicated), picked round-robin by {@link pickCallerId}.
+ * of them when every one is dedicated), picked round-robin by {@link pickCallerId}. The map it
+ * decides from is read through `DedicatedCallerIdCache` (`dedicated-caller-ids.ts`), whose
+ * `callerIdForContact` is this rule for one contact; a dial path never calls `pickCallerId` over
+ * a campaign's numbers itself.
  */
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 

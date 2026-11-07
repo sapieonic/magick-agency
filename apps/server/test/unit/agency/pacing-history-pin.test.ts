@@ -44,6 +44,7 @@ const { repos, settings } = vi.hoisted(() => ({
       setState: vi.fn().mockResolvedValue(null),
     },
     session: { findLiveForCampaign: vi.fn().mockResolvedValue([]), setState: vi.fn().mockResolvedValue(null) },
+    callerIds: { mapForCampaign: vi.fn() },
   },
   settings: { getMaxConcurrentCalls: vi.fn().mockResolvedValue(5) },
 }));
@@ -52,8 +53,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAttemptRepository: repos.attempt,
   agencyAgentSessionRepository: repos.session,
-  // No dedicated caller IDs (DN1): every contact dials from the rotation, the whole pool.
-  agencyAgentCallerIdRepository: { mapForCampaign: async () => new Map() },
+  agencyAgentCallerIdRepository: repos.callerIds,
 }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
@@ -63,7 +63,12 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn
 import * as metrics from '@magick-agency/observability/metrics/agency';
 import { PacingEngine, gateHistoryField } from '../../../src/agency/pacing-engine.js';
 import { PacingHistoryAccumulator } from '../../../src/agency/pacing/pacing-history.js';
-import { PACING_IDLE_FIELD, type PacingHistoryField } from '../../../src/agency/pacing/pacing-history-fields.js';
+import {
+  PACING_TICK_IDLE_FIELD,
+  TICK_IDLE_REASONS,
+  type PacingHistoryField,
+  type TickIdleReason,
+} from '../../../src/agency/pacing/pacing-history-fields.js';
 import { InProcessPacingInvalidationBus } from '../../../src/agency/pacing/invalidation-bus.js';
 import { AGENCY_PACING_IDLE_REASONS } from '@magick-agency/contracts/api/agency/insights';
 import type { DncCheck } from '../../../src/agency/dnc-registry.js';
@@ -134,7 +139,7 @@ function expectMetricAndHistoryAgree(history: PacingHistoryAccumulator): Partial
   const got = history.peek('camp-1');
   const expected: Partial<Record<PacingHistoryField, number>> = {};
   for (const call of idleInc.mock.calls) {
-    const field = PACING_IDLE_FIELD[(call[0] as { reason: keyof typeof PACING_IDLE_FIELD }).reason];
+    const field = PACING_TICK_IDLE_FIELD[(call[0] as { reason: TickIdleReason }).reason];
     expected[field] = (expected[field] ?? 0) + 1;
   }
   for (const call of gateInc.mock.calls) {
@@ -171,6 +176,8 @@ beforeEach(() => {
     id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1, agent_reopened: false,
   }));
   settings.getMaxConcurrentCalls.mockResolvedValue(5);
+  // No dedicated caller IDs (DN1) unless a case says so: every contact dials from the rotation.
+  repos.callerIds.mapForCampaign.mockResolvedValue(new Map());
   idleInc = vi.spyOn(metrics.agencyTickIdleTotal, 'inc');
   gateInc = vi.spyOn(metrics.agencyPreDialGateTotal, 'inc');
 });
@@ -182,7 +189,13 @@ afterEach(() => {
 });
 
 describe('every idle reason counts into its pacing history column, with its metric', () => {
-  const scenarios: Record<(typeof AGENCY_PACING_IDLE_REASONS)[number], () => ReturnType<typeof rig>> = {
+  it('the engine\'s reasons are the insights page\'s, plus the metric\'s own, each in a column', () => {
+    expect(TICK_IDLE_REASONS).toEqual([...AGENCY_PACING_IDLE_REASONS, 'dedications_unavailable']);
+    // Written out: a DB fault reading the dedications is "Could not reserve an agent" on the page.
+    expect(PACING_TICK_IDLE_FIELD.dedications_unavailable).toBe('idle_no_reservations');
+  });
+
+  const scenarios: Record<TickIdleReason, () => ReturnType<typeof rig>> = {
     no_agents: () => rig({ sessions: [] }),
     no_slots: () => {
       settings.getMaxConcurrentCalls.mockResolvedValue(1);
@@ -203,15 +216,19 @@ describe('every idle reason counts into its pacing history column, with its metr
       });
       return rig();
     },
+    dedications_unavailable: () => {
+      repos.callerIds.mapForCampaign.mockRejectedValue(new Error('connection reset'));
+      return rig();
+    },
   };
 
-  for (const reason of AGENCY_PACING_IDLE_REASONS) {
+  for (const reason of TICK_IDLE_REASONS) {
     it(reason, async () => {
       const { engine, history } = scenarios[reason]();
       await engine.tickOnce('camp-1');
       expect(idleInc).toHaveBeenCalledWith(expect.objectContaining({ reason }));
       const got = expectMetricAndHistoryAgree(history);
-      expect(got[PACING_IDLE_FIELD[reason]]).toBe(1);
+      expect(got[PACING_TICK_IDLE_FIELD[reason]]).toBe(1);
       expect(got.ticks).toBe(1);
     });
   }

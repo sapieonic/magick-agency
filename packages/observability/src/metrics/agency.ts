@@ -448,6 +448,10 @@ export const agencyPreDialGateTotal = counter<'campaign_id' | 'gate' | 'action'>
 // roster is exhausted" from "the tick is broken" — were invisible in Grafana Cloud.
 // `reason="nothing_due"` is contact assignment's (strict / preferred campaigns): agents
 // are available but none has a contact due, so none was reserved.
+// Two reasons are NOT benign: `no_caller_ids` (a campaign with no usable caller ID, until a
+// human edits it) and `dedications_unavailable` (the campaign's dedicated caller IDs could not
+// be read, a database fault: the tick reserved and claimed nothing). The label set is
+// `TICK_IDLE_REASONS` (`apps/server/src/agency/pacing/pacing-history-fields.ts`).
 export const agencyTickIdleTotal = counter<'campaign_id' | 'reason'>(meter, 'agency_tick_idle_total', {
   description: 'Ticks that dialed nothing, by benign reason (no agents, no slots, no contacts)',
 });

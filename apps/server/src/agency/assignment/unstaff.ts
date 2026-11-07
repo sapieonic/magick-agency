@@ -16,6 +16,13 @@
  * the same actor; nothing where none was set. A campaign the agent has been staffed on again
  * by the time it runs keeps its row (see `returnOnUnstaff`).
  *
+ * First, before anything can fail, it publishes `dedications_changed` for every campaign whose
+ * staffing closed: the agent's dedication there stopped counting when the staffing row closed
+ * (`EFFECTIVE_DEDICATION_SQL`), so the dial paths' cached map (`DedicatedCallerIdCache`) must
+ * drop it now, whether or not the release below succeeds. This is the one place every unstaff
+ * path passes through (the supervisor's DELETE, the team routes' offboarding, the super admin's
+ * membership change), and each calls it only after its close has committed.
+ *
  * Never throws: it follows a staffing change that has already committed, and a failure
  * leaves contacts with a former agent (visible on the progress screen, reassignable), never
  * a wrong permission. A dedication left behind by a failure is never used: it stopped counting
@@ -28,6 +35,7 @@ import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import type { AuditActorFields } from '../../audit/platform/audit-actor.js';
 import { agencyAssignmentRepository, type UnstaffReturn } from '../../db/repositories/agency.repository.js';
 import { auditAgentCallerIdCleared } from '../agent-caller-id-audit.js';
+import { publishPacingInvalidation } from '../pacing/invalidation-bus.js';
 
 const log = createChildLogger({ component: 'agency-assignment-unstaff' });
 
@@ -47,6 +55,8 @@ export async function returnContactsOnUnstaff(input: {
 }): Promise<UnstaffReturn[]> {
   const campaignIds = [...new Set(input.campaignIds)];
   if (campaignIds.length === 0) return [];
+  // The closes have committed: their dedications no longer count (see the module note).
+  for (const campaignId of campaignIds) publishPacingInvalidation({ type: 'dedications_changed', campaignId });
   let rows: UnstaffReturn[];
   try {
     rows = await agencyAssignmentRepository.returnOnUnstaff({

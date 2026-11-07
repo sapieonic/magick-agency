@@ -59,6 +59,7 @@ import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../..
 import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import { agencyAttemptRepository } from '../../../src/db/repositories/agency.repository.js';
+import { publishPacingInvalidation } from '../../../src/agency/pacing/invalidation-bus.js';
 
 const CATALOG = JSON.stringify([
   { code: 'interested', label: 'Interested', is_success: true, terminal: true },
@@ -566,6 +567,9 @@ describe('wrap-up redial — real app, real runtime, fake carrier (integration)'
            VALUES ($1, $2, $3, $4, $5, clock_timestamp())`,
           [tenant, account, campaign.id, other, pacedFrom],
         );
+        // What the PUT publishes after its commit (a raw write publishes nothing, and the dial
+        // paths' cached map would keep the old one until its TTL: `dedicated-caller-ids.ts`).
+        publishPacingInvalidation({ type: 'dedications_changed', campaignId: campaign.id });
       });
       expect(unownedCalls.redialFrom).toBe(unownedCalls.pacedFrom === R1 ? R2 : R1);
     } finally {

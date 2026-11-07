@@ -48,6 +48,7 @@ vi.mock('../../../src/agency/pre-dial-gates.js', async (orig) => ({
 
 import { WrapupManager } from '../../../src/agency/wrapup-manager.js';
 import { startWrapupRedial, type WrapupRedialDeps } from '../../../src/agency/wrapup-redial.js';
+import { DedicatedCallerIdCache } from '../../../src/agency/pacing/dedicated-caller-ids.js';
 import type { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import type { StationRegistry } from '../../../src/agency/station-registry.js';
 
@@ -111,6 +112,8 @@ function harness() {
   const dispatcher = { dispatch: vi.fn(async () => undefined) };
   const deps = {
     agents, wrapup, stations, dnc: {} as never, dispatcher, dialer,
+    // Unarmed: reads through to the mocked repository, as in a media worker.
+    callerIds: new DedicatedCallerIdCache(),
   } as unknown as WrapupRedialDeps;
   return { agents, wrapup, dialer, dispatcher, deps };
 }

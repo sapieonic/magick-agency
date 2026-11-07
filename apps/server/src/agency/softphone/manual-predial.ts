@@ -117,7 +117,10 @@ export interface ManualPredialDeps {
    * tag's own match (step 4).
    */
   findInFlightInAccount: (phoneE164: string) => Promise<AgencyContactRecord | null>;
-  /** Tagged calls: the tag's dedicated caller IDs (`agency_campaign_agent_caller_ids`, DN4). */
+  /**
+   * Tagged calls: the tag's dedicated caller IDs (`agency_campaign_agent_caller_ids`, DN4), as the
+   * dial paths read them (`DedicatedCallerIdCache.read`, cached per campaign).
+   */
   findDedicatedCallerIds: (campaignId: string) => Promise<DedicatedCallerIds>;
 }
 

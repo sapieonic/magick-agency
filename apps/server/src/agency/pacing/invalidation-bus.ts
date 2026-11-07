@@ -8,8 +8,9 @@
  * ticks, on a floor where every agent is on a call or the account is at its limit,
  * read four or five statements and reserve nothing. The engine skips such a tick
  * when nothing that could change its answer has happened since the last full one,
- * and it caches the campaign row and the account limit between full ticks. Both
- * need to hear about change, and each event below names one thing a tick reads:
+ * and it caches the campaign row, the account limit and the campaign's dedicated
+ * caller IDs between full ticks (`dedicated-caller-ids.ts`). Both need to hear about
+ * change, and each event below names one thing a tick reads:
  *
  * | Event                    | What changed                                | Published by |
  * |--------------------------|---------------------------------------------|--------------|
@@ -19,6 +20,7 @@
  * | `agent_available`        | an agent entered `available`, or attached a station | `AgentStateMachine` (via the runtime), the station attach |
  * | `contacts_changed`       | contacts arrived on the campaign            | the CSV ingest's roster chunks |
  * | `station_ready`          | a station was sent `ready` on a `strict` / `preferred` campaign, so what it last heard of its queue is that frame's | the station attach |
+| `dedications_changed`    | the campaign's effective dedicated caller IDs (DN1): one set, replaced or released, or an agent's staffing on it closed | `AgencyAgentCallerIdRepository.set` / `.clear`, `returnContactsOnUnstaff` (every unstaff path) |
  *
  * ── Serialisable on purpose ─────────────────────────────────────────────────
  * Events are plain JSON objects and carry ids only, never a row, a callback or a
@@ -53,7 +55,12 @@ export type PacingInvalidationEvent =
    * the `ready` replaced it on the station, or cleared it when its queue read failed, so the
    * next tick sends the agent's queue again.
    */
-  | { type: 'station_ready'; sessionId: string; campaignId: string };
+  | { type: 'station_ready'; sessionId: string; campaignId: string }
+  /**
+   * The campaign's dedicated caller-ID map (`DedicatedCallerIdCache`) is stale. Wakes nothing:
+   * a dedication changes which number a dial uses, never whether the campaign can dial.
+   */
+  | { type: 'dedications_changed'; campaignId: string };
 
 export type PacingInvalidationEventType = PacingInvalidationEvent['type'];
 
@@ -79,6 +86,7 @@ export function parsePacingInvalidationEvent(raw: unknown): PacingInvalidationEv
   switch (e['type']) {
     case 'campaign_changed':
     case 'contacts_changed':
+    case 'dedications_changed':
       return isId(e['campaignId']) ? { type: e['type'], campaignId: e['campaignId'] } : null;
     case 'account_limit_changed':
     case 'account_capacity_freed':

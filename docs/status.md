@@ -949,11 +949,15 @@ caller ID per agent". Server, db, contracts and console.
   a row an unstaff left behind never dials, blocks or revives.
 - One rule for every dial path, `resolveCallerId` (`agency/pacing/caller-id-pool.ts`): the
   contact owner's dedicated number while the campaign still has it, else the rotation (the usable
-  numbers minus the dedicated ones, or all of them when every one is dedicated). Pacing reads the
-  campaign's dedications once per dialling batch (a failed read returns the batch undialled; its
-  log is throttled per campaign, once a minute while it keeps failing); the agent's own call, the
-  wrap-up redial (WR7's "same number" kept only while it is in the rotation) and the soft phone
-  tagged to a campaign read them per dial (DN2–DN4).
+  numbers minus the dedicated ones, or all of them when every one is dedicated). Every dial path
+  reads the campaign's dedications from one per-campaign cache (`DedicatedCallerIdCache`, 2 s TTL,
+  invalidated by `dedications_changed`, which the PUT, the DELETE and every unstaff publish; read
+  through in a media worker). Pacing reads them once per dialling batch, before it reserves an
+  agent or claims a contact (a failed read dials nothing, records the idle reason
+  `dedications_unavailable` and logs, throttled per campaign, once a minute while it keeps
+  failing); the agent's own call and the wrap-up redial (WR7's "same number" kept only while it is
+  in the rotation) ask its `callerIdForContact`, and the soft phone tagged to a campaign feeds its
+  map to `selectCallerId` (DN2–DN4).
 - The soft phone tagged to a campaign refuses a caller ID outside the campaign's set as before.
   An in-set request goes through the same rule as the redial's previous number: the matched
   contact owner's dedicated number whatever was requested, else the requested number while it is
