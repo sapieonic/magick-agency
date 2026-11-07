@@ -37,6 +37,17 @@ const adapter = new PlivoAdapter({
 function makeBridge(live: boolean) {
   return {
     verifyWsToken: vi.fn().mockResolvedValue(true),
+    // As the bridge's Redis set: true the first time a (call, nonce) is seen.
+    seenNonces: new Set<string>(),
+    claimCallbackNonce: vi.fn(async function (this: { seenNonces: Set<string> }, callId: string, nonce: string) {
+      const key = `${callId}:${nonce}`;
+      if (this.seenNonces.has(key)) return false;
+      this.seenNonces.add(key);
+      return true;
+    }),
+    releaseCallbackNonce: vi.fn(async function (this: { seenNonces: Set<string> }, callId: string, nonce: string) {
+      this.seenNonces.delete(`${callId}:${nonce}`);
+    }),
     carrierCallbackAdapter: vi.fn().mockResolvedValue(adapter),
     answerCarrierCall: vi.fn().mockResolvedValue(live ? { streamUrl: STREAM, enableRecording: false, recordingCallbackUrl: null, maxDurationSeconds: 600 } : null),
     handleCarrierStatus: vi.fn().mockResolvedValue(undefined),

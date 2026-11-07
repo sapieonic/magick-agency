@@ -298,6 +298,19 @@ export class WebRtcBridgeManager {
     return this.tokens.verifyWsToken(callId, token, purpose);
   }
 
+  /**
+   * Record a verified carrier callback's signature nonce: false for one the call has seen
+   * (a replay). Fails open on Redis. The rules are `BridgeWsTokens.claimCallbackNonce`'s.
+   */
+  claimCallbackNonce(callId: string, nonce: string): Promise<boolean> {
+    return this.tokens.claimCallbackNonce(callId, nonce);
+  }
+
+  /** Forget a nonce whose callback could not be processed, so the carrier's retry is not a replay. */
+  releaseCallbackNonce(callId: string, nonce: string): Promise<void> {
+    return this.tokens.releaseCallbackNonce(callId, nonce);
+  }
+
   private readonly lifecycleListeners = new Set<WebRtcLifecycleListener>();
 
   /**

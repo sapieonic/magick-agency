@@ -61,6 +61,11 @@ export type PlivoCallStep =
   | { do: 'recording'; recordingId?: string; sign?: SignMode }
   /** Any callback with these params (merged over the call's own), e.g. a forged or stale one. */
   | { do: 'post'; to: CallbackTarget; params?: Record<string, string>; sign?: SignMode; token?: string }
+  /**
+   * The last callback posted again byte for byte, its signature and nonce included: a
+   * captured request replayed (an attacker's, not Plivo's: Plivo signs each post afresh).
+   */
+  | { do: 'replay' }
   /** Open the media WebSocket the answer XML named (rewritten to the server under test). */
   | { do: 'connect' }
   | { do: 'start'; encoding?: string; sampleRate?: number }
@@ -267,6 +272,14 @@ export class PlivoCall {
       headers['X-Plivo-Signature-V3'] = signPlivoCallback(token, signedUrl, params, nonce);
       headers['X-Plivo-Signature-V3-Nonce'] = nonce;
     }
+    this.lastPosted = { to, url, params, headers };
+    return this.post(to, url, params, headers);
+  }
+
+  /** The last callback as it was sent, for a replay step. */
+  private lastPosted: { to: CallbackTarget; url: string; params: Record<string, string>; headers: Record<string, string> } | null = null;
+
+  private async post(to: CallbackTarget, url: string, params: Record<string, string>, headers: Record<string, string>): Promise<CallbackResult> {
     const what = params['CallStatus'] ?? to;
     let result: CallbackResult;
     try {
@@ -343,6 +356,12 @@ export class PlivoCall {
       case 'post':
         await this.callback(step.to, { ...this.baseParams(), ...step.params }, step.sign, step.token);
         return;
+      case 'replay': {
+        const last = this.lastPosted;
+        if (!last) throw new Error('nothing posted to replay');
+        await this.post(last.to, last.url, last.params, last.headers);
+        return;
+      }
       case 'connect':
         await this.connect();
         return;

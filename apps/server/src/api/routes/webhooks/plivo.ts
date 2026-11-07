@@ -16,6 +16,12 @@
 // on (a reverse proxy may strip a prefix of it). A refused answer callback is answered
 // with a hangup, so a call we will not bridge is put down rather than left on the line.
 //
+// A signed callback is accepted once: its nonce is recorded for the call in Redis
+// (`claimCallbackNonce`, wherever the callback is handled, so in the worker that holds the
+// call when it is forwarded), and a repeat of the same (call, nonce) is refused as a
+// replay. A callback that fails to process gives its nonce back, so Plivo's retry of it is
+// not a replay. Redis failing fails open, with a log line.
+//
 // With media workers (`docs/scaling.md` §3.2) a callback whose URL carries `w` runs in the
 // worker that slot names, where the call lives: the route hands its parsed input to the
 // forwarder (`cluster/media-cluster.ts`, IPC `carrier.plivo_callback`) and answers with
@@ -27,7 +33,9 @@ import { config } from '../../../config/index.js';
 import type { WebRtcBridgeManager } from '../../../core/webrtc-bridge-manager.js';
 import { carrierCallbackUrl, type CarrierCallbackRoute } from '../../../core/bridge/carrier-urls.js';
 import { PLIVO_HANGUP_XML } from '../../../telephony/plivo/plivo.adapter.js';
-import { PLIVO_SIGNATURE_V3_HEADER, PLIVO_SIGNATURE_V3_NONCE_HEADER } from '../../../telephony/plivo/plivo-signature.js';
+import {
+  PLIVO_SIGNATURE_V3_HEADER, PLIVO_SIGNATURE_V3_NONCE_HEADER, headerValue,
+} from '../../../telephony/plivo/plivo-signature.js';
 import {
   normalizePlivoCallback, plivoCallEvent, type PlivoCallbackKind,
 } from '../../../telephony/plivo/plivo.webhook.js';
@@ -107,6 +115,8 @@ export async function handlePlivoCallback(
   input: PlivoCallbackInput,
 ): Promise<PlivoCallbackAnswer> {
   const { kind, callId } = input;
+  /** The nonce this request claimed, given back if it fails to process. */
+  let nonce: string | null = null;
   if (!UUID.test(callId)) {
     log.warn({ kind }, 'Plivo callback for a malformed call id — refusing');
     return refuse(kind);
@@ -125,6 +135,13 @@ export async function handlePlivoCallback(
     const signed = adapter.verifyCarrierRequest?.({ method: 'POST', url: input.url, params: input.params, headers: input.headers }) === true;
     if (!signed) {
       log.warn({ callId, kind }, 'Plivo callback with a signature that does not verify — refusing');
+      return refuse(kind);
+    }
+    // A verified signature has a nonce (`verifyPlivoV3Signature` refuses one without).
+    nonce = headerValue(input.headers, PLIVO_SIGNATURE_V3_NONCE_HEADER) ?? '';
+    if (!await bridge.claimCallbackNonce(callId, nonce)) {
+      nonce = null;
+      log.warn({ callId, kind }, 'Plivo callback whose signed nonce this call has already seen (a replay) — refusing');
       return refuse(kind);
     }
 
@@ -158,6 +175,7 @@ export async function handlePlivoCallback(
     }
   } catch (err) {
     log.error({ err, callId, kind }, 'Plivo callback failed');
+    if (nonce !== null) await bridge.releaseCallbackNonce(callId, nonce);
     return plivoCallbackUnavailable(kind);
   }
 }

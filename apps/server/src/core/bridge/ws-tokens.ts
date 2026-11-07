@@ -29,6 +29,14 @@ export const UNSTORED_WS_TOKEN_CAP = 10_000;
  * every insert would sit on the dial path.
  */
 export const UNSTORED_WS_TOKEN_SWEEP_MS = 10_000;
+/**
+ * How long a call's signed-callback nonces are remembered after its last callback
+ * ({@link BridgeWsTokens.claimCallbackNonce}): past the longest a callback can still pass the
+ * webhook token (the call, then WEBHOOK_TOKEN_POST_END_GRACE_SECONDS after it ends), so a
+ * captured callback cannot be replayed while its token would still let it through. Every
+ * callback re-arms it.
+ */
+export const CALLBACK_NONCE_TTL_SECONDS = WEBHOOK_TOKEN_POST_END_GRACE_SECONDS + 4 * 60 * 60;
 /*
  * WEBHOOK_TOKEN_POST_END_GRACE_SECONDS (`telephony/webhook-grace.ts`), Q6 (Manas,
  * 2026-10-09): how long a call's WEBHOOK token stays verifiable after the call ends. VoiceLink keeps posting to `/webrtc-status/:callId` after our teardown — the
@@ -165,6 +173,46 @@ export class BridgeWsTokens {
     } catch (err) {
       log.warn({ err, callId, purpose }, 'WebRTC WS token verify failed — allowing (degraded)');
       return true;
+    }
+  }
+
+  private callbackNonceKey(callId: string): string {
+    return `${this.keyPrefix}webrtc:callback-nonces:${callId}`;
+  }
+
+  /**
+   * Record a signed carrier callback's nonce for its call, once its signature verified:
+   * true the first time, false for a nonce this call has already seen (a replay of a
+   * captured callback, which the signature alone would accept for as long as the webhook
+   * token lives). One Redis set per call (`SADD`, re-armed to
+   * {@link CALLBACK_NONCE_TTL_SECONDS}), shared by every process, so a replay is refused
+   * whichever worker it reaches. Fails OPEN: with no Redis, or Redis erroring, the callback
+   * is accepted and logged, never a real callback refused over an outage.
+   */
+  async claimCallbackNonce(callId: string, nonce: string): Promise<boolean> {
+    if (!this.redis) return true;
+    const key = this.callbackNonceKey(callId);
+    try {
+      const result = await this.redis.multi().sadd(key, nonce).expire(key, CALLBACK_NONCE_TTL_SECONDS).exec();
+      const added = result?.[0];
+      if (!added || added[0]) throw added?.[0] ?? new Error('SADD answered nothing');
+      return added[1] === 1;
+    } catch (err) {
+      log.warn({ err, callId }, 'Carrier callback nonce not recorded (Redis) — accepting the callback unchecked for replay');
+      return true;
+    }
+  }
+
+  /**
+   * Forget a nonce whose callback could not be processed, so the carrier's retry of that
+   * same request is not refused as a replay. Never throws.
+   */
+  async releaseCallbackNonce(callId: string, nonce: string): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.srem(this.callbackNonceKey(callId), nonce);
+    } catch (err) {
+      log.warn({ err, callId }, 'Carrier callback nonce not released (Redis) — a retry of it may be refused');
     }
   }
 

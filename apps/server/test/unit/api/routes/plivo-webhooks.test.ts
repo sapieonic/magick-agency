@@ -42,6 +42,17 @@ const adapter = new PlivoAdapter({
 function makeBridge() {
   return {
     verifyWsToken: vi.fn().mockResolvedValue(true),
+    // As the bridge's Redis set: true the first time a (call, nonce) is seen.
+    seenNonces: new Set<string>(),
+    claimCallbackNonce: vi.fn(async function (this: { seenNonces: Set<string> }, callId: string, nonce: string) {
+      const key = `${callId}:${nonce}`;
+      if (this.seenNonces.has(key)) return false;
+      this.seenNonces.add(key);
+      return true;
+    }),
+    releaseCallbackNonce: vi.fn(async function (this: { seenNonces: Set<string> }, callId: string, nonce: string) {
+      this.seenNonces.delete(`${callId}:${nonce}`);
+    }),
     carrierCallbackAdapter: vi.fn().mockResolvedValue(adapter),
     answerCarrierCall: vi.fn().mockResolvedValue({
       streamUrl: STREAM, enableRecording: true,
@@ -64,7 +75,7 @@ function post(app: FastifyInstance, path: string, params: Record<string, string>
   signWith?: string; signUrl?: string; nonce?: string; host?: string; unsigned?: boolean;
 } = {}) {
   const publicUrl = opts.signUrl ?? `${PLIVO_BASE}${path}`;
-  const nonce = opts.nonce ?? '12345678901234567890';
+  const nonce = opts.nonce ?? freshNonce();
   const sig = computePlivoV3Signature(opts.signWith ?? TOKEN, 'POST', publicUrl, params, nonce);
   return app.inject({
     method: 'POST',
@@ -86,6 +97,51 @@ beforeEach(() => {
   setVoicelinkWebhookForwarder(null);
   setPlivoCallbackForwarder(null);
   bridge = makeBridge();
+});
+
+/** Each request signed with its own nonce, as Plivo signs each callback it sends. */
+let nonceSeq = 0;
+const freshNonce = () => `nonce-${++nonceSeq}-${Math.random().toString(36).slice(2)}`;
+
+describe('a replayed callback (the same signed nonce for the call) is refused', () => {
+  it('a status replayed is 403 and reaches the bridge once; another nonce is accepted', async () => {
+    const app = await buildApp(bridge);
+    const path = `/webrtc-status/${CALL_ID}?token=wh&w=3`;
+    const params = { CallUUID: 'uuid-1', CallStatus: 'ringing' };
+    expect((await post(app, path, params, { nonce: 'n-1' })).statusCode).toBe(200);
+    expect((await post(app, path, params, { nonce: 'n-1' })).statusCode).toBe(403);
+    expect(bridge.handleCarrierStatus).toHaveBeenCalledTimes(1);
+    expect((await post(app, path, params, { nonce: 'n-2' })).statusCode).toBe(200);
+    expect(bridge.handleCarrierStatus).toHaveBeenCalledTimes(2);
+    expect(bridge.claimCallbackNonce).toHaveBeenCalledWith(CALL_ID, 'n-1');
+  });
+
+  it('an answer replayed is put down with the hangup XML, never given the stream again', async () => {
+    const app = await buildApp(bridge);
+    expect((await post(app, answerPath, ANSWER, { nonce: 'a-1' })).body).toContain('<Stream');
+    expect((await post(app, answerPath, ANSWER, { nonce: 'a-1' })).body).toBe(PLIVO_HANGUP_XML);
+    expect(bridge.answerCarrierCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('a nonce is claimed only after the token and signature verify (a forgery cannot burn a real nonce)', async () => {
+    const app = await buildApp(bridge);
+    const path = `/webrtc-status/${CALL_ID}?token=wh&w=3`;
+    const params = { CallUUID: 'uuid-1', CallStatus: 'ringing' };
+    expect((await post(app, path, params, { nonce: 'n-9', signWith: 'someone-elses-token' })).statusCode).toBe(403);
+    expect(bridge.claimCallbackNonce).not.toHaveBeenCalled();
+    expect((await post(app, path, params, { nonce: 'n-9' })).statusCode).toBe(200);
+  });
+
+  it('a callback that failed to process gives its nonce back: the carrier`s retry of it is processed', async () => {
+    bridge.handleCarrierStatus.mockRejectedValueOnce(new Error('db down'));
+    const app = await buildApp(bridge);
+    const path = `/webrtc-status/${CALL_ID}?token=wh&w=3`;
+    const params = { CallUUID: 'uuid-1', CallStatus: 'ringing' };
+    expect((await post(app, path, params, { nonce: 'r-1' })).statusCode).toBe(503);
+    expect(bridge.releaseCallbackNonce).toHaveBeenCalledWith(CALL_ID, 'r-1');
+    expect((await post(app, path, params, { nonce: 'r-1' })).statusCode).toBe(200);
+    expect(bridge.handleCarrierStatus).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('POST /plivo/webrtc-answer/:callId', () => {
@@ -276,8 +332,7 @@ describe('the signed URL is the one the dial handed Plivo', () => {
         providerToken: 'prov', webhookToken: 'wh', routeHint: '3',
       });
       const app = await buildApp(bridge);
-      const nonce = '98765432109876543210';
-      const send = (handed: string, params: Record<string, string>) => app.inject({
+      const send = (handed: string, params: Record<string, string>, nonce = freshNonce()) => app.inject({
         method: 'POST',
         url: arrivesAt(handed.slice(handed.indexOf('/', 'https://'.length))),
         headers: {

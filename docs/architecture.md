@@ -613,8 +613,15 @@ every account the caller belongs to (CH2) where every internal handler is single
     purpose-bound webhook token in its URL (Q6) and a V3 signature (`plivo-signature.ts`) from the
     account the call was placed on, checked against the pinned credential resolved for
     `call_control` (its current token, or the previous one inside the 24 h rotation grace) over the
-    URL rebuilt from `PLIVO_WEBHOOK_BASE_URL`'s origin and the request's own path and query, never
-    a `Host` header. A callback after teardown reads the credential off the call row.
+    URL the dial handed Plivo, rebuilt by the dial's own builder (`carrierCallbackUrl`): the whole
+    `PLIVO_WEBHOOK_BASE_URL` as written (a path prefix included), the route, the call id and the
+    request's query; never a `Host` header and never the path the request arrived on (a reverse
+    proxy may strip a prefix of it). A callback after teardown reads the credential off the call
+    row. A verified callback's nonce is then recorded for its call in Redis (`claimCallbackNonce`,
+    one set per call shared by every process, kept past the webhook token's life), and a repeat
+    of the same (call, nonce) is refused like a bad signature (a replay of a captured callback);
+    a callback that fails to process gives its nonce back so Plivo's retry is not refused, and a
+    Redis fault accepts it, logged.
   - *Answer.* The answer callback replies `text/xml` (`answerCarrierCall`): a whole-session
     `<Record>` when the call records (its `callbackUrl` the recording callback), then a
     bidirectional μ-law `<Stream keepCallAlive>` to the stream URL kept on the session. A bad token

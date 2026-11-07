@@ -299,6 +299,31 @@ describe('a call on the tenant`s own Plivo account, through the real server', ()
     expect(after.status).toBe('no_answer');
   }, 60_000);
 
+  it('(k) a captured signed callback replayed (same signature and nonce) is refused; a fresh one goes through', async () => {
+    const r = rig!;
+    let checked = false;
+    r.carrier.setScript((): PlivoCallScript => ({
+      name: 'a replayed ring, then a real no-answer',
+      steps: [
+        { do: 'ring' },
+        { do: 'replay' },
+        { do: 'waitFor', until: () => checked, what: 'the test to check the replay' },
+        { do: 'hangup', status: 'no-answer' },
+        { do: 'replay' },
+      ],
+    }));
+    const { campaignId } = await plivoCampaign(r);
+    station = await joinAgent(r, campaignId);
+    const { call, callId } = await placed(r, campaignId);
+    await waitFor('the ring and its replay posted', () => call.callbacks.length === 2);
+    expect(call.callbacks.map((c) => [c.to, c.status])).toEqual([['ring', 200], ['ring', 403]]);
+    checked = true;
+    await r.carrier.settled();
+    // The real terminal (its own nonce) is processed; its replay after the call ended is not.
+    expect(call.statusesFor('hangup')).toEqual([200, 403]);
+    expect((await terminalRow(callId)).status).toBe('no_answer');
+  }, 60_000);
+
   it('(d) a dial Plivo refuses 401 pauses the campaign `carrier_auth`, audited; nothing else is dialled', async () => {
     const r = rig!;
     const audit = vi.spyOn(auditLogger, 'log');
