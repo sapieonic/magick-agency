@@ -412,7 +412,8 @@ its body parsed in P. Then:
 Plivo's answer, status and recording callbacks (`POST /api/v1/webhooks/plivo/webrtc-{answer,
 status,recording}/:callId`, `api/routes/webhooks/plivo.ts`) are routed the same way, by
 `carrier.plivo_callback {kind, callId, token, url, params, headers}`: `url` is the public URL
-Plivo called (env origin + path and query), `headers` only the two V3 signature headers, so
+Plivo called (rebuilt by the dial's own builder, `carrierCallbackUrl`: the env base as written,
+the route, the call id and the request's query), `headers` only the two V3 signature headers, so
 W*k* runs `handlePlivoCallback` (token, then signature, then the bridge) on exactly what Plivo
 signed. The answer is `{statusCode, contentType, body}`, so the answer callback's XML crosses
 back. No hint: run in P. The worker gone: an answer callback is answered with the hangup XML

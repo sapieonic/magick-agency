@@ -95,7 +95,8 @@ service's own account. The refusals with nothing placed at the carrier each have
 `telephony_credential_unavailable` (the credential cannot dial; the dialer pauses the campaign
 `carrier_account_unavailable`), `carrier_rate_limited` (a
 calls-per-second limit) and `carrier_auth_rejected` (the carrier refused the credential, HTTP
-401; the dialer pauses the campaign `carrier_auth`). `telephony_init_failed` is the carrier
+401; the bridge marks the credential `invalid` against the secret version that dialled, and
+the dialer pauses the campaign `carrier_auth`). `telephony_init_failed` is the carrier
 refusing a dial: it ends the call first, with an `ended`.
 
 `correlation` says what a leg belongs to: a campaign attempt (the dialer) or a soft-phone call
