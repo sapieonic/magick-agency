@@ -82,6 +82,8 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
   });
 
   configureAgencyRuntime({
+    // The workers dial; each counts its own agents' refusals (`carrier-refusal-breaker.ts`).
+    refusalCountShared: true,
     pacingStations: cluster.directory,
     dispatcher: cluster.dispatcher,
     reservedReturn: cluster.reservedReturn,

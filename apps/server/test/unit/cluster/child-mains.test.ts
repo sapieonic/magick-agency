@@ -65,7 +65,8 @@ vi.mock('../../../src/bootstrap/voice.js', () => ({
   })),
 }));
 vi.mock('../../../src/bootstrap/agency.js', () => ({
-  ensureAgencyRuntime: vi.fn(() => ({ startShard: vi.fn(() => { h.calls.push('startShard'); }) })),
+  configureAgencyRuntime: vi.fn((opts: unknown) => { h.calls.push(`configureAgencyRuntime:${JSON.stringify(opts)}`); }),
+  ensureAgencyRuntime: vi.fn(() => { h.calls.push('ensureAgencyRuntime'); return { startShard: vi.fn(() => { h.calls.push('startShard'); }) }; }),
 }));
 vi.mock('../../../src/cluster/worker-app.js', () => ({
   buildWorkerApp: vi.fn(async () => {
@@ -120,6 +121,11 @@ describe('a media worker process', () => {
     await runMediaChildProcess({ slot: 1 });
     expect(h.calls).toEqual(expect.arrayContaining(['pool:7', 'initAnalytics', 'startShard', 'startMediaChild']));
     expect(h.calls).not.toContain('shutdownAnalytics');
+    // A worker is never the sole counter of a campaign's carrier refusals (PL11): told so
+    // before its runtime is built.
+    const configured = h.calls.indexOf('configureAgencyRuntime:{"refusalCountShared":true}');
+    expect(configured).toBeGreaterThanOrEqual(0);
+    expect(configured).toBeLessThan(h.calls.indexOf('ensureAgencyRuntime'));
 
     await expect(primary.request('shutdown', { graceMs: 1_000 }, { deadlineMs: 2_000 })).resolves.toEqual({});
     expect(await exited).toBe(0);

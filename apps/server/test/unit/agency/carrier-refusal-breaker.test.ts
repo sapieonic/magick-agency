@@ -31,7 +31,8 @@ function fakeRedis() {
       };
       return chain;
     },
-    async del(key: string) { if (failing) throw new Error('redis down'); values.delete(key); ttls.delete(key); return 1; },
+    dels: [] as string[],
+    async del(key: string) { redis.dels.push(key); if (failing) throw new Error('redis down'); values.delete(key); ttls.delete(key); return 1; },
   };
   return redis;
 }
@@ -75,6 +76,62 @@ describe('CarrierRefusalBreaker', () => {
     expect(await b.noteRefusal('c1')).toBe(false);
     now = 62_000;
     expect(await b.noteRefusal('c1')).toBe(true);
+  });
+});
+
+describe('CarrierRefusalBreaker: a placed call\'s clear', () => {
+  const KEY = 'agency:carrier-refusals:c1';
+
+  it('as the sole counter: clears once after a start, then only after a refusal', async () => {
+    const redis = fakeRedis();
+    const b = new CarrierRefusalBreaker(redis as any, '', { threshold: 5, soleCounter: true });
+    // The first placed call after a start clears a streak a previous process may have left.
+    redis.values.set(KEY, 3);
+    await b.notePlaced('c1');
+    expect(redis.dels).toEqual([KEY]);
+    expect(redis.values.has(KEY)).toBe(false);
+    // No refusal since: no DEL.
+    await b.notePlaced('c1');
+    await b.notePlaced('c1');
+    expect(redis.dels).toEqual([KEY]);
+    // After a refusal the next placed call clears, and the one after does not.
+    await b.noteRefusal('c1');
+    await b.notePlaced('c1');
+    await b.notePlaced('c1');
+    expect(redis.dels).toEqual([KEY, KEY]);
+    // Per campaign: another campaign's first placed call clears its own key.
+    await b.notePlaced('c2');
+    expect(redis.dels).toEqual([KEY, KEY, 'agency:carrier-refusals:c2']);
+  });
+
+  it('as the sole counter: a refusal noted while a clear is in flight is not covered by it', async () => {
+    const redis = fakeRedis();
+    const b = new CarrierRefusalBreaker(redis as any, '', { threshold: 5, soleCounter: true });
+    const placed = b.notePlaced('c1');
+    await b.noteRefusal('c1');
+    await placed;
+    await b.notePlaced('c1');
+    expect(redis.dels).toHaveLength(2);
+  });
+
+  it('as the sole counter: a clear Redis refused is tried again on the next placed call', async () => {
+    const redis = fakeRedis();
+    const b = new CarrierRefusalBreaker(redis as any, '', { threshold: 5, soleCounter: true });
+    redis.fail(true);
+    await b.notePlaced('c1');
+    redis.fail(false);
+    await b.notePlaced('c1');
+    await b.notePlaced('c1');
+    expect(redis.dels).toHaveLength(2);
+  });
+
+  it('not the sole counter (media workers share the campaign): every placed call clears', async () => {
+    const redis = fakeRedis();
+    const b = new CarrierRefusalBreaker(redis as any, '', { threshold: 5 });
+    await b.notePlaced('c1');
+    await b.notePlaced('c1');
+    await b.notePlaced('c1');
+    expect(redis.dels).toHaveLength(3);
   });
 });
 

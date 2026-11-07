@@ -33,7 +33,7 @@ import { initTtsFileCache } from '../tts/tts-file-cache.js';
 import { setTelephonyReleaseObserver } from '../core/telephony-release.js';
 import { trackTelephonyLeaseRelease } from '@magick-agency/observability/metrics/voice';
 import { ensureVoiceEngine } from '../bootstrap/voice.js';
-import { ensureAgencyRuntime } from '../bootstrap/agency.js';
+import { configureAgencyRuntime, ensureAgencyRuntime } from '../bootstrap/agency.js';
 import { createTranscriber } from '../transcription/index.js';
 import { createAnalysisService } from '../analysis/index.js';
 import { createBridgeAnalysisHooks } from '../analysis/bridge-analysis-hooks.js';
@@ -150,6 +150,9 @@ async function boot(
   // D6: while Redis is down every worker admits from local leases, so each takes its share.
   guardHost.setDegradedShare(config.processes.mediaWorkers);
 
+  // A campaign's dials are spread over the workers that own its agents: none of them is
+  // the sole counter of its carrier refusals (`carrier-refusal-breaker.ts`).
+  configureAgencyRuntime({ refusalCountShared: true });
   const runtime = ensureAgencyRuntime(redis, config.redis.keyPrefix);
 
   if (config.dialerAnalysis?.enabled && createTranscriber(config) && createAnalysisService(config)) {
