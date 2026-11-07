@@ -686,6 +686,7 @@ class SoftphoneView {
     this.muteEnabled = false,
     this.audio = const AudioView(),
     this.canHangUp = false,
+    this.warnRingingHangUp = false,
     this.hangingUp = false,
     this.hangupFailure,
     this.dncEnabled = false,
@@ -851,6 +852,12 @@ class SoftphoneView {
   /// Route, routes and microphone problems (the host's audio).
   final AudioView audio;
   final bool canHangUp;
+
+  /// SP3: the call rings and its carrier cannot stop the customer's phone
+  /// ringing (its `can_cancel_ringing` is not `true`), so hanging up now leaves
+  /// it ringing. The warning above hang-up, and the screen reader's confirm
+  /// text. False while ringing on a carrier that cancels: hanging up just cancels.
+  final bool warnRingingHangUp;
   final bool hangingUp;
 
   /// A hang-up that failed while the call stays on the line: this screen's
@@ -1001,6 +1008,7 @@ class SoftphoneView {
       other.muteEnabled == muteEnabled &&
       other.audio == audio &&
       other.canHangUp == canHangUp &&
+      other.warnRingingHangUp == warnRingingHangUp &&
       other.hangingUp == hangingUp &&
       other.hangupFailure == hangupFailure &&
       other.dncEnabled == dncEnabled &&
