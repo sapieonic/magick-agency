@@ -7,7 +7,7 @@ import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../util
 import { settingsLink } from '../../../../utils/agency/insights/links';
 import { Panel } from './InsightsParts';
 import styles from './Insights.module.css';
-import { CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON, CARRIER_AUTH_PAUSE_REASON } from '../../../../utils/agencyCarriers';
+import { carrierPauseCopy } from '../../../../utils/agencyCarriers';
 
 const STATUS_WORDS: Record<string, string> = {
   draft: 'Created',
@@ -90,13 +90,9 @@ export function CampaignSettingsPanel({ summary }: { summary: AgencyInsightsSumm
 /** Who or what made a lifecycle transition, as the end of "Paused 7 Nov, 10:00 …". */
 function transitionBy(t: AgencyInsightsTransition): string {
   if (t.reason === 'abandonment_ceiling') return 'by the abandonment guardrail';
-  // Nobody pressed Pause: the dialler stopped because the carrier refused the account.
-  if (t.reason === CARRIER_AUTH_PAUSE_REASON) {
-    return 'automatically: the carrier refused this account’s credentials. Contact support to have them checked.';
-  }
-  // Nobody pressed Pause: the campaign's carrier account was disabled or revoked meanwhile.
-  if (t.reason === CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON) {
-    return 'automatically: this campaign’s carrier account is no longer active. Contact support to have it re-enabled, or choose another carrier.';
-  }
+  // Nobody pressed Pause: the campaign's carrier account could not dial (refused by the
+  // carrier, or no longer active). Every such reason has its copy in `CARRIER_PAUSE_COPY`.
+  const carrier = carrierPauseCopy(t.reason);
+  if (carrier) return `automatically: ${carrier.cause}. ${carrier.action}`;
   return `by ${actorName(t.actor, 'the dialler')}`;
 }

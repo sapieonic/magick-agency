@@ -1,6 +1,7 @@
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { errorCode } from './agencyErrors';
 import type { AgencyCampaign, AgencyCarrier } from '../types/agency-campaign';
+import type { AgencyInsightsHeadline } from '../types/agency-insights';
 import type { TenantPhoneAssignment } from '../types/phone-number';
 
 /**
@@ -159,12 +160,59 @@ export function withCarrierRefusalCopy(err: unknown): unknown {
   return copy === null ? err : new CarrierRefusalError(copy);
 }
 
+/**
+ * The pause reasons the dialler writes when a campaign's carrier account cannot dial: every
+ * reason of the Insights headline's pause other than a person's and the abandonment
+ * guardrail's. Derived from the wire type, so a new automatic carrier pause added to the
+ * contract fails to compile here until it has its entry in {@link CARRIER_PAUSE_COPY}.
+ */
+export type CarrierPauseReason = Exclude<
+  NonNullable<AgencyInsightsHeadline['paused']>['reason'],
+  'supervisor' | 'abandonment_ceiling'
+>;
+
+/** What an automatic carrier pause says, in pieces each surface composes. */
+export interface CarrierPauseCopy {
+  /** Who or what paused the campaign, for "Paused by". Never "the dialler": it only acted on it. */
+  by: string;
+  /** What happened, as the end of a sentence (lower case, no full stop). */
+  cause: string;
+  /** What to do about it, a full sentence (PL15: support, never an administrator). */
+  action: string;
+}
+
+export const CARRIER_PAUSE_COPY: Record<CarrierPauseReason, CarrierPauseCopy> = {
+  // The carrier answered a dial with 401 (PL2).
+  carrier_auth: {
+    by: 'The carrier',
+    cause: 'the carrier refused this account’s credentials',
+    action: 'Contact support to have them checked.',
+  },
+  // The credential was disabled, marked invalid or revoked since the campaign started (PL3).
+  carrier_account_unavailable: {
+    by: 'Carrier account not active',
+    cause: 'this campaign’s carrier account is no longer active',
+    action: 'Contact support to have it re-enabled, or choose another carrier.',
+  },
+};
+
+/** The copy for an automatic carrier pause, or `null` for any other reason. */
+export function carrierPauseCopy(reason: string | null | undefined): CarrierPauseCopy | null {
+  return reason && Object.hasOwn(CARRIER_PAUSE_COPY, reason)
+    ? CARRIER_PAUSE_COPY[reason as CarrierPauseReason]
+    : null;
+}
+
+/** "Paused: <cause>. <action>", the sentence a pause row says on its own (the Activity trail). */
+function pausedSentence(copy: CarrierPauseCopy): string {
+  return `Paused: ${copy.cause}. ${copy.action}`;
+}
+
 /** The pause reason the dialler writes when the carrier refused the campaign's account credentials. */
 export const CARRIER_AUTH_PAUSE_REASON = 'carrier_auth';
 
-/** What a `carrier_auth` pause says, wherever a pause reason is shown. */
-export const CARRIER_AUTH_PAUSE_COPY =
-  'Paused: the carrier refused this account’s credentials. Contact support to have them checked.';
+/** What a `carrier_auth` pause says on its own. */
+export const CARRIER_AUTH_PAUSE_COPY = pausedSentence(CARRIER_PAUSE_COPY.carrier_auth);
 
 /**
  * The pause reason the dialler writes when the campaign's carrier account is no longer
@@ -172,16 +220,14 @@ export const CARRIER_AUTH_PAUSE_COPY =
  */
 export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON = 'carrier_account_unavailable';
 
-/** What a `carrier_account_unavailable` pause says, wherever a pause reason is shown. */
-export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY =
-  'Paused: this campaign’s carrier account is no longer active. Contact support to have it re-enabled, or choose another carrier.';
+/** What a `carrier_account_unavailable` pause says on its own. */
+export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY = pausedSentence(CARRIER_PAUSE_COPY.carrier_account_unavailable);
 
 /**
- * The copy for a pause the dialler made because the campaign's carrier account cannot
+ * The sentence for a pause the dialler made because the campaign's carrier account cannot
  * dial, or `null` for any other pause reason.
  */
 export function carrierAccountPauseCopy(reason: string | null | undefined): string | null {
-  if (reason === CARRIER_AUTH_PAUSE_REASON) return CARRIER_AUTH_PAUSE_COPY;
-  if (reason === CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON) return CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY;
-  return null;
+  const copy = carrierPauseCopy(reason);
+  return copy ? pausedSentence(copy) : null;
 }
