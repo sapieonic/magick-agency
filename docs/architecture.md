@@ -378,7 +378,11 @@ every account the caller belongs to (CH2) where every internal handler is single
   that repeats cannot redial one contact on every tick; a delay, not an our-fault charge, so a
   systemic failure retires nobody). A dial called off before the bridge (the agent's socket or
   lease went, pacing stopped), or refused admission for capacity (back-pressure, not a fault:
-  pacing already bounds it by the account limit), returns its contact at once.
+  pacing already bounds it by the account limit), returns its contact at once. So does a dial
+  refused a calls-per-second slot (`carrier_rate_limited`), and one refused because the
+  campaign's carrier account cannot dial (`carrier_auth_rejected`, `telephony_credential_unavailable`),
+  which first pauses the campaign `carrier_auth` or `carrier_account_unavailable`
+  (`carrier-account-pause.ts`; "The voice engine", Plivo).
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);
@@ -511,8 +515,12 @@ every account the caller belongs to (CH2) where every internal handler is single
   call end for late recording posts (Q6). `voicelink-carrier.fixture.json` pins the carrier's
   payload shapes.
 - **Carrier modules** (`telephony/carrier-modules.ts`). Each carrier declares its media-stream
-  protocol (start negotiation, codec, wire format, framing, clip encoding) and hangup style; the bridge asks
-  the session's module rather than branching on a provider name (B18).
+  protocol (start negotiation, codec, wire format, framing, clip encoding), its hangup style, where
+  the stream URL goes (`mediaUrlInDialRequest`: in the dial for VoiceLink, in the answer XML for
+  Plivo) and a `lifecycle` reader of its status events; the bridge asks the session's module
+  rather than branching on a provider name (B18), and reads every carrier's ring, answer,
+  terminal and recording events through `lifecycle` (`handleCarrierStatus`, late terminals,
+  `finalizeEnding`).
 - **Tenant carrier credentials** (`telephony/credentials/`, B18–B22). A tenant may dial on its own
   carrier account (Plivo). Super-admins add the credential; it is checked with the carrier, then
   sealed (AES-256-GCM envelope under the `TELEPHONY_CREDENTIAL_KEYS` keyring) into
@@ -533,6 +541,81 @@ every account the caller belongs to (CH2) where every internal handler is single
   credential's secret is shredded, missing, or sealed under a key the keyring lacks.
   Only ciphertext reaches SQL, and pg spans carry query text, never parameter values
   (`decisions.md`, rulings of 2026-10-16).
+- **Plivo** (`telephony/plivo/`, decisions B18–B22 and PL1–PL10). Dialled only on a tenant's own
+  account, with no Plivo account in env. A call flows like this:
+  - *Which account.* A campaign names its carrier (`telephony_provider`) and, for Plivo, the
+    credential it is pinned to (`telephony_credential_id`); `agency/campaign-carrier.ts` checks at
+    create, PATCH and retry that the carrier is an active provider, the credential is this
+    tenant's and `active` (404 `telephony_credential_not_found`, 409
+    `telephony_credential_not_active`) and every caller ID is one of the credential's active synced
+    numbers. Start and resume answer 409 `telephony_credential_not_active` while it is not
+    `active`. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
+    carrier plus the tenant's active credentials). A soft-phone call takes its tag's carrier
+    account, or untagged the account of the chosen caller ID's number.
+  - *Numbers.* `TelephonyCredentialService.syncNumbers` (super-admin "Sync numbers", `POST
+    /super-admin/telephony-credentials/:id/sync-numbers`) pages the account's numbers from
+    Plivo's fixed API host and writes them to `phone_numbers` pinned to the credential
+    (`telephony_credential_id`, migration 0018), assigned to the tenant untagged; numbers gone
+    from the account are retired. `findAvailableForAccount` offers a synced number only while its
+    credential is `active` (PL4, PL5).
+  - *Dial.* The bridge inserts the call row pinning the credential, in a statement that re-checks
+    it is `active` (`EXISTS … FOR SHARE`), resolves the adapter with
+    `getForCredentialId(provider, id, 'dial', tenantId)`, and asks `PlivoAdapter.initiateCall`.
+    The adapter takes a slot from the per-account calls-per-second gate (`plivo-dial-rate.ts`: a
+    fixed one-second window in Redis keyed by the account's auth id, shared by every process; in
+    memory while Redis errors), then POSTs create-call to the fixed API host with Basic auth, no
+    redirects and `PLIVO_REQUEST_TIMEOUT_MS`, numbers as digits only, `time_limit` (the call's max
+    duration) and `ring_timeout`, and answer, ring and hangup URLs that must be on
+    `PLIVO_WEBHOOK_BASE_URL`'s origin. Plivo answers only a `request_uuid`, which the bridge keeps
+    on the session and in `provider_request_id`; the `call_uuid` arrives on the callbacks. A 401
+    is `CarrierAuthRejectedError`, a 429 or no slot in time `CarrierRateLimitedError`, a timeout or
+    an unreadable 2xx an unknown outcome (never retried), any other status (a 403 included, PL1) a
+    plain refusal; each counts in `carrier_dial_refusals_total{provider,kind}`.
+  - *Refusals with nothing placed* (`core/bridge/dial-refusals.ts`) tear the leg down with no
+    `ended` and their own `WebRtcRejectReason`: `telephony_credential_unavailable` (the
+    credential cannot dial, at the insert or the resolve; never the service's account instead),
+    `carrier_rate_limited` and `carrier_auth_rejected` (`seams.md` §3.1). The dialler treats a rate
+    limit as back-pressure, and on the other two pauses the campaign (below).
+  - *Callbacks* (`api/routes/webhooks/plivo.ts`): `POST /api/v1/webhooks/plivo/webrtc-answer/:callId`,
+    `webrtc-status/:callId` (ring and hangup) and `webrtc-recording/:callId`. Each needs the
+    purpose-bound webhook token in its URL (Q6) and a V3 signature (`plivo-signature.ts`) from the
+    account the call was placed on, checked against the pinned credential resolved for
+    `call_control` (its current token, or the previous one inside the 24 h rotation grace) over the
+    URL rebuilt from `PLIVO_WEBHOOK_BASE_URL`'s origin and the request's own path and query, never
+    a `Host` header. A callback after teardown reads the credential off the call row.
+  - *Answer.* The answer callback replies `text/xml` (`answerCarrierCall`): a whole-session
+    `<Record>` when the call records (its `callbackUrl` the recording callback), then a
+    bidirectional μ-law `<Stream keepCallAlive>` to the stream URL kept on the session. A bad token
+    or signature, an unknown call or one tearing down gets the hangup XML.
+  - *Media.* Plivo opens `/api/v1/webrtc-call/:id/pstn-stream` (the provider token in the URL),
+    negotiates with `start` (`audio/x-mulaw`, 8000), sends `media` frames and takes `playAudio`
+    frames. No browser leg speaks μ-law, so every Plivo call transcodes (`MulawTranscoder`,
+    μ-law 8 kHz ⇄ PCM16 16 kHz, `utils/audio-fir.ts`).
+  - *Status and recording.* Status callbacks drive ring, answer and terminal through the module's
+    `lifecycle` reader (outcomes pinned by `plivo-carrier.fixture.json`); the recording callback
+    persists `recording_url` and fires recording-ready, after teardown too
+    (`handleCarrierRecording`).
+  - *Ending.* Before the answer a teardown cancels the dial by its request id (`DELETE
+    …/Request/{request_uuid}/`, `cancelDialRequest`); after it, hangs up by the call id (`DELETE
+    …/Call/{call_uuid}/`); neither with an empty or malformed id (PL8). So a soft-phone hang-up
+    while a Plivo call rings stops the ringing; a VoiceLink one cannot (SP3).
+  - *Automatic pauses* (`agency/carrier-account-pause.ts`). A campaign dial refused
+    `carrier_auth_rejected` pauses the campaign `carrier_auth`; one refused
+    `telephony_credential_unavailable` pauses it `carrier_account_unavailable`. Running campaigns
+    only, on the first refusal, with an ERROR line and an `agency_campaign.auto_paused` audit row
+    carrying the reason (Insights reads it as a system pause); the contact goes back at once,
+    uncharged. Nothing resumes it automatically.
+  - *Recordings* (`telephony/recording-access.ts`, B21). Every recording fetch (the attempt and
+    soft-phone recording proxies, signed playback and the analysis fetch) asks a per-carrier table
+    with the call row's provider, pinned credential and tenant. VoiceLink: the configured hosts,
+    nothing attached. Plivo: `media.plivo.com` exactly, with Basic auth from the credential
+    resolved for `recording`, on the first request only; `fetchWithAllowedRedirects` sends request
+    headers to the first URL only, so a redirect hop carries nothing but `Range`, for every carrier.
+    A missing, revoked or foreign credential is a typed refusal with no fallback.
+  - *Media workers.* Plivo's callbacks carry the `w` hint like VoiceLink's posts; the primary
+    forwards them over IPC (`carrier.plivo_callback`: the public URL, the form params and only the
+    two signature headers) to the worker holding the call, which runs the same checks and returns
+    the XML (`scaling.md` §3.2, §4.3).
 - **Audio** (`audio/decode.ts`, `core/paced-audio-streamer.ts`, `tts/tts-file-cache.ts`). Uploaded
   abandon clips are decoded to PCM and cached on disk; there is no TTS (launch decision 4).
 - **Calls** are rows in `agency_calls` (`packages/db/src/repositories/agency-call.repository.ts`).
@@ -562,8 +645,10 @@ every account the caller belongs to (CH2) where every internal handler is single
   fails `unsupported_input`, `unsupported_operation` and `invalid_config` at once. Sarvam (speech-to-text only) calls its API directly.
 - **Transcribers** (`transcription/`): Gemini (default `gemini-3.5-flash`, 600 s windows, through
   the `ai/` gemini client) or Sarvam.
-  `recording-fetcher.ts` fetches only from `VOICELINK_RECORDING_HOSTS` (default
-  `recording.app.voicelink.co.in`), checked on every redirect hop.
+  `recording-fetcher.ts` fetches only from the hosts `telephony/recording-access.ts` allows for the
+  call's carrier (VoiceLink: `VOICELINK_RECORDING_HOSTS`, default `recording.app.voicelink.co.in`;
+  Plivo: `media.plivo.com` on the tenant's credential), checked on every redirect hop. A refused
+  access fails the job without a retry; a keyring fault is retried.
 - **LLM analysis** (`analysis/`): any `ai/` provider (`POST_CALL_ANALYSIS_PROVIDER`), on the transcript,
   or with `POST_CALL_ANALYSIS_INPUT=audio` (gemini) on the recording plus the transcript: the runner
   hands over the bytes it fetched (a resumed run fetches them again, from the transcript's
@@ -571,7 +656,8 @@ every account the caller belongs to (CH2) where every internal handler is single
   job's claim before every request so a slow run is not recovered from under it; profiles in
   `call_analysis_profiles`, served at `/proxy/call-analysis-profiles`.
 - **Playback**: `/api/v1/webrtc-recordings/:id` with an HMAC-signed query (`utils/recording-url.ts`,
-  `RECORDING_URL_SIGNING_SECRET`).
+  `RECORDING_URL_SIGNING_SECRET`), fetched through the same per-carrier access; a refused access
+  answers 404 `recording_unavailable`.
 - **Retention** (`maintenance/retention-purge.ts`, scheduled in `bootstrap/analysis.ts`):
   transcripts nulled after `AGENCY_TRANSCRIPT_RETENTION_DAYS` (default 30); call rows deleted only if
   `AGENCY_RETENTION_DAYS` is set. Runs 60 s after boot, then daily.
@@ -716,7 +802,9 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
   there) and handed to the owner with the socket handle (`ws-handoff.plugin.ts`). The worker
   completes the handshake (`ws-adopt.ts`, `worker-app.ts`). The station socket goes to its
   session's slot; the carrier's stream and status posts go to the slot written into the URLs
-  the worker gave the carrier (`&w=<slot>`).
+  the worker gave the carrier (`&w=<slot>`). Plivo's answer, status and recording callbacks are
+  forwarded the same way, as IPC requests the worker answers (the answer XML comes back with the
+  reply).
 - **Dials** go from pacing to the owner over IPC (`IpcDialDispatcher`, `dial.execute`), with a
   leadership grant the worker checks synchronously.
 - **Session-owned internal handlers** (`api/core-owners.ts`) are forwarded by `callCore`'s
@@ -771,13 +859,23 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
 - **Load, soak and scenario suites** (`apps/server/test/{unit,integration}/load/`): a full floor
   over real sockets, Postgres and Redis, sized by `LOAD_SCALE` and seeded by `LOAD_SEED`
   (`apps/server/test/helpers/load-scale.ts`). Mocks in `apps/server/test/mocks/`: a scriptable
-  VoiceLink carrier (REST with faults, plus a media-WS *client* that dials the server) and a
-  simulated agent-console fleet, both Node-native on `ws`. Open defects are pinned as `it.fails`.
+  VoiceLink carrier (REST with faults, plus a media-WS *client* that dials the server), a
+  scriptable Plivo carrier (below) and a simulated agent-console fleet, all Node-native on `ws`.
+  Open defects are pinned as `it.fails`.
+- **Plivo end to end** (`apps/server/test/integration/telephony/`, rest lane): real Postgres and
+  Redis, the app listening on loopback, pacing, the bridge and `PlivoAdapter`, the credential
+  service with a real sealer over a test keyring, against the mock Plivo carrier
+  (`test/mocks/plivo/`: Plivo's REST paths with Basic auth and per-route faults, V3-signed
+  callbacks, the answer XML fetched and followed, the μ-law media socket). Plivo's API host is
+  fixed, so tests reach the mock through `setPlivoTransportForTests`, which accepts only that
+  host; no env or config can point the adapter elsewhere. `plivo-call-e2e.test.ts` covers a full
+  call, a cancel while ringing, refused callbacks, both automatic pauses and the rotation grace;
+  `plivo-cluster-forwarding.test.ts` the forwarding to a media worker.
 - **End to end**: `runtime-e2e.test.ts` (real app, station socket, real bridge, fake carrier,
   through disposition, analysis and completion) and `runtime-boot-order.test.ts`.
 - **Contract and guard tests**: route tables enumerated from `onRoute`
   (`apps/server/test/unit/api/*route-table*.test.ts`, the agent-reach tests); config blocks disjoint;
-  the bridge seam contract; the VoiceLink carrier fixture; branding guards in all three apps and
+  the bridge seam contract; the VoiceLink and Plivo carrier fixtures; branding guards in all three apps and
   `packages/web-ui`; the
   console dev-proxy test; the error-code unions in `packages/contracts/test/` (including
   `TELEPHONY_CREDENTIAL_ERROR_CODES`, held equal to its union by an exhaustiveness guard).
