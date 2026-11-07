@@ -298,6 +298,9 @@ TRUST_PROXY_HOPS=2
 - `CONSOLE_BASE_URL` goes into invite links.
 - `VOICELINK_WEBHOOK_BASE_URL` must keep the `/api/v1/webhooks/voicelink` path. A bare origin
   makes every call-status webhook 404, and calls never move past "dialing" in the console.
+- Only if a tenant will dial on its own Plivo account (step 8.6):
+  `PLIVO_WEBHOOK_BASE_URL=https://agency.example.com/api/v1/webhooks/plivo`, on the same name and
+  keeping its path.
 - Leave `CONSOLE_BIND` and `SUPER_ADMIN_BIND` unset (loopback) for the Caddy setup.
 
 ### 6.3 Everything else
@@ -405,6 +408,8 @@ super-admin keeps calling its own origin: only nginx's :8081 block proxies `/sup
    CORS_ALLOWED_ORIGINS=https://app.example.com
    CONSOLE_BASE_URL=https://app.example.com
    VOICELINK_WEBHOOK_BASE_URL=https://api.example.com/api/v1/webhooks/voicelink
+   # only with Plivo (step 8.6):
+   # PLIVO_WEBHOOK_BASE_URL=https://api.example.com/api/v1/webhooks/plivo
    ```
 
    - `CONSOLE_API_BASE_URL` is a build arg of the `web` image: the API's origin, with no path and
@@ -587,6 +592,29 @@ Skip this until the agent app is published. Two things on the server side, both 
    A 404 means the variable is unset or did not validate; the log line says which. The TLS
    terminator must pass these paths through unchanged: no redirect, no auth.
 
+### 8.6 Plivo on a tenant's own account (optional)
+
+Skip this unless a tenant will dial on its own Plivo account (decisions B18–B22). No Plivo
+account goes in `docker/.env`: super-admins add each tenant's in the super-admin console, sealed
+under a master keyring. In `docker/.env`:
+
+```ini
+TELEPHONY_CREDENTIAL_KEYS=v1:<openssl rand -base64 32>
+TELEPHONY_CREDENTIAL_ACTIVE_KEY=v1
+PLIVO_WEBHOOK_BASE_URL=https://agency.example.com/api/v1/webhooks/plivo
+```
+
+- Back the keyring up apart from the database: losing it makes every stored credential unreadable,
+  and storing it with the database backups defeats the sealing.
+- `PLIVO_WEBHOOK_BASE_URL` is the public https origin plus `/api/v1/webhooks/plivo` (the API name
+  with step 7.3). Plivo fetches each call's answer XML and posts its callbacks there, and opens the
+  media socket on that host. Unset, every Plivo dial is refused before anything is sent.
+- `PLIVO_CALLS_PER_SECOND` (default 2, Plivo's account default) and the other `PLIVO_*` timings:
+  `docs/operations.md`, "Key settings and defaults".
+
+Recreate the server, then follow `docs/operations.md`, "Enabling Plivo for a tenant" (add the
+credential, sync its numbers, the concurrency allocation, the campaign's carrier).
+
 ## 9. Verify the deployment
 
 Run through this once before letting agents in. With the API on its own host, step 7.3 says
@@ -690,7 +718,8 @@ Update all of these together, then recreate the server:
 1. the new DNS record (and Mailjet's records if the mail domain changes);
 2. the Caddyfile (or the ACM certificate and ALB listener);
 3. Firebase's authorised domains;
-4. `CONSOLE_BASE_URL` and `VOICELINK_WEBHOOK_BASE_URL` in `docker/.env`;
+4. `CONSOLE_BASE_URL`, `VOICELINK_WEBHOOK_BASE_URL` and (with Plivo) `PLIVO_WEBHOOK_BASE_URL` in
+   `docker/.env`;
 5. with the API on its own host (step 7.3), `CORS_ALLOWED_ORIGINS` and `CONSOLE_API_BASE_URL`, then
    rebuild `web`.
 
@@ -741,6 +770,8 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 | `auth/unauthorized-domain` at sign-in | Domain not in Firebase's authorised domains | Step 8.1 |
 | Sign-in works, then every API call is 401 | `FIREBASE_PROJECT_ID` does not match the console's `VITE_FIREBASE_PROJECT_ID` | Make them the same project; rebuild `web` if the console side was wrong |
 | Calls ring but the console never shows them connecting or ending | `VOICELINK_WEBHOOK_BASE_URL` wrong (bare origin, old domain, http) | Step 6.2; recreate the server |
+| Every Plivo dial fails before it reaches Plivo (call rows `failed` with `BRIDGE_SETUP_FAILED`, or the log "Plivo dial refused before sending") | `PLIVO_WEBHOOK_BASE_URL` unset, not https, or not on the origin the callback URLs are built from | Step 8.6; recreate the server |
+| A Plivo campaign pauses by itself (`carrier_auth` or `carrier_account_unavailable`) | Plivo refused the credential (401), or the credential is no longer active | `docs/operations.md`, "Enabling Plivo for a tenant", "Automatic pauses" |
 | Uploads fail with "S3 client not initialized" | `S3_AUDIO_BUCKET` / `AWS_*` missing | Step 3.4 |
 | Recording playback answers 502 "not hosted on an allowed carrier host" | Recordings come from another VoiceLink host | `VOICELINK_RECORDING_HOSTS` (`docs/operations.md`, "Recordings") |
 | Recording links stop working after every restart | `RECORDING_URL_SIGNING_SECRET` unset | Set it once and keep it |
