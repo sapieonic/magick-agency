@@ -487,7 +487,7 @@ schema changes go in new numbered files; never edit or renumber an applied migra
 
 ## Enabling Plivo for a tenant
 
-Plivo is dialled only on a tenant's own Plivo account (decisions B18–B22, PL1–PL14); the
+Plivo is dialled only on a tenant's own Plivo account (decisions B18–B22, PL1–PL16); the
 service's own carrier stays VoiceLink. How a Plivo call flows: [`architecture.md`](architecture.md),
 "The voice engine". Once per deployment:
 
