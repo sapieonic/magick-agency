@@ -27,6 +27,7 @@ import type {
   AgencyCallbackFallback,
   AgencyOnUnstaff,
   AgencyOverrideKind,
+  CarrierAccountPauseReason,
 } from '@magick-agency/contracts/agency';
 
 /**
@@ -34,8 +35,10 @@ import type {
  * refusing its dials (`carrier-account-pause.ts`): `carrier_auth` (0018), the carrier
  * refused the credential; `carrier_account_unavailable` (0019), the credential is no longer
  * active; `carrier_refusing_calls` (0020, PL11), the carrier refused several dials in a row.
+ * The contract's single list (`CARRIER_ACCOUNT_PAUSE_REASONS`), re-exported for the
+ * model's importers.
  */
-export type CarrierAccountPauseReason = 'carrier_auth' | 'carrier_account_unavailable' | 'carrier_refusing_calls';
+export type { CarrierAccountPauseReason };
 
 /**
  * Retry policy keyed by outcome. No `machine` key — AMD is out.

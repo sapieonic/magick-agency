@@ -1,6 +1,5 @@
 import {
   AGENCY_STALL_PRIORITY,
-  CARRIER_ACCOUNT_PAUSE_REASONS,
   type AgencyStall,
   type AgencyStallCode,
   type AgencyCampaignStats,
@@ -8,6 +7,7 @@ import {
 } from '@magick-agency/contracts/agency';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { usableCallerIds } from './pacing/caller-id-pool.js';
+import { isCarrierAccountPauseReason } from './carrier-account-pause-reasons.js';
 
 /**
  * ─── THE CAMPAIGN HEALTH STRIP — THE ASSEMBLER ──────────────────────────────
@@ -102,9 +102,7 @@ export interface CampaignHealthInputs {
 
 /** Whether a stored pause reason is one the dialler made because the carrier account cannot dial. */
 function carrierAccountPause(reason: string | null | undefined): CarrierAccountPauseReason | null {
-  return (CARRIER_ACCOUNT_PAUSE_REASONS as readonly string[]).includes(reason ?? '')
-    ? reason as CarrierAccountPauseReason
-    : null;
+  return isCarrierAccountPauseReason(reason) ? reason : null;
 }
 
 /**
