@@ -61,11 +61,12 @@ export function CallerIdPicker({
   // Keyed on the two fields, not the object: a new object naming the same account must
   // not refilter (and so must not re-run the pruning effect below).
   const { telephony_provider: provider, telephony_credential_id: credentialId } = carrier;
-  const { onCarrier, otherCount } = useMemo(() => {
+  const { onCarrier, otherCount, isOnCarrier } = useMemo(() => {
     const all = phoneNumbers ?? [];
     const fit = all.filter((pn) =>
       numberOnCarrier(pn, { telephony_provider: provider, telephony_credential_id: credentialId }));
-    return { onCarrier: fit, otherCount: all.length - fit.length };
+    const phones = new Set(fit.map((pn) => pn.phone_number));
+    return { onCarrier: fit, otherCount: all.length - fit.length, isOnCarrier: (phone: string) => phones.has(phone) };
   }, [phoneNumbers, provider, credentialId]);
 
   // The carrier the selection was last checked against. Seeded with the first one, so a
@@ -74,14 +75,20 @@ export function CallerIdPicker({
   useEffect(() => {
     if (checkedKey.current === key || loading || error) return;
     checkedKey.current = key;
-    const kept = selected.filter((phone) => onCarrier.some((pn) => pn.phone_number === phone));
+    const kept = selected.filter(isOnCarrier);
     if (kept.length !== selected.length) onChange(kept);
-  }, [key, loading, error, onCarrier, selected, onChange]);
+  }, [key, loading, error, isOnCarrier, selected, onChange]);
 
   // Selected numbers not offered on this carrier account any more. Only meaningful once
   // the numbers are known (the loading and error branches return first).
-  const unavailable = selected.filter((phone) => !onCarrier.some((pn) => pn.phone_number === phone));
-  const remove = (phone: string) => onChange(selected.filter((p) => p !== phone));
+  const unavailable = selected.filter((phone) => !isOnCarrier(phone));
+
+  const toggle = (phone: string) => {
+    onChange(
+      selected.includes(phone) ? selected.filter((p) => p !== phone) : [...selected, phone],
+    );
+  };
+
   const withUnavailable = (body: ReactElement) => (
     unavailable.length === 0 ? body : (
       <>
@@ -95,7 +102,7 @@ export function CallerIdPicker({
                 type="button"
                 className={styles.remove}
                 disabled={disabled}
-                onClick={() => remove(phone)}
+                onClick={() => toggle(phone)}
                 aria-label={`Remove ${phone}`}
               >
                 Remove
@@ -111,12 +118,6 @@ export function CallerIdPicker({
       </>
     )
   );
-
-  const toggle = (phone: string) => {
-    onChange(
-      selected.includes(phone) ? selected.filter((p) => p !== phone) : [...selected, phone],
-    );
-  };
 
   if (loading) return <p className={styles.status}>Loading your numbers…</p>;
   if (error) return <p className={styles.error}>{error}</p>;
