@@ -1879,7 +1879,12 @@ export class WebRtcBridgeManager {
 
   /** Remember that `callId`'s carrier leg needs nothing more sent ({@link carrierLegsSettled}). */
   private noteCarrierLegSettled(callId: string, how: 'terminal' | 'hung_up'): void {
-    if (this.carrierLegsSettled.has(callId)) return;
+    // A carrier terminal outranks our own hangup: it is final, and a hangup claim that
+    // failed must not be released over it ({@link releaseCarrierLegHangup}).
+    if (this.carrierLegsSettled.has(callId)) {
+      if (how === 'terminal') this.carrierLegsSettled.set(callId, 'terminal');
+      return;
+    }
     if (this.carrierLegsSettled.size >= CARRIER_LEGS_SETTLED_MAX) {
       this.carrierLegsSettled.delete(this.carrierLegsSettled.keys().next().value!);
     }
@@ -1895,6 +1900,16 @@ export class WebRtcBridgeManager {
     if (this.carrierLegsSettled.has(callId)) return false;
     this.noteCarrierLegSettled(callId, 'hung_up');
     return true;
+  }
+
+  /**
+   * Give back a hangup claim whose request failed, so a later path that can hang the leg
+   * up (its next progress callback, a late answer) still does: left in place, the leg would
+   * read as hung up and keep ringing the customer. Only our own `hung_up` claim is given
+   * back, never a carrier terminal that arrived meanwhile.
+   */
+  private releaseCarrierLegHangup(callId: string): void {
+    if (this.carrierLegsSettled.get(callId) === 'hung_up') this.carrierLegsSettled.delete(callId);
   }
 
   /**
@@ -1926,7 +1941,9 @@ export class WebRtcBridgeManager {
       log.warn({ callId, provider, eventType, why }, 'Carrier progress for a call that has ended here names no call id — nothing can be hung up');
       return;
     }
-    if (!this.claimCarrierLegHangup(callId)) return;
+    if (this.carrierLegsSettled.has(callId)) return;
+    // The claim is taken once there is an adapter to send with: a claim taken before, with
+    // no adapter, marked the leg hung up when nothing was sent.
     const adapter = await this.carrierCallbackAdapter(callId, provider);
     if (!adapter) {
       log.error(
@@ -1935,6 +1952,7 @@ export class WebRtcBridgeManager {
       );
       return;
     }
+    if (!this.claimCarrierLegHangup(callId)) return;
     try {
       await adapter.endCall(carrierCallId);
       log.warn(
@@ -1942,6 +1960,7 @@ export class WebRtcBridgeManager {
         'Carrier was still connecting a call that has ended here — hung its leg up by the call id',
       );
     } catch (err) {
+      this.releaseCarrierLegHangup(callId);
       log.error({ err, callId, provider, carrierCallId, eventType, why }, 'Hanging up a carrier leg still connecting for a call that has ended failed');
     }
   }
@@ -2285,7 +2304,13 @@ export class WebRtcBridgeManager {
       if (!carrierCallId) return;
       // A late progress event may already have hung this leg up (or the carrier ended it).
       if (!this.claimCarrierLegHangup(callId)) return;
-      await hangupAdapter.endCall(carrierCallId);
+      try {
+        await hangupAdapter.endCall(carrierCallId);
+      } catch (err) {
+        // Not hung up: a later callback for the leg (a late answer) may still hang it up.
+        this.releaseCarrierLegHangup(callId);
+        throw err;
+      }
     } catch (err) {
       log.warn({ err, callId }, 'Error hanging up provider leg (already ended?)');
     }

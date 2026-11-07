@@ -517,6 +517,52 @@ describe('a leg the carrier is still connecting for a call that has ended here i
     expect(logSpy.error.mock.calls.some((c: any[]) => String(c[1]).includes('may reach the customer'))).toBe(true);
   });
 
+  it('a credential not resolvable for one callback claims nothing: the next callback, once it resolves, hangs the leg up', async () => {
+    plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    mockRepo.findById.mockResolvedValue(endedRow());
+    registry.getForCredentialId.mockRejectedValueOnce(new Error('credential unavailable'));
+    const ring = plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' });
+    await mgr.handleCarrierStatus(CALL_ID, ring, 'plivo');
+    await settle();
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    await mgr.handleCarrierStatus(CALL_ID, ring, 'plivo');
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1'));
+    expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stray-leg hangup that fails is given back: the next callback hangs the leg up again', async () => {
+    plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    mockRepo.findById.mockResolvedValue(endedRow());
+    plivoAdapter.endCall.mockRejectedValueOnce(new Error('Plivo hangup error 503: upstream'));
+    const ring = plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' });
+    await mgr.handleCarrierStatus(CALL_ID, ring, 'plivo');
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(await mgr.answerCarrierCall(CALL_ID, plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1' }), 'plivo')).toBeNull();
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledTimes(2));
+  });
+
+  it('a failed hangup is not given back over the carrier`s terminal that arrived meanwhile', async () => {
+    plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
+    const mgr = await dial();
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    mockRepo.findById.mockResolvedValue(endedRow());
+    let failHangup!: (e: Error) => void;
+    plivoAdapter.endCall.mockImplementationOnce(() => new Promise((_, reject) => { failHangup = reject; }));
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+    await vi.waitFor(() => expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1));
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'no-answer', CallUUID: 'uuid-1', HangupCauseName: 'No Answer' }), 'plivo');
+    failHangup(new Error('Plivo hangup error 503: upstream'));
+    await settle();
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+    await settle();
+    expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1);
+  });
+
   it('a carrier with no hangup API (VoiceLink, `close_media`): a late progress event sends nothing, as before', async () => {
     const mgr = new WebRtcBridgeManager(makeGuardHost() as any, null);
     mockRepo.findById.mockResolvedValue(endedRow({ provider: 'voicelink', telephony_credential_id: null }));
@@ -546,6 +592,19 @@ describe('a cancel that fails is not the end of the teardown', () => {
     expect(plivoAdapter.endCall).toHaveBeenCalledWith('uuid-1');
     expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1);
     expect(mgr.getSession(CALL_ID)).toBeUndefined();
+  });
+
+  it('cancel 404, call named, hangup 503: the late answer callback for that leg hangs it up again by REST', async () => {
+    plivoAdapter.cancelDialRequest.mockResolvedValueOnce('not_found');
+    plivoAdapter.endCall.mockRejectedValueOnce(new Error('Plivo hangup error 503: upstream'));
+    const mgr = await dial();
+    await mgr.handleCarrierStatus(CALL_ID, plivoEvent('status', { CallStatus: 'ringing', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+    await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
+    expect(plivoAdapter.endCall).toHaveBeenCalledTimes(1);
+    mockRepo.findById.mockResolvedValue(endedRow());
+    expect(await mgr.answerCarrierCall(CALL_ID, plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1' }), 'plivo')).toBeNull();
+    await settle();
+    expect(plivoAdapter.endCall).toHaveBeenCalledTimes(2);
   });
 
   it('a failed cancel with no call id yet: the late ring hangs it up', async () => {
