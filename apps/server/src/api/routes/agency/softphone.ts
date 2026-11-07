@@ -507,10 +507,11 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       });
     }
     // Dynamic imports, as the attempt's recording route: keep the config-loading
-    // modules out of this module's import graph.
+    // modules out of this module's import graph. The call row's carrier decides the
+    // hosts and any credential (`telephony/recording-access.ts`, B21).
     const { proxyCallRecording } = await import('../../../utils/recording-proxy.js');
-    const { config } = await import('../../../config/index.js');
-    return proxyCallRecording(media, request, reply, config.voicelinkRecording.allowedHosts);
+    const { getRecordingAccessResolver } = await import('../../../telephony/recording-access.js');
+    return proxyCallRecording(media, request, reply, await getRecordingAccessResolver());
   });
 
   // ── PATCH /softphone/calls/:id — call details and notes, last write wins ──

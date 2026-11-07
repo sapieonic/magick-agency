@@ -1,14 +1,24 @@
 /*
  * Reads and writes `agency_calls` through the shared repository. There is no
  * settlement: the job completes with no charge step (decision S6). The recording
- * fetch is gated by the VoiceLink recording-host allow-list. The PostHog /
+ * fetch takes its hosts and headers from the call's carrier access
+ * (`telephony/recording-access.ts`, B21): VoiceLink's host allow-list with nothing
+ * attached, or a BYOC carrier's exact hosts with the tenant's credential. The PostHog /
  * LLM-observability emitters come from `analytics/posthog.ts` and
  * `analytics/llm-observability.ts`.
  */
 import type { AppConfig } from '../config/schema.js';
 import { dialerAnalysisJobRepository } from '@magick-agency/db/repositories/dialer-analysis-job.repository';
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
-import { fetchRecordingBytes } from '../transcription/recording-fetcher.js';
+import { fetchRecordingBytes, type FetchedRecording } from '../transcription/recording-fetcher.js';
+import {
+  createRecordingAccessResolver,
+  processCredentialSource,
+  RecordingAccessRefusedError,
+  type RecordingAccess,
+  type RecordingAccessResolver,
+  type RecordingCallRef,
+} from '../telephony/recording-access.js';
 import { TranscriptionError, type Transcriber, type TranscriptionResult } from '../transcription/types.js';
 import type { AnalysisAudio, PostCallAnalysisService } from '../analysis/index.js';
 import { AiError, type AiErrorKind } from '../ai/index.js';
@@ -94,6 +104,12 @@ export interface DialerAnalysisRunnerDeps {
    * Omitted = empty = every fetch is refused (fail closed).
    */
   recordingHosts?: readonly string[];
+  /**
+   * How a call's recording is fetched (hosts, headers). Omitted = the carrier table
+   * of `telephony/recording-access.ts` over `recordingHosts` and this process's
+   * credential service (reached lazily, on the first BYOC recording).
+   */
+  resolveRecordingAccess?: RecordingAccessResolver;
 }
 
 /**
@@ -113,13 +129,43 @@ export class DialerAnalysisRunner {
   private readonly transcriber: Transcriber;
   private readonly analysisService: PostCallAnalysisService;
   private readonly cfg: DialerAnalysisConfig;
-  private readonly recordingHosts: readonly string[];
+  private readonly resolveRecordingAccess: RecordingAccessResolver;
 
   constructor(deps: DialerAnalysisRunnerDeps) {
     this.transcriber = deps.transcriber;
     this.analysisService = deps.analysisService;
     this.cfg = deps.config;
-    this.recordingHosts = deps.recordingHosts ?? [];
+    this.resolveRecordingAccess = deps.resolveRecordingAccess ?? createRecordingAccessResolver({
+      voicelinkHosts: deps.recordingHosts ?? [],
+      credentials: processCredentialSource,
+    });
+  }
+
+  /**
+   * Fetch a call's recording on its carrier's access, resolved afresh for every fetch so
+   * a credential revoked between attempts ends the next one (B21). A refused access is a
+   * non-retryable failure, except a keyring fault an operator can fix.
+   */
+  private async fetchRecording(call: RecordingCallRef, recordingUrl: string): Promise<FetchedRecording> {
+    let access: RecordingAccess;
+    try {
+      access = await this.resolveRecordingAccess(call);
+    } catch (err) {
+      if (err instanceof RecordingAccessRefusedError) {
+        log.warn({
+          provider: err.provider, credentialId: err.credentialId, reason: err.reason, credentialKind: err.credentialKind,
+        }, 'Recording access refused; not fetching');
+        throw new TranscriptionError('TRANSCRIPTION_FAILED', err.message, !err.permanent);
+      }
+      throw err;
+    }
+    return fetchRecordingBytes(recordingUrl, {
+      maxBytes: this.cfg.maxRecordingBytes,
+      timeoutMs: this.cfg.transcribeTimeoutMs,
+      allowedHosts: access.allowedHosts,
+      ...(Object.keys(access.headers).length > 0 ? { headers: access.headers } : {}),
+      ...(access.exactHosts ? { exactHosts: true } : {}),
+    });
   }
 
   /** The active transcriber's provider. */
@@ -190,7 +236,7 @@ export class DialerAnalysisRunner {
         //   case; these retries cover the tail without burning a job attempt.
         const transcribeStart = Date.now();
         const { result, audio } = await this.fetchAndTranscribe({
-          callId, jobId, generation,
+          callId, jobId, generation, call,
           recordingUrl: call.recording_url,
           recordingDurationSeconds: recordingDurationSeconds ?? null,
           languageHint: job.analysis_language ?? snapshot?.language_hint ?? undefined,
@@ -262,11 +308,7 @@ export class DialerAnalysisRunner {
       // fetches the recording again (same host allow-list and size cap), from the
       // URL that transcript was made from.
       if (this.analysisService.needsAudio && !analysisAudio) {
-        const fetched = await fetchRecordingBytes(call.transcript_meta?.source_url ?? call.recording_url, {
-          maxBytes: this.cfg.maxRecordingBytes,
-          timeoutMs: this.cfg.transcribeTimeoutMs,
-          allowedHosts: this.recordingHosts,
-        });
+        const fetched = await this.fetchRecording(call, call.transcript_meta?.source_url ?? call.recording_url);
         lease.shrinkTo(fetched.bytes.length * RECORDING_COPIES);
         analysisAudio = { bytes: fetched.bytes, mimeType: fetched.mimeType };
         await this.assertClaimActive(jobId, generation);
@@ -364,6 +406,8 @@ export class DialerAnalysisRunner {
     callId: string;
     jobId: string;
     generation: number;
+    /** The call row's carrier fields: they decide the fetch's hosts and headers. */
+    call: RecordingCallRef;
     recordingUrl: string;
     recordingDurationSeconds: number | null;
     languageHint: string | undefined;
@@ -395,11 +439,7 @@ export class DialerAnalysisRunner {
       }
 
       const fetchStart = Date.now();
-      const fetched = await fetchRecordingBytes(recordingUrl, {
-        maxBytes: this.cfg.maxRecordingBytes,
-        timeoutMs: this.cfg.transcribeTimeoutMs,
-        allowedHosts: this.recordingHosts,
-      });
+      const fetched = await this.fetchRecording(ctx.call, recordingUrl);
       this.observeStage('fetch', (Date.now() - fetchStart) / 1000);
       // Hold what this recording really takes rather than the worst case.
       lease.shrinkTo(fetched.bytes.length * RECORDING_COPIES);
