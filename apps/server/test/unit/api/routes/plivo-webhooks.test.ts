@@ -3,8 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Plivo's answer, status and recording callbacks (`src/api/routes/webhooks/plivo.ts`),
 // through the real webhooks plugin (its form parser) and a REAL `PlivoAdapter` for the
 // signature: each request is signed here with Plivo's V3 construction over the public URL
-// Plivo was given, so the route's URL reconstruction (env origin + the request's own path
-// and query, never the Host header) is what is under test. The bridge is a stub.
+// Plivo was given, so the route's URL reconstruction (the full env base + the route, the
+// call id and the request's query; never the Host header, never the path the request
+// arrived on) is what is under test. The bridge is a stub. Each request is signed with its
+// own nonce, as Plivo signs each callback: a repeated (call, nonce) is a replay.
 
 vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), isLevelEnabled: () => false }),

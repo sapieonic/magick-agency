@@ -544,7 +544,7 @@ every account the caller belongs to (CH2) where every internal handler is single
   credential's secret is shredded, missing, or sealed under a key the keyring lacks.
   Only ciphertext reaches SQL, and pg spans carry query text, never parameter values
   (`decisions.md`, rulings of 2026-10-16).
-- **Plivo** (`telephony/plivo/`, decisions B18–B22 and PL1–PL10). Dialled only on a tenant's own
+- **Plivo** (`telephony/plivo/`, decisions B18–B22 and PL1–PL14). Dialled only on a tenant's own
   account, with no Plivo account in env. A call flows like this:
   - *Which account.* A campaign names its carrier (`telephony_provider`) and, for Plivo, the
     credential it is pinned to (`telephony_credential_id`); `agency/campaign-carrier.ts` checks at

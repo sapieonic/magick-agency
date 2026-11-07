@@ -608,7 +608,10 @@ PLIVO_WEBHOOK_BASE_URL=https://agency.example.com/api/v1/webhooks/plivo
   and storing it with the database backups defeats the sealing.
 - `PLIVO_WEBHOOK_BASE_URL` is the public https origin plus `/api/v1/webhooks/plivo` (the API name
   with step 7.3). Plivo fetches each call's answer XML and posts its callbacks there, and opens the
-  media socket on that host. Unset, every Plivo dial is refused before anything is sent.
+  media socket on that host (under the same path prefix, if any). It must be an absolute `https:`
+  URL with no query or fragment, or the server does not start. Unset, Plivo accounts are not
+  offered for campaigns, a campaign pinned to one cannot start or resume (409 `carrier_not_ready`),
+  and any Plivo dial is refused before anything is sent (`CARRIER_DIAL_NOT_SENT`).
 - `PLIVO_CALLS_PER_SECOND` (default 2, Plivo's account default) and the other `PLIVO_*` timings:
   `docs/operations.md`, "Key settings and defaults".
 
@@ -770,7 +773,7 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 | `auth/unauthorized-domain` at sign-in | Domain not in Firebase's authorised domains | Step 8.1 |
 | Sign-in works, then every API call is 401 | `FIREBASE_PROJECT_ID` does not match the console's `VITE_FIREBASE_PROJECT_ID` | Make them the same project; rebuild `web` if the console side was wrong |
 | Calls ring but the console never shows them connecting or ending | `VOICELINK_WEBHOOK_BASE_URL` wrong (bare origin, old domain, http) | Step 6.2; recreate the server |
-| Every Plivo dial fails before it reaches Plivo (call rows `failed` with `BRIDGE_SETUP_FAILED`, or the log "Plivo dial refused before sending") | `PLIVO_WEBHOOK_BASE_URL` unset, not https, or not on the origin the callback URLs are built from | Step 8.6; recreate the server |
+| Plivo accounts are not offered for campaigns, start or resume of a Plivo campaign answers 409 `carrier_not_ready`, or every Plivo dial fails before it reaches Plivo (call rows `failed` with `CARRIER_DIAL_NOT_SENT`, the log "Plivo dial not sent", and the campaign auto-paused `carrier_refusing_calls` after five) | `PLIVO_WEBHOOK_BASE_URL` unset (a value that is not an absolute `https:` URL without a query or fragment stops the server from starting, with that message) | Step 8.6; recreate the server, then resume the campaign |
 | A Plivo campaign pauses by itself (`carrier_auth`, `carrier_account_unavailable` or `carrier_refusing_calls`) | Plivo refused the credential (401), the credential is no longer active, or Plivo refused five dials in a row (a destination not enabled, no credit, a caller ID it rejects) | `docs/operations.md`, "Enabling Plivo for a tenant", "Automatic pauses" |
 | Uploads fail with "S3 client not initialized" | `S3_AUDIO_BUCKET` / `AWS_*` missing | Step 3.4 |
 | Recording playback answers 502 "not hosted on an allowed carrier host" | Recordings come from another VoiceLink host | `VOICELINK_RECORDING_HOSTS` (`docs/operations.md`, "Recordings") |
