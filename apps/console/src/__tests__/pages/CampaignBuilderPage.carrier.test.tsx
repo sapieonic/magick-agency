@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   getIngestLimits: vi.fn(),
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
+  // The account's numbers; a test may drop the service's own to see the default move.
+  phoneNumbers: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -24,28 +26,29 @@ vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: () => true, map: {}, loading: false, refresh: vi.fn() }),
 }));
 vi.mock('../../hooks/useAgencyCarriers', () => ({ useAgencyCarriers: mocks.useAgencyCarriers }));
+const ALL_NUMBERS = [
+  {
+    phone_number_id: 'pn-1',
+    phone_number: '+912200000001',
+    provider_name: 'voicelink',
+    provider_display_name: 'VoiceLink',
+    telephony_credential_id: null,
+    label: 'Outbound 1',
+    is_default: true,
+  },
+  {
+    phone_number_id: 'pn-2',
+    phone_number: '+14155550102',
+    provider_name: 'plivo',
+    provider_display_name: 'Plivo',
+    telephony_credential_id: CRED_A,
+    label: 'Own 1',
+    is_default: false,
+  },
+];
 vi.mock('../../hooks/usePhoneNumbers', () => ({
   usePhoneNumbers: () => ({
-    phoneNumbers: [
-      {
-        phone_number_id: 'pn-1',
-        phone_number: '+912200000001',
-        provider_name: 'voicelink',
-        provider_display_name: 'VoiceLink',
-        telephony_credential_id: null,
-        label: 'Outbound 1',
-        is_default: true,
-      },
-      {
-        phone_number_id: 'pn-2',
-        phone_number: '+14155550102',
-        provider_name: 'plivo',
-        provider_display_name: 'Plivo',
-        telephony_credential_id: CRED_A,
-        label: 'Own 1',
-        is_default: false,
-      },
-    ],
+    phoneNumbers: mocks.phoneNumbers,
     loading: false,
     error: null,
     reload: vi.fn(),
@@ -90,6 +93,7 @@ function apiError(statusCode: number, code: string) {
 }
 
 beforeEach(() => {
+  mocks.phoneNumbers = ALL_NUMBERS;
   mocks.useTenant.mockReturnValue({ tenantId: 't1', accountId: 'a1' });
   mocks.useAgencyCarriers.mockReturnValue({ carriers: [SERVICE, OWN_A], error: null });
   mocks.getIngestLimits.mockRejectedValue(new Error('not needed here'));
@@ -100,6 +104,25 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+describe('the builder’s default carrier', () => {
+  it('is the first carrier account with a number available to this account, not the service’s with none', async () => {
+    mocks.phoneNumbers = ALL_NUMBERS.filter((n) => n.provider_name !== 'voicelink');
+    await renderPage();
+    expect(carrierSelect()!.value).toBe(`plivo:${CRED_A}`);
+    fireEvent.click(numberBox(/\+14155550102/)!);
+    save();
+    await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.createAgencyCampaign.mock.calls[0]![0]).toMatchObject({
+      caller_ids: ['+14155550102'], telephony_provider: 'plivo', telephony_credential_id: CRED_A,
+    });
+  });
+
+  it('stays the first listed when it has numbers', async () => {
+    await renderPage();
+    expect(carrierSelect()!.value).toBe('voicelink:');
+  });
 });
 
 describe('the builder’s carrier choice', () => {

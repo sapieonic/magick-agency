@@ -10,6 +10,7 @@ import { CampaignBehaviourSection } from './CampaignBehaviourSection';
 import { CallerIdPicker } from '../../agency/CallerIdPicker';
 import { CampaignCarrierField } from '../../../components/agency/CampaignCarrierField';
 import { useAgencyCarriers } from '../../../hooks/useAgencyCarriers';
+import { usePhoneNumbers } from '../../../hooks/usePhoneNumbers';
 import {
   CarrierRefusalError,
   SERVICE_CARRIER,
@@ -50,6 +51,7 @@ import {
 import {
   BUILDER_STEPS,
   basicsBlockReason,
+  defaultBuilderCarrier,
   canVisitStep,
   contactsContinueLabel,
   nextStep,
@@ -92,12 +94,13 @@ export default function CampaignBuilderPage() {
   const [callerIds, setCallerIds] = useState<string[]>([]);
   /**
    * The carrier account the campaign dials on. `null` until the operator picks one: the
-   * campaign then takes the first listed (the service's own account comes first), or the
-   * service's own when the list cannot be read, as before the choice existed.
+   * campaign then takes the first listed that has a number available to this account
+   * (`defaultBuilderCarrier`), or the service's own when the list cannot be read.
    */
   const { carriers } = useAgencyCarriers();
+  const { phoneNumbers } = usePhoneNumbers();
   const [chosenCarrier, setChosenCarrier] = useState<CarrierChoice | null>(null);
-  const carrier: CarrierChoice = chosenCarrier ?? carriers?.[0] ?? SERVICE_CARRIER;
+  const carrier: CarrierChoice = chosenCarrier ?? defaultBuilderCarrier(carriers, phoneNumbers);
   const carrierChoices = useMemo(() => carrierOptions(carriers ?? [], null), [carriers]);
   const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
   /**
