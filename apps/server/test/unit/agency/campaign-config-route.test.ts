@@ -986,7 +986,7 @@ describe('an outcome override on a catalog entry (CA8)', () => {
     const body = withOverride({ retry_delay: true });
     expect(validate(body)).toEqual([]);
     expect(validate(body, {}, { allowDispositionOverride: false })).toEqual([{
-      field: AT, message: "Overrides are a campaign feature: the soft phone's outcome catalog cannot grant one.",
+      field: AT, message: "Overrides are a campaign feature: the soft phone's outcome catalogue cannot grant one.",
     }]);
     // Everything else about the catalog is held to the same rules either way.
     expect(validate({ disposition_catalog: [{ code: 'redialed', label: 'R' }] }, {}, { allowDispositionOverride: false }))

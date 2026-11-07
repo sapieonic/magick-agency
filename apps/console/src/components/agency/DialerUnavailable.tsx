@@ -53,7 +53,7 @@ export function DialerUnavailable() {
         <span className={styles.icon} aria-hidden="true">
           <Headset size={22} />
         </span>
-        <h1 className={styles.title}>The dialer isn’t switched on yet</h1>
+        <h1 className={styles.title}>The dialler isn’t switched on yet</h1>
         <p className={styles.body}>
           Your account doesn’t have the Agency Dialer enabled, so there’s nothing here
           for you to work on yet. Ask your administrator to turn it on — once they do,
@@ -61,7 +61,7 @@ export function DialerUnavailable() {
         </p>
         <Link className={styles.action} to="/dialer">
           <Headset size={15} aria-hidden="true" />
-          Try the dialer
+          Try the dialler
         </Link>
       </div>
     </div>

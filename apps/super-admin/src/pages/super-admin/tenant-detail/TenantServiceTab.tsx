@@ -445,7 +445,7 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
             )}
             {concurrencyDetail.utilization?.status === 'unavailable' && (
               <div className={styles.warningBox} role="status">
-                Live utilization is unavailable. Capacity is shown as unknown and saving should be deferred until telemetry recovers.
+                Live utilisation is unavailable. Capacity is shown as unknown and saving should be deferred until telemetry recovers.
               </div>
             )}
             <div className={styles.table}>

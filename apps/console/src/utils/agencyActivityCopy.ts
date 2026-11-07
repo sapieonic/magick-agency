@@ -38,7 +38,7 @@ export function retentionNotice(retention: ActivityRetention | null): string | n
     // that this figure says nothing about. Stating it unqualified would claim a
     // guarantee for dispositions, do-not-call marks and staffing changes that
     // has not been checked — the retention trap, one store further along.
-    return `The dialer’s records go back to ${formatDate(retention.earliest_retained_at)}. `
+    return `The dialler’s records go back to ${formatDate(retention.earliest_retained_at)}. `
       + 'Anything older has passed its retention window and is no longer stored. Console records '
       + 'follow their own retention schedule, which this date does not cover.';
   }
@@ -77,7 +77,7 @@ export function formatActivityTimestamp(at: string): string {
  * does name the person.
  */
 export const CLIENT_ACTOR_TOOLTIP =
-  'The dialer does not record who pressed the button — it records which application asked. '
+  'The dialler does not record who pressed the button — it records which application asked. '
   + 'The matching “Console” row for this action names the person.';
 
 /**
@@ -333,7 +333,7 @@ export function activityDetailSummary(row: ActivityRow): string | null {
  */
 export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
   master: 'Console',
-  core: 'Dialer',
+  core: 'Dialler',
 };
 
 /**
@@ -348,7 +348,7 @@ export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
  */
 export const ACTIVITY_SOURCE_LEGEND =
   '“Recorded by” names which system logged the row: Console is someone in this workspace pressing '
-  + 'a control, Dialer is the campaign itself changing state — so the same pause can legitimately '
+  + 'a control, Dialler is the campaign itself changing state — so the same pause can legitimately '
   + 'appear once as each.';
 
 /** The table's accessible name — the campaign it belongs to, when known. */

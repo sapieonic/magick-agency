@@ -72,7 +72,7 @@ const TIMED_WRAPUP: WrapupAnchor = {
   redialRemaining: null,
 };
 
-const WAITING = 'Saved — waiting for the dialer to move you on';
+const WAITING = 'Saved — waiting for the dialler to move you on';
 
 /**
  * A real `ServerClock`, offset zero, pinned to `now`. Not a partial cast: the rail

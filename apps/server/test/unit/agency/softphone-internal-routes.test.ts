@@ -384,7 +384,7 @@ describe('the settings', () => {
       code: 'settings_invalid',
       details: [{
         path: 'disposition_catalog[0].override',
-        message: "Overrides are a campaign feature: the soft phone's outcome catalog cannot grant one.",
+        message: "Overrides are a campaign feature: the soft phone's outcome catalogue cannot grant one.",
       }],
     });
     expect(res.json().details).toHaveLength(1);

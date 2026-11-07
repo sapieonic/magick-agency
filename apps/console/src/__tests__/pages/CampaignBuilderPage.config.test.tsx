@@ -458,7 +458,7 @@ describe('the retry policy editor', () => {
      * The regression this exists for. The row seed was `{ max_attempts: 0 }`, so
      * touching only the delay box submitted `max_attempts: 0` the operator never
      * typed — and the API reads `min(configured, OUR_FAULT_REDIAL_BOUND)`, retiring
-     * the contact on its FIRST pre-connect agent drop. Never dialed again.
+     * the contact on its FIRST pre-connect agent drop. Never dialled again.
      */
     await openBehaviour();
     fireEvent.change(screen.getByLabelText('Agent disconnected (our fault) delay in minutes'), {

@@ -79,7 +79,7 @@ export const REDIAL_DISABLED_COPY = {
   /** The station socket is not open: the redial would ring a customer the agent cannot hear. */
   connection: 'Redial is available when connected',
   /** `campaign_state.dialing` is false: the server refuses a redial on a campaign that is not running. */
-  notDialing: 'The campaign isn’t dialing, so redial is off',
+  notDialing: 'The campaign isn’t dialling, so redial is off',
 } as const;
 
 /** The pad's stated reason while a redial is in flight. */

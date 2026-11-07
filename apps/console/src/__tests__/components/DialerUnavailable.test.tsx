@@ -32,7 +32,7 @@ describe('DialerUnavailable', () => {
        without signing out and back in. */
     render(<MemoryRouter><DialerUnavailable /></MemoryRouter>);
 
-    expect(screen.getByRole('link', { name: /try the dialer/i }).getAttribute('href'))
+    expect(screen.getByRole('link', { name: /try the dialler/i }).getAttribute('href'))
       .toBe('/dialer');
   });
 

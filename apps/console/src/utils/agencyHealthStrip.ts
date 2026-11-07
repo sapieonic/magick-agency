@@ -249,7 +249,7 @@ export function stallCopy(
 
     case 'dnc_unavailable':
       return diagnosis({
-        headline: 'Dialing has stopped — the Do Not Call check is unavailable.',
+        headline: 'Dialling has stopped — the Do Not Call check is unavailable.',
         facts: [
           {
             text: stall.tenant_wide
@@ -257,7 +257,7 @@ export function stallCopy(
               : 'The Do Not Call list could not be read.',
           },
         ],
-        advice: 'Nothing to change here — dialing resumes on its own once the check is back. Contact support if it persists.',
+        advice: 'Nothing to change here — dialling resumes on its own once the check is back. Contact support if it persists.',
       });
 
     case 'no_agents_available': {
@@ -326,7 +326,7 @@ export function stallCopy(
         ],
         advice: stall.next_retry_at
           ? `The next one is due at ${formatInstant(stall.next_retry_at)}.`
-          : 'No retry time is set — add contacts if you need this campaign dialing now.',
+          : 'No retry time is set — add contacts if you need this campaign dialling now.',
       });
 
     // There is no `credits_low` arm ("Credit is running low.", "Top up before

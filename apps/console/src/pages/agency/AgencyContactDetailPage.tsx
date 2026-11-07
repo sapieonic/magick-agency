@@ -374,7 +374,7 @@ export function AgencyContactDetailPage() {
         {attempts.length === 0 ? (
           <EmptyState
             icon={<PhoneOutgoing size={28} />}
-            title="This number was never dialed"
+            title="This number was never dialled"
             description={
               reason
                 ? 'It was suppressed before any call was placed, so there is no attempt history.'

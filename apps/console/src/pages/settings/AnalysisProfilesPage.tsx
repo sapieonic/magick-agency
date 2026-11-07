@@ -151,7 +151,7 @@ export default function AnalysisProfilesPage() {
   const handleSave = useCallback(async () => {
     if (!tenantId) return;
     if (!form.name.trim()) {
-      setFormError('Give this summary a name so you can pick it on the dialer.');
+      setFormError('Give this summary a name so you can pick it on the dialler.');
       return;
     }
     setSaving(true);
@@ -310,11 +310,11 @@ export default function AnalysisProfilesPage() {
 
       <PageDescription
         pageKey="analysis-profiles"
-        description="After a recorded dialer call, we can write a short summary of what was said. A summary setup tells us what to look for — the specific details you want noted from every call, like whether the customer agreed to a payment plan."
+        description="After a recorded dialler call, we can write a short summary of what was said. A summary setup tells us what to look for — the specific details you want noted from every call, like whether the customer agreed to a payment plan."
         tips={[
-          'Set one as the default and every recorded call uses it automatically. You can still pick a different one per call on the dialer.',
+          'Set one as the default and every recorded call uses it automatically. You can still pick a different one per call on the dialler.',
           'Telling us what these calls are about makes the summaries noticeably better — it is the single most useful thing you can fill in.',
-          'Only recorded calls can be summarized. There is nothing to listen to otherwise.',
+          'Only recorded calls can be summarised. There is nothing to listen to otherwise.',
         ]}
       />
 
@@ -325,7 +325,7 @@ export default function AnalysisProfilesPage() {
           <EmptyState
             icon={<Sparkles size={40} />}
             title="No call summaries set up yet"
-            description="Create one to have us write a summary of every recorded call you make from the dialer."
+            description="Create one to have us write a summary of every recorded call you make from the dialler."
             action={
               canWrite ? (
                 <button type="button" className="btn-primary" onClick={handleOpenCreate}>
@@ -498,8 +498,8 @@ export default function AnalysisProfilesPage() {
                   <span className={styles.toggleText}>
                     <span className={styles.toggleLabel}>Set as default for this account</span>
                     <span className={styles.toggleHint}>
-                      Every recorded dialer call will use this unless someone picks a
-                      different one when dialing.
+                      Every recorded dialler call will use this unless someone picks a
+                      different one when dialling.
                     </span>
                   </span>
                 </label>
@@ -554,7 +554,7 @@ export default function AnalysisProfilesPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete call summary"
-        message={`Delete "${deleteTarget?.name}"? Calls already summarized keep their summaries — this only stops it being used for new calls.`}
+        message={`Delete "${deleteTarget?.name}"? Calls already summarised keep their summaries — this only stops it being used for new calls.`}
         confirmLabel="Delete"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteTarget(null)}

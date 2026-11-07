@@ -101,7 +101,7 @@ export function BuilderSummary({
           onClick={() => onJump('behaviour')}
         />
       </dl>
-      <p className={styles.note}>Nothing is dialed until you start the campaign.</p>
+      <p className={styles.note}>Nothing is dialled until you start the campaign.</p>
     </aside>
   );
 }

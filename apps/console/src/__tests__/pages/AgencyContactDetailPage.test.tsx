@@ -17,7 +17,7 @@ import type { AgencyAttempt, AgencyContactDetail } from '../../types/agency-spin
  *    exactly this moment.
  *
  * 2. **A contact with no attempts is a real, explicable state**, not an error
- *    and not an empty table: a suppressed number was never dialed.
+ *    and not an empty table: a suppressed number was never dialled.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -313,7 +313,7 @@ describe('a suppressed contact', () => {
   it('explains the empty history rather than showing a bare empty table', async () => {
     renderPage();
     await screen.findByTestId('contact-suppressed');
-    expect(screen.getByText('This number was never dialed')).toBeTruthy();
+    expect(screen.getByText('This number was never dialled')).toBeTruthy();
     expect(screen.getByText(/suppressed before any call was placed/)).toBeTruthy();
   });
 });

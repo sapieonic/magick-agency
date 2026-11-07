@@ -108,7 +108,7 @@ export function AgencyCampaignContactsPage() {
       setCampaign(fresh);
       if (fresh.status === 'stopped' || fresh.status === 'completed') {
         throw new Error(
-          `This campaign is ${fresh.status} — contacts added now would never be dialed. Nothing was imported.`,
+          `This campaign is ${fresh.status} — contacts added now would never be dialled. Nothing was imported.`,
         );
       }
       return id;
@@ -143,7 +143,7 @@ export function AgencyCampaignContactsPage() {
 
       {isLive && (
         <p className={styles.liveNote}>
-          This campaign is dialing. New contacts join the queue as they load, so agents may start
+          This campaign is dialling. New contacts join the queue as they load, so agents may start
           receiving them before the import finishes.
         </p>
       )}
@@ -155,7 +155,7 @@ export function AgencyCampaignContactsPage() {
       */}
       {campaign.status === 'stopped' || campaign.status === 'completed' ? (
         <p className={styles.closedNote}>
-          This campaign has finished, so contacts added now would never be dialed. Create a new
+          This campaign has finished, so contacts added now would never be dialled. Create a new
           campaign for the remaining list.
         </p>
       ) : (

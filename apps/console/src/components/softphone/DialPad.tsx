@@ -21,7 +21,7 @@ export const RINGING_HANGUP_WARNING =
   'This carrier cannot stop a ringing call. If you hang up now, the customer’s phone keeps ringing for a while, and if they answer they hear nothing. Hang up only when you must.';
 
 const STATUS_LABEL = {
-  dialing: 'Dialing',
+  dialing: 'Dialling',
   ringing: 'Ringing',
   on_call: 'Connected',
   outcome: 'Ended',
@@ -89,7 +89,7 @@ export function DialPad({
         ) : null}
         {phase === 'outcome' ? (
           <p className={styles.hint} data-testid="outcome-closes">
-            Dialing is blocked until this call has an outcome.
+            Dialling is blocked until this call has an outcome.
             {call.outcome_due_at ? <OutcomeCloses dueAt={call.outcome_due_at} clock={clock} /> : null}
           </p>
         ) : null}

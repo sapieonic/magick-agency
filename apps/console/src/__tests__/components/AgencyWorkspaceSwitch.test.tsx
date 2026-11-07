@@ -14,7 +14,7 @@ import type { Role } from '../../types/auth';
  * ── What changed, and why the old assertion was hiding a hole ───────────────
  * The gate used to be `agency.supervise`, which floors at `account_admin`. But
  * `agency.station.connect` floors at `agent` (5), so a `viewer` and an `operator`
- * hold every agent permission, take dialer calls, and had NO entry point to the
+ * hold every agent permission, take dialler calls, and had NO entry point to the
  * dialer anywhere in the platform — while `AgentHomePage` offered those exact two
  * roles a documented link back OUT of it.
  *
@@ -53,9 +53,9 @@ import { Sidebar } from '../../components/layout/Sidebar';
 /** The supervisor's arm: a different shell, and the wording says so. */
 const SUPERVISOR_LABEL = /switch to magick agency/i;
 /** The agent persona's arm: a full-viewport page, so never called a "workspace". */
-const AGENT_LABEL = /take dialer calls/i;
+const AGENT_LABEL = /take dialler calls/i;
 /** Either arm, for the gate tests — where the point is that NOTHING renders. */
-const EITHER_LABEL = /switch to magick agency|take dialer calls/i;
+const EITHER_LABEL = /switch to magick agency|take dialler calls/i;
 
 function renderSidebar(collapsed = false) {
   return render(

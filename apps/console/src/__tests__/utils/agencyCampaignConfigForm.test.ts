@@ -79,7 +79,7 @@ describe('the built-in codes', () => {
      * from that arm, so on this entry `terminal` can never be observed — and if
      * an operator ever clears `suppress`, the leftover flag downgrades the
      * contact from `suppressed` to the weaker `completed`. It is `suppress`, not
-     * `terminal`, that stops the number being dialed again.
+     * `terminal`, that stops the number being dialled again.
      */
     expect(DEFAULT_DISPOSITIONS).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
     expect(OUR_FAULT_REDIAL_BOUND).toBe(AGENCY_OUR_FAULT_REDIAL_BOUND);
@@ -493,11 +493,11 @@ describe('the timezone gate', () => {
 describe('the calling-window echo', () => {
   const WINDOW = { start: '09:00', end: '20:00', days: [1, 2, 3, 4, 5], timezone: 'Asia/Kolkata' };
 
-  it('says the campaign would be dialing at a time inside the window', () => {
+  it('says the campaign would be dialling at a time inside the window', () => {
     // 2026-08-11 is a Tuesday. 09:00 UTC is 14:30 in Asia/Kolkata — inside.
     const echo = callingWindowEcho(WINDOW, new Date('2026-08-11T09:00:00Z'));
     expect(echo).toContain('14:30');
-    expect(echo).toContain('would be dialing');
+    expect(echo).toContain('would be dialling');
   });
 
   it('is evaluated ON the window boundary, not near it', () => {
@@ -505,10 +505,10 @@ describe('the calling-window echo', () => {
     // at an arbitrary hour cannot observe an off-by-one at the edge, which is
     // the only place this logic can be wrong.
     const openEdge = callingWindowEcho(WINDOW, new Date('2026-08-11T03:30:00Z')); // 09:00 IST
-    expect(openEdge).toContain('would be dialing');
+    expect(openEdge).toContain('would be dialling');
 
     const closeEdge = callingWindowEcho(WINDOW, new Date('2026-08-11T14:30:00Z')); // 20:00 IST
-    expect(closeEdge).toContain('would not be dialing');
+    expect(closeEdge).toContain('would not be dialling');
   });
 
   it('reads the day in the CAMPAIGN zone, not the browser one', () => {
@@ -518,7 +518,7 @@ describe('the calling-window echo', () => {
       { ...WINDOW, start: '00:00', end: '06:00' },
       new Date('2026-08-16T21:00:00Z'),
     );
-    expect(echo).toContain('would be dialing');
+    expect(echo).toContain('would be dialling');
   });
 
   it('marks an overnight window as overnight', () => {
@@ -528,8 +528,8 @@ describe('the calling-window echo', () => {
 
   it('does not claim a live status for a zone it cannot resolve', () => {
     const echo = callingWindowEcho({ ...WINDOW, timezone: 'EST' });
-    expect(echo).not.toContain('would be dialing');
-    expect(echo).not.toContain('would not be dialing');
+    expect(echo).not.toContain('would be dialling');
+    expect(echo).not.toContain('would not be dialling');
   });
 
   it('describes contiguous days as a range and scattered ones as a list', () => {
@@ -621,7 +621,7 @@ describe('the our-fault outcome — `agent_disconnected`', () => {
 
   it('spells out what 0 actually does, because "0 attempts" does not convey it', () => {
     // The API retires the contact outright once `ourFaultAttemptsUsed >= 0` — it
-    // does not merely skip a redial. Never dialed again, allowance unused.
+    // does not merely skip a redial. Never dialled again, allowance unused.
     expect(OUR_FAULT_RETRY_COPY).toMatch(/retires that contact for good/);
     expect(OUR_FAULT_ZERO_WARNING).toMatch(/retires the contact permanently/);
   });

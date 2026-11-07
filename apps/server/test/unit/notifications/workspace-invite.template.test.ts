@@ -125,7 +125,7 @@ describe('what happens next', () => {
       steps.reduce((acc, step) => acc.split(step).join('<STEP>'), text.split(subject).join('<SUBJECT>'));
     const agentSteps = [
       'Choose how you sign in — this link is what connects it to your place on the team.',
-      'Your station opens', 'The dialer screen you take calls from, ready to go.',
+      'Your station opens', 'The dialler screen you take calls from, ready to go.',
       'The campaigns you are staffed on appear', 'Your supervisor decides which ones; they show up as they are assigned.',
     ];
     const workspaceSteps = [

@@ -171,7 +171,7 @@ export function parseCsv(buffer: Buffer): ParseResult {
   }
 
   if (normalizedCount > 0) {
-    warnings.push(`Normalized ${normalizedCount} phone number${normalizedCount !== 1 ? 's' : ''} to E.164 format`);
+    warnings.push(`Normalised ${normalizedCount} phone number${normalizedCount !== 1 ? 's' : ''} to E.164 format`);
   }
 
   return { headers, rows, rowCount: rows.length, errors, warnings };

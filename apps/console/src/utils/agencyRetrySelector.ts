@@ -119,7 +119,7 @@ export const NO_DISPOSITION_BUCKET = '__none__';
  * `never_attempted: true` both mean "nobody dialled this contact", so they
  * render identically and a selector naming both says it once.
  */
-const NEVER_DIALED_COPY = 'never dialed at all';
+const NEVER_DIALED_COPY = 'never dialled at all';
 
 /**
  * What the retry dialog offers when it is opened from the campaign header
@@ -365,7 +365,7 @@ export function dispositionBucketLabel(
  * dimension. This is the third place that rule has to hold.
  */
 export function outcomeBucketLabel(code: string): string {
-  if (code === RETRY_NO_OUTCOME) return 'Never dialed';
+  if (code === RETRY_NO_OUTCOME) return 'Never dialled';
   return attemptOutcomeLabel(code);
 }
 
@@ -438,12 +438,12 @@ export function describeSelector(
   if (selector.never_attempted === true && !neverDialedNamed) {
     clauses.push(NEVER_DIALED_COPY);
   }
-  if (selector.never_attempted === false) clauses.push('dialed at least once');
+  if (selector.never_attempted === false) clauses.push('dialled at least once');
   if (typeof selector.attempt_count_gte === 'number') {
-    clauses.push(`dialed at least ${selector.attempt_count_gte} time${selector.attempt_count_gte === 1 ? '' : 's'}`);
+    clauses.push(`dialled at least ${selector.attempt_count_gte} time${selector.attempt_count_gte === 1 ? '' : 's'}`);
   }
   if (typeof selector.attempt_count_lte === 'number') {
-    clauses.push(`dialed at most ${selector.attempt_count_lte} time${selector.attempt_count_lte === 1 ? '' : 's'}`);
+    clauses.push(`dialled at most ${selector.attempt_count_lte} time${selector.attempt_count_lte === 1 ? '' : 's'}`);
   }
 
   if (clauses.length === 0) return 'No cohort is selected yet.';

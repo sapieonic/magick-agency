@@ -533,7 +533,7 @@ export function handleTimeReadout(stats: AgencyCampaignStats | null): Performanc
     */
     denominator:
       voicemailMeasured(stats)
-        ? { lead: null, rest: 'Voicemail excluded — the dialer’s own figure' }
+        ? { lead: null, rest: 'Voicemail excluded — the dialler’s own figure' }
         : null,
     scale: { kind: 'compare', bars },
     known: true,

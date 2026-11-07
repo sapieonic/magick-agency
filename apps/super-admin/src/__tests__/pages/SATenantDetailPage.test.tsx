@@ -258,7 +258,7 @@ describe('SATenantDetailPage — provider concurrency', () => {
     expect((screen.getByLabelText(`Concurrency allocated to ${operatorCarrierName('vobiz')}`) as HTMLInputElement).value).toBe('7');
   });
 
-  it('renders unavailable provider utilization as unknown, never zero', async () => {
+  it('renders unavailable provider utilisation as unknown, never zero', async () => {
     mocks.listProviders.mockResolvedValue([provider('vobiz')]);
     mocks.getAccounts.mockResolvedValue([{
       id: 'a-1', name: 'Sales', slug: 'sales', status: 'active', max_concurrent_calls: 30,
@@ -286,7 +286,7 @@ describe('SATenantDetailPage — provider concurrency', () => {
     await screen.findByRole('cell', { name: 'Sales' });
     fireEvent.click(screen.getByRole('button', { name: /manage providers/i }));
 
-    await waitFor(() => expect(screen.getByText(/Live utilization is unavailable/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Live utilisation is unavailable/i)).toBeTruthy());
     expect(screen.getAllByText('Unknown')).toHaveLength(2);
   });
 

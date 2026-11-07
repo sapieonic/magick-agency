@@ -57,7 +57,7 @@ export function agencyProductName(brandName: string): string {
  */
 const WHAT_HAPPENS_NEXT: ReadonlyArray<readonly [string, string]> = [
   ['Set up your sign-in', 'Choose how you sign in — this link is what connects it to your place on the team.'],
-  ['Your station opens', 'The dialer screen you take calls from, ready to go.'],
+  ['Your station opens', 'The dialler screen you take calls from, ready to go.'],
   ['The campaigns you are staffed on appear', 'Your supervisor decides which ones; they show up as they are assigned.'],
 ];
 

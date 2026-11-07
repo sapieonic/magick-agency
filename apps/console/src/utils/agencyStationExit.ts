@@ -100,7 +100,7 @@ export function stationExitBlocked(agentState: AgencyAgentState): boolean {
 export const LEAVE_BLOCKED_COPY = 'Finish this call first — leaving now would cut the customer off.';
 export const EXIT_BLOCKED_COPY = 'Finish this call first — this call is still on your screen.';
 export const EXIT_AVAILABLE_BLOCKED_COPY =
-  'You’re still in the dialing pool — leave the station or go on break first, or a call could be sent to an empty screen.';
+  'You’re still in the dialling pool — leave the station or go on break first, or a call could be sent to an empty screen.';
 
 /** The reason Leave is refused, or `null` when it is not. */
 export function leaveBlockedReason(agentState: AgencyAgentState): string | null {

@@ -21,7 +21,7 @@ import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../../types/a
 import styles from '../AgencyCampaignDetailPage.module.css';
 
 const ACTION_META: Record<Action, { label: string; icon: typeof Play; danger?: boolean }> = {
-  start: { label: 'Start dialing', icon: Play },
+  start: { label: 'Start dialling', icon: Play },
   pause: { label: 'Pause', icon: Pause },
   resume: { label: 'Resume', icon: Play },
   stop: { label: 'Stop', icon: Square, danger: true },

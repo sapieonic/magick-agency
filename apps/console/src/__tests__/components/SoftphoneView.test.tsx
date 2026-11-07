@@ -433,7 +433,7 @@ describe('the call, driven by manual_call frames', () => {
       fireEvent.click(screen.getByTestId('dial-call'));
     });
     // The HTTP answer is enough to show the call before any frame lands.
-    expect(rail()).toBe('Dialing +91 98204 61733');
+    expect(rail()).toBe('Dialling +91 98204 61733');
     expect(document.activeElement).toBe(screen.getByTestId('softphone-body'));
 
     const ringing = step(queued, 2, { state: 'ringing', can_cancel_ringing: false });
@@ -739,7 +739,7 @@ describe('the outcome window', () => {
     );
     expect(rail()).toBe('Outcome needed');
     expect(screen.getByTestId('outcome-closes').textContent).toMatch(
-      /^Dialing is blocked until this call has an outcome\. Without one, it closes in 1:(29|30)\.$/,
+      /^Dialling is blocked until this call has an outcome\. Without one, it closes in 1:(29|30)\.$/,
     );
   });
 });

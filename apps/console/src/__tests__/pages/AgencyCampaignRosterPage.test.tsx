@@ -55,7 +55,7 @@ const COMPLETED: AgencyRosterContact = {
 };
 
 /**
- * Never dialed. No attempt row, no `webrtc_calls` row — invisible everywhere
+ * Never dialled. No attempt row, no `webrtc_calls` row — invisible everywhere
  * else in the product.
  */
 const SUPPRESSED: AgencyRosterContact = {
@@ -161,7 +161,7 @@ describe('suppressed contacts', () => {
   it('says "never dialed" rather than leaving the outcome blank', async () => {
     renderPage();
     const row = await screen.findByTestId(`roster-row-${SUPPRESSED.id}`);
-    expect(within(row).getByText('Never dialed')).toBeTruthy();
+    expect(within(row).getByText('Never dialled')).toBeTruthy();
   });
 
   it('has a one-click filter for exactly these rows', async () => {

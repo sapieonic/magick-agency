@@ -29,7 +29,7 @@ const TENANT = { id: 't-new', name: 'Fresh Start', slug: 'fresh-start', status: 
 async function create() {
   render(<MemoryRouter><SATenantsPage /></MemoryRouter>);
   fireEvent.click(screen.getAllByRole('button', { name: /add tenant/i })[0]!);
-  fireEvent.change(screen.getByLabelText('Organization name'), { target: { value: 'Fresh Start' } });
+  fireEvent.change(screen.getByLabelText('Organisation name'), { target: { value: 'Fresh Start' } });
   fireEvent.change(screen.getByLabelText('Owner email'), { target: { value: 'founder@fresh.test' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create tenant' }));
 }

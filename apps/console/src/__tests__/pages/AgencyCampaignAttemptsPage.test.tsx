@@ -75,7 +75,7 @@ const ABANDONED: AgencyAttempt = {
   talk_seconds: null, created_at: '2026-08-17T09:50:00.000Z',
 };
 
-/** Never dialed at all — the reaper ended it after a replica died. */
+/** Never dialled at all — the reaper ended it after a replica died. */
 const ORPHANED: AgencyAttempt = {
   ...ABANDONED, id: 'attempt-orphaned', contact_id: 'contact-3',
   phone_e164: '+919876500003', outcome: 'orphaned', dialed_at: null,
@@ -318,14 +318,14 @@ describe('an empty result is never reported as a fact about the campaign', () =>
   it('does not say "no calls were placed" when pinned to one contact', async () => {
     // Arriving from a contact with no attempts, on a campaign that dialled
     // thousands. `contact_id` was omitted from the `filtered` flag, so the
-    // empty state read "This campaign has not dialed anyone yet" — an answer
+    // empty state read "This campaign has not dialled anyone yet" — an answer
     // about the query presented as an answer about the campaign.
     mocks.getCampaignAttempts.mockResolvedValue(page([]));
     renderPage('/agency/campaigns/camp-1/attempts?contact_id=contact-2');
 
     await screen.findByText('Nothing matches those filters');
     expect(screen.queryByText('No calls were placed')).toBeNull();
-    expect(screen.queryByText(/has not dialed anyone yet/)).toBeNull();
+    expect(screen.queryByText(/has not dialled anyone yet/)).toBeNull();
   });
 
   it('still says so when the campaign really did dial nobody', async () => {

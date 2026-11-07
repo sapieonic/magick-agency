@@ -863,7 +863,7 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
 
     it.each([
       ['partition_bound', '2026-05-01T00:00:00.000Z', 'source: partition_bound'],
-      ['unbounded', null, 'unbounded — the dialer reports no retention horizon'],
+      ['unbounded', null, 'unbounded — the dialler reports no retention horizon'],
       ['unknown', null, 'unknown (source: unknown)'],
     ])('reports the %s retention source the internal handler carried on the page', async (source, earliest, expectedText) => {
       // The horizon is `getAuditRetentionHorizon`'s.

@@ -74,8 +74,8 @@ function AgentLinkNote() {
        that support question. */
     return (
       <p className={styles.handoffNote} data-testid="agent-dialer-note">
-        This link opens the dialer’s own sign-in page, so it takes them straight to
-        the dialer once they’ve signed in. Assign them to a campaign and they’ll
+        This link opens the dialler’s own sign-in page, so it takes them straight to
+        the dialler once they’ve signed in. Assign them to a campaign and they’ll
         land on it.
       </p>
     );
@@ -83,7 +83,7 @@ function AgentLinkNote() {
 
   return (
     <p className={styles.handoffNote} data-testid="agent-dialer-gated-note">
-      This link points at the dialer, which isn’t switched on for this workspace —
+      This link points at the dialler, which isn’t switched on for this workspace —
       so they’ll sign in and be told it’s unavailable. Ask your administrator to
       enable the Agency Dialer before you send it.
     </p>

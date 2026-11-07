@@ -229,15 +229,15 @@ afterEach(() => {
 describe('campaign detail — the status-to-action matrix', () => {
   // [status, enabled, disabled-but-present, absent]
   const MATRIX: Array<[string, string[], string[], string[]]> = [
-    ['draft', ['Start dialing', 'Stop'], [], ['Pause', 'Resume']],
-    ['running', ['Pause', 'Stop'], [], ['Start dialing', 'Resume']],
-    ['paused', ['Resume', 'Stop'], [], ['Pause', 'Start dialing']],
+    ['draft', ['Start dialling', 'Stop'], [], ['Pause', 'Resume']],
+    ['running', ['Pause', 'Stop'], [], ['Start dialling', 'Resume']],
+    ['paused', ['Resume', 'Stop'], [], ['Pause', 'Start dialling']],
     // `stopping` no longer hides the controls a supervisor reaches for.
     // The pacing leader still owns the final write — the buttons are refused,
     // with the reason on screen, rather than being absent and unexplained.
-    ['stopping', [], ['Resume', 'Stop'], ['Start dialing', 'Pause']],
-    ['stopped', [], [], ['Start dialing', 'Pause', 'Resume', 'Stop']],
-    ['completed', [], [], ['Start dialing', 'Pause', 'Resume', 'Stop']],
+    ['stopping', [], ['Resume', 'Stop'], ['Start dialling', 'Pause']],
+    ['stopped', [], [], ['Start dialling', 'Pause', 'Resume', 'Stop']],
+    ['completed', [], [], ['Start dialling', 'Pause', 'Resume', 'Stop']],
   ];
 
   it.each(MATRIX)('%s enables %j, refuses %j, hides %j', async (status, enabled, refused, absent) => {
@@ -353,7 +353,7 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     );
 
     renderPage();
-    const start = await screen.findByRole('button', { name: 'Start dialing' });
+    const start = await screen.findByRole('button', { name: 'Start dialling' });
     fireEvent.click(start);
     fireEvent.click(start);
 
@@ -367,14 +367,14 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'draft' }));
 
     renderPage();
-    await screen.findByRole('button', { name: 'Start dialing' });
+    await screen.findByRole('button', { name: 'Start dialling' });
 
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Start dialing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start dialling' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy());
     expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'Start dialing' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start dialling' })).toBeNull();
     expect(mocks.showErrorToast).not.toHaveBeenCalled();
   });
 
@@ -382,11 +382,11 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'draft' }));
 
     renderPage();
-    await screen.findByRole('button', { name: 'Start dialing' });
+    await screen.findByRole('button', { name: 'Start dialling' });
 
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
     mocks.getAgencyCampaignStats.mockRejectedValue(new Error('stats unavailable'));
-    fireEvent.click(screen.getByRole('button', { name: 'Start dialing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start dialling' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy());
     expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
@@ -420,13 +420,13 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     );
 
     renderPage();
-    await screen.findByRole('button', { name: 'Start dialing' });
+    await screen.findByRole('button', { name: 'Start dialling' });
     mocks.getAgencyCampaignStats.mockRejectedValue(new Error('stats unavailable'));
-    fireEvent.click(screen.getByRole('button', { name: 'Start dialing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start dialling' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy());
     expect(mocks.transitionAgencyCampaign).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('button', { name: 'Start dialing' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start dialling' })).toBeNull();
     expect(mocks.showErrorToast).not.toHaveBeenCalled();
   });
 
@@ -443,16 +443,16 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     );
 
     renderPage();
-    await screen.findByRole('button', { name: 'Start dialing' });
-    fireEvent.click(screen.getByRole('button', { name: 'Start dialing' }));
+    await screen.findByRole('button', { name: 'Start dialling' });
+    fireEvent.click(screen.getByRole('button', { name: 'Start dialling' }));
 
     await waitFor(() => expect(mocks.showErrorToast).toHaveBeenCalled());
-    expect(screen.getByRole('button', { name: 'Start dialing' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start dialling' })).toBeTruthy();
   });
 
   it.each([
     ['resume', 'paused', 'Resume', 409, 'telephony_credential_not_active', /carrier account is not active.*Contact support to have it re-enabled/],
-    ['start', 'draft', 'Start dialing', 404, 'telephony_credential_not_found', /carrier account no longer exists/],
+    ['start', 'draft', 'Start dialling', 404, 'telephony_credential_not_found', /carrier account no longer exists/],
   ] as const)('says what to do when %s is refused for the campaign’s carrier account', async (
     _action, status, button, statusCode, code, copy,
   ) => {
@@ -476,7 +476,7 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'draft' }));
 
     renderPage();
-    await screen.findByRole('button', { name: 'Start dialing' });
+    await screen.findByRole('button', { name: 'Start dialling' });
 
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
@@ -485,14 +485,14 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     });
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Start dialing' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start dialling' })).toBeNull();
   });
 
   it('re-reads on window focus as well as visibilitychange — two windows both stay visible', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'draft' }));
 
     renderPage();
-    await screen.findByRole('button', { name: 'Start dialing' });
+    await screen.findByRole('button', { name: 'Start dialling' });
 
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
@@ -501,7 +501,7 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     });
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Start dialing' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start dialling' })).toBeNull();
   });
 
   it('an in-flight visibility GET cannot paint a draft over a start that already succeeded', async () => {
@@ -509,7 +509,7 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     mocks.getAgencyCampaignStats.mockResolvedValue(stats());
 
     renderPage();
-    await screen.findByRole('button', { name: 'Start dialing' });
+    await screen.findByRole('button', { name: 'Start dialling' });
 
     const campaignResolvers: Array<(value: AgencyCampaign) => void> = [];
     const statsResolvers: Array<(value: AgencyCampaignStats) => void> = [];
@@ -527,7 +527,7 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     expect(campaignResolvers.length).toBe(1);
 
     mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Start dialing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start dialling' }));
     await waitFor(() => expect(campaignResolvers.length).toBe(2));
 
     // Click's preflight is campaign-only, so it does not wait on stats.
@@ -545,7 +545,7 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     });
 
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Start dialing' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start dialling' })).toBeNull();
   });
 });
 
@@ -1028,7 +1028,7 @@ describe('campaign detail — permissions (agency.supervise)', () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
 
-    for (const label of ['Start dialing', 'Pause', 'Resume', 'Stop']) {
+    for (const label of ['Start dialling', 'Pause', 'Resume', 'Stop']) {
       expect(screen.queryByRole('button', { name: label })).toBeNull();
     }
     // Not merely hidden: nothing on the page can reach the transition API.

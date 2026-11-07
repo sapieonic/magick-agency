@@ -211,7 +211,7 @@ describe('calling hours', () => {
     expect(screen.getByTestId('calling-window-echo').textContent).toContain('Mon–Sat');
     // 06:30Z is 12:00 in Kolkata, a Wednesday: inside the window.
     expect(screen.getByTestId('calling-window-echo').textContent)
-      .toContain('Right now it is 12:00 there — the campaign would be dialing.');
+      .toContain('Right now it is 12:00 there — the campaign would be dialling.');
   });
 });
 

@@ -590,7 +590,7 @@ describe('the outcome breakdown never shows a raw bucket key', () => {
     renderDialog();
     const block = await screen.findByTestId('retry-by-outcome');
     expect(block.textContent).not.toContain('__none__');
-    expect(block.textContent).toContain('Never dialed');
+    expect(block.textContent).toContain('Never dialled');
   });
 
   it('still shows the raw key nowhere else in the dialog', async () => {

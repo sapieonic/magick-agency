@@ -124,7 +124,7 @@ describe('AgencyCampaignsPage — no campaigns yet', () => {
     expect(await screen.findByRole('heading', { name: 'Launch your first campaign' })).toBeTruthy();
     const create = screen.getByRole('link', { name: /New campaign/ });
     expect(create.getAttribute('href')).toBe('/agency/campaigns/new');
-    expect(screen.getByRole('heading', { name: 'Start dialing' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Start dialling' })).toBeTruthy();
     expect(screen.getByText('Several campaigns can run at once. They share your account’s lines.')).toBeTruthy();
     expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
   });
@@ -134,7 +134,7 @@ describe('AgencyCampaignsPage — no campaigns yet', () => {
     renderPage();
     expect(await screen.findByRole('heading', { name: 'No campaigns yet' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: /New campaign/ })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Start dialing' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Start dialling' })).toBeNull();
     expect(screen.getByText('Several campaigns can run at once. They share your account’s lines.')).toBeTruthy();
   });
 });
@@ -388,7 +388,7 @@ describe('AgencyCampaignsPage — the list', () => {
   it('says nothing is dialing when no campaign is active', async () => {
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT]));
     renderPage();
-    expect(await screen.findByText('Nothing is dialing right now')).toBeTruthy();
+    expect(await screen.findByText('Nothing is dialling right now')).toBeTruthy();
     expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
   });
 
@@ -444,7 +444,7 @@ describe('AgencyCampaignsPage — the list', () => {
 
     expect(await screen.findByRole('article', { name: 'Last year pilot' })).toBeTruthy();
     expect(mocks.listAgencyCampaigns).toHaveBeenCalledWith('tenant-1', 'account-1', ['running', 'stopping', 'paused']);
-    expect(screen.queryByText('Nothing is dialing right now')).toBeNull();
+    expect(screen.queryByText('Nothing is dialling right now')).toBeNull();
     expect(screen.getByText('250 campaigns · 1 active · latest 100 shown')).toBeTruthy();
 
     // The next page starts after the 100 history rows, not the 101 on screen.
@@ -460,7 +460,7 @@ describe('AgencyCampaignsPage — the list', () => {
     mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'o-draft', name: 'Old draft', status: 'draft' }]);
     renderPage();
 
-    expect(await screen.findByText('Nothing is dialing right now')).toBeTruthy();
+    expect(await screen.findByText('Nothing is dialling right now')).toBeTruthy();
     expect(screen.queryByText('Old draft')).toBeNull();
   });
 

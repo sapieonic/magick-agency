@@ -49,7 +49,7 @@ export const AGENT_STATE_RECONCILE_MS = 3000;
  * Exported so the test names the string once: a copy assertion written out by hand
  * in the test is a test of the test.
  */
-export const WAITING_FOR_DIALER_COPY = 'Saved — waiting for the dialer to move you on';
+export const WAITING_FOR_DIALER_COPY = 'Saved — waiting for the dialler to move you on';
 
 const AGENT_STATES: readonly AgencyAgentState[] = [
   'offline',

@@ -154,7 +154,7 @@ describe('Switch to soft phone', () => {
     await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
     expect(screen.getByTestId('rail-label').textContent).toBe('Ready to dial');
-    expect(screen.getByTestId('rail-detail').textContent).toMatch(/campaign's dialer does not reserve you here/);
+    expect(screen.getByTestId('rail-detail').textContent).toMatch(/campaign's dialler does not reserve you here/);
     expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
     // A soft-phone break is never ended as an ordinary one.
     expect(screen.queryByRole('button', { name: /End break/ })).toBeNull();

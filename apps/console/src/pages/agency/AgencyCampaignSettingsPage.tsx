@@ -427,7 +427,7 @@ export function AgencyCampaignSettingsPage() {
 
       {isLive && (
         <p className={styles.liveNote}>
-          This campaign is dialing. Changes apply to calls placed from now on — a call already
+          This campaign is dialling. Changes apply to calls placed from now on — a call already
           under way keeps the settings it started with.
         </p>
       )}

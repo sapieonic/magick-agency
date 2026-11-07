@@ -35,7 +35,7 @@ describe('retentionNotice', () => {
       source: 'partition_bound',
     });
 
-    expect(notice).toMatch(/The dialer’s records go back to/);
+    expect(notice).toMatch(/The dialler’s records go back to/);
     expect(notice).toMatch(/no longer stored/);
     // The horizon comes from the DIALER's partitions. Stating it unqualified
     // would claim a guarantee for dispositions, do-not-call marks and staffing

@@ -476,7 +476,7 @@ export default function CampaignBuilderPage() {
                       placeholder="Collections — August"
                       autoFocus
                     />
-                    <p className={styles.fieldHint}>A name your team will recognize in the campaign list.</p>
+                    <p className={styles.fieldHint}>A name your team will recognise in the campaign list.</p>
                   </div>
                   {/* Shown only when there is a choice: with one carrier account the
                       campaign takes it, and the step reads as it always did. */}
@@ -761,7 +761,7 @@ export default function CampaignBuilderPage() {
                     onEdit={() => goTo('behaviour')}
                   />
                   <p className={styles.reviewNote}>
-                    Saving creates a draft. Nothing is dialed until you open the campaign and start it.
+                    Saving creates a draft. Nothing is dialled until you open the campaign and start it.
                   </p>
                 </div>
               ) : null}
