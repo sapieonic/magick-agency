@@ -27,8 +27,11 @@ IN13 (Manas, 2026-11-07) split the one long Insights scroll into a tab per quest
 card per detail tab), **Calls** (outcomes, dispositions, trends), **Agents** (the floor and staffing,
 then the leaderboard, allocation and overrides), **Callbacks** and **Health** (compliance, stalls,
 caller IDs, recording). They are one `InsightsPanel` with a `view`, so the five tabs share one set
-of reads; each tab loads only the range reads it shows. Lifecycle and upload history moved to
-Settings. `…/insights` redirects to Overview. Detail in [`decisions.md`](decisions.md) §4.
+of reads; each tab loads only the range reads it shows. The as-of-now reads poll on every tab but
+Agents, which has the floor's own stats poll. Print still prints the whole report: every tab's
+sections render, print-only, for the printout. A stall going on now is the health strip's, not the
+attention list's (the health read's stall episodes follow the range). Lifecycle and upload history
+moved to Settings. `…/insights` redirects to Overview. Detail in [`decisions.md`](decisions.md) §4.
 
 ## Shape
 

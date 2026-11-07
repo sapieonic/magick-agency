@@ -1557,7 +1557,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 43 |
 | `apps/console/src/__tests__/components/HomeRedirect.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/InsightsHeadline.test.tsx` | 24 |
-| `apps/console/src/__tests__/components/InsightsSections.test.tsx` | 35 |
+| `apps/console/src/__tests__/components/InsightsSections.test.tsx` | 37 |
 | `apps/console/src/__tests__/components/MyContactsPanel.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/NotesField.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/PageDescription.test.tsx` | 3 |
@@ -1650,7 +1650,7 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 24 |
 | `apps/console/src/__tests__/hooks/useAudioPlayback.alaw.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
-| `apps/console/src/__tests__/hooks/useCampaignInsights.test.tsx` | 12 |
+| `apps/console/src/__tests__/hooks/useCampaignInsights.test.tsx` | 13 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
 | `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
@@ -1676,11 +1676,11 @@ Files: `AppHomeRedirect.tsx`, `accounts/AccountsPage.module.css`, `accounts/Acco
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 31 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` | 6 |
-| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 87 |
-| `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 13 |
-| `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 22 |
+| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 90 |
+| `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 14 |
+| `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 14 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 43 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgencyHomeRedirect.test.tsx` | 7 |
@@ -1707,7 +1707,7 @@ Files: `AppHomeRedirect.tsx`, `accounts/AccountsPage.module.css`, `accounts/Acco
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` | 22 |
-| `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 18 |
+| `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 20 |
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
@@ -1827,7 +1827,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/format.test.ts` | 17 |
 | `apps/console/src/__tests__/utils/insightsDrilldowns.test.tsx` | 81 |
-| `apps/console/src/__tests__/utils/insightsHelpers.test.ts` | 20 |
+| `apps/console/src/__tests__/utils/insightsHelpers.test.ts` | 22 |
 | `apps/console/src/__tests__/utils/insightsOverview.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/insightsRange.timezone.test.ts` | 17 |
 | `apps/console/src/__tests__/utils/inviteJoin.test.ts` | 8 |
