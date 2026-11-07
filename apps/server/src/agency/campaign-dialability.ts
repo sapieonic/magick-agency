@@ -73,7 +73,7 @@ export async function dialableCallerIds(campaign: DialabilityCampaign, now = Dat
   const pool = usableCallerIds(campaign as AgencyCampaignRecord);
   const credentialId = campaign.telephony_credential_id;
   if (!credentialId || pool.length === 0) return pool;
-  const key = `${campaign.id}|${credentialId}|${pool.join(',')}`;
+  const key = dialableCacheKey(campaign.id, credentialId, pool);
   const hit = cache.get(key, now);
   if (hit) return hit;
   const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
@@ -84,10 +84,61 @@ export async function dialableCallerIds(campaign: DialabilityCampaign, now = Dat
   return numbers;
 }
 
+function dialableCacheKey(campaignId: string, credentialId: string, pool: readonly string[]): string {
+  return `${campaignId}|${credentialId}|${pool.join(',')}`;
+}
+
 /** The campaign with its caller IDs narrowed to the dialable ones, for a path that reads the row. */
 export async function withDialableCallerIds<T extends DialabilityCampaign>(campaign: T): Promise<T> {
   if (!campaign.telephony_credential_id) return campaign;
   return { ...campaign, caller_ids: await dialableCallerIds(campaign) };
+}
+
+/**
+ * {@link withDialableCallerIds} for many campaigns at once (the soft phone's list of
+ * campaigns to tag a call with), in their order: each answer the cache holds, then one read
+ * per carrier account for the rest, over the union of their pools, each campaign's numbers
+ * filtered from it. The same numbers as one read per campaign: the rule is per number.
+ */
+export async function withDialableCallerIdsAll<T extends DialabilityCampaign>(
+  campaigns: readonly T[],
+  now = Date.now(),
+): Promise<T[]> {
+  const out = [...campaigns];
+  const reads = new Map<string, {
+    tenantId: string; accountId: string; credentialId: string; numbers: Set<string>;
+    campaigns: Array<{ index: number; pool: string[]; key: string }>;
+  }>();
+  campaigns.forEach((campaign, index) => {
+    const credentialId = campaign.telephony_credential_id;
+    if (!credentialId) return;
+    const pool = usableCallerIds(campaign as DialabilityCampaign as AgencyCampaignRecord);
+    const key = dialableCacheKey(campaign.id, credentialId, pool);
+    const known = pool.length === 0 ? pool : cache.get(key, now);
+    if (known) {
+      out[index] = { ...campaign, caller_ids: known };
+      return;
+    }
+    const readKey = `${campaign.tenant_id}|${campaign.account_id}|${credentialId}`;
+    let read = reads.get(readKey);
+    if (!read) {
+      read = { tenantId: campaign.tenant_id, accountId: campaign.account_id, credentialId, numbers: new Set(), campaigns: [] };
+      reads.set(readKey, read);
+    }
+    for (const n of pool) read.numbers.add(n);
+    read.campaigns.push({ index, pool, key });
+  });
+  await Promise.all([...reads.values()].map(async (read) => {
+    const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
+      read.tenantId, read.accountId, read.credentialId, [...read.numbers],
+    ));
+    for (const { index, pool, key } of read.campaigns) {
+      const numbers = pool.filter((n) => allowed.has(n));
+      cache.set(key, numbers, now);
+      out[index] = { ...campaigns[index]!, caller_ids: numbers };
+    }
+  }));
+  return out;
 }
 
 /**

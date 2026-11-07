@@ -43,7 +43,7 @@ import { resolveManualCatalog } from '../../../agency/softphone/manual-dispositi
 import { manualAnalysisProfileId } from '../../../agency/softphone/manual-predial.js';
 import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
-import { withDialableCallerIds } from '../../../agency/campaign-dialability.js';
+import { withDialableCallerIdsAll } from '../../../agency/campaign-dialability.js';
 import { dncEntryScope } from '../../../agency/dnc-registry.js';
 import { dncRepository } from '../../../dnc/dnc.repository.js';
 import { callingWindowState } from '../../../agency/calling-hours.js';
@@ -257,8 +257,8 @@ async function buildBootstrap(
   );
   const now = new Date();
   // Each campaign's caller IDs as a tagged dial will accept them: only those still
-  // dialable on its carrier account (PL13, `withDialableCallerIds`).
-  const dialableTaggable = await Promise.all(taggable.map((c) => withDialableCallerIds(c)));
+  // dialable on its carrier account (PL13), one read per carrier account (`withDialableCallerIdsAll`).
+  const dialableTaggable = await withDialableCallerIdsAll(taggable);
 
   return {
     taggable_campaigns: dialableTaggable.map((c) => taggableCampaign(c, profiles, settings, now)),
