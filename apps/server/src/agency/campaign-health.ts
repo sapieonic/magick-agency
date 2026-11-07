@@ -1,10 +1,13 @@
 import {
   AGENCY_STALL_PRIORITY,
+  CARRIER_ACCOUNT_PAUSE_REASONS,
   type AgencyStall,
   type AgencyStallCode,
   type AgencyCampaignStats,
+  type CarrierAccountPauseReason,
 } from '@magick-agency/contracts/agency';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
+import { usableCallerIds } from './pacing/caller-id-pool.js';
 
 /**
  * ─── THE CAMPAIGN HEALTH STRIP — THE ASSEMBLER ──────────────────────────────
@@ -83,6 +86,25 @@ export interface CampaignHealthInputs {
   recentFailures: { attempts: number; failed: number; windowMinutes: number };
   /** Break codes to counts, for the "5 on break (Lunch)" breakdown. */
   onBreakByReason: Record<string, number>;
+  /**
+   * How many of the campaign's caller IDs are still dialable on its carrier account
+   * (`dialableCallerIds`, PL13), read for a running campaign on a tenant's own account
+   * only; `null` when not read or the read failed (never a guess of zero).
+   */
+  dialableCallerIds: number | null;
+  /**
+   * Whether the account's per-carrier concurrency gives the campaign's carrier no lines
+   * (`carrierCapacityMissing`, PL14), read for a running campaign; `null` when not read or
+   * the read failed.
+   */
+  carrierCapacityMissing: boolean | null;
+}
+
+/** Whether a stored pause reason is one the dialler made because the carrier account cannot dial. */
+function carrierAccountPause(reason: string | null | undefined): CarrierAccountPauseReason | null {
+  return (CARRIER_ACCOUNT_PAUSE_REASONS as readonly string[]).includes(reason ?? '')
+    ? reason as CarrierAccountPauseReason
+    : null;
 }
 
 /**
@@ -137,6 +159,30 @@ export function diagnoseAll(input: CampaignHealthInputs): AgencyStall[] {
       ceiling_pct: campaign.abandonment_ceiling_pct,
       paused_at: (campaign.paused_at ?? new Date()).toISOString(),
     });
+  }
+
+  // 1a — the dialler's other automatic pauses: its carrier account cannot dial. Any
+  // reason on the shared list, so a new one needs only the console's copy for it.
+  const carrierPause = carrierAccountPause(campaign.pause_reason);
+  if (carrierPause) {
+    found.set('auto_paused_carrier', {
+      code: 'auto_paused_carrier',
+      reason: carrierPause,
+      paused_at: (campaign.paused_at ?? new Date()).toISOString(),
+    });
+  }
+
+  // 1b, 1c — running and dialling nothing for its carrier account: no caller ID left on
+  // it (PL13), or no lines for its carrier (PL14). No staffing fixes either.
+  if (campaign.status === 'running' && input.dialableCallerIds === 0) {
+    // An empty stored pool is the pacing guard's own case, not this one.
+    const stored = usableCallerIds(campaign).length;
+    if (stored > 0) {
+      found.set('no_dialable_caller_ids', { code: 'no_dialable_caller_ids', caller_ids_stored: stored });
+    }
+  }
+  if (campaign.status === 'running' && input.carrierCapacityMissing === true) {
+    found.set('no_carrier_capacity', { code: 'no_carrier_capacity' });
   }
 
   // 2 — fails CLOSED, and the supervisor must be told loudly. A campaign that has

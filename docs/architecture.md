@@ -556,7 +556,13 @@ every account the caller belongs to (CH2) where every internal handler is single
     numbers still active on the credential and available to the account (PL13; cached 15 s,
     cleared by a sync, retire, delete or unassign); a service-account campaign is not read.
     Start and resume also answer 409 `carrier_capacity_unallocated` when the account splits its
-    concurrency by carrier and gives the campaign's carrier no lines (PL14), any carrier. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
+    concurrency by carrier and gives the campaign's carrier no lines (PL14), any carrier.
+    The campaign health strip (`agency/campaign-health.ts`) names an automatic carrier pause
+    (`auto_paused_carrier`, any reason on the contract's `CARRIER_ACCOUNT_PAUSE_REASONS`, the
+    console's copy a table keyed by it, so a new pause reason needs only its sentence) and, for
+    a running campaign, `no_dialable_caller_ids` (PL13) and `no_carrier_capacity` (PL14), ranked
+    right after the abandonment pause; the advice says "contact support", since the service's
+    super-admins, not the tenant's, fix a carrier account. The console's carrier choice reads `GET /proxy/agency/carriers` (the service's
     carrier plus the tenant's active credentials). A soft-phone call takes its tag's carrier
     account, or untagged the account of the chosen caller ID's number.
   - *Numbers.* `TelephonyCredentialService.syncNumbers` (super-admin "Sync numbers", `POST

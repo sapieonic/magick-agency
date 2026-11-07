@@ -1,4 +1,5 @@
 import type { AgencyStall, AgencyStallCode } from '../types/agency-campaign';
+import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency';
 import { formatCount, pct, plural } from './format/number';
 import { ceilingPctText } from './agency/abandonmentCeiling';
 
@@ -33,6 +34,9 @@ import { ceilingPctText } from './agency/abandonmentCeiling';
  */
 export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
   'auto_paused_abandonment',
+  'auto_paused_carrier',
+  'no_dialable_caller_ids',
+  'no_carrier_capacity',
   'dnc_unavailable',
   'no_agents_available',
   'concurrency_saturated',
@@ -46,6 +50,9 @@ export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
 /** Short names for the "more issues" disclosure. One line each, no evidence. */
 export const AGENCY_STALL_LABELS: Record<AgencyStallCode, string> = {
   auto_paused_abandonment: 'Paused by the abandonment limit',
+  auto_paused_carrier: 'Paused: the carrier account cannot place calls',
+  no_dialable_caller_ids: 'No caller ID available on the carrier account',
+  no_carrier_capacity: 'No call capacity on this carrier',
   dnc_unavailable: 'Do Not Call check unavailable',
   no_agents_available: 'No agents available',
   concurrency_saturated: 'At the concurrency limit',
@@ -156,6 +163,31 @@ function breakClause(byReason: Record<string, number>): string | null {
 }
 
 /**
+ * What an automatic carrier-account pause says on the strip, by its reason (decisions PL2,
+ * PL3). Keyed by the contract's `CarrierAccountPauseReason`, so a new automatic carrier
+ * pause fails the typecheck until it has its sentence here, and that is all it needs.
+ *
+ * Who can fix a carrier account is the service's support, not the workspace's own
+ * administrators: the advice says "contact support".
+ */
+export const CARRIER_PAUSE_STALL_COPY: Record<CarrierAccountPauseReason, { headline: string; advice: string }> = {
+  carrier_auth: {
+    headline: 'Paused automatically — the carrier refused this campaign’s carrier account.',
+    advice: 'Contact support to check the carrier account’s credentials, then resume the campaign.',
+  },
+  carrier_account_unavailable: {
+    headline: 'Paused automatically — this campaign’s carrier account is no longer active.',
+    advice: 'Contact support to re-enable the carrier account, or move the campaign to another carrier in its settings, then resume it.',
+  },
+};
+
+/** For a reason this build has no sentence for (a newer server): still true, still actionable. */
+const CARRIER_PAUSE_FALLBACK = {
+  headline: 'Paused automatically — this campaign’s carrier account cannot place calls.',
+  advice: 'Contact support about the campaign’s carrier account, then resume the campaign.',
+};
+
+/**
  * The diagnosis for one stall, derived only from that arm's own evidence.
  *
  * `formatInstant` is injected rather than imported so the caller owns the
@@ -184,6 +216,36 @@ export function stallCopy(
         advice: 'Get more agents on shift before resuming, or the guardrail will pause it again.',
       });
     }
+
+    case 'auto_paused_carrier': {
+      const pausedAt = formatInstant(stall.paused_at);
+      const copy = (CARRIER_PAUSE_STALL_COPY as Partial<Record<string, { headline: string; advice: string }>>)[stall.reason]
+        ?? CARRIER_PAUSE_FALLBACK;
+      return diagnosis({
+        headline: copy.headline,
+        facts: [{ text: `Paused at ${pausedAt}. No calls are placed until it is resumed.`, emphasis: pausedAt }],
+        advice: copy.advice,
+      });
+    }
+
+    case 'no_dialable_caller_ids':
+      return diagnosis({
+        headline: 'Not dialling — none of this campaign’s caller IDs is available on its carrier account any more.',
+        facts: [
+          {
+            text: `${count(stall.caller_ids_stored, 'caller ID')} chosen, none still available.`,
+            emphasis: num(stall.caller_ids_stored),
+          },
+        ],
+        advice: 'Choose numbers that are still available in the campaign’s settings, or contact support if numbers are missing.',
+      });
+
+    case 'no_carrier_capacity':
+      return diagnosis({
+        headline: 'Not dialling — this account has no call capacity on the campaign’s carrier.',
+        facts: [{ text: 'Every call on this carrier is refused until capacity is added.' }],
+        advice: 'Contact support to add capacity for this carrier, or move the campaign to another carrier in its settings.',
+      });
 
     case 'dnc_unavailable':
       return diagnosis({

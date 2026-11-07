@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   AGENCY_STALL_LABELS,
   AGENCY_STALL_PRIORITY,
+  CARRIER_PAUSE_STALL_COPY,
   sortStallCodes,
   splitFact,
   stallCopy,
 } from '../../utils/agencyHealthStrip';
+import { AGENCY_STALL_PRIORITY as CONTRACT_STALL_PRIORITY, CARRIER_ACCOUNT_PAUSE_REASONS } from '@magick-agency/contracts/agency';
 import type { AgencyStall, AgencyStallCode } from '../../types/agency-campaign';
 
 /**
@@ -28,6 +30,9 @@ describe('stall priority', () => {
     // quietly change which diagnosis a supervisor sees.
     expect([...AGENCY_STALL_PRIORITY]).toEqual([
       'auto_paused_abandonment',
+      'auto_paused_carrier',
+      'no_dialable_caller_ids',
+      'no_carrier_capacity',
       'dnc_unavailable',
       'no_agents_available',
       'concurrency_saturated',
@@ -36,6 +41,10 @@ describe('stall priority', () => {
       // There is no `credits_low` stall code: agency has no credits.
       'elevated_failure_rate',
     ]);
+  });
+
+  it('agrees with the contract’s own list', () => {
+    expect([...AGENCY_STALL_PRIORITY]).toEqual([...CONTRACT_STALL_PRIORITY]);
   });
 
   it('labels every code, so a disclosure can never render an empty line', () => {
@@ -75,6 +84,44 @@ describe('sortStallCodes', () => {
     const input: AgencyStallCode[] = ['elevated_failure_rate', 'dnc_unavailable'];
     sortStallCodes(input);
     expect(input).toEqual(['elevated_failure_rate', 'dnc_unavailable']);
+  });
+});
+
+describe('stallCopy — the carrier-account diagnoses', () => {
+  const VENDOR = /plivo|voicelink|vobiz/i;
+
+  it.each(CARRIER_ACCOUNT_PAUSE_REASONS)('an automatic `%s` pause says what happened, when, and to contact support', (reason) => {
+    const copy = stallCopy({ code: 'auto_paused_carrier', reason, paused_at: '2026-11-04T09:00:00.000Z' }, at);
+    expect(copy.headline).toBe(CARRIER_PAUSE_STALL_COPY[reason].headline);
+    expect(copy.headline).toMatch(/^Paused automatically/);
+    expect(copy.evidence).toContain('«2026-11-04T09:00:00.000Z»');
+    expect(copy.advice).toMatch(/Contact support/);
+    // Support fixes a carrier account, not the workspace's own administrators.
+    expect(`${copy.headline} ${copy.advice}`).not.toMatch(/administrator/i);
+    expect(`${copy.headline} ${copy.evidence} ${copy.advice}`).not.toMatch(VENDOR);
+  });
+
+  it('a reason this build has no sentence for still says it is the carrier account, and what to do', () => {
+    const copy = stallCopy(
+      { code: 'auto_paused_carrier', reason: 'carrier_from_the_future' as never, paused_at: '2026-11-04T09:00:00.000Z' }, at,
+    );
+    expect(copy.headline).toMatch(/carrier account cannot place calls/);
+    expect(copy.advice).toMatch(/Contact support/);
+  });
+
+  it('no_dialable_caller_ids counts the stored pool and says how to fix it', () => {
+    const copy = stallCopy({ code: 'no_dialable_caller_ids', caller_ids_stored: 3 }, at);
+    expect(copy.headline).toMatch(/none of this campaign’s caller IDs is available/);
+    expect(copy.evidence).toBe('3 caller IDs chosen, none still available.');
+    expect(copy.advice).toMatch(/campaign’s settings.*contact support/);
+    expect(`${copy.headline} ${copy.advice}`).not.toMatch(VENDOR);
+  });
+
+  it('no_carrier_capacity names support as the fix', () => {
+    const copy = stallCopy({ code: 'no_carrier_capacity' }, at);
+    expect(copy.headline).toMatch(/no call capacity on the campaign’s carrier/);
+    expect(copy.advice).toMatch(/^Contact support to add capacity for this carrier/);
+    expect(`${copy.headline} ${copy.advice}`).not.toMatch(/administrator/i);
   });
 });
 
