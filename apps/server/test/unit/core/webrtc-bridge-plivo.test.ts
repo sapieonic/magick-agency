@@ -359,6 +359,24 @@ describe('a Plivo teardown reaches the carrier by the right id, and never an emp
     expect(registry.getForCredentialId).toHaveBeenLastCalledWith('plivo', 'cred-1', 'call_control', 'tenant-a');
   });
 
+  it('a second answer callback for a live call (Plivo fetching answer_url again, a new nonce) is idempotent: the same plan, one answer', async () => {
+    // Plivo fetches answer_url once per answered call; a second fetch means the first reply did
+    // not reach it (a timeout on its side), so it is given the same stream XML again rather than
+    // a hangup that would cut a live customer off. The answer is anchored and announced once.
+    // (A REPLAY of the same signed request, the same nonce, is refused at the route.)
+    const mgr = await dial();
+    const answer = plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1', RequestUUID: 'req-1' });
+    const first = await mgr.answerCarrierCall(CALL_ID, answer, 'plivo');
+    const answeredAt = mgr.getSession(CALL_ID)!.answeredAt;
+    const second = await mgr.answerCarrierCall(CALL_ID, plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
+    expect(first).not.toBeNull();
+    expect(second).toEqual(first);
+    expect(mgr.getSession(CALL_ID)!.answeredAt).toBe(answeredAt);
+    expect(lifecycle.filter((e) => e.phase === 'answered')).toHaveLength(1);
+    expect(plivoAdapter.endCall).not.toHaveBeenCalled();
+    expect(mockRepo.update).not.toHaveBeenCalledWith(CALL_ID, expect.objectContaining({ ended_at: expect.anything() }));
+  });
+
   it('after the answer: hangs up by Plivo`s call id from the answer callback, and cancels nothing', async () => {
     const mgr = await dial();
     const plan = await mgr.answerCarrierCall(CALL_ID, plivoEvent('answer', { CallStatus: 'in-progress', CallUUID: 'uuid-1', RequestUUID: 'req-1' }), 'plivo');
