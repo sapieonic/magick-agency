@@ -134,8 +134,12 @@ describe('phoneNumberRepository.syncForCredential (integration)', () => {
     await phoneNumberRepository.syncForCredential(cred, listed('+14155550001', '+14155550002'), admin);
     const result = await phoneNumberRepository.syncForCredential(cred, [], admin);
     expect(result).toMatchObject({ retired: ['+14155550001', '+14155550002'], active: 0 });
-    const { rows } = await getTestPool().query<{ n: number }>('SELECT count(*)::int AS n FROM phone_numbers');
-    expect(rows[0]!.n).toBe(2);
+    const { rows } = await getTestPool().query<{ phone_number: string; status: string }>(
+      'SELECT phone_number, status FROM phone_numbers ORDER BY phone_number');
+    expect(rows).toEqual([
+      { phone_number: '+14155550001', status: 'retired' },
+      { phone_number: '+14155550002', status: 'retired' },
+    ]);
   });
 
   it('a number already in the inventory elsewhere is refused, never taken over: another credential, another tenant, or the service account', async () => {
