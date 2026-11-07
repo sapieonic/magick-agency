@@ -52,6 +52,14 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     defaultNumber: '+912200000001',
   }),
 }));
+// One carrier account (the service's own): the carrier choice stays hidden here; its
+// cases are in `AgencyCampaignSettingsPage.carrier.test.tsx`.
+vi.mock('../../hooks/useAgencyCarriers', () => ({
+  useAgencyCarriers: () => ({
+    carriers: [{ telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' }],
+    error: null,
+  }),
+}));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
 }));
@@ -422,7 +430,7 @@ describe('campaign settings — caller IDs', () => {
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
   });
 
-  it('sends the pool AND pins the provider to voicelink', async () => {
+  it('sends the pool AND pins a campaign that names no carrier to the service’s own account', async () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
@@ -430,9 +438,13 @@ describe('campaign settings — caller IDs', () => {
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     const [, body] = mocks.updateAgencyCampaign.mock.calls[0]!;
     expect(body.caller_ids).toEqual(['+912200000001']);
-    // The server's column defaults to 'vobiz', so an omitted provider would point a
-    // VoiceLink pool at the wrong carrier.
+    // An older record names no carrier: the save pins the pool to the service's own
+    // account explicitly, carrier AND credential (none), so the pool and the carrier
+    // it is dialled on cannot disagree.
     expect(body.telephony_provider).toBe('voicelink');
+    expect(body.telephony_credential_id).toBeNull();
+    // With one carrier account there is nothing to choose.
+    expect(screen.queryByLabelText(/^Carrier/)).toBeNull();
   });
 
   it('loads the campaign’s existing pool as selected', async () => {

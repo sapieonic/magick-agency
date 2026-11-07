@@ -64,4 +64,5 @@ export const SA_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'POST', path: '/super-admin/telephony-credentials/:id/disable' },
   { method: 'POST', path: '/super-admin/telephony-credentials/:id/enable' },
   { method: 'POST', path: '/super-admin/telephony-credentials/:id/revoke' },
+  { method: 'POST', path: '/super-admin/telephony-credentials/:id/sync-numbers' },
 ];

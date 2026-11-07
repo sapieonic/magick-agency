@@ -1,9 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyRound, Plus, RefreshCw, ShieldCheck, Pencil, Ban, RotateCcw, Trash2 } from 'lucide-react';
+import { KeyRound, Plus, RefreshCw, ShieldCheck, Pencil, Ban, RotateCcw, Trash2, PhoneIncoming } from 'lucide-react';
 import type {
   TelephonyCredential,
+  TelephonyCredentialNumberSync,
   TelephonyCredentialProvider,
   TelephonyCredentialUsage,
+  TelephonyNumberSyncConflictReason,
+  TelephonyNumberSyncSkipReason,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import {
   createTelephonyCredential,
@@ -16,6 +19,7 @@ import {
   disableTelephonyCredential,
   enableTelephonyCredential,
   revokeTelephonyCredential,
+  syncTelephonyCredentialNumbers,
 } from '../../api/super-admin';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
@@ -49,6 +53,39 @@ const ACTIONS: Record<CredentialAction, (id: string) => Promise<TelephonyCredent
 };
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-IN') : '—');
+
+/** Why a number the carrier listed was not taken at all. */
+const SKIP_REASON: Record<TelephonyNumberSyncSkipReason, string> = {
+  not_voice: 'cannot carry voice calls',
+  invalid_number: 'not a valid phone number',
+};
+
+/** Why a listed voice number was not taken into this credential's inventory. */
+const CONFLICT_REASON: Record<TelephonyNumberSyncConflictReason, string> = {
+  registered_elsewhere: 'already in the inventory on another carrier account, or on the service’s own; never taken over',
+  deleted: 'deleted from the inventory; a sync does not bring it back',
+};
+
+/**
+ * The sync refusals an operator can act on, by code. Anything else shows the server's
+ * message (`err.message`), which already reads as a sentence.
+ */
+const SYNC_REFUSAL: Record<string, string> = {
+  credential_not_active: 'Only an active credential can sync its numbers. Enable or verify it first, then sync again.',
+  too_many_numbers: 'The carrier account lists more numbers than one sync can read, so nothing was changed.',
+  carrier_rejected: 'The carrier refused the stored credentials. Nothing was changed. Verify or rotate the secret, then sync again.',
+  carrier_unreachable: 'The carrier could not be reached. Nothing was changed. Try again shortly.',
+};
+
+function syncRefusal(err: unknown): string {
+  const details = (err as { details?: unknown } | null)?.details;
+  const code = details && typeof details === 'object' ? (details as { error?: unknown }).error : undefined;
+  if (typeof code === 'string' && Object.hasOwn(SYNC_REFUSAL, code)) return SYNC_REFUSAL[code]!;
+  return err instanceof Error && err.message ? err.message : 'Failed to sync numbers';
+}
+
+/** One sync's outcome, under the credential it ran for. */
+type SyncOutcome = { id: string } & ({ result: TelephonyCredentialNumberSync } | { error: string });
 
 export default function SATelephonyCredentialsPage() {
   const { tenants, loading: tenantsLoading } = useSuperAdminTenants();
@@ -84,6 +121,7 @@ export default function SATelephonyCredentialsPage() {
   // Status actions
   const [confirm, setConfirm] = useState<{ cred: TelephonyCredential; action: CredentialAction } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [sync, setSync] = useState<SyncOutcome | null>(null);
 
   // Only the latest load may write: changing a filter while a load is in flight must
   // not let the slower, superseded answer land last and show the wrong rows.
@@ -224,6 +262,20 @@ export default function SATelephonyCredentialsPage() {
     }
   };
 
+  const runSync = async (cred: TelephonyCredential) => {
+    setBusyId(cred.id);
+    setSync(null);
+    try {
+      const res = await syncTelephonyCredentialNumbers(cred.id);
+      replaceRow(res.credential);
+      setSync({ id: cred.id, result: res.sync });
+    } catch (err) {
+      setSync({ id: cred.id, error: syncRefusal(err) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const createProvider = providerOf(createForm.provider);
   const rotateProvider = rotateTarget ? providerOf(rotateTarget.provider) : undefined;
 
@@ -326,6 +378,11 @@ export default function SATelephonyCredentialsPage() {
                           <button className="btn-secondary" disabled={busyId === c.id} onClick={() => void runAction(c, 'verify')}>
                             <ShieldCheck size={14} /> Verify now
                           </button>
+                          {c.status === 'active' && (
+                            <button className="btn-secondary" disabled={busyId === c.id} onClick={() => void runSync(c)}>
+                              <PhoneIncoming size={14} /> {busyId === c.id ? 'Syncing…' : 'Sync numbers'}
+                            </button>
+                          )}
                           <button className="btn-secondary" onClick={() => { setRotateTarget(c); setRotateFields({}); setModalError(null); }}>
                             <RefreshCw size={14} /> Rotate secret
                           </button>
@@ -346,6 +403,7 @@ export default function SATelephonyCredentialsPage() {
                           </button>
                         </div>
                       )}
+                      {sync?.id === c.id && <SyncSummary outcome={sync} />}
                     </td>
                   </tr>
                 )}
@@ -498,6 +556,60 @@ export default function SATelephonyCredentialsPage() {
         onConfirm={() => { if (confirm) void runAction(confirm.cred, confirm.action); }}
         onCancel={() => setConfirm(null)}
       />
+    </div>
+  );
+}
+
+/** What one "Sync numbers" did, or why it did nothing. */
+function SyncSummary({ outcome }: { outcome: SyncOutcome }) {
+  if ('error' in outcome) {
+    return <div className={`${styles.error} ${styles.syncResult}`} role="alert" data-testid="sync-error">{outcome.error}</div>;
+  }
+  const r = outcome.result;
+  const lists: Array<[string, string[]]> = [
+    ['Added', r.added],
+    ['Reactivated', r.reactivated],
+    ['Retired', r.retired],
+  ];
+  return (
+    <div className={styles.syncResult} role="status" data-testid="sync-result">
+      <p className={styles.syncHeadline}>
+        {`Synced. ${r.active_numbers} active ${r.active_numbers === 1 ? 'number' : 'numbers'} on this account `
+          + `(the carrier listed ${r.listed}): ${r.added.length} added, ${r.reactivated.length} reactivated, `
+          + `${r.retired.length} retired, ${r.unchanged.length} unchanged.`}
+      </p>
+      <dl className={styles.syncLists}>
+        {lists.filter(([, numbers]) => numbers.length > 0).map(([title, numbers]) => (
+          <div key={title} className={styles.detailItem}>
+            <dt>{title}</dt>
+            <dd className={styles.mono}>{numbers.join(', ')}</dd>
+          </div>
+        ))}
+        {r.skipped.length > 0 && (
+          <div className={styles.detailItem}>
+            <dt>Skipped</dt>
+            <dd>
+              <ul className={styles.syncReasons}>
+                {r.skipped.map((s) => (
+                  <li key={`skip-${s.number}`}><span className={styles.mono}>{s.number}</span>: {SKIP_REASON[s.reason] ?? s.reason}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        )}
+        {r.conflicts.length > 0 && (
+          <div className={styles.detailItem}>
+            <dt>Conflicts</dt>
+            <dd>
+              <ul className={styles.syncReasons}>
+                {r.conflicts.map((c) => (
+                  <li key={`conflict-${c.phone_number}`}><span className={styles.mono}>{c.phone_number}</span>: {CONFLICT_REASON[c.reason] ?? c.reason}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        )}
+      </dl>
     </div>
   );
 }

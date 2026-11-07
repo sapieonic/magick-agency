@@ -151,6 +151,15 @@ describe('paused', () => {
     expect(kpi('kpi-paused-by')).toContain('Abandonment reached 3.4% (ceiling 3%)');
     expect(screen.getByTestId('headline-paused').textContent).not.toContain('fallen due since the pause');
   });
+
+  it('says the carrier refused the account’s credentials, and who can fix it', () => {
+    const s = summary('paused');
+    s.headline.paused = { ...s.headline.paused!, reason: 'carrier_auth', actor: null, abandonment_rate_pct_at_pause: null, callbacks_missed_while_paused: 0 };
+    renderHeadline(s);
+    expect(kpi('kpi-paused-by')).toContain('The carrier');
+    expect(kpi('kpi-paused-by')).toContain('Paused: the carrier refused this account’s credentials. Ask your administrator to check them.');
+    expect(kpi('kpi-paused-by')).not.toContain('Supervisor pause');
+  });
 });
 
 describe('stopping', () => {

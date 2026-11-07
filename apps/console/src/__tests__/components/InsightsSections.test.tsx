@@ -327,6 +327,21 @@ describe('the settings panel', () => {
     const row = screen.getByText('Abandonment ceiling').closest('div') as HTMLElement;
     expect(row.textContent).toBe('Abandonment ceiling7.25%');
   });
+
+  it('says a carrier_auth pause was the carrier refusing the account, not a person', () => {
+    const base = summary();
+    show(<CampaignSettingsPanel summary={{
+      ...base,
+      transitions: [
+        { to_status: 'paused', at: '2026-11-04T08:00:00.000Z', actor: null, reason: 'abandonment_ceiling' },
+        { to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_auth' },
+      ],
+    }} />);
+    const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
+    expect(items[0]).toMatch(/by the abandonment guardrail$/);
+    expect(items[1]).toMatch(/automatically: the carrier refused this account’s credentials\. Ask your administrator to check them\.$/);
+    expect(items[1]).not.toMatch(/by the dialler/);
+  });
 });
 
 describe('health and compliance', () => {

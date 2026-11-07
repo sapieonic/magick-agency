@@ -8,6 +8,7 @@ import { useModalFocus } from '../../hooks/useModalFocus';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CallerIdPicker } from '../../pages/agency/CallerIdPicker';
+import { carrierOfCampaign } from '../../utils/agencyCarriers';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from './HoldToConfirmButton';
 import {
   defaultRetryName,
@@ -559,7 +560,14 @@ export function AgencyRetryDialog({
               </span>
             </summary>
             <div className={styles.overridesBody}>
-              <CallerIdPicker selected={callerIds} onChange={setCallerIds} disabled={submitting} />
+              {/* The retry dials on the parent's carrier account (it inherits it), so
+                  only that account's numbers can override its caller IDs. */}
+              <CallerIdPicker
+                selected={callerIds}
+                onChange={setCallerIds}
+                carrier={carrierOfCampaign(campaign)}
+                disabled={submitting}
+              />
               <div className={styles.windowRow}>
                 <div className={styles.field}>
                   <label className={styles.label} htmlFor="retry-window-start">

@@ -210,7 +210,12 @@ describe('the abandonment limit on a draft created by the roster upload', () => 
     ['an out-of-range value', '15'],
   ])('leaves it off the create for %s, so the server default applies', async (_label, typed) => {
     const body = await importWithCeiling(() => fireEvent.change(box(), { target: { value: typed } }));
-    expect(body).toEqual({ name: 'Collections', caller_ids: ['+912200000001'], telephony_provider: 'voicelink' });
+    expect(body).toEqual({
+      name: 'Collections',
+      caller_ids: ['+912200000001'],
+      telephony_provider: 'voicelink',
+      telephony_credential_id: null,
+    });
   });
 });
 

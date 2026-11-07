@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import type { AgencyInsightsSummary } from '../../../../types/agency-insights';
+import type { AgencyInsightsSummary, AgencyInsightsTransition } from '../../../../types/agency-insights';
 import { formatCount } from '../../../../utils/format/number';
 import { ceilingPctText } from '../../../../utils/agency/abandonmentCeiling';
 import { describeIsoDays, hhmm } from '../../../../utils/format/weekdays';
@@ -7,6 +7,7 @@ import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../util
 import { settingsLink } from '../../../../utils/agency/insights/links';
 import { Panel } from './InsightsParts';
 import styles from './Insights.module.css';
+import { CARRIER_AUTH_PAUSE_REASON } from '../../../../utils/agencyCarriers';
 
 const STATUS_WORDS: Record<string, string> = {
   draft: 'Created',
@@ -76,7 +77,7 @@ export function CampaignSettingsPanel({ summary }: { summary: AgencyInsightsSumm
           <ol className={styles.callouts} data-testid="insights-transitions">
             {summary.transitions.map((t) => (
               <li key={`${t.to_status}-${t.at}`} className={styles.callout}>
-                {`${STATUS_WORDS[t.to_status] ?? t.to_status} ${formatZoned(t.at, zone)} by ${t.reason === 'abandonment_ceiling' ? 'the abandonment guardrail' : actorName(t.actor, 'the dialler')}`}
+                {`${STATUS_WORDS[t.to_status] ?? t.to_status} ${formatZoned(t.at, zone)} ${transitionBy(t)}`}
               </li>
             ))}
           </ol>
@@ -84,4 +85,14 @@ export function CampaignSettingsPanel({ summary }: { summary: AgencyInsightsSumm
       ) : null}
     </Panel>
   );
+}
+
+/** Who or what made a lifecycle transition, as the end of "Paused 7 Nov, 10:00 …". */
+function transitionBy(t: AgencyInsightsTransition): string {
+  if (t.reason === 'abandonment_ceiling') return 'by the abandonment guardrail';
+  // Nobody pressed Pause: the dialler stopped because the carrier refused the account.
+  if (t.reason === CARRIER_AUTH_PAUSE_REASON) {
+    return 'automatically: the carrier refused this account’s credentials. Ask your administrator to check them.';
+  }
+  return `by ${actorName(t.actor, 'the dialler')}`;
 }

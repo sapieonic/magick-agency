@@ -46,7 +46,17 @@ import {
   type CampaignRecordingState,
 } from '../../utils/agencyCampaignRecording';
 import { CampaignBehaviourSection } from '../campaigns/agency/CampaignBehaviourSection';
-import { CallerIdPicker, AGENCY_TELEPHONY_PROVIDER } from './CallerIdPicker';
+import { CallerIdPicker } from './CallerIdPicker';
+import { CampaignCarrierField } from '../../components/agency/CampaignCarrierField';
+import { useAgencyCarriers } from '../../hooks/useAgencyCarriers';
+import {
+  SERVICE_CARRIER,
+  carrierOfCampaign,
+  carrierOptions,
+  carrierRefusal,
+  sameCarrier,
+  type CarrierChoice,
+} from '../../utils/agencyCarriers';
 import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
@@ -82,6 +92,8 @@ export function AgencyCampaignSettingsPage() {
   const [config, setConfig] = useState<CampaignConfigState | null>(null);
   const [name, setName] = useState('');
   const [callerIds, setCallerIds] = useState<string[]>([]);
+  /** The carrier account the form holds; seeded from the campaign on load and save. */
+  const [carrier, setCarrier] = useState<CarrierChoice>(SERVICE_CARRIER);
   const [recording, setRecording] = useState<CampaignRecordingState | null>(null);
   /**
    * Analytics-only: the disposition order as of the last load/save, to detect
@@ -107,6 +119,9 @@ export function AgencyCampaignSettingsPage() {
   // Contact assignment's settings and outcome overrides: shown and sent only while
   // the flag is on (the server refuses a non-default value with it off).
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
+  // The carriers list needs the same permission as the save that sends its values, so a
+  // read-only viewer never asks; the picker then filters by the campaign's own carrier.
+  const { carriers } = useAgencyCarriers({ enabled: canEdit });
 
   // L1 (UX) gating only — the server's 403 is the real enforcement, and
   // `useGovernance` fails OPEN, so a missing/failed map leaves both controls
@@ -148,6 +163,7 @@ export function AgencyCampaignSettingsPage() {
       dispositionOrderRef.current = loaded.dispositions.map((d) => d.code);
       setName(record.name);
       setCallerIds(record.caller_ids ?? []);
+      setCarrier(carrierOfCampaign(record));
       setRecording(recordingStateFromCampaign(record));
       setAssignmentResetPending(false);
     } catch (err: unknown) {
@@ -209,6 +225,16 @@ export function AgencyCampaignSettingsPage() {
     const assignmentScope: AssignmentPayloadScope = !assignmentEnabled && !assignmentResetPending
       ? 'none'
       : modeLocked ? 'settings_only' : 'all';
+    /*
+      The carrier account is sent only when it moves, or when the stored record names
+      none (an older campaign, pinned to the service's own account as before). Naming it
+      makes the server re-check the account, so a campaign whose account was disabled
+      after it was set up could otherwise not have its calling window fixed until it was
+      moved. Moving back to the service's account sends `telephony_credential_id: null`
+      with the carrier, in the same PATCH.
+    */
+    const sendCarrier = !campaign?.telephony_provider
+      || !sameCarrier(carrier, carrierOfCampaign(campaign));
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -225,7 +251,12 @@ export function AgencyCampaignSettingsPage() {
           ...recordingFields,
           name: name.trim(),
           caller_ids: callerIds,
-          telephony_provider: AGENCY_TELEPHONY_PROVIDER,
+          ...(sendCarrier
+            ? {
+              telephony_provider: carrier.telephony_provider,
+              telephony_credential_id: carrier.telephony_credential_id,
+            }
+            : {}),
         },
         tenantId ?? undefined,
         accountId ?? undefined,
@@ -250,6 +281,7 @@ export function AgencyCampaignSettingsPage() {
       dispositionOrderRef.current = reseeded.dispositions.map((d) => d.code);
       setName(updated.name);
       setCallerIds(updated.caller_ids ?? []);
+      setCarrier(carrierOfCampaign(updated));
       setRecording(recordingStateFromCampaign(updated));
       setAssignmentResetPending(false);
       showToast('Campaign settings saved.', 'success');
@@ -282,6 +314,11 @@ export function AgencyCampaignSettingsPage() {
         setSaveError(refusal);
         return;
       }
+      const carrierRefused = carrierRefusal(err);
+      if (carrierRefused !== null) {
+        setSaveError(carrierRefused);
+        return;
+      }
       // The campaign started between the load and the save, so its mode is locked
       // now. Said on the field rather than as a bare 409; the operator's other
       // edits stay on screen.
@@ -298,8 +335,8 @@ export function AgencyCampaignSettingsPage() {
       setSaving(false);
     }
   }, [
-    id, config, name, callerIds, recording, recordingEnabled, analyticsEnabled,
-    tenantId, accountId, showToast, assignmentEnabled, campaign?.status, assignmentResetPending,
+    id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
+    tenantId, accountId, showToast, assignmentEnabled, campaign, assignmentResetPending,
   ]);
 
   if (loading) return <LoadingSpinner />;
@@ -317,6 +354,11 @@ export function AgencyCampaignSettingsPage() {
   const modeResetBlocked = assignmentModeLocked(campaign.status)
     && (campaign.assignment_mode ?? 'pool') !== 'pool';
   const isLive = campaign.status === 'running' || campaign.status === 'stopping';
+  // Every listed carrier account, plus the campaign's own when the list no longer has
+  // it (disabled or revoked): shown as it is rather than silently swapped on save.
+  // Offered only when there is a choice to make.
+  const carrierChoices = carriers ? carrierOptions(carriers, carrierOfCampaign(campaign)) : [];
+  const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
 
   const summaryGate = analysisGate({ enabled: analyticsEnabled, current: recording.profileId });
   const storedProfileId = resolveProfileId(recording.profileId);
@@ -395,11 +437,25 @@ export function AgencyCampaignSettingsPage() {
       </div>
 
       <div className={styles.basics}>
+        {canEdit && carrierChoices.length > 1 && (
+          <CampaignCarrierField
+            options={carrierChoices}
+            value={carrier}
+            onChange={setCarrier}
+            error={fieldErrors['telephony_credential_id'] ?? fieldErrors['telephony_provider']}
+          />
+        )}
         <div className="form-group">
           <label htmlFor="campaign-caller-ids">
             Caller IDs<span className="required-star">*</span>
           </label>
-          <CallerIdPicker selected={callerIds} onChange={setCallerIds} disabled={!canEdit} />
+          <CallerIdPicker
+            selected={callerIds}
+            onChange={setCallerIds}
+            carrier={carrier}
+            carrierLabel={carrierLabel}
+            disabled={!canEdit}
+          />
           {fieldErrors['caller_ids'] && (
             <p className={styles.fieldError}>{fieldErrors['caller_ids']}</p>
           )}

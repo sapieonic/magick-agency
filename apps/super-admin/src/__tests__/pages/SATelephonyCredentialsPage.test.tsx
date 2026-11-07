@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   disableTelephonyCredential: vi.fn(),
   enableTelephonyCredential: vi.fn(),
   revokeTelephonyCredential: vi.fn(),
+  syncTelephonyCredentialNumbers: vi.fn(),
   listTenants: vi.fn(),
 }));
 
@@ -164,5 +165,78 @@ describe('SATelephonyCredentialsPage', () => {
     render(<SATelephonyCredentialsPage />);
     expect(await screen.findByText(/no credential keyring/i)).toBeTruthy();
     expect((screen.getByRole('button', { name: /add credential/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('Sync numbers', () => {
+  /** Shaped like the `SuperAdminApiError` `saFetch` throws. */
+  function saError(statusCode: number, code: string, message = 'server words') {
+    return Object.assign(new Error(message), { statusCode, details: { error: code, message } });
+  }
+
+  async function openRow() {
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+  }
+
+  it('syncs an active credential and reads out what changed, reasons included', async () => {
+    mocks.syncTelephonyCredentialNumbers.mockResolvedValue({
+      credential: makeCred({ verified_at: '2026-10-12T00:00:00Z' }),
+      sync: {
+        listed: 7,
+        added: ['+14155550101', '+14155550102'],
+        reactivated: ['+14155550103'],
+        unchanged: ['+14155550104'],
+        retired: ['+14155550199'],
+        skipped: [{ number: '14155550105', reason: 'not_voice' }, { number: 'abc', reason: 'invalid_number' }],
+        conflicts: [
+          { phone_number: '+14155550106', reason: 'registered_elsewhere' },
+          { phone_number: '+14155550107', reason: 'deleted' },
+        ],
+        active_numbers: 4,
+      },
+    });
+    await openRow();
+    fireEvent.click(await screen.findByRole('button', { name: /sync numbers/i }));
+    await waitFor(() => expect(mocks.syncTelephonyCredentialNumbers).toHaveBeenCalledWith('cred-1'));
+
+    const result = await screen.findByTestId('sync-result');
+    expect(result.textContent).toContain(
+      'Synced. 4 active numbers on this account (the carrier listed 7): 2 added, 1 reactivated, 1 retired, 1 unchanged.',
+    );
+    expect(result.textContent).toContain('+14155550101, +14155550102');
+    expect(result.textContent).toContain('+14155550199');
+    expect(result.textContent).toContain('14155550105: cannot carry voice calls');
+    expect(result.textContent).toContain('abc: not a valid phone number');
+    expect(result.textContent).toContain('+14155550106: already in the inventory on another carrier account');
+    expect(result.textContent).toContain('+14155550107: deleted from the inventory; a sync does not bring it back');
+  });
+
+  it.each([
+    ['credential_not_active', 409, /Only an active credential can sync its numbers/],
+    ['too_many_numbers', 422, /more numbers than one sync can read, so nothing was changed/],
+    ['carrier_rejected', 400, /carrier refused the stored credentials/],
+    ['carrier_unreachable', 502, /carrier could not be reached/],
+  ])('says what to do when the sync is refused with %s', async (code, status, copy) => {
+    mocks.syncTelephonyCredentialNumbers.mockRejectedValue(saError(status, code));
+    await openRow();
+    fireEvent.click(await screen.findByRole('button', { name: /sync numbers/i }));
+    const alert = await screen.findByTestId('sync-error');
+    expect(alert.textContent).toMatch(copy);
+    expect(screen.queryByTestId('sync-result')).toBeNull();
+  });
+
+  it('shows the server’s message for any other refusal', async () => {
+    mocks.syncTelephonyCredentialNumbers.mockRejectedValue(saError(503, 'credential_store_unavailable', 'The credential store is unavailable.'));
+    await openRow();
+    fireEvent.click(await screen.findByRole('button', { name: /sync numbers/i }));
+    expect((await screen.findByTestId('sync-error')).textContent).toBe('The credential store is unavailable.');
+  });
+
+  it('is offered only on an active credential', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([makeCred({ status: 'disabled' })]);
+    await openRow();
+    expect(await screen.findByRole('button', { name: /verify now/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /sync numbers/i })).toBeNull();
   });
 });

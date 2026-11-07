@@ -684,6 +684,8 @@ describe('the campaign a builder actually creates', () => {
       name: 'Collections',
       caller_ids: ['+912200000001'],
       telephony_provider: 'voicelink',
+      // The service's own carrier account: no tenant credential.
+      telephony_credential_id: null,
       // The create carries the limit too (see the roster-first case in CampaignBuilderPage.test.tsx).
       abandonment_ceiling_pct: 3,
     });

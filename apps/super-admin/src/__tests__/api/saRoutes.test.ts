@@ -86,6 +86,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   disableTelephonyCredential: () => api.disableTelephonyCredential('c1'),
   enableTelephonyCredential: () => api.enableTelephonyCredential('c1'),
   revokeTelephonyCredential: () => api.revokeTelephonyCredential('c1'),
+  syncTelephonyCredentialNumbers: () => api.syncTelephonyCredentialNumbers('c1'),
 };
 
 describe('api/super-admin.ts ↔ SA_ROUTES', () => {
@@ -159,9 +160,6 @@ function serverSuperAdminRoutes(): Set<string> {
  */
 const SERVER_ONLY_ALLOWLIST: Record<string, string> = {
   'GET /super-admin/feature-flags/:p': 'single-flag read; the catalog (GET /feature-flags) already carries every flag and its override',
-  // Served before the UI calls it: the credentials page's "Sync numbers" action lands with the
-  // UI workstream, which adds it to SA_ROUTES and removes this entry.
-  'POST /super-admin/telephony-credentials/:p/sync-numbers': 'carrier account number sync; the credentials page wires it next',
 };
 
 describe('SA_ROUTES ↔ server route table', () => {

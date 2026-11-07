@@ -144,6 +144,18 @@ describe('activityDetailSummary', () => {
       .toBe('Reason: abandonment_ceiling');
   });
 
+  it('says what to do when the carrier refused the account’s credentials', () => {
+    expect(activityDetailSummary(row({ detail: { reason: 'carrier_auth' } })))
+      .toBe('Paused: the carrier refused this account’s credentials. Ask your administrator to check them.');
+  });
+
+  it('names a move to another carrier account in a config change', () => {
+    expect(activityDetailSummary(row({
+      action: 'agency_campaign.config_changed',
+      detail: { fields: ['telephony_provider', 'telephony_credential_id'] },
+    }))).toBe('Changed carrier and carrier account.');
+  });
+
   /** The audit case `on_behalf` exists for is called out, not buried. */
   it('says when a disposition was filed for another agent', () => {
     const filed = row({

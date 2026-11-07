@@ -450,6 +450,28 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     expect(screen.getByRole('button', { name: 'Start dialing' })).toBeTruthy();
   });
 
+  it.each([
+    ['resume', 'paused', 'Resume', 409, 'telephony_credential_not_active', /carrier account is not active.*Ask your administrator to re-enable it/],
+    ['start', 'draft', 'Start dialing', 404, 'telephony_credential_not_found', /carrier account no longer exists/],
+  ] as const)('says what to do when %s is refused for the campaign’s carrier account', async (
+    _action, status, button, statusCode, code, copy,
+  ) => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status }));
+    mocks.transitionAgencyCampaign.mockRejectedValue(
+      new ApiError(statusCode, { error: 'Conflict', code, message: 'server words' }),
+    );
+
+    renderPage();
+    await screen.findByRole('button', { name: button });
+    fireEvent.click(screen.getByRole('button', { name: button }));
+
+    await waitFor(() => expect(mocks.showErrorToast).toHaveBeenCalled());
+    const [shown] = mocks.showErrorToast.mock.calls[0]!;
+    expect((shown as Error).message).toMatch(copy);
+    // The campaign has not moved, so the control stays offered.
+    expect(screen.getByRole('button', { name: button })).toBeTruthy();
+  });
+
   it('re-reads a draft campaign when the window is focused, so Start can disappear', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'draft' }));
 

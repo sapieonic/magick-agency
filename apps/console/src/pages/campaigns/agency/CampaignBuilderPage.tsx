@@ -7,7 +7,17 @@ import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ColumnMapper } from './ColumnMapper';
 import { IngestSummary } from './IngestSummary';
 import { CampaignBehaviourSection } from './CampaignBehaviourSection';
-import { CallerIdPicker, AGENCY_TELEPHONY_PROVIDER } from '../../agency/CallerIdPicker';
+import { CallerIdPicker } from '../../agency/CallerIdPicker';
+import { CampaignCarrierField } from '../../../components/agency/CampaignCarrierField';
+import { useAgencyCarriers } from '../../../hooks/useAgencyCarriers';
+import {
+  CarrierRefusalError,
+  SERVICE_CARRIER,
+  carrierOptions,
+  sameCarrier,
+  withCarrierRefusalCopy,
+  type CarrierChoice,
+} from '../../../utils/agencyCarriers';
 import { CampaignRecordingField } from '../../../components/agency/CampaignRecordingField';
 import {
   AGENCY_RECORDING_CAPABILITY,
@@ -81,6 +91,16 @@ export default function CampaignBuilderPage() {
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [callerIds, setCallerIds] = useState<string[]>([]);
   /**
+   * The carrier account the campaign dials on. `null` until the operator picks one: the
+   * campaign then takes the first listed (the service's own account comes first), or the
+   * service's own when the list cannot be read, as before the choice existed.
+   */
+  const { carriers } = useAgencyCarriers();
+  const [chosenCarrier, setChosenCarrier] = useState<CarrierChoice | null>(null);
+  const carrier: CarrierChoice = chosenCarrier ?? carriers?.[0] ?? SERVICE_CARRIER;
+  const carrierChoices = useMemo(() => carrierOptions(carriers ?? [], null), [carriers]);
+  const carrierLabel = carriers?.find((c) => sameCarrier(c, carrier))?.label ?? null;
+  /**
    * Recording, set on the behaviour step and saved with the config. The account's
    * `agency.recording` decides whether it can be switched on (UX gating; the API's
    * 403 is the enforcement, and `useGovernance` fails open).
@@ -138,26 +158,33 @@ export default function CampaignBuilderPage() {
   /** Create the campaign on first need, so a draft exists to attach the roster to. */
   const ensureCampaign = useCallback(async (): Promise<string> => {
     if (campaignId) return campaignId;
-    const created = await createAgencyCampaign(
-      {
-        name: name.trim(),
-        // No `description`: the API stores no such column and its update whitelist
-        // does not list it, so sending one wrote nothing. See the note on
-        // `AgencyCampaign`.
-        // Both required by the API, and both omitted before this existed:
-        // `caller_ids` is rejected when empty, and `telephony_provider` defaults
-        // to `'vobiz'` in the schema — so a campaign left to the default
-        // would dial on the wrong provider from a VoiceLink-only pool.
-        caller_ids: callerIds,
-        telephony_provider: AGENCY_TELEPHONY_PROVIDER,
-        abandonment_ceiling_pct: ceilingForCreate,
-      },
-      tenantId ?? undefined,
-      accountId ?? undefined,
-    );
+    let created;
+    try {
+      created = await createAgencyCampaign(
+        {
+          name: name.trim(),
+          // No `description`: the API stores no such column and its update whitelist
+          // does not list it, so sending one wrote nothing. See the note on
+          // `AgencyCampaign`.
+          // `caller_ids` is rejected when empty. The carrier account is named in full
+          // (carrier AND credential, null for the service's own): the caller IDs must
+          // be numbers on that account, and the server checks them against it.
+          caller_ids: callerIds,
+          telephony_provider: carrier.telephony_provider,
+          telephony_credential_id: carrier.telephony_credential_id,
+          abandonment_ceiling_pct: ceilingForCreate,
+        },
+        tenantId ?? undefined,
+        accountId ?? undefined,
+      );
+    } catch (err: unknown) {
+      // A carrier refusal carries the operator's sentence, so the roster import (which
+      // shows `err.message`) and the config save both say it.
+      throw withCarrierRefusalCopy(err);
+    }
     setCampaignId(created.id);
     return created.id;
-  }, [campaignId, name, callerIds, ceilingForCreate, tenantId, accountId]);
+  }, [campaignId, name, callerIds, carrier, ceilingForCreate, tenantId, accountId]);
 
   const {
     limits,
@@ -275,6 +302,11 @@ export default function CampaignBuilderPage() {
         });
       }
     } catch (err: unknown) {
+      if (err instanceof CarrierRefusalError) {
+        setError(err.message);
+        goTo('basics');
+        return;
+      }
       // A `capability_disabled` 403 (recording switched on for an account that may
       // not record) carries no `details`; say what happened, on the step that has the box.
       const refusal = campaignSaveRefusal(err, { sentAnalysisProfile: false });
@@ -443,6 +475,19 @@ export default function CampaignBuilderPage() {
                     />
                     <p className={styles.fieldHint}>A name your team will recognize in the campaign list.</p>
                   </div>
+                  {/* Shown only when there is a choice: with one carrier account the
+                      campaign takes it, and the step reads as it always did. */}
+                  {carrierChoices.length > 1 ? (
+                    <CampaignCarrierField
+                      options={carrierChoices}
+                      value={carrier}
+                      onChange={setChosenCarrier}
+                      disabled={campaignId !== null}
+                      notice={campaignId !== null
+                        ? 'The draft is saved on this carrier. Change it in the campaign’s settings.'
+                        : null}
+                    />
+                  ) : null}
                   <div className="form-group">
                     <label htmlFor="campaign-caller-ids">
                       Numbers to call from<span className="required-star">*</span>
@@ -450,7 +495,12 @@ export default function CampaignBuilderPage() {
                     <p className={styles.fieldHint}>
                       Customers see these as the caller ID. Pick at least one — calls rotate through them.
                     </p>
-                    <CallerIdPicker selected={callerIds} onChange={setCallerIds} />
+                    <CallerIdPicker
+                      selected={callerIds}
+                      onChange={setCallerIds}
+                      carrier={carrier}
+                      carrierLabel={carrierLabel}
+                    />
                   </div>
                 </>
               ) : null}
