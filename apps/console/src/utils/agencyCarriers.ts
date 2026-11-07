@@ -1,7 +1,7 @@
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { errorCode } from './agencyErrors';
 import type { AgencyCampaign, AgencyCarrier } from '../types/agency-campaign';
-import type { AgencyInsightsHeadline } from '../types/agency-insights';
+import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency';
 import type { TenantPhoneAssignment } from '../types/phone-number';
 
 /**
@@ -161,17 +161,11 @@ export function withCarrierRefusalCopy(err: unknown): unknown {
 }
 
 /**
- * The pause reasons the dialler writes when a campaign's carrier account cannot dial: every
- * reason of the Insights headline's pause other than a person's and the abandonment
- * guardrail's. Derived from the wire type, so a new automatic carrier pause added to the
- * contract fails to compile here until it has its entry in {@link CARRIER_PAUSE_COPY}.
+ * What an automatic carrier pause says, in pieces each surface composes: the Insights
+ * headline ("Paused by", then "Automatic, <when>: <cause>. <action>"), its transitions, the
+ * Activity trail ("Paused: <cause>. <action>") and the health strip ("Paused automatically —
+ * <cause>." with the action as its advice).
  */
-export type CarrierPauseReason = Exclude<
-  NonNullable<AgencyInsightsHeadline['paused']>['reason'],
-  'supervisor' | 'abandonment_ceiling'
->;
-
-/** What an automatic carrier pause says, in pieces each surface composes. */
 export interface CarrierPauseCopy {
   /** Who or what paused the campaign, for "Paused by". Never "the dialler": it only acted on it. */
   by: string;
@@ -181,7 +175,13 @@ export interface CarrierPauseCopy {
   action: string;
 }
 
-export const CARRIER_PAUSE_COPY: Record<CarrierPauseReason, CarrierPauseCopy> = {
+/**
+ * The one table of carrier pause copy, keyed by the contract's `CarrierAccountPauseReason`, so
+ * a new automatic carrier pause fails the typecheck until it has its entry here, and every
+ * surface then says it. Who can fix a carrier account is the service's support, not the
+ * workspace's own administrators (PL15).
+ */
+export const CARRIER_PAUSE_COPY: Record<CarrierAccountPauseReason, CarrierPauseCopy> = {
   // The carrier answered a dial with 401 (PL2).
   carrier_auth: {
     by: 'The carrier',
@@ -205,7 +205,7 @@ export const CARRIER_PAUSE_COPY: Record<CarrierPauseReason, CarrierPauseCopy> = 
 /** The copy for an automatic carrier pause, or `null` for any other reason. */
 export function carrierPauseCopy(reason: string | null | undefined): CarrierPauseCopy | null {
   return reason && Object.hasOwn(CARRIER_PAUSE_COPY, reason)
-    ? CARRIER_PAUSE_COPY[reason as CarrierPauseReason]
+    ? CARRIER_PAUSE_COPY[reason as CarrierAccountPauseReason]
     : null;
 }
 
@@ -213,21 +213,6 @@ export function carrierPauseCopy(reason: string | null | undefined): CarrierPaus
 function pausedSentence(copy: CarrierPauseCopy): string {
   return `Paused: ${copy.cause}. ${copy.action}`;
 }
-
-/** The pause reason the dialler writes when the carrier refused the campaign's account credentials. */
-export const CARRIER_AUTH_PAUSE_REASON = 'carrier_auth';
-
-/** What a `carrier_auth` pause says on its own. */
-export const CARRIER_AUTH_PAUSE_COPY = pausedSentence(CARRIER_PAUSE_COPY.carrier_auth);
-
-/**
- * The pause reason the dialler writes when the campaign's carrier account is no longer
- * active (disabled, invalid or revoked since the campaign started).
- */
-export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_REASON = 'carrier_account_unavailable';
-
-/** What a `carrier_account_unavailable` pause says on its own. */
-export const CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY = pausedSentence(CARRIER_PAUSE_COPY.carrier_account_unavailable);
 
 /**
  * The sentence for a pause the dialler made because the campaign's carrier account cannot

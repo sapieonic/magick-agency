@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   AGENCY_STALL_LABELS,
   AGENCY_STALL_PRIORITY,
-  CARRIER_PAUSE_STALL_COPY,
   sortStallCodes,
   splitFact,
   stallCopy,
 } from '../../utils/agencyHealthStrip';
 import { AGENCY_STALL_PRIORITY as CONTRACT_STALL_PRIORITY, CARRIER_ACCOUNT_PAUSE_REASONS } from '@magick-agency/contracts/agency';
 import type { AgencyStall, AgencyStallCode } from '../../types/agency-campaign';
+import { CARRIER_PAUSE_COPY } from '../../utils/agencyCarriers';
 
 /**
  * The health strip's derivations.
@@ -92,7 +92,9 @@ describe('stallCopy — the carrier-account diagnoses', () => {
 
   it.each(CARRIER_ACCOUNT_PAUSE_REASONS)('an automatic `%s` pause says what happened, when, and to contact support', (reason) => {
     const copy = stallCopy({ code: 'auto_paused_carrier', reason, paused_at: '2026-11-04T09:00:00.000Z' }, at);
-    expect(copy.headline).toBe(CARRIER_PAUSE_STALL_COPY[reason].headline);
+    // The strip says the same cause and action as Insights and Activity, from the one table.
+    expect(copy.headline).toBe(`Paused automatically — ${CARRIER_PAUSE_COPY[reason].cause}.`);
+    expect(copy.advice).toBe(CARRIER_PAUSE_COPY[reason].action);
     expect(copy.headline).toMatch(/^Paused automatically/);
     expect(copy.evidence).toContain('«2026-11-04T09:00:00.000Z»');
     expect(copy.advice).toMatch(/Contact support/);

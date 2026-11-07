@@ -6,7 +6,8 @@ import { InsightsHeadline } from '../../pages/agency/campaign-detail/insights/In
 import type { AgencyInsightsReadiness, AgencyInsightsSummary } from '../../types/agency-insights';
 import type { AgencyCampaignStatus } from '../../types/agency';
 import { readiness, summary } from '../helpers/insights';
-import { CARRIER_PAUSE_COPY, type CarrierPauseReason } from '../../utils/agencyCarriers';
+import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency';
+import { CARRIER_PAUSE_COPY } from '../../utils/agencyCarriers';
 
 /**
  * The status-aware headline: one component per status, each reading its own
@@ -161,7 +162,7 @@ describe('paused', () => {
    */
   it.each(Object.entries(CARRIER_PAUSE_COPY))('names the cause of a %s pause, when, and who can fix it', (reason, copy) => {
     const s = summary('paused');
-    s.headline.paused = { ...s.headline.paused!, reason: reason as CarrierPauseReason, actor: null, abandonment_rate_pct_at_pause: null, callbacks_missed_while_paused: 0 };
+    s.headline.paused = { ...s.headline.paused!, reason: reason as CarrierAccountPauseReason, actor: null, abandonment_rate_pct_at_pause: null, callbacks_missed_while_paused: 0 };
     renderHeadline(s);
     const text = kpi('kpi-paused-by');
     expect(text).toContain(copy.by);

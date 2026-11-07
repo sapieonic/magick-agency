@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY,
-  CARRIER_AUTH_PAUSE_COPY,
   CARRIER_REFUSAL_COPY,
   CarrierRefusalError,
   SERVICE_CARRIER,
+  carrierAccountPauseCopy,
   carrierActive,
   carrierName,
   carrierOfCampaign,
@@ -14,6 +13,7 @@ import {
   withCarrierRefusalCopy,
 } from '../../utils/agencyCarriers';
 import type { AgencyCarrier } from '../../types/agency-campaign';
+import { CARRIER_ACCOUNT_PAUSE_REASONS } from '@magick-agency/contracts/agency';
 
 const CRED_A = '11111111-1111-4111-8111-111111111111';
 const SERVICE: AgencyCarrier = { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' };
@@ -87,11 +87,10 @@ describe('carrier refusals', () => {
    * supervisor to "your administrator"; it says to contact support (B17's phrase).
    */
   it('sends the operator to support, never to an administrator', () => {
-    const all = [...Object.values(CARRIER_REFUSAL_COPY), CARRIER_AUTH_PAUSE_COPY, CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY];
-    for (const copy of all) expect(copy).not.toMatch(/administrator/i);
+    const pauses = CARRIER_ACCOUNT_PAUSE_REASONS.map((reason) => carrierAccountPauseCopy(reason));
+    for (const copy of [...Object.values(CARRIER_REFUSAL_COPY), ...pauses]) expect(copy).not.toMatch(/administrator/i);
     expect(CARRIER_REFUSAL_COPY.telephony_credential_not_active).toMatch(/Contact support/);
-    expect(CARRIER_AUTH_PAUSE_COPY).toMatch(/Contact support/);
-    expect(CARRIER_ACCOUNT_UNAVAILABLE_PAUSE_COPY).toMatch(/Contact support/);
+    for (const copy of pauses) expect(copy).toMatch(/^Paused: .*Contact support/);
   });
 
   it('is British English and names no carrier', () => {

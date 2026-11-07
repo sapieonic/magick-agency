@@ -1,5 +1,5 @@
 import type { AgencyStall, AgencyStallCode } from '../types/agency-campaign';
-import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency';
+import { carrierPauseCopy, type CarrierPauseCopy } from './agencyCarriers';
 import { formatCount, pct, plural } from './format/number';
 import { ceilingPctText } from './agency/abandonmentCeiling';
 
@@ -163,32 +163,12 @@ function breakClause(byReason: Record<string, number>): string | null {
 }
 
 /**
- * What an automatic carrier-account pause says on the strip, by its reason (decisions PL2,
- * PL3). Keyed by the contract's `CarrierAccountPauseReason`, so a new automatic carrier
- * pause fails the typecheck until it has its sentence here, and that is all it needs.
- *
- * Who can fix a carrier account is the service's support, not the workspace's own
- * administrators: the advice says "contact support".
+ * For a carrier pause reason this build has no copy for (a newer server): still true, still
+ * actionable. Every known reason's copy is `CARRIER_PAUSE_COPY`, shared with Insights and Activity.
  */
-export const CARRIER_PAUSE_STALL_COPY: Record<CarrierAccountPauseReason, { headline: string; advice: string }> = {
-  carrier_auth: {
-    headline: 'Paused automatically — the carrier refused this campaign’s carrier account.',
-    advice: 'Contact support to check the carrier account’s credentials, then resume the campaign.',
-  },
-  carrier_account_unavailable: {
-    headline: 'Paused automatically — this campaign’s carrier account is no longer active.',
-    advice: 'Contact support to re-enable the carrier account, or move the campaign to another carrier in its settings, then resume it.',
-  },
-  carrier_refusing_calls: {
-    headline: 'Paused automatically — the carrier refused this campaign’s calls several times in a row.',
-    advice: 'Contact support to check the carrier account (the destinations it may call, its balance and its caller IDs), then resume the campaign.',
-  },
-};
-
-/** For a reason this build has no sentence for (a newer server): still true, still actionable. */
-const CARRIER_PAUSE_FALLBACK = {
-  headline: 'Paused automatically — this campaign’s carrier account cannot place calls.',
-  advice: 'Contact support about the campaign’s carrier account, then resume the campaign.',
+const CARRIER_PAUSE_FALLBACK: Pick<CarrierPauseCopy, 'cause' | 'action'> = {
+  cause: 'this campaign’s carrier account cannot place calls',
+  action: 'Contact support about the campaign’s carrier account, then resume the campaign.',
 };
 
 /**
@@ -223,12 +203,11 @@ export function stallCopy(
 
     case 'auto_paused_carrier': {
       const pausedAt = formatInstant(stall.paused_at);
-      const copy = (CARRIER_PAUSE_STALL_COPY as Partial<Record<string, { headline: string; advice: string }>>)[stall.reason]
-        ?? CARRIER_PAUSE_FALLBACK;
+      const copy = carrierPauseCopy(stall.reason) ?? CARRIER_PAUSE_FALLBACK;
       return diagnosis({
-        headline: copy.headline,
+        headline: `Paused automatically — ${copy.cause}.`,
         facts: [{ text: `Paused at ${pausedAt}. No calls are placed until it is resumed.`, emphasis: pausedAt }],
-        advice: copy.advice,
+        advice: copy.action,
       });
     }
 
