@@ -296,6 +296,21 @@ describe('the carrier refusal breaker', () => {
     expect(repos.campaign.pauseForCarrierAccount.mock.calls.filter(([, r]: any[]) => r === 'carrier_refusing_calls')).toEqual([]);
   });
 
+  it('a number the carrier cannot dial suppresses the contact `invalid`, uncharged, instead of holding it a minute for ever', async () => {
+    await dialWith(notSentFor('destination'));
+    expect(repos.contact.markState).toHaveBeenCalledWith('contact-1', 'suppressed', { suppressed_reason: 'invalid' });
+    expect(repos.contact.unclaim).not.toHaveBeenCalled();
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+    expectUncharged();
+  });
+
+  it('a dial not sent because the API was unreachable still holds the contact a minute', async () => {
+    const before = Date.now();
+    await dialWith(notSentFor('network'));
+    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect((repos.contact.unclaim.mock.calls[0]![1] as Date).getTime()).toBeGreaterThanOrEqual(before + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS);
+  });
+
   it('a campaign on the service`s own account (no credential) is never paused by it', async () => {
     const breaker = new CarrierRefusalBreaker(null, '');
     const own = { ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null };

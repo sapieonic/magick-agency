@@ -41,6 +41,7 @@ import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
 import { CarrierRefusalBreaker, countsTowardBreaker } from './carrier-refusal-breaker.js';
+import { carrierDialNotSentReason } from '../telephony/carrier-errors.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -614,8 +615,14 @@ export class AgencyDialer {
       // is paused, so its contact goes back at once like any carrier-account pause's.
       const capacityRefused = err instanceof WebRtcCallError
         && (CAPACITY_REFUSALS.has(err.code) || carrierPause !== undefined || refusalStreakTripped);
-      log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
-      await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused);
+      // The carrier cannot dial this contact's number at all (it passed our E.164 gate but
+      // not the carrier's own check): terminal for the contact, as the pre-dial gate's
+      // `phone_invalid` is, never a minute's hold that repeats for as long as the campaign runs.
+      const invalidDestination = err instanceof WebRtcCallError
+        && err.code === 'carrier_dial_not_sent'
+        && carrierDialNotSentReason(err) === 'destination';
+      log.warn({ err, attemptId, outcomeUnknown, invalidDestination }, 'Agency dial failed');
+      await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused, invalidDestination);
       return;
     }
     live.placing = false;
@@ -693,6 +700,13 @@ export class AgencyDialer {
      */
     dialOutcomeUnknown = false,
     capacityRefused = false,
+    /**
+     * The carrier will never dial this contact's number (`carrier_dial_not_sent`,
+     * `destination`): the contact is suppressed `invalid`, uncharged, as the pre-dial
+     * gate's `phone_invalid` does. A wrap-up redial is parked as usual (the agent still owes
+     * the outcome of the conversation they had).
+     */
+    invalidDestination = false,
   ): Promise<void> {
     const outcome = reason === 'failed' ? 'failed' : 'orphaned';
     /**
@@ -741,6 +755,11 @@ export class AgencyDialer {
       // never claims, so no paced dial follows it. But the carrier may still ring the
       // customer, so the reopened wrap-up offers NO further redial (below).
       await parkRedialContact(cmd, outcome);
+    } else if (invalidDestination) {
+      // Terminal and uncharged: no dial was placed, so no `bump_attempt` (see the pacing
+      // engine's `suppress` gate, which this mirrors).
+      await agencyContactRepository.markState(cmd.contactId, 'suppressed', { suppressed_reason: 'invalid' })
+        .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to suppress a contact the carrier cannot dial'));
     } else if (dialOutcomeUnknown) {
       // Not to be dialled again yet, and counted: the hold and the our-fault charge are
       // one statement, so a contact whose dials keep ending this way is retired at the

@@ -604,7 +604,7 @@ every account the caller belongs to (CH2) where every internal handler is single
     credential cannot dial, at the insert or the resolve; never the service's account instead),
     `carrier_rate_limited`, `carrier_auth_rejected` and `carrier_dial_not_sent` (the adapter's
     `CarrierDialNotSentError`, or an empty webhook base for the carrier, row
-    `CARRIER_DIAL_NOT_SENT`, or `CARRIER_DIAL_INVALID_NUMBER` for the contact's number;
+    `CARRIER_DIAL_NOT_SENT`, or `CARRIER_DIAL_INVALID_NUMBER` for the contact's number (the paced dial then suppresses that contact `invalid`, uncharged);
     `seams.md` §3.1). The dialler treats a rate limit as back-pressure, pauses the campaign on
     the credential's two (below), and returns a not-sent dial's contact uncharged after
     `PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`.
