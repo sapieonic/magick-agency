@@ -2113,7 +2113,7 @@ Files: `call_fields.dart`, `call_labels.dart`, `call_state.dart`, `hosted_here.d
 | `apps/mobile/test/core/softphone/phone_input_test.dart` | ~20 |
 | `apps/mobile/test/core/softphone/refusal_copy_test.dart` | ~8 |
 | `apps/mobile/test/core/softphone/softphone_api_test.dart` | ~15 |
-| `apps/mobile/test/core/softphone/softphone_controller_test.dart` | ~98 |
+| `apps/mobile/test/core/softphone/softphone_controller_test.dart` | ~100 |
 | `apps/mobile/test/core/softphone/softphone_seams_test.dart` | ~14 |
 
 ### `apps/mobile/lib/features/` (`auth/`, `join/`, `accounts/`, `campaigns/`, `settings/`)
@@ -2226,7 +2226,7 @@ Files: `phone_screen.dart`, `softphone_copy.dart`, `softphone_panel.dart`, `part
 |---|---|
 | `apps/mobile/test/features/softphone/phone_screen_test.dart` | ~30 |
 | `apps/mobile/test/features/softphone/softphone_a11y_test.dart` | ~18 |
-| `apps/mobile/test/features/softphone/softphone_panel_test.dart` | ~54 |
+| `apps/mobile/test/features/softphone/softphone_panel_test.dart` | ~56 |
 
 ### `apps/mobile/packages/agency_wire/`
 
@@ -2253,7 +2253,7 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 | `apps/mobile/packages/agency_wire/test/platform_test.dart` | ~14 |
 | `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
 | `apps/mobile/packages/agency_wire/test/session_test.dart` | ~18 |
-| `apps/mobile/packages/agency_wire/test/softphone_test.dart` | ~28 |
+| `apps/mobile/packages/agency_wire/test/softphone_test.dart` | ~30 |
 | `apps/mobile/packages/agency_wire/test/station_test.dart` | ~43 |
 
 ### `apps/mobile/packages/agent_audio/`

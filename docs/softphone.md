@@ -30,8 +30,9 @@ answer cancels the dial by its request id, so the ringing stops. The live call s
 Plivo, false for VoiceLink, and false before the leg is placed), held equal to the adapter's
 `capabilities.cancelRinging` by `provider-capabilities.test.ts`. The console shows the SP3 warning
 only when it is not `true`, and the warning names no carrier ("This carrier cannot stop a ringing
-call…"). Hang-up while ringing stays hold-to-confirm on every carrier. The agent app shows the
-same vendor-free warning on every ringing call; it does not read the field yet (§8).
+call…"). Hang-up while ringing stays hold-to-confirm on every carrier. The agent app follows the
+same rule (`ManualCall.canCancelRinging` in `apps/mobile/packages/agency_wire`; the panel's
+warning and its screen-reader confirm text).
 
 ## 2. Shape
 
@@ -566,15 +567,12 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
   switched in place. While a soft-phone call is live the app holds the agent on its screen; an
   owed outcome keeps the other tabs closed and a sign-out waiting.
 - **Liveness.** A phone silent mid-call is dropped (M1, §4.1 step 9). A ringing call whose phone
-  changes network therefore ends, and with SP3 the customer's phone may keep ringing; accepted.
+  changes network therefore ends, and on a carrier that cannot cancel a ringing call (SP3) the
+  customer's phone may keep ringing; accepted.
 
 ## 8. Not built (yet)
 
 Call details in the analysis prompt (needs a `context_pending` job hold), a callbacks list, DTMF,
 per-campaign call fields, a "every call must be tagged" setting, transfer and conference.
-Cancel-while-ringing on Plivo is told to the console (§1, after the table: `can_cancel_ringing`,
-no warning on a ringing Plivo call, and the warning names no carrier). The agent app still shows the
-SP3 warning, now vendor-free, on every ringing call, Plivo included: its wire type
-(`apps/mobile/packages/agency_wire`, `ManualCall`) does not decode `can_cancel_ringing` yet and
-ignores the key. The agent app has no DTMF and no recordings either; the supervisor's
-lists and Settings → Soft phone stay on the console.
+The agent app has no DTMF and no recordings; the supervisor's lists and Settings → Soft phone
+stay on the console.

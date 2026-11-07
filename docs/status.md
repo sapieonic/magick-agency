@@ -218,9 +218,9 @@ onto it (the re-attach window, never lapsed for a ring drop), so its answer conn
 suite demanded `abandoned`; forcing an early return reproduces CI's failure every run.
 
 **Not built** (`softphone.md` §8): call details in the analysis prompt, a callbacks list, DTMF,
-per-campaign call fields, "every call must be logged to a campaign", the agent app telling the
-agent a ringing Plivo call can be cancelled (the console does: `can_cancel_ringing`, and the
-SP3 warning names no carrier), transfer and conference. Seen and left: light-theme `<select>` elements show no arrow app-wide
+per-campaign call fields, "every call must be logged to a campaign", transfer and conference.
+The console and the agent app both show the SP3 warning only when the live call's
+`can_cancel_ringing` is not `true`, and it names no carrier. Seen and left: light-theme `<select>` elements show no arrow app-wide
 (`packages/web-ui/src/global.css`), and the station shows campaign numbers unformatted.
 
 ### Agent mobile app 2026-11-01 (V1)
@@ -941,9 +941,13 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
 
 Latest run, 2026-11-07, Plivo steps 3 and 4 on `f465fdf`, from inside each package:
 `pnpm test:grafana` 33 and `pnpm test:release` 10 pass. `packages/web-ui`, `packages/domain` and
-`packages/observability` were not rerun; their rows are the 2026-11-06 run's. No `apps/mobile`
-row: nothing in the agent app changed (the Insights paused reason gained a value the mobile wire
-types do not mirror).
+`packages/observability` were not rerun; their rows are the 2026-11-06 run's. The agent app did
+change on this branch: `c90cff4` reworded the SP3 warning in `softphone_copy.dart` and added
+`can_cancel_ringing` to the contract, with no Dart run. The review fix after it decodes the field
+in `agency_wire` and shows the warning only when it is not `true`; its `apps/mobile` row was run
+with Flutter 3.47.7 (Dart 3.13.5): `flutter analyze` and `agency_wire` `dart analyze` clean,
+`contracts-literals --check` up to date (51 vocabularies). The Insights paused reason gained a
+value the mobile wire types do not mirror.
 
 | Package | Unit | Integration |
 |---|---|---|
@@ -955,6 +959,7 @@ types do not mirror).
 | `packages/web-ui` | 235 (20 files), 2026-11-06 | — |
 | `packages/domain` | 137 (8 files), 2026-11-06 | — |
 | `packages/observability` | 14 (3 files), 2026-11-06 | — |
+| `apps/mobile` | `flutter test` 1466, `agency_wire` `dart test` 510, `agent_audio` 124 (review fix) | — |
 
 Run of 2026-11-06, the customer-history branch after its PR #50 review fixes. The agent app's
 Dart suites cannot run where it was built (no SDK), so there is no `apps/mobile` row for this run.

@@ -600,7 +600,7 @@ every account the caller belongs to (CH2) where every internal handler is single
     …/Request/{request_uuid}/`, `cancelDialRequest`); after it, hangs up by the call id (`DELETE
     …/Call/{call_uuid}/`); neither with an empty or malformed id (PL8). So a soft-phone hang-up
     while a Plivo call rings stops the ringing; a VoiceLink one cannot (SP3). The live soft-phone
-    call carries which (`can_cancel_ringing`), and the console warns only on the latter.
+    call carries which (`can_cancel_ringing`), and the console and the agent app warn only on the latter.
   - *Automatic pauses* (`agency/carrier-account-pause.ts`). A campaign dial refused
     `carrier_auth_rejected` pauses the campaign `carrier_auth`; one refused
     `telephony_credential_unavailable` pauses it `carrier_account_unavailable`. Running campaigns
