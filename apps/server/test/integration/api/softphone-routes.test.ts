@@ -299,7 +299,8 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
        VALUES ('agency_softphone_enabled', 'account', $1, $2, 'false'::jsonb)`,
       [tenant, dark],
     );
-    const provider = await insertTelephonyProvider();
+    // The service's own carrier: an untagged dial is placed on its caller ID's number's carrier.
+    const provider = await insertTelephonyProvider({ name: 'voicelink' });
     const number = await insertPhoneNumber({ provider_id: provider.id, phone_number: '+919000000099' });
     await insertPhoneAssignment({ tenant_id: tenant, phone_number_id: number.id, is_default: true });
     accountNumber = '+919000000099';
