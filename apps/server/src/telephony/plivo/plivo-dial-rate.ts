@@ -15,7 +15,7 @@
 //
 // The limiter is process-wide and set at voice bootstrap (`setPlivoDialRateLimiter`,
 // `bootstrap/voice.ts`); until then, and in unit tests, an in-memory one counts per process.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type Redis from 'ioredis';
 import { createChildLogger } from '@magick-agency/observability';
 
@@ -26,7 +26,12 @@ const WINDOW_MS = 1000;
 export type DialSlot = { admitted: true } | { admitted: false; retryAfterMs: number };
 
 export interface PlivoDialRateLimiter {
-  /** Take a slot for `accountRef` if fewer than `perSecond` were taken in the last 1000 ms. */
+  /**
+   * Take a slot for `accountRef` if fewer than `perSecond` were taken in the last 1000 ms.
+   * `perSecond` is a whole number of at least 1 ({@link acquirePlivoDialSlot} clamps it).
+   * A refusal's `retryAfterMs` is at least 1: the admission it waits on is still in the
+   * window, so it frees strictly later.
+   */
   tryAcquire(accountRef: string, perSecond: number): Promise<DialSlot>;
 }
 
@@ -47,16 +52,15 @@ export class InMemoryPlivoDialRateLimiter implements PlivoDialRateLimiter {
   async tryAcquire(accountRef: string, perSecond: number): Promise<DialSlot> {
     const t = this.now();
     if (this.logs.size > 1000) this.prune(t);
-    const limit = Math.max(1, Math.floor(perSecond));
     const admissions = trim(this.logs.get(accountRef) ?? [], t);
     this.logs.set(accountRef, admissions);
-    if (admissions.length < limit) {
+    if (admissions.length < perSecond) {
       admissions.push(t);
       return { admitted: true };
     }
-    // The slot frees when the admission `limit` places back from the newest ages out.
-    const frees = admissions[admissions.length - limit]! + WINDOW_MS;
-    return { admitted: false, retryAfterMs: Math.max(1, Math.ceil(frees - t)) };
+    // The slot frees when the admission `perSecond` places back from the newest ages out.
+    const frees = admissions[admissions.length - perSecond]! + WINDOW_MS;
+    return { admitted: false, retryAfterMs: Math.ceil(frees - t) };
   }
 
   /** Accounts with nothing left in the window leave nothing behind. */
@@ -72,7 +76,8 @@ export class InMemoryPlivoDialRateLimiter implements PlivoDialRateLimiter {
  * behind); otherwise return when the needed slot frees. The in-memory limiter's rule.
  *
  * KEYS[1] the account's log; ARGV: now (ms), limit, window (ms), a unique member.
- * Returns {1, 0} admitted, or {0, retryAfterMs}.
+ * Returns {1, 0} admitted, or {0, retryAfterMs}. Sent by its SHA1 (`EVALSHA`), and in full
+ * only when Redis does not hold it yet (`NOSCRIPT`).
  */
 const ACQUIRE_SCRIPT = `
 local key = KEYS[1]
@@ -87,10 +92,14 @@ if n < limit then
   return {1, 0}
 end
 local at = redis.call('ZRANGE', key, n - limit, n - limit, 'WITHSCORES')
-local retry = math.ceil(tonumber(at[2]) + window - now)
-if retry < 1 then retry = 1 end
-return {0, retry}
+return {0, math.ceil(tonumber(at[2]) + window - now)}
 `;
+const ACQUIRE_SCRIPT_SHA = createHash('sha1').update(ACQUIRE_SCRIPT).digest('hex');
+
+/** Whether a Redis error says the server does not hold the script `EVALSHA` named. */
+function isNoScript(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith('NOSCRIPT');
+}
 
 /**
  * Counts in Redis, so every process dialling on one account shares the window. Admission
@@ -99,6 +108,10 @@ return {0, retry}
  * falls back to the in-memory log (per process, the same sliding window) rather than
  * refusing the dial: Redis down must not stop dialling, and the concurrency guards
  * already degrade the same way.
+ *
+ * Each dial sends the script's SHA1 (`EVALSHA`), and the script itself only when Redis
+ * answers `NOSCRIPT` (its first use, or after a restart or `SCRIPT FLUSH`). A client with
+ * no `evalsha` sends the script every time.
  */
 export class RedisPlivoDialRateLimiter implements PlivoDialRateLimiter {
   private readonly fallback: InMemoryPlivoDialRateLimiter;
@@ -107,7 +120,7 @@ export class RedisPlivoDialRateLimiter implements PlivoDialRateLimiter {
   private seq = 0;
 
   constructor(
-    private readonly redis: Pick<Redis, 'eval'>,
+    private readonly redis: Pick<Redis, 'eval'> & Partial<Pick<Redis, 'evalsha'>>,
     private readonly keyPrefix: string,
     private readonly now: () => number = Date.now,
   ) {
@@ -119,8 +132,7 @@ export class RedisPlivoDialRateLimiter implements PlivoDialRateLimiter {
     const key = `${this.keyPrefix}plivo:dial_rate:${accountRef}`;
     const member = `${t}:${this.instance}:${this.seq++}`;
     try {
-      const limit = Math.max(1, Math.floor(perSecond));
-      const res = await this.redis.eval(ACQUIRE_SCRIPT, 1, key, t, limit, WINDOW_MS, member);
+      const res = await this.runScript(key, t, perSecond, member);
       if (!Array.isArray(res) || typeof res[0] !== 'number' || typeof res[1] !== 'number') {
         throw new Error('unexpected dial-rate script reply');
       }
@@ -130,6 +142,17 @@ export class RedisPlivoDialRateLimiter implements PlivoDialRateLimiter {
       log.warn({ err }, 'Plivo dial-rate count in Redis failed; counting in this process');
       return this.fallback.tryAcquire(accountRef, perSecond);
     }
+  }
+
+  private async runScript(key: string, t: number, limit: number, member: string): Promise<unknown> {
+    if (this.redis.evalsha) {
+      try {
+        return await this.redis.evalsha(ACQUIRE_SCRIPT_SHA, 1, key, t, limit, WINDOW_MS, member);
+      } catch (err) {
+        if (!isNoScript(err)) throw err;
+      }
+    }
+    return this.redis.eval(ACQUIRE_SCRIPT, 1, key, t, limit, WINDOW_MS, member);
   }
 }
 
@@ -167,13 +190,15 @@ export async function acquirePlivoDialSlot(
 ): Promise<{ admitted: true; waitedMs: number } | { admitted: false; waitedMs: number }> {
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? defaultSleep;
+  // The one clamp of the limit: a whole number of dials, at least one.
   const perSecond = Math.max(1, Math.floor(opts.perSecond));
   const started = now();
   for (;;) {
     const slot = await rate.tryAcquire(accountRef, perSecond);
     const waited = now() - started;
     if (slot.admitted) return { admitted: true, waitedMs: waited };
-    // At least 1 ms: a timer that fires a little early retries once more, never spins.
+    // The one floor of the wait, at least 1 ms whatever a limiter answers: a timer that
+    // fires a little early retries once more, never spins.
     const wait = Math.max(1, slot.retryAfterMs);
     if (waited + wait > opts.maxWaitMs) return { admitted: false, waitedMs: waited };
     await sleep(wait);

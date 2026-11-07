@@ -1,6 +1,7 @@
 // Plivo's per-account calls-per-second gate: a sliding 1000 ms window per account (a log of
 // admission times), shared in Redis, with a bounded wait for a slot. The Lua script itself
 // runs against real Redis in test/integration/telephony/plivo-dial-rate.test.ts.
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@magick-agency/observability', () => ({
@@ -77,6 +78,23 @@ describe('InMemoryPlivoDialRateLimiter', () => {
 });
 
 describe('acquirePlivoDialSlot', () => {
+  it('clamps the limit once, to a whole number of at least 1, and floors the wait at 1 ms', async () => {
+    const c = clock(0);
+    const limits: number[] = [];
+    let refusals = 1;
+    const rate = {
+      tryAcquire: vi.fn(async (_ref: string, perSecond: number) => {
+        limits.push(perSecond);
+        return refusals-- > 0 ? { admitted: false as const, retryAfterMs: 0 } : { admitted: true as const };
+      }),
+    };
+    expect(await acquirePlivoDialSlot(rate, 'MA1', { perSecond: 0.5, maxWaitMs: 5000, now: c.now, sleep: c.sleep }))
+      .toEqual({ admitted: true, waitedMs: 1 });
+    expect(c.sleep).toHaveBeenCalledWith(1);
+    await acquirePlivoDialSlot(rate, 'MA1', { perSecond: 2.9, maxWaitMs: 5000, now: c.now, sleep: c.sleep });
+    expect(limits).toEqual([1, 1, 2]);
+  });
+
   it('sleeps exactly until the oldest admission ages out, then admits', async () => {
     const c = clock(5_000_900);
     const l = new InMemoryPlivoDialRateLimiter(c.now);
@@ -173,6 +191,36 @@ describe('RedisPlivoDialRateLimiter', () => {
     expect((await a.tryAcquire('MA1', 2)).admitted).toBe(true);
     expect((await b.tryAcquire('MA1', 2)).admitted).toBe(true);
     expect((await a.tryAcquire('MA1', 2)).admitted).toBe(false);
+  });
+
+  it('sends the script by its SHA1, and in full only when Redis answers NOSCRIPT', async () => {
+    const c = clock(5_000);
+    const r = fakeRedis();
+    const loaded = new Set<string>();
+    const evalsha = vi.fn(async (sha: string, ...rest: [number, string, number, number, number, string]) => {
+      if (!loaded.has(sha)) throw new Error('NOSCRIPT No matching script. Please use EVAL.');
+      return r.eval('', ...rest);
+    });
+    const evalFn = vi.fn(async (script: string, ...rest: [number, string, number, number, number, string]) => {
+      loaded.add(createHash('sha1').update(script).digest('hex'));
+      return r.eval(script, ...rest);
+    });
+    const l = new RedisPlivoDialRateLimiter({ eval: evalFn, evalsha } as never, '', c.now);
+    expect(await l.tryAcquire('MA1', 2)).toEqual({ admitted: true });
+    expect(await l.tryAcquire('MA1', 2)).toEqual({ admitted: true });
+    expect(await l.tryAcquire('MA1', 2)).toEqual({ admitted: false, retryAfterMs: 1000 });
+    expect(evalFn).toHaveBeenCalledTimes(1);
+    expect(evalsha).toHaveBeenCalledTimes(3);
+  });
+
+  it('an EVALSHA error other than NOSCRIPT falls back to counting in this process, not to EVAL', async () => {
+    const c = clock(5_000);
+    const evalFn = vi.fn();
+    const evalsha = vi.fn(async () => { throw new Error('Command timed out'); });
+    const l = new RedisPlivoDialRateLimiter({ eval: evalFn, evalsha } as never, '', c.now);
+    expect((await l.tryAcquire('MA1', 1)).admitted).toBe(true);
+    expect((await l.tryAcquire('MA1', 1)).admitted).toBe(false);
+    expect(evalFn).not.toHaveBeenCalled();
   });
 
   it('falls back to counting in this process when Redis errors, on the same sliding window', async () => {
