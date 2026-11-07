@@ -400,6 +400,11 @@ export class MediaCluster implements WsHandoffTarget {
     this.supervisor.broadcast('concurrency.invalidate', { tenantId, accountId });
   }
 
+  /** Broadcast a number change so every worker drops its dialable caller-ID cache (PL13). */
+  invalidateDialableCallerIds(): void {
+    this.supervisor.broadcast('dialable.invalidate', {});
+  }
+
   /** Slot health for `/readyz`. */
   async health(): ReturnType<ChildSupervisor['health']> {
     return this.supervisor.health(1_000);

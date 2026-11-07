@@ -139,3 +139,28 @@ describe('MediaCluster snapshot refresh', () => {
     for (const f of forks) expect(f.requests('reaper.snapshot')).toHaveLength(1);
   });
 });
+
+describe('MediaCluster: invalidations the primary sends every worker', () => {
+  it('a dialable caller-ID clear reaches every worker as `dialable.invalidate` (PL13)', async () => {
+    const { c, forks } = cluster({ count: 2 });
+    running = c;
+    await c.start();
+    c.invalidateDialableCallerIds();
+    for (const f of forks) {
+      expect(f.sent.filter((m) => m.kind === 'event' && m.type === 'dialable.invalidate')).toEqual([
+        expect.objectContaining({ kind: 'event', type: 'dialable.invalidate', body: {} }),
+      ]);
+    }
+  });
+
+  it('a concurrency-limit change reaches every worker as `concurrency.invalidate`', async () => {
+    const { c, forks } = cluster({ count: 2 });
+    running = c;
+    await c.start();
+    c.invalidateLimits('t', 'a');
+    for (const f of forks) {
+      expect(f.sent.filter((m) => m.kind === 'event' && m.type === 'concurrency.invalidate'))
+        .toEqual([expect.objectContaining({ body: { tenantId: 't', accountId: 'a' } })]);
+    }
+  });
+});

@@ -34,6 +34,13 @@
  * finds an entry expired deletes it, and a full cache drops its expired entries before
  * its oldest.
  *
+ * With media workers (`MEDIA_WORKERS`) every worker keeps its own cache: the dials that run
+ * there (the agent's own call, the wrap-up redial, the tagged soft phone) read it. The
+ * clear runs where the change is made (the super-admin routes, in the primary), and the
+ * primary sends it to every worker (`dialable.invalidate`, {@link onDialableCallerIdsInvalidated},
+ * `cluster/primary.ts`), which clears its own ({@link clearDialableCallerIdCache}). A lost
+ * message costs at most the TTL.
+ *
  * ── PL14: a carrier with no allocation on a per-carrier breakdown cannot dial ─────────
  *
  * An account on a per-carrier concurrency breakdown (`provider_breakdown`) admits a call
@@ -49,9 +56,12 @@ import { providerConcurrencyRepository } from '@magick-agency/db/repositories/pr
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { carrierDialReady } from '../telephony/carrier-dial-readiness.js';
+import { createChildLogger } from '@magick-agency/observability';
 import { DEFAULT_CAMPAIGN_PROVIDER } from './campaign-carrier.js';
 import { usableCallerIds } from './pacing/caller-id-pool.js';
 import { GenerationTtlCache, MAX_TRACKED_GENERATIONS } from './pacing/read-cache.js';
+
+const log = createChildLogger({ component: 'agency-campaign-dialability' });
 
 /** How long one read of a campaign's dialable caller IDs is reused. */
 export const DIALABLE_CACHE_TTL_MS = 15_000;
@@ -63,12 +73,36 @@ const cache = new GenerationTtlCache<string[]>(
   DIALABLE_CACHE_TTL_MS, () => Date.now(), MAX_TRACKED_GENERATIONS, DIALABLE_CACHE_MAX_ENTRIES,
 );
 
+/** Who else must hear of a clear: the primary's relay to its media workers. */
+const invalidationListeners = new Set<() => void>();
+
 /**
- * Forget every cached read: a number was synced, retired, unassigned or re-tagged. A read in
- * flight across it stores nothing (the cache's generation moved).
+ * Forget every cached read, here and (through {@link onDialableCallerIdsInvalidated}) in
+ * every media worker: a number was synced, retired, unassigned or re-tagged.
  */
 export function invalidateDialableCallerIds(): void {
+  clearDialableCallerIdCache();
+  for (const listener of invalidationListeners) {
+    try {
+      listener();
+    } catch (err) {
+      log.warn({ err }, 'Could not relay a dialable caller-ID invalidation — the other processes see it within the cache TTL');
+    }
+  }
+}
+
+/**
+ * Forget every cached read in THIS process only: what a media worker runs when the primary
+ * relays a clear. A read in flight across it stores nothing (the cache's generation moved).
+ */
+export function clearDialableCallerIdCache(): void {
   cache.clear();
+}
+
+/** Hear every {@link invalidateDialableCallerIds} of this process. Returns the unsubscribe. */
+export function onDialableCallerIdsInvalidated(listener: () => void): () => void {
+  invalidationListeners.add(listener);
+  return () => { invalidationListeners.delete(listener); };
 }
 
 /**

@@ -439,6 +439,8 @@ export interface IpcEventMap {
   'station.broadcast': StationBroadcastBody;
   'station.send': StationSendBody;
   'concurrency.invalidate': AccountScopeBody;
+  /** Primary → every media worker: drop the dialable caller-ID cache (PL13, `campaign-dialability.ts`). */
+  'dialable.invalidate': EmptyBody;
   'reaper.forget_unrecorded': AttemptIdsBody;
   'voice.wake_self_heal': EmptyBody;
   'call.lease': CallLeaseBody;
@@ -474,6 +476,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'station.broadcast': parseStationBroadcast,
   'station.send': parseStationSend,
   'concurrency.invalidate': parseAccountScope,
+  'dialable.invalidate': parseEmptyBody,
   'reaper.forget_unrecorded': parseAttemptIds,
   'voice.wake_self_heal': parseEmptyBody,
   'call.lease': parseCallLease,

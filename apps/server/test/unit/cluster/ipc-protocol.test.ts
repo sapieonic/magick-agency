@@ -143,6 +143,13 @@ describe('body decoders', () => {
     }
   });
 
+  it('dialable.invalidate carries nothing, and refuses a body that is not an object', () => {
+    const decode = IPC_EVENT_DECODERS['dialable.invalidate'];
+    expect(decode(roundTrip({}))).toEqual({});
+    expect(decode(undefined)).toEqual({});
+    for (const bad of ['x', 1, null, ['a']]) expect(decode(bad)).toBeNull();
+  });
+
   it('every request type has both decoders and a default deadline', () => {
     for (const type of Object.keys(IPC_REQUEST_DECODERS) as Array<keyof typeof IPC_REQUEST_DECODERS>) {
       expect(typeof IPC_REQUEST_DECODERS[type].req).toBe('function');
@@ -164,6 +171,7 @@ describe('body decoders', () => {
       'station.broadcast': { campaignId: 'c', frame: { event: 'campaign_state', campaign_id: 'c' } },
       'station.send': { sessionId: 's', frame: { event: 'queue', campaign_id: 'c', due: false, reason: 'queue_empty', next_due_at: null } },
       'concurrency.invalidate': { tenantId: 't', accountId: 'a' },
+      'dialable.invalidate': {},
       'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
       'voice.wake_self_heal': {},
       'call.lease': { op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink' } },

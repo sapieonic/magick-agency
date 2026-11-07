@@ -20,6 +20,7 @@ import type Redis from 'ioredis';
 import type { AppContext } from '../app-context.js';
 import { StationRegistry } from '../agency/station-registry.js';
 import { AgentStateMachine } from '../agency/agent-state-machine.js';
+import { onDialableCallerIdsInvalidated } from '../agency/campaign-dialability.js';
 import { configureAgencyRuntime, getAgencyRuntime } from '../bootstrap/agency.js';
 import { getVoiceEngine } from '../bootstrap/voice.js';
 import { setCoreInjector } from '../api/core-dispatch.js';
@@ -125,6 +126,14 @@ export function warnIfMoreProcessesThanCores(
   return true;
 }
 
+/**
+ * Relay this process's dialable caller-ID invalidations (`invalidateDialableCallerIds`, PL13)
+ * to every media worker, whose dials read their own cache. Returns the unsubscribe.
+ */
+export function relayDialableInvalidations(cluster: Pick<MediaCluster, 'invalidateDialableCallerIds'>): () => void {
+  return onDialableCallerIdsInvalidated(() => cluster.invalidateDialableCallerIds());
+}
+
 /** After the bootstraps: bind what exists only now, then fork the workers and wait for them. */
 export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Promise<void>> {
   const runtime = getAgencyRuntime();
@@ -152,6 +161,8 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
     getDistributedAccountCount: (tenantId, accountId) => inner.getDistributedAccountCount(tenantId, accountId),
   };
   setConcurrencyControl(broadcasting);
+  // A number change made here (the super-admin routes) clears every worker's dialable caller-ID cache.
+  const offDialable = relayDialableInvalidations(cluster);
 
   await cluster.start();
   logger.info({ mediaWorkers: cluster.count }, 'Media worker processes started');
@@ -166,6 +177,7 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
       cluster.stop(MEDIA_WORKER_STOP_GRACE_MS),
     ]);
     offRevoke();
+    offDialable();
     if (getConcurrencyControl() === broadcasting) setConcurrencyControl(inner);
   };
 }

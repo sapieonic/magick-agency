@@ -536,6 +536,7 @@ runs. The worker trusts a command only from its parent channel.
 | `agent.return_reserved` | req | `{sessionId}` | 5 s, then `offline` write in P |
 | `station.broadcast` | event | `{campaignId, frame}` | — |
 | `concurrency.invalidate` | event | `{tenantId, accountId}`: drop the provider guard's 5 s `limitCache` and the degraded-mode local cache, as the seam does in P | — |
+| `dialable.invalidate` | event | `{}`: drop the worker's 15 s dialable caller-ID cache (PL13, `campaign-dialability.ts`), sent on every `invalidateDialableCallerIds` in P (a number synced, retired, deleted or unassigned) | — |
 | `reaper.snapshot` | req | `{}` → `{activeAttemptIds, unrecordedEnds: [{attemptId, dialOutcomeUnknown}], manualActiveIds, activeCallIds}` | 5 s, then **skip the sweep** (fail closed) |
 | `reaper.forget_unrecorded` | event | `{attemptIds}` | — |
 | `softphone.closed_by_sweep` | req | `{rows}` (sent to each row's session slot) | 10 s |

@@ -691,9 +691,10 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/lease-snapshot-window.test.ts` | 2 |
 | `apps/server/test/unit/cluster/loop-sampler.test.ts` | 5 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 15 |
-| `apps/server/test/unit/cluster/media-cluster.test.ts` | 6 |
+| `apps/server/test/unit/cluster/media-child-invalidations.test.ts` | 2 |
+| `apps/server/test/unit/cluster/media-cluster.test.ts` | 8 |
 | `apps/server/test/unit/cluster/plivo-callback-forwarding.test.ts` | ~6 |
-| `apps/server/test/unit/cluster/primary.test.ts` | 3 |
+| `apps/server/test/unit/cluster/primary.test.ts` | 5 |
 | `apps/server/test/unit/cluster/process-observability.test.ts` | 4 |
 | `apps/server/test/unit/cluster/readiness.test.ts` | 17 |
 | `apps/server/test/unit/cluster/roles.test.ts` | 8 |
