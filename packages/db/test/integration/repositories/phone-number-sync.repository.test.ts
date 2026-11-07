@@ -23,10 +23,10 @@ let account: string;
 let admin: string;
 let providers: { voicelink: string; plivo: string };
 
-async function insertCredential(tenantId = tenant, status: 'active' | 'disabled' | 'invalid' = 'active'): Promise<string> {
+async function insertCredential(tenantId = tenant, status: 'active' | 'disabled' | 'invalid' | 'revoked' = 'active'): Promise<string> {
   const { rows } = await getTestPool().query<{ id: string }>(
-    `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref, status)
-     VALUES ($1, 'plivo', $2, $3, $4) RETURNING id`,
+    `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref, status, revoked_at)
+     VALUES ($1, 'plivo', $2, $3, $4::varchar, CASE WHEN $4::varchar = 'revoked' THEN now() END) RETURNING id`,
     [tenantId, `cred-${randomUUID().slice(0, 6)}`, `MA${randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`, status],
   );
   return rows[0]!.id;
@@ -65,6 +65,30 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await closeTestPool();
+});
+
+describe('tenantPhoneAssignmentRepository.findAvailableForAccount: a credential that cannot dial offers no number (integration)', () => {
+  it.each(['disabled', 'invalid', 'revoked'] as const)('a %s credential`s synced numbers are not offered; the service`s own and an active credential`s are', async (status) => {
+    const live = await insertCredential();
+    const dead = await insertCredential();
+    await phoneNumberRepository.syncForCredential(live, listed('+14155550001'), admin);
+    await phoneNumberRepository.syncForCredential(dead, listed('+14155550002'), admin);
+    const own = await getTestPool().query<{ id: string }>(
+      `INSERT INTO phone_numbers (phone_number, provider_id) VALUES ('+919000000001', $1) RETURNING id`, [providers.voicelink]);
+    await getTestPool().query(`INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id) VALUES ($1, $2)`, [tenant, own.rows[0]!.id]);
+    const offered = async () => (await tenantPhoneAssignmentRepository.findAvailableForAccount(tenant, account)).map((a) => a.phone_number);
+
+    expect(await offered()).toEqual(['+14155550001', '+14155550002', '+919000000001']);
+    await getTestPool().query(
+      `UPDATE telephony_credentials SET status = $2::varchar, revoked_at = CASE WHEN $2::varchar = 'revoked' THEN now() END WHERE id = $1`, [dead, status]);
+    expect(await offered()).toEqual(['+14155550001', '+919000000001']);
+    // The number row itself is untouched (still active, still pinned): re-enabling offers it again.
+    expect(await numberRow('+14155550002')).toMatchObject({ status: 'active', telephony_credential_id: dead });
+    if (status !== 'revoked') {
+      await getTestPool().query(`UPDATE telephony_credentials SET status = 'active' WHERE id = $1`, [dead]);
+      expect(await offered()).toEqual(['+14155550001', '+14155550002', '+919000000001']);
+    }
+  });
 });
 
 describe('phoneNumberRepository.syncForCredential (integration)', () => {

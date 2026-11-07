@@ -162,6 +162,14 @@ export class TenantPhoneAssignmentRepository {
     return result.rows;
   }
 
+  /**
+   * The numbers an account may dial from: active numbers assigned to its tenant, untagged
+   * or tagged to it, default first. A number synced from a tenant credential is offered
+   * only while that credential is `active` (B20): a disabled, invalid or revoked
+   * credential cannot dial, so its numbers are neither caller IDs (the soft phone's
+   * bootstrap, default and untagged choice, the console's list) nor a route the
+   * super-admin concurrency check may count.
+   */
   async findAvailableForAccount(
     tenantId: string,
     accountId: string,
@@ -175,6 +183,10 @@ export class TenantPhoneAssignmentRepository {
        JOIN phone_numbers pn ON pn.id = tpa.phone_number_id
        JOIN telephony_providers tp ON tp.id = pn.provider_id
        WHERE tpa.tenant_id = $1 AND pn.status = 'active'
+         AND (
+           pn.telephony_credential_id IS NULL
+           OR EXISTS (SELECT 1 FROM telephony_credentials tc WHERE tc.id = pn.telephony_credential_id AND tc.status = 'active')
+         )
          AND (
            NOT EXISTS (SELECT 1 FROM phone_account_tags pat WHERE pat.assignment_id = tpa.id)
            OR EXISTS (SELECT 1 FROM phone_account_tags pat WHERE pat.assignment_id = tpa.id AND pat.account_id = $2)
