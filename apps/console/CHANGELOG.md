@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.14.0](https://github.com/sapieonic/magick-agency/compare/console-v0.13.0...console-v0.14.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,contracts,db:** dedicated caller ID per agent on a campaign ([#51](https://github.com/sapieonic/magick-agency/issues/51)) ([0d89c15](https://github.com/sapieonic/magick-agency/commit/0d89c15844269ce446cc77075c3423f0cf604c5c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.13.0
+    * @magick-agency/domain bumped to 0.5.1
+
 ## [0.13.0](https://github.com/sapieonic/magick-agency/compare/console-v0.12.0...console-v0.13.0) (2026-11-07)
 
 

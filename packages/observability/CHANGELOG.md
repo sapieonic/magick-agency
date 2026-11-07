@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.6.0...observability-v0.7.0) (2026-11-07)
+
+
+### Features
+
+* **server,console,contracts,db:** dedicated caller ID per agent on a campaign ([#51](https://github.com/sapieonic/magick-agency/issues/51)) ([0d89c15](https://github.com/sapieonic/magick-agency/commit/0d89c15844269ce446cc77075c3423f0cf604c5c))
+
 ## [0.6.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.5.0...observability-v0.6.0) (2026-11-05)
 
 
