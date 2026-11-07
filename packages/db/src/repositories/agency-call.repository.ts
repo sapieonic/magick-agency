@@ -13,8 +13,9 @@ import type {
  *  - every statement targets `agency_calls` (the baseline's rename of `webrtc_calls`);
  *  - `sip_connection_id` (SIP) is gone, as the baseline dropped the column;
  *    `telephony_credential_id` (BYOC, 0002) is written once at INSERT and never
- *    updated (a call keeps the credential it dialled on); `provider_request_id` is
- *    updatable;
+ *    updated (a call keeps the credential it dialled on), and only while that
+ *    credential is `active` (see `create`); `provider_request_id` is settable at
+ *    INSERT and updatable;
  *  - the default `provider` is `'voicelink'` (VoBiz is deleted; the baseline's
  *    column default is `'voicelink'` too);
  *  - `WebRtcCallScope` is `'agency'` only, and `analysisFlagFor` returns
@@ -153,17 +154,60 @@ export function analysisFlagFor(scope: WebRtcCallScope): FlagDefinition<boolean>
   return AGENCY_FLAGS.agency_call_analysis;
 }
 
+/**
+ * Thrown by {@link WebRtcCallRepository.create} when the call names a tenant carrier
+ * credential that is not `active` (disabled, invalid, revoked, or gone) at the instant
+ * of the insert. No row was written. The bridge treats it as a leg that was never
+ * placed: nothing reached the carrier, and the call never falls back to the service's
+ * own account (B20). Carries ids only.
+ */
+export class TelephonyCredentialNotActiveError extends Error {
+  readonly code = 'telephony_credential_not_active';
+  constructor(readonly credentialId: string) {
+    super(`Telephony credential ${credentialId} is not active; the call was not recorded`);
+    this.name = 'TelephonyCredentialNotActiveError';
+  }
+}
+
 export class WebRtcCallRepository {
+  /**
+   * Insert a call leg.
+   *
+   * ── A pinned credential is re-checked IN the insert ─────────────────────────
+   *
+   * With a non-null `telephony_credential_id` the row is written only if that
+   * credential is `active` at that instant, in this one statement: the `EXISTS` takes
+   * a SHARE lock on the credential row, so a disable, verify verdict, revoke or shred
+   * running now either commits first (the lock waits for it, the row is re-read, the
+   * check fails and nothing is inserted) or waits for this insert to commit (and then
+   * finds a live call pinned to the credential, which `call_control` keeps serving).
+   * A check in a separate statement before the insert could not close that window:
+   * a revoke landing between the two would leave a new call on a revoked credential.
+   * Refused: {@link TelephonyCredentialNotActiveError}, nothing written.
+   *
+   * `INSERT … SELECT` rather than `VALUES` so the row can be conditional; every
+   * placeholder therefore carries its column's type (a bare `$n` in a SELECT list gets
+   * none from the target column).
+   */
   async create(input: CreateWebRtcCallInput): Promise<WebRtcCallRecord> {
     const pool = getPool();
+    const credentialId = input.telephony_credential_id ?? null;
     const result = await pool.query<WebRtcCallRecord>(
       `INSERT INTO agency_calls
         (tenant_id, account_id, caller_id, destination_phone, provider,
          initiated_by, metadata, recording_requested,
          analysis_profile_id, analysis_language, analysis_consent, analysis_consent_at,
          campaign_id, agency_attempt_id, telephony_credential_id,
-         origin, manual_call_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+         origin, manual_call_id, provider_request_id)
+       SELECT $1::uuid, $2::uuid, $3::varchar, $4::varchar, $5::varchar,
+              $6::varchar, $7::jsonb, $8::boolean,
+              $9::uuid, $10::varchar, $11::boolean, $12::timestamptz,
+              $13::uuid, $14::uuid, $15::uuid,
+              $16::varchar, $17::uuid, $18::varchar
+        WHERE $15::uuid IS NULL
+           OR EXISTS (SELECT 1 FROM telephony_credentials c
+                       WHERE c.id = $15::uuid AND c.status = 'active'
+                         FOR SHARE)
        RETURNING *`,
       [
         input.tenant_id,
@@ -180,16 +224,19 @@ export class WebRtcCallRepository {
         input.analysis_consent_at ?? null,
         input.campaign_id ?? null,
         input.agency_attempt_id ?? null,
-        input.telephony_credential_id ?? null,
+        credentialId,
         // Both named in the column list above: an optional input field missing from it
         // would typecheck and be dropped. A manual leg with a campaign or attempt id,
         // or a manual_call_id without `origin: 'manual'`, is refused by
         // ck_agency_calls_manual_correlation rather than coerced here.
         input.origin ?? 'campaign',
         input.manual_call_id ?? null,
+        input.provider_request_id ?? null,
       ],
     );
-    return result.rows[0]!;
+    const row = result.rows[0];
+    if (!row) throw new TelephonyCredentialNotActiveError(credentialId!);
+    return row;
   }
 
   async findById(id: string): Promise<WebRtcCallRecord | null> {

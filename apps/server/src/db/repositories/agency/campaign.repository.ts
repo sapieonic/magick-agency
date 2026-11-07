@@ -41,6 +41,10 @@ function announceCampaignChanged(row: AgencyCampaignRecord | null | undefined): 
  */
 const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   'name', 'caller_ids', 'telephony_provider',
+  // The tenant carrier credential (0002). Patchable with the provider, and `null`
+  // legitimately moves the campaign back to the service's own account. The PATCH route
+  // judges the pair (`carrierRejected`); the composite FK refuses a mismatched one.
+  'telephony_credential_id',
   'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'break_reasons',
@@ -91,6 +95,8 @@ export class AgencyCampaignRepository {
   async create(input: {
     tenant_id: string; account_id: string; name: string; caller_ids: string[];
     telephony_provider?: string;
+    /** The tenant carrier credential it dials on; null/omitted = the service's own account. */
+    telephony_credential_id?: string | null;
     calling_window_start?: string; calling_window_end?: string;
     calling_days?: number[]; default_timezone?: string;
     wrapup_seconds?: number; wrapup_auto_return?: boolean; allow_wrapup_redial?: boolean;
@@ -144,7 +150,7 @@ export class AgencyCampaignRepository {
                $19, $20, COALESCE($21,false),
                COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
                COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
-               COALESCE($28::integer,30))
+               COALESCE($28::integer,30),$29::uuid)
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -171,6 +177,8 @@ export class AgencyCampaignRepository {
         input.callback_owner_grace_minutes ?? null, input.callback_fallback ?? null,
         input.allow_agent_retry ?? null, input.agent_retry_rounds ?? null,
         input.agent_retry_cooldown_minutes ?? null,
+        // The tenant carrier credential it dials on (0002); NULL = the service's own account.
+        input.telephony_credential_id ?? null,
       ],
     );
     return rows[0]!;

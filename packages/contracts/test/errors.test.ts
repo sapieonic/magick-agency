@@ -120,7 +120,7 @@ describe('roster refusal codes', () => {
 });
 
 describe('campaign-lifecycle codes', () => {
-  it('are the six campaign-lifecycle names, distinct', () => {
+  it('are the eight campaign-lifecycle names, distinct', () => {
     // `another_campaign_running` is retired (decisions MC6): several campaigns may run per account.
     expect([...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES]).toEqual([
       'invalid_campaign_transition',
@@ -129,6 +129,8 @@ describe('campaign-lifecycle codes', () => {
       'campaign_roster_exhausted',
       'announcement_not_found',
       'analysis_profile_not_found',
+      'telephony_credential_not_found',
+      'telephony_credential_not_active',
     ]);
     expectUnique(AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES);
   });

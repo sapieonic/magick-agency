@@ -59,13 +59,14 @@ describe('the retry bound constants', () => {
     expect(RETRY_IDEMPOTENCY_KEY_PATTERN.test('')).toBe(false);
   });
 
-  it('inherits exactly the twenty-five listed config columns, and no lifecycle column', () => {
+  it('inherits exactly the twenty-six listed config columns, and no lifecycle column', () => {
     // The list is what a retry copies from its parent. A LIFECYCLE column
     // landing in it would carry the parent's run onto a campaign that has never
     // dialled — a terminal status, a start time, or a stale auto-pause record on
     // a draft. `campaign-retry-repository.test.ts` asserts they are absent from
     // the INSERT; this asserts they are absent from the SOURCE of that list.
-    expect(RETRY_INHERITED_CONFIG_KEYS).toHaveLength(25);
+    expect(RETRY_INHERITED_CONFIG_KEYS).toHaveLength(26);
+    expect(RETRY_INHERITED_CONFIG_KEYS as readonly string[]).toContain('telephony_credential_id');
     for (const forbidden of [
       'status', 'started_at', 'ended_at', 'completed_at', 'contacts_total',
       'parent_campaign_id', 'root_campaign_id', 'retry_generation', 'retry_selector',

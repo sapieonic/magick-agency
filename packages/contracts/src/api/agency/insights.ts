@@ -171,7 +171,8 @@ export interface AgencyInsightsHeadline {
   paused: null | {
     paused_at: string;
     actor: AgencyInsightsActor | null;
-    reason: 'supervisor' | 'abandonment_ceiling';
+    /** `carrier_auth`: the carrier refused the campaign's carrier-account credential. */
+    reason: 'supervisor' | 'abandonment_ceiling' | 'carrier_auth';
     /** The 24 h abandonment rate the guardrail measured, for an auto-pause. */
     abandonment_rate_pct_at_pause: number | null;
     calls_finishing: number;

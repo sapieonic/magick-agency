@@ -27,7 +27,7 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
-import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, configRejected, ownedCampaign } from './guards.js';
+import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, ownedCampaign } from './guards.js';
 import { ACTOR_NAME_MAX, ACTOR_USER_ID_MAX } from './lifecycle.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 
@@ -342,6 +342,15 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       && await abandonAnnouncementRejected(request, reply, overrides['abandon_announcement_id'])) return reply;
     if ('analysis_profile_id' in overrides
       && await analysisProfileRejected(request, reply, overrides['analysis_profile_id'])) return reply;
+    // The carrier account, by the same rule: judged only when an override touches the
+    // carrier, the credential or the caller IDs, and then on the merged result, exactly as
+    // a PATCH would be. An inherited pin is not re-judged here (its campaign cannot START
+    // while the credential is not active, `campaignCredentialStartRefusal`).
+    if (await carrierRejected(request, reply, overrides, {
+      telephony_provider: 'telephony_provider' in overrides ? overrides['telephony_provider'] : parent.telephony_provider,
+      telephony_credential_id: 'telephony_credential_id' in overrides ? overrides['telephony_credential_id'] : parent.telephony_credential_id,
+      caller_ids: (overrides['caller_ids'] as string[] | undefined) ?? parent.caller_ids,
+    })) return reply;
 
     const generation = parent.retry_generation + 1;
     const requestedName = typeof body['name'] === 'string' ? body['name'].trim() : '';

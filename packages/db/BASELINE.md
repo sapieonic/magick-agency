@@ -16,7 +16,7 @@ the SQL is the authority. As of 2026-11-05.
   `dnc_entries.added_by`, `agency_dnc_outbox.added_by`, `agency_calls.initiated_by`) are text.
 - **Foreign keys** only where the table pairs need them; see the open questions for candidates.
 - **Seed.** One reference row, `telephony_providers ('voicelink', 'VoiceLink')`. No super-admin.
-  (0002 adds `plivo`, inactive; see below.)
+  (0002 adds `plivo`, inactive; 0018 activates it; see below.)
 - **Extension** `uuid-ossp` for `uuid_generate_v4()` defaults (`audit_logs`, `audio_files`,
   `announcements`); other ids use the built-in `gen_random_uuid()`.
 
@@ -74,7 +74,7 @@ Columns: `id`, `admin_id`, `admin_email`, `action`, `resource_type`, `resource_i
 
 Columns: `id`, `name`, `display_name`, `status`, `created_at`, `updated_at`.
 
-**`phone_numbers`**. The phone-number inventory for agency's VoiceLink account.
+**`phone_numbers`**. The phone-number inventory: numbers on the service's own VoiceLink account (added by a super-admin), and, from 0018, numbers synced from a tenant's own carrier account (`telephony_credential_id`).
 
 Columns: `id`, `phone_number`, `provider_id`, `label`, `capabilities`, `region`, `max_concurrent_calls`, `status`, `notes`, `created_by`, `created_at`, `updated_at`, `pool_eligible`.
 
@@ -156,7 +156,7 @@ Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snap
 
 ### Dialer
 
-**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. The baseline allows one running campaign per account (`uq_agency_campaign_running`); 0015 drops that index, so an account may run several (see below). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below).
+**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. The baseline allows one running campaign per account (`uq_agency_campaign_running`); 0015 drops that index, so an account may run several (see below). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below). 0018 lets `pause_reason` be `carrier_auth`.
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provider`, `calling_window_start`, `calling_window_end`, `calling_days`, `default_timezone`, `wrapup_seconds`, `wrapup_auto_return`, `retry_policy`, `disposition_catalog`, `record_calls`, `analysis_profile_id`, `context_display`, `status`, `contacts_total`, `created_by`, `started_at`, `completed_at`, `created_at`, `updated_at`, `break_reasons`, `abandon_announcement_id`, `abandonment_ceiling_pct`, `pause_reason`, `paused_at`, `pause_abandonment_rate_pct`, `ended_at`, `last_transition_by_user_id`, `last_transition_by_name`, `parent_campaign_id`, `root_campaign_id`, `retry_generation`, `retry_selector`, `retry_idempotency_key`.
 
@@ -802,6 +802,43 @@ Customer history: every read bounded to a number's newest 2,000 roster rows
 **Down** drops the index. **Tests**: `test/integration/db/customer-history-contacts-index-migration.test.ts`
 (definition, the walk stopping at the cap on a 5,000-row placeholder among 200,000 rows, down then
 up) and the down → up suite.
+
+### 0018 — `migrations/0018_plivo_numbers_and_carrier_pause.sql`
+
+The Plivo dial path's schema (decisions B18–B22; docs/status.md Plivo step 4).
+
+- **Activates** the `plivo` provider row 0002 seeded inactive: numbers, concurrency allocations
+  and campaigns may name it.
+- **`phone_numbers.telephony_credential_id`** (nullable UUID, FK `fk_phone_numbers_telephony_credential`
+  → `telephony_credentials (id)`, RESTRICT) and the partial index
+  `idx_phone_numbers_telephony_credential WHERE telephony_credential_id IS NOT NULL`: a number synced
+  from a tenant's own carrier account names its credential; NULL is the service's own account. A
+  plain FK, not a composite one: this table names its carrier by `provider_id` (uuid) and has no
+  tenant column, so no key of `telephony_credentials` matches without a denormalised copy. The one
+  writer, `phoneNumberRepository.syncForCredential`, reads the number's provider off the credential
+  in SQL; it inserts the account's numbers pinned to the credential and assigns them to the
+  credential's tenant with no account tag (every account of the tenant may use them, B20), refuses a
+  number already registered on another credential or the service's own account (a conflict, never
+  taken over), reactivates the credential's retired numbers the account lists again, and retires
+  (never deletes) the ones it no longer lists; all under a `FOR NO KEY UPDATE` lock on an `active`
+  credential row. `tenantPhoneAssignmentRepository.findCredentialNumbersForAccount` answers which
+  caller IDs a campaign pinned to the credential may use; the account-number reads return the column.
+- **`ck_agency_campaign_pause_reason`** gains `carrier_auth`: the carrier refused the campaign's
+  credential.
+- **Call insert** (repository, no schema change): `webrtcCallRepository.create` with a non-null
+  `telephony_credential_id` writes the row only while that credential is `active`, in the INSERT
+  itself (`INSERT … SELECT … WHERE EXISTS (… status = 'active' FOR SHARE)`), and otherwise throws
+  `TelephonyCredentialNotActiveError` with nothing written; it also takes `provider_request_id`.
+- **Locking.** A catalog-only `ADD COLUMN`, a plain `CREATE INDEX` on `phone_numbers` (small), and
+  the CHECK swap on `agency_campaigns` (ACCESS EXCLUSIVE, one scan of a small table); one
+  transaction, at container start.
+
+**Down** rewrites `carrier_auth` pauses to `supervisor` (the campaign stays paused), restores the
+CHECK, drops the index and the column (synced numbers stay, unlinked) and makes `plivo` inactive
+again. **Tests**: `test/integration/db/plivo-numbers-migration.test.ts` (the column, its FK and
+index, the CHECK, down then up), `test/integration/repositories/phone-number-sync.repository.test.ts`,
+`test/integration/repositories/credential-call-insert.repository.test.ts` (including a disable and a
+revoke committing while the insert waits), the seed-row case and the down → up suite.
 
 ## Tests
 

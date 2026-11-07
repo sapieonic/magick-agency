@@ -24,7 +24,7 @@ export class TenantPhoneAssignmentRepository {
   async findById(assignmentId: string): Promise<TenantPhoneAssignmentRecord | null> {
     const pool = getPool();
     const result = await pool.query<TenantPhoneAssignmentRecord>(
-      `SELECT tpa.*, pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region,
+      `SELECT tpa.*, pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region, pn.telephony_credential_id,
               tp.name AS provider_name, tp.display_name AS provider_display_name
        FROM tenant_phone_assignments tpa
        JOIN phone_numbers pn ON pn.id = tpa.phone_number_id
@@ -47,7 +47,7 @@ export class TenantPhoneAssignmentRepository {
   async findByTenantId(tenantId: string): Promise<TenantPhoneAssignmentRecord[]> {
     const pool = getPool();
     const result = await pool.query<TenantPhoneAssignmentRecord>(
-      `SELECT tpa.*, pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region,
+      `SELECT tpa.*, pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region, pn.telephony_credential_id,
               tp.name AS provider_name, tp.display_name AS provider_display_name
        FROM tenant_phone_assignments tpa
        JOIN phone_numbers pn ON pn.id = tpa.phone_number_id
@@ -77,7 +77,7 @@ export class TenantPhoneAssignmentRepository {
   ): Promise<TenantPhoneAssignmentRecord | null> {
     const pool = getPool();
     const result = await pool.query<TenantPhoneAssignmentRecord>(
-      `SELECT tpa.*, pn.phone_number, pn.max_concurrent_calls,
+      `SELECT tpa.*, pn.phone_number, pn.max_concurrent_calls, pn.telephony_credential_id,
               tp.name AS provider_name, tp.display_name AS provider_display_name
        FROM tenant_phone_assignments tpa
        JOIN phone_numbers pn ON pn.id = tpa.phone_number_id
@@ -91,7 +91,7 @@ export class TenantPhoneAssignmentRepository {
   async findDefaultForTenant(tenantId: string): Promise<TenantPhoneAssignmentRecord | null> {
     const pool = getPool();
     const result = await pool.query<TenantPhoneAssignmentRecord>(
-      `SELECT tpa.*, pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region,
+      `SELECT tpa.*, pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region, pn.telephony_credential_id,
               tp.name AS provider_name, tp.display_name AS provider_display_name
        FROM tenant_phone_assignments tpa
        JOIN phone_numbers pn ON pn.id = tpa.phone_number_id
@@ -168,7 +168,7 @@ export class TenantPhoneAssignmentRepository {
   ): Promise<(TenantPhoneAssignmentRecord & { assignment_id: string })[]> {
     const pool = getPool();
     const result = await pool.query<TenantPhoneAssignmentRecord & { assignment_id: string }>(
-      `SELECT pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region,
+      `SELECT pn.phone_number, pn.label, pn.max_concurrent_calls, pn.capabilities, pn.region, pn.telephony_credential_id,
               tp.name AS provider_name, tp.display_name AS provider_display_name,
               tpa.id AS assignment_id, tpa.is_default
        FROM tenant_phone_assignments tpa
@@ -183,6 +183,34 @@ export class TenantPhoneAssignmentRepository {
       [tenantId, accountId],
     );
     return result.rows;
+  }
+
+  /**
+   * Which of `phoneNumbers` an account may dial from on tenant credential
+   * `credentialId`: active numbers synced to that credential (0018), assigned to the
+   * tenant and available to the account (the `findAvailableForAccount` rule). A
+   * campaign pinned to the credential may name only these as caller IDs.
+   */
+  async findCredentialNumbersForAccount(
+    tenantId: string,
+    accountId: string,
+    credentialId: string,
+    phoneNumbers: readonly string[],
+  ): Promise<string[]> {
+    const pool = getPool();
+    const result = await pool.query<{ phone_number: string }>(
+      `SELECT pn.phone_number
+       FROM tenant_phone_assignments tpa
+       JOIN phone_numbers pn ON pn.id = tpa.phone_number_id
+       WHERE tpa.tenant_id = $1 AND pn.telephony_credential_id = $3 AND pn.status = 'active'
+         AND pn.phone_number = ANY($4::varchar[])
+         AND (
+           NOT EXISTS (SELECT 1 FROM phone_account_tags pat WHERE pat.assignment_id = tpa.id)
+           OR EXISTS (SELECT 1 FROM phone_account_tags pat WHERE pat.assignment_id = tpa.id AND pat.account_id = $2)
+         )`,
+      [tenantId, accountId, credentialId, [...phoneNumbers]],
+    );
+    return result.rows.map((r) => r.phone_number);
   }
 
   async setAccountDefault(

@@ -116,7 +116,8 @@ export async function computeSummary(campaign: AgencyCampaignRecord, deps: Summa
     name: names.get(transitionBy) ?? campaign.last_transition_by_name ?? null,
   };
   // The headline's actor and instants need the transitions and names read above.
-  if (headline.paused) headline.paused.actor = campaign.pause_reason === 'abandonment_ceiling' ? null : transitionActor;
+  // An automatic pause (the guardrail, or the carrier refusing the credential) has no actor.
+  if (headline.paused) headline.paused.actor = campaign.pause_reason === 'abandonment_ceiling' || campaign.pause_reason === 'carrier_auth' ? null : transitionActor;
   if (headline.stopping) {
     const pressed = [...transitions].reverse().find((t) => t.to_status === 'stopping');
     headline.stopping.actor = transitionActor;

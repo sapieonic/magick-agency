@@ -68,6 +68,12 @@ export interface AgencyCampaignRecord {
   name: string;
   caller_ids: string[];
   telephony_provider: string;
+  /**
+   * The tenant carrier credential the campaign dials on (0002; decisions B18–B22), or
+   * null for the service's own account. Held to `telephony_provider` and the tenant by a
+   * composite FK; a pinned credential must be active to start or resume.
+   */
+  telephony_credential_id: string | null;
   calling_window_start: string;
   calling_window_end: string;
   calling_days: number[];
@@ -119,11 +125,12 @@ export interface AgencyCampaignRecord {
   /**
    * Why the campaign is currently paused, or NULL when it is not paused.
    *
-   * Only two values are writable (CHECK-constrained): `supervisor` and
-   * `abandonment_ceiling`. The WS enum's `auto_paused` is deliberately absent —
+   * Three values are writable (CHECK-constrained): `supervisor`,
+   * `abandonment_ceiling`, and (0018) `carrier_auth`: the carrier refused the
+   * campaign's credential. The WS enum's `auto_paused` is deliberately absent —
    * its two emit sites are transient broadcasts that write no row.
    */
-  pause_reason: 'supervisor' | 'abandonment_ceiling' | null;
+  pause_reason: 'supervisor' | 'abandonment_ceiling' | 'carrier_auth' | null;
   /** When the current pause began. Cleared on resume/start. */
   paused_at: Date | null;
   /**
@@ -264,6 +271,7 @@ export type AgencyCampaignConfigColumns = Pick<
   AgencyCampaignRecord,
   | 'caller_ids'
   | 'telephony_provider'
+  | 'telephony_credential_id'
   | 'calling_window_start'
   | 'calling_window_end'
   | 'calling_days'

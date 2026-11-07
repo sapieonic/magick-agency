@@ -1,8 +1,11 @@
 import { getPool } from '../connection.js';
+import { withTransaction } from '../utils/transaction.js';
 import type {
   PhoneNumberRecord,
   CreatePhoneNumberInput,
   UpdatePhoneNumberInput,
+  SyncedNumberInput,
+  NumberSyncResult,
 } from '../models/phone-number.model.js';
 
 export class PhoneNumberRepository {
@@ -65,9 +68,138 @@ export class PhoneNumberRepository {
     return result.rows[0] || null;
   }
 
+  /**
+   * Make the inventory match the numbers a tenant credential's carrier account lists
+   * (BYOC, B18; 0018), in one transaction:
+   *
+   *  - a listed number not in the inventory is inserted on the credential's provider,
+   *    pinned to the credential (`telephony_credential_id`), and assigned to the
+   *    credential's tenant with no account tag, so every account of the tenant may
+   *    dial from it (B20: a credential serves every account of its tenant);
+   *  - a listed number already pinned to this credential is reactivated if it was
+   *    retired, and assigned to the tenant if it is not (a `deleted` one is left alone);
+   *  - a listed number already in the inventory on ANOTHER credential, or on the
+   *    service's own account (NULL), is refused as a conflict, never taken over;
+   *  - this credential's numbers the account no longer lists are retired, never deleted:
+   *    calls and campaigns name them, and the carrier may list them again.
+   *
+   * The credential row is locked first (`FOR NO KEY UPDATE`): two syncs of one
+   * credential run one after the other, and a disable or revoke waits for the sync (or
+   * the sync, finding the credential no longer `active`, writes nothing and returns
+   * null). The provider is read off the credential in SQL, so a synced number cannot
+   * name a different carrier from the credential it is pinned to.
+   *
+   * `listed` must be the account's COMPLETE list: anything missing from it is retired.
+   */
+  async syncForCredential(
+    credentialId: string,
+    listed: readonly SyncedNumberInput[],
+    adminId: string | null,
+  ): Promise<NumberSyncResult | null> {
+    return withTransaction(async (client, tx) => {
+      const cred = await client.query<{ tenant_id: string; provider_id: string }>(
+        `SELECT c.tenant_id, p.id AS provider_id
+           FROM telephony_credentials c
+           JOIN telephony_providers p ON p.name = c.provider
+          WHERE c.id = $1 AND c.status = 'active'
+            FOR NO KEY UPDATE OF c`,
+        [credentialId],
+      );
+      const row = cred.rows[0];
+      if (!row) {
+        await tx.rollback();
+        return null;
+      }
+      const numbers = [...new Set(listed.map((n) => n.phone_number))];
+      const labels = new Map(listed.map((n) => [n.phone_number, n.label]));
+
+      const existing = await client.query<{ id: string; phone_number: string; status: PhoneNumberRecord['status']; telephony_credential_id: string | null }>(
+        `SELECT id, phone_number, status, telephony_credential_id
+           FROM phone_numbers
+          WHERE phone_number = ANY($1::varchar[]) OR telephony_credential_id = $2::uuid
+            FOR UPDATE`,
+        [numbers, credentialId],
+      );
+      const byNumber = new Map(existing.rows.map((r) => [r.phone_number, r]));
+      const listedSet = new Set(numbers);
+
+      const result: NumberSyncResult = { added: [], reactivated: [], unchanged: [], retired: [], conflicts: [], active: 0 };
+      const toInsert: string[] = [];
+      const toReactivate: string[] = [];
+      for (const number of numbers) {
+        const found = byNumber.get(number);
+        if (!found) toInsert.push(number);
+        else if (found.telephony_credential_id !== credentialId) result.conflicts.push({ phone_number: number, reason: 'registered_elsewhere' });
+        else if (found.status === 'deleted') result.conflicts.push({ phone_number: number, reason: 'deleted' });
+        else if (found.status === 'retired') toReactivate.push(found.id);
+        else result.unchanged.push(number);
+      }
+      const toRetire = existing.rows.filter(
+        (r) => r.telephony_credential_id === credentialId && r.status === 'active' && !listedSet.has(r.phone_number),
+      );
+
+      if (toInsert.length > 0) {
+        // ON CONFLICT DO NOTHING: a number inserted by someone else since the read above
+        // (a super-admin's manual create, another credential's sync) is that writer's,
+        // and is reported as a conflict rather than overwritten.
+        const inserted = await client.query<{ phone_number: string }>(
+          `INSERT INTO phone_numbers
+             (phone_number, provider_id, label, capabilities, created_by, telephony_credential_id)
+           SELECT n.phone_number, $2::uuid, n.label, '{voice}', $3::uuid, $4::uuid
+             FROM unnest($1::varchar[], $5::varchar[]) AS n(phone_number, label)
+           ON CONFLICT (phone_number) DO NOTHING
+           RETURNING phone_number`,
+          [toInsert, row.provider_id, adminId, credentialId, toInsert.map((n) => labels.get(n) ?? null)],
+        );
+        const done = new Set(inserted.rows.map((r) => r.phone_number));
+        for (const number of toInsert) {
+          if (done.has(number)) result.added.push(number);
+          else result.conflicts.push({ phone_number: number, reason: 'registered_elsewhere' });
+        }
+      }
+      if (toReactivate.length > 0) {
+        const back = await client.query<{ phone_number: string }>(
+          `UPDATE phone_numbers SET status = 'active'
+            WHERE id = ANY($1::uuid[]) AND telephony_credential_id = $2::uuid AND status = 'retired'
+            RETURNING phone_number`,
+          [toReactivate, credentialId],
+        );
+        result.reactivated.push(...back.rows.map((r) => r.phone_number));
+      }
+      if (toRetire.length > 0) {
+        const gone = await client.query<{ phone_number: string }>(
+          `UPDATE phone_numbers SET status = 'retired'
+            WHERE id = ANY($1::uuid[]) AND telephony_credential_id = $2::uuid AND status = 'active'
+            RETURNING phone_number`,
+          [toRetire.map((r) => r.id), credentialId],
+        );
+        result.retired.push(...gone.rows.map((r) => r.phone_number));
+      }
+
+      // Every listed number now pinned to this credential is assigned to its tenant.
+      // Existing assignments (and their account tags and default) are left as they are.
+      await client.query(
+        `INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id, is_default, assigned_by)
+         SELECT $1::uuid, pn.id, false, $3::uuid
+           FROM phone_numbers pn
+          WHERE pn.telephony_credential_id = $2::uuid AND pn.status = 'active'
+         ON CONFLICT (tenant_id, phone_number_id) DO NOTHING`,
+        [row.tenant_id, credentialId, adminId],
+      );
+      const count = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM phone_numbers WHERE telephony_credential_id = $1 AND status = 'active'`,
+        [credentialId],
+      );
+      result.active = count.rows[0]!.n;
+      for (const list of [result.added, result.reactivated, result.unchanged, result.retired]) list.sort();
+      result.conflicts.sort((a, b) => a.phone_number.localeCompare(b.phone_number));
+      return result;
+    }, { pool: getPool() });
+  }
+
   // There is no `findPlatformOwned`: its one use was refusing to register a
-  // platform DID as a tenant's BYOC number, and bring-your-own-carrier is out of
-  // scope (VoiceLink only).
+  // platform DID as a tenant's BYOC number. A tenant's own-carrier numbers are not
+  // registered by hand: `syncForCredential` takes them from the carrier account.
 
   async create(input: CreatePhoneNumberInput): Promise<PhoneNumberRecord> {
     const pool = getPool();

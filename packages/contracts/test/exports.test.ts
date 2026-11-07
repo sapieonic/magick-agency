@@ -152,6 +152,8 @@ describe('package surface', () => {
       'version_conflict',
       'invalid_transition',
       'in_use',
+      'credential_not_active',
+      'too_many_numbers',
     ]);
     expect(new Set(TELEPHONY_CREDENTIAL_ERROR_CODES).size).toBe(TELEPHONY_CREDENTIAL_ERROR_CODES.length);
   });

@@ -10,6 +10,11 @@ export interface TenantPhoneAssignment {
   phone_number_id: string;
   provider_name: string;
   provider_display_name: string;
+  /**
+   * The tenant carrier credential the number was synced from (`GET /phone-numbers`
+   * sends it), or null for the service's own account. Optional: older servers omit it.
+   */
+  telephony_credential_id?: string | null;
   label: string | null;
   is_default: boolean;
   max_concurrent_calls: number;
@@ -20,6 +25,6 @@ export interface TenantPhoneAssignment {
     account_name: string;
     is_default: boolean;
   }>;
-  // There is no `is_byoc` flag: agency dials only on its own VoiceLink account,
-  // never a tenant's own carrier account.
+  // There is no `is_byoc` flag: a number on the tenant's own carrier account is the one
+  // with a non-null `telephony_credential_id`.
 }

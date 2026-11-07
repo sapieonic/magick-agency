@@ -32,7 +32,7 @@ import type { AgencyCampaignRecord } from '../../../src/db/models/agency.model.j
 function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignRecord {
   return {
     id: 'camp-1', tenant_id: 't1', account_id: 'a1', name: 'c',
-    caller_ids: ['+911'], telephony_provider: 'vobiz',
+    caller_ids: ['+911'], telephony_provider: 'vobiz', telephony_credential_id: null,
     calling_window_start: '00:00:00', calling_window_end: '24:00:00',
     calling_days: [0, 1, 2, 3, 4, 5, 6], default_timezone: 'UTC',
     wrapup_seconds: 30, abandon_announcement_id: null, wrapup_auto_return: true, allow_wrapup_redial: false,

@@ -50,6 +50,10 @@ vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
   announcementRepository: { findActiveByIdScoped: vi.fn().mockResolvedValue({ id: 'ann-1' }) },
 }));
 vi.mock('../../../src/analysis/profile-preflight.js', () => preflight);
+// A retry override naming the carrier is judged against the provider rows (`campaign-carrier.ts`).
+vi.mock('../../../src/db/repositories/telephony-provider.repository.js', () => ({
+  telephonyProviderRepository: { findByName: async (name: string) => ({ name, status: 'active' }) },
+}));
 
 import { agencyCampaignRoutes } from '../../../src/api/routes/agency-campaigns.routes.js';
 import { RETRY_INHERITED_CONFIG_KEYS } from '@magick-agency/domain/retry-campaign-bounds';
@@ -119,7 +123,7 @@ describe('POST / no longer hands sip_connection_id to the repository', () => {
       'analysis_profile_id', 'assignment_mode', 'callback_fallback', 'callback_owner_grace_minutes',
       'caller_ids', 'calling_days', 'calling_window_end', 'calling_window_start', 'context_display',
       'created_by', 'default_timezone', 'disposition_catalog', 'name', 'on_unstaff', 'record_calls', 'retry_policy',
-      'telephony_provider', 'tenant_id', 'wrapup_auto_return', 'wrapup_seconds',
+      'telephony_credential_id', 'telephony_provider', 'tenant_id', 'wrapup_auto_return', 'wrapup_seconds',
     ]);
     expect(input.record_calls).toBe(true);
     await app.close();

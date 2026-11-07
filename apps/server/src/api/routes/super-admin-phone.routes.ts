@@ -13,17 +13,23 @@ import {
   assignPhoneNumberSchema,
 } from '../validators/phone-number.validator.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
+import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
+import { findCredentialSpec } from '../../telephony/credentials/credential-specs.js';
 
 const log = createChildLogger({ component: 'super-admin-phone-routes' });
 
 /*
- * The super-admin phone inventory and assignment routes for the one VoiceLink
- * account. Deliberately absent:
- *  - Telephony-provider writes: the migrations seed the provider rows (`voicelink`
- *    active; `plivo` inactive until its dial path ships). `provider_id` still
- *    references `telephony_providers`, so number creation checks it and refuses
- *    an inactive provider, and `GET /telephony-providers` is kept so the
- *    super-admin console can pick the id.
+ * The super-admin phone inventory and assignment routes. Numbers on the service's
+ * own carrier account are added here by hand; numbers on a carrier dialled on a
+ * tenant's own account (Plivo, B18) come only from that credential's number sync
+ * (`POST /super-admin/telephony-credentials/:id/sync-numbers`), so creation refuses
+ * that carrier and an assignment of a synced number to another tenant is refused.
+ * Deliberately absent:
+ *  - Telephony-provider writes: the migrations seed the provider rows (`voicelink`,
+ *    and `plivo`, which 0018 activates). `provider_id` still references
+ *    `telephony_providers`, so number creation checks it and refuses an inactive
+ *    provider, and `GET /telephony-providers` is kept so the super-admin console can
+ *    pick the id.
  *  - `pool_eligible` on the wire (create/update input, the create log/audit
  *    field, every response row): it marked numbers for a signup pool, and there
  *    is no pooled number. The column stays in the schema at its default.
@@ -74,6 +80,15 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     }
     if (provider.status === 'inactive') {
       return reply.code(400).send({ error: 'Bad Request', message: 'Telephony provider is not active' });
+    }
+    // A carrier dialled on tenants' own accounts gets its numbers from a credential's
+    // number sync, which pins each to the credential: a number added by hand would name
+    // no credential, so no campaign could use it and no call could dial from it.
+    if (findCredentialSpec(provider.name)) {
+      return reply.code(400).send({
+        error: 'Bad Request',
+        message: 'Numbers on this carrier come from the tenant’s carrier account: sync them from its credential instead',
+      });
     }
 
     // Check phone number uniqueness
@@ -306,6 +321,18 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     }
     if (phoneNumber.status !== 'active') {
       return reply.code(400).send({ error: 'Bad Request', message: 'Phone number is not active' });
+    }
+    // A number synced from a tenant's carrier account belongs to that tenant: assigning
+    // it to another would let that tenant's calls present a number billed to, and dialled
+    // on, someone else's account.
+    if (phoneNumber.telephony_credential_id) {
+      const credential = await telephonyCredentialRepository.findById(phoneNumber.telephony_credential_id);
+      if (!credential || credential.tenant_id !== tenant_id) {
+        return reply.code(409).send({
+          error: 'Conflict',
+          message: 'This number is synced from another tenant’s carrier account and can only be assigned to that tenant',
+        });
+      }
     }
 
     try {

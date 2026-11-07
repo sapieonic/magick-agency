@@ -2332,6 +2332,9 @@ describe('every campaign route carries its RBAC permission', () => {
     // exempt it. That is the right way round: a route that is invisible in most
     // deployments is exactly the one whose permission nobody re-checks.
     ['post', '/campaigns/:id/roster/clear', 'agency.campaigns.write'],
+    // The carrier accounts a campaign may dial on (B18): read by the campaign builder to
+    // fill the very fields a create or edit sends, so it sits on the same floor as they do.
+    ['get', '/carriers', 'agency.campaigns.write'],
   ];
 
   it.each(EXPECTED)('%s %s requires %s', (verb, path, permission) => {

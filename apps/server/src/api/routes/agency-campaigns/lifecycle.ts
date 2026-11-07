@@ -15,6 +15,7 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { campaignOf, ownedCampaign } from './guards.js';
+import { campaignCredentialStartRefusal } from '../../../agency/campaign-carrier.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
@@ -156,6 +157,18 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
     // After the transition guard, so a campaign in the wrong status still gets the
     // transition error rather than a roster error it cannot act on yet.
     if (opts.requireRoster && await rosterRejected(reply, campaign)) return reply;
+
+    // Into `running` (start, resume) only while the carrier account it is pinned to is
+    // active: a disabled, invalid or revoked credential would fail every dial (the call
+    // insert re-checks it), so the supervisor is told now, with what to do about it.
+    if (to === 'running') {
+      const refusal = await campaignCredentialStartRefusal(campaign);
+      if (refusal) {
+        return reply.code(refusal.status).send({
+          error: refusal.status === 404 ? 'Not Found' : 'Conflict', code: refusal.code, message: refusal.message,
+        });
+      }
+    }
 
     // Several campaigns of one account may be `running` at once (decisions MC6: migration 0015
     // dropped `uq_agency_campaign_running`, and `another_campaign_running` is retired). The

@@ -297,7 +297,7 @@ void _allRosterCodesListed;
 //
 // These are deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because they are not
 // members of the action union: they are the campaign routes' refusals, not an
-// agent action's. The member set is exactly the six campaign-lifecycle codes below.
+// agent action's. The member set is exactly the eight campaign-lifecycle codes below.
 // `another_campaign_running` is retired (decisions MC6): an account may run several
 // campaigns at once, so Start and Resume no longer refuse on another running campaign.
 
@@ -318,7 +318,19 @@ export type AgencyCampaignLifecycleErrorCode =
    * `analysis_profile_id` names a profile this account does not own, or one that
    * no longer exists (the dialer runtime `analysis/profile-preflight.ts`).
    */
-  | 'analysis_profile_not_found';
+  | 'analysis_profile_not_found'
+  /**
+   * 404. `telephony_credential_id` names no carrier credential of this tenant on the
+   * campaign's `telephony_provider` (unknown, another tenant's, or another carrier's:
+   * the three are not told apart).
+   */
+  | 'telephony_credential_not_found'
+  /**
+   * 409. The tenant carrier credential is not `active` (disabled, invalid or revoked):
+   * a campaign cannot be pinned to it, and a campaign pinned to it cannot start or
+   * resume until a platform administrator re-enables it or the campaign is moved.
+   */
+  | 'telephony_credential_not_active';
 
 export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'invalid_campaign_transition',
@@ -327,6 +339,8 @@ export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'campaign_roster_exhausted',
   'announcement_not_found',
   'analysis_profile_not_found',
+  'telephony_credential_not_found',
+  'telephony_credential_not_active',
 ] as const satisfies readonly AgencyCampaignLifecycleErrorCode[];
 
 const _allLifecycleCodesListed: AllListed<

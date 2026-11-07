@@ -14,7 +14,11 @@ import type {
   TelephonyCredentialRecord,
   TelephonyCredentialSecretRecord,
 } from '@magick-agency/db/models/telephony-credential.model';
-import type { TelephonyCredentialErrorCode } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
+import type { PhoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
+import type {
+  TelephonyCredentialErrorCode,
+  TelephonyCredentialNumberSync,
+} from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { CredentialSealer, CredentialSealError, type SealContext } from './credential-sealer.js';
 import { findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
 import { Secret, secretHint } from './secret.js';
@@ -42,6 +46,9 @@ export type CredentialRepo = Pick<TelephonyCredentialRepository,
 export interface TenantLookup {
   findById(id: string): Promise<{ id: string } | null>;
 }
+
+/** The phone inventory write the number sync makes (`phoneNumberRepository`). */
+export type NumberSyncRepo = Pick<PhoneNumberRepository, 'syncForCredential'>;
 
 export type ServiceResult<T> =
   | { ok: true; value: T }
@@ -133,6 +140,8 @@ export class TelephonyCredentialService {
     /** Null when no keyring is configured: every write is refused, every resolve fails closed. */
     sealer: CredentialSealer | null;
     fetchImpl?: FetchLike;
+    /** The phone inventory, for `syncNumbers`. */
+    numbers?: NumberSyncRepo;
   }) {}
 
   get storeAvailable(): boolean {
@@ -309,6 +318,61 @@ export class TelephonyCredentialService {
     this.forget(id);
     const shredded = await this.deps.repo.shredIfIdle(id, WEBHOOK_TOKEN_POST_END_GRACE_SECONDS);
     return { ok: true, value: { credential: shredded ? (await this.deps.repo.findById(id))! : row, shredded } };
+  }
+
+  /**
+   * Make the tenant's numbers on this carrier match the carrier account's voice numbers
+   * (see `phoneNumberRepository.syncForCredential` for what is written). Only an `active`
+   * credential syncs, checked here and again under a row lock in the write, so a disable
+   * or revoke landing while the carrier answers writes nothing. Nothing is changed when
+   * the carrier refuses, cannot be reached, or lists more numbers than one sync reads (a
+   * partial list would retire numbers still on the account). A refusal here does not
+   * mark the credential invalid: that is `verify`'s verdict.
+   */
+  async syncNumbers(id: string, adminId: string): Promise<ServiceResult<{ credential: TelephonyCredentialRecord; sync: TelephonyCredentialNumberSync }>> {
+    const numbersRepo = this.deps.numbers;
+    if (!numbersRepo) throw new Error('TelephonyCredentialService was built without the phone number repository');
+    const current = await this.deps.repo.findById(id);
+    if (!current) return fail('not_found', 'Credential not found');
+    if (current.status !== 'active') {
+      return fail('credential_not_active', `Numbers are synced only from an active credential; this one is ${current.status}`);
+    }
+    const spec = findCredentialSpec(current.provider);
+    if (!spec?.listNumbers) return fail('unknown_provider', 'This provider’s numbers cannot be synced');
+    let opened: { row: TelephonyCredentialRecord; secret: Secret<Record<string, string>> };
+    try {
+      opened = await this.openCurrent(id, 'dial');
+    } catch (err) {
+      if (!(err instanceof CredentialUnavailableError)) throw err;
+      if (err.kind === 'status') {
+        return fail('credential_not_active', 'Numbers are synced only from an active credential');
+      }
+      return this.unavailable(err);
+    }
+    const list = await spec.listNumbers(opened.row.public_config as Record<string, string>, opened.secret.reveal(), this.deps.fetchImpl);
+    if (list.result === 'rejected') return fail('carrier_rejected', list.reason);
+    if (list.result === 'unreachable') return fail('carrier_unreachable', list.reason);
+    if (list.result === 'too_many') return fail('too_many_numbers', list.reason);
+    const written = await numbersRepo.syncForCredential(id, list.numbers, adminId);
+    if (!written) {
+      return fail('credential_not_active', 'The credential stopped being active while the carrier was answering; nothing was changed');
+    }
+    return {
+      ok: true,
+      value: {
+        credential: opened.row,
+        sync: {
+          listed: list.listed,
+          added: written.added,
+          reactivated: written.reactivated,
+          unchanged: written.unchanged,
+          retired: written.retired,
+          skipped: list.skipped,
+          conflicts: written.conflicts,
+          active_numbers: written.active,
+        },
+      },
+    };
   }
 
   async get(id: string): Promise<TelephonyCredentialRecord | null> {

@@ -90,6 +90,10 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /super-admin/telephony-credentials/:_/disable', 'carrier credential disable (BYOC, B20)'],
   ['POST /super-admin/telephony-credentials/:_/enable', 'carrier credential enable (BYOC, B20)'],
   ['POST /super-admin/telephony-credentials/:_/revoke', 'carrier credential revoke (BYOC, B20)'],
+  // The super-admin UI's "Sync numbers" action lands with the UI workstream (saRoutes.ts then lists it).
+  ['POST /super-admin/telephony-credentials/:_/sync-numbers', 'carrier account number sync (BYOC, B18; audited)'],
+  // Read by the console's campaign builder once its carrier choice lands (B18).
+  ['GET /proxy/agency/carriers', 'carrier accounts a campaign may dial on (BYOC, B18)'],
   // The console's old `/proxy/feature-flags` path is not served. The flag map stays at
   // `GET /feature-flags`, and the console calls it there; the old path is `not_served` in the fixture.
   ['GET /feature-flags', 'client flag map at its agency path (the console calls it here)'],

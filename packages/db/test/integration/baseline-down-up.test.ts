@@ -68,7 +68,7 @@ const ALL_MIGRATIONS = [
   '0008_wrapup_redial', '0009_contact_assignment', '0010_contact_assignment_index_and_checks',
   '0011_insights_foundation', '0012_insights_rollup', '0013_insights_pacing_history',
   '0014_insights_rollup_first_dials_carrier_errors', '0015_multiple_running_campaigns', '0016_customer_history_indexes',
-  '0017_customer_history_contacts_index',
+  '0017_customer_history_contacts_index', '0018_plivo_numbers_and_carrier_pause',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */
@@ -281,11 +281,11 @@ describe('migrations down → up', () => {
     expect(reapplied.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
   });
 
-  it('a fresh apply seeds exactly the telephony providers voicelink (active) and plivo (inactive)', async () => {
+  it('a fresh apply seeds exactly the telephony providers voicelink and plivo, both active (0018 activates plivo)', async () => {
     // Checked here rather than in baseline.test.ts because that file truncates.
     const { rows } = await getTestPool().query<{ name: string; status: string }>('SELECT name, status FROM telephony_providers ORDER BY name');
-    // Plivo stays inactive until its dial path ships: numbers and allocations cannot use it.
-    expect(rows).toEqual([{ name: 'plivo', status: 'inactive' }, { name: 'voicelink', status: 'active' }]);
+    // 0002 seeds plivo inactive; 0018 activates it with its dial path (numbers, allocations, campaigns).
+    expect(rows).toEqual([{ name: 'plivo', status: 'active' }, { name: 'voicelink', status: 'active' }]);
     // ...and nothing else: no seed super-admin, no seed number, no feature flags.
     for (const table of ['super_admins', 'phone_numbers', 'tenant_phone_assignments', 'feature_flag_overrides', 'tenants', 'users', 'telephony_credentials']) {
       const { rows: n } = await getTestPool().query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);

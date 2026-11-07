@@ -7,6 +7,7 @@ import type { TelephonyCredentialRecord } from '@magick-agency/db/models/telepho
 import type {
   TelephonyCredentialErrorCode,
   TelephonyCredentialProvidersResponse,
+  TelephonyCredentialSyncNumbersResponse,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { getTelephonyCredentialService } from '../../telephony/credentials/index.js';
 import type { ServiceResult, TelephonyCredentialService } from '../../telephony/credentials/credential-service.js';
@@ -40,6 +41,8 @@ const STATUS: Record<TelephonyCredentialErrorCode, number> = {
   version_conflict: 409,
   invalid_transition: 409,
   in_use: 409,
+  credential_not_active: 409,
+  too_many_numbers: 422,
 };
 
 const idParams = z.object({ id: z.string().uuid() });
@@ -198,5 +201,30 @@ export async function superAdminTelephonyCredentialRoutes(
     log.info({ credentialId: r.value.credential.id, shredded: r.value.shredded }, 'Telephony credential revoked');
     audit(request, 'revoke_telephony_credential', r.value.credential, { shredded: r.value.shredded });
     return reply.send({ credential: r.value.credential });
+  });
+
+  /**
+   * POST /super-admin/telephony-credentials/:id/sync-numbers — the carrier account's voice
+   * numbers become the tenant's numbers on this carrier (added, reactivated, retired);
+   * refused unless the credential is active. Audited with the counts and the numbers
+   * changed (numbers are not secret).
+   */
+  app.post('/telephony-credentials/:id/sync-numbers', async (request, reply) => {
+    const p = idParams.safeParse(request.params);
+    if (!p.success) return reply.code(404).send({ error: 'not_found', message: 'Credential not found' });
+    const r = await service().syncNumbers(p.data.id, request.superAdmin!.id);
+    if (!r.ok) return sendFailure(reply, r);
+    const { credential, sync } = r.value;
+    log.info({
+      credentialId: credential.id, listed: sync.listed, added: sync.added.length, reactivated: sync.reactivated.length,
+      retired: sync.retired.length, conflicts: sync.conflicts.length, active: sync.active_numbers,
+    }, 'Telephony credential numbers synced');
+    audit(request, 'sync_telephony_credential_numbers', credential, {
+      listed: sync.listed, active_numbers: sync.active_numbers,
+      added: sync.added, reactivated: sync.reactivated, retired: sync.retired, conflicts: sync.conflicts,
+    });
+    // `TelephonyCredentialSyncNumbersResponse`; the row's Dates serialise to its ISO strings.
+    const body: Omit<TelephonyCredentialSyncNumbersResponse, 'credential'> & { credential: TelephonyCredentialRecord } = { credential, sync };
+    return reply.send(body);
   });
 }
