@@ -71,7 +71,10 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   // day trends against it (`insights-rollup-oracle.test.ts`).
   ['GET /proxy/agency/campaigns/:_/stats/series', 'campaign stats series (no console caller since the Insights tab)'],
   ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (carrier-facing)'],
-  ['WS /api/v1/webrtc-call/:_/pstn-stream', 'VoiceLink PSTN media leg (carrier-facing WS)'],
+  ['POST /api/v1/webhooks/plivo/webrtc-answer/:_', 'Plivo answer callback, replies XML (carrier-facing)'],
+  ['POST /api/v1/webhooks/plivo/webrtc-status/:_', 'Plivo ring and hangup callback (carrier-facing)'],
+  ['POST /api/v1/webhooks/plivo/webrtc-recording/:_', 'Plivo recording-ready callback (carrier-facing)'],
+  ['WS /api/v1/webrtc-call/:_/pstn-stream', 'carrier PSTN media leg, VoiceLink and Plivo (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],
   ['GET /super-admin/usage', 'super-admin usage counts'],
   ['GET /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings'],
