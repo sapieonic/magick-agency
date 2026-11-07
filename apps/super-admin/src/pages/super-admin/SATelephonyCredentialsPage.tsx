@@ -125,7 +125,9 @@ export default function SATelephonyCredentialsPage() {
   // The row an action is running on, and which action: only that action's button says it
   // is working (a Verify must not relabel Sync "Syncing…"); every action on the row waits.
   const [busy, setBusy] = useState<{ id: string; action: CredentialAction | 'sync' } | null>(null);
-  const busyId = busy?.id ?? null;
+  /** Whether an action is running on row `id`, and, given one, whether it is `action`. */
+  const busyWith = (id: string, action?: CredentialAction | 'sync') =>
+    busy !== null && busy.id === id && (action === undefined || busy.action === action);
   const [sync, setSync] = useState<SyncOutcome | null>(null);
 
   // Only the latest load may write: changing a filter while a load is in flight must
@@ -380,12 +382,12 @@ export default function SATelephonyCredentialsPage() {
                       </dl>
                       {c.status !== 'revoked' && (
                         <div className={styles.detailActions} onClick={(e) => e.stopPropagation()}>
-                          <button className="btn-secondary" disabled={busyId === c.id} onClick={() => void runAction(c, 'verify')}>
-                            <ShieldCheck size={14} /> {busy?.id === c.id && busy.action === 'verify' ? 'Verifying…' : 'Verify now'}
+                          <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runAction(c, 'verify')}>
+                            <ShieldCheck size={14} /> {busyWith(c.id, 'verify') ? 'Verifying…' : 'Verify now'}
                           </button>
                           {c.status === 'active' && (
-                            <button className="btn-secondary" disabled={busyId === c.id} onClick={() => void runSync(c)}>
-                              <PhoneIncoming size={14} /> {busy?.id === c.id && busy.action === 'sync' ? 'Syncing…' : 'Sync numbers'}
+                            <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runSync(c)}>
+                              <PhoneIncoming size={14} /> {busyWith(c.id, 'sync') ? 'Syncing…' : 'Sync numbers'}
                             </button>
                           )}
                           <button className="btn-secondary" onClick={() => { setRotateTarget(c); setRotateFields({}); setModalError(null); }}>
@@ -395,7 +397,7 @@ export default function SATelephonyCredentialsPage() {
                             <Pencil size={14} /> Rename
                           </button>
                           {c.status === 'disabled' ? (
-                            <button className={`btn-secondary ${styles.successBtn}`} disabled={busyId === c.id} onClick={() => void runAction(c, 'enable')}>
+                            <button className={`btn-secondary ${styles.successBtn}`} disabled={busyWith(c.id)} onClick={() => void runAction(c, 'enable')}>
                               <RotateCcw size={14} /> Enable
                             </button>
                           ) : (
@@ -559,7 +561,7 @@ export default function SATelephonyCredentialsPage() {
         }
         confirmLabel={confirm?.action === 'revoke' ? 'Revoke' : 'Disable'}
         danger
-        disabled={busyId !== null}
+        disabled={busy !== null}
         onConfirm={() => { if (confirm) void runAction(confirm.cred, confirm.action); }}
         onCancel={() => setConfirm(null)}
       />
