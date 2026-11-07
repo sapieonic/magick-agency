@@ -179,6 +179,10 @@ export const CARRIER_PAUSE_STALL_COPY: Record<CarrierAccountPauseReason, { headl
     headline: 'Paused automatically — this campaign’s carrier account is no longer active.',
     advice: 'Contact support to re-enable the carrier account, or move the campaign to another carrier in its settings, then resume it.',
   },
+  carrier_refusing_calls: {
+    headline: 'Paused automatically — the carrier refused this campaign’s calls several times in a row.',
+    advice: 'Contact support to check the carrier account (the destinations it may call, its balance and its caller IDs), then resume the campaign.',
+  },
 };
 
 /** For a reason this build has no sentence for (a newer server): still true, still actionable. */

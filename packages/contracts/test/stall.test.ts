@@ -44,7 +44,7 @@ describe('stall vocabulary', () => {
   });
 
   it('lists every automatic carrier-account pause once', () => {
-    expect([...CARRIER_ACCOUNT_PAUSE_REASONS]).toEqual(['carrier_auth', 'carrier_account_unavailable']);
+    expect([...CARRIER_ACCOUNT_PAUSE_REASONS]).toEqual(['carrier_auth', 'carrier_account_unavailable', 'carrier_refusing_calls']);
   });
 
   it('exports no separate producer-subset list', () => {

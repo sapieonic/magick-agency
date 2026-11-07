@@ -249,7 +249,7 @@ export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
  * equal to it, the health strip's `auto_paused_carrier` carries one, and the console's
  * copy is a table keyed by it. A new automatic carrier pause is added here.
  */
-export const CARRIER_ACCOUNT_PAUSE_REASONS = ['carrier_auth', 'carrier_account_unavailable'] as const;
+export const CARRIER_ACCOUNT_PAUSE_REASONS = ['carrier_auth', 'carrier_account_unavailable', 'carrier_refusing_calls'] as const;
 export type CarrierAccountPauseReason = (typeof CARRIER_ACCOUNT_PAUSE_REASONS)[number];
 
 /**
