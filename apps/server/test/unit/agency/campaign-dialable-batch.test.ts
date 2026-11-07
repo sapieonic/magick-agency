@@ -58,6 +58,36 @@ describe('withDialableCallerIdsAll', () => {
     expect(byCredential).toEqual({ 'cred-A': ['+911', '+912', '+913', '+914'], 'cred-B': ['+921', '+922'] });
   });
 
+  it('a read that started before a clear does not put its stale answer back in the cache (single and batch)', async () => {
+    // The read of c1's numbers starts, then a sync retires +913 and clears the cache, then
+    // the read (taken before the retire) returns.
+    let release!: (numbers: string[]) => void;
+    mocks.findCredentialNumbersForAccount.mockImplementationOnce(() => new Promise<string[]>((r) => { release = r; }));
+    const reading = withDialableCallerIds(CAMPAIGNS[0]!);
+    await vi.waitFor(() => expect(mocks.findCredentialNumbersForAccount).toHaveBeenCalledTimes(1));
+    mocks.active.get('cred-A')!.delete('+913');
+    invalidateDialableCallerIds();
+    release(['+912', '+913']);
+    // That one dial reads what it read (it would have without any cache) ...
+    expect((await reading).caller_ids).toEqual(['+912', '+913']);
+    // ... but the next lookup reads again and never sees the retired number.
+    expect((await withDialableCallerIds(CAMPAIGNS[0]!)).caller_ids).toEqual(['+912']);
+    expect(mocks.findCredentialNumbersForAccount).toHaveBeenCalledTimes(2);
+
+    // The batch read, the same way.
+    invalidateDialableCallerIds();
+    mocks.findCredentialNumbersForAccount.mockClear();
+    let releaseBatch!: (numbers: string[]) => void;
+    mocks.findCredentialNumbersForAccount.mockImplementationOnce(() => new Promise<string[]>((r) => { releaseBatch = r; }));
+    const batch = withDialableCallerIdsAll([CAMPAIGNS[0]!]);
+    await vi.waitFor(() => expect(mocks.findCredentialNumbersForAccount).toHaveBeenCalledTimes(1));
+    mocks.active.get('cred-A')!.delete('+912');
+    invalidateDialableCallerIds();
+    releaseBatch(['+912']);
+    await batch;
+    expect((await withDialableCallerIds(CAMPAIGNS[0]!)).caller_ids).toEqual([]);
+  });
+
   it('answers from the cache it shares with the single read, and fills it', async () => {
     await withDialableCallerIds(CAMPAIGNS[0]!);
     mocks.findCredentialNumbersForAccount.mockClear();

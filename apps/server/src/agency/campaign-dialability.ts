@@ -28,7 +28,9 @@
  *
  * The read is cached per campaign, credential and pool for {@link DIALABLE_CACHE_TTL_MS},
  * so a pacing tick costs nothing between reads; a sync, retire or unassign clears the
- * cache ({@link invalidateDialableCallerIds}) so the very next dial sees it. A lookup that
+ * cache ({@link invalidateDialableCallerIds}) so the very next dial sees it. The cache is a
+ * {@link GenerationTtlCache}: a read that started before a clear does not store what it
+ * read when it returns (it would put a retired number back for a whole TTL). A lookup that
  * finds an entry expired deletes it, and a full cache drops its expired entries before
  * its oldest.
  *
@@ -47,9 +49,9 @@ import { providerConcurrencyRepository } from '@magick-agency/db/repositories/pr
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import { carrierDialReady } from '../telephony/carrier-dial-readiness.js';
-import { ExpiringCache } from '../utils/expiring-cache.js';
 import { DEFAULT_CAMPAIGN_PROVIDER } from './campaign-carrier.js';
 import { usableCallerIds } from './pacing/caller-id-pool.js';
+import { GenerationTtlCache, MAX_TRACKED_GENERATIONS } from './pacing/read-cache.js';
 
 /** How long one read of a campaign's dialable caller IDs is reused. */
 export const DIALABLE_CACHE_TTL_MS = 15_000;
@@ -57,9 +59,14 @@ const DIALABLE_CACHE_MAX_ENTRIES = 5_000;
 
 export type DialabilityCampaign = Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'caller_ids' | 'telephony_credential_id'>;
 
-const cache = new ExpiringCache<string[]>({ ttlMs: DIALABLE_CACHE_TTL_MS, maxEntries: DIALABLE_CACHE_MAX_ENTRIES });
+const cache = new GenerationTtlCache<string[]>(
+  DIALABLE_CACHE_TTL_MS, () => Date.now(), MAX_TRACKED_GENERATIONS, DIALABLE_CACHE_MAX_ENTRIES,
+);
 
-/** Forget every cached read: a number was synced, retired, unassigned or re-tagged. */
+/**
+ * Forget every cached read: a number was synced, retired, unassigned or re-tagged. A read in
+ * flight across it stores nothing (the cache's generation moved).
+ */
 export function invalidateDialableCallerIds(): void {
   cache.clear();
 }
@@ -69,18 +76,20 @@ export function invalidateDialableCallerIds(): void {
  * for a service-account campaign; a failed read for a pinned one rejects (the caller
  * treats it as it treats any other failed read on its path).
  */
-export async function dialableCallerIds(campaign: DialabilityCampaign, now = Date.now()): Promise<string[]> {
+export async function dialableCallerIds(campaign: DialabilityCampaign): Promise<string[]> {
   const pool = usableCallerIds(campaign as AgencyCampaignRecord);
   const credentialId = campaign.telephony_credential_id;
   if (!credentialId || pool.length === 0) return pool;
   const key = dialableCacheKey(campaign.id, credentialId, pool);
-  const hit = cache.get(key, now);
+  const hit = cache.get(key);
   if (hit) return hit;
+  // Read before the read starts: a clear while it runs moves it, and the store is skipped.
+  const generation = cache.generation(key);
   const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
     campaign.tenant_id, campaign.account_id, credentialId, pool,
   ));
   const numbers = pool.filter((n) => allowed.has(n));
-  cache.set(key, numbers, now);
+  cache.setIf(key, generation, numbers);
   return numbers;
 }
 
@@ -102,19 +111,18 @@ export async function withDialableCallerIds<T extends DialabilityCampaign>(campa
  */
 export async function withDialableCallerIdsAll<T extends DialabilityCampaign>(
   campaigns: readonly T[],
-  now = Date.now(),
 ): Promise<T[]> {
   const out = [...campaigns];
   const reads = new Map<string, {
     tenantId: string; accountId: string; credentialId: string; numbers: Set<string>;
-    campaigns: Array<{ index: number; pool: string[]; key: string }>;
+    campaigns: Array<{ index: number; pool: string[]; key: string; generation: number }>;
   }>();
   campaigns.forEach((campaign, index) => {
     const credentialId = campaign.telephony_credential_id;
     if (!credentialId) return;
     const pool = usableCallerIds(campaign as DialabilityCampaign as AgencyCampaignRecord);
     const key = dialableCacheKey(campaign.id, credentialId, pool);
-    const known = pool.length === 0 ? pool : cache.get(key, now);
+    const known = pool.length === 0 ? pool : cache.get(key);
     if (known) {
       out[index] = { ...campaign, caller_ids: known };
       return;
@@ -126,15 +134,16 @@ export async function withDialableCallerIdsAll<T extends DialabilityCampaign>(
       reads.set(readKey, read);
     }
     for (const n of pool) read.numbers.add(n);
-    read.campaigns.push({ index, pool, key });
+    // Each key's generation before any read starts, as in `dialableCallerIds`.
+    read.campaigns.push({ index, pool, key, generation: cache.generation(key) });
   });
   await Promise.all([...reads.values()].map(async (read) => {
     const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
       read.tenantId, read.accountId, read.credentialId, [...read.numbers],
     ));
-    for (const { index, pool, key } of read.campaigns) {
+    for (const { index, pool, key, generation } of read.campaigns) {
       const numbers = pool.filter((n) => allowed.has(n));
-      cache.set(key, numbers, now);
+      cache.setIf(key, generation, numbers);
       out[index] = { ...campaigns[index]!, caller_ids: numbers };
     }
   }));
