@@ -100,7 +100,10 @@ export interface AccountReportDataset extends ReportDatasetBase {
   campaigns: AccountReportCampaignRow[];
   /** The campaigns' figures summed; rates recomputed from the sums. */
   totals: AccountReportFigures;
-  /** The roster rows for the window, as the roster orders them by default (attempts, descending). */
+  /**
+   * The roster rows for the window, ordered by attempts, descending, at most 200 (the report's
+   * roster query; the roster screen's own default order is successes, descending).
+   */
   agents: AgencyRosterAgentRowWithName[];
   benchmark: ReportRosterBenchmark;
   daily: AccountReportDailyRow[];

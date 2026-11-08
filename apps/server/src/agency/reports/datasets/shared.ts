@@ -18,7 +18,7 @@ import { tenantRepository } from '@magick-agency/db/repositories/tenant.reposito
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { ReportRunRecord } from '../../../db/repositories/agency/report-run.repository.js';
-import { agencyAgentStatsRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAgentStatsRepository, agencyReportDatasetRepository } from '../../../db/repositories/agency.repository.js';
 import { getPool } from '@magick-agency/db';
 import { parseRosterQuery, ROSTER_MAX_LIMIT } from '../../agent-record.js';
 import { enrichAttemptAgentNames } from '../../agency-spine.js';
@@ -84,6 +84,17 @@ export async function runTenancy(run: ReportRunRecord): Promise<{ tenant: { id: 
   return { tenant: { id: tenant.id, name: tenant.name }, account: { id: account.id, name: account.name } };
 }
 
+/**
+ * The run's zone as Postgres names it, resolved once per build. A zone Postgres does not know
+ * fails the build (`assembly_failed`) with a clear message: the shared reads would otherwise cut
+ * the account's days in UTC without saying so (`resolvedZoneCte`) or fail with a bare SQL error.
+ */
+export async function resolveReportZone(timezone: string): Promise<string> {
+  const zone = await agencyReportDatasetRepository.knownZone(timezone);
+  if (zone === null) throw new Error(`The report's time zone ${timezone} is not known to the database.`);
+  return zone;
+}
+
 /** The campaigns of `ids` in the tenant, by id (rows outside the tenant are absent). */
 export async function campaignsByIds(ids: readonly string[], tenantId: string): Promise<Map<string, AgencyCampaignRecord>> {
   const unique = [...new Set(ids)];
@@ -127,9 +138,10 @@ export interface ReportRoster {
 }
 
 /**
- * The account roster as `GET /proxy/agency/agents/stats` serves it to the console for the window
- * (no `campaign_id`, `sort=attempts`, `order=desc`, `limit=200`, the console's own maximum): the
- * internal handler's read (`parseRosterQuery` then `agencyAgentStatsRepository.roster`), the
+ * The account roster as `GET /proxy/agency/agents/stats` serves it for the window with the
+ * report's query (no `campaign_id`, `sort=attempts`, `order=desc`, `limit=200`, the route's
+ * maximum; the console's roster defaults to `sort=successes`, so past 200 dialling agents the
+ * rows, never the benchmark, can differ from its first page): the internal handler's read (`parseRosterQuery` then `agencyAgentStatsRepository.roster`), the
  * route's membership scope (`scopeRowsToMembers`, departed agents dropped unless
  * `includeInactive`) and its name enrichment. The benchmark is the handler's, untouched by the
  * membership filter, so `includeInactive` changes the rows only.

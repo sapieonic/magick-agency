@@ -69,6 +69,8 @@ import {
   outcomeLabel,
   readAccountRoster,
   reportRange,
+  resolveReportZone,
+  roundPreservingSum,
   runTenancy,
   secondsCell,
   wire,
@@ -140,15 +142,21 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
   if (!accountId) throw new ReportSubjectUnavailableError('an agent review needs an account');
   const supervisor = run.audience === 'supervisor';
 
-  // The subject: any membership (a departed agent included, as on the agent record's route) in
-  // this account or tenant-wide.
+  // The subject: a membership in this account or tenant-wide. A supervisor may review an agent
+  // who has left (any status, as on the agent record's route); an agent's own (`self`) review
+  // needs their membership to be active still: a removed member's self run is unavailable.
   const [tenancy, memberships] = await Promise.all([
     runTenancy(run),
     membershipRepository.findAnyByUserAndTenant(agentUserId, run.tenant_id),
   ]);
-  if (!memberships.some((m) => m.account_id === null || m.account_id === accountId)) {
+  const inAccount = memberships.filter((m) => m.account_id === null || m.account_id === accountId);
+  if (inAccount.length === 0) {
     throw new ReportSubjectUnavailableError('the agent is not a member of the report\'s account');
   }
+  if (!supervisor && !inAccount.some((m) => m.status === 'active')) {
+    throw new ReportSubjectUnavailableError('the agent is no longer an active member of the report\'s account');
+  }
+  const zone = await resolveReportZone(run.timezone);
 
   const scope: ReportAgentScope = { agentUserId, tenantId: run.tenant_id, accountId, from: run.range_from, to: run.range_to };
   const statsQuery = parseAgentStatsQuery({ from: run.range_from.toISOString(), to: run.range_to.toISOString(), bucket: 'day' });
@@ -158,7 +166,7 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
     agencyAgentStatsRepository.stats({ tenantId: run.tenant_id, accountId, agentUserId }, statsQuery.filters).then(wire),
     readAccountRoster({ tenantId: run.tenant_id, accountId, from: run.range_from, to: run.range_to, includeInactive: true }),
     agencyReportDatasetRepository.agentStateIntervals(scope),
-    agencyReportDatasetRepository.agentAttemptDays({ ...scope, timezone: run.timezone }),
+    agencyReportDatasetRepository.agentAttemptDays({ ...scope, timezone: zone }),
     agencyReportDatasetRepository.agentOutcomes(scope),
     agencyReportDatasetRepository.agentCallbackTiming({ ...scope, now }),
     agencyReportDatasetRepository.agentDncMarked(scope),
@@ -198,10 +206,12 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
     .map((id) => ({ id, name: nameOf(id), timezone: campaignZone(campaigns.get(id)!.default_timezone) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  const stationSeconds = presence.by_state.available + presence.by_state.on_call + presence.by_state.wrapup + presence.by_state.break;
   const notes = agentNotes({
     supervisor,
     timezone: run.timezone,
-    occupancyMeasured: (record.occupancy?.shift_seconds ?? 0) > 0,
+    stationSeconds,
+    recordShiftSeconds: record.occupancy?.shift_seconds ?? 0,
     rosterRow: rosterRow !== null,
     future: run.range_to.getTime() > now.getTime(),
   });
@@ -227,7 +237,7 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
     occupancy: occupancyReadings(rosterRow?.occupancy_pct, record),
     presence: {
       days_worked: daily.filter((x) => x.station_s > 0).length,
-      station_seconds: presence.by_state.available + presence.by_state.on_call + presence.by_state.wrapup + presence.by_state.break,
+      station_seconds: stationSeconds,
       by_state: presence.by_state,
       break_by_reason: [...presence.break_by_reason]
         .filter(([, seconds]) => seconds > 0)
@@ -273,7 +283,10 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
 export function agentNotes(o: {
   supervisor: boolean;
   timezone: string;
-  occupancyMeasured: boolean;
+  /** `presence.station_seconds`: the logged-in time the report itself measured. */
+  stationSeconds: number;
+  /** `record.occupancy.shift_seconds`, 0 when the record served no occupancy (a degraded read). */
+  recordShiftSeconds: number;
   rosterRow: boolean;
   future: boolean;
 }): string[] {
@@ -284,7 +297,12 @@ export function agentNotes(o: {
     'Outcome labels and successes follow each campaign\'s current outcome list, so an outcome renamed or reclassified since applies to earlier calls too.',
     `Days run from midnight to midnight in ${o.timezone}. The agent's record page cuts each campaign's calls in that campaign's time zone, so a call near midnight can fall on a different day there.`,
   ];
-  if (!o.occupancyMeasured) notes.push('No state changes were recorded for this agent in the window, so occupancy is not measured.');
+  if (o.stationSeconds === 0) {
+    notes.push('No state changes were recorded for this agent in the window, so occupancy is not measured.');
+  } else if (o.recordShiftSeconds === 0) {
+    // The report measured logged-in time but the agent record's occupancy read served none.
+    notes.push('The agent record\'s occupancy was unavailable for this run, so the on-call shares are not shown; logged-in time and the days are measured.');
+  }
   if (!o.rosterRow) notes.push('The agent placed no dials in the window, so there is no floor row for them.');
   if (o.future) notes.push('The window runs past the time this report was made; later time is not included.');
   if (!o.supervisor) notes.push('This copy is the agent\'s own: it leaves out the floor comparison and call analysis, and shows phone numbers to the last four digits.');
@@ -327,10 +345,9 @@ function agentSessionsSource(scope: ReportAgentScope): ReportDetailSource {
 export function sessionCells(r: ReportSessionDetailRow, withAgent: false): unknown[];
 export function sessionCells(r: ReportSessionDetailRow, withAgent: true, agentName: string | null): unknown[];
 export function sessionCells(r: ReportSessionDetailRow, withAgent: boolean, agentName?: string | null): unknown[] {
-  const available = secondsCell(r.available_s) ?? 0;
-  const onCall = secondsCell(r.on_call_s) ?? 0;
-  const wrapup = secondsCell(r.wrapup_s) ?? 0;
-  const brk = secondsCell(r.break_s) ?? 0;
+  // Logged in is the session's total rounded once; the state parts are rounded so they add up to it.
+  const seconds = (v: unknown) => (Number.isFinite(Number(v ?? 0)) ? Number(v ?? 0) : 0);
+  const [available, onCall, wrapup, brk] = roundPreservingSum([r.available_s, r.on_call_s, r.wrapup_s, r.break_s].map(seconds)) as [number, number, number, number];
   const cells = [
     instantCell(r.joined_at),
     instantCell(r.left_at),

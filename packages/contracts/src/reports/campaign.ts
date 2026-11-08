@@ -31,7 +31,11 @@ export interface CampaignReportDataset extends ReportDatasetBase {
     name: string;
     /** As of `generated_at`. */
     status: AgencyCampaignStatus;
-    /** The campaign's resolved zone; equals `range.timezone`. */
+    /**
+     * The campaign's resolved zone; equals `range.timezone`. A campaign whose zone changed after
+     * the report was requested fails the run `subject_unavailable` rather than serve a window cut
+     * in one zone with day buckets cut in another.
+     */
     timezone: string;
   };
   summary: AgencyInsightsSummary;

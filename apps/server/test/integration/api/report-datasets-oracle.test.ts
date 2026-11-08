@@ -184,8 +184,13 @@ function analysedCall(f: TenantFloor, campaignId: string | null, attemptId: stri
   return id;
 }
 
+/** Phones of the two soft-phone calls started just before a window edge and dialled just after it. */
+const EDGE_IN = '+919812341111';
+const EDGE_OUT = '+919812342222';
+
 /** Four worked days for agent `i` on the main floor. */
 function seedAgent(i: number, campaigns: [string, string]): void {
+  let softphoneSession: string | null = null;
   const a = agent(i).id;
   DAYS.forEach((day, k) => {
     const campaign = campaigns[(i + k) % 2]!;
@@ -237,6 +242,22 @@ function seedAgent(i: number, campaigns: [string, string]): void {
       // Another agent's callback, kept by agent 0's campaign: not agent 0's to count.
     }
     if (i === 1 && k === 1) truth.callbacks.missed += 0; // agent 1's missed callback is not agent 0's
+    if (i === 0 && k === 0) {
+      // A callback due later the same day whose contact closed first: missed.
+      const t = at(10);
+      attempt(floor, { ...mine, contact_id: contact(floor, campaign, 'completed'), dialed_at: t, ...talked(t, 'callback'), callback_at: plus(t, 7200) });
+      truth.callbacks.booked += 1;
+      truth.callbacks.missed += 1;
+      truth.callRows += 1;
+    }
+    if (i === 0 && k === 3) {
+      // A callback booked for an hour from now, the contact open: after this window, and
+      // `pending_future` in a window running past now (asserted there).
+      const t = at(11);
+      attempt(floor, { ...mine, contact_id: contact(floor, campaign, 'pending'), dialed_at: t, ...talked(t, 'callback'), callback_at: plus(NOW, 3600) });
+      truth.callbacks.booked += 1;
+      truth.callRows += 1;
+    }
     // 4: the station went away mid-call.
     attempt(floor, { ...mine, contact_id: contact(floor, campaign), dialed_at: at(4), outcome: 'agent_disconnected', answered_at: plus(at(4), 3), bridged_at: plus(at(4), 4), ended_at: plus(at(4), 30) });
     if (i === 0) truth.drops += 1;
@@ -265,6 +286,7 @@ function seedAgent(i: number, campaigns: [string, string]): void {
     if (i === 0 && k === 2) {
       const sp = L(day, '14:00');
       const spId = session(floor, { agent: a, campaign: null, joined: sp, left: L(day, '14:30'), steps: [['break', sp, 'soft_phone'], ['offline', L(day, '14:30'), null]] });
+      softphoneSession = spId;
       const spCall = analysedCall(floor, null, null, { common: { overall_sentiment: { label: 'positive', score: 0.9 } } }, false);
       manual.push({ id: randomUUID(), tenant_id: floor.tenant, account_id: floor.account, session_id: spId, agent_user_id: a, destination_e164: '+919812340000',
         caller_id: '+919000000001', state: 'ended', outcome: 'connected', dialed_at: L(day, '14:05'), bridged_at: L(day, '14:05:10'),
@@ -276,6 +298,22 @@ function seedAgent(i: number, campaigns: [string, string]): void {
       truth.callRows += 1;
     }
   });
+  if (i === 0 && softphoneSession) {
+    // Soft-phone calls started (`created_at`) just before a window edge and dialled just after
+    // it: one rule, Insights' `created_at`, puts the first in the window and the second out of
+    // it, in the count, the sentiment set and the calls sheet alike.
+    const edge = (phone: string, created: Date, dialed: Date, label: string) => {
+      const callId = analysedCall(floor, null, null, { common: { overall_sentiment: { label, score: 0.5 } } }, false);
+      manual.push({ id: randomUUID(), tenant_id: floor.tenant, account_id: floor.account, session_id: softphoneSession, agent_user_id: a, destination_e164: phone,
+        caller_id: '+919000000001', state: 'ended', outcome: 'connected', dialed_at: dialed, bridged_at: plus(dialed, 5),
+        ended_at: plus(dialed, 65), created_at: created, webrtc_call_id: callId, settled_at: plus(dialed, 65) });
+    };
+    edge(EDGE_IN, L(TO, '23:59:58'), L(TODAY, '00:00:03'), 'negative');
+    edge(EDGE_OUT, L(shiftDate(FROM, -1), '23:59:58'), L(FROM, '00:00:03'), 'positive');
+    truth.softphone += 1;
+    truth.sentiment.negative += 1;
+    truth.callRows += 1;
+  }
   // Do Not Call marks: two in the window (both spellings of the author), one before it.
   dnc.push({ tenant_id: floor.tenant, account_id: floor.account, campaign_id: campaigns[0], phone_e164: `+91977${i}000001`, source: 'agent', added_by: a, created_at: L(DAYS[0]!, '10:00') });
   dnc.push({ tenant_id: floor.tenant, account_id: floor.account, campaign_id: campaigns[1], phone_e164: `+91977${i}000002`, source: 'agent', added_by: `user:${a}`, created_at: L(DAYS[1]!, '10:00') });
@@ -422,7 +460,8 @@ describe('agent review: every figure equals the screen it comes from', () => {
     expect(ds.follow_through.redials_connected).toBe(ds.follow_through.redials_placed);
     expect(ds.follow_through.dnc_marked).toBe(truth.dnc);
     expect(ds.follow_through.softphone_calls).toBe(truth.softphone);
-    expect(ds.quality).toEqual({ analysed_calls: 5, sentiment: truth.sentiment });
+    expect(ds.follow_through.callbacks.missed).toBeGreaterThan(0); // not vacuous
+    expect(ds.quality).toEqual({ analysed_calls: 6, sentiment: truth.sentiment });
     const conversations = ds.outcomes.reduce((s, o) => s + o.conversations, 0);
     expect(conversations).toBe(ds.daily.reduce((s, d) => s + d.conversations, 0));
     expect(ds.outcomes.filter((o) => o.is_success).reduce((s, o) => s + o.conversations, 0)).toBe(ds.record.successes);
@@ -453,6 +492,13 @@ describe('agent review: every figure equals the screen it comes from', () => {
     expect(keys).toContain('sentiment');
     const phone = keys.indexOf('phone');
     expect(callRows.every((r) => typeof r[phone] === 'string' && /^\+\d{10,}$/.test(r[phone] as string))).toBe(true);
+    // Soft-phone rows by Insights' rule (`created_at` in the window), as the count and the
+    // sentiment set take them: the call started before the window's end is in, the one started
+    // before its start is out, whatever their dial times.
+    const softphonePhones = callRows.filter((r) => r[keys.indexOf('type')] === 'Soft phone').map((r) => r[phone]);
+    expect(softphonePhones).toHaveLength(ds.follow_through.softphone_calls);
+    expect(softphonePhones).toContain(EDGE_IN);
+    expect(softphonePhones).not.toContain(EDGE_OUT);
     const times = callRows.map((r) => r[0] as string);
     expect([...times].sort()).toEqual(times);
     expect(callRows.filter((r) => r[keys.indexOf('recorded')] === true)).toHaveLength(4);
@@ -464,6 +510,20 @@ describe('agent review: every figure equals the screen it comes from', () => {
     const stateRows = await collect(stateSrc);
     const secs = stateSrc.columns.findIndex((c) => c.key === 'seconds');
     expect(stateRows.reduce((s, r) => s + Number(r[secs]), 0)).toBe(ds.presence.station_seconds);
+  });
+});
+
+describe('agent review, a window running past now', () => {
+  it('callbacks still ahead are pending_future; every IN4 class is counted', async () => {
+    const run = runOf({ kind: 'agent', subject: agent(0).id, tenant: floor.tenant, account: floor.account, from: FROM, to: shiftDate(TODAY, 1), timezone: ZONE });
+    const { callbacks } = (await build<'agent'>(run)).dataset.follow_through;
+    // The day-3 callback (due today, its contact closed) joins the missed; the one booked for an
+    // hour from now is the only one still ahead.
+    expect(callbacks).toEqual({
+      booked: truth.callbacks.booked, on_time: truth.callbacks.on_time, late: truth.callbacks.late,
+      missed: truth.callbacks.missed + 1, pending_future: 1, pending_due: truth.callbacks.pending_due,
+    });
+    for (const n of Object.values(callbacks)) expect(n).toBeGreaterThan(0);
   });
 });
 
@@ -675,9 +735,37 @@ describe('a subject outside the run\'s tenant or account is unavailable', () => 
     await expect(build(runOf({ ...t, kind: 'account', subject: other.account }))).rejects.toBeInstanceOf(ReportSubjectUnavailableError);
   });
 
-  it('a departed agent is still reviewable (any membership of the account)', async () => {
+  it('a departed agent is still reviewable by a supervisor (any membership of the account)', async () => {
     const built = await build<'agent'>(runOf({ ...base, tenant: floor.tenant, account: floor.account, kind: 'agent', subject: agent(2).id }));
     expect(built.dataset.roster_row?.agent_user_id).toBe(agent(2).id);
+  });
+
+  it('a self review of a departed agent is unavailable: self needs an active membership', async () => {
+    const err = await build(runOf({ ...base, tenant: floor.tenant, account: floor.account, kind: 'agent', subject: agent(2).id, audience: 'self' }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReportSubjectUnavailableError);
+    // An active agent's own review still builds (the self describe above).
+  });
+
+  it('a campaign whose time zone changed after the run was requested is unavailable, not cut in two zones', async () => {
+    const err = await build(runOf({ ...base, tenant: floor.tenant, account: floor.account, kind: 'campaign', subject: floor.campaigns[0]!, timezone: C1_ZONE }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReportSubjectUnavailableError);
+    expect((err as Error).message).toBe('The campaign\'s time zone changed after this report was requested; run it again.');
+  });
+
+  it('a report zone Postgres does not know fails assembly with a clear error, never days cut in UTC', async () => {
+    const t = { ...base, tenant: floor.tenant, account: floor.account };
+    const unknownZone = (run: ReportRunRecord): ReportRunRecord => ({ ...run, timezone: 'Mars/Olympus_Mons' });
+    for (const run of [
+      unknownZone(runOf({ ...t, kind: 'account', subject: floor.account })),
+      unknownZone(runOf({ ...t, kind: 'agent', subject: agent(0).id })),
+    ]) {
+      const err = await build(run).catch((e: unknown) => e);
+      expect(err, run.kind).toBeInstanceOf(Error);
+      expect(err, run.kind).not.toBeInstanceOf(ReportSubjectUnavailableError);
+      expect((err as Error).message, run.kind).toBe('The report\'s time zone Mars/Olympus_Mons is not known to the database.');
+    }
   });
 
   it('account campaign_ids narrow the campaign rows, not the roster', async () => {

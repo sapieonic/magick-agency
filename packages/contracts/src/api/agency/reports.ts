@@ -75,9 +75,11 @@ export const REPORT_CADENCES = ['daily', 'weekly', 'monthly'] as const satisfies
  * Why a run failed (`AgencyReportRun.error.code`), also the renderer's callback vocabulary
  * (`ReportRenderCallback.error.code`, the subset {@link ReportRendererFailureCode}).
  *
- * - `assembly_failed`: the server could not build the dataset (a read failed).
+ * - `assembly_failed`: the server could not build the dataset (a read failed, or the report's
+ *   time zone is one the database does not know).
  * - `subject_unavailable`: the subject is gone or out of reach by assembly time (a campaign
- *   deleted, an agent whose membership was removed for a `self` run).
+ *   deleted, an agent whose membership was removed or is no longer active for a `self` run, a
+ *   campaign whose time zone changed after a campaign report was requested: run it again).
  * - `dataset_unreadable`: the renderer could not read or parse the dataset or a detail file.
  * - `dataset_version_unsupported`: the dataset's `dataset_version` is not the renderer's.
  * - `render_failed`: building the PDF or the workbook threw.

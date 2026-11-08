@@ -150,6 +150,20 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], batc
 
 export class AgencyReportDatasetRepository {
   /**
+   * The report zone as Postgres names it (`pg_timezone_names`, case-insensitively, as
+   * `resolvedZoneCte` resolves a zone), or null when Postgres does not know it. The builders
+   * resolve the run's zone once with this and refuse an unknown one, rather than let a shared
+   * read fall back to UTC without saying so.
+   */
+  async knownZone(timezone: string): Promise<string | null> {
+    const { rows } = await getPool().query<{ name: string }>(
+      'SELECT z.name FROM pg_timezone_names z WHERE lower(z.name) = lower($1::text) ORDER BY z.name LIMIT 1',
+      [timezone],
+    );
+    return rows[0]?.name ?? null;
+  }
+
+  /**
    * The agent's non-offline state intervals over the window, oldest first: the occupancy
    * intervals' agent variant (tenant and account scoped, every session overlapping the window,
    * soft-phone sessions included) with each interval's session kind and campaign. Offline is
@@ -475,8 +489,12 @@ export interface ReportAgentCallRow {
 }
 
 /**
- * Every call the agent was on in the window, oldest first: their placed campaign attempts
- * (reserved to their sessions in this account) and their placed soft-phone calls. With
+ * Every call the agent was on in the window, oldest first by dial time: their placed campaign
+ * attempts (reserved to their sessions in this account, `dialed_at` in the window) and their
+ * placed soft-phone calls (`created_at` in the window, `dialed_at` set: Insights' soft-phone rule,
+ * the one `agentSoftphoneCalls` and `agentSentiment` use, so the sheet lists exactly the calls
+ * the count and the sentiment set take; a call started just before the window's end and dialled
+ * just after it is in, and its Dialled cell falls after the window). With
  * `analysis`, each row also says whether its call was recorded and its sentiment label (the
  * supervisor audience); without it the call table is not read at all.
  */
@@ -507,8 +525,8 @@ export function agentCallsStatement(q: ReportAgentScope & { analysis: boolean })
           WHERE a.tenant_id = $4::uuid
             AND a.account_id = $5::uuid
             AND a.agent_user_id = $1::uuid
-            AND a.created_at < $3::timestamptz
-            AND a.dialed_at >= $2::timestamptz AND a.dialed_at < $3::timestamptz
+            AND a.created_at >= $2::timestamptz AND a.created_at < $3::timestamptz
+            AND a.dialed_at IS NOT NULL
        ) x
        ORDER BY x.at, x.id`,
     values: agentValues(q),

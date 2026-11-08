@@ -12,7 +12,7 @@
  *  - `totals`: the campaigns' figures summed field by field (`sumFigures`); `abandoned_pct`
  *    recomputed from the summed counts with the screens' rate helper (`ratePct`), never averaged.
  *  - `agents`, `benchmark`: the roster screen's read for the window (`readAccountRoster`, the
- *    console's query and its departed-agent default), over the whole account whatever
+ *    report's query and the screen's departed-agent default), over the whole account whatever
  *    `campaign_ids` narrowed.
  *  - `daily`: the rollup's 15-minute UTC buckets of the covered campaigns, re-bucketed into local
  *    days of `range.timezone` by the rollup's own trend read (`bucket: 'day'` in that zone, DST
@@ -59,6 +59,7 @@ import {
   mapLimit,
   readAccountRoster,
   reportRange,
+  resolveReportZone,
   runTenancy,
   wire,
 } from './shared.js';
@@ -184,6 +185,7 @@ export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run,
     coveredCampaigns(run, accountId),
     readAccountRoster({ tenantId: run.tenant_id, accountId, from: run.range_from, to: run.range_to, includeInactive: false }),
   ]);
+  const zone = await resolveReportZone(run.timezone);
 
   const reads = await mapLimit(campaigns, ACCOUNT_CAMPAIGN_CONCURRENCY, async (campaign) => {
     const range = insightsRangeFor(campaign, run, now);
@@ -192,7 +194,7 @@ export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run,
       computeHealth(campaign, range, { now }).then(wire),
       agencyInsightsRollupRepository.trends({
         campaignId: campaign.id, tenantId: campaign.tenant_id, from: range.from, to: range.to,
-        bucket: 'day', timezone: run.timezone, successCodes: successCodes(campaign.disposition_catalog),
+        bucket: 'day', timezone: zone, successCodes: successCodes(campaign.disposition_catalog),
       }),
     ]);
     if (!days) throw new ReportSubjectUnavailableError('a campaign the report covers left its tenant');

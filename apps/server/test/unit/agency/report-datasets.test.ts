@@ -32,10 +32,12 @@ import {
   occupancyReadings,
   outcomeRows,
   sentimentBlock,
+  sessionCells,
+  sessionColumns,
 } from '../../../src/agency/reports/datasets/agent.js';
 import { accountDaily, campaignFigures, sumCounts, totalFigures } from '../../../src/agency/reports/datasets/account.js';
 import { agentIdsIn } from '../../../src/agency/reports/datasets/campaign.js';
-import { agentCallsStatement, type ReportAgentCallRow } from '../../../src/db/repositories/agency.repository.js';
+import { agentCallsStatement, type ReportAgentCallRow, type ReportSessionDetailRow } from '../../../src/db/repositories/agency.repository.js';
 import type { ReportRunRecord } from '../../../src/db/repositories/agency/report-run.repository.js';
 
 const T = (s: string) => new Date(s);
@@ -198,9 +200,39 @@ describe('the agent review\'s pure blocks', () => {
   });
 
   it('the self copy says what it leaves out', () => {
-    const base = { timezone: 'UTC', occupancyMeasured: true, rosterRow: true, future: false };
+    const base = { timezone: 'UTC', stationSeconds: 3600, recordShiftSeconds: 3600, rosterRow: true, future: false };
     expect(agentNotes({ ...base, supervisor: false }).at(-1)).toMatch(/last four digits/);
     expect(agentNotes({ ...base, supervisor: true }).join(' ')).not.toMatch(/last four digits/);
+  });
+
+  it('occupancy notes: "not measured" only with no logged-in time; a degraded record read says so instead', () => {
+    const base = { supervisor: true, timezone: 'UTC', rosterRow: true, future: false };
+    const notMeasured = /No state changes were recorded/;
+    const unavailable = /agent record's occupancy was unavailable for this run/;
+    const measured = agentNotes({ ...base, stationSeconds: 3600, recordShiftSeconds: 3600 }).join(' ');
+    expect(measured).not.toMatch(notMeasured);
+    expect(measured).not.toMatch(unavailable);
+    const none = agentNotes({ ...base, stationSeconds: 0, recordShiftSeconds: 0 }).join(' ');
+    expect(none).toMatch(notMeasured);
+    expect(none).not.toMatch(unavailable);
+    // Presence measured the time, the record's occupancy read did not: never "not measured".
+    const degraded = agentNotes({ ...base, stationSeconds: 3600, recordShiftSeconds: 0 }).join(' ');
+    expect(degraded).not.toMatch(notMeasured);
+    expect(degraded).toMatch(unavailable);
+  });
+
+  it('a session row: logged in is the rounded sum, and the state parts add up to it', () => {
+    const r: ReportSessionDetailRow = {
+      id: 's', agent_user_id: 'a', joined_at: T('2026-11-03T09:00:00Z'), left_at: null, kind: 'campaign', client_kind: 'web',
+      campaign_name: 'Spring', available_s: 0.4, on_call_s: 0.4, wrapup_s: 0.4, break_s: 0, dials: '2', drops: null,
+    };
+    const cells = sessionCells(r, false);
+    const key = (k: string) => sessionColumns().findIndex((c) => c.key === k);
+    expect(cells[key('logged_in_s')]).toBe(1);
+    const parts = ['available_s', 'on_call_s', 'wrapup_s', 'break_s'].map((k) => cells[key(k)] as number);
+    expect(parts.reduce((s, v) => s + v, 0)).toBe(1);
+    expect(sessionCells({ ...r, available_s: 100.75, on_call_s: 50.75, wrapup_s: null, break_s: 9.75 }, true, 'Ann'))
+      .toEqual(['Ann', '2026-11-03T09:00:00.000Z', null, 'Spring', 'Campaign', 'Web', 161, 101, 51, 0, 9, 2, 0]);
   });
 
   it('the calls sheet: self masks the phone and has no recording or sentiment cells (RP5, RP7)', () => {
