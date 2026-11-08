@@ -6,7 +6,7 @@ import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSu
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
-import { REPORTS_FLAG } from '../../utils/reports/reportsFlag';
+import { useReportsAccess } from '../../hooks/useReportsAccess';
 import styles from './AgentNav.module.css';
 
 /**
@@ -63,17 +63,6 @@ export function useCustomerHistoryAvailable(): boolean {
 }
 
 /** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
-/**
- * "My reports" is offered when the reports flag is on and the caller can open a
- * station (their own review is the one report they may run, RP5). Fails closed
- * without the providers, like the two above.
- */
-export function useReportsAvailable(): boolean {
-  const role = useRoleOrNone();
-  const flagOn = useFeatureFlagEnabled(REPORTS_FLAG);
-  return flagOn && hasPermission(role, 'agency.station.connect');
-}
-
 export function useSoftphoneAvailable(): boolean {
   const role = useRoleOrNone();
   const flagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
@@ -104,7 +93,10 @@ export function AgentNav({
 }) {
   const softphone = useSoftphoneAvailable();
   const customers = useCustomerHistoryAvailable();
-  const reports = useReportsAvailable();
+  // "My reports": the reports flag on and the caller can open a station (their own
+  // review is the one report they may run, RP5). Fails closed without the providers.
+  const reportsAccess = useReportsAccess();
+  const reports = reportsAccess.enabled && reportsAccess.canSelf;
   const hintId = useId();
   const hint = lockedReason ? null : leaveHint;
   const surfaces = agentSurfacesFor({ softphone, customers, reports });
