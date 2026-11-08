@@ -204,6 +204,71 @@ locals {
       },
     ]
 
+    # ── Reports: assembly, the renderer and its signed callback (docs/reports.md) ──
+    #
+    # Reporting, not dialling: a late or failed report costs no call, so these warn (Slack) and
+    # never page. The pipeline runs in the main process only: the assembler builds a run's
+    # dataset, the renderer (the report-renderer Lambda behind SQS, or in process) writes the
+    # files and calls back, and the reports tick (every AGENCY_REPORTS_TICK_INTERVAL_MS, 60s)
+    # sets the pending gauges, re-sends a run with no callback after
+    # AGENCY_REPORTS_RENDER_TIMEOUT_MS (15m), up to AGENCY_REPORTS_MAX_ATTEMPTS (3), and fails it
+    # `render_timed_out` after that. The run and callback counters exist only once a run
+    # finished or a callback arrived, so on a deployment without reports these read no data (OK).
+    "reports" = [
+      {
+        uid  = "agy-reports-pending-too-long"
+        name = "Report runs stuck pending"
+        # The tick's gauge: the age of the oldest run still queued, assembling or rendering, 0
+        # with none. A healthy run is ready in a minute or two (assembly seconds, a render well
+        # under the Lambda's 300s); one lost render message adds the 15m re-send. Above 900s for
+        # 10m is a run 25+ minutes old: past one re-send, so something is stuck, not slow. A
+        # gauge, so no window and no guard; max BY service_name, one tick per deployment.
+        expr          = "max by (service_name) (agency_reports_oldest_pending_seconds{${local.agency}})"
+        op            = "gt"
+        threshold     = 900
+        for           = "10m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "A report has been pending for more than 25 minutes"
+        description   = "agency_reports_oldest_pending_seconds has been above 900s for 10m on {{ $labels.service_name }}: a report run has stayed queued, assembling or rendering for 25+ minutes, and its requester sees it spinning on the Reports page. Read agency_reports_pending_runs by status on the dashboard's Reports panels. Mostly `queued` or `assembling`: the assembler is not getting through (the server's logs for the run id; a slow or failing screen read is agency's Postgres). Mostly `rendering`: the renderer is not calling back. With AGENCY_REPORTS_RENDERER=sqs, check the report-jobs queue and its dead-letter queue in CloudWatch (ApproximateNumberOfMessagesVisible, ApproximateAgeOfOldestMessage) and the report-renderer Lambda's logs (/aws/lambda/<name_prefix>-<environment>-report-renderer): errors or timeouts there, or messages piling up in the DLQ, are the renderer; an empty queue with runs rendering is a send that never reached SQS (the server's sqs:SendMessage, AGENCY_REPORTS_SQS_QUEUE_URL) or a callback that never reached the server (AGENCY_REPORTS_CALLBACK_BASE_URL, agy-reports-callback-bad-signature). The tick re-sends a silent run up to AGENCY_REPORTS_MAX_ATTEMPTS and then fails it `render_timed_out`, so the gauge falls on its own once the cause is fixed; the run row's status and error say where each one stopped. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-reports-failing"
+        name = "Report runs failing"
+        # Terminal failures only (status="failed"; a re-sent attempt is not a failure until the
+        # last). One failed run is a user's bad luck and the "Run again" button; 4+ in an hour
+        # (threshold 3.5, N-0.5: increase() extrapolates) is a pattern: the renderer, its layer
+        # or the dataset version, an assembly bug, or the queue's dead letters after a bad deploy.
+        # Summed over kind: one kind failing every time still crosses it. Sparse counter:
+        # new-series guard.
+        expr          = "sum by (service_name) (((agency_reports_runs_total{status=\"failed\",${local.agency}} unless agency_reports_runs_total{status=\"failed\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(agency_reports_runs_total{status=\"failed\",${local.agency}}[1h]))"
+        op            = "gt"
+        threshold     = 3.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Report runs are failing"
+        description   = "agency_reports_runs_total{status=\"failed\"} advanced by 4+ in the last hour on {{ $labels.service_name }}. Each one is a report that ended without files; its requester sees the failure on the Reports page. The run row's error.code says which stage failed: assembly_failed or subject_unavailable is the server's assembly (the server's logs for the run id; usually agency's Postgres, or a subject deleted since the request); dataset_unreadable, dataset_version_unsupported, render_failed or upload_failed is the renderer (the report-renderer Lambda's logs in CloudWatch, its DLQ; dataset_version_unsupported after a deploy means the server went out before the renderer, aws/README.md 'Deploy order'); render_timed_out is a renderer that never called back (follow agy-reports-pending-too-long). Read the counter by kind on the dashboard's Reports panels to see whether one kind fails alone. Once the cause is fixed, users re-run with 'Run again'; scheduled reports send the next period as usual. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-reports-callback-bad-signature"
+        name = "Report render callbacks refused for a bad signature"
+        # Any refused signature: the renderer and the server share AGENCY_REPORTS_CALLBACK_SECRET,
+        # so after a correct deploy this never happens. A mismatch refuses every callback (each
+        # run then times out and fails), and an unsigned caller is someone else at the webhook.
+        # Threshold 0 over a 15m window, for 0s (not the window, the validators pin that). Sparse
+        # counter: new-series guard.
+        expr          = "sum by (service_name) (((agency_reports_callbacks_total{result=\"bad_signature\",${local.agency}} unless agency_reports_callbacks_total{result=\"bad_signature\",${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(agency_reports_callbacks_total{result=\"bad_signature\",${local.agency}}[15m]))"
+        op            = "gt"
+        threshold     = 0
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "The server is refusing report render callbacks for a bad signature"
+        description   = "agency_reports_callbacks_total{result=\"bad_signature\"} advanced in the last 15m on {{ $labels.service_name }}: POST /webhooks/reports/rendered was refused (401) because its HMAC did not verify, or its timestamp was more than 300s from the server's clock. If renders are failing or pending too (agy-reports-failing with render_timed_out, agy-reports-pending-too-long), the renderer signs with a different secret than the server checks: AGENCY_REPORTS_CALLBACK_SECRET in the server's env must equal the report-renderer Lambda's (aws/terraform reports_callback_secret; after rotating one, apply and recreate the other), or a clock is off by minutes. Every refused callback leaves its run rendering until the tick re-sends and finally fails it, so fix the secret first, then let users 'Run again'. If reports are otherwise fine, something other than the renderer is posting to the webhook: read the access logs for the caller's address. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+    ]
+
     "processes" = [
       {
         uid  = "agy-cluster-child-crash"
