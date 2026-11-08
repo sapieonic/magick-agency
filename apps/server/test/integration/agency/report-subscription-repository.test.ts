@@ -24,8 +24,8 @@ type Handler = import('../../../src/db/repositories/agency.repository.js').Repor
  * overlapping ticks handle each subscription once (SKIP LOCKED); one run per period whatever
  * runs twice (the unique index).
  *
- * Mutation-checked: `FOR UPDATE` without `SKIP LOCKED` in the due claim makes the overlapping
- * ticks serialise and the held-lock case wait (time out); dropping the `failed` exclusion makes a
+ * Mutation-checked: `FOR UPDATE` without `SKIP LOCKED` in the due claim makes the held-lock case
+ * wait (time out; the overlapping ticks then only serialise); dropping the `failed` exclusion makes a
  * throwing handler be called again in the same call; running the handler outside the claim's
  * transaction (pool instead of client) leaves the run of a throwing handler behind.
  */
