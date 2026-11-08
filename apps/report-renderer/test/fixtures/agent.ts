@@ -91,7 +91,7 @@ interface Call {
   conversation: boolean;
   human: boolean;
   success: boolean;
-  sentiment: 'positive' | 'neutral' | 'negative' | null;
+  sentiment: 'positive' | 'neutral' | 'negative' | 'mixed' | null;
   phone: string;
 }
 interface Session {
@@ -253,7 +253,7 @@ export function agentFixture(options: AgentFixtureOptions = {}): AgentFixture {
           conversation: true,
           human,
           success: SUCCESS.has(code),
-          sentiment: recorded && human && rnd() < 0.55 ? weighted(rnd, [['positive', 55], ['neutral', 33], ['negative', 12]] as const) : null,
+          sentiment: recorded && human && rnd() < 0.55 ? weighted(rnd, [['positive', 52], ['neutral', 28], ['negative', 12], ['mixed', 8]] as const) : null,
           phone: phone(phoneRnd, self),
         };
         calls.push(call);
@@ -463,6 +463,7 @@ export function agentFixture(options: AgentFixtureOptions = {}): AgentFixture {
           positive: analysed.filter((c) => c.sentiment === 'positive').length,
           neutral: analysed.filter((c) => c.sentiment === 'neutral').length,
           negative: analysed.filter((c) => c.sentiment === 'negative').length,
+          mixed: analysed.filter((c) => c.sentiment === 'mixed').length,
         },
       };
 
@@ -683,7 +684,7 @@ function agentDefinitions(self: boolean) {
   if (!self) {
     defs.push(
       { key: 'floor_bands', label: 'Floor bands', text: 'The middle half (25th to 75th percentile) and median of agents on this account over the same window, counting only agents with at least 20 first dials.' },
-      { key: 'sentiment', label: 'Sentiment', text: 'From call analysis of recorded calls only; calls that were not recorded or analysed are not counted.' },
+      { key: 'sentiment', label: 'Sentiment', text: 'From call analysis of recorded calls only: positive, neutral, negative or mixed, each counted on its own; calls that were not recorded or analysed are not counted.' },
     );
   }
   return defs;

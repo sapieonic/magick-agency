@@ -58,8 +58,10 @@ export interface AgentReviewPresence {
   /** Logged-in seconds: the sum of `by_state`. */
   station_seconds: number;
   /**
-   * From the session event log, clipped to the window. When `record.occupancy` is measured it
-   * agrees with its `by_state` on these four states (its `reserved` added to `available`).
+   * From the session event log, clipped to the window, in WHOLE seconds (each state's window
+   * total rounded once). When `record.occupancy` is measured it agrees with its `by_state` on
+   * these four states (its `reserved` added to `available`) to within half a second each: the
+   * record serves fractional seconds.
    */
   by_state: ReportStateSeconds;
   /** `by_state.break` by reason, largest first; sums to it. The soft phone is the reason `soft_phone`. */
@@ -71,8 +73,13 @@ export interface AgentReviewPresence {
 /**
  * One local day in `range.timezone`. Every day of the window is present, zeros included, so
  * `daily.length === range.days`. Columns sum to the window figures: `dials` to
- * `record.attempts`, `connected` to `record.connected`, `successes` to `record.successes`,
- * `talk_s` to `record.talk_seconds`, the state seconds to `presence.by_state`.
+ * `record.attempts`, `connected` and `conversations` to `record.connected`, `successes` to
+ * `record.successes`, `talk_s` to `record.talk_seconds`, the state seconds to `presence.by_state`.
+ *
+ * Seconds (`station_s`, the four state columns, `talk_s`) are WHOLE seconds: each column is
+ * rounded across the days so the days sum exactly to the window's total rounded once. Where the
+ * record serves fractional seconds (`record.talk_seconds`, `record.occupancy`), Σ `talk_s` and
+ * each Σ state column can therefore differ from it by under a second (at most half a second).
  */
 export interface AgentReviewDailyRow {
   date: string;
@@ -93,9 +100,20 @@ export interface AgentReviewDailyRow {
   dials: number;
   /** Placed dials that were not wrap-up redials: the connect rate's denominator. */
   first_dials: number;
-  /** Bridged to the agent (the record's `connected`). */
+  /**
+   * The agent record's `connected` for the day: CONVERSATIONS, not bridged legs. A conversation
+   * the agent redialled from wrap-up counts once, at the attempt that carries its outcome (the
+   * one not closed `redialed`), even when that redial did not bridge itself; a bridged first
+   * dial counts when it was not closed `redialed`.
+   */
   connected: number;
-  /** One per conversation (a redial chain once): the success rate's denominator. */
+  /**
+   * One per conversation (a redial chain once): the success rate's denominator. The record's
+   * `connected` already counts conversations, so in this dataset `conversations` ALWAYS EQUALS
+   * `connected` (same count, same rule). Both are kept so a day row names the success rate's
+   * denominator as the campaign and account rows do; there the two differ (`connected` is
+   * Insights' `attempts_connected`: outcome `connected`, not a wrap-up redial).
+   */
   conversations: number;
   /** Conversations coded neither voicemail nor `no_disposition`: the connect rate's numerator. */
   human_connects: number;
@@ -183,9 +201,13 @@ export interface AgentReviewFollowThrough {
  * and null when analysis is off or no call in the window was analysed.
  */
 export interface AgentReviewQuality {
+  /** Analysed calls whose overall sentiment is one of the analysis's four labels (`SentimentLabel`). */
   analysed_calls: number;
-  /** Sums to `analysed_calls`. */
-  sentiment: { positive: number; neutral: number; negative: number };
+  /**
+   * Those calls by overall sentiment, one count per `SentimentLabel` (`mixed` is its own count,
+   * never folded into `neutral`). Sums to `analysed_calls`.
+   */
+  sentiment: { positive: number; neutral: number; negative: number; mixed: number };
 }
 
 /** RP11: occupancy shown three ways, each with its numerator and denominator stated. */

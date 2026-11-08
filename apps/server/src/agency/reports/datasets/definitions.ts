@@ -57,7 +57,7 @@ export function agentDefinitions(audience: 'supervisor' | 'self'): ReportDefinit
   if (audience === 'supervisor') {
     out.push(
       d('floor_comparison', 'Floor comparison', `The agent's figures against the middle half (25th to 75th percentile) of the account's agents who dialled in the same window. Only agents with at least ${ROSTER_FLOOR} first dials are compared; for the success rate and handle time they also need ${ROSTER_FLOOR} connected calls.`),
-      d('sentiment', 'Call sentiment', 'The overall sentiment the call analysis gave each analysed call. A call analysed as mixed is counted as neutral.'),
+      d('sentiment', 'Call sentiment', 'The overall sentiment the call analysis gave each analysed call: positive, neutral, negative or mixed, each counted on its own. Calls that were not analysed are not counted.'),
     );
   }
   return out;

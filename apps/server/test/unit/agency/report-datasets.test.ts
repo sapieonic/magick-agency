@@ -188,9 +188,12 @@ describe('the agent review\'s pure blocks', () => {
     ]);
   });
 
-  it('sentiment: mixed and unknown labels are neutral; nothing analysed is null', () => {
+  it('sentiment: one count per analysis label, mixed its own; an unknown label is not counted; nothing analysed is null', () => {
     expect(sentimentBlock([{ label: 'positive', calls: 2 }, { label: 'mixed', calls: 1 }, { label: 'neutral', calls: 1 }, { label: 'negative', calls: 3 }]))
-      .toEqual({ analysed_calls: 7, sentiment: { positive: 2, neutral: 2, negative: 3 } });
+      .toEqual({ analysed_calls: 7, sentiment: { positive: 2, neutral: 1, negative: 3, mixed: 1 } });
+    expect(sentimentBlock([{ label: 'positive', calls: 1 }, { label: 'ecstatic', calls: 4 }, { label: 'constructor', calls: 2 }]))
+      .toEqual({ analysed_calls: 1, sentiment: { positive: 1, neutral: 0, negative: 0, mixed: 0 } });
+    expect(sentimentBlock([{ label: 'ecstatic', calls: 4 }])).toBeNull();
     expect(sentimentBlock([])).toBeNull();
   });
 

@@ -52,6 +52,11 @@ describe('agent workbook', async () => {
     expect(rate.numFmt).toBe('0.0%');
     expect(rowOf('Dials').getCell(2).value).toBe(d.record.attempts);
     expect(rowOf('Time zone').getCell(2).value).toBe('Asia/Kolkata');
+    const q = d.quality!;
+    expect(q.sentiment.mixed).toBeGreaterThan(0);
+    expect(rowOf('Sentiment: mixed').getCell(2).value).toBe(q.sentiment.mixed);
+    expect(rowOf('Sentiment: neutral').getCell(2).value).toBe(q.sentiment.neutral);
+    expect(q.sentiment.positive + q.sentiment.neutral + q.sentiment.negative + q.sentiment.mixed).toBe(q.analysed_calls);
   });
 
   it('writes the detail sheets with every row, a frozen header and an autofilter', () => {

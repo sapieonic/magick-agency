@@ -180,6 +180,7 @@ async function agentWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: AgentRev
       { metric: 'Sentiment: positive', value: d.quality.sentiment.positive, type: 'int' },
       { metric: 'Sentiment: neutral', value: d.quality.sentiment.neutral, type: 'int' },
       { metric: 'Sentiment: negative', value: d.quality.sentiment.negative, type: 'int' },
+      { metric: 'Sentiment: mixed', value: d.quality.sentiment.mixed, type: 'int' },
     );
   }
   await writeSummary(wb, d, 'Agent performance review', metrics);

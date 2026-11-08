@@ -47,7 +47,12 @@ describe('agent review', () => {
     expect(html).toContain('data-block="floor"');
     expect(text(block(html, 'data-block', 'floor'))).toContain(`compared with ${d.benchmark!.pool_size} agents`);
     expect(html).toContain('data-block="quality"');
-    expect(text(block(html, 'data-block', 'quality'))).toContain(count(d.quality!.sentiment.positive));
+    const quality = text(block(html, 'data-block', 'quality'));
+    expect(quality).toContain(count(d.quality!.sentiment.positive));
+    // Mixed is its own part of the bar and the legend, never folded into neutral.
+    expect(d.quality!.sentiment.mixed).toBeGreaterThan(0);
+    expect(quality).toContain(`Mixed ${count(d.quality!.sentiment.mixed)} (`);
+    expect(quality).toContain(`Neutral ${count(d.quality!.sentiment.neutral)} (`);
   });
 
   it('writes a per-campaign rate below the roster floor as words, not 0', () => {

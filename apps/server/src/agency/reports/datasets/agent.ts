@@ -20,7 +20,8 @@
  *  - `follow_through`: IN4's callback classes over the callbacks the agent booked, the rollup's
  *    redial, retry and override measures over their attempts, their Do Not Call marks and
  *    soft-phone calls.
- *  - `quality` (supervisor only): analysed calls by overall sentiment, `mixed` counted as neutral.
+ *  - `quality` (supervisor only): analysed calls by overall sentiment, one count per label the
+ *    analysis emits (positive, neutral, negative, mixed).
  *
  * Detail sheets: `sessions`, `state_log`, `calls`, streamed through server-side cursors; the
  * `self` calls sheet has phone numbers masked to the last four digits (RP7) and no recording or
@@ -109,15 +110,17 @@ export function outcomeRows(
     .sort((a, b) => b.conversations - a.conversations || a.label.localeCompare(b.label));
 }
 
-/** Sentiment counts folded into the contract's three (`mixed` and anything else: neutral). */
+/**
+ * Sentiment counts, one per label the call analysis emits (`SentimentLabel`; `mixed` is its own
+ * count). The read already keeps only those labels (`agentSentiment`); a row with any other label
+ * is not an analysed call here and is left out, never counted as one of the four (pure).
+ */
 export function sentimentBlock(rows: ReadonlyArray<{ label: string; calls: number }>): AgentReviewDataset['quality'] {
-  const out = { positive: 0, neutral: 0, negative: 0 };
+  const out: NonNullable<AgentReviewDataset['quality']>['sentiment'] = { positive: 0, neutral: 0, negative: 0, mixed: 0 };
   for (const r of rows) {
-    if (r.label === 'positive') out.positive += r.calls;
-    else if (r.label === 'negative') out.negative += r.calls;
-    else out.neutral += r.calls;
+    if (Object.hasOwn(out, r.label)) out[r.label as keyof typeof out] += r.calls;
   }
-  const analysed = out.positive + out.neutral + out.negative;
+  const analysed = out.positive + out.neutral + out.negative + out.mixed;
   return analysed === 0 ? null : { analysed_calls: analysed, sentiment: out };
 }
 

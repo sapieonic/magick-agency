@@ -26,6 +26,7 @@
 import { getPool } from '@magick-agency/db';
 import { callSentimentLabelSql } from '@magick-agency/db/repositories/agency-call.repository';
 import { AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
+import type { SentimentLabel } from '@magick-agency/contracts/api/agency/webrtc-call';
 import type { InsightsCallbackClass } from './insights-range-reads.js';
 import { CALLBACK_BOOKING_COLUMNS_SQL, callbackClassSql } from './insights-range-reads.js';
 import { INSIGHTS_MEASURES } from './insights-rollup-sql.js';
@@ -110,6 +111,9 @@ const AGENT_ATTEMPTS_FROM = `FROM agency_call_attempts a
           AND a.dialed_at < $3::timestamptz`;
 
 const agentValues = (q: ReportAgentScope): unknown[] => [q.agentUserId, q.from, q.to, q.tenantId, q.accountId];
+
+/** The overall-sentiment labels the call analysis emits; the quality block counts these only. */
+export const SENTIMENT_LABELS = ['positive', 'neutral', 'negative', 'mixed'] as const satisfies readonly SentimentLabel[];
 
 const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
@@ -298,8 +302,10 @@ export class AgencyReportDatasetRepository {
   }
 
   /**
-   * Analysed calls (`analysis_status = 'completed'` with an overall sentiment label) among the
-   * agent's placed campaign attempts and soft-phone calls in the window, by lower-cased label.
+   * Analysed calls (`analysis_status = 'completed'` with an overall sentiment label the analysis
+   * emits: positive, neutral, negative or mixed, `SENTIMENT_LABELS`) among the agent's placed
+   * campaign attempts and soft-phone calls in the window, by lower-cased label. A call with any
+   * other label is not counted.
    */
   async agentSentiment(q: ReportAgentScope): Promise<Array<{ label: string; calls: number }>> {
     const label = callSentimentLabelSql('k.call_analysis');
@@ -323,9 +329,9 @@ export class AgencyReportDatasetRepository {
          JOIN agency_calls k ON k.id = x.call_id
         WHERE k.tenant_id = $4::uuid
           AND k.analysis_status = 'completed'
-          AND ${label} IS NOT NULL
+          AND lower(${label}) = ANY($6::text[])
         GROUP BY 1`,
-      agentValues(q),
+      [...agentValues(q), SENTIMENT_LABELS],
     );
     return rows.map((r) => ({ label: r.label, calls: n(r.n) }));
   }

@@ -212,7 +212,7 @@ their handlers' own parsers (`parseAgentStatsQuery`, `parseRosterQuery`).
 | agent | `outcomes` | conversations (`CONVERSATION_ATTEMPT_SQL`) by disposition code with the record's metrics; labels from each campaign's current catalog |
 | agent | `follow_through.callbacks` (classes) | `agentCallbackTiming`: IN4's columns and CASE (`CALLBACK_BOOKING_COLUMNS_SQL`, `callbackClassSql`, shared with Insights) over the callbacks the agent booked, booked time in the window |
 | agent | `dnc_marked`, `softphone_calls` | agent-written Do Not Call entries in the window (this account or tenant-wide); placed soft-phone calls (`created_at` in the window, Insights' rule, by agent) |
-| agent | `quality` | supervisor only: analysed calls (`analysis_status = 'completed'`, `callSentimentLabelSql`) among the agent's placed attempts and soft-phone calls; `mixed` counted as neutral; null when none |
+| agent | `quality` | supervisor only: analysed calls (`analysis_status = 'completed'`, `callSentimentLabelSql`) among the agent's placed attempts and soft-phone calls, one count per label the analysis emits (`positive`, `neutral`, `negative`, `mixed`; any other label is not counted); null when none |
 | campaign | `summary`, `activity`, `trends`, `health` | `computeSummary` (with the route's `liveStats` through `callCore`; null when that fails, as on a refusal), `computeActivity`, `computeTrends` (`bucket: 'day'`), `computeHealth`; not through the routes' cache |
 | campaign | `agent_names` | every id under `agent_user_id` / `user_id` / `never_joined` in the four objects (`agentIdsIn`), through `agentNamesOrNone` |
 | account | campaign rows | per covered campaign: `computeActivity` (`calls`, `callbacks.booked`), `computeHealth` (`recording`, the health row), and abandoned / answered summed over the rollup's trend read (`agencyInsightsRollupRepository.trends`, the read `computeTrends` serves its buckets from) |
@@ -239,7 +239,8 @@ three at a time (`ACCOUNT_CAMPAIGN_CONCURRENCY`).
   to the next, clipped to `range.end` or to `generated_at` when earlier (the future is not drawn as
   offline time), `offline` in every gap, equal neighbours merged.
 - *Conversations* on the agent's days are the record's `connected` (both count
-  `CONVERSATION_ATTEMPT_SQL`).
+  `CONVERSATION_ATTEMPT_SQL`), so `daily.conversations` always equals `daily.connected`; the
+  campaign and account day rows are where the two differ.
 - *Outcome rows*: `is_success` when any conversation of the code counted as a success in its
   campaign; `avg_talk_s` the agent leg of those conversations ÷ conversations, whole seconds.
 
