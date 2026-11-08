@@ -63,11 +63,18 @@ function deps(over: Partial<ReportTickDeps> = {}) {
 
 const opts = { intervalMs: 60_000, renderTimeoutMs: 900_000, maxAttempts: 3 };
 
-/** Run the tick's subscription step for one subscription; the handler's decision and the run input. */
-async function dueOnce(sub: ReportSubscriptionRecord, d = deps()) {
+/**
+ * Run the tick's subscription step for one subscription; the handler's decision and the run input.
+ * The fake claim answers as the repository does: `disabled` for a disable, else `advanced`; with
+ * `commitFails`, `error` after the handler ran (the advance UPDATE or the commit failed, so the run
+ * insert rolled back).
+ */
+async function dueOnce(sub: ReportSubscriptionRecord, d = deps(), { commitFails = false } = {}) {
   let decision: unknown;
   d.subscriptions.claimDue.mockImplementation(async (_now, _limit, handler) => {
     decision = await handler(sub, client);
+    if (commitFails) return [{ subscriptionId: sub.id, outcome: 'error', error: new Error('commit failed') }] as never[];
+    if ('disable' in (decision as object)) return [{ subscriptionId: sub.id, outcome: 'disabled' }] as never[];
     return [{ subscriptionId: sub.id, outcome: 'advanced', nextRunAt: (decision as { nextRunAt: Date }).nextRunAt }] as never[];
   });
   const result = await createReportTick(opts, d).runTick();
@@ -129,6 +136,30 @@ describe('subscriptions → runs', () => {
     const result = await createReportTick(opts, d).runTick();
     expect(result.subscriptions.errors).toBe(1);
     expect(d.runs.expireDue).toHaveBeenCalled();
+  });
+
+  it('counts nothing but the error when the advance or the commit fails after the handler ran (the run rolled back)', async () => {
+    const due = new Date('2026-11-08T08:00:00Z');
+    // Each decision the handler can reach: created, duplicate, flag off, disabled.
+    const cases: Array<[string, (d: ReturnType<typeof deps>) => void]> = [
+      ['created', () => {}],
+      ['duplicate', (d) => { d.runs.createForSubscription.mockResolvedValue(null as never); }],
+      ['flag_off', (d) => { d.reportsEnabled.mockResolvedValue(false); }],
+      ['disabled', (d) => { d.subject.mockResolvedValue({ available: false, reason: 'gone' }); }],
+    ];
+    for (const [name, arrange] of cases) {
+      metrics.subs.mockClear();
+      const d = deps();
+      arrange(d);
+      const { result } = await dueOnce(subscriptionRecord({ next_run_at: due }), d, { commitFails: true });
+      expect(result.subscriptions, name).toEqual({ created: 0, duplicate: 0, disabled: 0, flagOff: 0, errors: 1 });
+      expect(metrics.subs, name).not.toHaveBeenCalled();
+      // The retry next tick commits: counted once, then.
+      const retried = await dueOnce(subscriptionRecord({ next_run_at: due }), d);
+      const counted = name === 'flag_off' ? 'flagOff' : name;
+      expect(retried.result.subscriptions, name).toMatchObject({ [counted]: 1, errors: 0 });
+      expect(metrics.subs, name).toHaveBeenCalledTimes(name === 'disabled' ? 0 : 1);
+    }
   });
 
   it('a subscription whose subject is gone is disabled at the claim: no run, nothing emailed every period', async () => {

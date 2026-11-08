@@ -11,6 +11,8 @@ vi.mock('@magick-agency/db', async (orig) => ({
 const { reportRunRepository, reportSubscriptionRepository: repo } =
   await import('../../../src/db/repositories/agency.repository.js');
 const { localDayBounds, nextRunAt, periodFor } = await import('../../../src/agency/reports/schedule.js');
+const { createReportTick } = await import('../../../src/agency/reports/tick.js');
+const { agencyReportsSubscriptionRunsTotal } = await import('@magick-agency/observability/metrics/agency');
 type Mod = typeof import('../../../src/db/repositories/agency.repository.js');
 type CreateInput = Parameters<Mod['reportSubscriptionRepository']['create']>[0];
 type Sub = import('../../../src/db/repositories/agency.repository.js').ReportSubscriptionRecord;
@@ -282,5 +284,45 @@ describe('the due claim', () => {
       await client.query('ROLLBACK');
       client.release();
     }
+  });
+});
+
+describe('the tick on the real claim', () => {
+  /** The reports tick over the real repositories; every collaborator outside the claim is a stub. */
+  const tick = () => createReportTick({ intervalMs: 60_000, renderTimeoutMs: 900_000, maxAttempts: 3 }, {
+    runs: reportRunRepository,
+    subscriptions: repo,
+    reportsEnabled: async () => true,
+    subject: async () => ({ available: true, timezone: null }),
+    dispatcher: { dispatch: async () => {}, idle: async () => {} },
+    headObject: async () => null,
+    apply: async () => { throw new Error('not reached'); },
+    notify: async () => {},
+    now: () => NOW,
+  });
+
+  it('a run the advance UPDATE rolls back is not counted; the retry that commits counts it once', async () => {
+    const sub = await repo.create(input());
+    const inc = vi.spyOn(agencyReportsSubscriptionRunsTotal, 'inc');
+    // Refuse the advance (the UPDATE after the handler made the run), as a failing commit would.
+    await pool().query(`CREATE FUNCTION test_refuse_advance() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'advance refused'; END $$`);
+    await pool().query(`CREATE TRIGGER test_refuse_advance BEFORE UPDATE ON report_subscriptions
+      FOR EACH ROW EXECUTE FUNCTION test_refuse_advance()`);
+    try {
+      const failed = await tick().runTick();
+      expect(failed.subscriptions).toEqual({ created: 0, duplicate: 0, disabled: 0, flagOff: 0, errors: 1 });
+      expect(inc).not.toHaveBeenCalled();
+      expect(await runsOf(sub.id)).toEqual([]);
+      expect((await repo.findById(T, sub.id))!.next_run_at!.toISOString()).toBe('2026-11-09T02:00:00.000Z');
+    } finally {
+      await pool().query('DROP TRIGGER IF EXISTS test_refuse_advance ON report_subscriptions');
+      await pool().query('DROP FUNCTION IF EXISTS test_refuse_advance()');
+    }
+    const retried = await tick().runTick();
+    expect(retried.subscriptions).toMatchObject({ created: 1, errors: 0 });
+    expect(inc.mock.calls).toEqual([[{ result: 'created' }]]);
+    expect(await runsOf(sub.id)).toEqual(['2026-11-08']);
+    inc.mockRestore();
   });
 });

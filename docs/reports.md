@@ -424,6 +424,9 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   account have `agency_reports_enabled` off is skipped for that period (no run; the schedule
   advances, so turning the flag back on resumes it; `agency_reports_subscription_runs_total
   {result="flag_off"}`), and a finished run is marked notified without an email while it is off.
+  The subscription counts and the metric (`created`, `duplicate`, `flag_off`, and a disable's log
+  line) are taken only after the claim's transaction commits: a failed advance or commit rolls
+  the run back, and the retry next tick counts it once.
   Each due subscription's subject is probed at the claim
   (`subscription-subject.ts`, the builders' own `subject_unavailable` rule: the account exists; an
   agent's membership, any status, reaches it; the campaign is still the account's; an account

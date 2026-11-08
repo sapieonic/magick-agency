@@ -112,6 +112,11 @@ export interface ReportTickResult {
   errors: number;
 }
 
+/** What a due subscription's handler decided; counted only after its transaction commits. */
+type SubscriptionDecided =
+  | { result: 'created' | 'duplicate' | 'flag_off' }
+  | { result: 'disabled'; kind: ReportSubscriptionRecord['kind']; reason: string };
+
 /** The send a due subscription's run is for: its due time, or the latest missed one (catch-up). */
 export function dueSendAt(subscription: ReportSubscriptionRecord, now: Date): Date {
   const scheduled = subscription.next_run_at ? new Date(subscription.next_run_at) : now;
@@ -124,20 +129,23 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
   const unsentGraceMs = options.unsentGraceMs ?? REPORT_UNSENT_GRACE_MS;
 
   const subscriptionsStep = async (now: Date, result: ReportTickResult): Promise<void> => {
+    // What each handler decided, counted and logged only once `claimDue` reports its transaction
+    // committed (`advanced` or `disabled`): the handler runs BEFORE the advance UPDATE and the
+    // commit, and a failure in either rolls the run back, so counting inside it would count a run
+    // that never existed, again on the retry next tick.
+    const decided = new Map<string, SubscriptionDecided>();
     const handler = async (claimed: ReportSubscriptionRecord, client: PoolClient): Promise<ReportSubscriptionDueDecision> => {
       // Reports turned off for the account: skip this period without disabling, so turning the
       // flag back on resumes the schedule (from its next send, not a catch-up of the gap).
       if (!(await deps.reportsEnabled({ tenantId: claimed.tenant_id, accountId: claimed.account_id }))) {
-        result.subscriptions.flagOff += 1;
-        agencyReportsSubscriptionRunsTotal.inc({ result: 'flag_off' });
+        decided.set(claimed.id, { result: 'flag_off' });
         return { nextRunAt: nextRunAt(claimed, now) };
       }
       // Then the subject: one that is gone would only produce a run failing
       // `subject_unavailable` (and a failure email) every period, so the subscription stops.
       const subject = await deps.subject(claimed);
       if (!subject.available) {
-        result.subscriptions.disabled += 1;
-        log.warn({ subscriptionId: claimed.id, kind: claimed.kind, reason: subject.reason }, 'Report subscription disabled: its subject is gone');
+        decided.set(claimed.id, { result: 'disabled', kind: claimed.kind, reason: subject.reason });
         return { disable: true };
       }
       // A campaign subscription follows the campaign's CURRENT zone (RP3): the period, its bounds
@@ -167,13 +175,7 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
         subscriptionId: sub.id,
         periodStart: period.from,
       }, client);
-      if (run) {
-        result.subscriptions.created += 1;
-        agencyReportsSubscriptionRunsTotal.inc({ result: 'created' });
-      } else {
-        result.subscriptions.duplicate += 1;
-        agencyReportsSubscriptionRunsTotal.inc({ result: 'duplicate' });
-      }
+      decided.set(claimed.id, { result: run ? 'created' : 'duplicate' });
       return {
         nextRunAt: nextRunAt(sub, now),
         ...(sub.timezone !== claimed.timezone ? { timezone: sub.timezone } : {}),
@@ -182,9 +184,21 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
     const outcomes = await deps.subscriptions.claimDue(now, batch, handler);
     for (const outcome of outcomes) {
       if (outcome.outcome === 'error') {
+        // Rolled back, whatever the handler decided: nothing to count but the error.
         result.subscriptions.errors += 1;
         log.error({ subscriptionId: outcome.subscriptionId, err: outcome.error }, 'Report subscription could not produce its run');
+        continue;
       }
+      const d = decided.get(outcome.subscriptionId);
+      if (!d) continue;
+      if (d.result === 'disabled') {
+        result.subscriptions.disabled += 1;
+        log.warn({ subscriptionId: outcome.subscriptionId, kind: d.kind, reason: d.reason }, 'Report subscription disabled: its subject is gone');
+        continue;
+      }
+      if (d.result === 'flag_off') result.subscriptions.flagOff += 1;
+      else result.subscriptions[d.result] += 1;
+      agencyReportsSubscriptionRunsTotal.inc({ result: d.result });
     }
   };
 
