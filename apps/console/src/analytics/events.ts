@@ -24,6 +24,8 @@ import type {
   AgencyAssignmentMode,
   AgencyMyContactBucket,
 } from '@magick-agency/contracts/api/agency/assignment';
+import type { ReportCadence, ReportFormat, ReportKind } from '@magick-agency/contracts/api/agency/reports';
+import type { ReportWindowPreset } from '../utils/reports/reportWindow';
 
 /**
  * Typed product-event catalog.
@@ -517,6 +519,34 @@ export function trackAgencyAssignmentCommitted(props: EventCatalog['agency_assig
 /** A commit was refused (`preview_stale` included: the supervisor was shown a fresh preview). */
 export function trackAgencyAssignmentRefused(props: EventCatalog['agency_assignment_refused']): void {
   track('agency_assignment_refused', props);
+}
+
+/** Where an export was asked for (`docs/reports.md`, the four entry points and the Reports page). */
+export type ReportEntry = 'agent_record' | 'my_performance' | 'campaign_insights' | 'account_analytics' | 'reports_page';
+
+/** An export was queued (the server answered 202). */
+export function trackAgencyReportRequested(props: EventCatalog['agency_report_requested']): void {
+  track('agency_report_requested', props);
+}
+
+/** An export was refused; `code` is the report refusal code, or null. */
+export function trackAgencyReportRefused(props: EventCatalog['agency_report_refused']): void {
+  track('agency_report_refused', props);
+}
+
+/** A report file's download URL was fetched and opened. */
+export function trackAgencyReportDownloaded(props: EventCatalog['agency_report_downloaded']): void {
+  track('agency_report_downloaded', props);
+}
+
+/** "Run again" queued a new run with a finished run's parameters. */
+export function trackAgencyReportRunAgain(props: EventCatalog['agency_report_run_again']): void {
+  track('agency_report_run_again', props);
+}
+
+/** A scheduled report was created, changed, paused, resumed, deleted or run now. */
+export function trackAgencyReportSubscriptionChanged(props: EventCatalog['agency_report_subscription_changed']): void {
+  track('agency_report_subscription_changed', props);
 }
 
 /** An agent opened My contacts at the station. */
@@ -1305,6 +1335,40 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     kind: AgencyAssignmentKind;
     /** An `AgencyAssignmentErrorCode`, or null for a failure without one. */
     code: string | null;
+  };
+  /** {@link trackAgencyReportRequested} */
+  agency_report_requested: {
+    kind: ReportKind;
+    entry: ReportEntry;
+    preset: ReportWindowPreset;
+    /** Local days in the window. */
+    days: number;
+    pdf: boolean;
+    xlsx: boolean;
+    email_me: boolean;
+    /** The agent's own review (the server builds it with the `self` audience). */
+    self: boolean;
+  };
+  /** {@link trackAgencyReportRefused} */
+  agency_report_refused: {
+    kind: ReportKind;
+    entry: ReportEntry;
+    code: string | null;
+  };
+  /** {@link trackAgencyReportDownloaded} */
+  agency_report_downloaded: {
+    kind: ReportKind;
+    format: ReportFormat;
+  };
+  /** {@link trackAgencyReportRunAgain} */
+  agency_report_run_again: {
+    kind: ReportKind;
+  };
+  /** {@link trackAgencyReportSubscriptionChanged} */
+  agency_report_subscription_changed: {
+    kind: ReportKind;
+    cadence: ReportCadence;
+    action: 'created' | 'updated' | 'paused' | 'resumed' | 'deleted' | 'run_now';
   };
   /** {@link trackAgencyMyContactsOpened} */
   agency_my_contacts_viewed: {
