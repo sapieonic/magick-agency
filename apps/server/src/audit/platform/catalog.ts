@@ -116,6 +116,17 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // Tenant-wide reads, never campaign-scoped.
   'agency_customer_history.searched',
   'agency_customer_history.exported',
+  // ── Reports (docs/reports.md) ─────────────────────────────────────────────────
+  // A report run asked for (`details.via`: `request`, `retry` or `run_now`; kind, subject,
+  // window, zone, formats, audience) and one file of it downloaded (`details.format`). Filed under
+  // the run (`resource_id`). A subscription created, changed (`details.fields`) or deleted, filed
+  // under it. Account-wide, never campaign-scoped (a campaign report names its campaign in
+  // `details.subject_id`).
+  'agency_report.requested',
+  'agency_report.downloaded',
+  'agency_report_subscription.created',
+  'agency_report_subscription.updated',
+  'agency_report_subscription.deleted',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -158,6 +169,9 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   'agency_softphone_settings',
   // One customer-history search (`resource_id`: its `search_id`, `chs_` + 32 hex).
   'customer_history',
+  // One report run (`report_runs.id`) and one report subscription (`report_subscriptions.id`).
+  'agency_report',
+  'agency_report_subscription',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //
