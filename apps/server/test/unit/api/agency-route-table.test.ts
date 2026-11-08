@@ -52,21 +52,7 @@ const FIXTURE = JSON.parse(
  * known, dated gap — not a classification. Empty this set as they land; a path left here
  * after it is served fails the "pending is really pending" case below.
  */
-const PENDING: ReadonlyMap<string, string> = new Map([
-  // Reports (docs/reports.md): the console client (`apps/console/src/api/reports.ts`) lands
-  // before the routes (`proxy-agency-reports`). Remove these as the routes register; the
-  // "pending is really pending" case below fails on any left behind.
-  ['POST /proxy/agency/reports', 'reports routes not registered yet (docs/reports.md)'],
-  ['GET /proxy/agency/reports', 'reports routes not registered yet (docs/reports.md)'],
-  ['GET /proxy/agency/reports/:_', 'reports routes not registered yet (docs/reports.md)'],
-  ['GET /proxy/agency/reports/:_/files/:_', 'reports routes not registered yet (docs/reports.md)'],
-  ['POST /proxy/agency/reports/:_/retry', 'reports routes not registered yet (docs/reports.md)'],
-  ['GET /proxy/agency/report-subscriptions', 'reports routes not registered yet (docs/reports.md)'],
-  ['POST /proxy/agency/report-subscriptions', 'reports routes not registered yet (docs/reports.md)'],
-  ['PATCH /proxy/agency/report-subscriptions/:_', 'reports routes not registered yet (docs/reports.md)'],
-  ['DELETE /proxy/agency/report-subscriptions/:_', 'reports routes not registered yet (docs/reports.md)'],
-  ['POST /proxy/agency/report-subscriptions/:_/run-now', 'reports routes not registered yet (docs/reports.md)'],
-]);
+const PENDING: ReadonlyMap<string, string> = new Map([]);
 
 /**
  * Registered routes that are deliberately NOT console calls. Each names why it exists.
@@ -82,6 +68,8 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   // day trends against it (`insights-rollup-oracle.test.ts`).
   ['GET /proxy/agency/campaigns/:_/stats/series', 'campaign stats series (no console caller since the Insights tab)'],
   ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (carrier-facing)'],
+  // The report renderer's signed callback (docs/reports.md RP13; the HMAC is the credential).
+  ['POST /webhooks/reports/rendered', 'report renderer callback (HMAC-signed, no session)'],
   ['POST /api/v1/webhooks/plivo/webrtc-answer/:_', 'Plivo answer callback, replies XML (carrier-facing)'],
   ['POST /api/v1/webhooks/plivo/webrtc-status/:_', 'Plivo ring and hangup callback (carrier-facing)'],
   ['POST /api/v1/webhooks/plivo/webrtc-recording/:_', 'Plivo recording-ready callback (carrier-facing)'],

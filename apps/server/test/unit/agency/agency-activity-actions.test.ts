@@ -37,6 +37,11 @@ const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
   'agency_softphone_settings.updated',
   'agency_customer_history.searched',
   'agency_customer_history.exported',
+  'agency_report.requested',
+  'agency_report.downloaded',
+  'agency_report_subscription.created',
+  'agency_report_subscription.updated',
+  'agency_report_subscription.deleted',
 ]);
 
 const CAMPAIGN_SCOPED = {

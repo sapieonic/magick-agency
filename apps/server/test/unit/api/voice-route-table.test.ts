@@ -20,7 +20,7 @@ describe('voice plugin route table', () => {
     await app.ready();
     await app.close();
 
-    const voice = routes.filter((r) => r.includes('/webrtc-call') || r.includes('/webhooks')).sort();
+    const voice = routes.filter((r) => r.includes('/webrtc-call') || r.includes('/api/v1/webhooks')).sort();
     expect(voice).toEqual([
       'GET /api/v1/webrtc-call/:id/pstn-stream',
       'POST /api/v1/webhooks/plivo/webrtc-answer/:callId',

@@ -5,7 +5,7 @@ import websocket from '@fastify/websocket';
 import type { AppContext } from './app-context.js';
 import { initFeatureFlagService } from './feature-flags/index.js';
 import { platformPlugin } from './api/platform.plugin.js';
-import { agencyPlugin } from './api/agency.plugin.js';
+import { agencyPlugin, agencyWebhooksPlugin } from './api/agency.plugin.js';
 import { voicePlugin } from './api/voice.plugin.js';
 import { analysisPlugin } from './api/analysis.plugin.js';
 import { registerRateLimit, registerUserRateLimit } from './api/middleware/rate-limit.middleware.js';
@@ -214,6 +214,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   await app.register(platformPlugin, { ctx: opts.ctx });
   await app.register(agencyPlugin, { ctx: opts.ctx });
+  // The report renderer's signed callback (no session): the agency area's, beside its plugin.
+  await app.register(agencyWebhooksPlugin, { ctx: opts.ctx });
   await app.register(voicePlugin, { ctx: opts.ctx });
   await app.register(analysisPlugin, { ctx: opts.ctx });
 

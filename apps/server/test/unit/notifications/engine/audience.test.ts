@@ -336,7 +336,7 @@ describe('resolveEffectivePreferences leaves a retired row alone', () => {
       MASTER_EVENTS,
     );
     expect(effective.map((p) => p.eventKey)).toEqual([
-      'campaign.dispatched', 'campaign.completed', 'agency.campaign.completed', 'usage.digest',
+      'campaign.dispatched', 'campaign.completed', 'agency.campaign.completed', 'agency.report.ready', 'usage.digest',
     ]);
   });
 

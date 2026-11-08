@@ -196,6 +196,74 @@ must be a UUID (refused otherwise) and is written in lower case.
 - **downloads**: the requester, or anyone who could create the same run; re-checked per download,
   audited `agency_report.downloaded`.
 
+## Pipeline (`agency/reports/`, routes, callback, email)
+
+What W1 built, beside the contract above. Module detail and tests: [`modules.md`](modules.md)
+(`apps/server/src/agency/reports/`).
+
+- **Routes** (`api/routes/proxy-agency-reports.routes.ts` + `proxy-agency-reports/`, registered by
+  the agency plugin). Guards in order: session, tenant context, the RBAC floor (runs
+  `agency.station.connect`, subscriptions `agency.supervise`), the flag (`403 feature_disabled`,
+  body `{ error: 'Feature Not Enabled', code: 'feature_disabled', message: 'Reports are not enabled
+  for this account.' }`), then ids, body (the generic agency 400), reach over the subject ("Who may
+  run what"; 403 without a code, or `report_subject_not_found`), zone, window, per-user rate,
+  pending limit. A malformed, unknown or foreign run id is `report_not_found` (404), never 403. A run
+  is visible (detail, history, retry) to its requester and to supervisors of its account; a download
+  is allowed to the requester or to anyone who could create the same run now (a supervisor; for a
+  campaign run, while the account still owns the campaign; for a `self` review, the agent). Retry
+  and run-now create AD HOC runs through the same checks as `POST /reports` (rate and pending limit
+  included): retry keeps the parameters and `email_me` only when the caller is the requester;
+  run-now covers `periodFor(cadence, now)` (the latest complete period), `email_me` on. A
+  subscription PATCH recomputes `next_run_at` only when the schedule or `enabled` changes, so an edit
+  to formats or recipients never skips a due send; a campaign subscription keeps its zone. Audit
+  actions (`platform_audit_log`, group "Reports"): `agency_report.requested` (`details.via`:
+  `request`, `retry`, `run_now`), `agency_report.downloaded`, `agency_report_subscription.created`,
+  `.updated`, `.deleted`.
+- **Render callback** `POST /webhooks/reports/rendered` (`api/routes/webhooks/report-rendered.ts`),
+  registered by `agencyWebhooksPlugin` in `agency.plugin.ts` beside the agency plugin (not inside
+  it: everything the agency plugin registers is a session-guarded console route). Its own JSON
+  parser keeps the raw body; HMAC verified before parsing; every answer counted in
+  `agency_reports_callbacks_total`. In the app limiter's `webhook` bucket (`/webhooks/reports`
+  prefix). With no `AGENCY_REPORTS_CALLBACK_SECRET` (inline) every callback is refused. The web
+  image's nginx (`docker/nginx.conf`) proxies `/webhooks` to the server, so
+  `AGENCY_REPORTS_CALLBACK_BASE_URL` may be the console's public origin.
+- **One apply path**, `applyRenderOutcome` (`apply.ts`): the webhook, the inline renderer and the
+  tick's reconcile all go through it (callback names the run and attempt; every key the run's own
+  output key; a `rendered` result carries every requested format; then the attempt-fenced
+  `applyRenderResult`). A callback for a run that no longer exists is `stale`.
+- **Dispatch** (`dispatch.ts`): `sqs` sends the `ReportRenderMessage` JSON with
+  `@aws-sdk/client-sqs` (region and keys from the `s3` block, else the SDK's default chain).
+  `inline` loads `@magick-agency/report-renderer` with a dynamic `import()` of a non-literal
+  specifier typed by the local `ReportRendererModule` (`renderRun(message, io, options)`; `io.writeObject(key, body, contentType, bytes)`),
+  so the server's `tsc` never compiles the renderer's sources; the server must list the package as
+  a dependency for the import to resolve, and until it does an inline render fails the run
+  `render_failed` ("could not run"). Inline renders one run at a time; boot warns when `inline` runs
+  with `NODE_ENV=production`.
+- **Assembler** (`assembler.ts`): a run `assembling` with no dataset for 30 minutes
+  (`REPORT_ASSEMBLY_STALE_MS`) is reclaimed; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
+  times fails `assembly_failed`. A failed run's stored message is generic copy; the error is logged
+  with the run id only. Detail files are `application/gzip`.
+- **Read timeouts (for the dataset builders).** The builder seam hands a builder no database
+  client, and the builders read through the shared pool (the screens' own reads), so the assembler
+  cannot run their statements under `SET LOCAL statement_timeout`. It bounds each builder call by
+  wall clock instead (`REPORT_BUILD_TIMEOUT_MS`, 10 minutes): past it the run fails
+  `assembly_failed` while the statements already sent finish on their own. Builders should keep
+  each read bounded by its window and paging (detail sources by keyset pages, released in
+  `finally` when the assembler calls `return()` at the row cap).
+- **Tick** (`tick.ts`): each step handles at most 50 items a tick; a run assembled but unsent for
+  5 minutes is sent; a run found rendered in S3 after a lost callback records `renderer_version =
+  'reconciled'`.
+- **Email** (`notifications/agency-report-ready.ts`, template
+  `notifications/templates/agency-report-ready.template.ts`): catalog event `agency.report.ready`
+  (category `agency`, explicit audience, default on, so every role sees the toggle). Link
+  `${CONSOLE_BASE_URL}/t/:tenant/a/:account/agency/reports/:runId`. Subjects: "Your agent review for
+  … is ready", "Your scheduled campaign report for … is ready", "… could not be prepared". Counted
+  per recipient in `agency_reports_emails_total` (`skipped` covers recipients without access, users
+  who turned it off, a deleted subscription, no mail transport, and an already-claimed inbox).
+- **Bootstrap**: `startReportPipeline` from `bootstrap/agency.ts` after the runtime starts, main
+  process only, whatever the flag; stopped first on shutdown (assembler, tick, then the inline
+  queue drains).
+
 ## Workstreams
 
 | WS | Owns | Branch |

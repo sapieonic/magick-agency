@@ -8,6 +8,7 @@ import { startAgencyIngestReaper } from '../agency/agency-ingest.service.js';
 import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurrency-control.js';
 import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
 import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
+import { startReportPipeline } from '../agency/reports/pipeline.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -30,7 +31,9 @@ import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
  * periodic `startAgencyIngestReaper()`, whose handle is kept and cleared on shutdown; and
  * the insights rollup job (`agency/insights-rollup-job.ts`, migration 0012), started after
  * the runtime (the startup reap settles attempts first, and those writes mark their buckets)
- * and stopped first.
+ * and stopped first; and the report pipeline (`agency/reports/pipeline.ts`: the assembler and the
+ * reports tick, docs/reports.md RP10), started last and stopped before the rollup job. Both
+ * report loops start whatever the `agency_reports_enabled` flag says: the flag gates requests.
  */
 
 let runtime: AgencyRuntime | null = null;
@@ -105,10 +108,14 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
 
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
+  // Main process only, like the rollup job: one assembler and one tick per deployment.
+  const reports = startReportPipeline(ctx.config);
 
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
+    // The run in flight records (or is reclaimed by the next boot); the tick finishes its pass.
+    await reports.stop();
     // The batch in flight commits or rolls back; marks left over are the next boot's.
     await insightsRollup.stop();
     // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents

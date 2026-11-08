@@ -156,6 +156,15 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/customers/export',
   'POST /proxy/agency/customers/search',
   'POST /proxy/agency/customers/timeline',
+  // Reports (docs/reports.md, RP5): `agency.station.connect`, so an agent can export their OWN
+  // review and see their own runs. The reach over a subject is the route's (another agent, a
+  // campaign or the account is a 403 past the guards; others' runs are 404s). Subscriptions are
+  // `agency.supervise` and refuse an agent.
+  'GET /proxy/agency/reports',
+  'GET /proxy/agency/reports/:id',
+  'GET /proxy/agency/reports/:id/files/:format',
+  'POST /proxy/agency/reports',
+  'POST /proxy/agency/reports/:id/retry',
 ].sort();
 
 /**

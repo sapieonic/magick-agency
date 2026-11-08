@@ -75,6 +75,12 @@ type CampaignScopedAuditAction = Exclude<
   // A customer-history search or export reads one number across the tenant (CH10): no campaign.
   | 'agency_customer_history.searched'
   | 'agency_customer_history.exported'
+  // Reports and their schedules are account-wide (docs/reports.md): no row carries a campaign.
+  | 'agency_report.requested'
+  | 'agency_report.downloaded'
+  | 'agency_report_subscription.created'
+  | 'agency_report_subscription.updated'
+  | 'agency_report_subscription.deleted'
 >;
 
 /**

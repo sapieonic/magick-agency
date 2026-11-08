@@ -38,7 +38,7 @@ import { CAMPAIGN_ACTIVITY_ACTIONS } from '../../../../src/agency/agency-activit
  * — which is the point, since an unrecognised group renders outside every
  * section of the filter rather than as an obvious bug.
  */
-const GROUPS: readonly AuditActionGroup[] = ['Campaign', 'Calls', 'Staffing', 'Team'];
+const GROUPS: readonly AuditActionGroup[] = ['Campaign', 'Calls', 'Staffing', 'Reports', 'Team'];
 
 const servedActions = PLATFORM_AUDIT_ACTION_VOCABULARY.map((action) => action.value);
 const servedResourceTypes = PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY.map((type) => type.value);
