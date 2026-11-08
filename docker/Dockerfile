@@ -35,6 +35,9 @@ RUN corepack enable
 # package.json changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/server/package.json apps/server/
+# The report renderer (RP15) is a workspace dependency of the server, bundled into it as
+# TypeScript source like packages/*; its manifest is needed for the install to resolve it.
+COPY apps/report-renderer/package.json apps/report-renderer/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/db/package.json packages/db/
 COPY packages/domain/package.json packages/domain/
@@ -42,6 +45,7 @@ COPY packages/observability/package.json packages/observability/
 RUN pnpm install --frozen-lockfile --filter @magick-agency/server...
 COPY tsconfig.base.json ./
 COPY packages/ packages/
+COPY apps/report-renderer/ apps/report-renderer/
 COPY apps/server/ apps/server/
 RUN pnpm --filter @magick-agency/server build
 # The server's production dependencies only, as a self-contained directory

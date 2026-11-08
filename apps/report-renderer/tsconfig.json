@@ -1,0 +1,10 @@
+{
+  // Source, tests and scripts in one program (decision B1). Nothing is emitted: the server bundles
+  // `src/` as TypeScript source, and `scripts/build-lambda.mjs` bundles the Lambda with esbuild.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

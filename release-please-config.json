@@ -24,6 +24,7 @@
     "apps/server": { "component": "server", "exclude-paths": ["apps/server/test"] },
     "apps/console": { "component": "console", "exclude-paths": ["apps/console/src/__tests__"] },
     "apps/super-admin": { "component": "super-admin", "exclude-paths": ["apps/super-admin/src/__tests__"] },
+    "apps/report-renderer": { "component": "report-renderer", "exclude-paths": ["apps/report-renderer/test"] },
     "packages/contracts": { "component": "contracts", "exclude-paths": ["packages/contracts/test"] },
     "packages/db": { "component": "db", "exclude-paths": ["packages/db/test"] },
     "packages/domain": { "component": "domain", "exclude-paths": ["packages/domain/test"] },
