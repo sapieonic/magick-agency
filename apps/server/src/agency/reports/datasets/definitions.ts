@@ -7,9 +7,10 @@
  */
 import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '@magick-agency/contracts/agency';
 import { AGENCY_INSIGHTS_MIN_RATE_DENOMINATOR, AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES } from '@magick-agency/contracts/api/agency/insights';
-import type { ReportDefinition } from '@magick-agency/contracts/reports';
+import type { ReportDefinition, ReportDefinitionKey } from '@magick-agency/contracts/reports';
 
-const d = (key: string, label: string, text: string): ReportDefinition => ({ key, label, text });
+/** A key outside `REPORT_DEFINITION_KEYS` fails `tsc`; the per-kind list is held by a unit test. */
+const d = (key: ReportDefinitionKey, label: string, text: string): ReportDefinition => ({ key, label, text });
 
 const ROSTER_FLOOR = AGENCY_ROSTER_MIN_RATE_DENOMINATOR;
 const INSIGHTS_FLOOR = AGENCY_INSIGHTS_MIN_RATE_DENOMINATOR;

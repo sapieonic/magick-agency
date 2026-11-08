@@ -46,6 +46,92 @@ export interface ReportRange {
 }
 
 /** One entry of the definitions page: what a figure means, in words. */
+/**
+ * Every definition key each kind's dataset carries, in the server's print order: the server's
+ * definitions page (`apps/server/src/agency/reports/datasets/definitions.ts`) writes exactly
+ * these (a test holds it to them) and the renderer looks figures up by them, so a key either
+ * side gets wrong fails `tsc` or that test instead of leaving a workbook cell blank.
+ */
+export const REPORT_DEFINITION_KEYS = {
+  agent: [
+    'dials',
+    'first_dials',
+    'connected',
+    'connect_rate',
+    'successes',
+    'success_rate',
+    'talk_time',
+    'wrapup_time',
+    'aht',
+    'outcome_talk',
+    'logged_in_time',
+    'occupancy',
+    'on_call_share',
+    'on_call_share_excl_break',
+    'days_worked',
+    'first_in_last_out',
+    'drops',
+    'callbacks_booked',
+    'callbacks_on_time',
+    'callbacks_late',
+    'callbacks_missed',
+    'callbacks_pending',
+    'redials',
+    'agent_retries',
+    'overrides',
+    'dnc_marked',
+    'softphone_calls',
+    // The supervisor's copy only.
+    'floor_comparison',
+    'sentiment',
+  ],
+  campaign: [
+    'dials',
+    'first_dials',
+    'connected',
+    'conversations',
+    'connect_rate',
+    'success_rate',
+    'abandonment_rate',
+    'talk_time',
+    'wrapup_time',
+    'callbacks_booked',
+    'callbacks_on_time',
+    'callbacks_late',
+    'callbacks_missed',
+    'callbacks_pending',
+    'agents_online_peak',
+    'best_hours',
+    'stalls',
+    'predial_blocks',
+    'recording_share',
+  ],
+  account: [
+    'dials',
+    'first_dials',
+    'connected',
+    'conversations',
+    'connect_rate',
+    'success_rate',
+    'abandonment_rate',
+    'talk_time',
+    'wrapup_time',
+    'callbacks_booked',
+    'predial_blocks',
+    'recording_share',
+    'totals',
+    'agent_rates',
+    'occupancy',
+    'floor_comparison',
+  ],
+} as const satisfies Record<'agent' | 'campaign' | 'account', readonly string[]>;
+
+/** The agent review's keys the `self` audience's copy leaves out (RP5). */
+export const REPORT_SUPERVISOR_ONLY_AGENT_DEFINITION_KEYS = ['floor_comparison', 'sentiment'] as const satisfies readonly ReportDefinitionKey<'agent'>[];
+
+/** A definition key the dataset of kind `K` carries. */
+export type ReportDefinitionKey<K extends keyof typeof REPORT_DEFINITION_KEYS = keyof typeof REPORT_DEFINITION_KEYS> = (typeof REPORT_DEFINITION_KEYS)[K][number];
+
 export interface ReportDefinition {
   /** Stable identifier, e.g. `connect_rate`, `occupancy`. Not copy. */
   key: string;

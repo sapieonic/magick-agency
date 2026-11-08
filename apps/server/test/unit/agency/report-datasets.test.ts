@@ -17,6 +17,8 @@ import {
   type PresenceInterval,
 } from '../../../src/agency/reports/datasets/agent-presence.js';
 import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
+import { REPORT_DEFINITION_KEYS, REPORT_SUPERVISOR_ONLY_AGENT_DEFINITION_KEYS } from '@magick-agency/contracts/reports';
+import { accountDefinitions, agentDefinitions, campaignDefinitions } from '../../../src/agency/reports/datasets/definitions.js';
 import {
   commonNotes,
   dispositionLabel,
@@ -253,6 +255,17 @@ describe('the agent review\'s pure blocks', () => {
     expect(sup).toHaveLength(agentCallColumns(true).length);
     expect(sup.slice(3, 4)).toEqual(['+919812345678']);
     expect(sup.slice(-2)).toEqual([true, 'positive']);
+  });
+});
+
+describe('the definitions pages', () => {
+  it('write exactly the contract\'s keys per kind, in its order (the renderer looks figures up by them)', () => {
+    const keys = (defs: Array<{ key: string }>) => defs.map((x) => x.key);
+    expect(keys(agentDefinitions('supervisor'))).toEqual([...REPORT_DEFINITION_KEYS.agent]);
+    const supervisorOnly: readonly string[] = REPORT_SUPERVISOR_ONLY_AGENT_DEFINITION_KEYS;
+    expect(keys(agentDefinitions('self'))).toEqual(REPORT_DEFINITION_KEYS.agent.filter((k) => !supervisorOnly.includes(k)));
+    expect(keys(campaignDefinitions())).toEqual([...REPORT_DEFINITION_KEYS.campaign]);
+    expect(keys(accountDefinitions())).toEqual([...REPORT_DEFINITION_KEYS.account]);
   });
 });
 
