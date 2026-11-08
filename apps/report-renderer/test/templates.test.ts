@@ -187,6 +187,14 @@ describe('campaign report', () => {
     expect(trends).not.toContain(`${dayLabel(late.range.from)}:`);
   });
 
+  it('rounds the live pace to whole dials an hour', () => {
+    const live = structuredClone(d);
+    live.summary.headline.running!.dials_per_hour = 1234.567;
+    const headline = text(block(renderReportHtml(live, NO_FONTS), 'data-block', 'headline'));
+    expect(headline).toContain('1,235 dials an hour');
+    expect(headline).not.toContain('1,234.567');
+  });
+
   it('withholds an agent rate below the Insights floor', () => {
     const thin = structuredClone(d);
     thin.activity.agents[0] = { ...thin.activity.agents[0]!, dials: 20, redials: 0, human_connects: 9, conversations: 12, successes: 4 };

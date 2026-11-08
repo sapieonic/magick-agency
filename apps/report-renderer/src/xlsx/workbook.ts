@@ -20,7 +20,7 @@ import type {
   ReportDetailFile,
   ReportDetailSheet,
 } from '@magick-agency/contracts/reports';
-import { average, bucketDate, count, rate, rateText, servedRate, share, type Rate } from '../format';
+import { average, bucketDate, count, pct, rate, rateText, servedRate, share, type Rate } from '../format';
 import type { DetailReader } from '../io';
 import { agentConnectRate, agentSuccessRate } from '../rates';
 import { excelValue, NUM_FMT, writeTable, type SheetColumn } from './sheet';
@@ -472,7 +472,7 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     ['Abandonment', 'Abandoned in the window', abandoned, null, null],
     ['Abandonment', 'Answered in the window', answered, null, null],
     ['Abandonment', 'Ceiling (%)', h.abandonment.ceiling_pct, null, null],
-    ...h.abandonment.auto_pauses.map((p) => ['Auto-pause', p.measured_pct === null ? 'Measured rate not recorded' : `Measured ${p.measured_pct}%`, null, p.at, null]),
+    ...h.abandonment.auto_pauses.map((p) => ['Auto-pause', p.measured_pct === null ? 'Measured rate not recorded' : `Measured ${pct(p.measured_pct)}`, null, p.at, null]),
     ...Object.entries(h.stalls.minutes_by_reason).map(([k, m]) => ['Stall minutes', k, m, null, null]),
     ...h.stalls.episodes.map((e) => ['Stall episode', e.reason, e.minutes, e.started_at, e.ended_at]),
     ['Concurrency', 'Minutes at the concurrency limit', h.concurrency_limit_minutes, null, null],

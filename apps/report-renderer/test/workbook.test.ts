@@ -143,6 +143,17 @@ describe('campaign workbook', async () => {
     expect(date.value).toEqual(new Date('2026-10-09T00:00:00Z'));
     expect(date.numFmt).toBe('yyyy-mm-dd');
   });
+  it('writes an auto-pause’s measured rate with the report’s percentage format', async () => {
+    const paused = structuredClone(d);
+    paused.health.abandonment.auto_pauses = [{ at: '2026-10-22T06:42:00Z', measured_pct: 3.41666, ceiling_pct: 3 }];
+    const health = (await readWorkbook(await build(paused, details))).getWorksheet('Health')!;
+    const cells: string[] = [];
+    health.eachRow((r) => {
+      if (r.getCell(1).value === 'Auto-pause') cells.push(String(r.getCell(2).value));
+    });
+    expect(cells).toEqual(['Measured 3.4%']);
+  });
+
   it('dates each Daily row by its bucket_start, not by counting from range.from', async () => {
     const late = structuredClone(d);
     late.trends.buckets = late.trends.buckets.slice(2);

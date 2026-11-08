@@ -163,7 +163,7 @@ function Headline({ d }: { d: CampaignReportDataset }) {
     const a = h.running.agents_by_state;
     const online = a.available + a.reserved + a.on_call + a.wrapup + a.break;
     lines.push(`${plural(online, 'agent')} online (${count(a.on_call)} on a call), ${plural(h.running.calls_live, 'call')} live`);
-    if (h.running.dials_per_hour !== null) lines.push(`${count(h.running.dials_per_hour)} dials an hour`);
+    if (h.running.dials_per_hour !== null) lines.push(`${count(Math.round(h.running.dials_per_hour))} dials an hour`);
     if (h.running.eta_seconds !== null) lines.push(`about ${etaWords(h.running.eta_seconds)} of contacts left at this pace`);
   }
   if (h.paused) lines.push(`paused ${h.paused.reason === 'abandonment_ceiling' ? 'by the abandonment ceiling' : h.paused.reason === 'supervisor' ? 'by a supervisor' : 'by its carrier account'}`);

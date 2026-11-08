@@ -161,7 +161,7 @@ function AgentsPage({ d, header }: { d: AccountReportDataset; header: ReactNode 
           ]}
         />
       </Section>
-      <Section title="Agents" aside={`the account roster; floor bands over ${plural(d.benchmark.pool_size, 'agent')} with at least ${d.floors.agent_rate_min_first_dials} first dials`} flow id="agents">
+      <Section title="Agents" aside={`the account roster; floor bands over ${plural(d.benchmark.pool_size, 'agent')} with at least ${count(d.floors.agent_rate_min_first_dials)} first dials`} flow id="agents">
         <table>
           <thead>
             <tr>
