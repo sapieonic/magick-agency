@@ -44,6 +44,105 @@ describe('parseConfig', () => {
     expect(history({ AGENCY_CUSTOMER_EXPORT_MAX_ROWS: 'all' })).toBeNull();
   });
 
+  describe('agency.reports (docs/reports.md "Config")', () => {
+    const reports = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? result.config.agency.reports : null;
+    };
+    const messages = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? [] : result.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
+    };
+    const SQS = {
+      AGENCY_REPORTS_RENDERER: 'sqs',
+      AGENCY_REPORTS_SQS_QUEUE_URL: 'https://sqs.ap-south-1.amazonaws.com/123456789012/report-jobs',
+      AGENCY_REPORTS_CALLBACK_BASE_URL: 'https://api.example.com/',
+      AGENCY_REPORTS_CALLBACK_SECRET: 'x'.repeat(32),
+    };
+
+    it('defaults: inline, 100,000 rows, 2 s, 60 s, 15 min, 3 attempts, 90 days, 5 pending, 3 a minute', () => {
+      expect(reports({})).toEqual({
+        renderer: 'inline',
+        sqsQueueUrl: undefined,
+        callbackBaseUrl: undefined,
+        callbackSecret: undefined,
+        chromePath: undefined,
+        maxDetailRows: 100_000,
+        assemblerIntervalMs: 2_000,
+        tickIntervalMs: 60_000,
+        renderTimeoutMs: 900_000,
+        maxAttempts: 3,
+        retentionDays: 90,
+        tenantPendingLimit: 5,
+        userPerMinute: 3,
+      });
+    });
+
+    it('reads every key from the env, numbers coerced, an empty renderer is the default', () => {
+      expect(reports({
+        AGENCY_REPORTS_RENDERER: '',
+        AGENCY_REPORTS_CHROME_PATH: '/usr/bin/chromium',
+        AGENCY_REPORTS_MAX_DETAIL_ROWS: '5000',
+        AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS: '500',
+        AGENCY_REPORTS_TICK_INTERVAL_MS: '30000',
+        AGENCY_REPORTS_RENDER_TIMEOUT_MS: '60000',
+        AGENCY_REPORTS_MAX_ATTEMPTS: '5',
+        AGENCY_REPORTS_RETENTION_DAYS: '30',
+        AGENCY_REPORTS_TENANT_PENDING_LIMIT: '10',
+        AGENCY_REPORTS_USER_PER_MINUTE: '6',
+      })).toMatchObject({
+        renderer: 'inline', chromePath: '/usr/bin/chromium', maxDetailRows: 5000, assemblerIntervalMs: 500,
+        tickIntervalMs: 30_000, renderTimeoutMs: 60_000, maxAttempts: 5, retentionDays: 30,
+        tenantPendingLimit: 10, userPerMinute: 6,
+      });
+    });
+
+    it('bounds the numbers and the renderer', () => {
+      const bad: Array<Record<string, string>> = [
+        { AGENCY_REPORTS_RENDERER: 'lambda' },
+        { AGENCY_REPORTS_MAX_DETAIL_ROWS: '0' },
+        { AGENCY_REPORTS_MAX_ATTEMPTS: '0' },
+        { AGENCY_REPORTS_RETENTION_DAYS: 'forever' },
+        { AGENCY_REPORTS_TENANT_PENDING_LIMIT: '0' },
+        { AGENCY_REPORTS_USER_PER_MINUTE: '1.5' },
+        { AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS: '10' },
+      ];
+      for (const env of bad) {
+        expect(reports(env), JSON.stringify(env)).toBeNull();
+      }
+    });
+
+    it('sqs with its queue, callback base and a 32-character secret boots; the base loses its trailing slash', () => {
+      expect(reports(SQS)).toMatchObject({
+        renderer: 'sqs',
+        sqsQueueUrl: SQS.AGENCY_REPORTS_SQS_QUEUE_URL,
+        callbackBaseUrl: 'https://api.example.com',
+        callbackSecret: 'x'.repeat(32),
+      });
+    });
+
+    it('sqs without its settings fails boot, naming each missing one', () => {
+      expect(messages({ AGENCY_REPORTS_RENDERER: 'sqs' })).toEqual([
+        'agency.reports.sqsQueueUrl: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_SQS_QUEUE_URL (the https:// queue URL)',
+        "agency.reports.callbackBaseUrl: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL, http(s)://host)",
+        'agency.reports.callbackSecret: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_SECRET of at least 32 characters',
+      ]);
+      expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET: 'x'.repeat(31) })).toEqual([
+        'agency.reports.callbackSecret: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_SECRET of at least 32 characters',
+      ]);
+      expect(messages({ ...SQS, AGENCY_REPORTS_SQS_QUEUE_URL: 'report-jobs' })).toHaveLength(1);
+      expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_BASE_URL: 'api.example.com' })).toHaveLength(1);
+      // A whitespace-only value is absent.
+      expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET: ' '.repeat(40) })).toHaveLength(1);
+    });
+
+    it('inline needs none of the sqs settings', () => {
+      expect(reports({ AGENCY_REPORTS_RENDERER: 'inline', AGENCY_REPORTS_CALLBACK_SECRET: 'short' })).toMatchObject({
+        renderer: 'inline', callbackSecret: 'short',
+      });
+    });
+  });
+
   it('reports every missing required value', () => {
     const result = parseConfig({});
     expect(result.ok).toBe(false);

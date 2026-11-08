@@ -45,10 +45,77 @@ const customerHistorySchema = z.object({
   exportMaxRows: z.coerce.number().int().min(1).max(100_000).default(10_000),
 });
 
+/**
+ * `reports`: agent, campaign and account reports (docs/reports.md "Config", RP8, RP12, RP13).
+ *  - `renderer` (`AGENCY_REPORTS_RENDERER`, default `inline`): `inline` renders in process (dev
+ *    and tests); `sqs` sends each run to the renderer Lambda through `sqsQueueUrl`, which calls
+ *    back at `${callbackBaseUrl}/webhooks/reports/rendered` signed with `callbackSecret`. Under
+ *    `sqs` all three are required and the secret must be at least 32 characters: boot fails
+ *    otherwise, rather than queueing runs nothing can ever finish.
+ *  - `chromePath` (`AGENCY_REPORTS_CHROME_PATH`): Chromium for `inline` (else the renderer's own
+ *    discovery).
+ *  - `maxDetailRows` (`AGENCY_REPORTS_MAX_DETAIL_ROWS`, 100,000): a detail sheet's row cap (RP12).
+ *  - `assemblerIntervalMs` (2 s) and `tickIntervalMs` (60 s): the assembler's poll and the
+ *    reports tick (notify, reconcile, subscriptions, expiry).
+ *  - `renderTimeoutMs` (15 min) and `maxAttempts` (3): a run with no callback after the timeout
+ *    is re-sent, up to the attempts, then fails `render_timed_out` (RP13).
+ *  - `retentionDays` (90): a ready run's `expires_at` (RP8; the bucket's lifecycle matches it).
+ *  - `tenantPendingLimit` (5): runs queued, assembling or rendering per tenant
+ *    (`report_queue_full` past it). `userPerMinute` (3): ad hoc requests per user per minute
+ *    (`report_rate_limited`).
+ */
+export const REPORTS_CALLBACK_SECRET_MIN_LENGTH = 32;
+
+const optionalText = z.string().trim().optional().transform((v) => (v === undefined || v === '' ? undefined : v));
+
+const reportsSchema = z.object({
+  renderer: z.enum(['inline', 'sqs']).default('inline'),
+  sqsQueueUrl: optionalText,
+  callbackBaseUrl: optionalText,
+  callbackSecret: optionalText,
+  chromePath: optionalText,
+  maxDetailRows: z.coerce.number().int().min(1).max(1_000_000).default(100_000),
+  assemblerIntervalMs: z.coerce.number().int().min(250).max(600_000).default(2_000),
+  tickIntervalMs: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
+  renderTimeoutMs: z.coerce.number().int().min(10_000).max(24 * 3_600_000).default(900_000),
+  maxAttempts: z.coerce.number().int().min(1).max(10).default(3),
+  retentionDays: z.coerce.number().int().min(1).max(3650).default(90),
+  tenantPendingLimit: z.coerce.number().int().min(1).max(1000).default(5),
+  userPerMinute: z.coerce.number().int().min(1).max(1000).default(3),
+}).superRefine((data, ctx) => {
+  if (data.renderer !== 'sqs') return;
+  if (data.sqsQueueUrl === undefined || !/^https:\/\/\S+$/.test(data.sqsQueueUrl)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sqsQueueUrl'],
+      message: 'AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_SQS_QUEUE_URL (the https:// queue URL)',
+    });
+  }
+  if (data.callbackBaseUrl === undefined || !/^https?:\/\/[^\s/]+(\/\S*)?$/.test(data.callbackBaseUrl)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['callbackBaseUrl'],
+      message: 'AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_BASE_URL (the server\'s public base URL, http(s)://host)',
+    });
+  }
+  if (data.callbackSecret === undefined || data.callbackSecret.length < REPORTS_CALLBACK_SECRET_MIN_LENGTH) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['callbackSecret'],
+      message: `AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_SECRET of at least ${REPORTS_CALLBACK_SECRET_MIN_LENGTH} characters`,
+    });
+  }
+}).transform((data) => ({
+  ...data,
+  // Joined with `/webhooks/reports/rendered` by the dispatcher: no trailing slash.
+  callbackBaseUrl: data.callbackBaseUrl?.replace(/\/+$/, ''),
+}));
+
 const agencySchema = z.object({
   rosterReplaceEnabled: envBoolean.default(false),
   insightsRollup: insightsRollupSchema.default({}),
   customerHistory: customerHistorySchema.default({}),
+  reports: reportsSchema.default({}),
 });
 
 export const agencyConfigSchema = z.object({
@@ -67,6 +134,21 @@ export function readAgencyEnv(env: Env): Record<string, unknown> {
         searchesPerMinute: env['AGENCY_CUSTOMER_SEARCH_PER_MINUTE'],
         searchTtlMinutes: env['AGENCY_CUSTOMER_SEARCH_TTL_MINUTES'],
         exportMaxRows: env['AGENCY_CUSTOMER_EXPORT_MAX_ROWS'],
+      },
+      reports: {
+        renderer: env['AGENCY_REPORTS_RENDERER'] || undefined,
+        sqsQueueUrl: env['AGENCY_REPORTS_SQS_QUEUE_URL'],
+        callbackBaseUrl: env['AGENCY_REPORTS_CALLBACK_BASE_URL'],
+        callbackSecret: env['AGENCY_REPORTS_CALLBACK_SECRET'],
+        chromePath: env['AGENCY_REPORTS_CHROME_PATH'],
+        maxDetailRows: env['AGENCY_REPORTS_MAX_DETAIL_ROWS'],
+        assemblerIntervalMs: env['AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS'],
+        tickIntervalMs: env['AGENCY_REPORTS_TICK_INTERVAL_MS'],
+        renderTimeoutMs: env['AGENCY_REPORTS_RENDER_TIMEOUT_MS'],
+        maxAttempts: env['AGENCY_REPORTS_MAX_ATTEMPTS'],
+        retentionDays: env['AGENCY_REPORTS_RETENTION_DAYS'],
+        tenantPendingLimit: env['AGENCY_REPORTS_TENANT_PENDING_LIMIT'],
+        userPerMinute: env['AGENCY_REPORTS_USER_PER_MINUTE'],
       },
     },
   };

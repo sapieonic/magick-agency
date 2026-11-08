@@ -162,7 +162,9 @@ Repositories in `apps/server/src/db/repositories/agency/report-run.repository.ts
 Derived on the server only, never from a client (the ingest-key lesson):
 `report-datasets/{tenant}/{account|tenant}/{run}/dataset.json` and `…/details-{sheet}.ndjson.gz`
 (lifecycle 7 days); `reports/{tenant}/{account|tenant}/{run}/report.pdf` and `report.xlsx`
-(lifecycle 90 days). One module, `apps/server/src/agency/reports/report-keys.ts`.
+(lifecycle 90 days). `{account|tenant}` is the run's account id, or the literal `tenant` for a run
+with no account (none in v1). One module, `apps/server/src/agency/reports/report-keys.ts`; every id
+must be a UUID (refused otherwise) and is written in lower case.
 
 ## Config (`agency.reports`, `config/blocks/agency.ts`)
 

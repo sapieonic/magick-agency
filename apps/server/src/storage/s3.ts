@@ -1,4 +1,4 @@
-import type { Readable } from 'node:stream';
+import { Transform, type Readable } from 'node:stream';
 import {
   S3Client,
   PutObjectCommand,
@@ -8,9 +8,11 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createChildLogger, withSpan } from '@magick-agency/observability';
 import { s3OperationsTotal, s3OperationDurationSeconds } from '@magick-agency/observability/metrics/agency';
+import { attachmentHeader } from '../api/routes/helpers/csv-attachment.js';
 
 const log = createChildLogger({ component: 's3-storage' });
 
@@ -117,7 +119,27 @@ export async function getFile(key: string): Promise<Buffer> {
   });
 }
 
-export async function getPresignedUrl(key: string, expiresInSeconds = 900): Promise<string> {
+/** What a presigned GET may set on the response besides the expiry. */
+export interface PresignOptions {
+  /** Seconds the URL is valid; default 900. */
+  expiresIn?: number;
+  /**
+   * Served as `Content-Disposition: attachment` with this name (RFC 6266: an ASCII `filename=`
+   * fallback plus the UTF-8 `filename*=`), so the browser saves the file under it whatever the
+   * object's key is. The extension is the part after the last `.`.
+   */
+  filename?: string;
+  /** Served as the response `Content-Type` (overriding the object's own). */
+  contentType?: string;
+}
+
+/**
+ * A presigned GET for one object of the bucket. The second argument is the expiry in seconds
+ * (the original signature) or {@link PresignOptions}; the report downloads pass a file name and
+ * content type, so the URL downloads as `agent-review_priya-s_2026-10-09_2026-11-07.pdf`.
+ */
+export async function getPresignedUrl(key: string, options: number | PresignOptions = {}): Promise<string> {
+  const opts: PresignOptions = typeof options === 'number' ? { expiresIn: options } : options;
   return withSpan('s3.get_presigned_url', {
     'storage.key': key,
   }, async () => {
@@ -125,9 +147,78 @@ export async function getPresignedUrl(key: string, expiresInSeconds = 900): Prom
     const url = await getSignedUrl(client, new GetObjectCommand({
       Bucket: audioBucket,
       Key: key,
-    }), { expiresIn: expiresInSeconds });
+      ...(opts.filename !== undefined ? { ResponseContentDisposition: attachmentDisposition(opts.filename) } : {}),
+      ...(opts.contentType !== undefined ? { ResponseContentType: opts.contentType } : {}),
+    }), { expiresIn: opts.expiresIn ?? 900 });
     return url;
   });
+}
+
+/** `Content-Disposition: attachment` for a full file name (extension after the last `.`). */
+export function attachmentDisposition(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  const ext = dot > 0 ? filename.slice(dot + 1) : '';
+  // Only an ASCII alphanumeric extension is split off; anything else stays part of the name.
+  return /^[A-Za-z0-9]{1,10}$/.test(ext)
+    ? attachmentHeader(filename.slice(0, dot), ext)
+    : attachmentHeader(filename, '');
+}
+
+/** Multipart part size for {@link uploadStream}: 8 MiB (S3's minimum is 5 MiB, at most 10,000 parts). */
+export const UPLOAD_STREAM_PART_BYTES = 8 * 1024 * 1024;
+/** Parts in flight at once for one {@link uploadStream}: peak memory is about this × the part size. */
+export const UPLOAD_STREAM_QUEUE_SIZE = 2;
+
+/**
+ * Upload a stream of unknown length without buffering it whole (the report assembler's gzipped
+ * detail files, up to `AGENCY_REPORTS_MAX_DETAIL_ROWS` rows each): a multipart upload through
+ * `@aws-sdk/lib-storage`'s `Upload` (one `PutObject` when the body fits in one part). Resolves to
+ * the bytes written once S3 has the whole object; rejects, with the multipart upload aborted,
+ * when the body stream errors or S3 refuses. Counted as `s3_operations_total{operation=
+ * "upload_stream"}` and timed in `s3_operation_duration_seconds`.
+ */
+export async function uploadStream(key: string, body: Readable, contentType: string): Promise<number> {
+  return withSpan('s3.upload_stream', { 's3.key': key, 'storage.content_type': contentType }, async (span) => {
+    const startedAt = process.hrtime.bigint();
+    const client = getClient();
+    let bytes = 0;
+    const counter = new Transform({
+      transform(chunk: Buffer, _encoding, done) {
+        bytes += chunk.length;
+        done(null, chunk);
+      },
+    });
+    // `pipe` does not forward errors: a failed source must fail the upload, not stall it.
+    body.on('error', (err) => counter.destroy(err));
+    body.pipe(counter);
+    const upload = new Upload({
+      client,
+      params: { Bucket: audioBucket, Key: key, Body: counter, ContentType: contentType },
+      partSize: UPLOAD_STREAM_PART_BYTES,
+      queueSize: UPLOAD_STREAM_QUEUE_SIZE,
+      leavePartsOnError: false,
+    });
+    try {
+      await upload.done();
+    } catch (err) {
+      s3OperationsTotal.inc({ operation: 'upload_stream', status: 'error' });
+      body.unpipe(counter);
+      body.destroy();
+      throw err;
+    }
+    s3OperationsTotal.inc({ operation: 'upload_stream', status: 'success' });
+    s3OperationDurationSeconds.observe({ operation: 'upload_stream' }, Number(process.hrtime.bigint() - startedAt) / 1e9);
+    span.setAttribute('s3.size_bytes', bytes);
+    log.info({ key, contentType, size: bytes }, 'Stream uploaded to S3');
+    return bytes;
+  });
+}
+
+/** Write a JSON document (the report `dataset.json`): `application/json`, UTF-8. Returns its bytes. */
+export async function uploadJson(key: string, value: unknown): Promise<number> {
+  const body = Buffer.from(JSON.stringify(value), 'utf8');
+  await uploadFile(key, body, 'application/json; charset=utf-8');
+  return body.length;
 }
 
 /*
