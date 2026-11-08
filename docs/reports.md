@@ -51,49 +51,101 @@ console ──POST /proxy/agency/reports──► server (agency area, main proc
 
 ## Contracts (`packages/contracts`)
 
-Console wire types in `src/api/agency/reports.ts`; the dataset and render protocol (shared by the
-server and the renderer) in `src/reports/` (barrel `src/reports/index.ts`, exported as
-`@magick-agency/contracts/reports`). Literal unions are plain so the literal extractor reads them.
+Console wire types in `src/api/agency/reports.ts` (also in the `AgencyApi` namespace); the dataset
+and render protocol (shared by the server and the renderer) in `src/reports/` (barrel
+`src/reports/index.ts`, exported as `@magick-agency/contracts/reports`, an explicit `exports`
+entry ahead of `./*`). Literal unions are plain, each with an `as const` list (`REPORT_KINDS`,
+`REPORT_FORMATS`, ...). None is a mobile vocabulary, so `literals.json` does not change. The files'
+doc comments are the field-level contract; this section is the summary.
 
 - `ReportKind = 'agent' | 'campaign' | 'account'`; `ReportFormat = 'pdf' | 'xlsx'`;
   `ReportAudience = 'supervisor' | 'self'`;
-  `ReportRunStatus = 'queued' | 'assembling' | 'rendering' | 'ready' | 'failed' | 'expired'`;
-  `ReportCadence = 'daily' | 'weekly' | 'monthly'`.
-- Error codes `AgencyReportErrorCode` with `AGENCY_REPORT_ERROR_CODES` and the two-sided guard and
-  snapshot (`test/errors.test.ts`): `report_window_invalid`, `report_window_too_long`,
-  `report_timezone_invalid`, `report_subject_not_found`, `report_queue_full`,
-  `report_rate_limited`, `report_not_found`, `report_not_ready`, `report_expired`,
-  `report_format_unavailable`, `report_subscription_not_found`, `report_subscription_invalid`,
-  `report_recipient_invalid`.
+  `ReportRunStatus = 'queued' | 'assembling' | 'rendering' | 'ready' | 'failed' | 'expired'`
+  (`REPORT_PENDING_STATUSES` = the first three); `ReportCadence = 'daily' | 'weekly' | 'monthly'`;
+  `ReportFailureCode` (a run's `error.code`): `assembly_failed`, `subject_unavailable`,
+  `dataset_unreadable`, `dataset_version_unsupported`, `render_failed`, `upload_failed`,
+  `render_timed_out`; the renderer reports the middle four (`ReportRendererFailureCode`).
+- Constants: `REPORT_MAX_WINDOW_DAYS = 30`, `REPORT_MAX_STORED_WINDOW_MS` = (31 × 24 + 1) h (RP2,
+  the CHECK's cap), `REPORT_DOWNLOAD_URL_TTL_SECONDS = 300`, `REPORT_RUN_PAGE_DEFAULT_LIMIT = 25`
+  / `_MAX_LIMIT = 100`, `REPORT_SUBSCRIPTION_MAX_RECIPIENTS = 20`, `REPORT_FORMAT_CONTENT_TYPES`.
+- **Windows are local dates, both inclusive.** A request's and a run's `from`/`to` are
+  `YYYY-MM-DD` in the zone; the server reads `[local midnight of from, local midnight after to)`.
+  `reportWindowProblem(from, to, today?)` is the RP2 rule (≤ 30 days, or exactly one calendar
+  month; `to` not after today), shared by the console form and the server.
+- Error codes `AgencyReportErrorCode` with `AGENCY_REPORT_ERROR_CODES` (in `src/errors.ts` §5,
+  re-exported by the wire file) and the two-sided guard and snapshot (`test/errors.test.ts`):
+  `report_window_invalid` 400, `report_window_too_long` 400, `report_timezone_invalid` 400,
+  `report_subject_not_found` 404, `report_queue_full` 429, `report_rate_limited` 429,
+  `report_not_found` 404, `report_not_ready` 409, `report_expired` 410,
+  `report_format_unavailable` 404, `report_subscription_not_found` 404,
+  `report_subscription_invalid` 400, `report_recipient_invalid` 400. Body `{ error, code, message }`.
+  Flag off: `403 feature_disabled` (the dialer gate's body), not a report code.
 - `AgencyReportRun`: `id, kind, subject {id, name|null}, account_id|null, range {from, to,
   timezone}, formats, audience, status, requested_by {user_id, name|null}|null,
   subscription_id|null, created_at, finished_at|null, expires_at|null, files [{format, bytes}],
-  truncated, error {code, message}|null`.
-- `AgencyCreateReportRequest`: `kind, subject_id, from, to, timezone, formats, campaign_ids?,
-  email_me?`. `AgencyReportRunPage`: `runs, next_cursor|null`. `AgencyReportDownload`:
+  truncated, error {code: ReportFailureCode, message}|null`.
+- `AgencyCreateReportRequest`: `kind, subject_id, from, to, timezone?, formats, campaign_ids?,
+  email_me?`. `timezone` is required for agent and account and ignored for campaign (RP3);
+  `campaign_ids` is for `account` only (the agent review covers the whole account, as the record
+  and roster do). `AgencyReportRunListQuery`: `cursor?, limit?, kind?, subject_id?,
+  subscription_id?`. `AgencyReportRunPage`: `runs, next_cursor|null`. `AgencyReportDownload`:
   `url, filename, expires_at`.
 - `AgencyReportSubscription`: `id, kind, subject {id, name|null}, account_id|null, cadence,
   send_local_time 'HH:MM', send_weekday 1–7|null (ISO, Monday 1), send_monthday 1–28|null,
-  timezone, formats, recipients [{user_id, name|null}], enabled, next_run_at, last_run
-  {id, status, period_start}|null, created_by, created_at`. Create and update bodies alongside.
-- `ReportDataset` = `AgentReviewDataset | CampaignReportDataset | AccountReportDataset`, each with
-  `dataset_version` (`REPORT_DATASET_VERSION = 1`), `run_id, kind, audience, generated_at,
-  range {from, to, timezone, days}, tenant {id, name}, account {id, name}|null, subject {id, name},
-  definitions [{key, label, text}], notes [string], detail_files [ReportDetailFile]`.
-  Blocks REUSE the existing wire types wherever a screen already serves the block
-  (`AgencyInsightsSummary`, `…Activity`, `…Trends`, `…Health`, the roster row and benchmark, the
-  agent stats totals), so the report cannot hold a second opinion about a number.
+  timezone, formats, recipients [{user_id, name|null}], enabled, next_run_at|null (null while
+  disabled), last_run {id, status, period_start}|null, created_by {user_id, name|null},
+  created_at`. Periods: daily the previous local day, weekly the seven days ending the day
+  before, monthly the previous calendar month. `AgencyReportSubscriptionList {subscriptions}`;
+  `AgencyCreateReportSubscriptionRequest` (`kind, subject_id, cadence, send_local_time,
+  send_weekday?, send_monthday?, timezone?, formats, recipient_user_ids, enabled?`);
+  `AgencyUpdateReportSubscriptionRequest` = a partial of it without `kind` and `subject_id`.
+- `ReportDataset` = `AgentReviewDataset | CampaignReportDataset | AccountReportDataset`
+  (`ReportDatasetOf<K>`), each with `dataset_version` (`REPORT_DATASET_VERSION = 1`),
+  `run_id, kind, audience, generated_at, range {from, to, timezone, days, start, end},
+  tenant {id, name}, account {id, name}|null, subject {id, name}, definitions [{key, label,
+  text}], notes [string], detail_files [ReportDetailFile]` (`ReportDatasetBase`; `start`/`end`
+  are the read window's instants, `days` the number of local days). Campaign and account
+  datasets are `audience: 'supervisor'` by type.
+  Blocks REUSE the existing wire types wherever a screen already serves the block, so the report
+  cannot hold a second opinion about a number:
+  - **agent**: `agent {user_id, name}`, `campaigns [{id, name, timezone}]`, `record`
+    (`AgencyApi.AgencyAgentStatsTotals`, the console variant the proxy serves: occupancy
+    optional), `roster_row` (`AgencyRosterAgentRowWithName`|null), `benchmark`
+    (`ReportRosterBenchmark {cohort: AgencyApi.AgencyRosterBenchmark, pool_size}`|null, null for
+    `self`), `occupancy {handling_pct, on_call_pct, on_call_pct_excl_break}` (RP11), `presence`,
+    `daily` (one row per local day), `timeline` (the day with the most logged-in time, latest on a
+    tie)|null, `outcomes`, `per_campaign` (`AgencyAgentStatsByCampaign` + `campaign_name`),
+    `follow_through`, `quality`|null (null for `self`), `floors {agent_rate_min_first_dials}`.
+  - **campaign**: `campaign {id, name, status, timezone}`, `summary`, `activity`, `trends`
+    (`bucket: 'day'`; its `best_hours` is the hour-of-day block, so there is no separate hourly
+    series), `health` (the Insights wire objects verbatim), `agent_names` (id → name|null, for the
+    ids the Insights objects carry bare), `floors {campaign_rate_min_first_dials}`.
+  - **account**: `account {id, name}`, `campaigns` (`AccountReportCampaignRow`: identity plus
+    `AccountReportFigures {calls: AgencyInsightsCalls, callbacks_booked, abandoned, answered,
+    abandoned_pct|null, recording_connected, recorded}`), `totals` (`AccountReportFigures` summed,
+    rates recomputed from the sums), `agents` (roster rows with names), `benchmark`
+    (`ReportRosterBenchmark`), `daily`, `health` (per campaign: `auto_pauses,
+    stall_minutes_by_reason, concurrency_limit_minutes, carrier_failures, our_fault_retired,
+    predial_blocks`), `floors {campaign_rate_min_first_dials, agent_rate_min_first_dials}`.
 - `ReportDetailFile`: `sheet, label, key, rows, truncated, columns [{key, label, type}]` with
+  `sheet: 'sessions' | 'state_log' | 'calls' | 'attempts'` (`REPORT_DETAIL_SHEETS_BY_KIND`: agent
+  sessions, state_log, calls; campaign attempts, sessions; account attempts) and
   `type: 'text' | 'int' | 'number' | 'percent' | 'duration_s' | 'datetime' | 'date' | 'bool'`; the
   file is gzipped NDJSON, one JSON array of cell values per line, in `columns` order.
 - `ReportRenderMessage` (SQS body): `run_id, attempt, dataset_version, bucket, dataset_key,
-  output_prefix, formats, callback_url`. `ReportRenderCallback`: `run_id, attempt,
+  output_prefix, formats, callback_url`; output at `${output_prefix}report.pdf|xlsx`
+  (`REPORT_OUTPUT_FILE_NAMES`). `ReportRenderCallback`: `run_id, attempt,
   status 'rendered' | 'failed', files [{format, key, bytes}], error {code, message}|null,
   renderer_version`. Signed: header `x-mgkvc-report-timestamp` (unix seconds) and
-  `x-mgkvc-report-signature` = hex HMAC-SHA256 of `${timestamp}.${rawBody}` with
-  `AGENCY_REPORTS_CALLBACK_SECRET`; refused outside ±300 s.
+  `x-mgkvc-report-signature` = hex HMAC-SHA256 of `${timestamp}.${rawBody}`
+  (`reportSignaturePayload`) with `AGENCY_REPORTS_CALLBACK_SECRET`; refused outside ±300 s
+  (`REPORT_CALLBACK_MAX_SKEW_SECONDS`).
+- `reportFileName(kind, subjectName, from, to, format)` builds the download name, e.g.
+  `agent-review_priya-s_2026-10-09_2026-11-07.pdf`.
+- Flag `agency_reports_enabled` (`FF_AGENCY_REPORTS`, default off, global/tenant/account,
+  client-exposed), registered in `apps/server/src/feature-flags/registry.ts`.
 
-## Data (migration 0023)
+## Data (migration file 0023)
 
 `report_runs` and `report_subscriptions` as on the design page (account_id nullable, the
 31-days-plus-an-hour CHECK, `audience`, `claim_generation`/`claimed_at` for the assembler,
@@ -146,7 +198,7 @@ Derived on the server only, never from a client (the ingest-key lesson):
 
 | WS | Owns | Branch |
 |---|---|---|
-| F foundation | contracts (`src/api/agency/reports.ts`, `src/reports/`), flag, migration 0023 + BASELINE, the two repositories and their integration tests, `agency.reports` config, `report-keys.ts`, S3 multipart/stream helpers in `storage/s3.ts`, metric declarations | `ccr-2d5a3f08-9lq4ms` |
+| F foundation | contracts (`src/api/agency/reports.ts`, `src/reports/`), flag, the 0023 migration + BASELINE, the two repositories and their integration tests, `agency.reports` config, `report-keys.ts`, S3 multipart/stream helpers in `storage/s3.ts`, metric declarations | `ccr-2d5a3f08-9lq4ms` |
 | W1 pipeline | `agency/reports/` assembler, tick, render dispatch (SQS client, inline adapter), callback apply; `proxy-agency-reports` routes; the webhook route; audit vocabulary; `agency.report.ready` notification and email template; bootstrap wiring | `reports-w1` |
 | W2 datasets | `agency/reports/datasets/{agent,campaign,account}.ts`, role filtering, detail row sources, oracle tests (report figure = screen figure) | `reports-w2` |
 | W3 renderer | `apps/report-renderer` (templates, PDF, workbook, Lambda handler, zip build), release-please component, Dockerfile, CI browser | `reports-w3` |

@@ -2,10 +2,12 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
+  AGENCY_REPORT_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
   AGENCY_SOFTPHONE_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
+  type AgencyReportErrorCode,
   type AgencyRosterRefusalCode,
   type AgencySoftphoneErrorCode,
   type AgencyStationErrorCode,
@@ -233,4 +235,39 @@ describe('customer-history codes', () => {
     }
   });
 
+});
+
+// ── Reports (src/errors.ts §5, re-exported by src/api/agency/reports.ts; docs/reports.md).
+const _reportExact: Equals<(typeof AGENCY_REPORT_ERROR_CODES)[number], AgencyReportErrorCode> = true;
+const _consoleReportAgrees: Equals<AgencyApi.AgencyReportErrorCode, AgencyReportErrorCode> = true;
+void [_reportExact, _consoleReportAgrees];
+
+describe('report codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_REPORT_ERROR_CODES]).toEqual([
+      'report_window_invalid',
+      'report_window_too_long',
+      'report_timezone_invalid',
+      'report_subject_not_found',
+      'report_queue_full',
+      'report_rate_limited',
+      'report_not_found',
+      'report_not_ready',
+      'report_expired',
+      'report_format_unavailable',
+      'report_subscription_not_found',
+      'report_subscription_invalid',
+      'report_recipient_invalid',
+    ]);
+    expectUnique(AGENCY_REPORT_ERROR_CODES);
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_REPORT_ERROR_CODES).toBe(AGENCY_REPORT_ERROR_CODES);
+  });
+
+  it('do not overlap the action or soft-phone unions', () => {
+    const others = new Set<string>([...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES]);
+    for (const code of AGENCY_REPORT_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
 });

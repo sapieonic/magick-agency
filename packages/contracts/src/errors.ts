@@ -463,3 +463,63 @@ const _allSoftphoneCodesListed: AllListed<
   typeof AGENCY_SOFTPHONE_ERROR_CODES
 > = true;
 void _allSoftphoneCodesListed;
+
+// ─── 5. Report refusals ─────────────────────────────────────────────────────
+//
+// The codes of the report routes (`/proxy/agency/reports*`, `/proxy/agency/report-subscriptions*`,
+// docs/reports.md; shapes in `./api/agency/reports`). Outside the action union for the lifecycle
+// codes' reason: these are not an attempt action's refusals. The body is `{ error, code, message }`.
+// HTTP status beside each code. The flag gate (`agency_reports_enabled` off) answers the dialer
+// gate's `403 feature_disabled`, not one of these.
+
+/** Why a report route refused. */
+export type AgencyReportErrorCode =
+  /** 400. `from` or `to` is not a `YYYY-MM-DD` date, `to` is before `from`, or `to` is after today in the report zone. */
+  | 'report_window_invalid'
+  /** 400. More than `REPORT_MAX_WINDOW_DAYS` local days and not exactly one calendar month (RP2). */
+  | 'report_window_too_long'
+  /** 400. `timezone` is missing (agent, account) or not an IANA zone the server knows. */
+  | 'report_timezone_invalid'
+  /** 404. The subject (agent, campaign or account), or an id in `campaign_ids`, is not one the caller may report on in this account. */
+  | 'report_subject_not_found'
+  /** 429. The tenant already has `AGENCY_REPORTS_TENANT_PENDING_LIMIT` runs queued, assembling or rendering. Retry when one finishes. */
+  | 'report_queue_full'
+  /** 429. The caller asked for more than `AGENCY_REPORTS_USER_PER_MINUTE` ad hoc runs in the last minute. */
+  | 'report_rate_limited'
+  /** 404. No such run, or one the caller may not see. */
+  | 'report_not_found'
+  /** 409. A download of a run that is not `ready` (still in flight, or `failed`). */
+  | 'report_not_ready'
+  /** 410. A download of a run past its `expires_at` (RP8): its files are gone. */
+  | 'report_expired'
+  /** 404. A download in a format the run did not produce. */
+  | 'report_format_unavailable'
+  /** 404. No such subscription in this account. */
+  | 'report_subscription_not_found'
+  /** 400. The schedule is inconsistent: a day field missing for its cadence or set for another, or a malformed `send_local_time`. */
+  | 'report_subscription_invalid'
+  /** 400. A recipient is not a member of the tenant with `agency.supervise` on the account (RP4), or there are too many. */
+  | 'report_recipient_invalid';
+
+/** Runtime list of {@link AgencyReportErrorCode}, in declaration order. */
+export const AGENCY_REPORT_ERROR_CODES = [
+  'report_window_invalid',
+  'report_window_too_long',
+  'report_timezone_invalid',
+  'report_subject_not_found',
+  'report_queue_full',
+  'report_rate_limited',
+  'report_not_found',
+  'report_not_ready',
+  'report_expired',
+  'report_format_unavailable',
+  'report_subscription_not_found',
+  'report_subscription_invalid',
+  'report_recipient_invalid',
+] as const satisfies readonly AgencyReportErrorCode[];
+
+const _allReportCodesListed: AllListed<
+  AgencyReportErrorCode,
+  typeof AGENCY_REPORT_ERROR_CODES
+> = true;
+void _allReportCodesListed;

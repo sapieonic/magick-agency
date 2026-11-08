@@ -12,8 +12,8 @@ import {
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
 /*
- * The registry holds only the five agency flags.
- *  - "declares …" pins exactly the five agency flags; the shape cases pin
+ * The registry holds only the agency flags.
+ *  - "declares …" pins exactly the agency flags; the shape cases pin
  *    agency_dialer_enabled / agency_call_analysis / agency_late_binding /
  *    agency_softphone_enabled / agency_console_alaw8; defineFlag and the boolean
  *    resolveEnvDefault cases use agency_dialer_enabled (FF_AGENCY_DIALER); the number
@@ -41,16 +41,17 @@ describe('feature-flag registry', () => {
       }
     });
 
-    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled', () => {
+    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled, agency_reports_enabled', () => {
       expect(getFlag('agency_call_analysis')).toBeDefined();
       expect(getFlag('agency_dialer_enabled')).toBeDefined();
       expect(getFlag('agency_late_binding')).toBeDefined();
       expect(getFlag('agency_softphone_enabled')).toBeDefined();
       expect(getFlag('agency_console_alaw8')).toBeDefined();
       expect(getFlag('agency_contact_assignment_enabled')).toBeDefined();
+      expect(getFlag('agency_reports_enabled')).toBeDefined();
       expect(allFlags().map((f) => f.key)).toEqual([
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
-        'agency_console_alaw8', 'agency_contact_assignment_enabled',
+        'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled',
       ]);
     });
 
@@ -110,6 +111,16 @@ describe('feature-flag registry', () => {
       // The console picks its station socket's media format from it.
       expect(f.clientExposed).toBe(true);
       expect(f.envVar).toBe('FF_AGENCY_CONSOLE_ALAW8');
+    });
+
+    it('agency_reports_enabled is boolean, default off, tri-scoped, client-exposed', () => {
+      const f = getFlag('agency_reports_enabled')!;
+      expect(f.type).toBe('boolean');
+      expect(f.default).toBe(false);
+      expect(f.scopes).toEqual(expect.arrayContaining(['global', 'tenant', 'account']));
+      // The console shows/hides Reports and the export entry points.
+      expect(f.clientExposed).toBe(true);
+      expect(f.envVar).toBe('FF_AGENCY_REPORTS');
     });
   });
 
@@ -188,6 +199,7 @@ describe('feature-flag registry', () => {
       expect(keys).toContain('agency_call_analysis');
       expect(keys).toContain('agency_softphone_enabled');
       expect(keys).toContain('agency_console_alaw8');
+      expect(keys).toContain('agency_reports_enabled');
       expect(keys).not.toContain('agency_late_binding');
     });
   });

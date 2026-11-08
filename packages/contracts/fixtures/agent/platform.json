@@ -113,7 +113,8 @@
     "agency_call_analysis": false,
     "agency_softphone_enabled": false,
     "agency_console_alaw8": true,
-    "agency_contact_assignment_enabled": true
+    "agency_contact_assignment_enabled": true,
+    "agency_reports_enabled": false
   },
   "notification_preferences": {
     "events": [

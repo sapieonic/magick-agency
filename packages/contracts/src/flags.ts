@@ -1,5 +1,5 @@
 /**
- * The five agency feature flags: keys, defaults, scopes, `envVar` names,
+ * The agency feature flags: keys, defaults, scopes, `envVar` names,
  * `clientExposed`, owners and descriptions. Super-admins can override them per
  * tenant and account.
  *
@@ -200,9 +200,28 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency contact assignment: supervisors assign roster contacts to agents, agents work their own queue, agent-led retry and outcome overrides',
   },
+
+  // ── Reports: agent, campaign and account exports (PDF and Excel) ─────────────
+  //
+  // `docs/reports.md` (RP10). Gates every report route (`403 feature_disabled` when off), the
+  // assembler and the subscription tick's new runs for the tenant/account, and the console's
+  // Reports page and export entry points. Off by default: a report renders on our own compute
+  // (a Lambda or headless Chromium) and stores files for 90 days, so a tenant gets it by an
+  // override row, scoped and attributed. The download route is gated too, so turning it off
+  // also hides runs already rendered (their files still expire on the usual lifecycle).
+  agency_reports_enabled: {
+    key: 'agency_reports_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_REPORTS', // staging: FF_AGENCY_REPORTS=true
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console shows/hides Reports and the export buttons
+    owner: 'voice',
+    description: 'Agency reports: agent, campaign and account performance reports as PDF and Excel, ad hoc or on a schedule',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The six agency flag keys. */
+/** The seven agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -212,6 +231,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_softphone_enabled',
   'agency_console_alaw8',
   'agency_contact_assignment_enabled',
+  'agency_reports_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

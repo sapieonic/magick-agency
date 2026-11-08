@@ -10,7 +10,7 @@
  *   - `./agency`  the dialer runtime's frozen agency contract (frames, payloads, unions);
  *   - `./errors`  every agency error vocabulary as union + `as const` list;
  *   - `./rbac`    roles, permissions, the permission matrix, `hasPermission`;
- *   - `./flags`   the five agency feature flags;
+ *   - `./flags`   the agency feature flags;
  *   - `./primitives` `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, `AllListed`.
  *
  * NAMESPACED: the HTTP API layers, because they reuse names the root already
@@ -29,6 +29,10 @@
  *
  *     import type { AgencyRosterPage } from '@magick-agency/contracts/api/agency/agency-stats';
  *     import type { SessionResponse } from '@magick-agency/contracts/api/platform/auth';
+ *
+ * One directory has its own barrel and subpath, `@magick-agency/contracts/reports`
+ * (`./reports/index.ts`): the report dataset and render protocol, shared by the server and the
+ * report renderer (docs/reports.md). It is not re-exported from the root.
  *
  * A name exported from the root must never be re-exported flat from an API file
  * into the root; that is what the namespaces are for.

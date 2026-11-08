@@ -840,7 +840,7 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
 | `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
-| `apps/server/test/unit/feature-flags/registry.test.ts` | 15 |
+| `apps/server/test/unit/feature-flags/registry.test.ts` | 16 |
 
 ### `apps/server/src/invites/`
 
@@ -1184,10 +1184,11 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/assignment.test.ts` | 6 |
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
-| `packages/contracts/test/errors.test.ts` (the customer-history code lists: a hand-written snapshot and a two-way type guard) | 13 |
+| `packages/contracts/test/errors.test.ts` (the customer-history and report code lists: a hand-written snapshot and a two-way type guard) | 16 |
 | `packages/contracts/test/exports.test.ts` | 13 |
-| `packages/contracts/test/flags.test.ts` | 9 |
+| `packages/contracts/test/flags.test.ts` | 10 |
 | `packages/contracts/test/rbac.test.ts` | 66 |
+| `packages/contracts/test/reports.test.ts` (report vocabularies, constants, the RP2 window rule, `reportFileName`, the subpath export, and type-level pins that each dataset block is the screen's wire type) | 13 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
 `packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
@@ -1202,11 +1203,17 @@ _No dedicated test files._
 
 ### `packages/contracts/src/api/agency/`
 
-Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call, soft phone, contact assignment (`assignment.ts`: the supervisor's operations, progress and history, the agent's own contacts and agent-led retry; the public API layer serves those routes itself, so they have no dialer-contract twin), customer history (`customer-history.ts`: the search, timeline, export and options shapes, the filter caps `CUSTOMER_FILTER_LIST_MAX` and `CUSTOMER_FILTER_CODE_MAX`, the family's error codes; also served without a dialer twin), dedicated caller IDs (`agent-caller-id.ts`, DN1–DN10: the supervisor's list, set and release, their refusal codes, the PATCH's `caller_id_dedicated`, the audit actions; also served by the public API layer itself). Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
+Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call, soft phone, contact assignment (`assignment.ts`: the supervisor's operations, progress and history, the agent's own contacts and agent-led retry; the public API layer serves those routes itself, so they have no dialer-contract twin), customer history (`customer-history.ts`: the search, timeline, export and options shapes, the filter caps `CUSTOMER_FILTER_LIST_MAX` and `CUSTOMER_FILTER_CODE_MAX`, the family's error codes; also served without a dialer twin), reports (`reports.ts`, docs/reports.md: runs, the create request, the history page, downloads, subscriptions, their vocabularies and constants, the RP2 window rule `reportWindowProblem`; the error codes are `errors.ts` §5, re-exported), dedicated caller IDs (`agent-caller-id.ts`, DN1–DN10: the supervisor's list, set and release, their refusal codes, the PATCH's `caller_id_dedicated`, the audit actions; also served by the public API layer itself). Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
 
-Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `agent-caller-id.ts`, `assignment.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `customer-history.ts`, `dnc.ts`, `index.ts`, `shared.ts`, `softphone.ts`, `webrtc-call.ts`
+Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `agent-caller-id.ts`, `assignment.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `customer-history.ts`, `dnc.ts`, `index.ts`, `reports.ts`, `shared.ts`, `softphone.ts`, `webrtc-call.ts`
 
 _No dedicated test files._
+
+### `packages/contracts/src/reports/`
+
+The report dataset and render protocol (docs/reports.md), shared by the server and the report renderer, exported as `@magick-agency/contracts/reports` (`index.ts`; an explicit `exports` entry, not re-exported from the root): the dataset base, definitions and detail-file descriptors (`dataset.ts`, `REPORT_DATASET_VERSION`, `ReportRosterBenchmark`), the agent review (`agent.ts`), the campaign report (`campaign.ts`), the account report (`account.ts`), the SQS message, the signed callback and its header names (`render.ts`), and the download file name (`file-name.ts`, `reportFileName`). Each dataset block a screen already serves is that screen's wire type. Tested by `packages/contracts/test/reports.test.ts`.
+
+Files: `account.ts`, `agent.ts`, `campaign.ts`, `dataset.ts`, `file-name.ts`, `index.ts`, `render.ts`
 
 ### `packages/contracts/src/api/platform/`
 
