@@ -278,6 +278,104 @@
     ]
   },
   {
+    "name": "agency_reports_assemble_seconds",
+    "kind": "Histogram",
+    "description": "Seconds the assembler took to build and upload one report dataset, claim to recorded",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        1,
+        2,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120,
+        300,
+        600,
+        900,
+        1800
+      ]
+    },
+    "attributes": [
+      "kind"
+    ]
+  },
+  {
+    "name": "agency_reports_callbacks_total",
+    "kind": "Counter",
+    "description": "Render callbacks received, by result: applied, stale, bad_signature or invalid",
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_reports_emails_total",
+    "kind": "Counter",
+    "description": "Report-ready emails, by result: sent, skipped or failed",
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_reports_oldest_pending_seconds",
+    "kind": "ObservableGauge",
+    "description": "Age of the oldest pending report run at the last tick, seconds (0 when none)",
+    "unit": "s",
+    "attributes": []
+  },
+  {
+    "name": "agency_reports_pending_runs",
+    "kind": "ObservableGauge",
+    "description": "Report runs queued, assembling or rendering, set by the reports tick",
+    "attributes": [
+      "status"
+    ]
+  },
+  {
+    "name": "agency_reports_render_seconds",
+    "kind": "Histogram",
+    "description": "Seconds from sending a report run to the renderer to applying its callback",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        1,
+        2,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120,
+        300,
+        600,
+        900,
+        1800
+      ]
+    },
+    "attributes": [
+      "kind"
+    ]
+  },
+  {
+    "name": "agency_reports_runs_total",
+    "kind": "Counter",
+    "description": "Report runs that reached a terminal status (ready or failed), by kind",
+    "attributes": [
+      "kind",
+      "status"
+    ]
+  },
+  {
+    "name": "agency_reports_subscription_runs_total",
+    "kind": "Counter",
+    "description": "Subscription periods turned into runs, by result: created, or duplicate (the period already had one)",
+    "attributes": [
+      "result"
+    ]
+  },
+  {
     "name": "agency_tick_idle_total",
     "kind": "Counter",
     "description": "Ticks that dialed nothing, by benign reason (no agents, no slots, no contacts)",
