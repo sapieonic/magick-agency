@@ -14,7 +14,8 @@ import { gunzipSync } from 'node:zlib';
  *     renderer, which writes both files through the S3-backed IO → the run is `ready` → the
  *     download answers a presigned URL with the file name, audited → `expireDue` turns it
  *     `expired` and the download answers 410;
- *  2. the signed callback against a run in `rendering`: a correctly signed callback applies
+ *  2. the signed callback against a run in `rendering`: after a re-send (attempt 2) the first
+ *     attempt's late callback is stale (204, still `rendering`), the current attempt's applies
  *     (204, `ready`), a replay is acknowledged as stale (204, nothing changes), a bad signature is
  *     401 and a key outside the run's scope is 400;
  *  3. scoping: an agent's history holds only the runs they requested; another tenant reads none.
@@ -231,7 +232,7 @@ describe('reports on real Postgres through the real app', () => {
     expect(expired.json().code).toBe('report_expired');
   });
 
-  it('the signed callback: applies once, a replay is stale, a bad signature 401, a foreign key 400', async () => {
+  it('the signed callback: a superseded attempt is stale, the current one applies once, a replay is stale, a bad signature 401, a foreign key 400', async () => {
     const created = await call(loaded.app, 'POST', '/proxy/agency/reports', sup(), floor, review(agent().id));
     expect(created.statusCode, created.body).toBe(202);
     const runId = created.json().id as string;
@@ -261,7 +262,13 @@ describe('reports on real Postgres through the real app', () => {
     expect((await postCallback(foreign, signedHeaders(foreign))).statusCode).toBe(400);
     expect((await reportRunRepository.findById(floor.tenant, runId))!.status).toBe('rendering');
 
-    const body = callback();
+    // The tick re-sends it (attempt 2): attempt 1's late callback is now stale, acknowledged, ignored.
+    expect(await reportRunRepository.markSent(runId, { renderAttempt: 1 })).toBe(2);
+    const late = callback();
+    expect((await postCallback(late, signedHeaders(late))).statusCode).toBe(204);
+    expect((await reportRunRepository.findById(floor.tenant, runId))!).toMatchObject({ status: 'rendering', files: [] });
+
+    const body = callback({ attempt: 2 });
     const applied = await postCallback(body, signedHeaders(body));
     expect(applied.statusCode).toBe(204);
     const ready = (await reportRunRepository.findById(floor.tenant, runId))!;
@@ -271,7 +278,7 @@ describe('reports on real Postgres through the real app', () => {
       { format: 'xlsx', key: reportOutputKey(scope, 'xlsx'), bytes: 22 },
     ]);
 
-    const failedReplay = callback({ status: 'failed', files: [], error: { code: 'render_failed', message: 'late' } });
+    const failedReplay = callback({ attempt: 2, status: 'failed', files: [], error: { code: 'render_failed', message: 'late' } });
     const replay = await postCallback(failedReplay, signedHeaders(failedReplay));
     expect(replay.statusCode).toBe(204);
     expect((await reportRunRepository.findById(floor.tenant, runId))!).toMatchObject({ status: 'ready', error_code: null });
