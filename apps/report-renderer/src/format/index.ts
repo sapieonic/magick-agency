@@ -192,3 +192,14 @@ export function hoursIntoDay(iso: string, date: string, zone: string): number {
   const midnight = Date.parse(`${date}T00:00:00Z`);
   return (local - midnight) / 3_600_000;
 }
+
+/**
+ * The local date of a trend bucket: `bucket_start` as served, which is `YYYY-MM-DD` in the
+ * campaign's zone for `day` buckets. An instant (a sub-day bucket) is dated in `zone`. Never
+ * counted from `range.from`: the rollup may serve fewer buckets than the window has days.
+ */
+export function bucketDate(bucketStart: string, zone: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bucketStart)) return bucketStart;
+  const p = zonedParts(bucketStart, zone);
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}

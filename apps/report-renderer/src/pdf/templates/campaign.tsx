@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react';
 import type { CampaignReportDataset } from '@magick-agency/contracts/reports';
-import { average, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, type Rate } from '../../format';
+import { average, bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, type Rate } from '../../format';
 import { HourColumns, StackedColumns } from '../charts';
 import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
@@ -186,7 +186,7 @@ function Headline({ d }: { d: CampaignReportDataset }) {
 function TrendsPage({ d, floor, header }: { d: CampaignReportDataset; floor: number; header: ReactNode }) {
   const b = d.trends.buckets;
   const tickEvery = b.length > 16 ? 7 : b.length > 8 ? 2 : 1;
-  const dates = dayDates(d.range.from, b.length);
+  const dates = b.map((x) => bucketDate(x.bucket_start, d.range.timezone));
   const totalHuman = b.reduce((s, x) => s + x.human_connects, 0);
   const totalDials = b.reduce((s, x) => s + x.dials, 0);
   const firstDials = firstDialsOf(d);
@@ -460,12 +460,6 @@ function HealthPage({ d, floor, header }: { d: CampaignReportDataset; floor: num
 function nameOf(d: CampaignReportDataset, id: string): string {
   const n = d.agent_names[id];
   return n ?? `Unknown user ${id.slice(0, 8)}`;
-}
-
-/** The `YYYY-MM-DD` of each day bucket, from the range (buckets are one per local day). */
-export function dayDates(from: string, n: number): string[] {
-  const start = Date.parse(`${from}T00:00:00Z`);
-  return Array.from({ length: n }, (_, i) => new Date(start + i * 86_400_000).toISOString().slice(0, 10));
 }
 
 function busiest(b: CampaignReportDataset['trends']['buckets'], dates: string[]): string {

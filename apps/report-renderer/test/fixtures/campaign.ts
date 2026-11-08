@@ -206,7 +206,8 @@ export function buildCampaign(spec: CampaignSpec, options: { attemptsCap?: numbe
     const conn = sumOf(day, 'connected');
     const ab = sumOf(day, 'abandoned');
     return {
-      bucket_start: iso(localInstant(date, 0, spec.offsetMinutes)),
+      // `YYYY-MM-DD` in the campaign's zone, as Insights serves a `day` bucket.
+      bucket_start: date,
       dials: d,
       first_dials: d - r,
       human_connects: sumOf(day, 'human'),

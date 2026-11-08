@@ -143,6 +143,15 @@ describe('campaign workbook', async () => {
     expect(date.value).toEqual(new Date('2026-10-09T00:00:00Z'));
     expect(date.numFmt).toBe('yyyy-mm-dd');
   });
+  it('dates each Daily row by its bucket_start, not by counting from range.from', async () => {
+    const late = structuredClone(d);
+    late.trends.buckets = late.trends.buckets.slice(2);
+    const first = late.trends.buckets[0]!.bucket_start;
+    expect(first).not.toBe(late.range.from);
+    const daily = (await readWorkbook(await build(late, details))).getWorksheet('Daily')!;
+    expect(daily.getCell('A2').value).toEqual(new Date(`${first}T00:00:00Z`));
+    expect(daily.getCell('B2').value).toBe(late.trends.buckets[0]!.dials);
+  });
 });
 
 describe('account workbook', async () => {

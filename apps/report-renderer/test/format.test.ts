@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clockTime, count, dateTime, dayLabel, duration, hoursIntoDay, pct, rangeLabel, rate, rateText, servedRate } from '../src/format';
+import { bucketDate, clockTime, count, dateTime, dayLabel, duration, hoursIntoDay, pct, rangeLabel, rate, rateText, servedRate } from '../src/format';
 import { excelValue, localExcelDate } from '../src/xlsx/sheet';
 
 describe('format', () => {
@@ -45,5 +45,12 @@ describe('workbook cells', () => {
     expect(excelValue('Not enough calls to rate', 'percent', 'UTC')).toBe('Not enough calls to rate');
     expect(excelValue(null, 'int', 'UTC')).toBeNull();
     expect(excelValue('2026-10-09', 'date', 'UTC')).toEqual(new Date('2026-10-09T00:00:00Z'));
+  });
+
+  it('dates a trend bucket by its bucket_start: a day as served, an instant in the zone', () => {
+    expect(bucketDate('2026-10-11', 'Asia/Kolkata')).toBe('2026-10-11');
+    // 20:00 UTC on 10 Oct is already 11 Oct in Kolkata.
+    expect(bucketDate('2026-10-10T20:00:00.000Z', 'Asia/Kolkata')).toBe('2026-10-11');
+    expect(bucketDate('2026-10-10T20:00:00.000Z', 'Europe/London')).toBe('2026-10-10');
   });
 });

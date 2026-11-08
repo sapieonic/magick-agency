@@ -4,7 +4,7 @@
  * block at all (RP5).
  */
 import { describe, expect, it } from 'vitest';
-import { count, duration, pct } from '../src/format';
+import { count, dayLabel, duration, pct } from '../src/format';
 import { renderReportHtml } from '../src/pdf/render-pdf';
 import { accountFixture } from './fixtures/account';
 import { agentFixture } from './fixtures/agent';
@@ -134,6 +134,17 @@ describe('campaign report', () => {
     // An agent whose user no longer resolves is printed by id, marked as one.
     expect(text(block(html, 'data-block', 'agents'))).toContain('Unknown user 0a6e7f80');
     expect(text(block(html, 'data-block', 'callbacks'))).toContain(count(d.activity.callbacks.booked));
+  });
+
+  it('dates each day bucket by its bucket_start, not by counting from range.from', () => {
+    // A trend read that starts two days into the window (the first two days had no rollup rows).
+    const late = structuredClone(d);
+    late.trends.buckets = late.trends.buckets.slice(2);
+    const first = late.trends.buckets[0]!.bucket_start;
+    expect(first).not.toBe(late.range.from);
+    const trends = text(block(renderReportHtml(late, NO_FONTS), 'data-block', 'trends'));
+    expect(trends).toContain(`${dayLabel(first)}: ${count(late.trends.buckets[0]!.dials)} dials`);
+    expect(trends).not.toContain(`${dayLabel(late.range.from)}:`);
   });
 
   it('withholds an agent rate below the Insights floor', () => {

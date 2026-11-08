@@ -20,7 +20,7 @@ import type {
   ReportDetailFile,
   ReportDetailSheet,
 } from '@magick-agency/contracts/reports';
-import { average, count, rate, rateText, servedRate, share, type Rate } from '../format';
+import { average, bucketDate, count, rate, rateText, servedRate, share, type Rate } from '../format';
 import type { DetailReader } from '../io';
 import { agentConnectRate, agentSuccessRate } from '../rates';
 import { excelValue, NUM_FMT, writeTable, type SheetColumn } from './sheet';
@@ -355,7 +355,7 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks') },
     { metric: 'Numbers marked Do Not Call', value: d.activity.dnc_marked.total, type: 'int' },
   ]);
-  const dates = d.trends.buckets.map((_, i) => new Date(Date.parse(`${d.range.from}T00:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10));
+  const dates = d.trends.buckets.map((b) => bucketDate(b.bucket_start, d.range.timezone));
   await writeTable(
     wb,
     'Daily',
