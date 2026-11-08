@@ -8,7 +8,7 @@ repo; see [Routing](#routing-managed-outside-this-repo).
 | Path | What it is |
 |---|---|
 | [`terraform/`](terraform/) | The root module: the folder **Magick Agency Alerts** (uid `magick-agency-alerts`), the alert rules, the dashboard |
-| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 22 `agy-*` rules, as data (the newest, the `carrier-credentials` group, watches the tenant carrier credential keyring and sweep; `agy-pacing-share-starved` before it watches how the pacing round splits an account's slots between its running campaigns; the `insights` group before it watches the insights rollup job and the pacing history; runbooks in `docs/operations.md`, "Alert runbooks") |
+| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 25 `agy-*` rules, as data (the newest, the `reports` group, watches report runs, their pending age and the renderer's signed callback; the `carrier-credentials` group before it watches the tenant carrier credential keyring and sweep; `agy-pacing-share-starved` before it watches how the pacing round splits an account's slots between its running campaigns; the `insights` group before it watches the insights rollup job and the pacing history; runbooks in `docs/operations.md`, "Alert runbooks") |
 | [`terraform/alerting.tf`](terraform/alerting.tf) | The folder, `local.agency` (the selector), the routing labels, and the one `grafana_rule_group` resource |
 | [`terraform/dashboard.tf`](terraform/dashboard.tf) | The dashboard resource (app-platform `grafana_apps_dashboard_dashboard_v1beta1`) |
 | [`dashboards/magick-agency-overview.json`](dashboards/magick-agency-overview.json) | The dashboard (uid `magick-agency-overview`, classic model) |
@@ -111,6 +111,9 @@ Every expression selects `${local.agency}` and nothing else.
 | `agy-insights-rollup-stalled` | `agency_insights_rollup_recompute_seconds_count`, no committed batch for ~15m (a pass that never finishes freezes the backlog gauges) |
 | `agy-pacing-history-write-failures` | `agency_pacing_history_write_failures_total` by `path`, 5+ in 15m, with the new-series guard |
 | `agy-pacing-history-dropped` | `agency_pacing_history_dropped_total`, any, with the new-series guard |
+| `agy-reports-pending-too-long` | `agency_reports_oldest_pending_seconds` above 900s for 10m: a report run queued, assembling or rendering for 25+ minutes, past one render re-send (`docs/reports.md`, RP13) |
+| `agy-reports-failing` | `agency_reports_runs_total{status="failed"}`, 4+ in 1h, with the new-series guard |
+| `agy-reports-callback-bad-signature` | `agency_reports_callbacks_total{result="bad_signature"}`, any in 15m, with the new-series guard: the renderer's and the server's `AGENCY_REPORTS_CALLBACK_SECRET` differ, or something else posts to the callback |
 
 **Re-baseline `agy-error-log-volume` after the pilot.** It starts at 10+
 ERROR/FATAL lines in 15m because agency has no production history. Read
@@ -143,6 +146,9 @@ and `service_name=~"$service_name"`. The rows:
   (each campaign's slots in use against slots allocated, set only after a
   contended report to the split, and the slots the fair-share rule withheld
   from it, a measure of contention, MC1–MC7).
+- **Reports**: runs finished by kind and status, pending runs by status and the
+  oldest one's age, assembly and render duration p95 by kind, and render callbacks,
+  report-ready emails and subscription runs by result.
 - **Voice, capacity and storage**: WebSockets, telephony lease release,
   provider concurrency admission, rate-limit rejections, S3, the carrier
   credential keyring and sweeps, carrier dial refusals.

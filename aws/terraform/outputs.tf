@@ -63,3 +63,42 @@ output "server_availability_zone" {
   description = "The instance's AZ. Put the RDS instance in the same AZ (or Multi-AZ) to keep latency and cross-AZ traffic down."
   value       = one(aws_instance.server[*].availability_zone)
 }
+
+# ── Reports (null when enable_reports is false) ──────────────────────────────────────
+
+output "report_jobs_queue_url" {
+  description = "The server's AGENCY_REPORTS_SQS_QUEUE_URL."
+  value       = one(aws_sqs_queue.report_jobs[*].url)
+}
+
+output "report_jobs_dlq_url" {
+  description = "The report-jobs dead-letter queue: messages the renderer failed three times. Its depth is in CloudWatch (ApproximateNumberOfMessagesVisible)."
+  value       = one(aws_sqs_queue.report_jobs_dlq[*].url)
+}
+
+output "report_renderer_function_name" {
+  description = "The renderer Lambda's name, for its logs (/aws/lambda/<name>) and `aws lambda update-alias`."
+  value       = one(aws_lambda_function.report_renderer[*].function_name)
+}
+
+output "report_renderer_alias_arn" {
+  description = "ARN of the `live` alias the queue invokes."
+  value       = one(aws_lambda_alias.report_renderer_live[*].arn)
+}
+
+output "report_renderer_live_version" {
+  description = "The published version `live` points at now."
+  value       = one(aws_lambda_alias.report_renderer_live[*].function_version)
+}
+
+# The reports lines for the server's env, ready to append like server_env. The fourth,
+# AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL), is set by hand.
+output "reports_server_env" {
+  description = "Reports settings for the server's .env, including the callback secret (empty when enable_reports is false)."
+  sensitive   = true
+  value = var.enable_reports ? join("\n", [
+    "AGENCY_REPORTS_RENDERER=sqs",
+    "AGENCY_REPORTS_SQS_QUEUE_URL=${aws_sqs_queue.report_jobs[0].url}",
+    "AGENCY_REPORTS_CALLBACK_SECRET='${var.reports_callback_secret == null ? "" : var.reports_callback_secret}'",
+  ]) : ""
+}

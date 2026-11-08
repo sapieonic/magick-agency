@@ -1393,6 +1393,296 @@
         "x": 0,
         "y": 73
       },
+      "id": 124,
+      "title": "Reports",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Report runs reaching a terminal state, by kind (agent, campaign, account) and status (ready, failed). A failed run ended without files; the run row's error.code says which stage failed. `agy-reports-failing` warns at 4+ failures in an hour. Empty until a run finishes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 74
+      },
+      "id": 125,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Reports \u2014 Runs Finished by Kind and Status",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (kind, status) (increase(agency_reports_runs_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{kind}} {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Runs not yet finished, by status (queued, assembling, rendering), and the age of the oldest one (right axis), as of the reports tick's last pass (every 60s). Healthy is a few runs for a minute or two. Runs piling up in `queued` or `assembling` are the assembler; in `rendering`, the renderer or its callback (with the SQS renderer: the report-jobs queue, its dead-letter queue and the Lambda's logs in CloudWatch). `agy-reports-pending-too-long` warns when the oldest stays over 900s for 10m.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "oldest pending"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 74
+      },
+      "id": 126,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Reports \u2014 Pending Runs and Oldest Pending",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (status) (agency_reports_pending_runs{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max(agency_reports_oldest_pending_seconds{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "oldest pending",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Seconds to assemble a run's dataset (the screens' own reads, then the S3 upload), and from sending the render to applying its callback (queue wait, the renderer's cold start, Chromium and the workbook, the upload, the callback), by kind, p95. A render p95 approaching the Lambda's 300s timeout means renders are about to time out and be retried.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 82
+      },
+      "id": 127,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Reports \u2014 Assembly and Render Duration (p95)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(agency_reports_assemble_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "assemble {{kind}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(agency_reports_render_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "render {{kind}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Render callbacks by result (applied; stale: a fenced older attempt, harmless after a re-send; bad_signature: refused, `agy-reports-callback-bad-signature`; invalid: a body that did not parse), report-ready emails by result, and the runs subscriptions created (duplicate: a period that already had its run).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 82
+      },
+      "id": 128,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Reports \u2014 Callbacks, Emails and Scheduled Runs",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(agency_reports_callbacks_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "callback {{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (increase(agency_reports_emails_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "email {{result}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (result) (increase(agency_reports_subscription_runs_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "subscription {{result}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 90
+      },
       "id": 2,
       "title": "Voice, capacity and storage",
       "type": "row",
@@ -1428,7 +1718,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 74
+        "y": 91
       },
       "id": 10,
       "options": {
@@ -1517,7 +1807,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 74
+        "y": 91
       },
       "id": 73,
       "options": {
@@ -1606,7 +1896,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 74
+        "y": 91
       },
       "id": 67,
       "options": {
@@ -1665,7 +1955,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 82
+        "y": 99
       },
       "id": 102,
       "options": {
@@ -1753,7 +2043,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 82
+        "y": 99
       },
       "id": 76,
       "options": {
@@ -1850,7 +2140,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 90
+        "y": 107
       },
       "id": 122,
       "options": {
@@ -1937,7 +2227,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 90
+        "y": 107
       },
       "id": 123,
       "options": {
@@ -1971,7 +2261,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 98
+        "y": 115
       },
       "id": 3,
       "title": "Identity and mail",
@@ -2008,7 +2298,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 99
+        "y": 116
       },
       "id": 103,
       "options": {
@@ -2066,7 +2356,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 99
+        "y": 116
       },
       "id": 104,
       "options": {
@@ -2106,7 +2396,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 107
+        "y": 124
       },
       "id": 4,
       "title": "Analysis",
@@ -2174,7 +2464,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 108
+        "y": 125
       },
       "id": 68,
       "options": {
@@ -2238,7 +2528,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 108
+        "y": 125
       },
       "id": 69,
       "options": {
@@ -2314,7 +2604,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 116
+        "y": 133
       },
       "options": {
         "legend": {
@@ -2396,7 +2686,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 116
+        "y": 133
       },
       "options": {
         "legend": {
@@ -2443,7 +2733,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 124
+        "y": 141
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -2480,7 +2770,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 125
+        "y": 142
       },
       "id": 106,
       "options": {
@@ -2544,7 +2834,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 125
+        "y": 142
       },
       "id": 107,
       "options": {
@@ -2602,7 +2892,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 125
+        "y": 142
       },
       "id": 108,
       "options": {
@@ -2662,7 +2952,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 133
+        "y": 150
       },
       "id": 87,
       "options": {
@@ -2719,7 +3009,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 133
+        "y": 150
       },
       "id": 74,
       "options": {
@@ -2777,7 +3067,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 141
+        "y": 158
       },
       "id": 50,
       "options": {
@@ -2815,7 +3105,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 149
+        "y": 166
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -2852,7 +3142,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 150
+        "y": 167
       },
       "id": 112,
       "options": {
@@ -2910,7 +3200,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 150
+        "y": 167
       },
       "id": 113,
       "options": {
@@ -2968,7 +3258,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 158
+        "y": 175
       },
       "id": 114,
       "options": {
@@ -3026,7 +3316,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 158
+        "y": 175
       },
       "id": 115,
       "options": {
