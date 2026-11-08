@@ -32,7 +32,7 @@ database, the server or the clock (it prints `generated_at`).
   pinned to **25.11.0**, the release built for Chrome 153. Bump both together.
 - **Chrome for local runs and tests**: `findChrome()` tries `AGENCY_REPORTS_CHROME_PATH`,
   `CHROME_PATH`, Playwright's `/opt/pw-browsers/chromium-*/chrome-linux*/chrome`, then
-  `/usr/bin/google-chrome` (GitHub's Ubuntu runners), `/usr/bin/chromium`,
+  `/usr/bin/google-chrome` (GitHub's Ubuntu runners), `/usr/bin/google-chrome-stable`, `/usr/bin/chromium`,
   `/usr/bin/chromium-browser`. The PDF tests fail in CI when none is found rather than skip.
 - `pnpm test` from this directory. `REPORT_PREVIEW_DIR=<dir> pnpm vitest run test/preview.test.ts`
   writes every fixture's HTML and PDF for a look (`pdftoppm -r 80 -png` for page images).

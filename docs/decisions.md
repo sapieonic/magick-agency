@@ -489,8 +489,8 @@ has run against a real Plivo account yet (step 5). How a call flows: [`architect
 Reports, 2026-11-08 (agent, campaign and account exports as PDF and Excel, ad hoc or on a
 schedule; [`reports.md`](reports.md)). The design was reviewed the same day by an independent
 reviewer and revised (the server assembles the data, the renderer never reads the database). The
-full table, with each ruling's wording, is RP1–RP16 in [`reports.md`](reports.md) "Decisions";
-D1–D9 on the design page are RP1–RP9. Migration `0023_reports.sql`; wire
+full table, with each ruling's wording, is RP1–RP16 in [`reports.md`](reports.md) "Decisions".
+Migration `0023_reports.sql`; wire
 `packages/contracts/src/api/agency/reports.ts` and `packages/contracts/src/reports/`; renderer
 `apps/report-renderer`; flag `agency_reports_enabled`.
 

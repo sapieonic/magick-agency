@@ -1,8 +1,8 @@
 // Real Postgres: migrations/0023_reports.sql (docs/reports.md, RP1–RP16). globalSetup has
 // applied every migration. Pins report_runs and report_subscriptions (columns, every CHECK
 // including the 31-days-plus-an-hour window cap at its boundary, the one-run-per-period unique
-// index, the tenant cascade), the pipeline's indexes, the two agent-first read indexes and that
-// the planner uses them, then down and up again.
+// index, the tenant cascade), the pipeline's indexes, the agent-first sessions index and that
+// the planner uses it, then down and up again.
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';

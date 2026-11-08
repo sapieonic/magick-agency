@@ -4,7 +4,7 @@ Performance reports as a PDF and an Excel workbook, built outside the dialer pro
 or delivered on a schedule. This file is the design and the build contract: every workstream
 follows it, and a change to it is a change to the contract. Decisions are RP1–RP16 below; the
 ones marked **default, pending Manas** are the build's own calls from the 2026-11-08 design review
-(D1–D9 on the design page) and are recorded in [`decisions.md`](decisions.md) §4 as well.
+and are recorded in [`decisions.md`](decisions.md) §4 as well.
 
 ## Shape
 
@@ -22,8 +22,8 @@ console ──POST /proxy/agency/reports──► server (agency area, main proc
                                           ▼
                        POST /webhooks/reports/rendered (HMAC, attempt-fenced) ─► run ready
                                           ▼
-                       reports tick: notify (agency.report.ready email), reconcile lost
-                       messages, subscriptions → runs, expire
+                       reports tick: subscriptions → runs, resend unsent runs, reconcile lost
+                       messages, notify (agency.report.ready email), expire, gauges
                                           ▼
                        GET /proxy/agency/reports/:id/files/:format → { url } (5-min presigned)
 ```
@@ -32,14 +32,14 @@ console ──POST /proxy/agency/reports──► server (agency area, main proc
 
 | ID | Ruling | Status |
 |---|---|---|
-| RP1 | The server assembles the dataset with the reads the screens use (insights `compute*`, the agent record and roster through `callCore`, the same repositories); the renderer never touches the database. A Lambda reading RDS directly is later, once AWS deploys are automated. (D1) | default, pending Manas |
-| RP2 | Window: at most 30 days, or exactly one local calendar month (stored cap 31 days + 1 hour, the hour a clock change adds). Same cap for every kind in v1. (D2) | default, pending Manas |
-| RP3 | Zone: campaign report in the campaign's `default_timezone`; agent and account reports in the zone the request names (IANA, validated). No account time zone setting yet; the console defaults the form to the browser's zone. (D3) | default, pending Manas |
-| RP4 | Scheduled recipients are members of the tenant only, re-checked against RBAC at send time. (D4) | default, pending Manas |
-| RP5 | An agent may export their OWN review with the `self` audience: no floor benchmark, no call-analysis (sentiment) block or column, no recording column. Subscriptions are supervisors' only. (D5) | default, pending Manas |
-| RP6 | Email carries a link to the console only, no attachments. (D6) | default, pending Manas |
-| RP7 | Phone numbers in detail sheets are masked to the last four digits for the `self` audience and shown in full for `supervisor`. (D7) | default, pending Manas |
-| RP8 | Retention: report files 90 days (`reports/` lifecycle), datasets 7 days (`report-datasets/` lifecycle). The run row is kept and turns `expired` at `expires_at`. (D8) | default, pending Manas |
+| RP1 | The server assembles the dataset with the reads the screens use (insights `compute*`, the agent record and roster through `callCore`, the same repositories); the renderer never touches the database. A Lambda reading RDS directly is later, once AWS deploys are automated. | default, pending Manas |
+| RP2 | Window: at most 30 days, or exactly one local calendar month (stored cap 31 days + 1 hour, the hour a clock change adds). Same cap for every kind in v1. | default, pending Manas |
+| RP3 | Zone: campaign report in the campaign's `default_timezone`; agent and account reports in the zone the request names (IANA, validated). No account time zone setting yet; the console defaults the form to the browser's zone. | default, pending Manas |
+| RP4 | Scheduled recipients are members of the tenant only, re-checked against RBAC at send time. | default, pending Manas |
+| RP5 | An agent may export their OWN review with the `self` audience: no floor benchmark, no call-analysis (sentiment) block or column, no recording column. Subscriptions are supervisors' only. | default, pending Manas |
+| RP6 | Email carries a link to the console only, no attachments. | default, pending Manas |
+| RP7 | Phone numbers in detail sheets are masked to the last four digits for the `self` audience and shown in full for `supervisor`. | default, pending Manas |
+| RP8 | Retention: report files 90 days (`reports/` lifecycle), datasets 7 days (`report-datasets/` lifecycle). The run row is kept and turns `expired` at `expires_at`. | default, pending Manas |
 | RP9 | Rate floors are served as each source serves them: agent rows and floor bands use the roster's 20 first dials, campaign and account figures Insights' 25; the definitions page names both. (D9, the open "25 vs 20" item) | default, pending Manas |
 | RP10 | Reports live inside the agency module area (B4): config `agency.reports`, routes `proxy-agency-reports`, started from `bootstrap/agency.ts` in the main process only, metrics in the agency metrics file, flag `agency_reports_enabled`. | build |
 | RP11 | Occupancy benchmarked against the floor is the roster's `occupancy_pct` ((talk + wrap-up) ÷ shift); the agent record's on-call ÷ shift (with and without breaks) is shown beside it, labelled. | build |
@@ -147,12 +147,16 @@ doc comments are the field-level contract; this section is the summary.
 
 ## Data (migration file 0023)
 
-`report_runs` and `report_subscriptions` as on the design page (account_id nullable, the
-31-days-plus-an-hour CHECK, `audience`, `claim_generation`/`claimed_at` for the assembler,
-`render_attempt`/`sent_at` for the renderer, `files` JSONB, `truncated`, `dataset_key`,
-`notified_at`, `expires_at`), the unique `(subscription_id, period_start)` index, a work index on
-pending statuses, and one agent-first read index, `agency_agent_sessions (agent_user_id,
-joined_at)`. No agent-first rollup index: the agent review's call figures come from the agent
+Two tables; every column, CHECK and index is listed in `packages/db/BASELINE.md` "0023".
+`report_runs` (one row per run: `kind`, `audience`, the subject, `account_id` nullable, the local
+and instant windows under the 31-days-plus-an-hour CHECK, `status`, `claim_generation`/`claimed_at`
+for the assembler, `render_attempt`/`sent_at` for the renderer, `dataset_key`, `detail_files`,
+`files` JSONB, `truncated`, `error_code`/`error_message`, `notified_at`, `expires_at`,
+`subscription_id`/`period_start`) and `report_subscriptions` (kind, subject, cadence, send time and
+zone, formats, 1–20 member recipients, `next_run_at`, `enabled`). Indexes: the unique
+`(subscription_id, period_start)`, a work index on pending statuses, history, requester,
+unnotified and expiry indexes on runs, the due and account indexes on subscriptions, and one
+agent-first read index, `agency_agent_sessions (agent_user_id, joined_at)`. No agent-first rollup index: the agent review's call figures come from the agent
 record's attempt reads, and such an index drew the Insights allocation counters' campaign-first
 plan off the unique index (`insights-reads.test.ts`). No roles.
 Repositories in `apps/server/src/db/repositories/agency/report-run.repository.ts` and
@@ -173,9 +177,9 @@ must be a UUID (refused otherwise) and is written in lower case.
 | Env | Default | Meaning |
 |---|---|---|
 | `AGENCY_REPORTS_RENDERER` | `inline` | `inline` (in process, dev and tests) or `sqs` |
-| `AGENCY_REPORTS_SQS_QUEUE_URL` | | required when `sqs` |
+| `AGENCY_REPORTS_SQS_QUEUE_URL` | | required when `sqs`; `sqs` also needs `S3_AUDIO_BUCKET` set, or boot fails |
 | `AGENCY_REPORTS_CALLBACK_BASE_URL` | | the server's public base URL, required when `sqs` |
-| `AGENCY_REPORTS_CALLBACK_SECRET` | | ≥ 32 characters, required when `sqs` |
+| `AGENCY_REPORTS_CALLBACK_SECRET` | | ≥ 32 characters with no leading or trailing whitespace, required when `sqs` |
 | `AGENCY_REPORTS_CHROME_PATH` | | Chromium for `inline` (else the renderer's own discovery) |
 | `AGENCY_REPORTS_MAX_DETAIL_ROWS` | 100000 | RP12 |
 | `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS` | 2000 | assembler poll |
@@ -410,8 +414,8 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   (category `agency`, explicit audience, default on, so every role sees the toggle). Link
   `${CONSOLE_BASE_URL}/t/:tenant/a/:account/agency/reports/:runId`. Subjects: "Your agent review for
   … is ready", "Your scheduled campaign report for … is ready", "… could not be prepared". Counted
-  per recipient in `agency_reports_emails_total` (`skipped` covers recipients without access, users
-  who turned it off, a deleted subscription, no mail transport, and an already-claimed inbox).
+  per recipient in `agency_reports_emails_total` (`skipped` covers recipients without access or without an email
+  address, users who turned it off, a deleted subscription, no mail transport, and an already-claimed inbox).
 - **Bootstrap**: `startReportPipeline` from `bootstrap/agency.ts` after the runtime starts, main
   process only, whatever the flag; stopped first on shutdown (assembler, tick, then the inline
   queue drains).

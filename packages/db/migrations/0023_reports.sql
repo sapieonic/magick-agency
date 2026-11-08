@@ -1,5 +1,5 @@
 -- 0023_reports.sql — agent, campaign and account reports: runs, subscriptions and the agent-first
--- read indexes the agent review needs (docs/reports.md, decisions RP1–RP16).
+-- sessions index the agent review needs (docs/reports.md, decisions RP1–RP16).
 --
 -- ── report_runs ─────────────────────────────────────────────────────────────
 -- One row per report run: a PDF and/or an Excel workbook about one SUBJECT (the agent's user id,
@@ -60,7 +60,7 @@
 -- Migrations run at container start, before the server listens.
 --
 -- ── Down ────────────────────────────────────────────────────────────────────
--- Drops both indexes and both tables: every run record and subscription is lost (rendered files
+-- Drops the index and both tables: every run record and subscription is lost (rendered files
 -- stay in S3 until their lifecycle expires them). The server code that reads the tables must be
 -- rolled back with it.
 --

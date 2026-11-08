@@ -989,10 +989,10 @@ Agent, campaign and account reports (`docs/reports.md`, RP1–RP16).
 - **Locking.** Two new tables; plain `CREATE INDEX` on `agency_agent_sessions` (SHARE, one
   scan); one transaction, at container start.
 
-**Down** drops both indexes and both tables (every run record and subscription is lost; files stay
+**Down** drops the index and both tables (every run record and subscription is lost; files stay
 in S3 until their lifecycle). **Tests**: `test/integration/db/reports-migration.test.ts` (columns,
 every CHECK including the 745-hour cap at its boundary, the unique period, the cascade, index
-definitions, the planner using the agent-first indexes, down then up), the server's
+definitions, the planner using the agent-first index, down then up), the server's
 `test/integration/agency/report-run-repository.test.ts` and
 `report-subscription-repository.test.ts`, the table set in `baseline.test.ts` and the down → up
 suite.
