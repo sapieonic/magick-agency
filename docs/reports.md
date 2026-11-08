@@ -1,8 +1,8 @@
 # Reports: agent, campaign and account exports
 
 Performance reports as a PDF and an Excel workbook, built outside the dialer process, run ad hoc
-or delivered on a schedule. This file is the design and the build contract: every workstream
-follows it, and a change to it is a change to the contract. Decisions are RP1–RP16 below; the
+or delivered on a schedule. This file is the design and the build contract: every part of the
+build follows it, and a change to it is a change to the contract. Decisions are RP1–RP16 below; the
 ones marked **default, pending Manas** are the build's own calls from the 2026-11-08 design review
 and are recorded in [`decisions.md`](decisions.md) §4 as well.
 
@@ -179,9 +179,9 @@ must be a UUID (refused otherwise) and is written in lower case.
 |---|---|---|
 | `AGENCY_REPORTS_RENDERER` | `inline` | `inline` (in process, dev and tests) or `sqs` |
 | `AGENCY_REPORTS_SQS_QUEUE_URL` | | required when `sqs`; `sqs` also needs `S3_AUDIO_BUCKET` set, or boot fails |
-| `AGENCY_REPORTS_CALLBACK_BASE_URL` | | the server's public base URL, required when `sqs` |
+| `AGENCY_REPORTS_CALLBACK_BASE_URL` | | the server's public base URL (scheme and host, no path), required when `sqs` |
 | `AGENCY_REPORTS_CALLBACK_SECRET` | | ≥ 32 characters with no leading or trailing whitespace, required when `sqs` |
-| `AGENCY_REPORTS_CHROME_PATH` | | Chromium for `inline` (else the renderer's own discovery) |
+| `AGENCY_REPORTS_CHROME_PATH` | | Chromium for `inline` (else the renderer's own discovery: `CHROME_PATH`, Playwright's Chromium, then the usual system paths) |
 | `AGENCY_REPORTS_MAX_DETAIL_ROWS` | 100000 | RP12 |
 | `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS` | 2000 | assembler poll |
 | `AGENCY_REPORTS_TICK_INTERVAL_MS` | 60000 | tick |
@@ -243,7 +243,9 @@ three at a time (`ACCOUNT_CAMPAIGN_CONCURRENCY`).
 - *Logged-in time*: every non-offline second of the occupancy intervals, the agent's sessions in
   this account (campaign and soft phone), reserved folded into available. Whole seconds: each
   column is rounded across the days so the days sum to the window's rounded total
-  (`roundPreservingSum`), and break reasons to the break total.
+  (`roundPreservingSum`), and break reasons to the break total. "Logged in" (and "logins and
+  logouts", "first in, last out") means joined to a campaign or the soft phone: no table records
+  signing in to the console or the app, so a user who signs in without joining shows no time.
 - *Day*: midnight to midnight in `range.timezone`; an interval crossing midnight is split there.
   `first_in` / `last_out` are the day's first and last logged-in instants, clipped to the day.
   `sessions`: sessions with logged-in time that day.
@@ -328,7 +330,7 @@ campaigns adds about one campaign's Insights reads per campaign, three at a time
 
 ## Pipeline (`agency/reports/`, routes, callback, email)
 
-What W1 built, beside the contract above. Module detail and tests: [`modules.md`](modules.md)
+The server's side, beside the contract above. Module detail and tests: [`modules.md`](modules.md)
 (`apps/server/src/agency/reports/`).
 
 - **Routes** (`api/routes/proxy-agency-reports.routes.ts` + `proxy-agency-reports/`, registered by
@@ -374,13 +376,18 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   `@aws-sdk/client-sqs` (region and keys from the `s3` block, else the SDK's default chain).
   `inline` loads `@magick-agency/report-renderer` with a dynamic `import()` of a non-literal
   specifier typed by the local `ReportRendererModule` (`renderRun(message, io, options)`; `io.writeObject(key, body, contentType, bytes)`),
-  so the server's `tsc` never compiles the renderer's sources; the server must list the package as
-  a dependency for the import to resolve, and until it does an inline render fails the run
-  `render_failed` (the reason logged). Inline renders one run at a time and passes `renderRun` a
+  so the server's `tsc` never compiles the renderer's sources (the server lists the package as a
+  dependency so the import resolves in a workspace install). Under `inline` the renderer is loaded
+  once at start (`checkInlineRenderer`) and a failure is logged then; a run that still cannot load
+  it fails `render_failed` with renderer version `inline-unavailable`. The production image has
+  neither the renderer's runnable sources nor Chromium, so production uses `sqs`. Inline renders one run at a time and passes `renderRun` a
   `log` callback, so the renderer's events (stage, run id, attempt, format, bytes, ms) reach the
   server log as structured lines; boot warns when `inline` runs with `NODE_ENV=production`.
 - **Assembler** (`assembler.ts`): a run `assembling` with no dataset for 30 minutes
-  (`REPORT_ASSEMBLY_STALE_MS`) is reclaimed; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
+  (`REPORT_ASSEMBLY_STALE_MS`) is reclaimed, and the first pass after start reclaims any such run
+  at once (one replica: a claim older than that pass belongs to a process that is gone, so a
+  restart mid-build does not park a run for 30 minutes); `stop()` waits at most 20 s
+  (`REPORT_ASSEMBLER_STOP_WAIT_MS`) for the build in flight, inside the container's 45 s grace; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
   times fails `assembly_failed`. A failed run's stored message is generic copy; the error is logged
   with the run id only. Detail files are `application/gzip`.
 - **Read timeouts (for the dataset builders).** The builder seam hands a builder no database
@@ -401,15 +408,24 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   backlog) and, after the last attempt, failed `render_timed_out`. A late attempt's files still
   count: every attempt writes the same output keys and the tick applies a run whose files are all
   in S3 before re-sending or failing it. Sizing and signs: `operations.md`, "Reports: sizing the
-  render timeout"; the default (15 minutes) is unchanged. Each due subscription's subject is probed at the claim
+  render timeout"; the default (15 minutes) is unchanged. A due subscription whose tenant and
+  account have `agency_reports_enabled` off is skipped for that period (no run; the schedule
+  advances, so turning the flag back on resumes it; `agency_reports_subscription_runs_total
+  {result="flag_off"}`), and a finished run is marked notified without an email while it is off.
+  Each due subscription's subject is probed at the claim
   (`subscription-subject.ts`, the builders' own `subject_unavailable` rule: the account exists; an
   agent's membership, any status, reaches it; the campaign is still the account's; an account
   report is about its own account): a subject that is gone DISABLES the subscription (no run, so no
   failure email every period). A campaign subscription's period, bounds and next send are cut in
-  the campaign's CURRENT zone, read at the claim and written back to the subscription when it
-  moved (a zone `Intl` cannot use keeps the stored one, logged). A subscription run that still
-  fails `subject_unavailable` (the subject left between the claim and the build) disables its
-  subscription in the assembler; that run's failure email is the last.
+  the campaign's CURRENT zone, read at the claim by the builder's own rule (`campaignZone`: unset
+  or unusable is UTC) and written back to the subscription when it moved; a zone Postgres lacks
+  fails each run `assembly_failed`, as the campaign's Insights tab fails, until it is fixed. A
+  subscription run that still fails `subject_unavailable` disables its subscription in the
+  assembler only when the same probe, asked again, says the subject is gone (the subject left
+  between the claim and the build; that run's failure email is the last); a builder refusal for a
+  passing reason, such as an account report's campaign moving mid-build, keeps the schedule. A
+  campaign whose zone changed between the claim and the build fails the run `subject_changed`
+  and never stops the schedule.
 - **Email** (`notifications/agency-report-ready.ts`, template
   `notifications/templates/agency-report-ready.template.ts`): catalog event `agency.report.ready`
   (category `agency`, explicit audience, default on, so every role sees the toggle). Link

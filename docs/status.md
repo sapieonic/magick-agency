@@ -1068,7 +1068,9 @@ independent reviewers (no blockers; every minor finding fixed with a test or sta
 **Not verified here:** a real AWS run (SQS, the Lambda with the `@sparticuz/chromium` layer, S3
 lifecycle), `docker build` of either image, the mobile `agency_wire` Dart tests (Dart was not
 installed; the only contract fixture change is a new flag in `platform.json`), and the Grafana
-module's `terraform validate` (its provider download timed out; `fmt` passed).
+module's `terraform validate` (its provider download timed out; `fmt` passed). CI has not run on
+this branch: every count below is a local run, so the renderer's PDF suite on GitHub's runner,
+`build-lambda.mjs` in CI and the `mobile.yml` job are unproven until the branch is pushed.
 
 ## Test counts
 

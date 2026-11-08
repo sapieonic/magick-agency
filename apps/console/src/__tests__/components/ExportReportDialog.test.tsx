@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { reportRun } from '../helpers/reports';
 
@@ -31,7 +31,7 @@ vi.mock('../../utils/reports/reportWindow', async () => {
   return { ...actual, browserZone: () => 'Asia/Kolkata' };
 });
 
-import { ExportReportDialog, type ExportReportTarget } from '../../components/agency/reports/ExportReportDialog';
+import { CAMPAIGN_ZONE_UNUSABLE, ExportReportDialog, type ExportReportTarget } from '../../components/agency/reports/ExportReportDialog';
 import { ApiError } from '../../api/client';
 
 // 20:00 UTC on Sunday 8 Nov 2026: already Monday 9 Nov in Kolkata, still 8 Nov in New York.
@@ -249,6 +249,18 @@ describe('ExportReportDialog — submission', () => {
     expect(mocks.showToast).not.toHaveBeenCalled();
     // The button is usable again for a second try.
     expect((screen.getByTestId('report-export-submit') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('a campaign zone the reports cannot use is explained, not met with "choose another"', async () => {
+    mocks.createReport.mockRejectedValue(new ApiError(400, { error: 'x', code: 'report_timezone_invalid', message: 'server words' }));
+    renderDialog(CAMPAIGN);
+    submit();
+    expect((await screen.findByTestId('report-submit-error')).textContent).toBe(CAMPAIGN_ZONE_UNUSABLE);
+    // An agent or account report has a zone chooser: the usual copy.
+    cleanup();
+    renderDialog(AGENT);
+    submit();
+    expect((await screen.findByTestId('report-submit-error')).textContent).toMatch(/isn’t recognised. Choose another/);
   });
 
   it('closes on Escape', () => {

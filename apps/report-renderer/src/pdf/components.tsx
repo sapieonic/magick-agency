@@ -164,9 +164,3 @@ export function NameOrId({ name, id }: { name: string | null | undefined; id: st
   if (id === null) return <span className="muted">Not reserved to an agent</span>;
   return <span className="idref">Unknown user {id.slice(0, 8)}</span>;
 }
-
-export function nameOrIdText(name: string | null | undefined, id: string | null): string {
-  if (name) return name;
-  if (id === null) return 'Not reserved to an agent';
-  return `Unknown user ${id.slice(0, 8)}`;
-}

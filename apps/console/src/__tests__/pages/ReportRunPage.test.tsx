@@ -133,6 +133,15 @@ describe('ReportRunPage', () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
+  it('a download refused as not found says access to the files was lost, not that the run is missing', async () => {
+    // The page is showing the run: a supervisor demoted since keeps its metadata, not its files.
+    mocks.getReport.mockResolvedValue(reportRun());
+    mocks.apiFetch.mockRejectedValue(new ApiError(404, { code: 'report_not_found', message: 'x' }));
+    renderRun();
+    fireEvent.click(await screen.findByTestId('report-download-pdf'));
+    expect((await screen.findByRole('alert')).textContent).toBe('You no longer have access to this report’s files.');
+  });
+
   it('says why a run failed, and Run again opens the new run', async () => {
     mocks.getReport.mockResolvedValue(reportRun({ status: 'failed', error: { code: 'render_timed_out', message: 'x' } }));
     mocks.retryReport.mockResolvedValue(reportRun({ id: 'run-2', status: 'queued' }));

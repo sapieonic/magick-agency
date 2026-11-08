@@ -35,8 +35,12 @@ RUN corepack enable
 # package.json changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/server/package.json apps/server/
-# The report renderer (RP15) is a workspace dependency of the server, bundled into it as
-# TypeScript source like packages/*; its manifest is needed for the install to resolve it.
+# The report renderer (RP15) is a workspace dependency of the server, for
+# AGENCY_REPORTS_RENDERER=inline in development. It is NOT bundled: the server loads it with a
+# dynamic import the bundle leaves alone, and this image has no Chromium, so production renders
+# on the Lambda (sqs). Its manifest is needed for the install to resolve; `pnpm deploy --prod`
+# below still copies it and its production dependencies (puppeteer-core, exceljs, react) into
+# the image, unused.
 COPY apps/report-renderer/package.json apps/report-renderer/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/db/package.json packages/db/

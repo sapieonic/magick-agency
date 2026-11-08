@@ -106,11 +106,6 @@ export function average(total: number, n: number): number | null {
   return total / n;
 }
 
-/** A nullable percentage as printed, with the words for "not measured". */
-export function pctOr(value: number | null | undefined, words = 'Not measured'): string {
-  return value === null || value === undefined ? words : pct(value);
-}
-
 // ── Dates and times in a zone ─────────────────────────────────────────────────
 
 const formatters = new Map<string, Intl.DateTimeFormat>();

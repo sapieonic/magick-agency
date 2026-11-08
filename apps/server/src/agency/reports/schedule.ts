@@ -134,7 +134,7 @@ function resolveWall(timezone: string, date: CivilDate, secondsOfDay: number): D
   return new Date(candidates[0] ?? wall - before);
 }
 
-/** The instant of `HH:MM`-style seconds on a local date in `timezone`. Exported for tests and W1's tick. */
+/** The instant of `HH:MM`-style seconds on a local date in `timezone`. Exported for tests and the tick. */
 export function localInstant(timezone: string, date: string, secondsOfDay = 0): Date {
   assertZone(timezone);
   return resolveWall(timezone, parseDate(date), secondsOfDay);

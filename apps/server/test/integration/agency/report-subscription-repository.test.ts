@@ -55,7 +55,7 @@ function input(o: Partial<CreateInput> = {}): CreateInput {
   };
 }
 
-/** The tick's handler, as W1 will write it: the period's run on the claim's client, then the next send. */
+/** A handler shaped like the tick's: the period's run on the claim's client, then the next send. */
 const tickHandler = (calls: string[] = []): Handler => async (sub, client) => {
   calls.push(sub.id);
   const period = periodFor(sub.cadence, sub.next_run_at!, sub.timezone);

@@ -14,7 +14,8 @@ database, the server or the clock (it prints `generated_at`).
 - **PDF**: TSX templates in `src/pdf/templates/` → `renderToStaticMarkup` → headless Chromium
   through `puppeteer-core` (A4, header and "Page X of Y" footer). Charts are static SVG
   (`src/pdf/charts.tsx`) at the 688 px content width. IBM Plex is embedded from `@fontsource`
-  woff2 files (`src/pdf/fonts.ts`); use only glyphs Plex has (no ▲ ✓: use ↑ ↓), or the Lambda,
+  woff2 files (`src/pdf/fonts.ts`; `REPORT_RENDERER_FONTS_DIR` overrides where they are read
+  from); use only glyphs Plex has (no ▲ ✓: use ↑ ↓), or the Lambda,
   which has almost no system fonts, prints boxes. Numbers in `en-IN` (the console's
   `DISPLAY_LOCALE`), dates British style, everything in the dataset's zone.
 - **Rates**: a rate below its floor or with no denominator is words (`src/format`), never 0. The
@@ -23,8 +24,10 @@ database, the server or the clock (it prints `generated_at`).
   (`src/io.ts`), so a 100,000-row sheet keeps the heap flat (`test/workbook-memory.test.ts`).
 - **Lambda** (`src/lambda.ts`, handler `index.handler`): SQS batch size 1, S3 via the default
   credential chain, one `PutObject` per file (no multipart: the role has only `s3:PutObject` on
-  `reports/*`), callback signed per contracts and retried three times; an undeliverable callback
-  is a `batchItemFailures` entry. `pnpm build:lambda` writes `dist/report-renderer-lambda.zip`
+  `reports/*`), callback signed per contracts, each try bounded by 15 s, retried three times; an
+  undeliverable callback is a `batchItemFailures` entry, but a final 4xx (anything but 408 and
+  429: a bad signature, a rejected body, no route) is logged and not redelivered, since a
+  re-render would be refused again (the server's tick finds the files in S3 by itself). `pnpm build:lambda` writes `dist/report-renderer-lambda.zip`
   (`index.mjs` and `fonts/` at the zip root).
 - **Chromium versions go together.** The Lambda layer is `@sparticuz/chromium` **153.0.0**
   (Chromium 153), mounted at `/opt/nodejs/node_modules` and resolved there by

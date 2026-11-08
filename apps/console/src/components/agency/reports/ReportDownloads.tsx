@@ -3,7 +3,7 @@ import { Download } from 'lucide-react';
 import type { AgencyReportRun, ReportFormat } from '@magick-agency/contracts/api/agency/reports';
 import { REPORT_FORMATS } from '@magick-agency/contracts/api/agency/reports';
 import { useTenant } from '../../../contexts/TenantContext';
-import { downloadReportFile, reportErrorMessage } from '../../../api/reports';
+import { downloadReportFile, reportErrorCode, reportErrorMessage } from '../../../api/reports';
 import { trackAgencyReportDownloaded } from '../../../analytics/events';
 import { formatFileSize, REPORT_FORMAT_LABELS } from '../../../utils/reports/reportCopy';
 import styles from './Reports.module.css';
@@ -29,7 +29,11 @@ export function ReportDownloads({ run, compact = false }: { run: AgencyReportRun
       await downloadReportFile(run.id, format, tenantId ?? undefined, accountId ?? undefined);
       trackAgencyReportDownloaded({ kind: run.kind, format });
     } catch (err) {
-      setError(reportErrorMessage(err, 'We couldn’t start the download. Try again.'));
+      // The page is showing this run, so a 404 here means access to its files was lost (a
+      // supervisor demoted since, or a campaign or agent no longer in the account), not "no such run".
+      setError(reportErrorCode(err) === 'report_not_found'
+        ? 'You no longer have access to this report’s files.'
+        : reportErrorMessage(err, 'We couldn’t start the download. Try again.'));
     } finally {
       setBusy(null);
     }

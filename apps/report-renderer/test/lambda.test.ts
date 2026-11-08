@@ -1,5 +1,6 @@
 /**
- * The Lambda handler with a fake S3 client and a fake fetch: the callback is signed as the
+ * The Lambda handler with a fake S3 client and a fake fetch (a final 4xx is neither retried nor
+ * redelivered; each try carries a timeout signal): the callback is signed as the
  * contract says (and verifies), a failed POST is retried with backoff, an undeliverable callback
  * is a batch item failure, a render failure is not. Plus the layer resolution of
  * `@sparticuz/chromium`.
@@ -63,6 +64,7 @@ function setup(statuses: Array<number | Error>, opts: { secret?: string; dataset
   objects.set(datasetKey, Buffer.from(JSON.stringify(opts.dataset === 'v2' ? { ...dataset, dataset_version: 2 } : dataset)));
   const s3 = fakeS3(objects);
   const posts: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
+  const inits: Array<{ signal?: AbortSignal }> = [];
   const sleeps: number[] = [];
   const logs: Array<Record<string, unknown>> = [];
   const queue = [...statuses];
@@ -73,6 +75,7 @@ function setup(statuses: Array<number | Error>, opts: { secret?: string; dataset
     log: (l) => logs.push(l),
     fetch: async (url, init) => {
       posts.push({ url, headers: init.headers, body: init.body });
+      inits.push(init);
       const next = queue.shift() ?? 200;
       if (next instanceof Error) throw next;
       return { status: next };
@@ -93,7 +96,7 @@ function setup(statuses: Array<number | Error>, opts: { secret?: string; dataset
     callback_url: 'https://agency.example.test/webhooks/reports/rendered',
   };
   const event = { Records: [{ messageId: 'm-1', body: JSON.stringify(message), attributes: { ApproximateReceiveCount: '1' } }] } as unknown as SQSEvent;
-  return { handler: createHandler(deps), event, posts, sleeps, logs, s3, message, dataset };
+  return { handler: createHandler(deps), event, posts, inits, sleeps, logs, s3, message, dataset };
 }
 
 describe('Lambda handler', () => {
@@ -138,6 +141,25 @@ describe('Lambda handler', () => {
     const res = await handler(event);
     expect(posts).toHaveLength(3);
     expect(res.batchItemFailures).toEqual([{ itemIdentifier: 'm-1' }]);
+  });
+
+  it('a final refusal (400, 401, 403, 404) is not retried and not redelivered; 408 and 429 are retried', async () => {
+    for (const status of [400, 401, 403, 404]) {
+      const { handler, event, posts, logs } = setup([status]);
+      const res = await handler(event);
+      expect(posts, String(status)).toHaveLength(1);
+      expect(res.batchItemFailures, String(status)).toEqual([]);
+      expect(logs).toContainEqual(expect.objectContaining({ event: 'record.callback_refused', status }));
+    }
+    const { handler, event, posts } = setup([408, 429, 204]);
+    expect((await handler(event)).batchItemFailures).toEqual([]);
+    expect(posts).toHaveLength(3);
+  });
+
+  it('bounds each callback try with a timeout signal', async () => {
+    const { handler, event, inits } = setup([204]);
+    await handler(event);
+    expect(inits[0]!.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('calls back a render failure and does not ask SQS to retry it', async () => {

@@ -48,6 +48,10 @@ export interface ExportReportDialogProps {
   now?: Date;
 }
 
+/** A campaign whose own time zone the reports cannot use (Postgres lacks it). */
+export const CAMPAIGN_ZONE_UNUSABLE =
+  'This campaign’s time zone can’t be used for reports. Change it in the campaign’s settings, then try again.';
+
 export function exportDialogTitle(target: ExportReportTarget): string {
   if (target.kind === 'agent') return target.selfAudience ? 'Export my review' : 'Export agent review';
   return target.kind === 'campaign' ? 'Export campaign report' : 'Export account report';
@@ -142,7 +146,10 @@ function OpenExportReportDialog({ onClose, target, entry, now }: ExportReportDia
       onClose();
     } catch (err) {
       trackAgencyReportRefused({ kind: target.kind, entry, code: reportErrorCode(err) });
-      setSubmitError(reportErrorMessage(err, 'We couldn’t start this export. Try again.'));
+      // A campaign report is cut in the campaign's own zone, and this dialog has no zone to choose.
+      setSubmitError(isCampaign && reportErrorCode(err) === 'report_timezone_invalid'
+        ? CAMPAIGN_ZONE_UNUSABLE
+        : reportErrorMessage(err, 'We couldn’t start this export. Try again.'));
       setSubmitting(false);
     }
   };

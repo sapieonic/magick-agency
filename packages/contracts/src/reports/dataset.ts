@@ -7,8 +7,8 @@
  * - **One opinion per number.** A block that a console screen already serves is that screen's
  *   wire object, reused verbatim (`AgencyInsightsSummary`, `…Activity`, `…Trends`, `…Health`,
  *   the roster row and benchmark, the agent record totals), filled by the same server read.
- *   A report figure therefore equals the screen figure for the same window, and W2's oracle
- *   tests hold them equal.
+ *   A report figure therefore equals the screen figure for the same window, and the server's oracle
+ *   tests (`report-datasets-oracle.test.ts`) hold them equal.
  * - **Blocks the screens do not serve** (the agent's day-by-day presence, the timeline, the
  *   account's per-campaign rows) carry their COUNTS, and where a rate is carried it says its
  *   numerator and denominator and is `null`, never 0, on a zero denominator. A renderer that

@@ -12,7 +12,7 @@ import type { SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
 import type { Browser } from 'puppeteer-core';
 import type { ReportRenderMessage } from '@magick-agency/contracts/reports';
 import { errorMessage } from './errors';
-import { postCallback, type PostDeps } from './lambda/callback';
+import { CallbackRefusedError, postCallback, type PostDeps } from './lambda/callback';
 import { launchLambdaChromium } from './lambda/chromium';
 import { s3IO, type S3Like } from './lambda/s3-io';
 import { renderRun } from './render-run';
@@ -37,6 +37,11 @@ export function createHandler(deps: HandlerDeps): (event: SQSEvent) => Promise<S
       try {
         await processRecord(record, deps);
       } catch (error) {
+        if (error instanceof CallbackRefusedError) {
+          // Final: a redelivery would render again only to be refused again (callback.ts).
+          deps.log({ event: 'record.callback_refused', message_id: record.messageId, status: error.status });
+          continue;
+        }
         deps.log({ event: 'record.failed', message_id: record.messageId, error: errorMessage(error) });
         batchItemFailures.push({ itemIdentifier: record.messageId });
       }
