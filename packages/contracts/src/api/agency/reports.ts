@@ -405,10 +405,10 @@ export function reportWindowProblem(
     if (t === null || end === null || end > t) return 'report_window_invalid';
   }
   if (days <= REPORT_MAX_WINDOW_DAYS) return null;
-  // Exactly one calendar month: starts on the 1st, ends in the same month, and the day after
-  // `to` is the next month's 1st.
-  const dayAfterTo = new Date((epochDay(to)! + 1) * 86_400_000).toISOString().slice(0, 10);
-  const wholeMonth = from.endsWith('-01') && from.slice(0, 7) === to.slice(0, 7) && dayAfterTo.endsWith('-01');
+  // Longer than 30 days is accepted only as exactly one calendar month. A window over 30 days
+  // that starts and ends in the same month can only be a 31-day month's 1st to 31st, so that one
+  // check is the whole rule.
+  const wholeMonth = from.slice(0, 7) === to.slice(0, 7);
   return wholeMonth ? null : 'report_window_too_long';
 }
 
