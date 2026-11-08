@@ -38,6 +38,7 @@ import {
   findAccountRun,
   usableReportZone,
   reportsGate,
+  reportScope,
   resolveReportTarget,
   sendReportRefusal,
   uuid,
@@ -108,8 +109,10 @@ export async function createAdHocRun(
     ...(input.supervisorOnly ? { supervisorOnly: true } : {}),
   });
   if (!target) return reply;
-  const tenantId = request.tenantId!;
-  const accountId = request.accountId!.toLowerCase();
+  const scope = reportScope(request);
+  const tenantId = scope.tenantId;
+  // `resolveReportTarget` refused a request with no account context.
+  const accountId = scope.accountId!;
 
   const timezone = await usableReportZone(deps, target.campaignTimezone ?? input.timezone);
   if (timezone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
@@ -125,9 +128,6 @@ export async function createAdHocRun(
   }
 
   const userId = request.user!.id;
-  const recent = await deps.runs.countRequestedSince(tenantId, userId, new Date(now.getTime() - 60_000));
-  if (recent >= deps.config.userPerMinute) return sendReportRefusal(reply, 'report_rate_limited');
-
   const bounds = localDayBounds(from, to, timezone);
   const created = await deps.runs.create({
     tenantId,
@@ -144,8 +144,13 @@ export async function createAdHocRun(
     audience: target.audience,
     requestedBy: userId,
     emailMe: input.emailMe,
-  }, deps.config.tenantPendingLimit);
-  if (!created.ok) return sendReportRefusal(reply, 'report_queue_full');
+  }, {
+    // Both counted in the insert's transaction, under the tenant's lock: a double-click or a
+    // script firing several requests at once cannot all pass the same count.
+    pendingLimit: deps.config.tenantPendingLimit,
+    requesterRate: { limit: deps.config.userPerMinute, since: new Date(now.getTime() - 60_000) },
+  });
+  if (!created.ok) return sendReportRefusal(reply, created.reason === 'rate_limited' ? 'report_rate_limited' : 'report_queue_full');
 
   const run = created.run;
   auditReport(deps, request, {
@@ -186,7 +191,10 @@ async function callerMayDownload(deps: ReportRouteDeps, request: FastifyRequest,
   }
   if (!callerSupervises(request)) return false;
   if (run.kind === 'campaign') return (await deps.campaign(request, run.subject_id)) !== null;
-  if (run.kind === 'agent') return deps.agentInAccount(run.subject_id, request.tenantId!, request.accountId!.toLowerCase());
+  if (run.kind === 'agent') {
+    const { tenantId, accountId } = reportScope(request);
+    return deps.agentInAccount(run.subject_id, tenantId, accountId!);
+  }
   return true;
 }
 
@@ -226,11 +234,11 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
         return reply.code(400).send({ error: 'Validation Error', details: { fieldErrors: { cursor: ['not a cursor this API issued'] } } });
       }
     }
-    const accountId = request.accountId;
+    const { tenantId, accountId } = reportScope(request);
     if (!accountId) return reply.code(200).send({ runs: [], next_cursor: null } satisfies AgencyReportRunPage);
     const page = await deps.runs.list({
-      tenantId: request.tenantId!,
-      accountId: accountId.toLowerCase(),
+      tenantId,
+      accountId,
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.subject_id ? { subjectId: query.subject_id.toLowerCase() } : {}),
       ...(query.subscription_id ? { subscriptionId: query.subscription_id.toLowerCase() } : {}),
@@ -239,7 +247,7 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
       ...(after ? { after } : {}),
       limit: query.limit ?? REPORT_RUN_PAGE_DEFAULT_LIMIT,
     });
-    const names = await deps.names(request.tenantId!, page.rows.map(runNameRef));
+    const names = await deps.names(tenantId, page.rows.map(runNameRef));
     const body: AgencyReportRunPage = { runs: page.rows.map((run) => toReportRunWire(run, names)), next_cursor: page.next_cursor };
     return reply.code(200).send(body);
   });
@@ -251,7 +259,7 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
     if (!(await reportsGate(deps, request, reply))) return reply;
     const run = await findAccountRun(deps, request, request.params.id);
     if (!run || !callerSeesRun(request, run)) return sendReportRefusal(reply, 'report_not_found');
-    const names = await deps.names(request.tenantId!, [runNameRef(run)]);
+    const names = await deps.names(reportScope(request).tenantId, [runNameRef(run)]);
     return reply.code(200).send(toReportRunWire(run, names));
   });
 
@@ -274,7 +282,7 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
     const file = run.files.find((f) => f.format === format);
     if (!file) return sendReportRefusal(reply, 'report_format_unavailable');
 
-    const names = await deps.names(request.tenantId!, [runNameRef(run)]);
+    const names = await deps.names(reportScope(request).tenantId, [runNameRef(run)]);
     const filename = reportFileName(
       run.kind,
       reportSubjectName(names, run.kind, run.subject_id) ?? run.subject_id,

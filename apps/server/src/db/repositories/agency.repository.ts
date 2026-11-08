@@ -194,6 +194,7 @@ export type {
   ReportRenderApplyOutcome,
   ReportRenderResult,
   ReportRunCreateInput,
+  ReportRunCreateLimits,
   ReportRunCreateOutcome,
   ReportRunFence,
   ReportRunFile,

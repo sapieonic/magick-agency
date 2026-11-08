@@ -51,7 +51,7 @@ export interface ReportCampaignTarget {
 /** Everything the report routes read or write, injectable for tests. */
 export interface ReportRouteDeps {
   config: AgencyReportsConfig;
-  runs: Pick<ReportRunRepository, 'create' | 'findById' | 'list' | 'countRequestedSince'>;
+  runs: Pick<ReportRunRepository, 'create' | 'findById' | 'list'>;
   subscriptions: Pick<ReportSubscriptionRepository, 'create' | 'update' | 'delete' | 'findById' | 'list'>;
   /** The `agency_reports_enabled` flag for the request's tenant and account. */
   reportsEnabled(request: FastifyRequest): Promise<boolean>;
@@ -125,6 +125,28 @@ export async function reportsGate(deps: ReportRouteDeps, request: FastifyRequest
   return false;
 }
 
+/** The request's tenant and account, in the case the reports tables store them. */
+export interface ReportScope {
+  tenantId: string;
+  /** Null without an account context (`X-Account-Id` not sent). */
+  accountId: string | null;
+}
+
+/**
+ * The request's tenant and account in lower case, as every stored id is (`::text` of a `uuid`).
+ * The tenant context middleware keeps `X-Tenant-Id` and `X-Account-Id` as the client sent them,
+ * and a UUID's case is the client's to choose (Postgres's `uuid` cast ignores it; a JS `===` does
+ * not), so every reports route reads the ids through here, never `request.tenantId` /
+ * `request.accountId` directly: a comparison with a stored row, an id handed to code that compares
+ * in JS (`reachesAccount`, the campaign probe), and an id written to a row or an audit entry.
+ */
+export function reportScope(request: FastifyRequest): ReportScope {
+  return {
+    tenantId: request.tenantId!.toLowerCase(),
+    accountId: request.accountId ? request.accountId.toLowerCase() : null,
+  };
+}
+
 /** Does the caller hold `agency.supervise` on the request's account? */
 export function callerSupervises(request: FastifyRequest): boolean {
   return hasPermission(request.membership?.role, 'agency.supervise');
@@ -169,8 +191,7 @@ export async function resolveReportTarget(
   reply: FastifyReply,
   input: { kind: ReportKind; subjectId: string; supervisorOnly?: boolean },
 ): Promise<ReportTarget | null> {
-  const tenantId = request.tenantId!;
-  const accountId = request.accountId;
+  const { tenantId, accountId } = reportScope(request);
   if (!accountId) {
     await sendReportRefusal(reply, 'report_subject_not_found');
     return null;
@@ -210,7 +231,7 @@ export async function resolveReportTarget(
         await reply.code(403).send(REPORT_FORBIDDEN_BODY);
         return null;
       }
-      if (subjectId !== accountId.toLowerCase()) {
+      if (subjectId !== accountId) {
         await sendReportRefusal(reply, 'report_subject_not_found');
         return null;
       }
@@ -221,9 +242,10 @@ export async function resolveReportTarget(
 
 /** A run of the request's tenant AND account, or null (also for an id that is not a UUID). */
 export async function findAccountRun(deps: ReportRouteDeps, request: FastifyRequest, id: string): Promise<ReportRunRecord | null> {
-  if (!UUID_RE.test(id)) return null;
-  const run = await deps.runs.findById(request.tenantId!, id.toLowerCase());
-  if (!run || !request.accountId || run.account_id !== request.accountId.toLowerCase()) return null;
+  const { tenantId, accountId } = reportScope(request);
+  if (!UUID_RE.test(id) || !accountId) return null;
+  const run = await deps.runs.findById(tenantId, id.toLowerCase());
+  if (!run || run.account_id !== accountId) return null;
   return run;
 }
 
@@ -238,9 +260,10 @@ export function auditReport(
   request: FastifyRequest,
   entry: Pick<PlatformCreateAuditLogInput, 'action' | 'resource_type' | 'resource_id' | 'details'>,
 ): void {
+  const { tenantId, accountId } = reportScope(request);
   deps.audit({
-    tenant_id: request.tenantId!,
-    ...(request.accountId ? { account_id: request.accountId } : {}),
+    tenant_id: tenantId,
+    ...(accountId ? { account_id: accountId } : {}),
     ...requestAuditActor(request),
     ...entry,
   } as PlatformCreateAuditLogInput);
@@ -252,16 +275,22 @@ export function defaultReportRouteDeps(config: AgencyReportsConfig): ReportRoute
     config,
     runs: reportRunRepository,
     subscriptions: reportSubscriptionRepository,
-    reportsEnabled: (request) => getFeatureFlagService().isEnabled(FLAGS.agency_reports_enabled, {
-      tenantId: request.tenantId!,
-      ...(request.accountId ? { accountId: request.accountId } : {}),
-    }),
+    reportsEnabled: (request) => {
+      const { tenantId, accountId } = reportScope(request);
+      return getFeatureFlagService().isEnabled(FLAGS.agency_reports_enabled, { tenantId, ...(accountId ? { accountId } : {}) });
+    },
     async campaign(request, campaignId) {
+      const { tenantId, accountId } = reportScope(request);
+      if (!accountId) return null;
+      // The internal handler's `requireOwned` compares the account header in JS too, so the probe
+      // names the account in lower case. Its tenant is `request.tenantId` as sent, which is
+      // already lower case whenever there is an account: the tenant middleware refuses an
+      // `X-Account-Id` whose stored `tenant_id` differs from `X-Tenant-Id` as sent.
       const [probe, row] = await Promise.all([
-        fetchOwnedCoreCampaign(request, campaignId),
+        fetchOwnedCoreCampaign(request, campaignId, accountId),
         agencyCampaignRepository.findById(campaignId),
       ]);
-      if (!probe.ok || !row || row.tenant_id !== request.tenantId || row.account_id !== request.accountId) return null;
+      if (!probe.ok || !row || row.tenant_id !== tenantId || row.account_id !== accountId) return null;
       return { id: row.id, name: row.name, timezone: row.default_timezone };
     },
     agentInAccount: isMemberOfAccountEver,

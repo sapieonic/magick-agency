@@ -22,12 +22,16 @@
  * `WITH picked AS MATERIALIZED (SELECT … FOR UPDATE SKIP LOCKED LIMIT n)` (packages/db CLAUDE.md):
  * concurrent claimers never take the same row and never more than `n`.
  *
- * ── The per-tenant pending limit ─────────────────────────────────────────────
- * {@link ReportRunRepository.create} counts the tenant's queued, assembling and rendering runs and
- * inserts in one transaction under a transaction-scoped advisory lock on the tenant
- * ({@link REPORT_RUN_PENDING_LOCK_SQL}), so concurrent requests cannot both pass a count of
- * `limit - 1`. A subscription's run ({@link ReportRunRepository.createForSubscription}) is not
- * refused by the limit (a scheduled period must not be dropped) but counts toward it.
+ * ── The per-tenant pending limit and the per-user rate ───────────────────────
+ * {@link ReportRunRepository.create} counts the requester's ad hoc runs in the rate window, then
+ * the tenant's queued, assembling and rendering runs, and inserts, in one transaction under a
+ * transaction-scoped advisory lock on the tenant ({@link REPORT_RUN_PENDING_LOCK_SQL}), so
+ * concurrent requests cannot both pass a count of `limit - 1` for either limit. One lock covers
+ * both: the rate counts the requester's runs IN THE TENANT, and every ad hoc insert of the tenant
+ * takes that lock, so a second lock keyed on the user would serialise nothing more (and one lock
+ * has no order to get wrong). A subscription's run ({@link ReportRunRepository.createForSubscription})
+ * is not refused by the pending limit (a scheduled period must not be dropped) but counts toward
+ * it; it has no requester, so it never counts toward anyone's rate.
  *
  * Every id is bound as a parameter and cast once; callers validate ids at the edge (`22P02`).
  */
@@ -125,8 +129,21 @@ export interface ReportRunSubscriptionInput
   periodStart: string;
 }
 
+/** The limits {@link ReportRunRepository.create} holds under the tenant's lock. */
+export interface ReportRunCreateLimits {
+  /** `AGENCY_REPORTS_TENANT_PENDING_LIMIT`: runs queued, assembling or rendering per tenant. */
+  pendingLimit: number;
+  /**
+   * `AGENCY_REPORTS_USER_PER_MINUTE`: at most `limit` ad hoc runs by the requester created at or
+   * after `since`. Omitted, or a run with no requester: no rate check.
+   */
+  requesterRate?: { limit: number; since: Date };
+}
+
 export type ReportRunCreateOutcome =
   | { ok: true; run: ReportRunRecord }
+  /** The requester already had `recent` runs in the rate window (≥ the limit). Checked first. */
+  | { ok: false; reason: 'rate_limited'; recent: number }
   /** The tenant already had `pending` runs queued, assembling or rendering (≥ the limit). */
   | { ok: false; reason: 'queue_full'; pending: number };
 
@@ -197,9 +214,13 @@ export const REPORT_RUN_COLUMNS = `
   r.sent_at, r.dataset_key, r.detail_files, r.files, r.truncated, r.renderer_version, r.error_code,
   r.error_message, r.notified_at, r.created_at, r.finished_at, r.expires_at`;
 
-/** Serialises {@link ReportRunRepository.create} per tenant. `$1` tenant id. */
+/**
+ * Serialises {@link ReportRunRepository.create} per tenant. `$1` tenant id, keyed on its canonical
+ * (lower-case) text through the `uuid` cast, so the same tenant spelled in another case takes the
+ * same lock.
+ */
 export const REPORT_RUN_PENDING_LOCK_SQL =
-  `SELECT pg_advisory_xact_lock(hashtext('report_runs.pending'), hashtext($1::text))`;
+  `SELECT pg_advisory_xact_lock(hashtext('report_runs.pending'), hashtext($1::uuid::text))`;
 
 /**
  * The assembler's claim: the oldest queued run, or an `assembling` run whose claim is older than
@@ -247,19 +268,29 @@ function fenceSql(fence: ReportRunFence, bind: ReturnType<typeof params>): strin
 
 export class ReportRunRepository {
   /**
-   * Queue an ad hoc run, unless the tenant already has `pendingLimit` runs pending
-   * (`AGENCY_REPORTS_TENANT_PENDING_LIMIT`). The count and the insert are one transaction under
-   * the tenant's advisory lock, so the limit holds under concurrent requests.
+   * Queue an ad hoc run, unless the requester already has `requesterRate.limit` runs since
+   * `requesterRate.since` (`rate_limited`), or the tenant already has `pendingLimit` runs pending
+   * (`queue_full`). The counts and the insert are one transaction under the tenant's advisory
+   * lock, so both limits hold under concurrent requests (a double-click, a script).
    */
-  async create(input: ReportRunCreateInput, pendingLimit: number): Promise<ReportRunCreateOutcome> {
+  async create(input: ReportRunCreateInput, limits: ReportRunCreateLimits): Promise<ReportRunCreateOutcome> {
     return withTransaction(async (client) => {
       await client.query(REPORT_RUN_PENDING_LOCK_SQL, [input.tenantId]);
+      if (limits.requesterRate && input.requestedBy !== null) {
+        const { rows: requested } = await client.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM report_runs
+            WHERE requested_by = $1::uuid AND created_at >= $2::timestamptz AND tenant_id = $3::uuid`,
+          [input.requestedBy, limits.requesterRate.since, input.tenantId],
+        );
+        const recent = requested[0]?.n ?? 0;
+        if (recent >= limits.requesterRate.limit) return { ok: false as const, reason: 'rate_limited' as const, recent };
+      }
       const { rows: counted } = await client.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM report_runs WHERE tenant_id = $1::uuid AND status IN ${PENDING_SQL}`,
         [input.tenantId],
       );
       const pending = counted[0]?.n ?? 0;
-      if (pending >= pendingLimit) return { ok: false as const, reason: 'queue_full' as const, pending };
+      if (pending >= limits.pendingLimit) return { ok: false as const, reason: 'queue_full' as const, pending };
       const { rows } = await client.query<ReportRunRecord>(
         `INSERT INTO report_runs AS r (${INSERT_COLUMNS}) VALUES (${INSERT_PLACEHOLDERS})
          RETURNING ${REPORT_RUN_COLUMNS}`,
@@ -334,16 +365,6 @@ export class ReportRunRepository {
       bind.values,
     );
     return toKeysetPage(rows, input.limit, ({ cursor_at: _cursor, ...run }) => run);
-  }
-
-  /** Ad hoc runs `userId` requested at or after `since` (`AGENCY_REPORTS_USER_PER_MINUTE`). */
-  async countRequestedSince(tenantId: string, userId: string, since: Date): Promise<number> {
-    const { rows } = await getPool().query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM report_runs
-        WHERE requested_by = $1::uuid AND created_at >= $2::timestamptz AND tenant_id = $3::uuid`,
-      [userId, since, tenantId],
-    );
-    return rows[0]?.n ?? 0;
   }
 
   /**

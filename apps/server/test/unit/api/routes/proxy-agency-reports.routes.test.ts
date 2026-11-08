@@ -21,6 +21,7 @@ import type { ReportRouteDeps } from '../../../../src/api/routes/proxy-agency-re
 import { agencyConfigSchema } from '../../../../src/config/blocks/agency.js';
 import type {
   ReportRunCreateInput,
+  ReportRunCreateLimits,
   ReportRunRecord,
   ReportSubscriptionCreateInput,
   ReportSubscriptionPatch,
@@ -35,8 +36,11 @@ const FOREIGN_CAMPAIGN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const NOW = new Date('2026-11-08T10:00:00Z');
 const ZONE_NOT_IN_POSTGRES = 'America/Ciudad_Juarez';
 const config = agencyConfigSchema.parse({}).agency.reports;
+/** The limits every ad hoc create hands the repository. */
+const LIMITS = expect.objectContaining({ pendingLimit: config.tenantPendingLimit, requesterRate: expect.objectContaining({ limit: config.userPerMinute }) });
 
-interface Caller { userId: string; role: MembershipRole; accountId?: string }
+/** `tenantId` / `accountId`: the headers as the client sent them (the tenant middleware keeps their case). */
+interface Caller { userId: string; role: MembershipRole; accountId?: string; tenantId?: string }
 const supervisor: Caller = { userId: SUPERVISOR, role: 'account_admin' };
 const agent: Caller = { userId: AGENT, role: 'agent' };
 const otherAgent: Caller = { userId: OTHER_AGENT, role: 'agent' };
@@ -52,7 +56,12 @@ function fakeDeps() {
     recent: 0,
     queueFull: false,
     runs: {
-      create: vi.fn(async (input: ReportRunCreateInput, _limit: number) => {
+      // The repository counts both limits inside its insert transaction: `recent` stands in for
+      // the requester's runs in the window, `queueFull` for the tenant's pending count.
+      create: vi.fn(async (input: ReportRunCreateInput, limits: ReportRunCreateLimits) => {
+        if (limits.requesterRate && deps.recent >= limits.requesterRate.limit) {
+          return { ok: false as const, reason: 'rate_limited' as const, recent: deps.recent };
+        }
         if (deps.queueFull) return { ok: false as const, reason: 'queue_full' as const, pending: 5 };
         seq += 1;
         const id = `${String(seq).padStart(8, '0')}-0000-4000-8000-000000000000`;
@@ -70,7 +79,6 @@ function fakeDeps() {
         return run && run.tenant_id === tenantId ? run : null;
       }),
       list: vi.fn(async (_params: unknown) => ({ rows: [...runs.values()], next_cursor: null, limit: 25 })),
-      countRequestedSince: vi.fn(async () => deps.recent),
     },
     subscriptions: {
       create: vi.fn(async (input: ReportSubscriptionCreateInput) => {
@@ -89,6 +97,8 @@ function fakeDeps() {
         const next = {
           ...sub,
           ...(patch.cadence ? { cadence: patch.cadence } : {}),
+          ...(patch.sendLocalTime ? { send_local_time: patch.sendLocalTime } : {}),
+          ...(patch.timezone ? { timezone: patch.timezone } : {}),
           ...(patch.sendWeekday !== undefined ? { send_weekday: patch.sendWeekday } : {}),
           ...(patch.sendMonthday !== undefined ? { send_monthday: patch.sendMonthday } : {}),
           ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
@@ -134,7 +144,7 @@ async function build() {
   app = Fastify({ logger: false });
   app.addHook('onRequest', async (request) => {
     const r = request as unknown as Record<string, unknown>;
-    r['tenantId'] = TENANT;
+    r['tenantId'] = caller.tenantId ?? TENANT;
     r['accountId'] = caller.accountId ?? ACCOUNT;
     r['user'] = { id: caller.userId };
     r['membership'] = { role: caller.role, account_id: ACCOUNT, status: 'active' };
@@ -211,7 +221,10 @@ describe('POST /reports: who may run what', () => {
     // October in London: from local midnight (BST, 23:00Z) to local midnight after the 31st (GMT).
     expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({
       rangeFrom: new Date('2026-09-30T23:00:00Z'), rangeTo: new Date('2026-11-01T00:00:00Z'), requestedBy: SUPERVISOR, emailMe: false,
-    }), config.tenantPendingLimit);
+    }), {
+      pendingLimit: config.tenantPendingLimit,
+      requesterRate: { limit: config.userPerMinute, since: new Date(NOW.getTime() - 60_000) },
+    });
     expect(f.audits).toEqual([expect.objectContaining({
       action: 'agency_report.requested', resource_type: 'agency_report', resource_id: run.id,
       details: expect.objectContaining({ via: 'request', kind: 'agent', audience: 'supervisor' }),
@@ -223,7 +236,7 @@ describe('POST /reports: who may run what', () => {
     const res = await req('POST', '/proxy/agency/reports', agentReview({ email_me: true }));
     expect(res.statusCode).toBe(202);
     expect(res.json()).toMatchObject({ audience: 'self', requested_by: { user_id: AGENT } });
-    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ audience: 'self', emailMe: true }), expect.any(Number));
+    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ audience: 'self', emailMe: true }), LIMITS);
   });
 
   it('an agent may not export another agent\'s review: 403', async () => {
@@ -257,7 +270,7 @@ describe('POST /reports: who may run what', () => {
   it('an account report is about the context account only; campaign_ids must be the account\'s', async () => {
     const ok = await req('POST', '/proxy/agency/reports', agentReview({ kind: 'account', subject_id: ACCOUNT, campaign_ids: [CAMPAIGN] }));
     expect(ok.statusCode).toBe(202);
-    expect(f.deps.runs.create).toHaveBeenLastCalledWith(expect.objectContaining({ campaignIds: [CAMPAIGN] }), expect.any(Number));
+    expect(f.deps.runs.create).toHaveBeenLastCalledWith(expect.objectContaining({ campaignIds: [CAMPAIGN] }), LIMITS);
     const other = await req('POST', '/proxy/agency/reports', agentReview({ kind: 'account', subject_id: OTHER_ACCOUNT }));
     expect(other.json()).toMatchObject({ code: 'report_subject_not_found' });
     const foreign = await req('POST', '/proxy/agency/reports', agentReview({ kind: 'account', subject_id: ACCOUNT, campaign_ids: [FOREIGN_CAMPAIGN] }));
@@ -343,8 +356,11 @@ describe('POST /reports: validation', () => {
     const res = await req('POST', '/proxy/agency/reports', agentReview());
     expect(res.statusCode).toBe(429);
     expect(res.json()).toMatchObject({ error: expect.any(String), code: 'report_rate_limited', message: expect.any(String) });
-    expect(f.deps.runs.countRequestedSince).toHaveBeenCalledWith(TENANT, SUPERVISOR, new Date(NOW.getTime() - 60_000));
-    expect(f.deps.runs.create).not.toHaveBeenCalled();
+    // Counted by the repository inside the insert's transaction (not read first and then inserted).
+    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ requestedBy: SUPERVISOR, tenantId: TENANT }), expect.objectContaining({
+      requesterRate: { limit: config.userPerMinute, since: new Date(NOW.getTime() - 60_000) },
+    }));
+    expect(f.audits).toEqual([]);
   });
 
   it('the tenant\'s pending limit → 429 report_queue_full', async () => {
@@ -353,6 +369,46 @@ describe('POST /reports: validation', () => {
     expect(res.statusCode).toBe(429);
     expect(res.json().code).toBe('report_queue_full');
     expect(f.audits).toEqual([]);
+  });
+});
+
+describe('the tenant and account headers in upper case', () => {
+  // The tenant middleware keeps the headers as sent; every stored id, and every id code compares
+  // in JS (`reachesAccount`, the campaign probe), is lower case.
+  beforeEach(() => {
+    caller = { ...supervisor, tenantId: TENANT.toUpperCase(), accountId: ACCOUNT.toUpperCase() };
+  });
+
+  it('a run is created, checked and audited with the ids in lower case', async () => {
+    const res = await req('POST', '/proxy/agency/reports', agentReview());
+    expect(res.statusCode).toBe(202);
+    expect(f.deps.agentInAccount).toHaveBeenCalledWith(AGENT, TENANT, ACCOUNT);
+    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT, accountId: ACCOUNT }), LIMITS);
+    expect(f.audits[0]).toMatchObject({ tenant_id: TENANT, account_id: ACCOUNT });
+    // The account report's subject is the context account, whatever its header's case.
+    expect((await req('POST', '/proxy/agency/reports', agentReview({ kind: 'account', subject_id: ACCOUNT }))).statusCode).toBe(202);
+  });
+
+  it('the run, its download and the history are found under the lower-case ids', async () => {
+    f.runs.set(RUN, runRecord({ status: 'ready', files: [{ format: 'pdf', key: 'k.pdf', bytes: 1 }], expires_at: new Date('2027-01-01T00:00:00Z') }));
+    expect((await req('GET', `/proxy/agency/reports/${RUN}`)).statusCode).toBe(200);
+    expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(200);
+    await req('GET', '/proxy/agency/reports');
+    expect(f.deps.runs.list).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT, accountId: ACCOUNT }));
+  });
+
+  it('subscriptions are created, listed, changed and run under the lower-case ids', async () => {
+    const created = await req('POST', '/proxy/agency/report-subscriptions', {
+      kind: 'campaign', subject_id: CAMPAIGN, cadence: 'daily', send_local_time: '08:00', formats: ['pdf'], recipient_user_ids: [SUPERVISOR],
+    });
+    expect(created.statusCode).toBe(201);
+    expect(f.deps.supervisorsAmong).toHaveBeenCalledWith([SUPERVISOR], TENANT, ACCOUNT);
+    expect(f.deps.subscriptions.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT, accountId: ACCOUNT }));
+    await req('GET', '/proxy/agency/report-subscriptions');
+    expect(f.deps.subscriptions.list).toHaveBeenCalledWith(TENANT, ACCOUNT);
+    expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { formats: ['xlsx'] })).statusCode).toBe(200);
+    expect((await req('POST', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}/run-now`)).statusCode).toBe(202);
+    expect((await req('DELETE', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`)).statusCode).toBe(204);
   });
 });
 
@@ -483,7 +539,7 @@ describe('POST /reports/:id/retry', () => {
     expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'account', subjectId: ACCOUNT, campaignIds: [CAMPAIGN], localFrom: '2026-10-01', localTo: '2026-10-31',
       requestedBy: SUPERVISOR, emailMe: false,
-    }), expect.any(Number));
+    }), LIMITS);
     expect(f.audits[0]).toMatchObject({ details: expect.objectContaining({ via: 'retry' }) });
   });
 
@@ -492,7 +548,7 @@ describe('POST /reports/:id/retry', () => {
     caller = agent;
     const res = await req('POST', `/proxy/agency/reports/${RUN}/retry`);
     expect(res.statusCode).toBe(202);
-    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ audience: 'self', emailMe: true }), expect.any(Number));
+    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ audience: 'self', emailMe: true }), LIMITS);
     caller = otherAgent;
     expect((await req('POST', `/proxy/agency/reports/${RUN}/retry`)).statusCode).toBe(404);
   });
@@ -557,7 +613,11 @@ describe('subscriptions', () => {
     expect((await req('POST', '/proxy/agency/report-subscriptions', daily({ kind: 'agent', subject_id: AGENT, timezone: 'Europe/London' }))).statusCode).toBe(201);
   });
 
+  /** The fake campaign probe answers with the campaign in `zone` (it is in New York by default). */
+  const campaignIn = (zone: string) => f.deps.campaign.mockResolvedValue({ id: CAMPAIGN, name: 'Spring renewals', timezone: zone });
+
   it('PATCH: disabling clears next_run_at; a schedule change recomputes it; a formats-only edit keeps it', async () => {
+    campaignIn('Europe/London');
     f.subs.set(SUBSCRIPTION, subscriptionRecord());
     let res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { formats: ['xlsx', 'pdf'] });
     expect(res.statusCode).toBe(200);
@@ -575,6 +635,7 @@ describe('subscriptions', () => {
   });
 
   it('PATCH: the whole unchanged schedule re-sent (as the console does) with a formats edit keeps next_run_at; fields name only what changed', async () => {
+    campaignIn('Europe/London');
     const due = new Date('2026-11-08T08:00:00Z'); // due before NOW: the tick has not sent it yet
     f.subs.set(SUBSCRIPTION, subscriptionRecord({ next_run_at: due }));
     const whole = {
@@ -596,6 +657,62 @@ describe('subscriptions', () => {
     res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { ...whole, formats: ['pdf', 'xlsx'], send_local_time: '11:00' });
     expect(f.deps.subscriptions.update.mock.calls[2]![2]).toMatchObject({ nextRunAt: new Date('2026-11-08T11:00:00Z') });
     expect(f.audits.at(-1)).toMatchObject({ details: { fields: ['send_local_time'] } });
+  });
+
+  it('PATCH re-enabling resolves the subject as POST does: a campaign deleted since is 404 report_subject_not_found, nothing stored', async () => {
+    // The tick disabled it at a send because its campaign was gone (the fake probe knows CAMPAIGN only).
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ subject_id: FOREIGN_CAMPAIGN, enabled: false, next_run_at: null }));
+    const res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: true });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ code: 'report_subject_not_found' });
+    expect(f.deps.campaign).toHaveBeenCalledWith(expect.anything(), FOREIGN_CAMPAIGN);
+    expect(f.deps.subscriptions.update).not.toHaveBeenCalled();
+    expect(f.audits).toEqual([]);
+
+    // An edit that leaves it disabled needs no subject (it cuts no send): formats, or the schedule.
+    expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { formats: ['xlsx'] })).statusCode).toBe(200);
+    expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { send_local_time: '09:00' })).statusCode).toBe(200);
+    // Nor does disabling an enabled one whose subject is gone, or a formats edit while it is enabled.
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ subject_id: FOREIGN_CAMPAIGN }));
+    expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { formats: ['xlsx'] })).statusCode).toBe(200);
+    // A schedule change on an enabled one cuts a new send, so it resolves the subject too.
+    expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { send_local_time: '09:00' })).json().code)
+      .toBe('report_subject_not_found');
+    expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: false })).statusCode).toBe(200);
+  });
+
+  it('PATCH re-enabling an agent subscription whose agent no longer reaches the account: 404 report_subject_not_found', async () => {
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ kind: 'agent', subject_id: AGENT, enabled: false, next_run_at: null }));
+    f.deps.agentInAccount.mockResolvedValue(false);
+    const res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: true });
+    expect(res.json()).toMatchObject({ code: 'report_subject_not_found' });
+    expect(f.deps.subscriptions.update).not.toHaveBeenCalled();
+    f.deps.agentInAccount.mockResolvedValue(true);
+    const ok = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: true });
+    expect(ok.statusCode).toBe(200);
+    // An agent subscription keeps its own zone: 08:00 London after 10:00Z on the 8th is the 9th.
+    expect(ok.json()).toMatchObject({ enabled: true, timezone: 'Europe/London', next_run_at: '2026-11-09T08:00:00.000Z' });
+  });
+
+  it('PATCH re-enabling a campaign subscription cuts next_run_at in the campaign\'s CURRENT zone and stores that zone (RP3)', async () => {
+    // Stored while the campaign was in Kolkata; it has moved to New York since (the fake probe).
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ timezone: 'Asia/Kolkata', enabled: false, next_run_at: null }));
+    const res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: true });
+    expect(res.statusCode).toBe(200);
+    // 08:00 New York (EST) after 10:00Z on the 8th is 13:00Z on the 8th; 08:00 Kolkata would be 02:30Z on the 9th.
+    expect(res.json()).toMatchObject({ enabled: true, timezone: 'America/New_York', next_run_at: '2026-11-08T13:00:00.000Z' });
+    expect(f.deps.subscriptions.update.mock.calls[0]![2]).toMatchObject({
+      timezone: 'America/New_York', enabled: true, nextRunAt: new Date('2026-11-08T13:00:00Z'),
+    });
+    expect(f.audits.at(-1)).toMatchObject({ details: { fields: ['enabled', 'timezone'], enabled: true } });
+  });
+
+  it('PATCH re-enabling a campaign whose current zone Postgres cannot cut days in: 400 report_timezone_invalid, as POST', async () => {
+    campaignIn(ZONE_NOT_IN_POSTGRES);
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ enabled: false, next_run_at: null }));
+    expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: true })).json().code)
+      .toBe('report_timezone_invalid');
+    expect(f.deps.subscriptions.update).not.toHaveBeenCalled();
   });
 
   it('PATCH: the day fields are checked against the resulting cadence', async () => {
@@ -631,7 +748,7 @@ describe('subscriptions', () => {
     expect(res.json()).toMatchObject({ subscription_id: null, requested_by: { user_id: SUPERVISOR }, audience: 'supervisor' });
     expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({
       localFrom: '2026-10-01', localTo: '2026-10-31', requestedBy: SUPERVISOR, emailMe: true, audience: 'supervisor',
-    }), expect.any(Number));
+    }), LIMITS);
     expect(f.audits[0]).toMatchObject({ details: expect.objectContaining({ via: 'run_now', subscription_id: SUBSCRIPTION }) });
   });
 
@@ -644,7 +761,7 @@ describe('subscriptions', () => {
     expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'campaign', timezone: 'America/New_York', localFrom: '2026-11-07', localTo: '2026-11-07',
       rangeFrom: new Date('2026-11-07T05:00:00Z'), rangeTo: new Date('2026-11-08T05:00:00Z'),
-    }), expect.any(Number));
+    }), LIMITS);
   });
 
   it('GET lists the account\'s subscriptions with names', async () => {

@@ -15,14 +15,14 @@ type CreateInput = import('../../../src/db/repositories/agency.repository.js').R
 
 /**
  * The report run repository on real Postgres (docs/reports.md, RP2, RP8, RP12–RP14; migration
- * 0023): the per-tenant pending limit under concurrent creates, the assembler's claim (oldest
+ * 0023): the per-tenant pending limit and the per-user rate under concurrent creates, the assembler's claim (oldest
  * first, SKIP LOCKED between two claimers and past a held row lock, the stale reclaim), every
  * fence (a lost claim's writes refused, a superseded render attempt's callback `stale`, two
  * re-sends of one attempt sending once), the subscription run's unique period, the history's
  * keyset paging and account scoping, notification, expiry and the pending stats.
  *
  * Mutation-checked: dropping the advisory lock from `create` lets the concurrent creates past the
- * limit; `FOR UPDATE` without `SKIP LOCKED` in the claim makes the held-lock case wait (time out);
+ * pending limit and the per-user rate; `FOR UPDATE` without `SKIP LOCKED` in the claim makes the held-lock case wait (time out);
  * dropping `claim_generation` from `markAssembled`'s WHERE lets the lost claim write; dropping
  * `render_attempt` from `applyRenderResult`'s WHERE applies the superseded callback; dropping the
  * `render_attempt` fence from `markSent` lets both concurrent re-sends win.
@@ -52,7 +52,7 @@ function input(o: Partial<CreateInput> = {}): CreateInput {
 }
 
 async function created(o: Partial<CreateInput> = {}) {
-  const outcome = await repo.create(input(o), 1000);
+  const outcome = await repo.create(input(o), { pendingLimit: 1000 });
   if (!outcome.ok) throw new Error('queue full');
   return outcome.run;
 }
@@ -100,14 +100,14 @@ describe('create and read', () => {
   });
 
   it('the stored window cap refuses 745 hours and a second (the CHECK under the repository)', async () => {
-    await expect(repo.create(input({ rangeTo: new Date('2026-11-01T00:00:01Z') }), 5))
+    await expect(repo.create(input({ rangeTo: new Date('2026-11-01T00:00:01Z') }), { pendingLimit: 5 }))
       .rejects.toMatchObject({ code: '23514', constraint: 'ck_report_runs_window' });
   });
 });
 
 describe('the per-tenant pending limit', () => {
   it('twelve concurrent creates against a limit of five: exactly five queued, seven refused', async () => {
-    const outcomes = await Promise.all(Array.from({ length: 12 }, () => repo.create(input(), 5)));
+    const outcomes = await Promise.all(Array.from({ length: 12 }, () => repo.create(input(), { pendingLimit: 5 })));
     expect(outcomes.filter((o) => o.ok)).toHaveLength(5);
     const refused = outcomes.filter((o) => !o.ok);
     expect(refused).toHaveLength(7);
@@ -122,12 +122,68 @@ describe('the per-tenant pending limit', () => {
     await pool().query(
       `UPDATE report_runs SET status = 'failed', finished_at = now(), error_code = 'assembly_failed', error_message = 'x' WHERE id = $1`,
       [done.id]);
-    expect((await repo.create(input(), 3)).ok).toBe(true); // 3 pending now (the failed one is not)
-    expect((await repo.create(input(), 3)).ok).toBe(false);
-    expect((await repo.create(input({ tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT }), 3)).ok).toBe(true);
+    expect((await repo.create(input(), { pendingLimit: 3 })).ok).toBe(true); // 3 pending now (the failed one is not)
+    expect((await repo.create(input(), { pendingLimit: 3 })).ok).toBe(false);
+    expect((await repo.create(input({ tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT }), { pendingLimit: 3 })).ok).toBe(true);
     const sub = await repo.createForSubscription({ ...input(), subscriptionId: randomUUID(), periodStart: '2026-10-01' });
     expect(sub).not.toBeNull();
     expect(await repo.pendingStats()).toMatchObject({ queued: 5 });
+  });
+});
+
+describe('the per-user rate', () => {
+  const minuteAgo = () => new Date(Date.now() - 60_000);
+  const limits = (limit: number) => ({ pendingLimit: 1000, requesterRate: { limit, since: minuteAgo() } });
+
+  it('counts the requester\'s runs in the window, in the tenant: older ones and other requesters do not count', async () => {
+    const user = randomUUID();
+    await created({ requestedBy: user });
+    const old = await created({ requestedBy: user });
+    await created();
+    await pool().query(`UPDATE report_runs SET created_at = now() - interval '2 minutes' WHERE id = $1`, [old.id]);
+    // One in the window: a limit of 2 lets one more in, then refuses.
+    expect((await repo.create(input({ requestedBy: user }), limits(2))).ok).toBe(true);
+    expect(await repo.create(input({ requestedBy: user }), limits(2))).toEqual({ ok: false, reason: 'rate_limited', recent: 2 });
+    // The same user in another tenant has their own count.
+    expect((await repo.create(input({ requestedBy: user, tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT }), limits(1))).ok).toBe(true);
+    // No requester (and no rate given): never rate limited.
+    expect((await repo.create(input({ requestedBy: null }), limits(0))).ok).toBe(true);
+    expect((await repo.create(input({ requestedBy: user }), { pendingLimit: 1000 })).ok).toBe(true);
+  });
+
+  it('three concurrent creates with two already in the minute and a limit of three: exactly one more', async () => {
+    const user = randomUUID();
+    await created({ requestedBy: user });
+    await created({ requestedBy: user });
+    const outcomes = await Promise.all(Array.from({ length: 3 }, () => repo.create(input({ requestedBy: user }), limits(3))));
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    expect(outcomes.filter((o) => !o.ok)).toEqual([
+      { ok: false, reason: 'rate_limited', recent: 3 },
+      { ok: false, reason: 'rate_limited', recent: 3 },
+    ]);
+    const { rows } = await pool().query<{ n: number }>('SELECT count(*)::int AS n FROM report_runs WHERE requested_by = $1', [user]);
+    expect(rows[0]!.n).toBe(3);
+  });
+
+  it('the rate is checked before the pending limit, both under the one tenant lock', async () => {
+    const user = randomUUID();
+    await created({ requestedBy: user });
+    expect(await repo.create(input({ requestedBy: user }), { pendingLimit: 1, requesterRate: { limit: 1, since: minuteAgo() } }))
+      .toEqual({ ok: false, reason: 'rate_limited', recent: 1 });
+    expect(await repo.create(input(), { pendingLimit: 1, requesterRate: { limit: 1, since: minuteAgo() } }))
+      .toEqual({ ok: false, reason: 'queue_full', pending: 1 });
+  });
+
+  it('the tenant lock is keyed on the canonical id: the tenant in upper case is the same lock and the same counts', async () => {
+    const user = randomUUID();
+    await created({ requestedBy: user });
+    await created({ requestedBy: user });
+    const upper = T.toUpperCase();
+    const outcomes = await Promise.all(Array.from({ length: 6 }, (_, i) =>
+      repo.create(input({ requestedBy: user, tenantId: i % 2 ? upper : T }), limits(3))));
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    const { rows } = await pool().query<{ n: number }>('SELECT count(*)::int AS n FROM report_runs WHERE requested_by = $1', [user]);
+    expect(rows[0]!.n).toBe(3);
   });
 });
 
@@ -352,16 +408,6 @@ describe('the history list', () => {
     expect(await list({ tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT })).toEqual([]);
   });
 
-  it('countRequestedSince counts one requester\'s runs in the window', async () => {
-    const user = randomUUID();
-    await created({ requestedBy: user });
-    const old = await created({ requestedBy: user });
-    await created();
-    await pool().query(`UPDATE report_runs SET created_at = now() - interval '2 minutes' WHERE id = $1`, [old.id]);
-    expect(await repo.countRequestedSince(T, user, new Date(Date.now() - 60_000))).toBe(1);
-    expect(await repo.countRequestedSince(T, user, new Date(Date.now() - 600_000))).toBe(2);
-    expect(await repo.countRequestedSince(OTHER_TENANT, user, new Date(Date.now() - 600_000))).toBe(0);
-  });
 });
 
 describe('pendingStats', () => {

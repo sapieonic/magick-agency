@@ -343,7 +343,12 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   run what"; 403 without a code, or `report_subject_not_found`), zone (an IANA name `Intl` knows AND
   Postgres's `pg_timezone_names` holds, case-insensitively as `AT TIME ZONE` matches, so a run is
   never queued in a zone the dataset reads cannot cut days in; `report_timezone_invalid`), window, per-user rate,
-  pending limit. A malformed, unknown or foreign run id is `report_not_found` (404), never 403. A run
+  pending limit. The per-user rate and the pending limit are counted inside the insert's
+  transaction under the tenant's advisory lock (`ReportRunRepository.create`), so a burst of
+  requests cannot all pass one count; the rate counts the requester's runs in the tenant, so the
+  one lock covers both. The routes read the tenant and account through `reportScope`, in lower
+  case as every stored id is: the tenant middleware keeps `X-Account-Id` as sent, and a
+  tenant-wide member may send it in any case. A malformed, unknown or foreign run id is `report_not_found` (404), never 403. A run
   is visible (detail, history, retry) to its requester and to supervisors of its account; a download
   only to someone who could create the same run now (the agent for a `self` review; for a
   `supervisor` run a current supervisor, whoever requested it: "Who may run what"). Retry
@@ -354,7 +359,11 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   zone) or `enabled` changes VALUE against the stored row, not when it is merely present (the
   console sends the whole schedule on every edit), so an edit to formats or recipients never skips
   a due send; its audit `details.fields` names only the fields that changed; a campaign subscription's zone is the campaign's current `default_timezone` (a `timezone` in
-  the PATCH is ignored), and run-now cuts its period in the zone the run is stored with (for a
+  the PATCH is ignored). A PATCH that switches a subscription back on, or changes an enabled one's
+  schedule, first resolves the subject as POST does (`report_subject_not_found` when it is gone,
+  as after the tick disabled it) and, for a campaign, cuts `next_run_at` in the campaign's current
+  zone and stores that zone (`report_timezone_invalid` when Postgres cannot cut days in it); an
+  edit that leaves it disabled, or a formats or recipients edit, does not. Run-now cuts its period in the zone the run is stored with (for a
   campaign, the campaign's current zone). Audit
   actions (`platform_audit_log`, group "Reports"): `agency_report.requested` (`details.via`:
   `request`, `retry`, `run_now`), `agency_report.downloaded`, `agency_report_subscription.created`,

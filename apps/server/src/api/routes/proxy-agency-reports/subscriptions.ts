@@ -29,6 +29,7 @@ import {
   auditReport,
   usableReportZone,
   reportsGate,
+  reportScope,
   resolveReportTarget,
   sendReportRefusal,
   distinct,
@@ -87,7 +88,8 @@ async function recipientsProblem(
   if (recipients.length > REPORT_SUBSCRIPTION_MAX_RECIPIENTS) {
     return `A scheduled report has at most ${REPORT_SUBSCRIPTION_MAX_RECIPIENTS} recipients.`;
   }
-  const allowed = await deps.supervisorsAmong(recipients.map((r) => r.toLowerCase()), request.tenantId!, request.accountId!.toLowerCase());
+  const { tenantId, accountId } = reportScope(request);
+  const allowed = await deps.supervisorsAmong(recipients.map((r) => r.toLowerCase()), tenantId, accountId!);
   return recipients.every((r) => allowed.has(r.toLowerCase()))
     ? null
     : 'Every recipient must be a supervisor on this account.';
@@ -136,13 +138,14 @@ async function findAccountSubscription(
   request: FastifyRequest,
   id: string,
 ): Promise<ReportSubscriptionRecord | null> {
-  if (!UUID_RE.test(id) || !request.accountId) return null;
-  const sub = await deps.subscriptions.findById(request.tenantId!, id.toLowerCase());
-  return sub && sub.account_id === request.accountId.toLowerCase() ? sub : null;
+  const { tenantId, accountId } = reportScope(request);
+  if (!UUID_RE.test(id) || !accountId) return null;
+  const sub = await deps.subscriptions.findById(tenantId, id.toLowerCase());
+  return sub && sub.account_id === accountId ? sub : null;
 }
 
 async function sendSubscription(deps: ReportRouteDeps, request: FastifyRequest, reply: FastifyReply, sub: ReportSubscriptionRecord, status: number) {
-  const names = await deps.names(request.tenantId!, [subscriptionNameRef(sub)]);
+  const names = await deps.names(reportScope(request).tenantId, [subscriptionNameRef(sub)]);
   return reply.code(status).send(toReportSubscriptionWire(sub, names));
 }
 
@@ -152,9 +155,10 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
   /** GET /report-subscriptions — the account's subscriptions, newest first. */
   app.get('/report-subscriptions', supervise, async (request, reply) => {
     if (!(await reportsGate(deps, request, reply))) return reply;
-    if (!request.accountId) return reply.code(200).send({ subscriptions: [] } satisfies AgencyReportSubscriptionList);
-    const subs = await deps.subscriptions.list(request.tenantId!, request.accountId.toLowerCase());
-    const names = await deps.names(request.tenantId!, subs.map(subscriptionNameRef));
+    const { tenantId, accountId } = reportScope(request);
+    if (!accountId) return reply.code(200).send({ subscriptions: [] } satisfies AgencyReportSubscriptionList);
+    const subs = await deps.subscriptions.list(tenantId, accountId);
+    const names = await deps.names(tenantId, subs.map(subscriptionNameRef));
     const body: AgencyReportSubscriptionList = { subscriptions: subs.map((s) => toReportSubscriptionWire(s, names)) };
     return reply.code(200).send(body);
   });
@@ -183,9 +187,11 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
     if (recipientIssue) return sendReportRefusal(reply, 'report_recipient_invalid', recipientIssue);
 
     const enabled = body.enabled ?? true;
+    const scope = reportScope(request);
     const sub = await deps.subscriptions.create({
-      tenantId: request.tenantId!,
-      accountId: request.accountId!.toLowerCase(),
+      tenantId: scope.tenantId,
+      // `resolveReportTarget` refused a request with no account context.
+      accountId: scope.accountId!,
       kind: target.kind,
       subjectId: target.subjectId,
       cadence: schedule.cadence,
@@ -244,10 +250,6 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
       if (zone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
       timezone = zone;
     }
-    if (patch.recipient_user_ids) {
-      const recipientIssue = await recipientsProblem(deps, request, patch.recipient_user_ids);
-      if (recipientIssue) return sendReportRefusal(reply, 'report_recipient_invalid', recipientIssue);
-    }
 
     const enabled = patch.enabled ?? existing.enabled;
     const formats = patch.formats ? orderedFormats(patch.formats) : existing.formats;
@@ -255,16 +257,37 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
     // By VALUE against the stored row, not by presence: the console sends only the fields the
     // supervisor changed, but any client may re-send a field unchanged, and a field merely present
     // must not count as a change.
-    const changed = changedSubscriptionFields(existing, {
+    const changedWith = (zone: string) => changedSubscriptionFields(existing, {
       cadence,
       send_local_time: schedule.send_local_time,
       send_weekday: weekday,
       send_monthday: monthday,
-      timezone,
+      timezone: zone,
       formats,
       recipient_user_ids: recipients,
       enabled,
     });
+
+    // Switching it back on, or moving an enabled one's schedule, cuts a new `next_run_at`: first
+    // the subject, as POST resolves it. The tick disables a subscription whose subject is gone, so
+    // re-enabling one without this would answer 200 and be disabled again at the next send. A
+    // campaign's period and next send are cut in the campaign's CURRENT zone (RP3), stored on the
+    // row as POST stores it, not in the zone the tick last saw.
+    if (enabled && (!existing.enabled || changedWith(timezone).some((field) => SCHEDULE_FIELDS.has(field)))) {
+      const target = await resolveReportTarget(deps, request, reply, { kind: existing.kind, subjectId: existing.subject_id, supervisorOnly: true });
+      if (!target) return reply;
+      if (target.kind === 'campaign') {
+        const zone = await usableReportZone(deps, target.campaignTimezone ?? timezone);
+        if (zone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
+        timezone = zone;
+      }
+    }
+    if (patch.recipient_user_ids) {
+      const recipientIssue = await recipientsProblem(deps, request, patch.recipient_user_ids);
+      if (recipientIssue) return sendReportRefusal(reply, 'report_recipient_invalid', recipientIssue);
+    }
+
+    const changed = changedWith(timezone);
     const scheduleChanged = changed.some((field) => SCHEDULE_FIELDS.has(field));
     const fullSchedule: ReportSchedule = { ...schedule, timezone };
     const update: ReportSubscriptionPatch = {
@@ -281,7 +304,7 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
       // never skips a due send.
       ...(scheduleChanged ? { nextRunAt: enabled ? nextRunAt(fullSchedule, deps.now()) : null } : {}),
     };
-    const sub = await deps.subscriptions.update(request.tenantId!, existing.id, update);
+    const sub = await deps.subscriptions.update(reportScope(request).tenantId, existing.id, update);
     if (!sub) return sendReportRefusal(reply, 'report_subscription_not_found');
     auditReport(deps, request, {
       action: 'agency_report_subscription.updated',
@@ -296,7 +319,7 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
   app.delete<IdParams>('/report-subscriptions/:id', supervise, async (request, reply) => {
     if (!(await reportsGate(deps, request, reply))) return reply;
     const existing = await findAccountSubscription(deps, request, request.params.id);
-    if (!existing || !(await deps.subscriptions.delete(request.tenantId!, existing.id))) {
+    if (!existing || !(await deps.subscriptions.delete(reportScope(request).tenantId, existing.id))) {
       return sendReportRefusal(reply, 'report_subscription_not_found');
     }
     auditReport(deps, request, {
