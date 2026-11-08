@@ -416,15 +416,18 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   process only, whatever the flag; stopped first on shutdown (assembler, tick, then the inline
   queue drains).
 
-## Workstreams
+## Where things are
 
-| WS | Owns | Branch |
-|---|---|---|
-| F foundation | contracts (`src/api/agency/reports.ts`, `src/reports/`), flag, the 0023 migration + BASELINE, the two repositories and their integration tests, `agency.reports` config, `report-keys.ts`, S3 multipart/stream helpers in `storage/s3.ts`, metric declarations | `ccr-2d5a3f08-9lq4ms` |
-| W1 pipeline | `agency/reports/` assembler, tick, render dispatch (SQS client, inline adapter), callback apply; `proxy-agency-reports` routes; the webhook route; audit vocabulary; `agency.report.ready` notification and email template; bootstrap wiring | `reports-w1` |
-| W2 datasets | `agency/reports/datasets/{agent,campaign,account}.ts`, role filtering, detail row sources, oracle tests (report figure = screen figure) | `reports-w2` |
-| W3 renderer | `apps/report-renderer` (templates, PDF, workbook, Lambda handler, zip build), release-please component, Dockerfile, CI browser | `reports-w3` |
-| W4 console | API client, Reports page (history, subscriptions), export dialog, entry points (agent record, My stats, campaign Insights, account), flag gating | `reports-w4` |
-| W5 infra | `aws/terraform/reports.tf`, IAM, lifecycle rules, Grafana alert rules | `reports-w5` |
+| Area | Files |
+|---|---|
+| Contracts | `packages/contracts/src/api/agency/reports.ts`, `packages/contracts/src/reports/` |
+| Data | `packages/db/migrations/0023_reports.sql`; `apps/server/src/db/repositories/agency/report-run.repository.ts`, `report-subscription.repository.ts`, `report-dataset-reads.ts` |
+| Datasets | `apps/server/src/agency/reports/datasets/` (agent, campaign, account; the seam in `types.ts`) |
+| Pipeline | `apps/server/src/agency/reports/` (assembler, dispatch, apply, callback signature, tick, pipeline, access, run view, schedule, keys, failure messages, subscription subject, zone) |
+| Routes | `apps/server/src/api/routes/proxy-agency-reports.routes.ts` and `proxy-agency-reports/`; `apps/server/src/api/routes/webhooks/report-rendered.ts` |
+| Email | `apps/server/src/notifications/agency-report-ready.ts` and its template |
+| Renderer | `apps/report-renderer` (its own `CLAUDE.md`) |
+| Console | `apps/console/src/api/reports.ts`, `components/agency/reports/`, `pages/agency/Report*.tsx`, `hooks/useReportRun.ts`, `hooks/useReportsAccess.ts`, `utils/reports/` |
+| Infrastructure | `aws/terraform/reports.tf` (and its test), the `reports` rules and dashboard row in `grafana/` |
 
-Contract changes after F go through the orchestrator, never edited in a workstream branch.
+Tests per module are in [`modules.md`](modules.md); counts in [`status.md`](status.md).

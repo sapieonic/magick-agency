@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-07.
+are as of 2026-11-08.
 
 ## What Magick Agency is
 
@@ -51,6 +51,12 @@ branch's migrations are 0019–0021 after `main`'s 0018; server 8837 unit / 2150
 Automatic outcomes for unanswered calls (2026-11-07: a campaign maps no answer, busy, failed,
 invalid number and abandoned to one of its outcomes, filed on the call as a label only, OD1–OD8)
 is merged over Plivo the same day (its migration is 0022): db unit 428, console 5742.
+
+Reports (2026-11-08: agent performance reviews, campaign and account reports as PDF and Excel,
+ad hoc or on a schedule, behind a flag, RP1–RP16) are built through the server, a renderer app that
+runs as a Lambda or in process, the console and the infrastructure, reviewed independently and
+re-run: server 9111 unit / 2276 + 15 integration + 9 expected fail, db 428 / 632, console 5869,
+renderer 78 ([`reports.md`](reports.md); `status.md`, "Test counts"). They have not run on AWS.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
