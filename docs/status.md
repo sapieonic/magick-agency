@@ -1078,18 +1078,21 @@ Latest run, 2026-11-08, the reports feature (RP1–RP16) after the final review'
 gate on schedules and emails, `subject_changed`, the restart reclaim, final callback refusals) and
 the simplification pass (shared helpers, one definition-key list in the contracts, the workbook's
 Definition cells filled, the console's outcome words in the workbook, lighter dataset reads,
-report polling paused in a hidden tab and backed off), from inside each package, with no other run sharing this worktree's database: `pnpm lint` clean in
+report polling paused in a hidden tab and backed off) and the PR review's fixes (a bounded
+pipeline shutdown, subscription runs counted after commit, the per-user rate counted in the
+insert, lower-cased header ids, re-enable resolving the subject, one build deadline over detail
+streaming, superseded renders dropped, the renderer out of the production image), from inside each package, with no other run sharing this worktree's database: `pnpm lint` clean in
 9 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass; `pnpm build` clean;
-`contracts-literals --check` up to date (51 vocabularies); `aws/terraform` unchanged since its
-`terraform test` 7 pass and `validate` clean earlier the same day. `apps/mobile` was not run (no Flutter or Dart in this environment).
+`contracts-literals --check` up to date (51 vocabularies); `aws/terraform` `terraform test` 9 pass and
+`validate` clean. `apps/mobile` was not run (no Flutter or Dart in this environment).
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 9123 passed + 1 expected fail + 42 skipped (455 files) | rest lane 2278 passed + 9 expected fail + 2 skipped (222 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
+| `apps/server` | 9152 passed + 1 expected fail + 42 skipped (457 files) | rest lane 2293 passed + 9 expected fail + 2 skipped (224 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
 | `packages/db` | 428 (25 files) | 632 (64 files) |
 | `apps/console` | 5876 (305 files) | — |
 | `apps/super-admin` | 471 (35 files) | — |
-| `apps/report-renderer` | 86 passed + 2 skipped (11 files + 1 skipped: the opt-in preview and a CI-only browser check) | — |
+| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped: the opt-in preview and a CI-only browser check) | — |
 | `packages/contracts` | 352 (12 files) | — |
 | `packages/web-ui` | 240 (20 files) | — |
 | `packages/domain` | 142 (9 files) | — |
