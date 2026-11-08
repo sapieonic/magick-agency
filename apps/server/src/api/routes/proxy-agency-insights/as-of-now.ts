@@ -5,7 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { insightsCache, insightsCacheKey } from '../../../agency/insights/cache.js';
-import { liveStats } from '../../../agency/insights/live-stats.js';
+import { liveStats } from '../helpers/live-stats.js';
 import { computeSummary } from '../../../agency/insights/summary.js';
 import { computeReadiness } from '../../../agency/insights/readiness.js';
 import { computeAllocation } from '../../../agency/insights/allocation.js';

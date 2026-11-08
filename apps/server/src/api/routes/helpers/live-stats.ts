@@ -2,10 +2,12 @@
  * The summary's stats strip read (`computeSummary`'s `liveStats`), shared by the summary route
  * (`api/routes/proxy-agency-insights/as-of-now.ts`) and the campaign report's builder
  * (`agency/reports/datasets/campaign.ts`), so the report's headline is the route's own read.
+ * A `callCore` caller, so it stays in the public API layer (B16) beside `core-campaign.ts`,
+ * the other internal-handler hop the reports builders share with the routes.
  */
 import type { AgencyCampaignStats } from '@magick-agency/contracts/agency';
-import { callCore } from '../../api/core-dispatch.js';
-import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
+import { callCore } from '../../core-dispatch.js';
+import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 
 /**
  * The stats strip's payload, through the internal handler that serves it, under the campaign's
