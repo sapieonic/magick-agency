@@ -155,7 +155,13 @@ export interface AgentReviewOutcomeRow {
   conversations: number;
   /** `conversations / Σ conversations × 100`; null when the sum is 0. */
   share_pct: number | null;
-  /** Agent-leg talk seconds of these conversations `/ conversations`; null when `conversations` is 0. */
+  /**
+   * Agent-leg talk seconds of the attempt that carries each conversation's outcome
+   * `/ conversations`, whole seconds; null when `conversations` is 0. In a wrap-up redial chain
+   * that is the redial's leg only: the earlier legs (closed `redialed`) are not in it, while
+   * `record.talk_seconds` counts every bridged leg. So Σ (`avg_talk_s` × `conversations`) can be
+   * less than `record.talk_seconds`.
+   */
   avg_talk_s: number | null;
 }
 
@@ -170,9 +176,14 @@ export interface AgentReviewCampaignRow extends AgencyAgentStatsByCampaign {
  */
 export interface AgentReviewFollowThrough {
   callbacks: {
-    /** Booked by the agent's dials in the window. */
+    /** Booked by the agent's dials in the window (counted at the booking dial, whenever it is due). */
     booked: number;
-    /** Of those with `callback_at` in the window: dialled within 15 minutes of the booked time (or early). */
+    /**
+     * The classes below count a different set from `booked`: callbacks the agent booked (at any
+     * time before the window's end) that are DUE in the window (`callback_at` in it), so they do
+     * not sum to `booked`. On time: the follow-up was dialled within 15 minutes of the booked
+     * time (or early), whoever dialled it.
+     */
     on_time: number;
     /** Dialled later than that. */
     late: number;
@@ -192,7 +203,11 @@ export interface AgentReviewFollowThrough {
   overrides_used: number;
   /** Do Not Call entries the agent wrote. */
   dnc_marked: number;
-  /** Soft-phone calls the agent placed (outside every campaign count above). */
+  /**
+   * Soft-phone calls the agent placed (outside every campaign count above): started
+   * (`created_at`) in the window and dialled, Insights' soft-phone rule. The calls sheet and the
+   * sentiment set take soft-phone calls by the same rule.
+   */
   softphone_calls: number;
 }
 
@@ -227,7 +242,11 @@ export interface AgentReviewDataset extends ReportDatasetBase {
   campaigns: ReportCampaignRef[];
   /** The agent record's window totals (see the module note for the type choice). */
   record: AgencyAgentStatsTotals;
-  /** The agent's roster row for the window; null when they placed no dial (the roster has no row then). */
+  /**
+   * The agent's roster row for the window; null when they placed no dial (the roster has no row
+   * then), and null when they are below the 200th row of the roster read (attempts, descending)
+   * on a floor of more than 200 dialling agents.
+   */
   roster_row: AgencyRosterAgentRowWithName | null;
   /** Null for the `self` audience (RP5). */
   benchmark: ReportRosterBenchmark | null;
