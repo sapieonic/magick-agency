@@ -1328,19 +1328,20 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 Scenario, flow, guard and setup tests that span several modules. The migrations themselves are SQL
 files in `packages/db/migrations/`, `0001_baseline.sql` to
-`0021_carrier_refusing_calls_pause.sql` (0009 and 0010 are contact assignment's; tested by
+`0023_reports.sql` (0009 and 0010 are contact assignment's; tested by
 `db/contact-assignment-migration.test.ts`; `0008_wrapup_redial.sql`, the wrap-up redial's, by
 `db/wrapup-redial-migration.test.ts`; 0011, the insights page's shared schema, by
 `db/insights-foundation-migration.test.ts`; 0012, the insights rollup and its dirty-marking
 triggers, by `db/insights-rollup-migration.test.ts`; 0013, the pacing history, by
 `db/insights-pacing-history-migration.test.ts`; 0014, the rollup's connect-rate measures and carrier
-errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`; 0016, the customer-history soft-phone destination index (CH9), by `db/customer-history-indexes-migration.test.ts`; 0017, the customer-history roster index that bounds every read to the newest 2,000 rows (CH14), by `db/customer-history-contacts-index-migration.test.ts`; 0018, the dedicated caller IDs per agent per campaign (DN1), by `db/agent-caller-ids-migration.test.ts`; 0019, Plivo numbers (the `plivo` provider row active, `phone_numbers.telephony_credential_id`) and the `carrier_auth` pause reason, by `db/plivo-numbers-migration.test.ts`; 0020, the `carrier_account_unavailable` pause reason, by `db/carrier-account-unavailable-migration.test.ts`; 0021, the `carrier_refusing_calls` pause reason, by `db/carrier-refusing-calls-migration.test.ts`; 0022, automatic outcomes for unanswered calls (OD4), by `db/outcome-dispositions-migration.test.ts`).
+errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`; 0016, the customer-history soft-phone destination index (CH9), by `db/customer-history-indexes-migration.test.ts`; 0017, the customer-history roster index that bounds every read to the newest 2,000 rows (CH14), by `db/customer-history-contacts-index-migration.test.ts`; 0018, the dedicated caller IDs per agent per campaign (DN1), by `db/agent-caller-ids-migration.test.ts`; 0019, Plivo numbers (the `plivo` provider row active, `phone_numbers.telephony_credential_id`) and the `carrier_auth` pause reason, by `db/plivo-numbers-migration.test.ts`; 0020, the `carrier_account_unavailable` pause reason, by `db/carrier-account-unavailable-migration.test.ts`; 0021, the `carrier_refusing_calls` pause reason, by `db/carrier-refusing-calls-migration.test.ts`; 0022, automatic outcomes for unanswered calls (OD4), by `db/outcome-dispositions-migration.test.ts`; 0023, report runs and subscriptions and the two agent-first read indexes (docs/reports.md), by `db/reports-migration.test.ts`).
 
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~14 |
 | `packages/db/test/integration/db/agent-caller-ids-migration.test.ts` | 5 |
 | `packages/db/test/integration/db/outcome-dispositions-migration.test.ts` | 7 |
+| `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | 8 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |

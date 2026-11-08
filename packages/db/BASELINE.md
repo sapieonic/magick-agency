@@ -5,7 +5,7 @@ under [Later migrations](#later-migrations). This file is their inventory: the r
 they follow, every table with its purpose and columns, the unique indexes that carry invariants, the
 triggers and functions, how it is tested, and the schema questions still open. Read it before
 writing a repository, a migration or an import script. Column lists are generated from the SQL;
-the SQL is the authority. As of 2026-11-05.
+the SQL is the authority. As of 2026-11-08.
 
 ## Rules
 
@@ -22,7 +22,7 @@ the SQL is the authority. As of 2026-11-05.
 
 ## Tables
 
-33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012, 44 with 0013), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
+33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012, 44 with 0013, 45 with 0018, 47 with 0023), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
 
 | Group | Tables |
 |---|---|
@@ -934,6 +934,67 @@ calls", OD1–OD8).
 **Tests**: `test/integration/db/outcome-dispositions-migration.test.ts` (column shapes and
 defaults, both CHECKs including the NULL outcome, a write-up beside an automatic outcome, the
 NOT VALID attempts CHECK, down then up) and the down → up suite.
+
+### 0023 — `migrations/0023_reports.sql`
+
+Agent, campaign and account reports (`docs/reports.md`, RP1–RP16).
+
+- **`report_runs`**: one row per run, a PDF and/or workbook about one subject over one window.
+  `id`, `tenant_id` (FK `tenants`, CASCADE), `account_id` (nullable, no FK; v1 always sets it),
+  `kind` (`agent | campaign | account`), `subject_id` (agent user id, campaign id or account id;
+  no FK), `campaign_ids UUID[]` (account runs only, NULL = every campaign), the window twice:
+  `local_from` / `local_to` (`DATE`, inclusive, in `timezone`) and `range_from` / `range_to`
+  (the half-open instants read), `formats TEXT[]`, `audience` (`supervisor | self`),
+  `requested_by` (no FK; NULL for a subscription's run), `email_me`, `subscription_id` (no FK:
+  runs outlive their subscription) with `period_start`, `status` (`queued | assembling |
+  rendering | ready | failed | expired`), `claim_generation` / `claimed_at` (assembler claim and
+  fence), `render_attempt` / `sent_at` (renderer send and callback fence, RP13), `dataset_key`,
+  `detail_files` (JSONB array), `files` (JSONB array of `{format, key, bytes}`), `truncated`
+  (RP12), `renderer_version`, `error_code` / `error_message`, `notified_at`, `created_at`,
+  `finished_at`, `expires_at`.
+  CHECKs: kind, status; `self` only on an agent run (RP5); `campaign_ids` only on an account run,
+  never empty; **`ck_report_runs_window`**: `range_to > range_from`, `range_to - range_from <=
+  745 hours` (31 days plus the hour a clock change adds, RP2, `REPORT_MAX_STORED_WINDOW_MS`) and
+  `local_to >= local_from`; formats non-empty within `pdf, xlsx`; a trimmed zone; subscription and
+  period set together; non-negative counters; JSONB arrays; an error (a `ReportFailureCode`)
+  exactly on a failed run; `finished_at` exactly when terminal, `expires_at` exactly when ready or
+  expired.
+- **`uq_report_runs_subscription_period`** `(subscription_id, period_start) WHERE subscription_id
+  IS NOT NULL`: one run per subscription period (RP14); the tick inserts `ON CONFLICT DO NOTHING`
+  on it, and the subscription's newest run is one backward step of it.
+- **`idx_report_runs_pending`** `(status, created_at)` partial on the three pending statuses: the
+  assembler's claim, the tick's reconcile, the per-tenant pending limit and the gauges.
+  **`idx_report_runs_history`** `(tenant_id, account_id, created_at DESC, id DESC)`: the history
+  page's keyset. **`idx_report_runs_requester`** `(requested_by, created_at DESC, id DESC)`: a
+  caller's own runs and the per-user rate. **`idx_report_runs_unnotified`** `(finished_at)` on
+  finished runs that email someone and are not yet handled. **`idx_report_runs_expiry`**
+  `(expires_at) WHERE status = 'ready'` (RP8).
+- **`report_subscriptions`**: `id`, `tenant_id` (FK, CASCADE), `account_id`, `kind`,
+  `subject_id`, `cadence` (`daily | weekly | monthly`), `send_local_time TIME(0)`,
+  `send_weekday` (ISO 1–7, weekly only), `send_monthday` (1–28, monthly only), `timezone`,
+  `formats`, `recipient_user_ids UUID[]` (1–20), `enabled`, `next_run_at` (NULL exactly when
+  disabled, `ck_report_subscriptions_enabled`), `created_by` (no FK), `created_at`,
+  `updated_at` (set by the repository's UPDATE; no trigger). **`idx_report_subscriptions_due`**
+  `(next_run_at) WHERE enabled`; **`idx_report_subscriptions_account`** `(tenant_id, account_id,
+  created_at DESC, id DESC)`.
+- **Agent-first read indexes** for the agent review, which reads one agent across every campaign:
+  **`idx_agency_insights_rollup_agents_agent`** `(agent_user_id, bucket_start)` and
+  **`idx_agency_agent_sessions_agent`** `(agent_user_id, joined_at)`.
+- **Repositories** (server, B12): `apps/server/src/db/repositories/agency/report-run.repository.ts`
+  (claims with `MATERIALIZED` + `SKIP LOCKED`, the per-tenant pending limit under a per-tenant
+  advisory lock, every pipeline write fenced on `claim_generation` or `render_attempt`) and
+  `report-subscription.repository.ts` (the due claim advances `next_run_at` in the transaction
+  that creates the run).
+- **Locking.** Two new tables; plain `CREATE INDEX` on `agency_insights_rollup_agents` and
+  `agency_agent_sessions` (SHARE, one scan each); one transaction, at container start.
+
+**Down** drops both indexes and both tables (every run record and subscription is lost; files stay
+in S3 until their lifecycle). **Tests**: `test/integration/db/reports-migration.test.ts` (columns,
+every CHECK including the 745-hour cap at its boundary, the unique period, the cascade, index
+definitions, the planner using the agent-first indexes, down then up), the server's
+`test/integration/agency/report-run-repository.test.ts` and
+`report-subscription-repository.test.ts`, the table set in `baseline.test.ts` and the down → up
+suite.
 
 ## Tests
 
