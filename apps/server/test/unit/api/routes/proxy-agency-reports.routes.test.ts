@@ -374,27 +374,33 @@ describe('POST /reports: validation', () => {
 
 describe('the tenant and account headers in upper case', () => {
   // The tenant middleware keeps the headers as sent; every stored id, and every id code compares
-  // in JS (`reachesAccount`, the campaign probe), is lower case.
+  // in JS (`reachesAccount`, the campaign probe), is lower case. The fixture's ids are all digits
+  // (their upper case is themselves), so this world's tenant and account have letters.
+  const LT = 'abcdef12-3456-4789-8abc-def123456789';
+  const LA = 'fedcba98-7654-4321-8fed-cba987654321';
   beforeEach(() => {
-    caller = { ...supervisor, tenantId: TENANT.toUpperCase(), accountId: ACCOUNT.toUpperCase() };
+    caller = { ...supervisor, tenantId: LT.toUpperCase(), accountId: LA.toUpperCase() };
   });
 
   it('a run is created, checked and audited with the ids in lower case', async () => {
     const res = await req('POST', '/proxy/agency/reports', agentReview());
     expect(res.statusCode).toBe(202);
-    expect(f.deps.agentInAccount).toHaveBeenCalledWith(AGENT, TENANT, ACCOUNT);
-    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT, accountId: ACCOUNT }), LIMITS);
-    expect(f.audits[0]).toMatchObject({ tenant_id: TENANT, account_id: ACCOUNT });
+    expect(f.deps.agentInAccount).toHaveBeenCalledWith(AGENT, LT, LA);
+    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: LT, accountId: LA }), LIMITS);
+    expect(f.audits[0]).toMatchObject({ tenant_id: LT, account_id: LA });
     // The account report's subject is the context account, whatever its header's case.
-    expect((await req('POST', '/proxy/agency/reports', agentReview({ kind: 'account', subject_id: ACCOUNT }))).statusCode).toBe(202);
+    expect((await req('POST', '/proxy/agency/reports', agentReview({ kind: 'account', subject_id: LA }))).statusCode).toBe(202);
   });
 
   it('the run, its download and the history are found under the lower-case ids', async () => {
-    f.runs.set(RUN, runRecord({ status: 'ready', files: [{ format: 'pdf', key: 'k.pdf', bytes: 1 }], expires_at: new Date('2027-01-01T00:00:00Z') }));
+    f.runs.set(RUN, runRecord({
+      tenant_id: LT, account_id: LA, status: 'ready', files: [{ format: 'pdf', key: 'k.pdf', bytes: 1 }],
+      expires_at: new Date('2027-01-01T00:00:00Z'),
+    }));
     expect((await req('GET', `/proxy/agency/reports/${RUN}`)).statusCode).toBe(200);
     expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(200);
     await req('GET', '/proxy/agency/reports');
-    expect(f.deps.runs.list).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT, accountId: ACCOUNT }));
+    expect(f.deps.runs.list).toHaveBeenCalledWith(expect.objectContaining({ tenantId: LT, accountId: LA }));
   });
 
   it('subscriptions are created, listed, changed and run under the lower-case ids', async () => {
@@ -402,10 +408,11 @@ describe('the tenant and account headers in upper case', () => {
       kind: 'campaign', subject_id: CAMPAIGN, cadence: 'daily', send_local_time: '08:00', formats: ['pdf'], recipient_user_ids: [SUPERVISOR],
     });
     expect(created.statusCode).toBe(201);
-    expect(f.deps.supervisorsAmong).toHaveBeenCalledWith([SUPERVISOR], TENANT, ACCOUNT);
-    expect(f.deps.subscriptions.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT, accountId: ACCOUNT }));
+    expect(f.deps.supervisorsAmong).toHaveBeenCalledWith([SUPERVISOR], LT, LA);
+    expect(f.deps.subscriptions.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: LT, accountId: LA }));
     await req('GET', '/proxy/agency/report-subscriptions');
-    expect(f.deps.subscriptions.list).toHaveBeenCalledWith(TENANT, ACCOUNT);
+    expect(f.deps.subscriptions.list).toHaveBeenCalledWith(LT, LA);
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ tenant_id: LT, account_id: LA }));
     expect((await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { formats: ['xlsx'] })).statusCode).toBe(200);
     expect((await req('POST', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}/run-now`)).statusCode).toBe(202);
     expect((await req('DELETE', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`)).statusCode).toBe(204);

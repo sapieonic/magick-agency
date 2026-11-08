@@ -10,7 +10,7 @@ vi.mock('@magick-agency/db', async (orig) => ({
   getPool: () => getTestPool(),
 }));
 
-const { reportRunRepository: repo } = await import('../../../src/db/repositories/agency.repository.js');
+const { reportRunRepository: repo, REPORT_RUN_PENDING_LOCK_SQL } = await import('../../../src/db/repositories/agency.repository.js');
 type CreateInput = import('../../../src/db/repositories/agency.repository.js').ReportRunCreateInput;
 
 /**
@@ -22,7 +22,9 @@ type CreateInput = import('../../../src/db/repositories/agency.repository.js').R
  * keyset paging and account scoping, notification, expiry and the pending stats.
  *
  * Mutation-checked: dropping the advisory lock from `create` lets the concurrent creates past the
- * pending limit and the per-user rate; `FOR UPDATE` without `SKIP LOCKED` in the claim makes the held-lock case wait (time out);
+ * pending limit and the per-user rate; counting the rate before the transaction lets them past
+ * the rate; keying the lock on the raw text (`$1::text`) lets a create naming the tenant in upper
+ * case past a held lock; `FOR UPDATE` without `SKIP LOCKED` in the claim makes the held-lock case wait (time out);
  * dropping `claim_generation` from `markAssembled`'s WHERE lets the lost claim write; dropping
  * `render_attempt` from `applyRenderResult`'s WHERE applies the superseded callback; dropping the
  * `render_attempt` fence from `markSent` lets both concurrent re-sends win.
@@ -174,16 +176,23 @@ describe('the per-user rate', () => {
       .toEqual({ ok: false, reason: 'queue_full', pending: 1 });
   });
 
-  it('the tenant lock is keyed on the canonical id: the tenant in upper case is the same lock and the same counts', async () => {
-    const user = randomUUID();
-    await created({ requestedBy: user });
-    await created({ requestedBy: user });
-    const upper = T.toUpperCase();
-    const outcomes = await Promise.all(Array.from({ length: 6 }, (_, i) =>
-      repo.create(input({ requestedBy: user, tenantId: i % 2 ? upper : T }), limits(3))));
-    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
-    const { rows } = await pool().query<{ n: number }>('SELECT count(*)::int AS n FROM report_runs WHERE requested_by = $1', [user]);
-    expect(rows[0]!.n).toBe(3);
+  it('the tenant lock is keyed on the canonical id: a create naming the tenant in upper case waits on the lower-case lock', async () => {
+    const lettered = 'abcdef12-3456-4789-8abc-def123456789'; // T is all digits: its upper case is itself
+    await insertTenant({ id: lettered });
+    const holder = await pool().connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(REPORT_RUN_PENDING_LOCK_SQL, [lettered]);
+      let settled = false;
+      const pending = repo.create(input({ tenantId: lettered.toUpperCase(), accountId: null }), limits(3))
+        .finally(() => { settled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(settled).toBe(false);
+      await holder.query('COMMIT');
+      expect((await pending).ok).toBe(true);
+    } finally {
+      holder.release();
+    }
   });
 });
 
