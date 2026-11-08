@@ -109,11 +109,13 @@ const reportsSchema = z.object({
       message: 'AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_SQS_QUEUE_URL (the https:// queue URL)',
     });
   }
-  if (data.callbackBaseUrl === undefined || !/^https?:\/\/[^\s/]+(\/\S*)?$/.test(data.callbackBaseUrl)) {
+  // Scheme and host only (a trailing slash is fine): the dispatcher appends the webhook path, and
+  // a base with a path (`https://host/api`) would send every callback to a route that 404s.
+  if (data.callbackBaseUrl === undefined || !/^https?:\/\/[^\s/]+\/?$/.test(data.callbackBaseUrl)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['callbackBaseUrl'],
-      message: 'AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_BASE_URL (the server\'s public base URL, http(s)://host)',
+      message: 'AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_BASE_URL (the server\'s public base URL, http(s)://host, no path)',
     });
   }
   if (data.callbackSecret === undefined || data.callbackSecret.length < REPORTS_CALLBACK_SECRET_MIN_LENGTH) {

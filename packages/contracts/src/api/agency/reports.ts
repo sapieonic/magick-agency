@@ -90,6 +90,7 @@ export const REPORT_CADENCES = ['daily', 'weekly', 'monthly'] as const satisfies
 export type ReportFailureCode =
   | 'assembly_failed'
   | 'subject_unavailable'
+  | 'subject_changed'
   | 'dataset_unreadable'
   | 'dataset_version_unsupported'
   | 'render_failed'
@@ -98,6 +99,7 @@ export type ReportFailureCode =
 export const REPORT_FAILURE_CODES = [
   'assembly_failed',
   'subject_unavailable',
+  'subject_changed',
   'dataset_unreadable',
   'dataset_version_unsupported',
   'render_failed',

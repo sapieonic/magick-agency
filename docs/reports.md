@@ -63,6 +63,7 @@ doc comments are the field-level contract; this section is the summary.
   `ReportRunStatus = 'queued' | 'assembling' | 'rendering' | 'ready' | 'failed' | 'expired'`
   (`REPORT_PENDING_STATUSES` = the first three); `ReportCadence = 'daily' | 'weekly' | 'monthly'`;
   `ReportFailureCode` (a run's `error.code`): `assembly_failed`, `subject_unavailable`,
+  `subject_changed` (a campaign's zone changed between the run's creation and its build),
   `dataset_unreadable`, `dataset_version_unsupported`, `render_failed`, `upload_failed`,
   `render_timed_out`; the renderer reports the middle four (`ReportRendererFailureCode`).
 - Constants: `REPORT_MAX_WINDOW_DAYS = 30`, `REPORT_MAX_STORED_WINDOW_MS` = (31 × 24 + 1) h (RP2,

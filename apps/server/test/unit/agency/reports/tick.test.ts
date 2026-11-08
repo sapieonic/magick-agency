@@ -1,4 +1,5 @@
-// The reports tick over fakes: a subscription's period and catch-up (only the latest missed
+// The reports tick over fakes: the flag gate (a subscription's period skipped and the email
+// withheld while `agency_reports_enabled` is off), a subscription's period and catch-up (only the latest missed
 // period), the duplicate, the advance strictly after now; the reconcile paths (unsent → sent;
 // timed out with every file in S3 → applied through the shared path; without them → re-sent, then
 // failed `render_timed_out` at the last attempt); notify only for the tick that marked the run;
@@ -48,7 +49,9 @@ function deps(over: Partial<ReportTickDeps> = {}) {
     subscriptions: {
       claimDue: vi.fn(async (_now: Date, _limit: number, _handler: ReportSubscriptionDueHandler): Promise<never[]> => []),
     },
-    subject: vi.fn(async (_sub: ReportSubscriptionRecord): Promise<ReportSubscriptionSubject> => ({ available: true, timezone: null })),
+    reportsEnabled: vi.fn(async (_scope: { tenantId: string; accountId: string | null }) => true),
+    // As the real probe answers: a campaign comes back with its zone (unchanged here), others with none.
+    subject: vi.fn(async (sub: ReportSubscriptionRecord): Promise<ReportSubscriptionSubject> => ({ available: true, timezone: sub.kind === 'campaign' ? sub.timezone : null })),
     dispatcher: { dispatch: vi.fn(async () => {}), idle: vi.fn(async () => {}) },
     headObject: vi.fn(async (_key: string) => null as { bytes: number } | null),
     apply: vi.fn(async () => ({ result: 'applied' as const, run: runRecord({ status: 'ready' }) })),
@@ -153,12 +156,42 @@ describe('subscriptions → runs', () => {
     // The next send is 08:00 New York (13:00Z), today, and the decision stores the zone.
     expect(decision).toEqual({ nextRunAt: new Date('2026-11-08T13:00:00Z'), timezone: 'America/New_York' });
 
-    // An unchanged zone writes none; a zone Intl cannot use keeps the stored one.
+    // An unchanged zone writes none.
     d.runs.createForSubscription.mockClear();
     d.subject.mockResolvedValue({ available: true, timezone: 'Europe/London' });
     expect((await dueOnce(sub, d)).decision).not.toHaveProperty('timezone');
-    d.subject.mockResolvedValue({ available: true, timezone: 'Mars/Olympus' });
-    expect((await dueOnce(sub, d)).decision).not.toHaveProperty('timezone');
+  });
+
+  it('an unset or unusable campaign zone is UTC, as the builder and the Insights reads take it', async () => {
+    // Taking the builder's rule (campaignZone) means the run's zone is the one the builder
+    // expects, so the run is never failed as a changed zone (and never stops the schedule).
+    for (const zone of ['Mars/Olympus', null]) {
+      const d = deps();
+      d.subject.mockResolvedValue({ available: true, timezone: zone });
+      const { decision, input } = await dueOnce(subscriptionRecord({ timezone: 'Europe/London', next_run_at: new Date('2026-11-08T08:00:00Z') }), d);
+      expect(input).toMatchObject({ timezone: 'UTC' });
+      expect(decision).toMatchObject({ timezone: 'UTC' });
+    }
+    // An agent or account subscription keeps its own zone (the probe returns none for them).
+    const d = deps();
+    const agent = subscriptionRecord({ kind: 'agent', timezone: 'Europe/London', next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, input } = await dueOnce(agent, d);
+    expect(input).toMatchObject({ timezone: 'Europe/London' });
+    expect(decision).not.toHaveProperty('timezone');
+  });
+
+  it('with the flag off for the account the period is skipped: no run, no probe, the schedule advances', async () => {
+    const d = deps();
+    d.reportsEnabled.mockResolvedValue(false);
+    const sub = subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, result } = await dueOnce(sub, d);
+    expect(d.reportsEnabled).toHaveBeenCalledWith({ tenantId: TENANT, accountId: ACCOUNT });
+    expect(d.subject).not.toHaveBeenCalled();
+    expect(d.runs.createForSubscription).not.toHaveBeenCalled();
+    // Not disabled: turning the flag back on resumes from the next send.
+    expect(decision).toEqual({ nextRunAt: new Date('2026-11-09T08:00:00Z') });
+    expect(result.subscriptions).toMatchObject({ created: 0, disabled: 0, flagOff: 1 });
+    expect(metrics.subs).toHaveBeenCalledWith({ result: 'flag_off' });
   });
 
   it('dueSendAt: the due time, or the latest missed send when that is later', () => {
@@ -270,6 +303,25 @@ describe('notify, expire, gauges', () => {
     expect(d.notify).toHaveBeenCalledTimes(1);
     expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ id: RUN }));
     expect(result.notified).toBe(1);
+  });
+
+  it('with the flag off for the run\'s account the run is marked notified and no email is sent', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' }), runRecord({ id: RUN_B, status: 'ready', account_id: null })]);
+    d.reportsEnabled.mockImplementation(async ({ accountId }) => accountId === null);
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.reportsEnabled).toHaveBeenCalledWith({ tenantId: TENANT, accountId: ACCOUNT });
+    expect(d.runs.markNotified).toHaveBeenCalledWith(RUN);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ id: RUN_B }));
+    expect(result).toMatchObject({ notified: 1, notifySkipped: 1 });
+
+    // A flag read that throws leaves the run unmarked, for the next tick.
+    const d2 = deps();
+    d2.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' })]);
+    d2.reportsEnabled.mockRejectedValue(new Error('flags down'));
+    expect((await createReportTick(opts, d2).runTick()).errors).toBe(1);
+    expect(d2.runs.markNotified).not.toHaveBeenCalled();
   });
 
   it('an email that throws is isolated', async () => {

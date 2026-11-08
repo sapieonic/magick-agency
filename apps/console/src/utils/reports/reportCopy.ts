@@ -50,6 +50,7 @@ export const REPORT_STATUS_META: Record<ReportRunStatus, { label: string; color:
 export const REPORT_FAILURE_MESSAGES: Record<ReportFailureCode, string> = {
   assembly_failed: 'We couldn’t gather the figures for this report. Run it again in a few minutes.',
   subject_unavailable: 'The agent, campaign or account this report is about is no longer available.',
+  subject_changed: 'The campaign’s time zone changed while this report was being prepared. Run it again; scheduled reports use the new zone from the next one.',
   dataset_unreadable: 'The report’s figures couldn’t be read when building the files. Run it again.',
   dataset_version_unsupported: 'The report was prepared by a different version of the service. Run it again.',
   render_failed: 'Building the files failed. Run it again.',

@@ -204,7 +204,8 @@ export const AGENCY_FLAGS = Object.freeze({
   // ── Reports: agent, campaign and account exports (PDF and Excel) ─────────────
   //
   // `docs/reports.md` (RP10). Gates every report route (`403 feature_disabled` when off), the
-  // assembler and the subscription tick's new runs for the tenant/account, and the console's
+  // subscription tick's new runs and the report-ready emails for the tenant/account (a run
+  // already queued still finishes), and the console's
   // Reports page and export entry points. Off by default: a report renders on our own compute
   // (a Lambda or headless Chromium) and stores files for 90 days, so a tenant gets it by an
   // override row, scoped and attributed. The download route is gated too, so turning it off

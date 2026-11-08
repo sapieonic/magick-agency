@@ -11,6 +11,7 @@ import type { ReportFailureCode } from '@magick-agency/contracts/api/agency/repo
 export const REPORT_FAILURE_MESSAGES: Record<ReportFailureCode, string> = {
   assembly_failed: 'The report data could not be gathered.',
   subject_unavailable: 'The report subject is no longer available.',
+  subject_changed: 'The campaign\'s time zone changed while this report was being prepared; run it again.',
   dataset_unreadable: 'The report data could not be read to build the files.',
   dataset_version_unsupported: 'The report data is in a version the file builder does not support.',
   render_failed: 'The report files could not be built.',

@@ -40,6 +40,7 @@ import { localDateOf, localDayBounds, localInstant } from '../../../src/agency/r
 import {
   REPORT_DATASET_BUILDERS,
   ReportSubjectUnavailableError,
+  ReportZoneChangedError,
   type BuiltReport,
   type ReportDetailSource,
 } from '../../../src/agency/reports/datasets/index.js';
@@ -747,10 +748,12 @@ describe('a subject outside the run\'s tenant or account is unavailable', () => 
     // An active agent's own review still builds (the self describe above).
   });
 
-  it('a campaign whose time zone changed after the run was requested is unavailable, not cut in two zones', async () => {
+  it('a campaign whose time zone changed after the run was requested fails as changed (not gone), never cut in two zones', async () => {
     const err = await build(runOf({ ...base, tenant: floor.tenant, account: floor.account, kind: 'campaign', subject: floor.campaigns[0]!, timezone: C1_ZONE }))
       .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ReportSubjectUnavailableError);
+    // Not `ReportSubjectUnavailableError`: the campaign is still there, so no schedule may stop.
+    expect(err).toBeInstanceOf(ReportZoneChangedError);
+    expect(err).not.toBeInstanceOf(ReportSubjectUnavailableError);
     expect((err as Error).message).toBe('The campaign\'s time zone changed after this report was requested; run it again.');
   });
 

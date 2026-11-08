@@ -140,6 +140,25 @@ export const loadReportRenderer: ReportRendererLoader = async () => {
   return mod as ReportRendererModule;
 };
 
+/**
+ * Load the renderer once at start under `inline`, so a server that cannot (the production image
+ * has neither the package's sources nor Chromium) says so at boot, not only in each run's failure.
+ * True when it loaded. Never throws.
+ */
+export async function checkInlineRenderer(loader: ReportRendererLoader = loadReportRenderer): Promise<boolean> {
+  try {
+    await loader();
+    return true;
+  } catch (err) {
+    log.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      'AGENCY_REPORTS_RENDERER=inline but the renderer cannot be loaded: every report run will fail render_failed. '
+        + 'Set AGENCY_REPORTS_RENDERER=sqs (DEPLOYMENT.md 6.4).',
+    );
+    return false;
+  }
+}
+
 /** The renderer's IO over this server's bucket (`storage/s3.ts`). */
 export const s3RendererIO: ReportRendererIO = {
   readObject: (key) => getFile(key),

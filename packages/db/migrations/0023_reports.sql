@@ -186,7 +186,7 @@ CREATE TABLE report_runs (
     (status = 'failed') = (error_code IS NOT NULL)
     AND (error_code IS NULL) = (error_message IS NULL)
     AND (error_code IS NULL OR error_code IN (
-      'assembly_failed', 'subject_unavailable', 'dataset_unreadable', 'dataset_version_unsupported',
+      'assembly_failed', 'subject_unavailable', 'subject_changed', 'dataset_unreadable', 'dataset_version_unsupported',
       'render_failed', 'upload_failed', 'render_timed_out'
     ))
   ),

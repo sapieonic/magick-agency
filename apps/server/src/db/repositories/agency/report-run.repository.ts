@@ -413,7 +413,7 @@ export class ReportRunRepository {
   }
 
   /**
-   * End a run as `failed` with `code` (the assembler: `assembly_failed`, `subject_unavailable`,
+   * End a run as `failed` with `code` (the assembler: `assembly_failed`, `subject_unavailable`, `subject_changed`,
    * under `{ claimGeneration }`; the tick: `render_timed_out`, under `{ renderAttempt }`). The
    * failed run, or null when the fence did not hold.
    */

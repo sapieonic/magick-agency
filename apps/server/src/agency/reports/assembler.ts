@@ -22,9 +22,20 @@
  *  4. `dataset.json` (the builder's dataset plus `detail_files`) through `uploadJson`.
  *  5. `markAssembled`, then `markSent` (both fenced on the claim), then the dispatch.
  *
- * Errors: `ReportSubjectUnavailableError` fails the run `subject_unavailable` (and disables the
- * subscription that produced it, if any); anything else `assembly_failed`. Logged with the run id,
- * never the dataset.
+ * Errors: `ReportSubjectUnavailableError` fails the run `subject_unavailable`, and disables the
+ * subscription that produced it only when the tick's own probe (`probeSubscriptionSubject`) agrees
+ * the subject is gone: a builder can refuse for a passing reason (an account report's campaign
+ * moved mid-build) and the schedule must survive that. `ReportZoneChangedError` (a campaign's zone
+ * changed after the run was made) fails `subject_changed`; anything else `assembly_failed`.
+ * Logged with the run id, never the dataset.
+ *
+ * ── Restarts ────────────────────────────────────────────────────────────────
+ * `stop()` waits at most `stopWaitMs` for the run in flight (a build may run for minutes; the
+ * container's grace is 45 s). A run left `assembling` with no dataset by a stop, a crash or a
+ * kill is reclaimed by the FIRST pass after start, whatever its claim's age: one replica (D2), so
+ * a claim older than this process's first pass belongs to a process that is gone. Later passes
+ * reclaim only claims older than `staleAfterMs`. The claim fence keeps a mistaken reclaim (a
+ * clock skew) harmless.
  *
  * ── Read timeouts ───────────────────────────────────────────────────────────
  * The builders read through the shared pool (the screens' own reads, RP1), and the builder seam
@@ -51,6 +62,7 @@ import { uploadJson, uploadStream } from '../../storage/s3.js';
 import {
   REPORT_DATASET_BUILDERS,
   ReportSubjectUnavailableError,
+  ReportZoneChangedError,
   type ReportDatasetBuilder,
   type ReportDetailSource,
 } from './datasets/index.js';
@@ -58,6 +70,7 @@ import { reportDatasetKey, reportDetailKey, type ReportKeyScope } from './report
 import type { ReportRenderDispatcher } from './dispatch.js';
 import { countTerminalRun } from './apply.js';
 import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
+import { probeSubscriptionSubject, type ReportSubscriptionSubject, type SubjectRef } from './subscription-subject.js';
 
 const log = createChildLogger({ component: 'agency-reports-assembler' });
 
@@ -71,6 +84,9 @@ export const REPORT_DETAIL_CONTENT_TYPE = 'application/gzip';
 /** User-facing fallbacks stored on a failed run (the console keys its copy off the code). */
 export const ASSEMBLY_FAILED_MESSAGE = REPORT_FAILURE_MESSAGES.assembly_failed;
 export const SUBJECT_UNAVAILABLE_MESSAGE = REPORT_FAILURE_MESSAGES.subject_unavailable;
+export const SUBJECT_CHANGED_MESSAGE = REPORT_FAILURE_MESSAGES.subject_changed;
+/** How long `stop()` waits for the run in flight before giving up on it (inside the 45 s grace). */
+export const REPORT_ASSEMBLER_STOP_WAIT_MS = 20_000;
 
 export interface ReportAssemblerOptions {
   intervalMs: number;
@@ -78,6 +94,7 @@ export interface ReportAssemblerOptions {
   maxAttempts: number;
   staleAfterMs?: number;
   buildTimeoutMs?: number;
+  stopWaitMs?: number;
 }
 
 export interface ReportAssemblerStorage {
@@ -87,8 +104,12 @@ export interface ReportAssemblerStorage {
 
 export interface ReportAssemblerDeps {
   repo: Pick<ReportRunRepository, 'claimNextQueued' | 'markAssembled' | 'markSent' | 'markFailed'>;
-  /** A subscription whose run failed `subject_unavailable` is disabled (its failure email is the last). */
+  /**
+   * A subscription whose run failed `subject_unavailable` is disabled (its failure email is the
+   * last) when `subject` (the tick's probe) also says the subject is gone.
+   */
   subscriptions: Pick<ReportSubscriptionRepository, 'disable'>;
+  subject(ref: SubjectRef): Promise<ReportSubscriptionSubject>;
   builders: Record<ReportKind, ReportDatasetBuilder>;
   storage: ReportAssemblerStorage;
   dispatcher: ReportRenderDispatcher;
@@ -97,7 +118,7 @@ export interface ReportAssemblerDeps {
 
 export type ReportAssembleOutcome =
   | { runId: string; outcome: 'sent'; attempt: number }
-  | { runId: string; outcome: 'failed'; code: 'assembly_failed' | 'subject_unavailable' }
+  | { runId: string; outcome: 'failed'; code: 'assembly_failed' | 'subject_unavailable' | 'subject_changed' }
   /** A fenced write was refused: the claim was taken over; this assembler stopped. */
   | { runId: string; outcome: 'claim_lost' }
   /** Recorded and sent, but the dispatch threw; the tick re-sends it. */
@@ -113,6 +134,7 @@ export function defaultAssemblerDeps(dispatcher: ReportRenderDispatcher): Report
   return {
     repo: reportRunRepository,
     subscriptions: reportSubscriptionRepository,
+    subject: probeSubscriptionSubject,
     builders: REPORT_DATASET_BUILDERS,
     storage: { uploadStream, uploadJson },
     dispatcher,
@@ -192,7 +214,7 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
 
   const fail = async (
     run: ReportRunRecord,
-    code: 'assembly_failed' | 'subject_unavailable',
+    code: 'assembly_failed' | 'subject_unavailable' | 'subject_changed',
     message: string,
   ): Promise<ReportAssembleOutcome> => {
     const failed = await deps.repo.markFailed(run.id, code, message, { claimGeneration: run.claim_generation });
@@ -200,13 +222,16 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
     countTerminalRun(failed);
     if (code === 'subject_unavailable' && run.subscription_id) {
       // The subject left between the tick's probe and the build: stop the schedule here, so this
-      // run's failure email is the last one its recipients get.
+      // run's failure email is the last one its recipients get. Only when the probe agrees: a
+      // refusal for a passing reason leaves the schedule alone, and a probe that throws leaves it
+      // to the tick's own probe next period.
       try {
-        if (await deps.subscriptions.disable(run.subscription_id)) {
-          log.warn({ runId: run.id, subscriptionId: run.subscription_id }, 'Report subscription disabled: its subject is gone');
+        const subject = await deps.subject(run);
+        if (!subject.available && (await deps.subscriptions.disable(run.subscription_id))) {
+          log.warn({ runId: run.id, subscriptionId: run.subscription_id, reason: subject.reason }, 'Report subscription disabled: its subject is gone');
         }
       } catch (err) {
-        log.error({ runId: run.id, subscriptionId: run.subscription_id, err }, 'Report subscription could not be disabled; the tick\'s probe will');
+        log.error({ runId: run.id, subscriptionId: run.subscription_id, err }, 'Report subscription could not be checked or disabled; the tick\'s probe will');
       }
     }
     return { runId: run.id, outcome: 'failed', code };
@@ -248,6 +273,10 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
         log.warn({ runId: run.id, kind: run.kind, reason: err.message }, 'Report subject unavailable');
         return fail(run, 'subject_unavailable', SUBJECT_UNAVAILABLE_MESSAGE);
       }
+      if (err instanceof ReportZoneChangedError) {
+        log.warn({ runId: run.id, kind: run.kind, reason: err.message }, 'Report campaign zone changed after the run was made');
+        return fail(run, 'subject_changed', SUBJECT_CHANGED_MESSAGE);
+      }
       log.error({ runId: run.id, kind: run.kind, err }, 'Report assembly failed');
       return fail(run, 'assembly_failed', ASSEMBLY_FAILED_MESSAGE);
     }
@@ -275,13 +304,18 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
     }
   };
 
-  /** Claim and assemble until nothing is queued or `shouldStop()`. */
-  const drain = async (shouldStop: () => boolean): Promise<ReportAssembleOutcome[]> => {
+  /**
+   * Claim and assemble until nothing is queued or `shouldStop()`. `reclaimOrphans` (the first pass
+   * after start): an `assembling` run claimed before this pass began is reclaimed at once.
+   */
+  const drain = async (shouldStop: () => boolean, opts: { reclaimOrphans?: boolean } = {}): Promise<ReportAssembleOutcome[]> => {
     const outcomes: ReportAssembleOutcome[] = [];
+    const passStart = deps.now().getTime();
     while (!shouldStop()) {
       let run: ReportRunRecord | null;
       try {
-        run = await deps.repo.claimNextQueued(new Date(deps.now().getTime() - staleAfterMs));
+        const stale = deps.now().getTime() - staleAfterMs;
+        run = await deps.repo.claimNextQueued(new Date(opts.reclaimOrphans ? Math.max(stale, passStart) : stale));
       } catch (err) {
         log.error({ err }, 'Report claim failed; retrying next pass');
         break;
@@ -298,12 +332,16 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
 /** Start the loop (module header). */
 export function startReportAssembler(options: ReportAssemblerOptions, deps: ReportAssemblerDeps): ReportAssembler {
   const assembler = createReportAssembler(options, deps);
+  const stopWaitMs = options.stopWaitMs ?? REPORT_ASSEMBLER_STOP_WAIT_MS;
   let stopping = false;
+  let first = true;
   let running: Promise<ReportAssembleOutcome[]> | null = null;
 
   const runPass = async (): Promise<ReportAssembleOutcome[] | null> => {
     if (running || stopping) return null;
-    running = assembler.drain(() => stopping);
+    const reclaimOrphans = first;
+    first = false;
+    running = assembler.drain(() => stopping, { reclaimOrphans });
     try {
       return await running;
     } finally {
@@ -320,7 +358,15 @@ export function startReportAssembler(options: ReportAssemblerOptions, deps: Repo
     async stop() {
       stopping = true;
       clearInterval(timer);
-      if (running) await running.catch(() => undefined);
+      if (running) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const waited = await Promise.race([
+          running.then(() => true, () => true),
+          new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), stopWaitMs); timer.unref?.(); }),
+        ]);
+        clearTimeout(timer);
+        if (!waited) log.warn({ stopWaitMs }, 'Report assembler stopped with a run in flight; the next start reclaims it');
+      }
       log.info('Report assembler stopped');
     },
   };

@@ -3,9 +3,14 @@
  * process only (started by `startAgency`), never overlapping itself:
  *
  *  (a) **subscriptions → runs** through `claimDue`: each due subscription in its own transaction.
- *      Its subject is probed first (`subscription-subject.ts`): one that is gone disables the
- *      subscription (no run, no failure email every period). A campaign subscription takes the
- *      campaign's CURRENT zone (RP3), stored back on the subscription when it changed.
+ *      With `agency_reports_enabled` off for its tenant and account the period is skipped: no
+ *      run, the schedule advances, and turning the flag back on resumes it (the `flag_off`
+ *      metric). Its subject is probed next (`subscription-subject.ts`): one that is gone disables
+ *      the subscription (no run, no failure email every period). A campaign subscription takes
+ *      the campaign's CURRENT zone as the builder and the Insights reads take it (`campaignZone`,
+ *      RP3), stored back on the subscription when it changed. A zone Postgres does not know is
+ *      not caught here: the run fails `assembly_failed` each period, as the campaign's own
+ *      Insights tab fails, and the failure email says so;
  *      Its run covers `periodFor(cadence, sendAt, zone)`, where `sendAt` is its due `next_run_at`,
  *      or, when more than one send was missed (downtime), the most recent missed send
  *      (`previousRunAt(now)`): catch-up sends only the latest period (RP14). The unique
@@ -18,7 +23,8 @@
  *      webhook; else (a file missing, or the HEAD itself failing) re-sent while
  *      `render_attempt < maxAttempts`, else failed `render_timed_out`;
  *  (c) **notify**: each finished run that emails someone is marked notified first, and only the
- *      tick that marked it sends (at most once);
+ *      tick that marked it sends (at most once); with the flag off for the run's tenant and
+ *      account it is marked and not sent (its link would land on a page the flag hides);
  *  (d) **expire** ready runs past `expires_at` (RP8);
  *  (e) the pending gauges.
  *
@@ -46,7 +52,7 @@ import { localDayBounds, nextRunAt, periodFor, previousRunAt } from './schedule.
 import { reportOutputKey } from './report-keys.js';
 import type { ReportRenderDispatcher } from './dispatch.js';
 import type { ReportSubscriptionSubject } from './subscription-subject.js';
-import { isUsableTimezone } from '../calling-hours.js';
+import { campaignZone } from '../insights/range.js';
 import { countTerminalRun, type RenderOutcomeResult } from './apply.js';
 import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 
@@ -82,6 +88,8 @@ export interface ReportTickDeps {
     | 'pendingStats'
   >;
   subscriptions: Pick<ReportSubscriptionRepository, 'claimDue'>;
+  /** Is `agency_reports_enabled` on for this tenant and account? */
+  reportsEnabled(scope: { tenantId: string; accountId: string | null }): Promise<boolean>;
   /** Is a due subscription's subject still there (and a campaign's current zone)? `probeSubscriptionSubject`. */
   subject(sub: ReportSubscriptionRecord): Promise<ReportSubscriptionSubject>;
   dispatcher: ReportRenderDispatcher;
@@ -95,11 +103,13 @@ export interface ReportTickDeps {
 }
 
 export interface ReportTickResult {
-  subscriptions: { created: number; duplicate: number; disabled: number; errors: number };
+  subscriptions: { created: number; duplicate: number; disabled: number; flagOff: number; errors: number };
   resent: number;
   reconciled: number;
   timedOut: number;
   notified: number;
+  /** Finished runs marked notified without an email: the flag was off for their account. */
+  notifySkipped: number;
   expired: number;
   errors: number;
 }
@@ -117,7 +127,14 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
 
   const subscriptionsStep = async (now: Date, result: ReportTickResult): Promise<void> => {
     const handler = async (claimed: ReportSubscriptionRecord, client: PoolClient): Promise<ReportSubscriptionDueDecision> => {
-      // The subject first: one that is gone would only produce a run failing
+      // Reports turned off for the account: skip this period without disabling, so turning the
+      // flag back on resumes the schedule (from its next send, not a catch-up of the gap).
+      if (!(await deps.reportsEnabled({ tenantId: claimed.tenant_id, accountId: claimed.account_id }))) {
+        result.subscriptions.flagOff += 1;
+        agencyReportsSubscriptionRunsTotal.inc({ result: 'flag_off' });
+        return { nextRunAt: nextRunAt(claimed, now) };
+      }
+      // Then the subject: one that is gone would only produce a run failing
       // `subject_unavailable` (and a failure email) every period, so the subscription stops.
       const subject = await deps.subject(claimed);
       if (!subject.available) {
@@ -126,14 +143,13 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
         return { disable: true };
       }
       // A campaign subscription follows the campaign's CURRENT zone (RP3): the period, its bounds
-      // and the next send are cut in it, and the stored zone follows it.
+      // and the next send are cut in it, and the stored zone follows it. `campaignZone` is the
+      // builder's and the Insights reads' own rule (an unset or unusable zone is UTC), so the
+      // run's zone is the one the builder expects and never fails it as a changed zone.
       let sub = claimed;
-      if (subject.timezone !== null && subject.timezone !== claimed.timezone) {
-        if (isUsableTimezone(subject.timezone)) {
-          sub = { ...claimed, timezone: subject.timezone };
-        } else {
-          log.warn({ subscriptionId: claimed.id, timezone: subject.timezone }, 'Campaign zone not usable; the subscription keeps its stored zone');
-        }
+      if (claimed.kind === 'campaign') {
+        const zone = campaignZone(subject.timezone);
+        if (zone !== claimed.timezone) sub = { ...claimed, timezone: zone };
       }
       const sendAt = dueSendAt(sub, now);
       const period = periodFor(sub.cadence, sendAt, sub.timezone);
@@ -252,7 +268,13 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
     const runs = await deps.runs.findFinishedUnnotified(batch);
     for (const run of runs) {
       try {
+        // The flag is read before the mark, so a flag read that throws leaves the run to retry.
+        const enabled = await deps.reportsEnabled({ tenantId: run.tenant_id, accountId: run.account_id });
         if (!(await deps.runs.markNotified(run.id))) continue;
+        if (!enabled) {
+          result.notifySkipped += 1;
+          continue;
+        }
         result.notified += 1;
         await deps.notify(run);
       } catch (err) {
@@ -276,8 +298,8 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
   const runTick = async (): Promise<ReportTickResult> => {
     const now = deps.now();
     const result: ReportTickResult = {
-      subscriptions: { created: 0, duplicate: 0, disabled: 0, errors: 0 },
-      resent: 0, reconciled: 0, timedOut: 0, notified: 0, expired: 0, errors: 0,
+      subscriptions: { created: 0, duplicate: 0, disabled: 0, flagOff: 0, errors: 0 },
+      resent: 0, reconciled: 0, timedOut: 0, notified: 0, notifySkipped: 0, expired: 0, errors: 0,
     };
     const step = async (name: string, work: () => Promise<void>): Promise<void> => {
       try {

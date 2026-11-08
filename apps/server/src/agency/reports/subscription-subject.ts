@@ -25,7 +25,7 @@ export type ReportSubscriptionSubject =
   /** `timezone`: the campaign's current zone for a campaign subscription; null for the others. */
   | { available: true; timezone: string | null };
 
-type SubjectRef = Pick<ReportSubscriptionRecord, 'tenant_id' | 'account_id' | 'kind' | 'subject_id'>;
+export type SubjectRef = Pick<ReportSubscriptionRecord, 'tenant_id' | 'account_id' | 'kind' | 'subject_id'>;
 
 export async function probeSubscriptionSubject(sub: SubjectRef): Promise<ReportSubscriptionSubject> {
   const gone = (reason: string): ReportSubscriptionSubject => ({ available: false, reason });

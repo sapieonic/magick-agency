@@ -7,6 +7,7 @@ import type { ReportRenderCallback, ReportRenderMessage } from '@magick-agency/c
 import {
   REPORT_CALLBACK_PATH,
   buildRenderMessage,
+  checkInlineRenderer,
   createInlineDispatcher,
   createSqsDispatcher,
   rendererLogLine,
@@ -71,6 +72,12 @@ describe('the SQS dispatcher', () => {
 });
 
 describe('the inline dispatcher', () => {
+  it('checkInlineRenderer loads the renderer once at start: true, or false (logged) when it cannot', async () => {
+    const renderer: ReportRendererModule = { renderRun: vi.fn() };
+    expect(await checkInlineRenderer(async () => renderer)).toBe(true);
+    expect(await checkInlineRenderer(async () => { throw new Error('Cannot find module'); })).toBe(false);
+  });
+
   function renderer(impl?: (m: ReportRenderMessage) => Promise<ReportRenderCallback>) {
     const calls: string[] = [];
     let active = 0;

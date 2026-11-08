@@ -77,6 +77,7 @@ import {
 } from '../load/load-harness.js';
 import { reportRunRepository, reportSubscriptionRepository } from '../../../src/db/repositories/agency.repository.js';
 import { createReportAssembler } from '../../../src/agency/reports/assembler.js';
+import { probeSubscriptionSubject } from '../../../src/agency/reports/subscription-subject.js';
 import { createInlineDispatcher, s3RendererIO, type ReportRenderDispatcher } from '../../../src/agency/reports/dispatch.js';
 import { applyRenderOutcome } from '../../../src/agency/reports/apply.js';
 import { signReportCallback } from '../../../src/agency/reports/callback-signature.js';
@@ -125,6 +126,7 @@ function assemblerWith(dispatcher: ReportRenderDispatcher) {
     {
       repo: reportRunRepository,
       subscriptions: reportSubscriptionRepository,
+      subject: probeSubscriptionSubject,
       builders: { agent: fakeBuilder, campaign: fakeBuilder, account: fakeBuilder },
       storage: { uploadStream, uploadJson },
       dispatcher,

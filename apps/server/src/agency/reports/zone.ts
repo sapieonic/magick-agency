@@ -15,10 +15,12 @@ const known = new Set<string>();
 export const POSTGRES_ZONE_SQL = 'SELECT EXISTS (SELECT 1 FROM pg_timezone_names WHERE lower(name) = lower($1)) AS known';
 
 export async function postgresKnowsZone(zone: string): Promise<boolean> {
-  if (known.has(zone)) return true;
+  // Keyed in lower case, as the SQL matches, so case variants of one zone share an entry.
+  const key = zone.toLowerCase();
+  if (known.has(key)) return true;
   const { rows } = await getPool().query<{ known: boolean }>(POSTGRES_ZONE_SQL, [zone]);
   const found = rows[0]?.known === true;
-  if (found) known.add(zone);
+  if (found) known.add(key);
   return found;
 }
 

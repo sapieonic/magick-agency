@@ -1,7 +1,9 @@
 // The report assembler over a fake builder, a fake S3 and a fake dispatcher: the detail cap
 // (RP12: the iterator's `return()` is called, the file and the run are `truncated`), the gzipped
 // NDJSON it writes, the dataset it records, the claim fence (a refused write stops it), the claim
-// ceiling, the error mapping and the no-overlap loop. The claim SQL and the fenced writes are
+// ceiling, the error mapping (a subscription stops only when the tick's probe agrees its subject
+// is gone; a changed campaign zone is `subject_changed`), the no-overlap loop, the first pass's
+// orphan reclaim and the bounded stop. The claim SQL and the fenced writes are
 // pinned on Postgres by the repository's integration tests and the reports round trip.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'node:zlib';
@@ -19,10 +21,13 @@ import {
   createReportAssembler,
   startReportAssembler,
   streamDetailFile,
+  SUBJECT_CHANGED_MESSAGE,
   type ReportAssemblerDeps,
 } from '../../../../src/agency/reports/assembler.js';
+import type { ReportSubscriptionSubject } from '../../../../src/agency/reports/subscription-subject.js';
 import {
   ReportSubjectUnavailableError,
+  ReportZoneChangedError,
   type ReportDatasetBuilder,
   type ReportDetailSource,
 } from '../../../../src/agency/reports/datasets/index.js';
@@ -98,6 +103,8 @@ function deps(over: Partial<ReportAssemblerDeps> = {}, run = runRecord({ status:
       markFailed: vi.fn(async (id: string, code: string, ..._rest: unknown[]) => runRecord({ id, status: 'failed', error_code: code as never })),
     },
     subscriptions: { disable: vi.fn(async (_id: string) => true) },
+    // The tick's probe: by default the subject is gone (the builder's refusal stands).
+    subject: vi.fn(async (_ref: unknown): Promise<ReportSubscriptionSubject> => ({ available: false, reason: 'the campaign no longer exists in the account' })),
     builders: builders(async (ctx) => ({ dataset: datasetOf(ctx.run), details: [] })),
     storage,
     dispatcher: { dispatch: vi.fn(async (..._args: unknown[]) => {}), idle: vi.fn(async () => {}) },
@@ -247,6 +254,33 @@ describe('assembling one run', () => {
     expect((await createReportAssembler(opts, d3).drain(() => false))[0]).toMatchObject({ outcome: 'failed', code: 'subject_unavailable' });
   });
 
+  it('a builder refusal the tick\'s probe does not share fails the run and keeps the schedule', async () => {
+    // An account report's campaign moved mid-build: the builder refuses, but the account (the
+    // subject) is still there, so the next period must still run.
+    const refused = builders(async () => { throw new ReportSubjectUnavailableError('a campaign the report covers is no longer in its account'); });
+    const d = deps({ builders: refused }, runRecord({ status: 'assembling', kind: 'account', subscription_id: SUBSCRIPTION }));
+    d.subject.mockResolvedValue({ available: true, timezone: null });
+    expect((await createReportAssembler(opts, d).drain(() => false))[0]).toMatchObject({ outcome: 'failed', code: 'subject_unavailable' });
+    expect(d.subject).toHaveBeenCalledWith(expect.objectContaining({ id: RUN, subscription_id: SUBSCRIPTION }));
+    expect(d.subscriptions.disable).not.toHaveBeenCalled();
+
+    // A probe that throws leaves the schedule to the tick's own probe.
+    const d2 = deps({ builders: refused }, runRecord({ status: 'assembling', subscription_id: SUBSCRIPTION }));
+    d2.subject.mockRejectedValue(new Error('db down'));
+    expect((await createReportAssembler(opts, d2).drain(() => false))[0]).toMatchObject({ outcome: 'failed', code: 'subject_unavailable' });
+    expect(d2.subscriptions.disable).not.toHaveBeenCalled();
+  });
+
+  it('a campaign whose zone changed after the run was made fails subject_changed and never stops a schedule', async () => {
+    const changed = builders(async () => { throw new ReportZoneChangedError('zone changed'); });
+    const d = deps({ builders: changed }, runRecord({ status: 'assembling', subscription_id: SUBSCRIPTION }));
+    const [outcome] = await createReportAssembler(opts, d).drain(() => false);
+    expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'subject_changed' });
+    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'subject_changed', SUBJECT_CHANGED_MESSAGE, { claimGeneration: 1 });
+    expect(d.subject).not.toHaveBeenCalled();
+    expect(d.subscriptions.disable).not.toHaveBeenCalled();
+  });
+
   it('maps any other failure (a read, an upload) to assembly_failed, never storing the error text', async () => {
     const d = deps({ builders: builders(async () => { throw new Error('relation "secret" does not exist'); }) });
     const [outcome] = await createReportAssembler(opts, d).drain(() => false);
@@ -277,6 +311,13 @@ describe('assembling one run', () => {
     await createReportAssembler({ ...opts, staleAfterMs: 60_000 }, d).drain(() => false);
     expect(d.repo.claimNextQueued).toHaveBeenCalledWith(new Date('2026-11-08T09:59:00Z'));
   });
+
+  it('reclaimOrphans (the first pass after start) reclaims any claim older than the pass itself', async () => {
+    const d = deps();
+    await createReportAssembler(opts, d).drain(() => false, { reclaimOrphans: true });
+    // Not the 30-minute stale cutoff: the pass's own start.
+    expect(d.repo.claimNextQueued).toHaveBeenCalledWith(new Date('2026-11-08T10:00:00Z'));
+  });
 });
 
 describe('the loop', () => {
@@ -304,6 +345,27 @@ describe('the loop', () => {
     expect(outcomes?.map((o) => o.outcome)).toEqual(['sent', 'sent']);
     expect(maxInFlight).toBe(1);
     await loop.stop();
+  });
+
+  it('the first pass after start reclaims orphaned claims; later passes use the stale cutoff', async () => {
+    const d = deps();
+    const loop = startReportAssembler(opts, d);
+    await loop.runPass();
+    await loop.runPass();
+    expect(d.repo.claimNextQueued.mock.calls[0]![0]).toEqual(new Date('2026-11-08T10:00:00Z'));
+    expect(d.repo.claimNextQueued.mock.calls.at(-1)![0]).toEqual(new Date('2026-11-08T09:30:00Z'));
+    await loop.stop();
+  });
+
+  it('stop gives up on a run in flight after stopWaitMs (the next start reclaims it)', async () => {
+    const d = deps({ builders: builders(() => new Promise(() => {})) });
+    const loop = startReportAssembler({ ...opts, stopWaitMs: 20 }, d);
+    void loop.runPass();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const started = Date.now();
+    await loop.stop();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(await loop.runPass()).toBeNull();
   });
 
   it('stop waits for the run in flight and starts no new pass', async () => {

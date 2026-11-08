@@ -127,7 +127,7 @@ describe('parseConfig', () => {
     it('sqs without its settings fails boot, naming each missing one', () => {
       expect(messages({ AGENCY_REPORTS_RENDERER: 'sqs' })).toEqual([
         'agency.reports.sqsQueueUrl: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_SQS_QUEUE_URL (the https:// queue URL)',
-        "agency.reports.callbackBaseUrl: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL, http(s)://host)",
+        "agency.reports.callbackBaseUrl: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL, http(s)://host, no path)",
         'agency.reports.callbackSecret: AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_SECRET of at least 32 characters',
       ]);
       expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET: 'x'.repeat(31) })).toEqual([
@@ -135,6 +135,9 @@ describe('parseConfig', () => {
       ]);
       expect(messages({ ...SQS, AGENCY_REPORTS_SQS_QUEUE_URL: 'report-jobs' })).toHaveLength(1);
       expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_BASE_URL: 'api.example.com' })).toHaveLength(1);
+      // A path would put the webhook under it (`/api/webhooks/…`), a route that 404s.
+      expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_BASE_URL: 'https://api.example.com/api' })).toHaveLength(1);
+      expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_BASE_URL: 'https://api.example.com' })).toHaveLength(0);
       expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET: ' '.repeat(40) })).toHaveLength(1);
     });
 

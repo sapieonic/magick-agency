@@ -913,8 +913,13 @@ comes down by itself; users re-run the failed ones.
 **Means:** 4+ report runs ended `failed` in an hour (`agency_reports_runs_total{status="failed"}`).
 
 **Check:** the failed runs' `error.code`. `assembly_failed`, `subject_unavailable`: the server's
-assembly. `dataset_unreadable`, `render_failed`, `upload_failed`: the renderer (its logs; an
-S3 error is its role or the bucket). `dataset_version_unsupported`: the server was deployed
+assembly. `subject_changed`: a campaign's zone was edited while its run waited; nothing to fix.
+`dataset_unreadable`, `render_failed`, `upload_failed`: the renderer (its logs; an S3 error is
+its role or the bucket; a missing `dataset.json`, for a message replayed after the 7-day dataset
+lifecycle, reads as `AccessDenied` because the renderer's role has no `ListBucket`).
+`render_failed` with renderer version `inline-unavailable`: the server is on
+`AGENCY_REPORTS_RENDERER=inline` without the renderer (the production image); its boot log says
+so; set `sqs`. `dataset_version_unsupported`: the server was deployed
 before the renderer; apply the renderer (aws/README.md, "Deploy order"). `render_timed_out`: no
 callback, as in `agy-reports-pending-too-long`. A renderer that started failing after an apply:
 roll `live` back (aws/README.md, "Rollback").

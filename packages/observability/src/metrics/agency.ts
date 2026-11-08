@@ -877,5 +877,5 @@ export const agencyReportsEmailsTotal = counter<'result'>(meter, 'agency_reports
 });
 
 export const agencyReportsSubscriptionRunsTotal = counter<'result'>(meter, 'agency_reports_subscription_runs_total', {
-  description: 'Subscription periods turned into runs, by result: created, or duplicate (the period already had one)',
+  description: 'Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)',
 });

@@ -2,8 +2,9 @@
  * The report pipeline's background work, assembled from config: the render dispatcher
  * (`./dispatch.ts`), the assembler (`./assembler.ts`) and the reports tick (`./tick.ts`).
  * Started by `startAgency` (`bootstrap/agency.ts`) in the main process only, whatever the
- * `agency_reports_enabled` flag says (the flag gates requests; with it off nothing is queued and
- * both loops find nothing to do). Stopped assembler first (its run in flight records or is
+ * `agency_reports_enabled` flag says: the flag gates the routes, and the tick reads it per tenant
+ * and account before a subscription's run and before an email (`tick.ts`); a run already queued
+ * when the flag goes off still finishes, its files hidden behind the gated download. Stopped assembler first (its run in flight records or is
  * reclaimed later), then the tick, then the inline renderer's queue is drained.
  */
 import { createChildLogger } from '@magick-agency/observability';
@@ -12,6 +13,7 @@ import { headFile } from '../../storage/s3.js';
 import { sendAgencyReportReadyEmails } from '../../notifications/agency-report-ready.js';
 import { applyRenderOutcome, defaultApplyDeps } from './apply.js';
 import {
+  checkInlineRenderer,
   createInlineDispatcher,
   createSqsDispatcher,
   sqsSender,
@@ -21,6 +23,7 @@ import {
 import { defaultAssemblerDeps, startReportAssembler, type ReportAssembler } from './assembler.js';
 import { defaultTickRepos, startReportTick, type ReportTick } from './tick.js';
 import { probeSubscriptionSubject } from './subscription-subject.js';
+import { FLAGS, getFeatureFlagService } from '../../feature-flags/index.js';
 
 const log = createChildLogger({ component: 'agency-reports' });
 
@@ -87,6 +90,7 @@ export function startReportPipeline(
     log.warn('No S3 bucket configured (S3_AUDIO_BUCKET): report runs will fail to assemble');
   }
   const dispatcher = createReportDispatcher(config, opts);
+  if (reports.renderer === 'inline') void checkInlineRenderer(opts.loader);
   const assembler = startReportAssembler(
     { intervalMs: reports.assemblerIntervalMs, maxDetailRows: reports.maxDetailRows, maxAttempts: reports.maxAttempts },
     defaultAssemblerDeps(dispatcher),
@@ -97,6 +101,10 @@ export function startReportPipeline(
     {
       ...defaultTickRepos,
       dispatcher,
+      reportsEnabled: ({ tenantId, accountId }) => getFeatureFlagService().isEnabled(FLAGS.agency_reports_enabled, {
+        tenantId,
+        ...(accountId ? { accountId } : {}),
+      }),
       subject: probeSubscriptionSubject,
       headObject: headReportObject,
       apply: (runId, attempt, callback) => applyRenderOutcome(runId, attempt, callback, applyDeps),

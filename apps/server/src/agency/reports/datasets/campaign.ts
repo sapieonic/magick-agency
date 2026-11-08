@@ -50,7 +50,7 @@ import {
   secondsCell,
   wire,
 } from './shared.js';
-import { ReportSubjectUnavailableError, type ReportDatasetBuilder, type ReportDetailSource } from './types.js';
+import { ReportSubjectUnavailableError, ReportZoneChangedError, type ReportDatasetBuilder, type ReportDetailSource } from './types.js';
 
 const log = createChildLogger({ component: 'report-datasets' });
 
@@ -103,9 +103,10 @@ export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ ru
   // The run's window was cut in the campaign's zone when it was requested (RP3); the Insights day
   // buckets are cut in the zone the campaign has NOW. A zone changed in between would serve
   // `range` in one zone and `trends` in the other (and break `campaign.timezone ===
-  // range.timezone`), so the run fails `subject_unavailable` and the user runs it again.
+  // range.timezone`), so the run fails (`assembly_failed`: the campaign is still there) and the
+  // next run, or a re-run, is cut in the new zone.
   if (campaignZone(campaign.default_timezone) !== run.timezone) {
-    throw new ReportSubjectUnavailableError('The campaign\'s time zone changed after this report was requested; run it again.');
+    throw new ReportZoneChangedError('The campaign\'s time zone changed after this report was requested; run it again.');
   }
   const range = insightsRangeFor(campaign, run, now);
   const dayRange = insightsRangeFor(campaign, run, now, 'day');

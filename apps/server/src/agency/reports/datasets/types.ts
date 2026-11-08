@@ -57,3 +57,16 @@ export class ReportSubjectUnavailableError extends Error {
     this.name = 'ReportSubjectUnavailableError';
   }
 }
+
+/**
+ * Thrown by the campaign builder when the campaign's time zone changed between the request (or
+ * the tick that made a subscription's run) and the build: the run's window was cut in the old
+ * zone, the Insights reads cut days in the new one. The subject is still there, so the run fails
+ * `assembly_failed` (the next run, or a re-run, uses the new zone) and no subscription stops.
+ */
+export class ReportZoneChangedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReportZoneChangedError';
+  }
+}
