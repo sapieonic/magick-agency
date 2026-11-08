@@ -177,6 +177,18 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* The export entry point, pushed to the header's far end. Empty while reports are off. */
+.drilldownActions {
+  margin-left: auto;
+}
+
+.drilldownActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .back {

@@ -2568,6 +2568,76 @@
       "source": "apps/console/src/api/agencyAssignment.ts",
       "status": "served",
       "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/reports",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): queue an ad hoc run (202)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/reports",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): the run history, newest first, keyset paged"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/reports/:id",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): one run, polled while it is being prepared"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/reports/:id/files/:format",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): a five-minute download URL for one file"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/reports/:id/retry",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): \"Run again\": a new run with the same parameters (202)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/report-subscriptions",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): the account's scheduled reports"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/report-subscriptions",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): create a scheduled report (201)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/agency/report-subscriptions/:id",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): edit, pause or resume a scheduled report"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/report-subscriptions/:id",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): delete a scheduled report (204)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/report-subscriptions/:id/run-now",
+      "source": "apps/console/src/api/reports.ts",
+      "status": "served",
+      "reason": "reports route, served by the public API layer at the console path (contracts api/agency/reports.ts, docs/reports.md): produce a scheduled report's run now (202)"
     }
   ]
 }

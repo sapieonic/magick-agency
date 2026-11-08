@@ -37,3 +37,24 @@ describe('Toast — request id chip', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('req_77'));
   });
 });
+
+describe('Toast — action button', () => {
+  it('renders no action button when the toast has none', () => {
+    render(<Toast toast={toast({ message: 'Saved', type: 'success' })} onDismiss={vi.fn()} />);
+    expect(screen.queryAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Dismiss notification']);
+  });
+
+  it('runs the action and dismisses the toast when its button is pressed', async () => {
+    const onClick = vi.fn();
+    const onDismiss = vi.fn();
+    render(
+      <Toast
+        toast={toast({ message: 'Report queued', type: 'success', action: { label: 'View report', onClick } })}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'View report' }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('t1'));
+  });
+});

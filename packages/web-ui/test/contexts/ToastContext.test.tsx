@@ -28,6 +28,17 @@ describe('ToastProvider', () => {
     expect(screen.getByText('Could not save')).toBeTruthy();
   });
 
+  it('carries an action through to the toast it shows', () => {
+    const { seen, Consumer } = countingConsumer();
+    render(<ToastProvider><Consumer /></ToastProvider>);
+    let clicked = 0;
+
+    act(() => seen.api!.showToast('Report queued', 'success', 4000, { label: 'View report', onClick: () => { clicked += 1; } }));
+
+    act(() => screen.getByRole('button', { name: 'View report' }).click());
+    expect(clicked).toBe(1);
+  });
+
   it('keeps at most five toasts, dropping the oldest', () => {
     const { seen, Consumer } = countingConsumer();
     render(<ToastProvider><Consumer /></ToastProvider>);

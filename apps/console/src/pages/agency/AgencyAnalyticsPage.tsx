@@ -16,6 +16,7 @@ import { AgentAnalyticsSection } from '../../components/agency/AgentAnalyticsSec
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import type { AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
 import { formatCount } from '../../utils/format/number';
+import { ExportReportButton } from '../../components/agency/reports/ExportReportButton';
 import styles from './AgencyAnalyticsPage.module.css';
 
 /**
@@ -134,7 +135,7 @@ function statsWindow(rows: readonly AgencyCampaign[], shown: number): AgencyCamp
 type AnalyticsTab = 'campaigns' | 'agents';
 
 export function AgencyAnalyticsPage() {
-  const { tenantId, accountId, role } = useTenant();
+  const { tenantId, accountId, role, accounts } = useTenant();
   const [campaigns, setCampaigns] = useState<AgencyCampaign[] | null>(null);
   const [stats, setStats] = useState<Record<string, StatsState>>({});
   const [error, setError] = useState<string | null>(null);
@@ -316,43 +317,59 @@ export function AgencyAnalyticsPage() {
    * hides it from an `account_admin`, the very role the permission floors at.
    */
   const canSupervise = hasPermission(role, 'agency.supervise');
+  const accountName = accounts?.find((a) => a.id === accountId)?.name ?? null;
 
   return (
     <div className={styles.page}>
       <div className={styles.header}>
         <h1 className={styles.title}>Analytics</h1>
+
         {/*
           Only rendered for someone who holds the permission the agent reads are
           floored on — a tab that 403s on its first click is worse than no tab,
           because it reads as a broken product rather than an absent one.
         */}
-        {canSupervise && (
-          <div className={styles.tabs} role="tablist" aria-label="Analytics view">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'campaigns'}
-              aria-controls="agency-analytics-view"
-              className={styles.tab}
-              data-selected={tab === 'campaigns' ? 'true' : 'false'}
-              onClick={() => setTab('campaigns')}
-            >
-              By campaign
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'agents'}
-              aria-controls="agency-analytics-view"
-              className={styles.tab}
-              data-selected={tab === 'agents' ? 'true' : 'false'}
-              data-testid="tab-agents"
-              onClick={() => setTab('agents')}
-            >
-              By agent
-            </button>
-          </div>
-        )}
+        <div className={styles.headerTools}>
+          {canSupervise && (
+            <div className={styles.tabs} role="tablist" aria-label="Analytics view">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'campaigns'}
+                aria-controls="agency-analytics-view"
+                className={styles.tab}
+                data-selected={tab === 'campaigns' ? 'true' : 'false'}
+                onClick={() => setTab('campaigns')}
+              >
+                By campaign
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'agents'}
+                aria-controls="agency-analytics-view"
+                className={styles.tab}
+                data-selected={tab === 'agents' ? 'true' : 'false'}
+                data-testid="tab-agents"
+                onClick={() => setTab('agents')}
+              >
+                By agent
+              </button>
+            </div>
+          )}
+          {/*
+            "Export account report" (`docs/reports.md`): every campaign and agent of
+            this account, the page's own subject. Supervisors only, and nothing while
+            reports are off.
+          */}
+          {accountId ? (
+            <ExportReportButton
+              entry="account_analytics"
+              className={`btn-secondary ${styles.exportButton}`}
+              target={{ kind: 'account', subject: { id: accountId, name: accountName } }}
+            />
+          ) : null}
+        </div>
       </div>
 
       <PageDescription

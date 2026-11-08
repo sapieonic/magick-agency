@@ -1,11 +1,12 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
-import { ChartNoAxesCombined, ListChecks, Phone, PhoneOutgoing, Search } from 'lucide-react';
+import { ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneOutgoing, Search } from 'lucide-react';
 import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { REPORTS_FLAG } from '../../utils/reports/reportsFlag';
 import styles from './AgentNav.module.css';
 
 /**
@@ -40,6 +41,7 @@ const ICONS: Record<AgentSurfaceId, typeof ListChecks> = {
   performance: ChartNoAxesCombined,
   attempts: PhoneOutgoing,
   customers: Search,
+  reports: FileText,
 };
 
 /**
@@ -61,6 +63,17 @@ export function useCustomerHistoryAvailable(): boolean {
 }
 
 /** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
+/**
+ * "My reports" is offered when the reports flag is on and the caller can open a
+ * station (their own review is the one report they may run, RP5). Fails closed
+ * without the providers, like the two above.
+ */
+export function useReportsAvailable(): boolean {
+  const role = useRoleOrNone();
+  const flagOn = useFeatureFlagEnabled(REPORTS_FLAG);
+  return flagOn && hasPermission(role, 'agency.station.connect');
+}
+
 export function useSoftphoneAvailable(): boolean {
   const role = useRoleOrNone();
   const flagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
@@ -91,9 +104,10 @@ export function AgentNav({
 }) {
   const softphone = useSoftphoneAvailable();
   const customers = useCustomerHistoryAvailable();
+  const reports = useReportsAvailable();
   const hintId = useId();
   const hint = lockedReason ? null : leaveHint;
-  const surfaces = agentSurfacesFor({ softphone, customers });
+  const surfaces = agentSurfacesFor({ softphone, customers, reports });
   return (
     <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
       {surfaces.map((surface) => {

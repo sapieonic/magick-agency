@@ -34,6 +34,7 @@ import { TrendsSection } from './TrendsSection';
 import { HealthSection, RecordingSection } from './HealthSection';
 import { CampaignMeta } from './CampaignFacts';
 import { Panel, SectionBody } from './InsightsParts';
+import { ExportReportButton } from '../../../../components/agency/reports/ExportReportButton';
 import styles from './Insights.module.css';
 
 interface InsightsPanelProps {
@@ -313,6 +314,17 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
             <Printer size={14} aria-hidden="true" />
             {printRequested ? 'Preparing…' : 'Print'}
           </button>
+          {/* "Export campaign report" (`docs/reports.md`): PDF and Excel in the
+              campaign's own zone (RP3). Nothing while reports are off. */}
+          <ExportReportButton
+            entry="campaign_insights"
+            className={`btn-secondary ${styles.toolButton}`}
+            target={{
+              kind: 'campaign',
+              subject: { id: campaignId, name: summary?.name ?? null },
+              campaignTimezone: timezone,
+            }}
+          />
         </div>
       </div>
       <p className={styles.rangeNote}>

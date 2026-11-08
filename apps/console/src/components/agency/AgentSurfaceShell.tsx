@@ -89,6 +89,11 @@ export interface AgentSurfaceShellProps {
    * calls will otherwise conclude the dialer has lost their team's numbers.
    */
   note?: ReactNode;
+  /**
+   * Controls at the far end of the heading line ("Export my review"). Optional, and
+   * free to render nothing: the heading keeps its width when it is empty.
+   */
+  actions?: ReactNode;
   children: ReactNode;
 }
 
@@ -98,6 +103,7 @@ export function AgentSurfaceShell({
   subtitle,
   current,
   note,
+  actions,
   children,
 }: AgentSurfaceShellProps) {
   const { role, accountId, accountResolution, accountError, reloadAccounts } = useTenant();
@@ -137,6 +143,7 @@ export function AgentSurfaceShell({
               <h1 className={styles.title}>{title}</h1>
               <p className={styles.subtitle}>{subtitle}</p>
             </div>
+            {actions ? <div className={styles.headerActions}>{actions}</div> : null}
           </div>
 
           {/*

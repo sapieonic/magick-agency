@@ -1484,18 +1484,18 @@ Files: `AppVersion.module.css`, `AppVersion.tsx`, `Breadcrumbs.module.css`, `Bre
 | `packages/web-ui/test/components/LiveDot.test.tsx` | 7 |
 | `packages/web-ui/test/components/Pagination.test.tsx` | 28 |
 | `packages/web-ui/test/components/StatusBadge.test.tsx` | 15 |
-| `packages/web-ui/test/components/Toast.test.tsx` | 2 |
+| `packages/web-ui/test/components/Toast.test.tsx` | 4 |
 | `packages/web-ui/test/components/dataTableAlignCss.test.ts` | 5 |
 
 ### `packages/web-ui/src/contexts/`
 
-`ToastProvider` / `useToast` (memoised context value).
+`ToastProvider` / `useToast` (memoised context value). `showToast` takes an optional action (`{ label, onClick }`), one button under the message that runs and dismisses.
 
 Files: `ToastContext.tsx`
 
 | Test file | Cases |
 |---|---|
-| `packages/web-ui/test/contexts/ToastContext.test.tsx` | 3 |
+| `packages/web-ui/test/contexts/ToastContext.test.tsx` | 4 |
 
 ### `packages/web-ui/src/hooks/`
 
@@ -1540,9 +1540,9 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 
 ### `apps/console/src/api/`
 
-API client (`client.ts`, auth headers) and one module per API family: accounts, agency, activity, campaigns, insights, spine, stats, auth, analysis profiles, calls, DNC, CSV export, feature flags, invites, notifications, phone numbers, soft phone, tenants, users. `agencyInsights.ts` is the campaign Insights tab's seven reads (`GET …/campaigns/:id/insights/*`, docs/insights.md), one function per section, ranges as half-open `[from, to)` instants. `softphone.ts` is the soft phone's routes (docs/softphone.md §6), all under `/proxy/agency/softphone` except the switch and return on a campaign session: bootstrap, session open, place / update / hang up / outcome / DNC for a manual call, the keyset call list (`manualCallQuery`) and detail, the recording blob, and settings. Refusals come back as typed results (`SoftphoneResult`, `parseSoftphoneRefusal`: the DNC, calling-hours, contact-in-flight, session-on-campaign and call-pending shapes, a generic one for the rest of the code union, and an unknown one) rather than exceptions; `agencySpine.ts` exports `recordingRefusal` for its recording fetch. Contact assignment (behind `agency_contact_assignment_enabled`): `agencyAssignment.ts` is the supervisor's operations, progress and history and the agent's reads of their own contacts, `agencyMyContacts.ts` the agent's two acts on them (retry the ones not reached, call one now). `customerHistory.ts` is customer history's four routes (docs/customer-history.md §2): search, timeline, export (the CSV's file name read from a plain, quoted or RFC 5987 `Content-Disposition`) and `getCustomerSearchOptions`.
+API client (`client.ts`, auth headers) and one module per API family: accounts, agency, activity, campaigns, insights, spine, stats, auth, analysis profiles, calls, DNC, CSV export, feature flags, invites, notifications, phone numbers, soft phone, tenants, users. `agencyInsights.ts` is the campaign Insights tab's seven reads (`GET …/campaigns/:id/insights/*`, docs/insights.md), one function per section, ranges as half-open `[from, to)` instants. `softphone.ts` is the soft phone's routes (docs/softphone.md §6), all under `/proxy/agency/softphone` except the switch and return on a campaign session: bootstrap, session open, place / update / hang up / outcome / DNC for a manual call, the keyset call list (`manualCallQuery`) and detail, the recording blob, and settings. Refusals come back as typed results (`SoftphoneResult`, `parseSoftphoneRefusal`: the DNC, calling-hours, contact-in-flight, session-on-campaign and call-pending shapes, a generic one for the rest of the code union, and an unknown one) rather than exceptions; `agencySpine.ts` exports `recordingRefusal` for its recording fetch. Contact assignment (behind `agency_contact_assignment_enabled`): `agencyAssignment.ts` is the supervisor's operations, progress and history and the agent's reads of their own contacts, `agencyMyContacts.ts` the agent's two acts on them (retry the ones not reached, call one now). `customerHistory.ts` is customer history's four routes (docs/customer-history.md §2): search, timeline, export (the CSV's file name read from a plain, quoted or RFC 5987 `Content-Disposition`) and `getCustomerSearchOptions`. `reports.ts` is the reports surface (docs/reports.md): runs (create, keyset list, get, the per-format download URL then `window.location.assign`, retry) and subscriptions (list, create, patch, delete, run now); `REPORT_ERROR_MESSAGES` / `reportErrorMessage` give every report refusal code and `feature_disabled` British-English words.
 
-Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `notifications.ts`, `phone-numbers.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
+Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `notifications.ts`, `phone-numbers.ts`, `reports.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1562,6 +1562,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `
 | `apps/console/src/__tests__/api/exportCsv.test.ts` | 3 |
 | `apps/console/src/__tests__/api/invites.test.ts` | 21 |
 | `apps/console/src/__tests__/api/originator-header.test.ts` | 4 |
+| `apps/console/src/__tests__/api/reports.test.ts` | 13 |
 | `apps/console/src/__tests__/api/softphone.test.ts` | 14 |
 | `apps/console/src/__tests__/api/tenants.test.ts` | 6 |
 
@@ -1683,6 +1684,22 @@ Files: `CustomerCallLink.tsx`, `CustomerHistory.module.css`, `CustomerHistorySum
 | `apps/console/src/__tests__/pages/CustomerHistoryPage.test.tsx` | 45 |
 | `apps/console/src/__tests__/utils/customerSearchRecent.test.ts` | 9 |
 
+### `apps/console/src/components/agency/reports/`
+
+Reports (docs/reports.md). `ExportReportDialog` is the one export dialog for every kind: the window (Last 7 days, Last 30 days, Previous week, Previous month or Custom, as local dates in the report's zone, `utils/reports/reportWindow.ts`, held to the contracts' `reportWindowProblem`), the zone (the browser's for agent and account reports; the campaign's, read-only, for a campaign report, RP3), PDF and Excel (at least one), "Email me when it's ready"; the 202 closes it with a toast whose "View report" opens the run; refusals stay inline. `ExportReportButton` is every entry point, gated by `mayExport` (the `agency_reports_enabled` flag, then `agency.supervise` for any subject, else the caller's own review only, RP5): Export agent review on the supervisor's agent record (`AgentAnalyticsSection`), Export my review on My performance, Export campaign report beside Print on the Insights toolbar, Export account report in the Analytics header and on the Reports page. `ReportStatusPill` (Preparing…, Ready, Failed, Expired), `ReportDownloads` (a fresh download URL per press), `ReportHistory` (keyset Load more, kind filter and "Only mine" for supervisors, pending rows polling themselves), `SubscriptionsPanel` and `SubscriptionFormDialog` (cadence daily / weekly on a day / monthly on the 1st–28th at a time, zone, formats, recipients from the account's supervisors up to `REPORT_SUBSCRIPTION_MAX_RECIPIENTS`; pause, resume, run now, delete behind an in-page confirmation). The pages are `pages/agency/ReportsPage.tsx` (`/agency/reports`, History and, for supervisors, Subscriptions) and `pages/agency/ReportRunPage.tsx` (`/agency/reports/:runId`, the "report ready" email's link), each also served to a dedicated agent at `/dialer/reports*` in `AgentSurfaceShell` (`AgentReportsPage`, `AgentReportRunPage`; the agency paths send them there). `hooks/useReportRun.ts` polls a run every 3 s while it is pending; `hooks/useReportsAccess.ts` is who may do what and where the pages live; copy in `utils/reports/reportCopy.ts`; the flag key in `utils/reports/reportsFlag.ts`. Navigation: Reports in `AgencySidebar` (viewer and up), My reports in `AgentNav`, both flag-gated.
+
+Files: `ExportReportButton.tsx`, `ExportReportDialog.tsx`, `ReportDownloads.tsx`, `ReportHistory.tsx`, `ReportStatusPill.tsx`, `Reports.module.css`, `SubscriptionFormDialog.tsx`, `SubscriptionsPanel.tsx`
+
+| Test file | Cases |
+|---|---|
+| `apps/console/src/__tests__/components/ExportReportDialog.test.tsx` | 20 |
+| `apps/console/src/__tests__/components/reportEntryPoints.test.tsx` | 24 |
+| `apps/console/src/__tests__/components/SubscriptionsPanel.test.tsx` | 14 |
+| `apps/console/src/__tests__/hooks/useReportRun.test.tsx` | 10 |
+| `apps/console/src/__tests__/pages/ReportRunPage.test.tsx` | 9 |
+| `apps/console/src/__tests__/pages/ReportsPage.test.tsx` | 11 |
+| `apps/console/src/__tests__/utils/reportWindow.test.ts` | 17 |
+
 ### `apps/console/src/contexts/`
 
 React contexts: auth, tenant, theme and the rest (the toast context is in `packages/web-ui`). `AuthContext.tsx`'s invite-credential flow is in `authInvite.ts` (`useInviteJoin`, `useInviteCredentialFlow`) and its 6-hour cap check in `useSessionWatchdog.ts`; the context API is unchanged. `UrlScopeContext.tsx` owns the browser history and the tenant/account scope its URL carries, in two contexts: the scope (`useUrlScope`; `useUrlHistory` where the real history is required) changes only with the tenant or account, the location (`useUrlLocation`, for `ScopedRouter`) on every navigation. Its `go` is the one way between scopes. `TenantContext` requires that provider, adopts the URL's tenant and account, reloads the console at the new account's home on a switch (`utils/pageLoad.ts`; a tenant switch resolves the tenant's first account first and loads its scope), and falls back to the saved choice in `localStorage` only on an unscoped URL or one the viewer cannot open, which it never saves.
@@ -1794,7 +1811,7 @@ Files: `AppHomeRedirect.tsx`, `accounts/AccountsPage.module.css`, `accounts/Acco
 | `apps/console/src/__tests__/pages/TeamPage.resendInvite.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/TranscriptSection.test.tsx` | 7 |
 | `apps/console/src/__tests__/pages/VerifyEmailPage.returnPath.test.tsx` | 6 |
-| `apps/console/src/__tests__/pages/agencyRoutes.test.tsx` | 5 |
+| `apps/console/src/__tests__/pages/agencyRoutes.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/dialerEntryRoutes.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/joinRoutes.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/useAgencyConsole.cues.test.ts` | 12 |

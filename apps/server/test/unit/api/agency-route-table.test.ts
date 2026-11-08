@@ -53,8 +53,19 @@ const FIXTURE = JSON.parse(
  * after it is served fails the "pending is really pending" case below.
  */
 const PENDING: ReadonlyMap<string, string> = new Map([
-  // Empty: the insights range reads (activity, trends, health) were the last, served since
-  // workstream E2 (docs/insights.md "API (range reads)").
+  // Reports (docs/reports.md): the console client (`apps/console/src/api/reports.ts`) lands
+  // before the routes (`proxy-agency-reports`). Remove these as the routes register; the
+  // "pending is really pending" case below fails on any left behind.
+  ['POST /proxy/agency/reports', 'reports routes not registered yet (docs/reports.md)'],
+  ['GET /proxy/agency/reports', 'reports routes not registered yet (docs/reports.md)'],
+  ['GET /proxy/agency/reports/:_', 'reports routes not registered yet (docs/reports.md)'],
+  ['GET /proxy/agency/reports/:_/files/:_', 'reports routes not registered yet (docs/reports.md)'],
+  ['POST /proxy/agency/reports/:_/retry', 'reports routes not registered yet (docs/reports.md)'],
+  ['GET /proxy/agency/report-subscriptions', 'reports routes not registered yet (docs/reports.md)'],
+  ['POST /proxy/agency/report-subscriptions', 'reports routes not registered yet (docs/reports.md)'],
+  ['PATCH /proxy/agency/report-subscriptions/:_', 'reports routes not registered yet (docs/reports.md)'],
+  ['DELETE /proxy/agency/report-subscriptions/:_', 'reports routes not registered yet (docs/reports.md)'],
+  ['POST /proxy/agency/report-subscriptions/:_/run-now', 'reports routes not registered yet (docs/reports.md)'],
 ]);
 
 /**

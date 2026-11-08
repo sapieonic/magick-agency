@@ -78,6 +78,29 @@
   white-space: pre-line;
 }
 
+/* Optional action (a link-like button under the message) */
+.actionButton {
+  margin-top: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.actionButton:hover {
+  color: var(--accent-hover);
+}
+
+.actionButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Close button */
 .closeButton {
   flex-shrink: 0;
