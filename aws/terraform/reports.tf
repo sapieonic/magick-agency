@@ -13,10 +13,11 @@
 # callback URL travels in each message, so the function needs only the callback secret.
 #
 # The server switches to this path with, in its env (`terraform output -raw reports_server_env`
-# prints the first three):
+# prints the first four):
 #   AGENCY_REPORTS_RENDERER=sqs
 #   AGENCY_REPORTS_SQS_QUEUE_URL=<report_jobs_queue_url>
 #   AGENCY_REPORTS_CALLBACK_SECRET=<the same reports_callback_secret as the function>
+#   AGENCY_REPORTS_RENDER_TIMEOUT_MS=<reports_render_timeout_seconds × 1000, checked against the queue below>
 #   AGENCY_REPORTS_CALLBACK_BASE_URL=<the server's public base URL, set by hand>
 # Deploy order and rollback: aws/README.md, "Reports".
 
@@ -24,11 +25,26 @@ locals {
   report_renderer_name = "${var.name_prefix}-${var.environment}-report-renderer"
   report_jobs_name     = "${var.name_prefix}-${var.environment}-report-jobs"
 
-  # Lambda's timeout, and the queue's visibility timeout at six times it (AWS's guidance
-  # for an SQS event source: a message must stay invisible through the function's retries
-  # of a batch, or a second invocation renders it while the first still runs).
+  # The three timeouts of a render attempt, and the order they must keep (the queue's
+  # precondition below checks it against reports_render_timeout_seconds):
+  #
+  #   function timeout (300 s) < visibility timeout (600 s)
+  #   visibility timeout + function timeout (900 s) <= the server's render timeout (900 s default)
+  #
+  # The first is AWS's (an event source mapping refuses a queue whose visibility timeout is
+  # below the function's timeout, which would let a second invocation take the message while
+  # the first still runs). The second makes SQS's redelivery of a record the function failed
+  # (an undeliverable callback, a crash, a timeout) land, and finish, while the server is
+  # still waiting for that attempt; a redelivery after the server's render timeout, when the
+  # tick has re-sent the run as the next attempt or failed it, could only end `stale`. The
+  # function drops such a message without rendering (it carries `superseded_after`, the
+  # server's deadline for the attempt), so a later redelivery costs an invocation of
+  # milliseconds, not a second Chromium render. Hence a visibility timeout of twice
+  # the function's, not AWS's suggested six times: the margin it buys is for invocations
+  # throttled at the account's concurrency limit, and a message that outlasts its receives
+  # under throttling is re-sent by the server (RP13) anyway.
   report_renderer_timeout_seconds = 300
-  report_jobs_visibility_seconds  = 6 * local.report_renderer_timeout_seconds
+  report_jobs_visibility_seconds  = 2 * local.report_renderer_timeout_seconds
 
   # RP8: datasets are an intermediate the renderer reads within minutes; 7 days leaves room
   # to re-render (RP13 re-sends) and to read one when a run is being diagnosed.
@@ -39,9 +55,13 @@ locals {
 # A message is one run's render attempt (ReportRenderMessage). Retention of a day is far
 # past anything useful: the server re-sends a run with no callback after
 # AGENCY_REPORTS_RENDER_TIMEOUT_MS (15 min) as a new attempt, and fences the old one's
-# callback (RP13). Three receives without a delete (the function threw, timed out or ran out
-# of memory three times) move it to the dead-letter queue, kept 14 days for diagnosis.
-# Nothing replays the DLQ automatically; the server's re-send is the retry.
+# callback (RP13). Three receives without a delete (the function threw, timed out, ran out
+# of memory or could not deliver its callback, three times) move it to the dead-letter queue,
+# kept 14 days for diagnosis. With the message received promptly, its first redelivery
+# (600 s after that receive) finishes inside the server's wait for the attempt; the third
+# receive, 1200 s or more after it, is past that wait and is dropped unrendered
+# (`superseded_after`). Nothing replays the DLQ automatically; the server's
+# re-send is the retry.
 
 resource "aws_sqs_queue" "report_jobs_dlq" {
   count = var.enable_reports ? 1 : 0
@@ -63,6 +83,13 @@ resource "aws_sqs_queue" "report_jobs" {
     deadLetterTargetArn = aws_sqs_queue.report_jobs_dlq[0].arn
     maxReceiveCount     = 3
   })
+
+  lifecycle {
+    precondition {
+      condition     = local.report_jobs_visibility_seconds > local.report_renderer_timeout_seconds && local.report_jobs_visibility_seconds + local.report_renderer_timeout_seconds <= var.reports_render_timeout_seconds
+      error_message = "reports_render_timeout_seconds must be at least the queue's visibility timeout plus the function's timeout (${local.report_jobs_visibility_seconds + local.report_renderer_timeout_seconds} s), so a redelivered render finishes while the server still waits for it (reports.tf, locals)."
+    }
+  }
 }
 
 # Only report-jobs may dead-letter into the DLQ.

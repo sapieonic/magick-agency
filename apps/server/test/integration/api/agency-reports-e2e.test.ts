@@ -532,6 +532,7 @@ describe('SQS mode: the server\'s message, the renderer as the Lambda runs it, t
       agency: { ...config.agency, reports: { ...config.agency.reports, renderer: 'sqs' as const, sqsQueueUrl: QUEUE_URL, callbackBaseUrl: CALLBACK_BASE } },
     };
     mocks.sqs.length = 0;
+    const sentFrom = Date.now();
     const assembler = createReportAssembler({ intervalMs: 600_000, maxDetailRows: 100_000, maxAttempts: 3 }, defaultAssemblerDeps(createReportDispatcher(sqsConfig)));
     expect(await assembler.drain(() => false)).toEqual([{ runId, outcome: 'sent', attempt: 1 }]);
     expect((await getRun(runId)).status).toBe('rendering');
@@ -549,7 +550,12 @@ describe('SQS mode: the server\'s message, the renderer as the Lambda runs it, t
       output_prefix: reportOutputPrefix(scope),
       formats: ['xlsx'],
       callback_url: `${CALLBACK_BASE}/webhooks/reports/rendered`,
+      superseded_after: expect.any(String),
     } satisfies ReportRenderMessage);
+    // The tick's deadline for this attempt: the send plus AGENCY_REPORTS_RENDER_TIMEOUT_MS.
+    const deadline = Date.parse(message.superseded_after!) - config.agency.reports.renderTimeoutMs;
+    expect(deadline).toBeGreaterThanOrEqual(sentFrom);
+    expect(deadline).toBeLessThanOrEqual(Date.now());
 
     // The Lambda's part: render with an IO over the message's bucket, sign, POST.
     const { renderRun, signCallback } = await renderer();

@@ -205,6 +205,17 @@ variable "report_renderer_live_version" {
   }
 }
 
+variable "reports_render_timeout_seconds" {
+  type        = number
+  description = "The server's AGENCY_REPORTS_RENDER_TIMEOUT_MS, in seconds (reports_server_env prints it in milliseconds): how long the server waits for a render attempt's callback, from the send, before re-sending or failing the run (RP13). At least the report-jobs visibility timeout plus the function's timeout (900 s), so an SQS redelivery finishes inside it; raise it for large bursts (docs/operations.md, \"Reports: sizing the render timeout\")."
+  default     = 900
+
+  validation {
+    condition     = floor(var.reports_render_timeout_seconds) == var.reports_render_timeout_seconds && var.reports_render_timeout_seconds <= 86400
+    error_message = "reports_render_timeout_seconds must be a whole number of seconds, at most 86400 (the server's ceiling)."
+  }
+}
+
 variable "report_retention_days" {
   type        = number
   description = "Days the rendered files under reports/ are kept before S3 expires them (RP8). Keep it equal to the server's AGENCY_REPORTS_RETENTION_DAYS, which turns the run `expired` at the same age. Datasets under report-datasets/ expire after 7 days."

@@ -185,8 +185,8 @@ POSTs a signed callback to the server's public URL. The Lambda never touches the
 
 | Resource | What it is |
 |---|---|
-| `report-jobs` queue | `<name_prefix>-<environment>-report-jobs`. Visibility timeout 1800 s (six times the function's 300 s), retention 1 day, SQS-managed encryption, redrive to the DLQ after 3 receives |
-| `report-jobs-dlq` | Messages the function failed three times (threw, timed out, out of memory), kept 14 days. Nothing replays it: the server re-sends a run with no callback as a new attempt (RP13) |
+| `report-jobs` queue | `<name_prefix>-<environment>-report-jobs`. Visibility timeout 600 s (twice the function's 300 s; "Timeouts" below), retention 1 day, SQS-managed encryption, redrive to the DLQ after 3 receives |
+| `report-jobs-dlq` | Messages the function failed three times (threw, timed out, out of memory, callback undeliverable), kept 14 days. Nothing replays it: the server re-sends a run with no callback as a new attempt (RP13) |
 | `report-renderer` function | `<name_prefix>-<environment>-report-renderer`. Node.js 22, x86_64, 2048 MB, 300 s, 1024 MB of `/tmp`, the Chromium layer, `AGENCY_REPORTS_CALLBACK_SECRET` in its environment. `publish = true`: every apply that changes the code or configuration publishes a version |
 | `live` alias | What the queue invokes; it follows the latest published version unless `report_renderer_live_version` pins one |
 | Event source mapping | Queue → `live`, one message per invocation, `ReportBatchItemFailures`, at most 3 renders at once |
@@ -247,13 +247,34 @@ The whole first-time setup, with the server's side and the checks: [`REPORTS_SET
    Add those lines and `AGENCY_REPORTS_CALLBACK_BASE_URL=https://agency.example.com` to the
    server's env (`docker/.env` on the VM, `apps/server/.env` for a dev box), then recreate
    the server. `reports_server_env` prints `AGENCY_REPORTS_RENDERER=sqs`,
-   `AGENCY_REPORTS_SQS_QUEUE_URL` and `AGENCY_REPORTS_CALLBACK_SECRET` (the same value
-   the function holds). `AGENCY_REPORTS_CALLBACK_BASE_URL` is the server's public base URL,
+   `AGENCY_REPORTS_SQS_QUEUE_URL`, `AGENCY_REPORTS_CALLBACK_SECRET` (the same value
+   the function holds) and `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (from
+   `reports_render_timeout_seconds`, "Timeouts" below). `AGENCY_REPORTS_CALLBACK_BASE_URL` is the server's public base URL,
    which the Lambda reaches over the internet; Terraform does not know it. Then turn the
    `agency_reports_enabled` flag on for the tenants that should see reports.
 
 `terraform test` (in `aws/terraform`, after `terraform init -backend=false`) checks the
 module against a mocked provider without touching AWS.
+
+### Timeouts
+
+A render attempt has three timeouts, and they must keep this order:
+
+    function timeout (300 s) < queue visibility timeout (600 s)
+    visibility timeout + function timeout (900 s) <= server render timeout (AGENCY_REPORTS_RENDER_TIMEOUT_MS)
+
+The first is AWS's: the event source mapping refuses a queue whose visibility timeout is below the
+function's. The second puts SQS's redelivery of a message the function failed (an undeliverable
+callback, a crash, a timeout) inside the server's wait for that attempt, so the redelivered render
+is applied, not acknowledged `stale` after the server re-sent the run (RP13). The server's side is
+`reports_render_timeout_seconds` (default 900), printed into `reports_server_env`; the queue's
+precondition refuses a value below the sum. Keep the server's env equal to the printed line: the
+server cannot see the queue, so only this module checks the relationship. The visibility timeout
+is twice the function's rather than AWS's suggested six times (the margin for invocations
+throttled at the account's concurrency limit): a message that outlasts its receives is re-sent by
+the server anyway. And when a message does arrive after the server stopped waiting (a third
+receive, a backed-up queue), the function reads its `superseded_after` and drops it in
+milliseconds instead of rendering it.
 
 ### Deploy order
 

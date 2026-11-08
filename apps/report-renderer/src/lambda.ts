@@ -5,6 +5,11 @@
  * callback. A record whose callback cannot be delivered is returned in `batchItemFailures` so SQS
  * redelivers it; a render failure is NOT a batch failure (it is reported in the callback).
  *
+ * A record received after its `superseded_after` (an SQS redelivery or a backed-up queue that
+ * outlasted the server's `AGENCY_REPORTS_RENDER_TIMEOUT_MS`) is dropped without rendering and
+ * without a batch failure: the server has already re-sent the run as the next attempt or failed
+ * it, so this attempt's callback could only be acknowledged as `stale` (RP13).
+ *
  * Logs are JSON lines with run id, attempt and timings, never dataset contents (personal data).
  */
 import { S3Client } from '@aws-sdk/client-s3';
@@ -54,6 +59,10 @@ async function processRecord(record: SQSRecord, deps: HandlerDeps): Promise<void
   if (!deps.secret) throw new Error('AGENCY_REPORTS_CALLBACK_SECRET is not set');
   const message = JSON.parse(record.body) as ReportRenderMessage;
   const receive = Number(record.attributes?.ApproximateReceiveCount ?? 1);
+  if (isSuperseded(message, deps.now())) {
+    deps.log({ event: 'record.superseded', run_id: message.run_id, attempt: message.attempt, receive, superseded_after: message.superseded_after });
+    return;
+  }
   const started = Date.now();
   const callback = await renderRun(message, s3IO(deps.s3, message.bucket), {
     launch: deps.launch,
@@ -65,6 +74,16 @@ async function processRecord(record: SQSRecord, deps: HandlerDeps): Promise<void
     deps.log({ event: 'callback.try', run_id: message.run_id, attempt: message.attempt, try: n, outcome }),
   );
   deps.log({ event: 'record.done', run_id: message.run_id, attempt: message.attempt, status: callback.status, callback_status: status, ms: Date.now() - started });
+}
+
+/**
+ * Is the message past its `superseded_after` at `nowSeconds` (unix seconds)? Absent or not a
+ * date: never (an older server, the inline path), so the message is rendered as before.
+ */
+export function isSuperseded(message: Pick<ReportRenderMessage, 'superseded_after'>, nowSeconds: number): boolean {
+  if (typeof message.superseded_after !== 'string') return false;
+  const at = Date.parse(message.superseded_after);
+  return Number.isFinite(at) && nowSeconds * 1000 > at;
 }
 
 let s3: S3Client | null = null;

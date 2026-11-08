@@ -103,5 +103,6 @@ output "reports_server_env" {
     "AGENCY_REPORTS_RENDERER=sqs",
     "AGENCY_REPORTS_SQS_QUEUE_URL=${aws_sqs_queue.report_jobs[0].url}",
     "AGENCY_REPORTS_CALLBACK_SECRET='${var.reports_callback_secret == null ? "" : var.reports_callback_secret}'",
+    "AGENCY_REPORTS_RENDER_TIMEOUT_MS=${var.reports_render_timeout_seconds * 1000}",
   ]) : ""
 }

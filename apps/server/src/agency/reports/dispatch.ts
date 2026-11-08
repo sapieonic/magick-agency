@@ -5,7 +5,9 @@
  *
  *  - **sqs** ({@link createSqsDispatcher}): one `SendMessage` of the {@link ReportRenderMessage}
  *    JSON to `AGENCY_REPORTS_SQS_QUEUE_URL`; the renderer Lambda renders and POSTs its signed
- *    callback to `${AGENCY_REPORTS_CALLBACK_BASE_URL}/webhooks/reports/rendered`.
+ *    callback to `${AGENCY_REPORTS_CALLBACK_BASE_URL}/webhooks/reports/rendered`. Each message
+ *    carries `superseded_after` (now + `AGENCY_REPORTS_RENDER_TIMEOUT_MS`), the instant the tick
+ *    stops waiting for that attempt; the Lambda drops a message it receives later.
  *  - **inline** ({@link createInlineDispatcher}): the renderer package
  *    (`@magick-agency/report-renderer`) called in this process, one run at a time, its returned
  *    callback applied through `applyRenderOutcome` (no HTTP, no signature); the renderer's
@@ -54,7 +56,7 @@ export interface ReportRenderDispatcher {
 export function buildRenderMessage(
   run: DispatchableRun,
   attempt: number,
-  opts: { bucket: string; callbackUrl: string },
+  opts: { bucket: string; callbackUrl: string; supersededAfter?: Date },
 ): ReportRenderMessage {
   if (!run.dataset_key) throw new Error(`report run ${run.id}: no dataset recorded, nothing to render`);
   return {
@@ -66,6 +68,7 @@ export function buildRenderMessage(
     output_prefix: reportOutputPrefix({ tenantId: run.tenant_id, accountId: run.account_id, runId: run.id }),
     formats: [...run.formats],
     callback_url: opts.callbackUrl,
+    ...(opts.supersededAfter ? { superseded_after: opts.supersededAfter.toISOString() } : {}),
   };
 }
 
@@ -98,11 +101,19 @@ export function createSqsDispatcher(opts: {
   bucket: string;
   callbackBaseUrl: string;
   sender: ReportSqsSender;
+  /** `AGENCY_REPORTS_RENDER_TIMEOUT_MS`: stamps each message's `superseded_after`. */
+  renderTimeoutMs: number;
+  now?: () => Date;
 }): ReportRenderDispatcher {
   const callbackUrl = `${opts.callbackBaseUrl.replace(/\/+$/, '')}${REPORT_CALLBACK_PATH}`;
+  const now = opts.now ?? (() => new Date());
   return {
     async dispatch(run, attempt) {
-      const message = buildRenderMessage(run, attempt, { bucket: opts.bucket, callbackUrl });
+      // The tick gives up on this attempt `renderTimeoutMs` after `markSent` stamped `sent_at`,
+      // just before this call; past that instant the Lambda drops a (re)delivered message
+      // instead of rendering a result the server would only answer as stale (RP13).
+      const supersededAfter = new Date(now().getTime() + opts.renderTimeoutMs);
+      const message = buildRenderMessage(run, attempt, { bucket: opts.bucket, callbackUrl, supersededAfter });
       await opts.sender.send(opts.queueUrl, JSON.stringify(message));
       log.info({ runId: run.id, attempt }, 'Report run sent to the renderer queue');
     },

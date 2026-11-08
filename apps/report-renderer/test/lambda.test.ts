@@ -2,7 +2,8 @@
  * The Lambda handler with a fake S3 client and a fake fetch (a final 4xx is neither retried nor
  * redelivered; each try carries a timeout signal): the callback is signed as the
  * contract says (and verifies), a failed POST is retried with backoff, an undeliverable callback
- * is a batch item failure, a render failure is not. Plus the layer resolution of
+ * is a batch item failure, a render failure is not, a record past its `superseded_after` is
+ * dropped unrendered. Plus the layer resolution of
  * `@sparticuz/chromium`.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -57,7 +58,7 @@ function fakeS3(objects: Map<string, Buffer>) {
   };
 }
 
-function setup(statuses: Array<number | Error>, opts: { secret?: string; dataset?: 'ok' | 'v2' } = {}) {
+function setup(statuses: Array<number | Error>, opts: { secret?: string; dataset?: 'ok' | 'v2'; supersededAfter?: string } = {}) {
   const { dataset, details } = campaignFixture();
   const objects = new Map<string, Buffer>(details);
   const datasetKey = `report-datasets/t/a/${dataset.run_id}/dataset.json`;
@@ -94,6 +95,7 @@ function setup(statuses: Array<number | Error>, opts: { secret?: string; dataset
     output_prefix: `reports/t/a/${dataset.run_id}/`,
     formats: ['xlsx'],
     callback_url: 'https://agency.example.test/webhooks/reports/rendered',
+    ...(opts.supersededAfter !== undefined ? { superseded_after: opts.supersededAfter } : {}),
   };
   const event = { Records: [{ messageId: 'm-1', body: JSON.stringify(message), attributes: { ApproximateReceiveCount: '1' } }] } as unknown as SQSEvent;
   return { handler: createHandler(deps), event, posts, inits, sleeps, logs, s3, message, dataset };
@@ -168,6 +170,25 @@ describe('Lambda handler', () => {
     expect(res.batchItemFailures).toEqual([]);
     expect(s3.puts).toHaveLength(0);
     expect(JSON.parse(posts[0]!.body)).toMatchObject({ status: 'failed', error: { code: 'dataset_version_unsupported' } });
+  });
+
+  it('drops a record received after its superseded_after: no read, no render, no callback, no redelivery', async () => {
+    const past = new Date(NOW * 1000 - 1_000).toISOString();
+    const { handler, event, posts, s3, logs, message } = setup([204], { supersededAfter: past });
+    const res = await handler(event);
+    expect(res.batchItemFailures).toEqual([]);
+    expect(s3.puts).toHaveLength(0);
+    expect(posts).toHaveLength(0);
+    expect(logs).toContainEqual(expect.objectContaining({ event: 'record.superseded', run_id: message.run_id, attempt: 1, superseded_after: past }));
+  });
+
+  it('renders a record still inside its superseded_after, and one without (or with an unreadable) deadline', async () => {
+    for (const supersededAfter of [new Date(NOW * 1000 + 60_000).toISOString(), undefined, 'not a date']) {
+      const { handler, event, posts, s3 } = setup([204], supersededAfter === undefined ? {} : { supersededAfter });
+      expect((await handler(event)).batchItemFailures, String(supersededAfter)).toEqual([]);
+      expect(s3.puts, String(supersededAfter)).toHaveLength(1);
+      expect(posts, String(supersededAfter)).toHaveLength(1);
+    }
   });
 
   it('fails the record without a secret, and on a body that is not a message', async () => {

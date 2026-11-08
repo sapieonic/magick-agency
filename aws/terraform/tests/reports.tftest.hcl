@@ -98,11 +98,11 @@ run "enabled" {
     noncurrent_version_expiration_days = 30
   }
   assert {
-    condition     = output.reports_server_env == "AGENCY_REPORTS_RENDERER=sqs\nAGENCY_REPORTS_SQS_QUEUE_URL=https://sqs.ap-south-1.amazonaws.com/123456789012/q\nAGENCY_REPORTS_CALLBACK_SECRET='0123456789abcdef+/=$#\"0123456789abcdef0123'"
+    condition     = output.reports_server_env == "AGENCY_REPORTS_RENDERER=sqs\nAGENCY_REPORTS_SQS_QUEUE_URL=https://sqs.ap-south-1.amazonaws.com/123456789012/q\nAGENCY_REPORTS_CALLBACK_SECRET='0123456789abcdef+/=$#\"0123456789abcdef0123'\nAGENCY_REPORTS_RENDER_TIMEOUT_MS=900000"
     error_message = "reports_server_env lines"
   }
   assert {
-    condition     = aws_sqs_queue.report_jobs[0].visibility_timeout_seconds == 1800 && aws_sqs_queue.report_jobs[0].message_retention_seconds == 86400 && aws_sqs_queue.report_jobs[0].sqs_managed_sse_enabled
+    condition     = aws_sqs_queue.report_jobs[0].visibility_timeout_seconds == 600 && aws_sqs_queue.report_jobs[0].message_retention_seconds == 86400 && aws_sqs_queue.report_jobs[0].sqs_managed_sse_enabled
     error_message = "queue settings"
   }
   assert {
@@ -132,6 +132,34 @@ run "enabled" {
   assert {
     condition     = toset(flatten([for s in data.aws_iam_policy_document.report_renderer[0].statement : s.actions])) == toset(["logs:CreateLogStream", "logs:PutLogEvents", "s3:GetObject", "s3:PutObject", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"])
     error_message = "renderer actions"
+  }
+}
+
+# The server's render timeout must outlast a redelivery: visibility (600 s) + function (300 s).
+run "render_timeout_below_redelivery_refused" {
+  command = plan
+  variables {
+    enable_reports                     = true
+    report_renderer_zip                = "versions.tf"
+    report_renderer_chromium_layer_arn = "arn:aws:lambda:ap-south-1:123456789012:layer:chromium:3"
+    reports_callback_secret            = "0123456789abcdef0123456789abcdef0123"
+    reports_render_timeout_seconds     = 899
+  }
+  expect_failures = [aws_sqs_queue.report_jobs]
+}
+
+run "render_timeout_raised" {
+  command = apply
+  variables {
+    enable_reports                     = true
+    report_renderer_zip                = "versions.tf"
+    report_renderer_chromium_layer_arn = "arn:aws:lambda:ap-south-1:123456789012:layer:chromium:3"
+    reports_callback_secret            = "0123456789abcdef0123456789abcdef0123"
+    reports_render_timeout_seconds     = 1800
+  }
+  assert {
+    condition     = endswith(output.reports_server_env, "\nAGENCY_REPORTS_RENDER_TIMEOUT_MS=1800000")
+    error_message = "render timeout line"
   }
 }
 

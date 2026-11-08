@@ -667,7 +667,10 @@ server) or by the `report-renderer` Lambda behind the `report-jobs` SQS queue
 | `AGENCY_REPORTS_CALLBACK_SECRET` | The Lambda's `reports_callback_secret`, the same value (≥ 32 characters) |
 | `AGENCY_REPORTS_CALLBACK_BASE_URL` | The server's public base URL, which the Lambda calls back |
 
-`terraform output -raw reports_server_env` prints the first three. Deploy the renderer before the
+`terraform output -raw reports_server_env` prints the first three, and
+`AGENCY_REPORTS_RENDER_TIMEOUT_MS` from `reports_render_timeout_seconds` (default 900 s; it must
+stay at least the queue's visibility timeout plus the function's timeout, "Reports: sizing the
+render timeout"). Deploy the renderer before the
 server on every release (aws/README.md, "Deploy order"); roll it back by pointing its `live` alias
 at the previous version ("Rollback" there).
 
@@ -688,7 +691,8 @@ after `AGENCY_REPORTS_RETENTION_DAYS`. Where to look, in order:
    `ApproximateNumberOfMessagesVisible` and `ApproximateAgeOfOldestMessage`: growing means the
    Lambda is not consuming (its event source mapping disabled, or every invocation failing). The
    dead-letter queue's `ApproximateNumberOfMessagesVisible` above 0 means messages failed three
-   receives (the function threw, timed out at 300 s or ran out of memory); read a message there
+   receives (the function threw, timed out at 300 s, ran out of memory or could not deliver its
+   callback; each redelivery waits out the 600 s visibility timeout); read a message there
    for its `run_id` and the function's logs (`/aws/lambda/<function>`) for the error. An empty
    queue with runs `rendering`: the send never reached SQS (the server's logs, its
    `AGENCY_REPORTS_SQS_QUEUE_URL`, its `sqs:SendMessage`), or the callback never reached the server
@@ -704,6 +708,22 @@ an older attempt's callback is ignored once a newer one was sent (`stale` on the
 Purge the DLQ once you have read what it holds.
 
 ### Reports: sizing the render timeout
+
+**The invariant to keep** (with the queue `aws/terraform` creates):
+
+    function timeout (300 s) < queue visibility timeout (600 s)
+    visibility timeout + function timeout (900 s) <= AGENCY_REPORTS_RENDER_TIMEOUT_MS
+
+The first is AWS's. The second makes SQS's redelivery of a message the function failed (its
+callback undeliverable, a crash, a timeout) happen, and finish, while the server still waits for
+that attempt, so the redelivered render's callback is applied rather than acknowledged `stale`.
+Terraform holds both sides: `reports_render_timeout_seconds` (default 900) is printed into
+`reports_server_env` and the apply refuses a value below 900. Change the timeout there, never only
+in the server's env: the server cannot see the queue, so nothing at boot checks it. Breaking the
+second inequality costs latency, not renders: each message carries `superseded_after` (the send
+plus the server's timeout), and the function drops a message it receives after it in
+milliseconds, without rendering, so a redelivery or a backed-up message that outlasted the server's
+wait never takes one of the 3 render slots.
 
 `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (default 15 minutes) counts from the send, so a run's time in
 the `report-jobs` queue counts against it, not only its render. The renderer takes at most 3
@@ -724,15 +744,17 @@ function's logs (`record.done … ms`). With renders of about a minute, 15 minut
 about 40 runs; at the function's 300 s ceiling it covers 6.
 
 **When it is too short**, a queued message is not lost, only late, but the tick cannot tell the
-two apart: it re-sends the run as a new attempt (another message in the same backlog, so the
-queue grows), the first attempt's render still runs and its callback is acknowledged `stale`, and
-after `AGENCY_REPORTS_MAX_ATTEMPTS` sends the run fails `render_timed_out` although nothing was
-broken. A late render is not wasted: every attempt writes the run's same output keys, and before
+two apart: it re-sends the run as a new attempt (another message at the back of the same
+backlog), the first attempt's message is dropped unrendered when the function reaches it (past its
+`superseded_after`), and after `AGENCY_REPORTS_MAX_ATTEMPTS` sends the run fails
+`render_timed_out` although nothing was broken. A render that started before the timeout and
+finished after it is not wasted: every attempt writes the run's same output keys, and before
 re-sending or failing a run the tick looks for them in S3 and applies the run as rendered when
-they are all there. The signs: `agency_reports_callbacks_total{result="stale"}` climbing, the
-queue's `ApproximateAgeOfOldestMessage` near or above the timeout, the DLQ empty, and runs failing
+they are all there. The signs: `record.superseded` lines in the function's logs, the queue's
+`ApproximateAgeOfOldestMessage` near or above the timeout, the DLQ empty, and runs failing
 `render_timed_out` right after a burst (a scheduled send time). The remedies, cheapest first:
-raise `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (a lost message is then retried that much later), spread
+raise `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (through `reports_render_timeout_seconds`; a lost message
+is then retried that much later), spread
 subscriptions' send times, or raise the mapping's `maximum_concurrency` (each render holds a
 Chromium of 2 GB). The default stays at 15 minutes: it is ample for the bursts reports see today,
 and a longer one only delays the retry of a genuinely lost message.

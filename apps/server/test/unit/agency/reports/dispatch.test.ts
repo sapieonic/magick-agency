@@ -39,6 +39,12 @@ describe('buildRenderMessage', () => {
     });
   });
 
+  it('carries superseded_after only when given one (the inline renderer renders at once)', () => {
+    const at = new Date('2026-11-08T10:15:00.000Z');
+    expect(buildRenderMessage(run, 1, { bucket: 'b', callbackUrl: 'u', supersededAfter: at }).superseded_after).toBe('2026-11-08T10:15:00.000Z');
+    expect(buildRenderMessage(run, 1, { bucket: 'b', callbackUrl: 'u' })).not.toHaveProperty('superseded_after');
+  });
+
   it('refuses a run with no recorded dataset', () => {
     expect(() => buildRenderMessage(runRecord({ dataset_key: null }), 1, { bucket: 'b', callbackUrl: 'u' })).toThrow();
   });
@@ -52,6 +58,8 @@ describe('the SQS dispatcher', () => {
       bucket: 'bucket',
       callbackBaseUrl: 'https://api.example.com/',
       sender: { send },
+      renderTimeoutMs: 900_000,
+      now: () => new Date('2026-11-08T10:00:00.000Z'),
     });
     await dispatcher.dispatch(run, 3);
     expect(send).toHaveBeenCalledTimes(1);
@@ -61,11 +69,13 @@ describe('the SQS dispatcher', () => {
     expect(message).toMatchObject({ run_id: RUN, attempt: 3, bucket: 'bucket', dataset_key: DATASET_KEY });
     expect(message.callback_url).toBe(`https://api.example.com${REPORT_CALLBACK_PATH}`);
     expect(REPORT_CALLBACK_PATH).toBe('/webhooks/reports/rendered');
+    // The instant the tick stops waiting for this attempt: the send plus the render timeout.
+    expect(message.superseded_after).toBe('2026-11-08T10:15:00.000Z');
   });
 
   it('propagates a send failure (the run stays rendering; the tick re-sends)', async () => {
     const dispatcher = createSqsDispatcher({
-      queueUrl: 'q', bucket: 'b', callbackBaseUrl: 'https://a', sender: { send: async () => { throw new Error('throttled'); } },
+      queueUrl: 'q', bucket: 'b', callbackBaseUrl: 'https://a', renderTimeoutMs: 900_000, sender: { send: async () => { throw new Error('throttled'); } },
     });
     await expect(dispatcher.dispatch(run, 1)).rejects.toThrow('throttled');
   });

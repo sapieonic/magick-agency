@@ -35,5 +35,6 @@ environment = "dev-manas" # must equal the workspace name
 # report_renderer_chromium_layer_arn = null   # arn:aws:lambda:<region>:<account>:layer:<name>:<version>
 # reports_callback_secret            = null   # 32+ chars; the server's AGENCY_REPORTS_CALLBACK_SECRET
 # report_renderer_live_version       = null   # an older version number rolls `live` back
+# reports_render_timeout_seconds     = 900    # the server's AGENCY_REPORTS_RENDER_TIMEOUT_MS / 1000; >= 900
 # report_retention_days              = 90     # = the server's AGENCY_REPORTS_RETENTION_DAYS
 # report_renderer_log_retention_days = 30

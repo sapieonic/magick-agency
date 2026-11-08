@@ -151,11 +151,16 @@ Before you start:
    terraform output -raw reports_server_env; echo
    ```
 
-   That prints `AGENCY_REPORTS_RENDERER=sqs`, `AGENCY_REPORTS_SQS_QUEUE_URL=…` and
-   `AGENCY_REPORTS_CALLBACK_SECRET=…`. The server's existing S3 key needs no change: the apply
-   added permission to send to the queue.
+   That prints `AGENCY_REPORTS_RENDERER=sqs`, `AGENCY_REPORTS_SQS_QUEUE_URL=…`,
+   `AGENCY_REPORTS_CALLBACK_SECRET=…` and `AGENCY_REPORTS_RENDER_TIMEOUT_MS=900000`. The server's
+   existing S3 key needs no change: the apply added permission to send to the queue.
 
-6. **Configure the server.** On the VM, add those three lines to `docker/.env`, plus the public
+   The render timeout is `reports_render_timeout_seconds` (default 900) and must stay at least the
+   queue's visibility timeout plus the function's timeout (600 + 300 s): the apply refuses a
+   smaller value. If you change it, change it in the tfvars and copy the printed line, never only
+   in `docker/.env` (aws/README.md, "Timeouts").
+
+6. **Configure the server.** On the VM, add those four lines to `docker/.env`, plus the public
    base URL the Lambda will call back on:
 
    ```bash

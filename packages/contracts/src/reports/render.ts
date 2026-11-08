@@ -53,6 +53,14 @@ export interface ReportRenderMessage {
   formats: ReportFormat[];
   /** Absolute URL of `POST /webhooks/reports/rendered`. */
   callback_url: string;
+  /**
+   * ISO-8601 UTC instant (the send plus `AGENCY_REPORTS_RENDER_TIMEOUT_MS`) after which the
+   * server no longer waits for this attempt: its tick re-sends the run as the next attempt or
+   * fails it (RP13), so this attempt's result could only be `stale`. A renderer that receives the
+   * message later (an SQS redelivery, a backed-up queue) drops it without rendering. Absent (the
+   * inline renderer, which renders at once): always rendered.
+   */
+  superseded_after?: string;
 }
 
 /** The renderer's signed `POST` to `callback_url`. */

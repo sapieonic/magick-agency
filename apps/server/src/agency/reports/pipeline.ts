@@ -62,6 +62,7 @@ export function createReportDispatcher(
       queueUrl: reports.sqsQueueUrl!,
       bucket,
       callbackBaseUrl: reports.callbackBaseUrl!,
+      renderTimeoutMs: reports.renderTimeoutMs,
       sender: sqsSender({
         region: config.s3?.region ?? process.env['AWS_REGION'],
         ...(config.s3 ? { credentials: { accessKeyId: config.s3.accessKeyId, secretAccessKey: config.s3.secretAccessKey } } : {}),

@@ -27,7 +27,9 @@ database, the server or the clock (it prints `generated_at`).
   `reports/*`), callback signed per contracts, each try bounded by 15 s, retried three times; an
   undeliverable callback is a `batchItemFailures` entry, but a final 4xx (anything but 408 and
   429: a bad signature, a rejected body, no route) is logged and not redelivered, since a
-  re-render would be refused again (the server's tick finds the files in S3 by itself). `pnpm build:lambda` writes `dist/report-renderer-lambda.zip`
+  re-render would be refused again (the server's tick finds the files in S3 by itself). A record
+  received after its `superseded_after` (the server's deadline for that attempt) is dropped
+  without rendering and without a batch failure: its callback could only be `stale`. `pnpm build:lambda` writes `dist/report-renderer-lambda.zip`
   (`index.mjs` and `fonts/` at the zip root).
 - **Chromium versions go together.** The Lambda layer is `@sparticuz/chromium` **153.0.0**
   (Chromium 153), mounted at `/opt/nodejs/node_modules` and resolved there by

@@ -134,7 +134,10 @@ doc comments are the field-level contract; this section is the summary.
   `type: 'text' | 'int' | 'number' | 'percent' | 'duration_s' | 'datetime' | 'date' | 'bool'`; the
   file is gzipped NDJSON, one JSON array of cell values per line, in `columns` order.
 - `ReportRenderMessage` (SQS body): `run_id, attempt, dataset_version, bucket, dataset_key,
-  output_prefix, formats, callback_url`; output at `${output_prefix}report.pdf|xlsx`
+  output_prefix, formats, callback_url`, and under `sqs` `superseded_after` (ISO-8601 UTC: the
+  send plus `AGENCY_REPORTS_RENDER_TIMEOUT_MS`, when the tick stops waiting for that attempt; the
+  Lambda drops a message it receives later without rendering, since its callback could only be
+  `stale`; absent, as inline sends it, the message is always rendered); output at `${output_prefix}report.pdf|xlsx`
   (`REPORT_OUTPUT_FILE_NAMES`). `ReportRenderCallback`: `run_id, attempt,
   status 'rendered' | 'failed', files [{format, key, bytes}], error {code, message}|null,
   renderer_version`. Signed: header `x-mgkvc-report-timestamp` (unix seconds) and
@@ -185,7 +188,7 @@ must be a UUID (refused otherwise) and is written in lower case.
 | `AGENCY_REPORTS_MAX_DETAIL_ROWS` | 100000 | RP12 |
 | `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS` | 2000 | assembler poll |
 | `AGENCY_REPORTS_TICK_INTERVAL_MS` | 60000 | tick |
-| `AGENCY_REPORTS_RENDER_TIMEOUT_MS` | 900000 | RP13 |
+| `AGENCY_REPORTS_RENDER_TIMEOUT_MS` | 900000 | RP13; under `sqs` at least the queue's visibility timeout plus the function's timeout (600 + 300 s with `aws/terraform`), so an SQS redelivery finishes while the server still waits (`operations.md`, "Reports: sizing the render timeout") |
 | `AGENCY_REPORTS_MAX_ATTEMPTS` | 3 | RP13 |
 | `AGENCY_REPORTS_RETENTION_DAYS` | 90 | `expires_at` |
 | `AGENCY_REPORTS_TENANT_PENDING_LIMIT` | 5 | runs queued, assembling or rendering per tenant |
@@ -392,7 +395,8 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   dependency so the import resolves in a workspace install). Under `inline` the renderer is loaded
   once at start (`checkInlineRenderer`) and a failure is logged then; a run that still cannot load
   it fails `render_failed` with renderer version `inline-unavailable`. The production image has
-  neither the renderer's runnable sources nor Chromium, so production uses `sqs`. Inline renders one run at a time and passes `renderRun` a
+  neither the renderer's runnable sources nor Chromium, so production uses `sqs`. `sqs` stamps each message's
+  `superseded_after`. Inline renders one run at a time and passes `renderRun` a
   `log` callback, so the renderer's events (stage, run id, attempt, format, bytes, ms) reach the
   server log as structured lines; boot warns when `inline` runs with `NODE_ENV=production`.
 - **Assembler** (`assembler.ts`): a run `assembling` with no dataset for 30 minutes
@@ -434,7 +438,8 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   must exceed that backlog or a run that is only late is re-sent (another message in the same
   backlog) and, after the last attempt, failed `render_timed_out`. A late attempt's files still
   count: every attempt writes the same output keys and the tick applies a run whose files are all
-  in S3 before re-sending or failing it. Sizing and signs: `operations.md`, "Reports: sizing the
+  in S3 before re-sending or failing it. A message the Lambda receives after the timeout (its
+  `superseded_after`) is dropped unrendered, so a superseded attempt never takes a render slot. Sizing and signs: `operations.md`, "Reports: sizing the
   render timeout"; the default (15 minutes) is unchanged. A due subscription whose tenant and
   account have `agency_reports_enabled` off is skipped for that period (no run; the schedule
   advances, so turning the flag back on resumes it; `agency_reports_subscription_runs_total

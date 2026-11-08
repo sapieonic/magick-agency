@@ -342,9 +342,10 @@ TRUST_PROXY_HOPS=2
 | `AGENCY_REPORTS_RENDERER` | `sqs` (the default, `inline`, renders in the server process and needs Chromium there; it is for development) |
 | `AGENCY_REPORTS_SQS_QUEUE_URL` | The `report-jobs` queue URL from step 3.5 |
 | `AGENCY_REPORTS_CALLBACK_SECRET` | The same value as the Lambda's (`reports_callback_secret` in the tfvars), at least 32 characters. Quote it |
+| `AGENCY_REPORTS_RENDER_TIMEOUT_MS` | `900000` (the default). At least the `report-jobs` queue's visibility timeout plus the function's timeout (600 + 300 s), so an SQS redelivery finishes while the server still waits for it; set it through `reports_render_timeout_seconds` in the tfvars, which refuses a smaller value |
 | `AGENCY_REPORTS_CALLBACK_BASE_URL` | The server's public base URL, e.g. `https://agency.example.com` (with the API on its own host, that host). The Lambda posts the rendered result to it over the internet |
 
-The first three come from `terraform output -raw reports_server_env`. The server's S3 key needs no
+All but the base URL come from `terraform output -raw reports_server_env`. The server's S3 key needs no
 change; Terraform has added `sqs:SendMessage` on the queue to its policy. The other reports
 settings have defaults ([`docs/reports.md`](docs/reports.md), "Config"). Reports stay hidden until
 the `agency_reports_enabled` flag is on for a tenant. The first-time walkthrough, with the checks
