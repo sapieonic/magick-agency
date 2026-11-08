@@ -17,8 +17,9 @@ import { insightsCampaign, type CampaignParams } from './shared.js';
 /**
  * The stats strip's payload, through the internal handler that serves it, under the campaign's
  * own (proved) account. Null when it refuses (the summary then reports what it can read itself).
+ * The campaign report's builder reads the summary through this too (`agency/reports/datasets/`).
  */
-async function liveStats(campaign: AgencyCampaignRecord): Promise<Partial<AgencyCampaignStats> | null> {
+export async function liveStats(campaign: AgencyCampaignRecord): Promise<Partial<AgencyCampaignStats> | null> {
   const result = await callCore({
     method: 'GET',
     path: `/agency-campaigns/${campaign.id}/stats`,

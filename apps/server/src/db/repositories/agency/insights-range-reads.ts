@@ -125,6 +125,40 @@ export interface InsightsCallbackTiming {
 }
 
 /**
+ * The columns IN4's classification reads off one booking attempt, aliased `b`, joined (LEFT) to
+ * its contact as `ct`: `callback_at`, `contact_closed` (anything but `pending`, `in_flight` or
+ * `connected`, or a contact row that is gone) and `next_dialed_at` (the contact's next placed
+ * attempt, the first higher `attempt_number` with `dialed_at` set, `uq_agency_attempt_number`).
+ * Shared with the agent review's follow-through (`report-dataset-reads.ts`), which classifies the
+ * callbacks ONE AGENT booked by the same rules.
+ */
+export const CALLBACK_BOOKING_COLUMNS_SQL = `b.callback_at,
+                COALESCE(ct.state NOT IN ('pending', 'in_flight', 'connected'), true) AS contact_closed,
+                (SELECT n.dialed_at FROM agency_call_attempts n
+                  WHERE n.contact_id = b.contact_id
+                    AND n.attempt_number > b.attempt_number
+                    AND n.dialed_at IS NOT NULL
+                  ORDER BY n.attempt_number LIMIT 1) AS next_dialed_at`;
+
+/**
+ * IN4's class of one booked callback, over {@link CALLBACK_BOOKING_COLUMNS_SQL}'s columns plus a
+ * boolean `campaign_ended` (`completed` or `stopped`). `nowParam` and `onTimeMinutesParam` are
+ * the placeholders bound to the read's clock and `AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES`.
+ * One spelling for the campaign read below and the agent review's.
+ */
+export function callbackClassSql(nowParam: string, onTimeMinutesParam: string): string {
+  return `CASE
+                  WHEN next_dialed_at IS NOT NULL
+                   AND next_dialed_at <= callback_at + make_interval(mins => ${onTimeMinutesParam}::int) THEN 'on_time'
+                  WHEN next_dialed_at IS NOT NULL THEN 'late'
+                  WHEN contact_closed THEN 'missed'
+                  WHEN campaign_ended THEN 'missed'
+                  WHEN callback_at > ${nowParam}::timestamptz THEN 'pending_future'
+                  ELSE 'pending_due'
+                END`;
+}
+
+/**
  * Callback timing (IN4) for the callbacks whose BOOKED time falls in `[from, to)`: the booking
  * attempts (`callback_at IS NOT NULL`) through `idx_agency_attempts_campaign_callback`, each
  * classified by the contact's next placed attempt after it (the first higher `attempt_number`
@@ -153,15 +187,9 @@ export async function insightsCallbackTiming(
          SELECT c.id, c.status IN ('completed', 'stopped') AS ended
            FROM agency_campaigns c WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid
        ), booked AS (
-         SELECT b.callback_at,
+         SELECT ${CALLBACK_BOOKING_COLUMNS_SQL},
                 ct.assigned_user_id,
-                COALESCE(ct.state NOT IN ('pending', 'in_flight', 'connected'), true) AS contact_closed,
-                camp.ended AS campaign_ended,
-                (SELECT n.dialed_at FROM agency_call_attempts n
-                  WHERE n.contact_id = b.contact_id
-                    AND n.attempt_number > b.attempt_number
-                    AND n.dialed_at IS NOT NULL
-                  ORDER BY n.attempt_number LIMIT 1) AS next_dialed_at
+                camp.ended AS campaign_ended
            FROM agency_call_attempts b
            JOIN camp ON b.campaign_id = camp.id
            LEFT JOIN agency_contacts ct ON ct.id = b.contact_id
@@ -169,15 +197,7 @@ export async function insightsCallbackTiming(
             AND b.callback_at >= $3::timestamptz AND b.callback_at < $4::timestamptz
        ), classified AS (
          SELECT assigned_user_id,
-                CASE
-                  WHEN next_dialed_at IS NOT NULL
-                   AND next_dialed_at <= callback_at + make_interval(mins => $6::int) THEN 'on_time'
-                  WHEN next_dialed_at IS NOT NULL THEN 'late'
-                  WHEN contact_closed THEN 'missed'
-                  WHEN campaign_ended THEN 'missed'
-                  WHEN callback_at > $5::timestamptz THEN 'pending_future'
-                  ELSE 'pending_due'
-                END AS cls
+                ${callbackClassSql('$5', '$6')} AS cls
            FROM booked
        )
        SELECT EXISTS (SELECT 1 FROM camp) AS found,
