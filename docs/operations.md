@@ -648,11 +648,63 @@ nothing, so two probers see the same numbers and a stall stays visible for the w
 For history, the *Processes* row reads the OTel runtime gauges (`nodejs_eventloop_*`, one series
 per process, per export interval), which keep their own histogram and are not touched by probes.
 
+## Reports
+
+Reports ([`reports.md`](reports.md)) are assembled in the main process and rendered either in
+process (`AGENCY_REPORTS_RENDERER=inline`, the default: development and tests, Chromium on the
+server) or by the `report-renderer` Lambda behind the `report-jobs` SQS queue
+(`AGENCY_REPORTS_RENDERER=sqs`, production; created by `aws/terraform` with `enable_reports`,
+[`aws/README.md`](../aws/README.md) "Reports"). Every reports setting and its default is in
+[`reports.md`](reports.md), "Config". The renderer path needs four:
+
+| Variable | Value |
+|---|---|
+| `AGENCY_REPORTS_RENDERER` | `sqs` |
+| `AGENCY_REPORTS_SQS_QUEUE_URL` | `terraform output report_jobs_queue_url` |
+| `AGENCY_REPORTS_CALLBACK_SECRET` | The Lambda's `reports_callback_secret`, the same value (≥ 32 characters) |
+| `AGENCY_REPORTS_CALLBACK_BASE_URL` | The server's public base URL, which the Lambda calls back |
+
+`terraform output -raw reports_server_env` prints the first three. Deploy the renderer before the
+server on every release (aws/README.md, "Deploy order"); roll it back by pointing its `live` alias
+at the previous version ("Rollback" there).
+
+### Reports: when runs are stuck
+
+A run moves `queued` → `assembling` → `rendering` → `ready` (or `failed`), and turns `expired`
+after `AGENCY_REPORTS_RETENTION_DAYS`. Where to look, in order:
+
+1. **The dashboard's *Reports* row.** *Pending Runs and Oldest Pending* shows which status runs
+   pile up in (`agency_reports_pending_runs`, set by the reports tick every minute) and how old
+   the oldest is (`agency_reports_oldest_pending_seconds`, which `agy-reports-pending-too-long`
+   watches). *Callbacks* shows whether renders come back, and how they are refused.
+2. **The run row.** `report_runs` holds each run's `status`, `error` (`code` and `message`: the
+   stage that failed, `docs/reports.md` "Contracts"), `render_attempt` and `sent_at`. Runs stuck
+   in `queued` or `assembling` are the server's assembler (its logs for the run id; usually
+   Postgres). Runs stuck in `rendering` were sent and have not called back.
+3. **SQS and the Lambda, in CloudWatch** (the renderer path only). The `report-jobs` queue's
+   `ApproximateNumberOfMessagesVisible` and `ApproximateAgeOfOldestMessage`: growing means the
+   Lambda is not consuming (its event source mapping disabled, or every invocation failing). The
+   dead-letter queue's `ApproximateNumberOfMessagesVisible` above 0 means messages failed three
+   receives (the function threw, timed out at 300 s or ran out of memory); read a message there
+   for its `run_id` and the function's logs (`/aws/lambda/<function>`) for the error. An empty
+   queue with runs `rendering`: the send never reached SQS (the server's logs, its
+   `AGENCY_REPORTS_SQS_QUEUE_URL`, its `sqs:SendMessage`), or the callback never reached the server
+   (`AGENCY_REPORTS_CALLBACK_BASE_URL` wrong or unreachable from the internet, or refused:
+   `agency_reports_callbacks_total{result="bad_signature"}`).
+
+The tick re-sends a run with no callback after `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (15 min) as a
+new attempt, after first checking S3 for its files, and fails it `render_timed_out` after
+`AGENCY_REPORTS_MAX_ATTEMPTS` (3). So a fixed cause clears on its own; runs already failed are
+re-run from the console ("Run again"). Nothing replays the dead-letter queue, and nothing needs to:
+an older attempt's callback is ignored once a newer one was sent (`stale` on the callbacks panel).
+Purge the DLQ once you have read what it holds.
+
 ## Alert runbooks
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page, and for the carrier credential rules. The insights rules first: a stale or holed Insights page costs no
+warn (Slack) and never page, for the carrier credential rules, and for the reports rules (warn
+only). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -805,6 +857,46 @@ retention B20 promises.
 Postgres or its pool; a lock wait on a credential row being revoked or rotated clears on its own.
 
 **Do:** fix Postgres. The sweep is idempotent: the next hourly pass, or a restart, catches up.
+
+### `agy-reports-pending-too-long`
+
+**Means:** the oldest report run still queued, assembling or rendering has been older than
+900 s for 10 minutes (`agency_reports_oldest_pending_seconds`), so it is 25+ minutes old: past
+one render re-send. Its requester sees it spinning. Dialling is unaffected.
+
+**Check:** "Reports: when runs are stuck" above: the pending panel's status split, the run rows,
+then the queue, its DLQ and the Lambda's logs.
+
+**Do:** fix the stage that holds the runs (Postgres for assembly; the renderer, its deploy or the
+callback settings for rendering). The tick re-sends and finally fails silent runs, so the gauge
+comes down by itself; users re-run the failed ones.
+
+### `agy-reports-failing`
+
+**Means:** 4+ report runs ended `failed` in an hour (`agency_reports_runs_total{status="failed"}`).
+
+**Check:** the failed runs' `error.code`. `assembly_failed`, `subject_unavailable`: the server's
+assembly. `dataset_unreadable`, `render_failed`, `upload_failed`: the renderer (its logs; an
+S3 error is its role or the bucket). `dataset_version_unsupported`: the server was deployed
+before the renderer; apply the renderer (aws/README.md, "Deploy order"). `render_timed_out`: no
+callback, as in `agy-reports-pending-too-long`. A renderer that started failing after an apply:
+roll `live` back (aws/README.md, "Rollback").
+
+**Do:** fix the cause; users then use "Run again", and subscriptions send the next period as
+usual.
+
+### `agy-reports-callback-bad-signature`
+
+**Means:** the server refused at least one render callback in 15 minutes because its HMAC did not
+verify or its timestamp was more than 300 s off (`agency_reports_callbacks_total{result="bad_signature"}`).
+
+**Check:** whether reports are failing or pending too. If so, the Lambda's and the server's
+`AGENCY_REPORTS_CALLBACK_SECRET` differ (a rotation half done) or a clock is minutes off. If
+reports are otherwise fine, something else is posting to `/webhooks/reports/rendered`: look at the
+callers in the access logs.
+
+**Do:** make the two secrets equal (`reports_callback_secret` and apply; `docker/.env` and
+recreate the server), then let users re-run what failed meanwhile.
 
 ## Releases and versioning
 
