@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "description": "Renders report datasets to PDF (React → HTML → headless Chromium) and Excel (exceljs streaming writer); runs as a Lambda or in the server process (RP15).",
-  "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

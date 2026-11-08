@@ -175,6 +175,9 @@ importers:
       '@magick-agency/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@magick-agency/report-renderer':
+        specifier: workspace:*
+        version: link:../report-renderer
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1

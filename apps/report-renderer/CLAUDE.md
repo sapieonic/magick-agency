@@ -36,3 +36,11 @@ database, the server or the clock (it prints `generated_at`).
   `/usr/bin/chromium-browser`. The PDF tests fail in CI when none is found rather than skip.
 - `pnpm test` from this directory. `REPORT_PREVIEW_DIR=<dir> pnpm vitest run test/preview.test.ts`
   writes every fixture's HTML and PDF for a look (`pdftoppm -r 80 -png` for page images).
+
+## Module format
+
+The package is CommonJS like `packages/contracts` (no `"type": "module"`): the server loads it in
+process for `AGENCY_REPORTS_RENDERER=inline` under `tsx`, and an ES module importing the CommonJS
+contracts source there cannot see its named exports. The Lambda bundle is still ESM
+(`scripts/build-lambda.mjs` emits `index.mjs`), and `src/pdf/fonts.ts` falls back from
+`import.meta.url` to `__filename`.

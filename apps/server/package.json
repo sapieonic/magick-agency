@@ -25,6 +25,7 @@
     "@magick-agency/db": "workspace:*",
     "@magick-agency/domain": "workspace:*",
     "@magick-agency/observability": "workspace:*",
+    "@magick-agency/report-renderer": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.81.0",
     "@opentelemetry/exporter-metrics-otlp-proto": "^0.223.0",
