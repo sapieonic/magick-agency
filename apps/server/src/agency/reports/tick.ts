@@ -2,8 +2,11 @@
  * The reports tick (docs/reports.md "Shape", RP8, RP13, RP14): every `tickIntervalMs`, main
  * process only (started by `startAgency`), never overlapping itself:
  *
- *  (a) **subscriptions → runs** through `claimDue`: each due subscription in its own transaction;
- *      its run covers `periodFor(cadence, sendAt, zone)`, where `sendAt` is its due `next_run_at`,
+ *  (a) **subscriptions → runs** through `claimDue`: each due subscription in its own transaction.
+ *      Its subject is probed first (`subscription-subject.ts`): one that is gone disables the
+ *      subscription (no run, no failure email every period). A campaign subscription takes the
+ *      campaign's CURRENT zone (RP3), stored back on the subscription when it changed.
+ *      Its run covers `periodFor(cadence, sendAt, zone)`, where `sendAt` is its due `next_run_at`,
  *      or, when more than one send was missed (downtime), the most recent missed send
  *      (`previousRunAt(now)`): catch-up sends only the latest period (RP14). The unique
  *      `(subscription, period_start)` index turns a repeat into `null` (the `duplicate` metric).
@@ -41,6 +44,8 @@ import type { PoolClient } from 'pg';
 import { localDayBounds, nextRunAt, periodFor, previousRunAt } from './schedule.js';
 import { reportOutputKey } from './report-keys.js';
 import type { ReportRenderDispatcher } from './dispatch.js';
+import type { ReportSubscriptionSubject } from './subscription-subject.js';
+import { isUsableTimezone } from '../calling-hours.js';
 import { countTerminalRun, type RenderOutcomeResult } from './apply.js';
 
 const log = createChildLogger({ component: 'agency-reports-tick' });
@@ -75,6 +80,8 @@ export interface ReportTickDeps {
     | 'pendingStats'
   >;
   subscriptions: Pick<ReportSubscriptionRepository, 'claimDue'>;
+  /** Is a due subscription's subject still there (and a campaign's current zone)? `probeSubscriptionSubject`. */
+  subject(sub: ReportSubscriptionRecord): Promise<ReportSubscriptionSubject>;
   dispatcher: ReportRenderDispatcher;
   /** HEAD one object: its size, or null when it does not exist. Throws on any other error. */
   headObject(key: string): Promise<{ bytes: number } | null>;
@@ -86,7 +93,7 @@ export interface ReportTickDeps {
 }
 
 export interface ReportTickResult {
-  subscriptions: { created: number; duplicate: number; errors: number };
+  subscriptions: { created: number; duplicate: number; disabled: number; errors: number };
   resent: number;
   reconciled: number;
   timedOut: number;
@@ -107,7 +114,25 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
   const unsentGraceMs = options.unsentGraceMs ?? REPORT_UNSENT_GRACE_MS;
 
   const subscriptionsStep = async (now: Date, result: ReportTickResult): Promise<void> => {
-    const handler = async (sub: ReportSubscriptionRecord, client: PoolClient): Promise<ReportSubscriptionDueDecision> => {
+    const handler = async (claimed: ReportSubscriptionRecord, client: PoolClient): Promise<ReportSubscriptionDueDecision> => {
+      // The subject first: one that is gone would only produce a run failing
+      // `subject_unavailable` (and a failure email) every period, so the subscription stops.
+      const subject = await deps.subject(claimed);
+      if (!subject.available) {
+        result.subscriptions.disabled += 1;
+        log.warn({ subscriptionId: claimed.id, kind: claimed.kind, reason: subject.reason }, 'Report subscription disabled: its subject is gone');
+        return { disable: true };
+      }
+      // A campaign subscription follows the campaign's CURRENT zone (RP3): the period, its bounds
+      // and the next send are cut in it, and the stored zone follows it.
+      let sub = claimed;
+      if (subject.timezone !== null && subject.timezone !== claimed.timezone) {
+        if (isUsableTimezone(subject.timezone)) {
+          sub = { ...claimed, timezone: subject.timezone };
+        } else {
+          log.warn({ subscriptionId: claimed.id, timezone: subject.timezone }, 'Campaign zone not usable; the subscription keeps its stored zone');
+        }
+      }
       const sendAt = dueSendAt(sub, now);
       const period = periodFor(sub.cadence, sendAt, sub.timezone);
       const bounds = localDayBounds(period.from, period.to, sub.timezone);
@@ -133,7 +158,10 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
         result.subscriptions.duplicate += 1;
         agencyReportsSubscriptionRunsTotal.inc({ result: 'duplicate' });
       }
-      return { nextRunAt: nextRunAt(sub, now) };
+      return {
+        nextRunAt: nextRunAt(sub, now),
+        ...(sub.timezone !== claimed.timezone ? { timezone: sub.timezone } : {}),
+      };
     };
     const outcomes = await deps.subscriptions.claimDue(now, batch, handler);
     for (const outcome of outcomes) {
@@ -236,7 +264,7 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
   const runTick = async (): Promise<ReportTickResult> => {
     const now = deps.now();
     const result: ReportTickResult = {
-      subscriptions: { created: 0, duplicate: 0, errors: 0 },
+      subscriptions: { created: 0, duplicate: 0, disabled: 0, errors: 0 },
       resent: 0, reconciled: 0, timedOut: 0, notified: 0, expired: 0, errors: 0,
     };
     const step = async (name: string, work: () => Promise<void>): Promise<void> => {

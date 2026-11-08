@@ -608,6 +608,18 @@ describe('subscriptions', () => {
     expect(f.audits[0]).toMatchObject({ details: expect.objectContaining({ via: 'run_now', subscription_id: SUBSCRIPTION }) });
   });
 
+  it('run-now on a campaign subscription cuts the period in the campaign\'s CURRENT zone, the zone the run is stored with', async () => {
+    // Stored when the campaign was in Kiritimati (UTC+14, where 10:00Z on the 8th is already the 9th);
+    // the campaign is in New York now (the fake probe), where it is 05:00 on the 8th.
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ timezone: 'Pacific/Kiritimati' }));
+    const res = await req('POST', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}/run-now`);
+    expect(res.statusCode).toBe(202);
+    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'campaign', timezone: 'America/New_York', localFrom: '2026-11-07', localTo: '2026-11-07',
+      rangeFrom: new Date('2026-11-07T05:00:00Z'), rangeTo: new Date('2026-11-08T05:00:00Z'),
+    }), expect.any(Number));
+  });
+
   it('GET lists the account\'s subscriptions with names', async () => {
     f.subs.set(SUBSCRIPTION, subscriptionRecord());
     const res = await req('GET', '/proxy/agency/report-subscriptions');

@@ -11,7 +11,8 @@
  *   2. hand it, with the transaction's client, to the caller's handler, which creates the run
  *      (`ReportRunRepository.createForSubscription(input, client)`) and answers when the
  *      subscription next runs;
- *   3. write that `next_run_at` (or disable it) and commit.
+ *   3. write that `next_run_at` (and the zone the handler cut it in, when it changed), or disable
+ *      it, and commit.
  * The run and the advance commit together or not at all: a crash before the commit leaves the
  * subscription due and no run; after it, both. The unique `(subscription_id, period_start)` index
  * is the backstop under all of it: a handler that runs twice for one period (a retry after an
@@ -95,8 +96,11 @@ export interface ReportSubscriptionPatch {
 
 /** What the due handler decides for one subscription. */
 export type ReportSubscriptionDueDecision =
-  /** The next send; must be after the claim's `now`. */
-  | { nextRunAt: Date }
+  /**
+   * The next send; must be after the claim's `now`. `timezone`, when given, is written with it: a
+   * campaign subscription follows its campaign's CURRENT zone (RP3), re-read at each claim.
+   */
+  | { nextRunAt: Date; timezone?: string }
   /** Stop scheduling it (its subject or account is gone): `enabled = false`, `next_run_at = NULL`. */
   | { disable: true };
 
@@ -261,8 +265,9 @@ export class ReportSubscriptionRepository {
             throw new Error(`report subscription ${sub.id}: next run ${String(decision.nextRunAt)} is not after the claim`);
           }
           await client.query(
-            'UPDATE report_subscriptions SET next_run_at = $2::timestamptz, updated_at = now() WHERE id = $1::uuid',
-            [sub.id, decision.nextRunAt],
+            `UPDATE report_subscriptions SET next_run_at = $2::timestamptz, timezone = COALESCE($3::text, timezone), updated_at = now()
+              WHERE id = $1::uuid`,
+            [sub.id, decision.nextRunAt, decision.timezone ?? null],
           );
           return { subscriptionId: sub.id, outcome: 'advanced' as const, nextRunAt: decision.nextRunAt };
         }, { pool: getPool() });

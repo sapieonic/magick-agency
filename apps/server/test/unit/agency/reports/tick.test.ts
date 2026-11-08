@@ -18,6 +18,7 @@ vi.mock('@magick-agency/observability/metrics/agency', async (importOriginal) =>
 
 import { createReportTick, dueSendAt, type ReportTickDeps } from '../../../../src/agency/reports/tick.js';
 import { reportOutputKey } from '../../../../src/agency/reports/report-keys.js';
+import type { ReportSubscriptionSubject } from '../../../../src/agency/reports/subscription-subject.js';
 import type {
   ReportRunFence,
   ReportRunSubscriptionInput,
@@ -47,6 +48,7 @@ function deps(over: Partial<ReportTickDeps> = {}) {
     subscriptions: {
       claimDue: vi.fn(async (_now: Date, _limit: number, _handler: ReportSubscriptionDueHandler): Promise<never[]> => []),
     },
+    subject: vi.fn(async (_sub: ReportSubscriptionRecord): Promise<ReportSubscriptionSubject> => ({ available: true, timezone: null })),
     dispatcher: { dispatch: vi.fn(async () => {}), idle: vi.fn(async () => {}) },
     headObject: vi.fn(async (_key: string) => null as { bytes: number } | null),
     apply: vi.fn(async () => ({ result: 'applied' as const, run: runRecord({ status: 'ready' }) })),
@@ -66,7 +68,7 @@ async function dueOnce(sub: ReportSubscriptionRecord, d = deps()) {
     return [{ subscriptionId: sub.id, outcome: 'advanced', nextRunAt: (decision as { nextRunAt: Date }).nextRunAt }] as never[];
   });
   const result = await createReportTick(opts, d).runTick();
-  return { decision: decision as { nextRunAt: Date }, input: d.runs.createForSubscription.mock.calls[0]?.[0], result, d };
+  return { decision: decision as { nextRunAt: Date; timezone?: string } & { disable?: true }, input: d.runs.createForSubscription.mock.calls[0]?.[0], result, d };
 }
 
 beforeEach(() => { vi.clearAllMocks(); });
@@ -124,6 +126,39 @@ describe('subscriptions → runs', () => {
     const result = await createReportTick(opts, d).runTick();
     expect(result.subscriptions.errors).toBe(1);
     expect(d.runs.expireDue).toHaveBeenCalled();
+  });
+
+  it('a subscription whose subject is gone is disabled at the claim: no run, nothing emailed every period', async () => {
+    const d = deps();
+    d.subject.mockResolvedValue({ available: false, reason: 'the campaign no longer exists in the account' });
+    const sub = subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, result } = await dueOnce(sub, d);
+    expect(decision).toEqual({ disable: true });
+    expect(d.subject).toHaveBeenCalledWith(sub);
+    expect(d.runs.createForSubscription).not.toHaveBeenCalled();
+    expect(result.subscriptions).toMatchObject({ created: 0, disabled: 1 });
+  });
+
+  it('a campaign subscription is cut in the campaign\'s CURRENT zone, and the stored zone follows it', async () => {
+    const d = deps();
+    // Stored as London at creation; the campaign has since moved to New York (UTC-5 in November).
+    d.subject.mockResolvedValue({ available: true, timezone: 'America/New_York' });
+    const sub = subscriptionRecord({ timezone: 'Europe/London', next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, input } = await dueOnce(sub, d);
+    // 09:30Z is 04:30 in New York: the latest complete day there is 7 November.
+    expect(input).toMatchObject({
+      timezone: 'America/New_York', localFrom: '2026-11-07', localTo: '2026-11-07', periodStart: '2026-11-07',
+      rangeFrom: new Date('2026-11-07T05:00:00Z'), rangeTo: new Date('2026-11-08T05:00:00Z'),
+    });
+    // The next send is 08:00 New York (13:00Z), today, and the decision stores the zone.
+    expect(decision).toEqual({ nextRunAt: new Date('2026-11-08T13:00:00Z'), timezone: 'America/New_York' });
+
+    // An unchanged zone writes none; a zone Intl cannot use keeps the stored one.
+    d.runs.createForSubscription.mockClear();
+    d.subject.mockResolvedValue({ available: true, timezone: 'Europe/London' });
+    expect((await dueOnce(sub, d)).decision).not.toHaveProperty('timezone');
+    d.subject.mockResolvedValue({ available: true, timezone: 'Mars/Olympus' });
+    expect((await dueOnce(sub, d)).decision).not.toHaveProperty('timezone');
   });
 
   it('dueSendAt: the due time, or the latest missed send when that is later', () => {

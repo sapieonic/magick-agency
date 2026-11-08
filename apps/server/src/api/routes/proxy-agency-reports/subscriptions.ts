@@ -325,12 +325,13 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
     if (!(await reportsGate(deps, request, reply))) return reply;
     const sub = await findAccountSubscription(deps, request, request.params.id);
     if (!sub) return sendReportRefusal(reply, 'report_subscription_not_found');
-    const period = periodFor(sub.cadence, deps.now(), sub.timezone);
+    const now = deps.now();
     return createAdHocRun(deps, request, reply, {
       kind: sub.kind,
       subjectId: sub.subject_id,
-      from: period.from,
-      to: period.to,
+      // Cut in the zone the run is stored with: for a campaign, the campaign's current zone (RP3),
+      // which may have moved since the subscription stored its own.
+      window: (zone) => periodFor(sub.cadence, now, zone),
       timezone: sub.timezone,
       formats: sub.formats,
       campaignIds: null,

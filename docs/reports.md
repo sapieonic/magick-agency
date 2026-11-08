@@ -322,7 +322,9 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   subscription PATCH recomputes `next_run_at` only when a schedule field (cadence, send time, day,
   zone) or `enabled` changes VALUE against the stored row, not when it is merely present (the
   console sends the whole schedule on every edit), so an edit to formats or recipients never skips
-  a due send; its audit `details.fields` names only the fields that changed; a campaign subscription keeps its zone. Audit
+  a due send; its audit `details.fields` names only the fields that changed; a campaign subscription's zone is the campaign's current `default_timezone` (a `timezone` in
+  the PATCH is ignored), and run-now cuts its period in the zone the run is stored with (for a
+  campaign, the campaign's current zone). Audit
   actions (`platform_audit_log`, group "Reports"): `agency_report.requested` (`details.via`:
   `request`, `retry`, `run_now`), `agency_report.downloaded`, `agency_report_subscription.created`,
   `.updated`, `.deleted`.
@@ -359,7 +361,15 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   `finally` when the assembler calls `return()` at the row cap).
 - **Tick** (`tick.ts`): each step handles at most 50 items a tick; a run assembled but unsent for
   5 minutes is sent; a run found rendered in S3 after a lost callback records `renderer_version =
-  'reconciled'`.
+  'reconciled'`. Each due subscription's subject is probed at the claim
+  (`subscription-subject.ts`, the builders' own `subject_unavailable` rule: the account exists; an
+  agent's membership, any status, reaches it; the campaign is still the account's; an account
+  report is about its own account): a subject that is gone DISABLES the subscription (no run, so no
+  failure email every period). A campaign subscription's period, bounds and next send are cut in
+  the campaign's CURRENT zone, read at the claim and written back to the subscription when it
+  moved (a zone `Intl` cannot use keeps the stored one, logged). A subscription run that still
+  fails `subject_unavailable` (the subject left between the claim and the build) disables its
+  subscription in the assembler; that run's failure email is the last.
 - **Email** (`notifications/agency-report-ready.ts`, template
   `notifications/templates/agency-report-ready.template.ts`): catalog event `agency.report.ready`
   (category `agency`, explicit audience, default on, so every role sees the toggle). Link

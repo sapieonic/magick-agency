@@ -75,7 +75,7 @@ import {
   call, drainAudits, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
   type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
-import { reportRunRepository } from '../../../src/db/repositories/agency.repository.js';
+import { reportRunRepository, reportSubscriptionRepository } from '../../../src/db/repositories/agency.repository.js';
 import { createReportAssembler } from '../../../src/agency/reports/assembler.js';
 import { createInlineDispatcher, s3RendererIO, type ReportRenderDispatcher } from '../../../src/agency/reports/dispatch.js';
 import { applyRenderOutcome } from '../../../src/agency/reports/apply.js';
@@ -124,6 +124,7 @@ function assemblerWith(dispatcher: ReportRenderDispatcher) {
     { intervalMs: 60_000, maxDetailRows: 1000, maxAttempts: 3 },
     {
       repo: reportRunRepository,
+      subscriptions: reportSubscriptionRepository,
       builders: { agent: fakeBuilder, campaign: fakeBuilder, account: fakeBuilder },
       storage: { uploadStream, uploadJson },
       dispatcher,
