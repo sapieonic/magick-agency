@@ -18,6 +18,7 @@ vi.mock('@magick-agency/observability/metrics/agency', async (importOriginal) =>
 
 import { createReportTick, dueSendAt, type ReportTickDeps } from '../../../../src/agency/reports/tick.js';
 import { reportOutputKey } from '../../../../src/agency/reports/report-keys.js';
+import type { ReportSubscriptionSubject } from '../../../../src/agency/reports/subscription-subject.js';
 import type {
   ReportRunFence,
   ReportRunSubscriptionInput,
@@ -47,6 +48,7 @@ function deps(over: Partial<ReportTickDeps> = {}) {
     subscriptions: {
       claimDue: vi.fn(async (_now: Date, _limit: number, _handler: ReportSubscriptionDueHandler): Promise<never[]> => []),
     },
+    subject: vi.fn(async (_sub: ReportSubscriptionRecord): Promise<ReportSubscriptionSubject> => ({ available: true, timezone: null })),
     dispatcher: { dispatch: vi.fn(async () => {}), idle: vi.fn(async () => {}) },
     headObject: vi.fn(async (_key: string) => null as { bytes: number } | null),
     apply: vi.fn(async () => ({ result: 'applied' as const, run: runRecord({ status: 'ready' }) })),
@@ -66,7 +68,7 @@ async function dueOnce(sub: ReportSubscriptionRecord, d = deps()) {
     return [{ subscriptionId: sub.id, outcome: 'advanced', nextRunAt: (decision as { nextRunAt: Date }).nextRunAt }] as never[];
   });
   const result = await createReportTick(opts, d).runTick();
-  return { decision: decision as { nextRunAt: Date }, input: d.runs.createForSubscription.mock.calls[0]?.[0], result, d };
+  return { decision: decision as { nextRunAt: Date; timezone?: string } & { disable?: true }, input: d.runs.createForSubscription.mock.calls[0]?.[0], result, d };
 }
 
 beforeEach(() => { vi.clearAllMocks(); });
@@ -124,6 +126,39 @@ describe('subscriptions → runs', () => {
     const result = await createReportTick(opts, d).runTick();
     expect(result.subscriptions.errors).toBe(1);
     expect(d.runs.expireDue).toHaveBeenCalled();
+  });
+
+  it('a subscription whose subject is gone is disabled at the claim: no run, nothing emailed every period', async () => {
+    const d = deps();
+    d.subject.mockResolvedValue({ available: false, reason: 'the campaign no longer exists in the account' });
+    const sub = subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, result } = await dueOnce(sub, d);
+    expect(decision).toEqual({ disable: true });
+    expect(d.subject).toHaveBeenCalledWith(sub);
+    expect(d.runs.createForSubscription).not.toHaveBeenCalled();
+    expect(result.subscriptions).toMatchObject({ created: 0, disabled: 1 });
+  });
+
+  it('a campaign subscription is cut in the campaign\'s CURRENT zone, and the stored zone follows it', async () => {
+    const d = deps();
+    // Stored as London at creation; the campaign has since moved to New York (UTC-5 in November).
+    d.subject.mockResolvedValue({ available: true, timezone: 'America/New_York' });
+    const sub = subscriptionRecord({ timezone: 'Europe/London', next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, input } = await dueOnce(sub, d);
+    // 09:30Z is 04:30 in New York: the latest complete day there is 7 November.
+    expect(input).toMatchObject({
+      timezone: 'America/New_York', localFrom: '2026-11-07', localTo: '2026-11-07', periodStart: '2026-11-07',
+      rangeFrom: new Date('2026-11-07T05:00:00Z'), rangeTo: new Date('2026-11-08T05:00:00Z'),
+    });
+    // The next send is 08:00 New York (13:00Z), today, and the decision stores the zone.
+    expect(decision).toEqual({ nextRunAt: new Date('2026-11-08T13:00:00Z'), timezone: 'America/New_York' });
+
+    // An unchanged zone writes none; a zone Intl cannot use keeps the stored one.
+    d.runs.createForSubscription.mockClear();
+    d.subject.mockResolvedValue({ available: true, timezone: 'Europe/London' });
+    expect((await dueOnce(sub, d)).decision).not.toHaveProperty('timezone');
+    d.subject.mockResolvedValue({ available: true, timezone: 'Mars/Olympus' });
+    expect((await dueOnce(sub, d)).decision).not.toHaveProperty('timezone');
   });
 
   it('dueSendAt: the due time, or the latest missed send when that is later', () => {
@@ -200,13 +235,29 @@ describe('reconcile', () => {
       runRecord({ id: RUN, status: 'rendering', render_attempt: 1 }),
       runRecord({ id: RUN_B, status: 'rendering', render_attempt: 1 }),
     ]);
-    d.headObject.mockImplementation(async (key: string) => {
-      if (key.includes(RUN)) throw new Error('S3 500');
-      return null;
+    d.runs.markSent.mockImplementation(async (id: string, fence: ReportRunFence) => {
+      if (id === RUN) throw new Error('db hiccup');
+      return ('renderAttempt' in fence ? fence.renderAttempt : 0) + 1;
     });
     const result = await createReportTick(opts, d).runTick();
     expect(result.errors).toBe(1);
     expect(d.runs.markSent).toHaveBeenCalledWith(RUN_B, { renderAttempt: 1 });
+  });
+
+  it('a HEAD that fails (not a 404) counts as files missing: re-sent while attempts remain, then failed, never stuck', async () => {
+    const d = deps();
+    d.headObject.mockRejectedValue(Object.assign(new Error('Access Denied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }));
+    const run = runRecord({ status: 'rendering', render_attempt: 1 });
+    d.runs.findRenderingSentBefore.mockResolvedValue([run]);
+    let result = await createReportTick(opts, d).runTick();
+    expect(result.errors).toBe(0);
+    expect(d.apply).not.toHaveBeenCalled();
+    expect(d.dispatcher.dispatch).toHaveBeenCalledWith(run, 2);
+
+    d.runs.findRenderingSentBefore.mockResolvedValue([runRecord({ status: 'rendering', render_attempt: 3 })]);
+    result = await createReportTick(opts, d).runTick();
+    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', expect.any(String), { renderAttempt: 3 });
+    expect(result.timedOut).toBe(1);
   });
 });
 

@@ -72,14 +72,34 @@ run "short_secret_refused" {
   expect_failures = [var.reports_callback_secret]
 }
 
+run "quote_in_secret_refused" {
+  command = plan
+  variables {
+    reports_callback_secret = "0123456789abcdef'0123456789abcdef0123"
+  }
+  expect_failures = [var.reports_callback_secret]
+}
+
+run "padded_secret_refused" {
+  command = plan
+  variables {
+    reports_callback_secret = " 0123456789abcdef0123456789abcdef0123"
+  }
+  expect_failures = [var.reports_callback_secret]
+}
+
 run "enabled" {
   command = apply
   variables {
     enable_reports                     = true
     report_renderer_zip                = "versions.tf" # any file: the plan only hashes it
     report_renderer_chromium_layer_arn = "arn:aws:lambda:ap-south-1:123456789012:layer:chromium:3"
-    reports_callback_secret            = "0123456789abcdef0123456789abcdef0123"
+    reports_callback_secret            = "0123456789abcdef+/=$#\"0123456789abcdef0123"
     noncurrent_version_expiration_days = 30
+  }
+  assert {
+    condition     = output.reports_server_env == "AGENCY_REPORTS_RENDERER=sqs\nAGENCY_REPORTS_SQS_QUEUE_URL=https://sqs.ap-south-1.amazonaws.com/123456789012/q\nAGENCY_REPORTS_CALLBACK_SECRET='0123456789abcdef+/=$#\"0123456789abcdef0123'"
+    error_message = "reports_server_env lines"
   }
   assert {
     condition     = aws_sqs_queue.report_jobs[0].visibility_timeout_seconds == 1800 && aws_sqs_queue.report_jobs[0].message_retention_seconds == 86400 && aws_sqs_queue.report_jobs[0].sqs_managed_sse_enabled

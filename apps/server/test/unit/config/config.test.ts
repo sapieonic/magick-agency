@@ -58,6 +58,9 @@ describe('parseConfig', () => {
       AGENCY_REPORTS_SQS_QUEUE_URL: 'https://sqs.ap-south-1.amazonaws.com/123456789012/report-jobs',
       AGENCY_REPORTS_CALLBACK_BASE_URL: 'https://api.example.com/',
       AGENCY_REPORTS_CALLBACK_SECRET: 'x'.repeat(32),
+      S3_AUDIO_BUCKET: 'magick-agency-dev-media',
+      AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+      AWS_SECRET_ACCESS_KEY: 'secret',
     };
 
     it('defaults: inline, 100,000 rows, 2 s, 60 s, 15 min, 3 attempts, 90 days, 5 pending, 3 a minute', () => {
@@ -132,8 +135,29 @@ describe('parseConfig', () => {
       ]);
       expect(messages({ ...SQS, AGENCY_REPORTS_SQS_QUEUE_URL: 'report-jobs' })).toHaveLength(1);
       expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_BASE_URL: 'api.example.com' })).toHaveLength(1);
-      // A whitespace-only value is absent.
       expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET: ' '.repeat(40) })).toHaveLength(1);
+    });
+
+    it('sqs without the S3 bucket fails boot, naming S3_AUDIO_BUCKET (runs would queue and never finish)', () => {
+      const { S3_AUDIO_BUCKET: _bucket, AWS_ACCESS_KEY_ID: _id, AWS_SECRET_ACCESS_KEY: _secret, ...noS3 } = SQS;
+      expect(messages(noS3)).toEqual([
+        'agency.reports.renderer: AGENCY_REPORTS_RENDERER=sqs needs the S3 bucket the renderer reads and writes: '
+          + 'set S3_AUDIO_BUCKET (with AWS_REGION, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)',
+      ]);
+      // Inline without a bucket still boots (it warns; a dev box may not have one).
+      expect(reports({ AGENCY_REPORTS_RENDERER: 'inline' })).not.toBeNull();
+    });
+
+    it('the callback secret is used exactly as written: never trimmed, leading or trailing whitespace refused', () => {
+      const secret = `${'x'.repeat(20)} ${'y'.repeat(20)}`; // inner whitespace is part of the value
+      expect(reports({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET: secret })?.callbackSecret).toBe(secret);
+      const refused = 'agency.reports.callbackSecret: AGENCY_REPORTS_CALLBACK_SECRET has leading or trailing whitespace: '
+        + 'remove it here and in the renderer\'s copy (the callback is signed with the value exactly as written)';
+      for (const padded of [` ${'x'.repeat(32)}`, `${'x'.repeat(32)}\n`, `${'x'.repeat(32)} `]) {
+        expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET: padded }), JSON.stringify(padded)).toEqual([refused]);
+      }
+      // Inline uses a configured secret too (the webhook verifies with it), so the rule holds there.
+      expect(messages({ AGENCY_REPORTS_CALLBACK_SECRET: ' padded ' })).toEqual([refused]);
     });
 
     it('inline needs none of the sqs settings', () => {

@@ -10,6 +10,8 @@
  *     tenant's object. A `rendered` callback must carry one file per requested format.
  *  3. `applyRenderResult` writes it only while the run is `rendering` under that attempt; a late
  *     callback of a superseded send is `stale` (acknowledged, ignored).
+ *  4. A `failed` result stores its code's generic copy (`failure-messages.ts`); the renderer's
+ *     own message is logged with the run id and attempt, never stored or served.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import {
@@ -24,6 +26,7 @@ import {
   type ReportRunRepository,
 } from '../../db/repositories/agency.repository.js';
 import { isReportOutputKey } from './report-keys.js';
+import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 
 const log = createChildLogger({ component: 'agency-reports' });
 
@@ -85,13 +88,16 @@ export async function applyRenderOutcome(
       retentionDays: deps.retentionDays,
     });
   } else {
-    const code = callback.error && RENDERER_CODES.has(callback.error.code) ? callback.error.code : 'render_failed';
+    const code = (callback.error && RENDERER_CODES.has(callback.error.code) ? callback.error.code : 'render_failed') as ReportRendererFailureCode;
+    // The renderer's own text (an exception message, a key, a path) is logged, never stored or
+    // served: the run keeps the code's generic copy (`failure-messages.ts`).
+    log.warn({
+      runId, attempt, code, rendererCode: callback.error?.code ?? null,
+      rendererMessage: callback.error?.message?.slice(0, 2000) ?? null, rendererVersion: callback.renderer_version,
+    }, 'Report renderer reported a failure');
     applied = await deps.repo.applyRenderResult(runId, attempt, {
       status: 'failed',
-      error: {
-        code: code as ReportRendererFailureCode,
-        message: (callback.error?.message ?? 'The renderer reported a failure.').slice(0, 2000),
-      },
+      error: { code, message: REPORT_FAILURE_MESSAGES[code] },
       rendererVersion: callback.renderer_version,
     });
   }

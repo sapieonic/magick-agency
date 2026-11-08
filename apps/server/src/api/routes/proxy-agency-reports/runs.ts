@@ -36,7 +36,7 @@ import {
   callerSeesRun,
   callerSupervises,
   findAccountRun,
-  isReportTimezone,
+  usableReportZone,
   reportsGate,
   resolveReportTarget,
   sendReportRefusal,
@@ -77,8 +77,11 @@ type FileParams = { Params: { id: string; format: string } };
 export interface AdHocRunInput {
   kind: ReportKind;
   subjectId: string;
-  from: string;
-  to: string;
+  /**
+   * The local dates, or how to derive them from the zone the run is cut in (run-now: the latest
+   * complete period in THAT zone, which for a campaign is the campaign's current one).
+   */
+  window: { from: string; to: string } | ((timezone: string) => { from: string; to: string });
   /** The request's zone (agent, account); ignored for a campaign (its own zone). */
   timezone: string | undefined;
   formats: ReportFormat[];
@@ -110,11 +113,12 @@ export async function createAdHocRun(
   const tenantId = request.tenantId!;
   const accountId = request.accountId!.toLowerCase();
 
-  const timezone = target.campaignTimezone ?? input.timezone;
-  if (!isReportTimezone(timezone)) return sendReportRefusal(reply, 'report_timezone_invalid');
+  const timezone = await usableReportZone(deps, target.campaignTimezone ?? input.timezone);
+  if (timezone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
 
   const now = deps.now();
-  const windowProblem = reportWindowProblem(input.from, input.to, localDateOf(now, timezone));
+  const { from, to } = typeof input.window === 'function' ? input.window(timezone) : input.window;
+  const windowProblem = reportWindowProblem(from, to, localDateOf(now, timezone));
   if (windowProblem) return sendReportRefusal(reply, windowProblem);
 
   if (input.campaignIds) {
@@ -126,15 +130,15 @@ export async function createAdHocRun(
   const recent = await deps.runs.countRequestedSince(tenantId, userId, new Date(now.getTime() - 60_000));
   if (recent >= deps.config.userPerMinute) return sendReportRefusal(reply, 'report_rate_limited');
 
-  const bounds = localDayBounds(input.from, input.to, timezone);
+  const bounds = localDayBounds(from, to, timezone);
   const created = await deps.runs.create({
     tenantId,
     accountId,
     kind: target.kind,
     subjectId: target.subjectId,
     campaignIds: input.campaignIds ? input.campaignIds.map((id) => id.toLowerCase()) : null,
-    localFrom: input.from,
-    localTo: input.to,
+    localFrom: from,
+    localTo: to,
     timezone,
     rangeFrom: bounds.start,
     rangeTo: bounds.end,
@@ -167,17 +171,24 @@ export async function createAdHocRun(
 }
 
 /**
- * May the caller download this run's files? The requester, or anyone who could create the same
- * run now (re-checked on every download): a supervisor of the account (for a campaign run, while
- * the account still owns the campaign), or, for an agent's `self` review, the agent themselves.
+ * May the caller download this run's files? Only someone who could create the same run NOW,
+ * re-checked on every download (docs/reports.md "Who may run what"):
+ *  - a `self` review: the agent it is about (its requester), with `agency.station.connect`;
+ *  - a `supervisor` run: a caller holding `agency.supervise` on the account now, whoever requested
+ *    it (a supervisor demoted since keeps seeing their run in the history, but its files are
+ *    refused); for a campaign run, while the account still owns the campaign; for an agent run,
+ *    while the agent's membership reaches the account.
+ * A refusal is the route's `404 report_not_found`, as for a run the caller cannot reach at all.
  */
 async function callerMayDownload(deps: ReportRouteDeps, request: FastifyRequest, run: ReportRunRecord): Promise<boolean> {
-  if (run.requested_by !== null && run.requested_by === request.user?.id) return true;
-  if (run.kind === 'agent' && run.audience === 'self') {
-    return run.subject_id === request.user?.id && hasPermission(request.membership?.role, 'agency.station.connect');
+  const userId = request.user?.id.toLowerCase();
+  if (run.audience === 'self') {
+    return run.kind === 'agent' && userId !== undefined && run.subject_id === userId
+      && hasPermission(request.membership?.role, 'agency.station.connect');
   }
   if (!callerSupervises(request)) return false;
   if (run.kind === 'campaign') return (await deps.campaign(request, run.subject_id)) !== null;
+  if (run.kind === 'agent') return deps.agentInAccount(run.subject_id, request.tenantId!, request.accountId!.toLowerCase());
   return true;
 }
 
@@ -193,8 +204,7 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
     return createAdHocRun(deps, request, reply, {
       kind: body.kind,
       subjectId: body.subject_id,
-      from: body.from,
-      to: body.to,
+      window: { from: body.from, to: body.to },
       timezone: body.timezone,
       formats: body.formats,
       campaignIds: body.campaign_ids ?? null,
@@ -307,8 +317,7 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
     return createAdHocRun(deps, request, reply, {
       kind: run.kind,
       subjectId: run.subject_id,
-      from: run.local_from,
-      to: run.local_to,
+      window: { from: run.local_from, to: run.local_to },
       timezone: run.timezone,
       formats: run.formats,
       campaignIds: run.campaign_ids,

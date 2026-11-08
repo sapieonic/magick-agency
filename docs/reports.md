@@ -312,8 +312,14 @@ campaigns adds about one campaign's Insights reads per campaign, three at a time
   tenant-wide admins on any account of the tenant).
 - **subscriptions**: `agency.supervise`; every recipient must be a member with `agency.supervise`
   on the account (checked at create and again at send).
-- **downloads**: the requester, or anyone who could create the same run; re-checked per download,
-  audited `agency_report.downloaded`.
+- **downloads**: only someone who could create the same run now, re-checked per download and
+  audited `agency_report.downloaded`. A `self` review: the agent it is about (who requested it). A
+  `supervisor` run: a caller with `agency.supervise` on the account now, whoever requested it; for
+  a campaign run while the account still owns the campaign, for an agent run while the agent's
+  membership reaches the account. Having requested a `supervisor` run is not enough: a supervisor
+  demoted since still sees it in the history and on its page (`GET /reports/:id`; the run's
+  metadata, never its contents), but each download answers `404 report_not_found`, the same
+  refusal as a run the caller cannot reach.
 
 ## Pipeline (`agency/reports/`, routes, callback, email)
 
@@ -325,16 +331,22 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   `agency.station.connect`, subscriptions `agency.supervise`), the flag (`403 feature_disabled`,
   body `{ error: 'Feature Not Enabled', code: 'feature_disabled', message: 'Reports are not enabled
   for this account.' }`), then ids, body (the generic agency 400), reach over the subject ("Who may
-  run what"; 403 without a code, or `report_subject_not_found`), zone, window, per-user rate,
+  run what"; 403 without a code, or `report_subject_not_found`), zone (an IANA name `Intl` knows AND
+  Postgres's `pg_timezone_names` holds, case-insensitively as `AT TIME ZONE` matches, so a run is
+  never queued in a zone the dataset reads cannot cut days in; `report_timezone_invalid`), window, per-user rate,
   pending limit. A malformed, unknown or foreign run id is `report_not_found` (404), never 403. A run
   is visible (detail, history, retry) to its requester and to supervisors of its account; a download
-  is allowed to the requester or to anyone who could create the same run now (a supervisor; for a
-  campaign run, while the account still owns the campaign; for a `self` review, the agent). Retry
+  only to someone who could create the same run now (the agent for a `self` review; for a
+  `supervisor` run a current supervisor, whoever requested it: "Who may run what"). Retry
   and run-now create AD HOC runs through the same checks as `POST /reports` (rate and pending limit
   included): retry keeps the parameters and `email_me` only when the caller is the requester;
   run-now covers `periodFor(cadence, now)` (the latest complete period), `email_me` on. A
-  subscription PATCH recomputes `next_run_at` only when the schedule or `enabled` changes, so an edit
-  to formats or recipients never skips a due send; a campaign subscription keeps its zone. Audit
+  subscription PATCH recomputes `next_run_at` only when a schedule field (cadence, send time, day,
+  zone) or `enabled` changes VALUE against the stored row, not when it is merely present (the
+  console sends the whole schedule on every edit), so an edit to formats or recipients never skips
+  a due send; its audit `details.fields` names only the fields that changed; a campaign subscription's zone is the campaign's current `default_timezone` (a `timezone` in
+  the PATCH is ignored), and run-now cuts its period in the zone the run is stored with (for a
+  campaign, the campaign's current zone). Audit
   actions (`platform_audit_log`, group "Reports"): `agency_report.requested` (`details.via`:
   `request`, `retry`, `run_now`), `agency_report.downloaded`, `agency_report_subscription.created`,
   `.updated`, `.deleted`.
@@ -349,15 +361,19 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
 - **One apply path**, `applyRenderOutcome` (`apply.ts`): the webhook, the inline renderer and the
   tick's reconcile all go through it (callback names the run and attempt; every key the run's own
   output key; a `rendered` result carries every requested format; then the attempt-fenced
-  `applyRenderResult`). A callback for a run that no longer exists is `stale`.
+  `applyRenderResult`). A callback for a run that no longer exists is `stale`. A `failed` result
+  stores its code's generic British-English copy (`failure-messages.ts`, one sentence per
+  `ReportFailureCode`); the renderer's own message is logged with the run id and attempt, never
+  stored or served, and the run view serves the copy from the code, never the stored text.
 - **Dispatch** (`dispatch.ts`): `sqs` sends the `ReportRenderMessage` JSON with
   `@aws-sdk/client-sqs` (region and keys from the `s3` block, else the SDK's default chain).
   `inline` loads `@magick-agency/report-renderer` with a dynamic `import()` of a non-literal
   specifier typed by the local `ReportRendererModule` (`renderRun(message, io, options)`; `io.writeObject(key, body, contentType, bytes)`),
   so the server's `tsc` never compiles the renderer's sources; the server must list the package as
   a dependency for the import to resolve, and until it does an inline render fails the run
-  `render_failed` ("could not run"). Inline renders one run at a time; boot warns when `inline` runs
-  with `NODE_ENV=production`.
+  `render_failed` (the reason logged). Inline renders one run at a time and passes `renderRun` a
+  `log` callback, so the renderer's events (stage, run id, attempt, format, bytes, ms) reach the
+  server log as structured lines; boot warns when `inline` runs with `NODE_ENV=production`.
 - **Assembler** (`assembler.ts`): a run `assembling` with no dataset for 30 minutes
   (`REPORT_ASSEMBLY_STALE_MS`) is reclaimed; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
   times fails `assembly_failed`. A failed run's stored message is generic copy; the error is logged
@@ -371,7 +387,24 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   `finally` when the assembler calls `return()` at the row cap).
 - **Tick** (`tick.ts`): each step handles at most 50 items a tick; a run assembled but unsent for
   5 minutes is sent; a run found rendered in S3 after a lost callback records `renderer_version =
-  'reconciled'`.
+  'reconciled'`; a HEAD that fails for any reason other than not-found is logged and counts as a
+  file missing (re-sent under the attempt fence, or failed `render_timed_out` at the last attempt),
+  so a `rendering` run is never stuck on S3 errors. `AGENCY_REPORTS_RENDER_TIMEOUT_MS` counts from
+  the send, queue wait included: with the renderer at 3 renders at once, a burst of runs (every
+  subscription sharing a send time, plus ad hoc runs) waits `ceil(n / 3)` renders, so the timeout
+  must exceed that backlog or a run that is only late is re-sent (another message in the same
+  backlog) and, after the last attempt, failed `render_timed_out`. A late attempt's files still
+  count: every attempt writes the same output keys and the tick applies a run whose files are all
+  in S3 before re-sending or failing it. Sizing and signs: `operations.md`, "Reports: sizing the
+  render timeout"; the default (15 minutes) is unchanged. Each due subscription's subject is probed at the claim
+  (`subscription-subject.ts`, the builders' own `subject_unavailable` rule: the account exists; an
+  agent's membership, any status, reaches it; the campaign is still the account's; an account
+  report is about its own account): a subject that is gone DISABLES the subscription (no run, so no
+  failure email every period). A campaign subscription's period, bounds and next send are cut in
+  the campaign's CURRENT zone, read at the claim and written back to the subscription when it
+  moved (a zone `Intl` cannot use keeps the stored one, logged). A subscription run that still
+  fails `subject_unavailable` (the subject left between the claim and the build) disables its
+  subscription in the assembler; that run's failure email is the last.
 - **Email** (`notifications/agency-report-ready.ts`, template
   `notifications/templates/agency-report-ready.template.ts`): catalog event `agency.report.ready`
   (category `agency`, explicit audience, default on, so every role sees the toggle). Link

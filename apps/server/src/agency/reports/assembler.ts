@@ -22,8 +22,9 @@
  *  4. `dataset.json` (the builder's dataset plus `detail_files`) through `uploadJson`.
  *  5. `markAssembled`, then `markSent` (both fenced on the claim), then the dispatch.
  *
- * Errors: `ReportSubjectUnavailableError` fails the run `subject_unavailable`; anything else
- * `assembly_failed`. Logged with the run id, never the dataset.
+ * Errors: `ReportSubjectUnavailableError` fails the run `subject_unavailable` (and disables the
+ * subscription that produced it, if any); anything else `assembly_failed`. Logged with the run id,
+ * never the dataset.
  *
  * ── Read timeouts ───────────────────────────────────────────────────────────
  * The builders read through the shared pool (the screens' own reads, RP1), and the builder seam
@@ -41,8 +42,10 @@ import type { ReportKind } from '@magick-agency/contracts/api/agency/reports';
 import type { ReportDetailFile } from '@magick-agency/contracts/reports';
 import {
   reportRunRepository,
+  reportSubscriptionRepository,
   type ReportRunRecord,
   type ReportRunRepository,
+  type ReportSubscriptionRepository,
 } from '../../db/repositories/agency.repository.js';
 import { uploadJson, uploadStream } from '../../storage/s3.js';
 import {
@@ -54,6 +57,7 @@ import {
 import { reportDatasetKey, reportDetailKey, type ReportKeyScope } from './report-keys.js';
 import type { ReportRenderDispatcher } from './dispatch.js';
 import { countTerminalRun } from './apply.js';
+import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 
 const log = createChildLogger({ component: 'agency-reports-assembler' });
 
@@ -65,8 +69,8 @@ export const REPORT_BUILD_TIMEOUT_MS = 10 * 60_000;
 export const REPORT_DETAIL_CONTENT_TYPE = 'application/gzip';
 
 /** User-facing fallbacks stored on a failed run (the console keys its copy off the code). */
-export const ASSEMBLY_FAILED_MESSAGE = 'The report data could not be gathered.';
-export const SUBJECT_UNAVAILABLE_MESSAGE = 'The report subject is no longer available.';
+export const ASSEMBLY_FAILED_MESSAGE = REPORT_FAILURE_MESSAGES.assembly_failed;
+export const SUBJECT_UNAVAILABLE_MESSAGE = REPORT_FAILURE_MESSAGES.subject_unavailable;
 
 export interface ReportAssemblerOptions {
   intervalMs: number;
@@ -83,6 +87,8 @@ export interface ReportAssemblerStorage {
 
 export interface ReportAssemblerDeps {
   repo: Pick<ReportRunRepository, 'claimNextQueued' | 'markAssembled' | 'markSent' | 'markFailed'>;
+  /** A subscription whose run failed `subject_unavailable` is disabled (its failure email is the last). */
+  subscriptions: Pick<ReportSubscriptionRepository, 'disable'>;
   builders: Record<ReportKind, ReportDatasetBuilder>;
   storage: ReportAssemblerStorage;
   dispatcher: ReportRenderDispatcher;
@@ -106,6 +112,7 @@ export interface ReportAssembler {
 export function defaultAssemblerDeps(dispatcher: ReportRenderDispatcher): ReportAssemblerDeps {
   return {
     repo: reportRunRepository,
+    subscriptions: reportSubscriptionRepository,
     builders: REPORT_DATASET_BUILDERS,
     storage: { uploadStream, uploadJson },
     dispatcher,
@@ -191,6 +198,17 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
     const failed = await deps.repo.markFailed(run.id, code, message, { claimGeneration: run.claim_generation });
     if (!failed) return { runId: run.id, outcome: 'claim_lost' };
     countTerminalRun(failed);
+    if (code === 'subject_unavailable' && run.subscription_id) {
+      // The subject left between the tick's probe and the build: stop the schedule here, so this
+      // run's failure email is the last one its recipients get.
+      try {
+        if (await deps.subscriptions.disable(run.subscription_id)) {
+          log.warn({ runId: run.id, subscriptionId: run.subscription_id }, 'Report subscription disabled: its subject is gone');
+        }
+      } catch (err) {
+        log.error({ runId: run.id, subscriptionId: run.subscription_id, err }, 'Report subscription could not be disabled; the tick\'s probe will');
+      }
+    }
     return { runId: run.id, outcome: 'failed', code };
   };
 

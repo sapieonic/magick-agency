@@ -8,8 +8,9 @@
  *    callback to `${AGENCY_REPORTS_CALLBACK_BASE_URL}/webhooks/reports/rendered`.
  *  - **inline** ({@link createInlineDispatcher}): the renderer package
  *    (`@magick-agency/report-renderer`) called in this process, one run at a time, its returned
- *    callback applied through `applyRenderOutcome` (no HTTP, no signature). Development and tests
- *    only: the production image carries no Chromium.
+ *    callback applied through `applyRenderOutcome` (no HTTP, no signature); the renderer's
+ *    structured log events (stage, run id, attempt, bytes, ms) go to the server log. Development
+ *    and tests only: the production image carries no Chromium.
  *
  * ── How the inline dispatcher reaches the renderer ───────────────────────────
  * The renderer is its own workspace app (RP15) whose sources are `.tsx`. It is loaded with a
@@ -153,6 +154,54 @@ export const s3RendererIO: ReportRendererIO = {
   },
 };
 
+/** A renderer log event as `renderRun` emits it (`RenderLogEvent`): never dataset contents. */
+export interface ReportRendererLogEvent {
+  event?: string;
+  run_id?: string;
+  attempt?: number;
+  format?: string;
+  bytes?: number;
+  ms?: number;
+  code?: string;
+  error?: string;
+}
+
+/** One structured line in the server log for a renderer event (run id, attempt, stage, bytes, ms). */
+export interface ReportRendererLogLine {
+  runId: string | undefined;
+  attempt: number | undefined;
+  stage: string;
+  format?: string;
+  bytes?: number;
+  ms?: number;
+  code?: string;
+  error?: string;
+}
+
+/** Map a renderer event to the server's log fields (unknown fields dropped). */
+export function rendererLogLine(event: unknown): ReportRendererLogLine {
+  const e = (event && typeof event === 'object' ? event : {}) as ReportRendererLogEvent;
+  return {
+    runId: typeof e.run_id === 'string' ? e.run_id : undefined,
+    attempt: typeof e.attempt === 'number' ? e.attempt : undefined,
+    stage: typeof e.event === 'string' ? e.event : 'unknown',
+    ...(typeof e.format === 'string' ? { format: e.format } : {}),
+    ...(typeof e.bytes === 'number' ? { bytes: e.bytes } : {}),
+    ...(typeof e.ms === 'number' ? { ms: e.ms } : {}),
+    ...(typeof e.code === 'string' ? { code: e.code } : {}),
+    ...(typeof e.error === 'string' ? { error: e.error.slice(0, 2000) } : {}),
+  };
+}
+
+const rendererLog = createChildLogger({ component: 'agency-reports-renderer' });
+
+/** Write a renderer event to the server log: a failure as a warning, every other stage as info. */
+export function logRendererEvent(event: unknown): void {
+  const line = rendererLogLine(event);
+  if (line.stage === 'render.failed') rendererLog.warn(line, 'Report renderer: render failed');
+  else rendererLog.info(line, `Report renderer: ${line.stage}`);
+}
+
 /** The version the inline dispatcher records when the renderer never ran. */
 export const INLINE_UNAVAILABLE_VERSION = 'inline-unavailable';
 
@@ -164,9 +213,12 @@ export function createInlineDispatcher(opts: {
   apply: (runId: string, attempt: number, callback: ReportRenderCallback) => Promise<unknown>;
   io?: ReportRendererIO;
   loader?: ReportRendererLoader;
+  /** Where the renderer's log events go (default: the server log, {@link logRendererEvent}). */
+  logEvent?: (event: unknown) => void;
 }): ReportRenderDispatcher {
   const io = opts.io ?? s3RendererIO;
   const loader = opts.loader ?? loadReportRenderer;
+  const logEvent = opts.logEvent ?? logRendererEvent;
   // One render at a time: each dispatch is chained behind the previous one.
   let queue: Promise<void> = Promise.resolve();
 
@@ -174,7 +226,10 @@ export function createInlineDispatcher(opts: {
     let callback: ReportRenderCallback;
     try {
       const renderer = await loader();
-      callback = await renderer.renderRun(message, io, opts.chromePath ? { chromePath: opts.chromePath } : {});
+      callback = await renderer.renderRun(message, io, {
+        ...(opts.chromePath ? { chromePath: opts.chromePath } : {}),
+        log: (event) => { try { logEvent(event); } catch { /* a log sink never fails a render */ } },
+      });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       log.error({ runId: message.run_id, attempt: message.attempt, err: reason }, 'Inline report render failed');

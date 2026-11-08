@@ -20,6 +20,7 @@ import {
 } from './dispatch.js';
 import { defaultAssemblerDeps, startReportAssembler, type ReportAssembler } from './assembler.js';
 import { defaultTickRepos, startReportTick, type ReportTick } from './tick.js';
+import { probeSubscriptionSubject } from './subscription-subject.js';
 
 const log = createChildLogger({ component: 'agency-reports' });
 
@@ -96,6 +97,7 @@ export function startReportPipeline(
     {
       ...defaultTickRepos,
       dispatcher,
+      subject: probeSubscriptionSubject,
       headObject: headReportObject,
       apply: (runId, attempt, callback) => applyRenderOutcome(runId, attempt, callback, applyDeps),
       notify: (run) => sendAgencyReportReadyEmails(run, { retentionDays: reports.retentionDays }),

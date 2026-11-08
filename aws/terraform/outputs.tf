@@ -92,7 +92,10 @@ output "report_renderer_live_version" {
 }
 
 # The reports lines for the server's env, ready to append like server_env. The fourth,
-# AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL), is set by hand.
+# AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL), is set by hand. The secret is
+# single-quoted so dotenv and Docker Compose read `$`, `#` and `"` literally; a single quote has
+# no escape inside single quotes, so var.reports_callback_secret refuses one (variables.tf), and
+# refuses leading or trailing whitespace, which the server refuses too.
 output "reports_server_env" {
   description = "Reports settings for the server's .env, including the callback secret (empty when enable_reports is false)."
   sensitive   = true

@@ -27,7 +27,7 @@ import {
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import {
   auditReport,
-  isReportTimezone,
+  usableReportZone,
   reportsGate,
   resolveReportTarget,
   sendReportRefusal,
@@ -103,6 +103,43 @@ async function recipientsProblem(
     : 'Every recipient must be a supervisor on this account.';
 }
 
+/** The fields whose change moves `next_run_at`. */
+const SCHEDULE_FIELDS: ReadonlySet<string> = new Set([
+  'cadence', 'send_local_time', 'send_weekday', 'send_monthday', 'timezone', 'enabled',
+]);
+
+/** What a PATCH would store, field by field. */
+interface SubscriptionValues {
+  cadence: ReportCadence;
+  send_local_time: string;
+  send_weekday: number | null;
+  send_monthday: number | null;
+  timezone: string;
+  formats: readonly string[];
+  recipient_user_ids: readonly string[];
+  enabled: boolean;
+}
+
+/** The fields whose value differs from the stored row, sorted (recipients compared as a set). */
+export function changedSubscriptionFields(existing: ReportSubscriptionRecord, next: SubscriptionValues): string[] {
+  const sameList = (a: readonly string[], b: readonly string[], asSet: boolean) => {
+    if (a.length !== b.length) return false;
+    const x = asSet ? [...a].map((v) => v.toLowerCase()).sort() : [...a];
+    const y = asSet ? [...b].map((v) => v.toLowerCase()).sort() : [...b];
+    return x.every((v, i) => v === y[i]);
+  };
+  const changed: string[] = [];
+  if (next.cadence !== existing.cadence) changed.push('cadence');
+  if (next.send_local_time !== existing.send_local_time) changed.push('send_local_time');
+  if (next.send_weekday !== existing.send_weekday) changed.push('send_weekday');
+  if (next.send_monthday !== existing.send_monthday) changed.push('send_monthday');
+  if (next.timezone !== existing.timezone) changed.push('timezone');
+  if (!sameList(next.formats, orderedFormats(existing.formats), false)) changed.push('formats');
+  if (!sameList(next.recipient_user_ids, existing.recipient_user_ids, true)) changed.push('recipient_user_ids');
+  if (next.enabled !== existing.enabled) changed.push('enabled');
+  return changed.sort();
+}
+
 /** A subscription of the request's tenant AND account, or null. */
 async function findAccountSubscription(
   deps: ReportRouteDeps,
@@ -149,8 +186,8 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
 
     const target = await resolveReportTarget(deps, request, reply, { kind: body.kind, subjectId: body.subject_id, supervisorOnly: true });
     if (!target) return reply;
-    const timezone = target.campaignTimezone ?? body.timezone;
-    if (!isReportTimezone(timezone)) return sendReportRefusal(reply, 'report_timezone_invalid');
+    const timezone = await usableReportZone(deps, target.campaignTimezone ?? body.timezone);
+    if (timezone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
 
     const recipientIssue = await recipientsProblem(deps, request, body.recipient_user_ids);
     if (recipientIssue) return sendReportRefusal(reply, 'report_recipient_invalid', recipientIssue);
@@ -212,9 +249,10 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
 
     // A campaign subscription keeps the campaign's zone (RP3): a `timezone` in the PATCH is ignored.
     let timezone = existing.timezone;
-    if (existing.kind !== 'campaign' && patch.timezone !== undefined) {
-      if (!isReportTimezone(patch.timezone)) return sendReportRefusal(reply, 'report_timezone_invalid');
-      timezone = patch.timezone;
+    if (existing.kind !== 'campaign' && patch.timezone !== undefined && patch.timezone !== existing.timezone) {
+      const zone = await usableReportZone(deps, patch.timezone);
+      if (zone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
+      timezone = zone;
     }
     if (patch.recipient_user_ids) {
       const recipientIssue = await recipientsProblem(deps, request, patch.recipient_user_ids);
@@ -222,10 +260,21 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
     }
 
     const enabled = patch.enabled ?? existing.enabled;
-    const scheduleChanged = patch.cadence !== undefined || patch.send_local_time !== undefined
-      || patch.send_weekday !== undefined || patch.send_monthday !== undefined
-      || timezone !== existing.timezone || patch.enabled !== undefined
-      || weekday !== existing.send_weekday || monthday !== existing.send_monthday;
+    const formats = patch.formats ? orderedFormats(patch.formats) : existing.formats;
+    const recipients = patch.recipient_user_ids ? patch.recipient_user_ids.map((r) => r.toLowerCase()) : existing.recipient_user_ids;
+    // By VALUE against the stored row, not by presence: the console sends the whole schedule on
+    // every edit, so a field merely present must not count as a change.
+    const changed = changedSubscriptionFields(existing, {
+      cadence,
+      send_local_time: schedule.send_local_time,
+      send_weekday: weekday,
+      send_monthday: monthday,
+      timezone,
+      formats,
+      recipient_user_ids: recipients,
+      enabled,
+    });
+    const scheduleChanged = changed.some((field) => SCHEDULE_FIELDS.has(field));
     const fullSchedule: ReportSchedule = { ...schedule, timezone };
     const update: ReportSubscriptionPatch = {
       cadence,
@@ -234,11 +283,12 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
       sendMonthday: monthday,
       timezone,
       enabled,
-      ...(patch.formats ? { formats: orderedFormats(patch.formats) } : {}),
-      ...(patch.recipient_user_ids ? { recipientUserIds: patch.recipient_user_ids.map((r) => r.toLowerCase()) } : {}),
-      // Recomputed whenever the schedule or `enabled` changes (null while disabled); otherwise kept,
-      // so a due send is not skipped by an edit to formats or recipients.
-      ...(scheduleChanged || !enabled ? { nextRunAt: enabled ? nextRunAt(fullSchedule, deps.now()) : null } : {}),
+      ...(patch.formats ? { formats } : {}),
+      ...(patch.recipient_user_ids ? { recipientUserIds: recipients } : {}),
+      // Recomputed only when a schedule field or `enabled` actually changed (null while disabled);
+      // otherwise kept, so an edit to formats or recipients (or a re-sent, unchanged schedule)
+      // never skips a due send.
+      ...(scheduleChanged ? { nextRunAt: enabled ? nextRunAt(fullSchedule, deps.now()) : null } : {}),
     };
     const sub = await deps.subscriptions.update(request.tenantId!, existing.id, update);
     if (!sub) return sendReportRefusal(reply, 'report_subscription_not_found');
@@ -246,7 +296,7 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
       action: 'agency_report_subscription.updated',
       resource_type: 'agency_report_subscription',
       resource_id: sub.id,
-      details: { fields: Object.keys(patch).sort(), enabled: sub.enabled },
+      details: { fields: changed, enabled: sub.enabled },
     });
     return sendSubscription(deps, request, reply, sub, 200);
   });
@@ -276,12 +326,13 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
     if (!(await reportsGate(deps, request, reply))) return reply;
     const sub = await findAccountSubscription(deps, request, request.params.id);
     if (!sub) return sendReportRefusal(reply, 'report_subscription_not_found');
-    const period = periodFor(sub.cadence, deps.now(), sub.timezone);
+    const now = deps.now();
     return createAdHocRun(deps, request, reply, {
       kind: sub.kind,
       subjectId: sub.subject_id,
-      from: period.from,
-      to: period.to,
+      // Cut in the zone the run is stored with: for a campaign, the campaign's current zone (RP3),
+      // which may have moved since the subscription stored its own.
+      window: (zone) => periodFor(sub.cadence, now, zone),
       timezone: sub.timezone,
       formats: sub.formats,
       campaignIds: null,

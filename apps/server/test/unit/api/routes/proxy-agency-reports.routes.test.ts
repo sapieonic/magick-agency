@@ -33,6 +33,7 @@ import {
 const OTHER_AGENT = '99999999-9999-4999-8999-999999999999';
 const FOREIGN_CAMPAIGN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const NOW = new Date('2026-11-08T10:00:00Z');
+const ZONE_NOT_IN_POSTGRES = 'America/Ciudad_Juarez';
 const config = agencyConfigSchema.parse({}).agency.reports;
 
 interface Caller { userId: string; role: MembershipRole; accountId?: string }
@@ -116,6 +117,8 @@ function fakeDeps() {
       accounts: new Map([[ACCOUNT, 'North']]),
     })),
     presign: vi.fn(async (key: string) => `https://s3.example/${key}?sig=1`),
+    // Postgres's zone database, as if it lacked one zone this process's ICU knows.
+    zoneKnownToDatabase: vi.fn(async (zone: string) => zone !== ZONE_NOT_IN_POSTGRES),
     audit: vi.fn((entry: { action: string; resource_id?: string; details?: Record<string, unknown> }) => { audits.push(entry); }),
     now: () => NOW,
   };
@@ -288,6 +291,30 @@ describe('POST /reports: validation', () => {
     expect((await req('POST', '/proxy/agency/reports', agentReview({ timezone: 'UTC' }))).statusCode).toBe(202);
   });
 
+  it('the zone must also be in Postgres\'s zone database (the dataset reads cut days with AT TIME ZONE)', async () => {
+    let res = await req('POST', '/proxy/agency/reports', agentReview({ timezone: ZONE_NOT_IN_POSTGRES }));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('report_timezone_invalid');
+    expect(f.deps.zoneKnownToDatabase).toHaveBeenCalledWith(ZONE_NOT_IN_POSTGRES);
+    expect(f.deps.runs.create).not.toHaveBeenCalled();
+    // A zone Intl refuses never reaches the database.
+    f.deps.zoneKnownToDatabase.mockClear();
+    await req('POST', '/proxy/agency/reports', agentReview({ timezone: 'Mars/Olympus' }));
+    expect(f.deps.zoneKnownToDatabase).not.toHaveBeenCalled();
+    // Subscriptions: create and a zone PATCH, the same rule.
+    caller = supervisor;
+    res = await req('POST', '/proxy/agency/report-subscriptions', {
+      kind: 'agent', subject_id: AGENT, cadence: 'daily', send_local_time: '08:00', timezone: ZONE_NOT_IN_POSTGRES,
+      formats: ['pdf'], recipient_user_ids: [SUPERVISOR],
+    });
+    expect(res.json().code).toBe('report_timezone_invalid');
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ kind: 'agent', subject_id: AGENT }));
+    res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { timezone: ZONE_NOT_IN_POSTGRES });
+    expect(res.json().code).toBe('report_timezone_invalid');
+    expect(f.deps.subscriptions.create).not.toHaveBeenCalled();
+    expect(f.deps.subscriptions.update).not.toHaveBeenCalled();
+  });
+
   it('the window rule (RP2): 30 days, or exactly one calendar month; not after today in the zone', async () => {
     const cases: Array<[string, string, number, string | null]> = [
       ['2026-10-01', '2026-10-30', 202, null],              // 30 days
@@ -416,6 +443,31 @@ describe('GET /reports/:id/files/:format', () => {
     expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(404);
   });
 
+  it('a requester demoted since may still see a supervisor run, but not download it (404); a self review stays its agent\'s', async () => {
+    // Requested as a supervisor; the caller now holds only the agent role.
+    const demoted: Caller = { userId: SUPERVISOR, role: 'agent' };
+    for (const run of [
+      ready({ requested_by: SUPERVISOR }),
+      ready({ kind: 'campaign', subject_id: CAMPAIGN, requested_by: SUPERVISOR }),
+      ready({ kind: 'account', subject_id: ACCOUNT, requested_by: SUPERVISOR }),
+    ]) {
+      f.runs.set(RUN, run);
+      caller = demoted;
+      expect((await req('GET', `/proxy/agency/reports/${RUN}`)).statusCode, run.kind).toBe(200);
+      const res = await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`);
+      expect(res.statusCode, run.kind).toBe(404);
+      expect(res.json().code).toBe('report_not_found');
+      caller = supervisor;
+      expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode, run.kind).toBe(200);
+    }
+    expect(f.deps.presign).toHaveBeenCalledTimes(3);
+  });
+
+  it('a supervisor run about an agent whose membership no longer reaches the account: 404 even for its requester', async () => {
+    f.runs.set(RUN, ready({ subject_id: FOREIGN_CAMPAIGN, requested_by: SUPERVISOR }));
+    expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(404);
+  });
+
   it('another account\'s run is 404 even for its requester', async () => {
     f.runs.set(RUN, ready({ account_id: OTHER_ACCOUNT }));
     expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(404);
@@ -522,6 +574,30 @@ describe('subscriptions', () => {
     expect(f.audits.at(-1)).toMatchObject({ action: 'agency_report_subscription.updated', details: { fields: ['cadence', 'enabled', 'send_weekday'], enabled: true } });
   });
 
+  it('PATCH: the whole unchanged schedule re-sent (as the console does) with a formats edit keeps next_run_at; fields name only what changed', async () => {
+    const due = new Date('2026-11-08T08:00:00Z'); // due before NOW: the tick has not sent it yet
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ next_run_at: due }));
+    const whole = {
+      cadence: 'daily', send_local_time: '08:00', send_weekday: null, send_monthday: null, timezone: 'Europe/London',
+      recipient_user_ids: [SUPERVISOR], enabled: true,
+    };
+    let res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { ...whole, formats: ['pdf', 'xlsx'] });
+    expect(res.statusCode).toBe(200);
+    expect(f.deps.subscriptions.update.mock.calls[0]![2]).not.toHaveProperty('nextRunAt');
+    expect(res.json().next_run_at).toBe(due.toISOString());
+    expect(f.audits.at(-1)).toMatchObject({ details: { fields: ['formats'], enabled: true } });
+
+    // `enabled: true` on an enabled subscription, nothing else changed: nothing recomputed, no field named.
+    res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: true });
+    expect(f.deps.subscriptions.update.mock.calls[1]![2]).not.toHaveProperty('nextRunAt');
+    expect(f.audits.at(-1)).toMatchObject({ details: { fields: [] } });
+
+    // A real change of the send time does recompute it.
+    res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { ...whole, formats: ['pdf', 'xlsx'], send_local_time: '11:00' });
+    expect(f.deps.subscriptions.update.mock.calls[2]![2]).toMatchObject({ nextRunAt: new Date('2026-11-08T11:00:00Z') });
+    expect(f.audits.at(-1)).toMatchObject({ details: { fields: ['send_local_time'] } });
+  });
+
   it('PATCH: the day fields are checked against the resulting cadence', async () => {
     f.subs.set(SUBSCRIPTION, subscriptionRecord({ cadence: 'weekly', send_weekday: 3 }));
     // Switching to daily drops the weekday it no longer uses.
@@ -557,6 +633,18 @@ describe('subscriptions', () => {
       localFrom: '2026-10-01', localTo: '2026-10-31', requestedBy: SUPERVISOR, emailMe: true, audience: 'supervisor',
     }), expect.any(Number));
     expect(f.audits[0]).toMatchObject({ details: expect.objectContaining({ via: 'run_now', subscription_id: SUBSCRIPTION }) });
+  });
+
+  it('run-now on a campaign subscription cuts the period in the campaign\'s CURRENT zone, the zone the run is stored with', async () => {
+    // Stored when the campaign was in Kiritimati (UTC+14, where 10:00Z on the 8th is already the 9th);
+    // the campaign is in New York now (the fake probe), where it is 05:00 on the 8th.
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ timezone: 'Pacific/Kiritimati' }));
+    const res = await req('POST', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}/run-now`);
+    expect(res.statusCode).toBe(202);
+    expect(f.deps.runs.create).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'campaign', timezone: 'America/New_York', localFrom: '2026-11-07', localTo: '2026-11-07',
+      rangeFrom: new Date('2026-11-07T05:00:00Z'), rangeTo: new Date('2026-11-08T05:00:00Z'),
+    }), expect.any(Number));
   });
 
   it('GET lists the account\'s subscriptions with names', async () => {

@@ -215,6 +215,16 @@ describe('the due claim', () => {
     expect(await runsOf(sub.id)).toEqual([]);
   });
 
+  it('an advance may carry the zone the handler cut the period in (a campaign\'s current zone); without it the zone is kept', async () => {
+    const sub = await repo.create(input());
+    const later = new Date(NOW.getTime() + 86_400_000);
+    await repo.claimDue(NOW, 10, async () => ({ nextRunAt: later, timezone: 'Asia/Tokyo' }));
+    expect(await repo.findById(T, sub.id)).toMatchObject({ timezone: 'Asia/Tokyo', next_run_at: later });
+    await repo.update(T, sub.id, { nextRunAt: NOW });
+    await repo.claimDue(NOW, 10, async () => ({ nextRunAt: later }));
+    expect(await repo.findById(T, sub.id)).toMatchObject({ timezone: 'Asia/Tokyo' });
+  });
+
   it('a disable decision stops the subscription', async () => {
     const sub = await repo.create(input());
     expect(await repo.claimDue(NOW, 10, async () => ({ disable: true }))).toEqual([{ subscriptionId: sub.id, outcome: 'disabled' }]);

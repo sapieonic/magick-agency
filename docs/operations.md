@@ -198,7 +198,7 @@ production.
 | `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
 | `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`, `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` | `15000` (1000–600000), `200` (1–5000) | The insights rollup job (`docs/insights.md`): how often a pass recomputes the dirty 15-minute buckets, and how many a batch claims. The page's range sections lag the attempts by about one interval; `agency_insights_rollup_dirty_buckets` and `_oldest_dirty_seconds` say how far |
 | `AGENCY_CUSTOMER_SEARCH_PER_MINUTE`, `AGENCY_CUSTOMER_SEARCH_TTL_MINUTES`, `AGENCY_CUSTOMER_EXPORT_MAX_ROWS` | `30` (1–10000), `30` (1–1440), `10000` (1–100000) | Customer history (`docs/customer-history.md`): searches and exports a minute per user (CH11, its own bucket besides `RATE_LIMIT_USER_MAX`), how long a search id serves its timeline and export, and the export's row cap (`X-Export-Truncated: true` past it). Timeline pages and `GET /proxy/agency/customers/options` are not charged to the per-minute cap |
-| `AGENCY_REPORTS_RENDERER`, `AGENCY_REPORTS_SQS_QUEUE_URL`, `AGENCY_REPORTS_CALLBACK_BASE_URL`, `AGENCY_REPORTS_CALLBACK_SECRET`, `AGENCY_REPORTS_CHROME_PATH` | `inline`, unset | Reports (`docs/reports.md`): `inline` renders in process; `sqs` sends runs to the renderer Lambda and needs the queue URL, the server's public base URL (callback `<base>/webhooks/reports/rendered`) and a secret of at least 32 characters, or boot fails |
+| `AGENCY_REPORTS_RENDERER`, `AGENCY_REPORTS_SQS_QUEUE_URL`, `AGENCY_REPORTS_CALLBACK_BASE_URL`, `AGENCY_REPORTS_CALLBACK_SECRET`, `AGENCY_REPORTS_CHROME_PATH` | `inline`, unset | Reports (`docs/reports.md`): `inline` renders in process; `sqs` sends runs to the renderer Lambda and needs the queue URL, the server's public base URL (callback `<base>/webhooks/reports/rendered`) and a secret of at least 32 characters (used exactly as written: leading or trailing whitespace fails boot), and the S3 bucket (`S3_AUDIO_BUCKET`), or boot fails |
 | `AGENCY_REPORTS_MAX_DETAIL_ROWS`, `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS`, `AGENCY_REPORTS_TICK_INTERVAL_MS`, `AGENCY_REPORTS_RENDER_TIMEOUT_MS`, `AGENCY_REPORTS_MAX_ATTEMPTS`, `AGENCY_REPORTS_RETENTION_DAYS`, `AGENCY_REPORTS_TENANT_PENDING_LIMIT`, `AGENCY_REPORTS_USER_PER_MINUTE` | `100000`, `2000`, `60000`, `900000`, `3`, `90`, `5`, `3` | Reports: detail-sheet row cap (RP12), assembler poll, tick, render timeout and sends before `render_timed_out` (RP13), file retention in days (RP8), runs pending per tenant, ad hoc requests per user per minute |
 | `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B27); the web image is then built with `CONSOLE_API_BASE_URL` |
 | `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
@@ -694,12 +694,47 @@ after `AGENCY_REPORTS_RETENTION_DAYS`. Where to look, in order:
    (`AGENCY_REPORTS_CALLBACK_BASE_URL` wrong or unreachable from the internet, or refused:
    `agency_reports_callbacks_total{result="bad_signature"}`).
 
-The tick re-sends a run with no callback after `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (15 min) as a
+The tick re-sends a run with no callback after `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (15 min; size it
+against the renderer's backlog, "Reports: sizing the render timeout" below) as a
 new attempt, after first checking S3 for its files, and fails it `render_timed_out` after
 `AGENCY_REPORTS_MAX_ATTEMPTS` (3). So a fixed cause clears on its own; runs already failed are
 re-run from the console ("Run again"). Nothing replays the dead-letter queue, and nothing needs to:
 an older attempt's callback is ignored once a newer one was sent (`stale` on the callbacks panel).
 Purge the DLQ once you have read what it holds.
+
+### Reports: sizing the render timeout
+
+`AGENCY_REPORTS_RENDER_TIMEOUT_MS` (default 15 minutes) counts from the send, so a run's time in
+the `report-jobs` queue counts against it, not only its render. The renderer takes at most 3
+messages at once (`maximum_concurrency` in `aws/terraform/reports.tf`, one message per invocation)
+and each render may run up to the function's 300 s timeout. Runs sent together queue behind each
+other: the `n`-th run of a burst starts after about `ceil(n / 3)` renders. Size the timeout so the
+last run of the largest burst still calls back in time:
+
+    AGENCY_REPORTS_RENDER_TIMEOUT_MS > ceil(burst / 3) × p95 render time + p95 render time + a margin
+
+`burst` is the runs sent within a few minutes of each other: every subscription sharing a send
+time (they all fall due on the same tick; the assembler sends them one after another, a few
+seconds apart, which spreads them only a little) plus the ad hoc runs in flight (at most
+`AGENCY_REPORTS_TENANT_PENDING_LIMIT` per tenant). Read the p95 render time from the dashboard's *Reports — Assembly and Render Duration (p95)*
+panel (`agency_reports_render_seconds`, send to applied callback, so it includes the queue wait:
+read it outside a burst) or the
+function's logs (`record.done … ms`). With renders of about a minute, 15 minutes covers a burst of
+about 40 runs; at the function's 300 s ceiling it covers 6.
+
+**When it is too short**, a queued message is not lost, only late, but the tick cannot tell the
+two apart: it re-sends the run as a new attempt (another message in the same backlog, so the
+queue grows), the first attempt's render still runs and its callback is acknowledged `stale`, and
+after `AGENCY_REPORTS_MAX_ATTEMPTS` sends the run fails `render_timed_out` although nothing was
+broken. A late render is not wasted: every attempt writes the run's same output keys, and before
+re-sending or failing a run the tick looks for them in S3 and applies the run as rendered when
+they are all there. The signs: `agency_reports_callbacks_total{result="stale"}` climbing, the
+queue's `ApproximateAgeOfOldestMessage` near or above the timeout, the DLQ empty, and runs failing
+`render_timed_out` right after a burst (a scheduled send time). The remedies, cheapest first:
+raise `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (a lost message is then retried that much later), spread
+subscriptions' send times, or raise the mapping's `maximum_concurrency` (each render holds a
+Chromium of 2 GB). The default stays at 15 minutes: it is ample for the bursts reports see today,
+and a longer one only delays the retry of a genuinely lost message.
 
 ## Alert runbooks
 

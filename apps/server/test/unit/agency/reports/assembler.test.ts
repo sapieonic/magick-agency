@@ -28,7 +28,7 @@ import {
 } from '../../../../src/agency/reports/datasets/index.js';
 import { reportDatasetKey, reportDetailKey } from '../../../../src/agency/reports/report-keys.js';
 import type { ReportRunRecord } from '../../../../src/db/repositories/agency.repository.js';
-import { ACCOUNT, RUN, TENANT, runRecord } from './run-fixture.js';
+import { ACCOUNT, RUN, SUBSCRIPTION, TENANT, runRecord } from './run-fixture.js';
 
 const scope = { tenantId: TENANT, accountId: ACCOUNT, runId: RUN };
 
@@ -97,6 +97,7 @@ function deps(over: Partial<ReportAssemblerDeps> = {}, run = runRecord({ status:
       markSent: vi.fn(async (..._args: unknown[]): Promise<number | null> => 1),
       markFailed: vi.fn(async (id: string, code: string, ..._rest: unknown[]) => runRecord({ id, status: 'failed', error_code: code as never })),
     },
+    subscriptions: { disable: vi.fn(async (_id: string) => true) },
     builders: builders(async (ctx) => ({ dataset: datasetOf(ctx.run), details: [] })),
     storage,
     dispatcher: { dispatch: vi.fn(async (..._args: unknown[]) => {}), idle: vi.fn(async () => {}) },
@@ -226,6 +227,24 @@ describe('assembling one run', () => {
     const [outcome] = await createReportAssembler(opts, d).drain(() => false);
     expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'subject_unavailable' });
     expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'subject_unavailable', expect.any(String), { claimGeneration: 1 });
+    // An ad hoc run has no subscription to stop.
+    expect(d.subscriptions.disable).not.toHaveBeenCalled();
+  });
+
+  it('a subscription run whose subject is gone disables its subscription (its failure email is the last)', async () => {
+    const gone = builders(async () => { throw new ReportSubjectUnavailableError('campaign deleted'); });
+    const d = deps({ builders: gone }, runRecord({ status: 'assembling', subscription_id: SUBSCRIPTION, requested_by: null }));
+    const [outcome] = await createReportAssembler(opts, d).drain(() => false);
+    expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'subject_unavailable' });
+    expect(d.subscriptions.disable).toHaveBeenCalledWith(SUBSCRIPTION);
+
+    // Any other failure leaves the schedule alone; a disable that throws still reports the failed run.
+    const d2 = deps({ builders: builders(async () => { throw new Error('read failed'); }) }, runRecord({ status: 'assembling', subscription_id: SUBSCRIPTION }));
+    await createReportAssembler(opts, d2).drain(() => false);
+    expect(d2.subscriptions.disable).not.toHaveBeenCalled();
+    const d3 = deps({ builders: gone }, runRecord({ status: 'assembling', subscription_id: SUBSCRIPTION }));
+    d3.subscriptions.disable.mockRejectedValue(new Error('db down'));
+    expect((await createReportAssembler(opts, d3).drain(() => false))[0]).toMatchObject({ outcome: 'failed', code: 'subject_unavailable' });
   });
 
   it('maps any other failure (a read, an upload) to assembly_failed, never storing the error text', async () => {
