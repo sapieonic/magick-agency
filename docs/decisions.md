@@ -486,6 +486,27 @@ has run against a real Plivo account yet (step 5). How a call flows: [`architect
 | PL15 | Console copy about something only the service's operators can change (a carrier account's credentials, enabling or re-enabling it, which numbers are synced or assigned to the tenant) tells the operator to **contact support**, B17's phrase, never "ask your administrator": a tenant's admins have no screen that shows or fixes a carrier account. The server's carrier refusals say the same. Copy about what a tenant admin can change (team, invites, account capabilities) keeps naming the administrator | **default, awaiting ratification** |
 | PL16 | Carrier names in the super-admin console: the alias, then the vendor in parentheses, "Pravah (Plivo)", on every screen that names a carrier (credential column and picker, phone numbers and their picker, tenant numbers, the concurrency tables), through `operatorCarrierName` (`apps/super-admin/src/utils/carrierName.ts`). Operators need the vendor to find an account's Auth ID or a number in the vendor's own console, and the alias first keeps the two consoles saying the same name. The vendor is named plainly only where an operator acts in the vendor's tooling: a credential field's help ("Plivo console → Overview"), its format errors and the carrier's own refusal in `last_error`. Our own copy (placeholders, sentences) names no vendor. The tenant console, the mobile app and server messages that reach them show the alias alone. Guarded by `apps/super-admin/src/__tests__/branding/carrierNames.test.ts` | **default, awaiting ratification** |
 
+Reports, 2026-11-08 (agent, campaign and account exports as PDF and Excel, ad hoc or on a
+schedule; [`reports.md`](reports.md)). The design was reviewed the same day by an independent
+reviewer and revised (the server assembles the data, the renderer never reads the database). The
+full table, with each ruling's wording, is RP1–RP16 in [`reports.md`](reports.md) "Decisions";
+D1–D9 on the design page are RP1–RP9. Migration `0023_reports.sql`; wire
+`packages/contracts/src/api/agency/reports.ts` and `packages/contracts/src/reports/`; renderer
+`apps/report-renderer`; flag `agency_reports_enabled`.
+
+| ID | Decision | Status |
+|---|---|---|
+| RP1 | The server assembles each report's data with the reads the screens use; the renderer (a Lambda, or in process) never reads the database | **default, pending Manas** |
+| RP2 | A window is at most 30 days, or exactly one local calendar month, for every kind | **default, pending Manas** |
+| RP3 | Campaign reports in the campaign's zone; agent and account reports in the zone the request names (no account zone setting yet) | **default, pending Manas** |
+| RP4 | Scheduled recipients are tenant members with `agency.supervise`, re-checked when each report is sent | **default, pending Manas** |
+| RP5 | An agent may export their own review, without floor comparisons, call analysis or recording columns; subscriptions are supervisors' only | **default, pending Manas** |
+| RP6 | The email carries a link to the console, no attachments | **default, pending Manas** |
+| RP7 | Phone numbers in detail sheets masked to the last four digits in an agent's own copy | **default, pending Manas** |
+| RP8 | Files kept 90 days, datasets 7 days (S3 lifecycle); the run is then shown as expired | **default, pending Manas** |
+| RP9 | Rates are floored as each source floors them (agent 20, campaign 25) until the open "Rate floors" item is settled | **default, pending Manas** |
+| RP10–RP16 | Build calls: reports inside the agency area (B4); occupancy against the floor is the roster's; 100,000-row detail sheets; the attempt-fenced render callback and the tick's reconcile; one run per subscription period; the renderer as its own app; ad hoc emails only on request | build |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |

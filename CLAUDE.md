@@ -18,6 +18,7 @@ only; never cite another system, repo or external design doc.
 | `docs/softphone.md`, `docs/mobile.md` | you work on the soft phone or the agent app |
 | `docs/insights.md` | you work on the campaign Insights tab, its rollup or the pacing history |
 | `docs/customer-history.md` | you work on the customer-history search (one number across campaigns) |
+| `docs/reports.md` | you work on report exports (agent, campaign, account PDFs and workbooks, subscriptions, the renderer) |
 | `docs/operations.md`, `DEPLOYMENT.md` | you run, release or deploy it |
 
 ## Layout
@@ -26,6 +27,7 @@ only; never cite another system, repo or external design doc.
 apps/server/         one Fastify process, single replica: platform, agency, voice, analysis
 apps/console/        Vite + React: agent station, soft phone, supervisor, team, invites, settings
 apps/super-admin/    Vite + React: tenants, users, numbers, limits, credentials, flags, usage
+apps/report-renderer/ report PDFs and workbooks from a dataset; runs as a Lambda or in the server (RP15)
 apps/mobile/         Flutter agent app (Android + iOS); not a pnpm package
 packages/contracts/  wire contract shared by server, UIs and (through fixtures) the mobile app
 packages/domain/     pure dialer rules: leaf modules, no imports beyond contracts and other leaves
