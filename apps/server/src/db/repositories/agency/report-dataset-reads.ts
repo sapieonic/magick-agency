@@ -150,20 +150,6 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], batc
 
 export class AgencyReportDatasetRepository {
   /**
-   * The report zone as Postgres names it (`pg_timezone_names`, case-insensitively, as
-   * `resolvedZoneCte` resolves a zone), or null when Postgres does not know it. The builders
-   * resolve the run's zone once with this and refuse an unknown one, rather than let a shared
-   * read fall back to UTC without saying so.
-   */
-  async knownZone(timezone: string): Promise<string | null> {
-    const { rows } = await getPool().query<{ name: string }>(
-      'SELECT z.name FROM pg_timezone_names z WHERE lower(z.name) = lower($1::text) ORDER BY z.name LIMIT 1',
-      [timezone],
-    );
-    return rows[0]?.name ?? null;
-  }
-
-  /**
    * The agent's non-offline state intervals over the window, oldest first: the occupancy
    * intervals' agent variant (tenant and account scoped, every session overlapping the window,
    * soft-phone sessions included) with each interval's session kind and campaign. Offline is

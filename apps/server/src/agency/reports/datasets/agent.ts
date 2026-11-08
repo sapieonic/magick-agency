@@ -45,6 +45,7 @@ import {
   agentSessionsStatement,
   agentStateLogStatement,
   reportCursorRows,
+  type ReportAgentAttemptDayRow,
   type ReportAgentCallRow,
   type ReportAgentScope,
   type ReportSessionDetailRow,
@@ -62,6 +63,7 @@ import {
   breakReasonLabel,
   campaignsByIds,
   col,
+  commonNotes,
   dispositionLabel,
   instantCell,
   localDays,
@@ -145,9 +147,10 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
   // The subject: a membership in this account or tenant-wide. A supervisor may review an agent
   // who has left (any status, as on the agent record's route); an agent's own (`self`) review
   // needs their membership to be active still: a removed member's self run is unavailable.
-  const [tenancy, memberships] = await Promise.all([
+  const [tenancy, memberships, zone] = await Promise.all([
     runTenancy(run),
     membershipRepository.findAnyByUserAndTenant(agentUserId, run.tenant_id),
+    resolveReportZone(run.timezone),
   ]);
   const inAccount = memberships.filter((m) => m.account_id === null || m.account_id === accountId);
   if (inAccount.length === 0) {
@@ -156,7 +159,6 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
   if (!supervisor && !inAccount.some((m) => m.status === 'active')) {
     throw new ReportSubjectUnavailableError('the agent is no longer an active member of the report\'s account');
   }
-  const zone = await resolveReportZone(run.timezone);
 
   const scope: ReportAgentScope = { agentUserId, tenantId: run.tenant_id, accountId, from: run.range_from, to: run.range_to };
   const statsQuery = parseAgentStatsQuery({ from: run.range_from.toISOString(), to: run.range_to.toISOString(), bucket: 'day' });
@@ -187,13 +189,10 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
   // ── Time and the days ──
   const days = localDays(run.local_from, run.local_to, run.timezone);
   const presence = foldPresence(intervals, days);
-  const daily = dailyRows(presence.days, attemptDays.map((a) => ({
-    date: a.date, attempts: a.attempts, first_dials: a.first_dials, connected: a.connected,
-    human_connects: a.human_connects, successes: a.successes, talk_seconds: a.talk_seconds, drops: a.drops,
-  })));
+  const daily = dailyRows(presence.days, attemptDays);
   const clipEnd = new Date(Math.min(run.range_to.getTime(), now.getTime()));
   const breakCatalogs = [...campaigns.values()].map((c) => c.break_reasons);
-  const sum = <K extends keyof (typeof attemptDays)[number]>(k: K) => attemptDays.reduce((s, a) => s + Number(a[k]), 0);
+  const sum = (k: Exclude<keyof ReportAgentAttemptDayRow, 'date'>) => attemptDays.reduce((s, a) => s + a[k], 0);
 
   const rosterRow = roster.rows.find((r) => r.agent_user_id.toLowerCase() === agentUserId.toLowerCase()) ?? null;
   const record = stats.totals;
@@ -304,7 +303,7 @@ export function agentNotes(o: {
     notes.push('The agent record\'s occupancy was unavailable for this run, so the on-call shares are not shown; logged-in time and the days are measured.');
   }
   if (!o.rosterRow) notes.push('The agent placed no dials in the window, so there is no floor row for them.');
-  if (o.future) notes.push('The window runs past the time this report was made; later time is not included.');
+  notes.push(...commonNotes({ future: o.future, later: 'time' }));
   if (!o.supervisor) notes.push('This copy is the agent\'s own: it leaves out the floor comparison and call analysis, and shows phone numbers to the last four digits.');
   return notes;
 }

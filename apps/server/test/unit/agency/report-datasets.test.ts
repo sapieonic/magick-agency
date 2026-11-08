@@ -16,12 +16,15 @@ import {
   timelineSegments,
   type PresenceInterval,
 } from '../../../src/agency/reports/datasets/agent-presence.js';
+import { ATTEMPT_OUTCOME_LABELS } from '@magick-agency/contracts/api/agency/agency-spine';
 import {
+  commonNotes,
   dispositionLabel,
   breakReasonLabel,
   localDates,
   localDays,
   maskPhone,
+  outcomeLabel,
   reportRange,
   roundPreservingSum,
 } from '../../../src/agency/reports/datasets/shared.js';
@@ -267,6 +270,26 @@ describe('labels', () => {
     expect(breakReasonLabel('soft_phone', [])).toBe('Soft phone');
     expect(breakReasonLabel('unspecified', [])).toBe('No reason given');
     expect(breakReasonLabel('zz', [])).toBe('zz');
+  });
+
+  it('an outcome in the console\'s own words; an unknown code as itself; none is a blank cell', () => {
+    for (const [code, label] of Object.entries(ATTEMPT_OUTCOME_LABELS)) expect(outcomeLabel(code)).toBe(label);
+    expect(outcomeLabel('canceled')).toBe('Stopped by us before answer');
+    expect(outcomeLabel('something_new')).toBe('something_new');
+    expect(outcomeLabel(null)).toBeNull();
+  });
+});
+
+describe('commonNotes', () => {
+  it('the still-counting note, then the window-past-now note worded per kind', () => {
+    expect(commonNotes({ future: false, later: 'time' })).toEqual([]);
+    expect(commonNotes({ pending: true, future: true, later: 'calls' })).toEqual([
+      'Some of the window\'s most recent calls were still being counted when this report was made.',
+      'The window runs past the time this report was made; later calls are not included.',
+    ]);
+    expect(commonNotes({ future: true, later: 'time' })).toEqual([
+      'The window runs past the time this report was made; later time is not included.',
+    ]);
   });
 });
 

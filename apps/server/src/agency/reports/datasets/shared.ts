@@ -12,19 +12,21 @@ import {
 } from '@magick-agency/contracts/agency';
 import type { ReportDetailColumn, ReportRange, ReportRosterBenchmark } from '@magick-agency/contracts/reports';
 import type { AgencyRosterAgentRowWithName, AgencyRosterPage } from '@magick-agency/contracts/api/agency/agency-stats';
+import { attemptOutcomeLabel } from '@magick-agency/contracts/api/agency/agency-spine';
 import type { AgencyInsightsBucket } from '@magick-agency/contracts/api/agency/insights';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { ReportRunRecord } from '../../../db/repositories/agency/report-run.repository.js';
-import { agencyAgentStatsRepository, agencyReportDatasetRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAgentStatsRepository } from '../../../db/repositories/agency.repository.js';
 import { getPool } from '@magick-agency/db';
 import { parseRosterQuery, ROSTER_MAX_LIMIT } from '../../agent-record.js';
 import { enrichAttemptAgentNames } from '../../agency-spine.js';
-import { resolveAgentNames, scopeRowsToMembers } from '../../agency-agent-identity.js';
+import { agentNamesOrNone, resolveAgentNames, scopeRowsToMembers } from '../../agency-agent-identity.js';
 import { parseInsightsRange, type ServedInsightsRange } from '../../insights/range.js';
 import { localDayBounds } from '../schedule.js';
+import { postgresZoneName } from '../zone.js';
 import { ReportSubjectUnavailableError } from './types.js';
 
 const log = createChildLogger({ component: 'report-datasets' });
@@ -85,12 +87,13 @@ export async function runTenancy(run: ReportRunRecord): Promise<{ tenant: { id: 
 }
 
 /**
- * The run's zone as Postgres names it, resolved once per build. A zone Postgres does not know
- * fails the build (`assembly_failed`) with a clear message: the shared reads would otherwise cut
- * the account's days in UTC without saying so (`resolvedZoneCte`) or fail with a bare SQL error.
+ * The run's zone as Postgres names it (`postgresZoneName`, `../zone.ts`: the routes' own lookup,
+ * remembered per process). A zone Postgres does not know fails the build (`assembly_failed`) with
+ * a clear message: the shared reads would otherwise cut the account's days in UTC without saying
+ * so (`resolvedZoneCte`) or fail with a bare SQL error.
  */
 export async function resolveReportZone(timezone: string): Promise<string> {
-  const zone = await agencyReportDatasetRepository.knownZone(timezone);
+  const zone = await postgresZoneName(timezone);
   if (zone === null) throw new Error(`The report's time zone ${timezone} is not known to the database.`);
   return zone;
 }
@@ -179,18 +182,40 @@ export async function readAccountRoster(q: {
   };
 }
 
-/** Run `fn` over `items` with at most `limit` in flight; results in input order. */
-export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]!);
+/** The rows a detail sheet holds before naming their new agents: one name lookup per batch. */
+export const NAME_BATCH_ROWS = 500;
+
+/**
+ * A detail sheet's rows, each paired with its agent's name: the new ids of every
+ * {@link NAME_BATCH_ROWS} rows resolved in one lookup (`agentNamesOrNone`), seeded with the names
+ * the builder already holds (`known`; only names, so an id it could not name is asked again). A
+ * name only improves on the id: a failed lookup is null, as is a row with no agent. Rows keep
+ * their order.
+ */
+export async function* withAgentNames<T>(
+  rows: AsyncIterable<T>,
+  agentIdOf: (row: T) => string | null,
+  q: { tenantId: string; surface: string; known?: ReadonlyMap<string, string | null> },
+): AsyncGenerator<[T, string | null]> {
+  const names = new Map<string, string | null>();
+  for (const [id, name] of q.known ?? []) if (name !== null) names.set(id, name);
+  const pending: T[] = [];
+  const flush = async function* (): AsyncGenerator<[T, string | null]> {
+    const unknown = pending.map(agentIdOf).filter((id): id is string => id !== null && !names.has(id));
+    if (unknown.length > 0) {
+      const got = await agentNamesOrNone(unknown, q.tenantId, q.surface);
+      for (const id of new Set(unknown)) names.set(id, got.get(id) ?? null);
+    }
+    for (const row of pending.splice(0)) {
+      const id = agentIdOf(row);
+      yield [row, id === null ? null : names.get(id) ?? null];
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
+  for await (const row of rows) {
+    pending.push(row);
+    if (pending.length >= NAME_BATCH_ROWS) yield* flush();
+  }
+  yield* flush();
 }
 
 /**
@@ -239,23 +264,29 @@ export function instantCell(v: Date | string | null | undefined): string | null 
 /** A column. */
 export const col = (key: string, label: string, type: ReportDetailColumn['type']): ReportDetailColumn => ({ key, label, type });
 
-/** Outcome codes as printed (attempt outcomes are wire codes; the sheet shows words). */
-const OUTCOME_LABELS: Record<string, string> = {
-  connected: 'Connected',
-  no_answer: 'No answer',
-  busy: 'Busy',
-  failed: 'Failed',
-  machine: 'Answering machine',
-  invalid: 'Invalid number',
-  abandoned: 'Abandoned',
-  agent_disconnected: 'Agent disconnected',
-  orphaned: 'Closed by the system',
-  canceled: 'Cancelled',
-};
-
-/** An attempt or call outcome in words; an unknown code is shown as itself. */
+/**
+ * An attempt or call outcome in words: the console's own words (`attemptOutcomeLabel`), an unknown
+ * code shown as itself. Null stays null (a blank cell), where the console says "Not classified".
+ */
 export function outcomeLabel(outcome: string | null): string | null {
-  return outcome === null ? null : OUTCOME_LABELS[outcome] ?? outcome;
+  return outcome === null ? null : attemptOutcomeLabel(outcome);
+}
+
+/** What a window running past `generated_at` leaves out: the agent review's time, the campaign and account reports' calls. */
+const FUTURE_NOTES = {
+  time: 'The window runs past the time this report was made; later time is not included.',
+  calls: 'The window runs past the time this report was made; later calls are not included.',
+} as const;
+
+/**
+ * The notes the kinds share, in print order: the rollup still counting the window's most recent
+ * calls (`pending`), then a window running past `generated_at` (`future`, worded for `later`).
+ */
+export function commonNotes(o: { pending?: boolean; future: boolean; later: keyof typeof FUTURE_NOTES }): string[] {
+  return [
+    ...(o.pending ? ['Some of the window\'s most recent calls were still being counted when this report was made.'] : []),
+    ...(o.future ? [FUTURE_NOTES[o.later]] : []),
+  ];
 }
 
 /** Disposition codes that are the system's, not a catalog's. */
