@@ -184,6 +184,14 @@ variable "reports_callback_secret" {
     condition     = var.reports_callback_secret == null || length(coalesce(var.reports_callback_secret, "x")) >= 32
     error_message = "reports_callback_secret must be at least 32 characters, as the server requires."
   }
+
+  # reports_server_env prints it single-quoted for a .env file, where a single quote cannot be
+  # escaped, and the server refuses leading or trailing whitespace (it signs with the value as
+  # written). `openssl rand -base64 48` never produces either.
+  validation {
+    condition     = var.reports_callback_secret == null || can(regex("^[^\\s'][^'\\r\\n]*[^\\s']$", coalesce(var.reports_callback_secret, "xx")))
+    error_message = "reports_callback_secret must not contain a single quote or a line break, nor start or end with whitespace."
+  }
 }
 
 variable "report_renderer_live_version" {
