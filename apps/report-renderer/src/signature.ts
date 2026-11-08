@@ -12,7 +12,7 @@ export function signCallback(secret: string, rawBody: string, timestampSeconds: 
   return { [REPORT_TIMESTAMP_HEADER]: ts, [REPORT_SIGNATURE_HEADER]: signature };
 }
 
-/** Constant-time check of a signature (for tests and any receiver in this repo). */
+/** Constant-time check of a signature, for this package's tests (the server verifies with its own). Not exported from the package entry. */
 export function verifyCallbackSignature(secret: string, rawBody: string, timestamp: string, signature: string): boolean {
   const expected = Buffer.from(createHmac('sha256', secret).update(reportSignaturePayload(timestamp, rawBody), 'utf8').digest('hex'), 'utf8');
   const given = Buffer.from(signature, 'utf8');

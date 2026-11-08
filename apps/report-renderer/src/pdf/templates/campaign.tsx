@@ -6,19 +6,12 @@
  */
 import type { ReactNode } from 'react';
 import type { CampaignReportDataset } from '@magick-agency/contracts/reports';
-import { average, bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, type Rate } from '../../format';
-import { HourColumns, StackedColumns } from '../charts';
-import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, rateKpi } from '../components';
+import { bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, unknownUser } from '../../format';
+import { campaignFigures, recordingShare } from '../../rates';
+import { HourColumns, StackedColumns, tickEvery } from '../charts';
+import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, STATUS_WORDS, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
 
-const STATUS_WORDS: Record<CampaignReportDataset['campaign']['status'], string> = {
-  draft: 'Draft',
-  running: 'Running',
-  paused: 'Paused',
-  stopping: 'Stopping',
-  completed: 'Completed',
-  stopped: 'Stopped',
-};
 const STALL_WORDS: Record<string, string> = {
   no_agents: 'No agents available',
   no_slots: 'No call slots free',
@@ -40,7 +33,7 @@ export function CampaignReport({ d }: { d: CampaignReportDataset }) {
   const floor = d.floors.campaign_rate_min_first_dials;
   return (
     <>
-      <OverviewPage d={d} floor={floor} />
+      <OverviewPage d={d} />
       <TrendsPage d={d} floor={floor} header={small('Trends and agents')} />
       <HealthPage d={d} floor={floor} header={small('Callbacks and health')} />
       <DefinitionsPage
@@ -56,17 +49,10 @@ function firstDialsOf(d: CampaignReportDataset): number {
   return d.trends.buckets.reduce((s, b) => s + b.first_dials, 0);
 }
 
-function OverviewPage({ d, floor }: { d: CampaignReportDataset; floor: number }) {
+function OverviewPage({ d }: { d: CampaignReportDataset }) {
   const zone = d.range.timezone;
   const calls = d.activity.calls;
-  const firstDials = calls.dials - calls.redials.placed;
-  const answered = d.trends.buckets.reduce((s, b) => s + b.answered, 0);
-  const abandoned = d.trends.buckets.reduce((s, b) => s + b.abandoned, 0);
-  const connect = rate(calls.human_connects, firstDials, floor);
-  const success = rate(calls.successes, calls.conversations, floor);
-  const abandonment = rate(abandoned, answered, floor);
-  const talk = average(calls.talk_seconds, calls.connected);
-  const wrap = average(calls.wrapup_seconds, calls.wrapup_measured);
+  const { firstDials, answered, abandoned, connect, success, abandonment, talk, wrap, handle } = campaignFigures(d);
   const conversations = calls.conversations;
   return (
     <div className="page" data-page="overview">
@@ -86,9 +72,9 @@ function OverviewPage({ d, floor }: { d: CampaignReportDataset; floor: number })
             rateKpi('Connect rate', connect, `${count(calls.human_connects)} people / ${count(firstDials)} first dials`, 'connect_rate'),
             rateKpi('Success rate', success, `${count(calls.successes)} successes / ${count(conversations)} conversations`, 'success_rate'),
             rateKpi('Abandonment', abandonment, `${count(abandoned)} of ${count(answered)} answered`, 'abandonment'),
-            talk === null
+            talk === null || handle === null
               ? { id: 'aht', label: 'Average handle time', value: 'No connected calls', words: true }
-              : { id: 'aht', label: 'Average handle time', value: duration(talk + (wrap ?? 0)), detail: `talk ${duration(talk)} + wrap ${wrap === null ? 'not measured' : duration(wrap)}` },
+              : { id: 'aht', label: 'Average handle time', value: duration(handle), detail: `talk ${duration(talk)} + wrap ${wrap === null ? 'not measured' : duration(wrap)}` },
           ]}
         />
       </Section>
@@ -185,7 +171,7 @@ function Headline({ d }: { d: CampaignReportDataset }) {
 
 function TrendsPage({ d, floor, header }: { d: CampaignReportDataset; floor: number; header: ReactNode }) {
   const b = d.trends.buckets;
-  const tickEvery = b.length > 16 ? 7 : b.length > 8 ? 2 : 1;
+  const every = tickEvery(b.length);
   const dates = b.map((x) => bucketDate(x.bucket_start, d.range.timezone));
   const totalHuman = b.reduce((s, x) => s + x.human_connects, 0);
   const totalDials = b.reduce((s, x) => s + x.dials, 0);
@@ -210,7 +196,7 @@ function TrendsPage({ d, floor, header }: { d: CampaignReportDataset; floor: num
           ]}
           columns={b.map((x, i) => ({
             label: shortDate(dates[i]!),
-            tick: i % tickEvery === 0,
+            tick: i % every === 0,
             values: [x.human_connects, Math.max(0, x.dials - x.human_connects)],
             title: `${dayLabel(dates[i]!)}: ${count(x.dials)} dials, ${count(x.human_connects)} people reached`,
           }))}
@@ -308,9 +294,8 @@ function HealthPage({ d, floor, header }: { d: CampaignReportDataset; floor: num
   const cb = d.activity.callbacks;
   const h = d.health;
   const stalls = Object.entries(h.stalls.minutes_by_reason).filter(([, m]) => m > 0);
-  const answered = d.trends.buckets.reduce((s, b) => s + b.answered, 0);
-  const abandoned = d.trends.buckets.reduce((s, b) => s + b.abandoned, 0);
-  const recorded: Rate = rate(h.recording.recorded, h.recording.connected, 1);
+  const { answered, abandoned, abandonment } = campaignFigures(d);
+  const recorded = recordingShare(h.recording.recorded, h.recording.connected);
   return (
     <div className="page" data-page="health">
       {header}
@@ -350,7 +335,7 @@ function HealthPage({ d, floor, header }: { d: CampaignReportDataset; floor: num
           <dl className="facts">
             <dt>In the window</dt>
             <dd>
-              {rateText(rate(abandoned, answered, floor))} ({count(abandoned)} of {count(answered)} answered)
+              {rateText(abandonment)} ({count(abandoned)} of {count(answered)} answered)
             </dd>
             <dt>Ceiling</dt>
             <dd>{pct(h.abandonment.ceiling_pct, 2)}</dd>
@@ -458,8 +443,7 @@ function HealthPage({ d, floor, header }: { d: CampaignReportDataset; floor: num
 }
 
 function nameOf(d: CampaignReportDataset, id: string): string {
-  const n = d.agent_names[id];
-  return n ?? `Unknown user ${id.slice(0, 8)}`;
+  return d.agent_names[id] ?? unknownUser(id);
 }
 
 function busiest(b: CampaignReportDataset['trends']['buckets'], dates: string[]): string {

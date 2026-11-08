@@ -3,9 +3,19 @@
  * rate cells (a rate without enough calls is words, never 0), legends and the definitions page.
  */
 import type { ReactNode } from 'react';
-import type { ReportDatasetBase } from '@magick-agency/contracts/reports';
-import { rateText, type Rate } from '../format';
+import type { CampaignReportDataset, ReportDatasetBase } from '@magick-agency/contracts/reports';
+import { rateText, unknownUser, type Rate } from '../format';
 import { BASE_CSS } from './styles';
+
+/** A campaign's status in words. */
+export const STATUS_WORDS: Record<CampaignReportDataset['campaign']['status'], string> = {
+  draft: 'Draft',
+  running: 'Running',
+  paused: 'Paused',
+  stopping: 'Stopping',
+  completed: 'Completed',
+  stopped: 'Stopped',
+};
 
 export function Doc({ title, fontsCss, children }: { title: string; fontsCss: string; children: ReactNode }) {
   return (
@@ -69,7 +79,7 @@ export function Kpi({ label, value, words, detail, id }: KpiProps) {
 
 /** A KPI whose value is a rate: the percentage, or the words. */
 export function rateKpi(label: string, rate: Rate, detail: string | undefined, id?: string): KpiProps {
-  return { label, value: rateText(rate), words: rate.kind !== 'value', detail: rate.kind === 'value' ? detail : rate.kind === 'withheld' ? detail : undefined, id };
+  return { label, value: rateText(rate), words: rate.kind !== 'value', detail: rate.kind === 'none' ? undefined : detail, id };
 }
 
 export function Kpis({ items, four }: { items: KpiProps[]; four?: boolean }) {
@@ -162,5 +172,5 @@ function DefinitionRow({ label, text }: { label: string; text: string }) {
 export function NameOrId({ name, id }: { name: string | null | undefined; id: string | null }) {
   if (name) return <>{name}</>;
   if (id === null) return <span className="muted">Not reserved to an agent</span>;
-  return <span className="idref">Unknown user {id.slice(0, 8)}</span>;
+  return <span className="idref">{unknownUser(id)}</span>;
 }

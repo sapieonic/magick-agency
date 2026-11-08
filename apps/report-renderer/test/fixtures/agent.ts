@@ -667,24 +667,41 @@ function blankDial(t: number, campaign: string, outcome: Call['outcome'], redial
   };
 }
 
+// The server's agent definitions (`datasets/definitions.ts`), keys, labels and texts as it writes them.
 function agentDefinitions(self: boolean) {
   const defs = [
-    { key: 'station_time', label: 'Time on station', text: 'Logged-in time on this account’s campaigns: idle, on a call, wrap-up and breaks. Logged-out gaps are not counted.' },
-    { key: 'talk_time', label: 'Talking (agent leg)', text: 'From the moment the call was bridged to the agent until it ended. Calls the reaper closed are left out, so this can be a little lower than time in the on-call state.' },
-    { key: 'occupancy', label: 'Occupancy', text: 'Talk plus measured wrap-up, divided by time on station (breaks included). This is the roster’s figure, the one compared with the floor.' },
-    { key: 'on_call_share', label: 'On a call (state time)', text: 'Time in the on-call state divided by time on station, shown with and without breaks in the denominator.' },
-    { key: 'connect_rate', label: 'Connect rate', text: 'People reached (conversations not coded voicemail and with an outcome written) divided by first dials (dials that were not wrap-up redials). Not quoted below 20 first dials.' },
-    { key: 'success_rate', label: 'Success rate', text: 'Calls closed with a success outcome divided by connected calls. Not quoted below 20 connected calls.' },
-    { key: 'aht', label: 'Average handle time', text: 'Talk plus measured wrap-up, divided by connected calls.' },
-    { key: 'conversations', label: 'Conversations', text: 'One per person spoken to: a wrap-up redial to the same person counts once.' },
-    { key: 'drops', label: 'Drops', text: 'Station connections that ended without the agent leaving (a lost network or a closed app).' },
-    { key: 'callbacks', label: 'Callbacks', text: 'Callbacks the agent booked. On time means dialled within 15 minutes of the booked time, or earlier.' },
-    { key: 'catalog', label: 'Outcome labels', text: 'Outcomes carry each campaign’s current labels: editing a campaign’s outcomes re-labels its history.' },
+    { key: 'dials', label: 'Dials', text: 'Every call placed for the agent in the window, wrap-up redials included.' },
+    { key: 'first_dials', label: 'First dials', text: 'Dials that were not wrap-up redials: the connect rate\'s denominator.' },
+    { key: 'connected', label: 'Connected', text: 'Calls bridged to the agent, counted once per conversation: a wrap-up redial chain is one conversation, counted at the call that carries its outcome.' },
+    { key: 'connect_rate', label: 'Connect rate', text: 'People reached ÷ first dials. A person is reached when a conversation is closed with an outcome other than voicemail or "no outcome". Shown in words below 20 first dials.' },
+    { key: 'successes', label: 'Successes', text: 'Conversations closed with an outcome the campaign marks as a success, by each campaign\'s current outcome list.' },
+    { key: 'success_rate', label: 'Success rate', text: 'Successes ÷ conversations (connected calls). Shown in words below 20 first dials.' },
+    { key: 'talk_time', label: 'Talk time', text: 'The agent\'s leg of each connected call: from the moment it was bridged to the agent until it ended. Calls the system closed after a fault are left out.' },
+    { key: 'wrapup_time', label: 'Wrap-up time', text: 'Measured wrap-up: from the end of the call until the agent submitted an outcome, returned early or was returned automatically. Wrap-ups ended by a supervisor, by the agent leaving or by the campaign stopping are left out.' },
+    { key: 'aht', label: 'Average handle time', text: '(Talk time + wrap-up time) ÷ connected calls.' },
+    { key: 'outcome_talk', label: 'Average talk by outcome', text: 'The agent\'s leg of the call that carries each conversation\'s outcome ÷ conversations with that outcome. For a wrap-up redial chain only the redial\'s leg counts here, while talk time above counts every leg, so the outcome table can account for less talk than the talk time.' },
+    { key: 'logged_in_time', label: 'Logged-in time', text: 'Time in any state but offline, taken from the recorded state changes of the agent\'s sessions in this account, campaign and soft phone. Reserved time (a call being connected) counts as available. Logged in means joined to a campaign or the soft phone: signing in to the console or the app without joining is not recorded, so it does not count.' },
+    { key: 'occupancy', label: 'Occupancy (handling)', text: '(Talk time + wrap-up time) ÷ logged-in time, breaks included. This is the figure compared with the floor.' },
+    { key: 'on_call_share', label: 'On-call share', text: 'Time in the on-call state ÷ logged-in time, breaks included.' },
+    { key: 'on_call_share_excl_break', label: 'On-call share excluding breaks', text: 'Time in the on-call state ÷ logged-in time with break time taken out.' },
+    { key: 'days_worked', label: 'Days worked', text: 'Days with any logged-in time.' },
+    { key: 'first_in_last_out', label: 'First in, last out', text: 'The first and last logged-in moment of each day; a shift running through midnight is split there.' },
+    { key: 'drops', label: 'Dropped calls', text: 'Calls reserved to the agent that ended because their station disconnected mid-call.' },
+    { key: 'callbacks_booked', label: 'Callbacks booked', text: 'The agent\'s calls in the window that ended with a callback time set.' },
+    { key: 'callbacks_on_time', label: 'Callbacks kept on time', text: 'Of the callbacks the agent booked that were due in the window, those whose follow-up call was dialled no later than 15 minutes after the booked time (an early call counts as on time), whoever dialled it.' },
+    { key: 'callbacks_late', label: 'Callbacks kept late', text: 'Callbacks the agent booked, due in the window, whose follow-up call was dialled more than 15 minutes after the booked time.' },
+    { key: 'callbacks_missed', label: 'Callbacks missed', text: 'Callbacks the agent booked, due in the window, that were never dialled because the contact was closed first or the campaign ended.' },
+    { key: 'callbacks_pending', label: 'Callbacks pending', text: 'Callbacks the agent booked, due in the window, that have not been dialled yet: upcoming while the booked time is still ahead, overdue once it has passed.' },
+    { key: 'redials', label: 'Wrap-up redials', text: 'Redials the agent placed from wrap-up, and how many of them connected.' },
+    { key: 'agent_retries', label: 'Agent retries', text: 'Dials the agent asked for themselves: contacts they reopened and numbers they dialled by hand.' },
+    { key: 'overrides', label: 'Overrides used', text: 'Dials that used an outcome override (an extra attempt, an early retry or calling outside hours).' },
+    { key: 'dnc_marked', label: 'Do Not Call marks', text: 'Numbers the agent added to the Do Not Call list.' },
+    { key: 'softphone_calls', label: 'Soft-phone calls', text: 'Calls the agent placed on the soft phone, counted when the call was started; one started just before the end of the window counts in it even if it was dialled after. They are outside every campaign figure above.' },
   ];
   if (!self) {
     defs.push(
-      { key: 'floor_bands', label: 'Floor bands', text: 'The middle half (25th to 75th percentile) and median of agents on this account over the same window, counting only agents with at least 20 first dials.' },
-      { key: 'sentiment', label: 'Sentiment', text: 'From call analysis of recorded calls only: positive, neutral, negative or mixed, each counted on its own; calls that were not recorded or analysed are not counted.' },
+      { key: 'floor_comparison', label: 'Floor comparison', text: 'The agent\'s figures against the middle half (25th to 75th percentile) of the account\'s agents who dialled in the same window. Only agents with at least 20 first dials are compared; for the success rate and handle time they also need 20 connected calls.' },
+      { key: 'sentiment', label: 'Call sentiment', text: 'The overall sentiment the call analysis gave each analysed call: positive, neutral, negative or mixed, each counted on its own. Calls that were not analysed are not counted.' },
     );
   }
   return defs;

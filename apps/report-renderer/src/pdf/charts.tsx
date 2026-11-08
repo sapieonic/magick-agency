@@ -74,6 +74,11 @@ export interface Column {
   title: string;
 }
 
+/** Every how many day columns an x label is shown: every day up to 8, every other up to 16, then weekly. */
+export function tickEvery(columns: number): number {
+  return columns > 16 ? 7 : columns > 8 ? 2 : 1;
+}
+
 /**
  * Columns stacked bottom to top in series order. `scale` turns a value into axis units (seconds →
  * hours) and `unit` labels the ticks.

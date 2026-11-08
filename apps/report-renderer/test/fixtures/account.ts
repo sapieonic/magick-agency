@@ -12,7 +12,7 @@ import type {
 } from '@magick-agency/contracts/reports';
 import { REPORT_DATASET_VERSION } from '@magick-agency/contracts/reports';
 import { ACCOUNT, TENANT } from './agent';
-import { buildCampaign, DAYS, FLOOR_AGENTS, FROM, GENERATED_AT, NEW_JOINER, SPRING_RECOVERY, TO, type CampaignSpec } from './campaign';
+import { buildCampaign, campaignDefinitions, DAYS, FLOOR_AGENTS, FROM, GENERATED_AT, NEW_JOINER, SPRING_RECOVERY, TO, type CampaignSpec } from './campaign';
 import { gunzipSync } from 'node:zlib';
 import { DUBAI_OFFSET, iso, KOLKATA_OFFSET, localDays, localInstant, ndjsonGz, percentile } from './util';
 
@@ -218,16 +218,13 @@ export function accountFixture(
     tenant: TENANT,
     account: ACCOUNT,
     subject: { id: ACCOUNT.id, name: ACCOUNT.name },
+    // The server's account definitions (`datasets/definitions.ts`): the campaign's, less the per-campaign ones, then its own.
     definitions: [
-      { key: 'connect_rate', label: 'Connect rate', text: 'People reached divided by first dials. Campaign and account figures are not quoted below 25 first dials; agent figures below 20.' },
-      { key: 'success_rate', label: 'Success rate', text: 'Conversations closed with a success outcome divided by conversations (campaigns) or by connected calls (agents).' },
-      { key: 'abandonment', label: 'Abandonment', text: 'Answered calls that reached no agent divided by answered calls.' },
-      { key: 'aht', label: 'Average handle time', text: 'Talk plus measured wrap-up per connected call.' },
-      { key: 'occupancy', label: 'Occupancy', text: 'An agent’s talk plus measured wrap-up divided by their time on station, breaks included.' },
-      { key: 'recording', label: 'Recorded', text: 'Connected calls with a recording, over connected calls.' },
-      { key: 'floor_bands', label: 'Floor bands', text: 'The 25th percentile, median and 75th percentile of agents with at least 20 first dials in the window.' },
-      { key: 'totals', label: 'Totals', text: 'Every campaign’s counts summed; rates of the totals are recomputed from the sums, never averaged.' },
-      { key: 'days', label: 'Days', text: 'Each campaign’s activity re-cut into days of Asia/Kolkata, which can differ from a campaign’s own zone.' },
+      ...campaignDefinitions().filter((x) => !['best_hours', 'agents_online_peak', 'stalls', 'callbacks_on_time', 'callbacks_late', 'callbacks_missed', 'callbacks_pending'].includes(x.key)),
+      { key: 'totals', label: 'Account totals', text: 'Each figure summed over the covered campaigns; every rate of the totals is worked out again from the summed counts, never averaged across campaigns.' },
+      { key: 'agent_rates', label: 'Agent rates', text: 'Each agent\'s connect rate (people reached ÷ first dials), success rate (successes ÷ connected calls) and handle time ((talk + wrap-up) ÷ connected calls) over all the account\'s campaigns. Shown in words below 20 first dials.' },
+      { key: 'occupancy', label: 'Occupancy (handling)', text: '(Talk time + wrap-up time) ÷ logged-in time, breaks included, from the recorded state changes.' },
+      { key: 'floor_comparison', label: 'Floor comparison', text: 'The middle half (25th to 75th percentile) of the account\'s agents who dialled in the window, over agents with at least 20 first dials.' },
     ],
     notes: [
       'Legacy Balances dials in Asia/Dubai; its activity is shown in this report’s days (Asia/Kolkata).',
