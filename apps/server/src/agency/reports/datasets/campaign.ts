@@ -30,10 +30,10 @@ import {
   type ReportAttemptRow,
   type ReportSessionDetailRow,
 } from '../../../db/repositories/agency.repository.js';
-import { liveStats } from '../../../api/routes/proxy-agency-insights/as-of-now.js';
 import { agentNamesOrNone } from '../../agency-agent-identity.js';
 import { computeActivity } from '../../insights/activity.js';
 import { computeHealth } from '../../insights/health.js';
+import { liveStats } from '../../insights/live-stats.js';
 import { campaignZone } from '../../insights/range.js';
 import { computeSummary } from '../../insights/summary.js';
 import { computeTrends } from '../../insights/trends.js';
@@ -41,6 +41,7 @@ import { sessionCells, sessionColumns } from './agent.js';
 import { campaignDefinitions } from './definitions.js';
 import {
   col,
+  commonNotes,
   dispositionLabel,
   insightsRangeFor,
   instantCell,
@@ -49,6 +50,7 @@ import {
   runTenancy,
   secondsCell,
   wire,
+  withAgentNames,
 } from './shared.js';
 import { ReportSubjectUnavailableError, ReportZoneChangedError, type ReportDatasetBuilder, type ReportDetailSource } from './types.js';
 
@@ -120,6 +122,7 @@ export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ ru
   ]);
 
   const ids = agentIdsIn(summary, activity, trends, health);
+  // Also the detail sheets' first names: they look up only the agents these do not cover.
   const names = await agentNamesOrNone(ids, run.tenant_id, 'report campaign');
   const agentNames: Record<string, string | null> = {};
   for (const id of ids.sort()) agentNames[id] = names.get(id) ?? null;
@@ -129,10 +132,11 @@ export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ ru
     `Days run from midnight to midnight in the campaign's time zone, ${run.timezone}.`,
     'Successes and outcome labels follow the campaign\'s current outcome list, so an outcome renamed or reclassified since applies to earlier calls too.',
     'Best hours are counted in each contact\'s own time zone.',
-    ...(activity.pending_buckets > 0 || trends.pending_buckets > 0 || health.pending_buckets > 0
-      ? ['Some of the window\'s most recent calls were still being counted when this report was made.']
-      : []),
-    ...(run.range_to.getTime() > now.getTime() ? ['The window runs past the time this report was made; later calls are not included.'] : []),
+    ...commonNotes({
+      pending: activity.pending_buckets > 0 || trends.pending_buckets > 0 || health.pending_buckets > 0,
+      future: run.range_to.getTime() > now.getTime(),
+      later: 'calls',
+    }),
   ];
 
   const dataset: Omit<CampaignReportDataset, 'detail_files'> = {
@@ -160,8 +164,8 @@ export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ ru
   return {
     dataset,
     details: [
-      attemptsSource({ campaignIds: [campaign.id], tenantId: run.tenant_id, from: run.range_from, to: run.range_to }, campaigns, false),
-      campaignSessionsSource(campaign, run.range_from, run.range_to),
+      attemptsSource({ campaignIds: [campaign.id], tenantId: run.tenant_id, from: run.range_from, to: run.range_to }, campaigns, false, names),
+      campaignSessionsSource(campaign, run.range_from, run.range_to, names),
     ],
   };
 };
@@ -186,69 +190,61 @@ export function attemptColumns(withCampaign: boolean): ReportDetailSource['colum
 
 /**
  * Every placed attempt of the campaigns in the window, oldest first, with each agent's name
- * resolved once per batch of new ids (a name only improves on the id: a failed lookup is null).
+ * (`withAgentNames`: the builder's `knownNames` first, then one lookup per batch of new ids; a
+ * name only improves on the id).
  */
 export function attemptsSource(
   q: { campaignIds: string[]; tenantId: string; from: Date; to: Date },
   campaigns: ReadonlyMap<string, AgencyCampaignRecord>,
   withCampaign: boolean,
+  knownNames?: ReadonlyMap<string, string | null>,
 ): ReportDetailSource {
   return {
     sheet: 'attempts',
     label: 'Call attempts',
     columns: attemptColumns(withCampaign),
     async *rows() {
-      const names = new Map<string, string | null>();
-      const pending: ReportAttemptRow[] = [];
-      const flush = async function* () {
-        const unknown = pending.map((r) => r.agent_user_id).filter((id): id is string => id !== null && !names.has(id));
-        if (unknown.length > 0) {
-          const got = await agentNamesOrNone(unknown, q.tenantId, 'report attempts');
-          for (const id of new Set(unknown)) names.set(id, got.get(id) ?? null);
-        }
-        for (const r of pending.splice(0)) {
-          const campaign = campaigns.get(r.campaign_id);
-          yield [
-            instantCell(r.dialed_at),
-            ...(withCampaign ? [campaign?.name ?? r.campaign_id] : []),
-            r.agent_user_id === null ? null : names.get(r.agent_user_id) ?? r.agent_user_id,
-            r.phone,
-            outcomeLabel(r.outcome),
-            r.disposition_code,
-            r.disposition_code === null ? null : dispositionLabel(r.disposition_code, campaign?.disposition_catalog),
-            secondsCell(r.talk_s),
-            secondsCell(r.wrapup_s),
-            r.caller_id,
-            Number(r.redial_number),
-            instantCell(r.callback_at),
-          ];
-        }
-      };
       const { text, values } = campaignAttemptsStatement(q);
-      for await (const r of reportCursorRows<ReportAttemptRow>(text, values)) {
-        pending.push(r);
-        if (pending.length >= 500) yield* flush();
+      const named = withAgentNames(reportCursorRows<ReportAttemptRow>(text, values), (r) => r.agent_user_id, {
+        tenantId: q.tenantId, surface: 'report attempts', ...(knownNames ? { known: knownNames } : {}),
+      });
+      for await (const [r, agentName] of named) {
+        const campaign = campaigns.get(r.campaign_id);
+        yield [
+          instantCell(r.dialed_at),
+          ...(withCampaign ? [campaign?.name ?? r.campaign_id] : []),
+          r.agent_user_id === null ? null : agentName ?? r.agent_user_id,
+          r.phone,
+          outcomeLabel(r.outcome),
+          r.disposition_code,
+          r.disposition_code === null ? null : dispositionLabel(r.disposition_code, campaign?.disposition_catalog),
+          secondsCell(r.talk_s),
+          secondsCell(r.wrapup_s),
+          r.caller_id,
+          Number(r.redial_number),
+          instantCell(r.callback_at),
+        ];
       }
-      yield* flush();
     },
   };
 }
 
-function campaignSessionsSource(campaign: AgencyCampaignRecord, from: Date, to: Date): ReportDetailSource {
+function campaignSessionsSource(
+  campaign: AgencyCampaignRecord,
+  from: Date,
+  to: Date,
+  knownNames: ReadonlyMap<string, string | null>,
+): ReportDetailSource {
   return {
     sheet: 'sessions',
     label: 'Sessions',
     columns: [col('agent', 'Agent', 'text'), ...sessionColumns()],
     async *rows() {
-      const names = new Map<string, string | null>();
       const { text, values } = campaignSessionsStatement({ campaignId: campaign.id, tenantId: campaign.tenant_id, from, to });
-      for await (const r of reportCursorRows<ReportSessionDetailRow>(text, values)) {
-        if (!names.has(r.agent_user_id)) {
-          const got = await agentNamesOrNone([r.agent_user_id], campaign.tenant_id, 'report sessions');
-          names.set(r.agent_user_id, got.get(r.agent_user_id) ?? null);
-        }
-        yield sessionCells(r, true, names.get(r.agent_user_id) ?? r.agent_user_id);
-      }
+      const named = withAgentNames(reportCursorRows<ReportSessionDetailRow>(text, values), (r) => r.agent_user_id, {
+        tenantId: campaign.tenant_id, surface: 'report sessions', known: knownNames,
+      });
+      for await (const [r, agentName] of named) yield sessionCells(r, true, agentName ?? r.agent_user_id);
     },
   };
 }

@@ -175,7 +175,7 @@ describe('POST /webhooks/reports/rendered', () => {
     const res = await post(body, signed(body));
     expect(res.statusCode).toBe(204);
     expect(r.applyRenderResult).toHaveBeenCalledWith(RUN, 2, expect.objectContaining({
-      status: 'failed', error: { code: 'upload_failed', message: REPORT_FAILURE_MESSAGES.upload_failed },
+      status: 'failed', error: { code: 'upload_failed' },
     }));
     expect(JSON.stringify(r.applyRenderResult.mock.calls)).not.toContain('AccessDenied');
     expect(metrics.runs).toHaveBeenCalledWith({ kind: 'agent', status: 'failed' });
@@ -204,7 +204,7 @@ describe('applyRenderOutcome', () => {
       status: 'failed', files: [], error: { code: 'assembly_failed' as never, message: 'TypeError: x is undefined' },
     }), deps(rp));
     expect(rp.applyRenderResult).toHaveBeenCalledWith(RUN, 2, expect.objectContaining({
-      error: { code: 'render_failed', message: REPORT_FAILURE_MESSAGES.render_failed },
+      error: { code: 'render_failed' },
     }));
   });
 

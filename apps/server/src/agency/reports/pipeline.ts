@@ -8,10 +8,11 @@
  * reclaimed later), then the tick, then the inline renderer's queue is drained.
  */
 import { createChildLogger } from '@magick-agency/observability';
+import type { ReportRenderCallback } from '@magick-agency/contracts/reports';
 import type { AppConfig } from '../../config/index.js';
 import { headFile } from '../../storage/s3.js';
 import { sendAgencyReportReadyEmails } from '../../notifications/agency-report-ready.js';
-import { applyRenderOutcome, defaultApplyDeps } from './apply.js';
+import { applyRenderOutcome, defaultApplyDeps, type RenderOutcomeResult } from './apply.js';
 import {
   checkInlineRenderer,
   createInlineDispatcher,
@@ -29,14 +30,21 @@ const log = createChildLogger({ component: 'agency-reports' });
 
 type ReportsConfig = AppConfig['agency']['reports'];
 
-/** The render dispatcher the config names. */
+/** `applyRenderOutcome` on the real repository, bound to the config's retention. */
+type ReportApply = (runId: string, attempt: number, callback: ReportRenderCallback) => Promise<RenderOutcomeResult>;
+
+function reportApply(reports: ReportsConfig): ReportApply {
+  const deps = defaultApplyDeps(reports.retentionDays);
+  return (runId, attempt, callback) => applyRenderOutcome(runId, attempt, callback, deps);
+}
+
+/** The render dispatcher the config names; the inline one applies results through `opts.apply` (default: {@link reportApply}). */
 export function createReportDispatcher(
   config: Pick<AppConfig, 's3'> & { agency: { reports: ReportsConfig } },
-  opts: { loader?: ReportRendererLoader } = {},
+  opts: { loader?: ReportRendererLoader; apply?: ReportApply } = {},
 ): ReportRenderDispatcher {
   const reports = config.agency.reports;
   const bucket = config.s3?.audioBucket ?? '';
-  const apply = defaultApplyDeps(reports.retentionDays);
   if (reports.renderer === 'sqs') {
     return createSqsDispatcher({
       queueUrl: reports.sqsQueueUrl!,
@@ -51,7 +59,7 @@ export function createReportDispatcher(
   return createInlineDispatcher({
     bucket,
     ...(reports.chromePath ? { chromePath: reports.chromePath } : {}),
-    apply: (runId, attempt, callback) => applyRenderOutcome(runId, attempt, callback, apply),
+    apply: opts.apply ?? reportApply(reports),
     ...(opts.loader ? { loader: opts.loader } : {}),
   });
 }
@@ -89,13 +97,14 @@ export function startReportPipeline(
   if (!config.s3) {
     log.warn('No S3 bucket configured (S3_AUDIO_BUCKET): report runs will fail to assemble');
   }
-  const dispatcher = createReportDispatcher(config, opts);
+  // One apply path for the inline renderer and the tick's reconcile.
+  const apply = reportApply(reports);
+  const dispatcher = createReportDispatcher(config, { ...opts, apply });
   if (reports.renderer === 'inline') void checkInlineRenderer(opts.loader);
   const assembler = startReportAssembler(
     { intervalMs: reports.assemblerIntervalMs, maxDetailRows: reports.maxDetailRows, maxAttempts: reports.maxAttempts },
     defaultAssemblerDeps(dispatcher),
   );
-  const applyDeps = defaultApplyDeps(reports.retentionDays);
   const tick = startReportTick(
     { intervalMs: reports.tickIntervalMs, renderTimeoutMs: reports.renderTimeoutMs, maxAttempts: reports.maxAttempts },
     {
@@ -107,7 +116,7 @@ export function startReportPipeline(
       }),
       subject: probeSubscriptionSubject,
       headObject: headReportObject,
-      apply: (runId, attempt, callback) => applyRenderOutcome(runId, attempt, callback, applyDeps),
+      apply,
       notify: (run) => sendAgencyReportReadyEmails(run, { retentionDays: reports.retentionDays }),
       now: () => new Date(),
     },

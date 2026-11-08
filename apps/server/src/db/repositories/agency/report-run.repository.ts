@@ -45,6 +45,7 @@ import type {
 import type { ReportDetailFile } from '@magick-agency/contracts/reports';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import type { PoolClient } from 'pg';
+import { REPORT_FAILURE_MESSAGES } from '../../../agency/reports/failure-messages.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
 
 type Queryable = Pick<PoolClient, 'query'>;
@@ -151,7 +152,8 @@ export type ReportRenderResult =
   }
   | {
     status: 'failed';
-    error: { code: ReportRendererFailureCode; message: string };
+    /** The run stores the code's generic copy (`failure-messages.ts`), never the renderer's text. */
+    error: { code: ReportRendererFailureCode };
     rendererVersion: string;
   };
 
@@ -389,7 +391,7 @@ export class ReportRunRepository {
   /**
    * Apply the renderer's callback (RP13): only for the run's current `attempt` while it is
    * `rendering`. Rendered: `ready`, the files, `finished_at = now()`, `expires_at = finished_at +
-   * retentionDays`. Failed: `failed` with the renderer's code and message. Either way the
+   * retentionDays`. Failed: `failed` with the renderer's code and its generic copy. Either way the
    * renderer's version is recorded. Anything else is `stale`.
    */
   async applyRenderResult(id: string, attempt: number, result: ReportRenderResult): Promise<ReportRenderApplyOutcome> {
@@ -407,21 +409,22 @@ export class ReportRunRepository {
             SET status = 'failed', error_code = $3, error_message = $4, renderer_version = $5, finished_at = now()
           WHERE r.id = $1::uuid AND r.render_attempt = $2::int AND r.status = 'rendering'
           RETURNING ${REPORT_RUN_COLUMNS}`,
-        [id, attempt, result.error.code, result.error.message, result.rendererVersion],
+        [id, attempt, result.error.code, REPORT_FAILURE_MESSAGES[result.error.code], result.rendererVersion],
       );
     return rows[0] ? { result: 'applied', run: rows[0] } : { result: 'stale' };
   }
 
   /**
-   * End a run as `failed` with `code` (the assembler: `assembly_failed`, `subject_unavailable`, `subject_changed`,
-   * under `{ claimGeneration }`; the tick: `render_timed_out`, under `{ renderAttempt }`). The
-   * failed run, or null when the fence did not hold.
+   * End a run as `failed` with `code` and the code's generic copy (`failure-messages.ts`; the
+   * assembler: `assembly_failed`, `subject_unavailable`, `subject_changed`, under
+   * `{ claimGeneration }`; the tick: `render_timed_out`, under `{ renderAttempt }`). The failed
+   * run, or null when the fence did not hold.
    */
-  async markFailed(id: string, code: ReportFailureCode, message: string, fence: ReportRunFence): Promise<ReportRunRecord | null> {
+  async markFailed(id: string, code: ReportFailureCode, fence: ReportRunFence): Promise<ReportRunRecord | null> {
     const bind = params();
     const idParam = bind.add(id);
     const codeParam = bind.add(code);
-    const messageParam = bind.add(message);
+    const messageParam = bind.add(REPORT_FAILURE_MESSAGES[code]);
     const { rows } = await getPool().query<ReportRunRecord>(
       `UPDATE report_runs r
           SET status = 'failed', error_code = ${codeParam}::varchar, error_message = ${messageParam}::text, finished_at = now()

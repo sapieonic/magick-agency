@@ -54,7 +54,6 @@ import type { ReportRenderDispatcher } from './dispatch.js';
 import type { ReportSubscriptionSubject } from './subscription-subject.js';
 import { campaignZone } from '../insights/range.js';
 import { countTerminalRun, type RenderOutcomeResult } from './apply.js';
-import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 
 const log = createChildLogger({ component: 'agency-reports-tick' });
 
@@ -64,7 +63,6 @@ export const REPORT_TICK_BATCH = 50;
 export const REPORT_UNSENT_GRACE_MS = 5 * 60_000;
 /** The renderer version recorded on a run the tick found finished in S3 after a lost callback. */
 export const RECONCILED_RENDERER_VERSION = 'reconciled';
-export const RENDER_TIMED_OUT_MESSAGE = REPORT_FAILURE_MESSAGES.render_timed_out;
 
 export interface ReportTickOptions {
   intervalMs: number;
@@ -190,14 +188,23 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
     }
   };
 
+  /**
+   * Send `run` again under the attempt it was read at (`markSent`'s fence, so two passes that read
+   * the same row send it once), counted in `resent`; `warning` is logged before the dispatch.
+   */
+  const resend = async (run: ReportRunRecord, result: ReportTickResult, warning?: string): Promise<void> => {
+    const attempt = await deps.runs.markSent(run.id, { renderAttempt: run.render_attempt });
+    if (attempt === null) return;
+    result.resent += 1;
+    if (warning) log.warn({ runId: run.id, attempt }, warning);
+    await deps.dispatcher.dispatch(run, attempt);
+  };
+
   const resendUnsent = async (now: Date, result: ReportTickResult): Promise<void> => {
     const runs = await deps.runs.findAssembledUnsent(new Date(now.getTime() - unsentGraceMs), batch);
     for (const run of runs) {
       try {
-        const attempt = await deps.runs.markSent(run.id, { renderAttempt: run.render_attempt });
-        if (attempt === null) continue;
-        result.resent += 1;
-        await deps.dispatcher.dispatch(run, attempt);
+        await resend(run, result);
       } catch (err) {
         result.errors += 1;
         log.error({ runId: run.id, err }, 'Assembled report run could not be sent');
@@ -235,16 +242,10 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
       return;
     }
     if (run.render_attempt < options.maxAttempts) {
-      const attempt = await deps.runs.markSent(run.id, { renderAttempt: run.render_attempt });
-      if (attempt === null) return;
-      result.resent += 1;
-      log.warn({ runId: run.id, attempt }, 'Report run had no callback in time; re-sent');
-      await deps.dispatcher.dispatch(run, attempt);
+      await resend(run, result, 'Report run had no callback in time; re-sent');
       return;
     }
-    const failed = await deps.runs.markFailed(run.id, 'render_timed_out', RENDER_TIMED_OUT_MESSAGE, {
-      renderAttempt: run.render_attempt,
-    });
+    const failed = await deps.runs.markFailed(run.id, 'render_timed_out', { renderAttempt: run.render_attempt });
     if (failed) {
       result.timedOut += 1;
       countTerminalRun(failed);

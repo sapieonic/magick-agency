@@ -202,7 +202,8 @@ review's agent has no ACTIVE membership of the account (a supervisor's review ta
 so someone who left can still be reviewed), and when a campaign report's campaign has changed its
 time zone since the run was requested (the window was cut in the old zone, the Insights day
 buckets would be cut in the new one: "run it again"). The agent and account builders resolve the
-run's zone against `pg_timezone_names` once (`resolveReportZone`); a zone Postgres does not know
+run's zone against `pg_timezone_names` (`resolveReportZone`, through `zone.ts`'s `postgresZoneName`,
+the routes' own lookup, remembered per process); a zone Postgres does not know
 fails assembly with a clear message rather than the account's days being cut in UTC silently. RP1 is held by `test/integration/api/report-datasets-oracle.test.ts`,
 which checks every block a screen serves against that screen's response for the same window,
 fetched through `buildApp` + `inject`.
@@ -235,8 +236,9 @@ their handlers' own parsers (`parseAgentStatsQuery`, `parseRosterQuery`).
 
 **Covered campaigns (account).** `run.campaign_ids` when set (each must be a campaign of the
 account, else `subject_unavailable`); otherwise every campaign of the account with a rollup bucket
-of dials in the window, or running, paused or stopping now; by name. They are read at most
-three at a time (`ACCOUNT_CAMPAIGN_CONCURRENCY`).
+of dials in the window, or running, paused or stopping now; by name. They are read one at a time
+(`ACCOUNT_CAMPAIGN_CONCURRENCY`): each campaign's Insights reads already run about seventeen
+statements in parallel on the pool the dialer shares (`DB_POOL_MAX`).
 
 **New definitions** (for blocks no screen serves; spelled in `agent-presence.ts`):
 
@@ -283,8 +285,8 @@ REPEATABLE READ transaction on a client of its own, 1,000 rows a fetch, released
 | agent `sessions` | the agent's sessions in the account overlapping the window | seconds per state in the window from the occupancy intervals (Logged in is the session's total rounded once, the state parts rounded to add up to it), dials and drops per session |
 | agent `state_log` | every non-offline state interval, clipped to the window | the state in words, break reason label, campaign or "Soft phone" |
 | agent `calls` | placed campaign attempts reserved to the agent (`dialed_at` in the window) and placed soft-phone calls (`created_at` in the window, as `softphone_calls` counts them), by dial time | `self`: phone `****1234` (RP7), no Recorded or Sentiment column (RP5), the call table not read at all |
-| campaign `attempts` | every placed attempt in the window | full phone, agent name (resolved per 500 rows), result, outcome code and label, talk (agent leg), measured wrap-up, caller ID, redial, callback |
-| campaign `sessions` | every session on the campaign overlapping the window | the agent's sessions columns, the agent's name first |
+| campaign `attempts` | every placed attempt in the window | full phone, agent name (the builder's names first, the rest resolved per 500 rows), result (the console's words, `attemptOutcomeLabel`), outcome code and label, talk (agent leg), measured wrap-up, caller ID, redial, callback |
+| campaign `sessions` | every session on the campaign overlapping the window | the agent's sessions columns, the agent's name first (named as the attempts sheet names them) |
 | account `attempts` | every placed attempt of the covered campaigns | as the campaign sheet, with a Campaign column |
 
 **Limits, stated.** The agent's `roster_row` is found in the report's roster read (`limit=200`,
@@ -308,7 +310,7 @@ minutes per agent; tables ANALYZEd; shared 4-CPU dev host, cold insights cache, 
 account report (one campaign) in 2.9 s. Draining the sheets: the agent's 19,328 calls in 0.27 s and
 4,321 state intervals in 0.06 s; the campaign's 967,284 attempts in 10.9 s (the assembler stops at
 100,000), with the heap staying under 170 MB (rows are never held). An account with several
-campaigns adds about one campaign's Insights reads per campaign, three at a time.
+campaigns adds about one campaign's Insights reads per campaign, one campaign at a time.
 
 ## Who may run what
 
@@ -370,7 +372,8 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   output key; a `rendered` result carries every requested format; then the attempt-fenced
   `applyRenderResult`). A callback for a run that no longer exists is `stale`. A `failed` result
   stores its code's generic British-English copy (`failure-messages.ts`, one sentence per
-  `ReportFailureCode`); the renderer's own message is logged with the run id and attempt, never
+  `ReportFailureCode`, written by the repository from the code: `applyRenderResult` and
+  `markFailed` take no message); the renderer's own message is logged with the run id and attempt, never
   stored or served, and the run view serves the copy from the code, never the stored text.
 - **Dispatch** (`dispatch.ts`): `sqs` sends the `ReportRenderMessage` JSON with
   `@aws-sdk/client-sqs` (region and keys from the `s3` block, else the SDK's default chain).

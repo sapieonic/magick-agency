@@ -21,7 +21,6 @@ import { reportFileName } from '@magick-agency/contracts/reports';
 import { hasPermission } from '@magick-agency/contracts/rbac';
 import { decodeKeysetCursor } from '@magick-agency/domain/keyset-cursor';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { UUID_RE } from '../../../utils/uuid.js';
 import type { ReportRunRecord } from '../../../db/repositories/agency.repository.js';
 import { localDateOf, localDayBounds } from '../../../agency/reports/schedule.js';
 import {
@@ -35,16 +34,15 @@ import {
   auditReport,
   callerSeesRun,
   callerSupervises,
+  distinct,
   findAccountRun,
   usableReportZone,
   reportsGate,
   resolveReportTarget,
   sendReportRefusal,
+  uuid,
   type ReportRouteDeps,
 } from './shared.js';
-
-const uuid = z.string().regex(UUID_RE, 'must be a UUID');
-const distinct = <T>(items: readonly T[]) => new Set(items).size === items.length;
 
 /** `POST /reports` (`AgencyCreateReportRequest`). Dates and the zone are checked after access, with their own codes. */
 const createReportBody = z.object({
@@ -251,7 +249,6 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
     if (!(await reportsGate(deps, request, reply))) return reply;
-    if (!UUID_RE.test(request.params.id)) return sendReportRefusal(reply, 'report_not_found');
     const run = await findAccountRun(deps, request, request.params.id);
     if (!run || !callerSeesRun(request, run)) return sendReportRefusal(reply, 'report_not_found');
     const names = await deps.names(request.tenantId!, [runNameRef(run)]);
@@ -263,7 +260,6 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
     if (!(await reportsGate(deps, request, reply))) return reply;
-    if (!UUID_RE.test(request.params.id)) return sendReportRefusal(reply, 'report_not_found');
     const run = await findAccountRun(deps, request, request.params.id);
     if (!run || !(await callerMayDownload(deps, request, run))) return sendReportRefusal(reply, 'report_not_found');
     const format = request.params.format as ReportFormat;
@@ -311,7 +307,6 @@ export async function registerReportRunRoutes(app: FastifyInstance, deps: Report
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
     if (!(await reportsGate(deps, request, reply))) return reply;
-    if (!UUID_RE.test(request.params.id)) return sendReportRefusal(reply, 'report_not_found');
     const run = await findAccountRun(deps, request, request.params.id);
     if (!run || !callerSeesRun(request, run)) return sendReportRefusal(reply, 'report_not_found');
     return createAdHocRun(deps, request, reply, {

@@ -20,8 +20,9 @@
  *    midnight), summed across campaigns. `agents_online_peak` is null: a distinct count across
  *    campaigns is not measured (a sum of per-campaign peaks would count an agent who moved twice).
  *
- * Campaigns are read at most {@link ACCOUNT_CAMPAIGN_CONCURRENCY} at a time: each campaign's
- * activity read runs its own parallel statements.
+ * Campaigns are read one at a time ({@link ACCOUNT_CAMPAIGN_CONCURRENCY}): each campaign's Insights
+ * reads already run about seventeen statements in parallel on the pool the dialer shares
+ * (`DB_POOL_MAX`), so several campaigns at once would crowd the dialer out.
  *
  * Detail sheet: `attempts`, every placed dial of the covered campaigns in the window.
  */
@@ -50,13 +51,14 @@ import { computeActivity } from '../../insights/activity.js';
 import { computeHealth } from '../../insights/health.js';
 import { campaignZone } from '../../insights/range.js';
 import { successCodes } from '../../insights/shared.js';
+import { mapWithConcurrency } from '../../../utils/concurrency.js';
 import { attemptsSource } from './campaign.js';
 import { accountDefinitions } from './definitions.js';
 import {
   campaignsByIds,
+  commonNotes,
   insightsRangeFor,
   localDates,
-  mapLimit,
   readAccountRoster,
   reportRange,
   resolveReportZone,
@@ -65,8 +67,8 @@ import {
 } from './shared.js';
 import { ReportSubjectUnavailableError, type ReportDatasetBuilder } from './types.js';
 
-/** Campaigns whose Insights reads run at once. */
-export const ACCOUNT_CAMPAIGN_CONCURRENCY = 3;
+/** Campaigns whose Insights reads run at once (module header: each runs its own parallel statements). */
+export const ACCOUNT_CAMPAIGN_CONCURRENCY = 1;
 
 /**
  * Sum same-shaped count objects field by field (pure): numbers add, objects recurse (the union of
@@ -180,14 +182,14 @@ async function coveredCampaigns(run: Parameters<ReportDatasetBuilder>[0]['run'],
 export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run, now }) => {
   const accountId = run.account_id;
   if (!accountId || run.subject_id !== accountId) throw new ReportSubjectUnavailableError('an account report is about its own account');
-  const [tenancy, campaigns, roster] = await Promise.all([
+  const [tenancy, campaigns, roster, zone] = await Promise.all([
     runTenancy(run),
     coveredCampaigns(run, accountId),
     readAccountRoster({ tenantId: run.tenant_id, accountId, from: run.range_from, to: run.range_to, includeInactive: false }),
+    resolveReportZone(run.timezone),
   ]);
-  const zone = await resolveReportZone(run.timezone);
 
-  const reads = await mapLimit(campaigns, ACCOUNT_CAMPAIGN_CONCURRENCY, async (campaign) => {
+  const reads = await mapWithConcurrency(campaigns, ACCOUNT_CAMPAIGN_CONCURRENCY, async (campaign) => {
     const range = insightsRangeFor(campaign, run, now);
     const [activity, health, days] = await Promise.all([
       computeActivity(campaign, range, { now }).then(wire),
@@ -216,8 +218,7 @@ export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run,
     'The agent table covers all of the account\'s campaigns, whichever campaigns this report lists.',
     'Successes follow each campaign\'s current outcome list, so an outcome reclassified since applies to earlier calls too.',
     'Agents online at the busiest moment of each day are not measured across campaigns, so the day table leaves them out.',
-    ...(reads.some((r) => r.pending > 0) ? ['Some of the window\'s most recent calls were still being counted when this report was made.'] : []),
-    ...(run.range_to.getTime() > now.getTime() ? ['The window runs past the time this report was made; later calls are not included.'] : []),
+    ...commonNotes({ pending: reads.some((r) => r.pending > 0), future: run.range_to.getTime() > now.getTime(), later: 'calls' }),
     ...(campaigns.length === 0 ? ['No campaign of this account placed a call in the window.'] : []),
   ];
 
@@ -252,6 +253,8 @@ export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run,
         { campaignIds: campaigns.map((c) => c.id), tenantId: run.tenant_id, from: run.range_from, to: run.range_to },
         new Map(campaigns.map((c) => [c.id, c])),
         true,
+        // The roster's names (the same resolver): the sheet looks up only the agents it does not list.
+        new Map(roster.rows.map((r) => [r.agent_user_id, r.agent_name])),
       ),
     ],
   };

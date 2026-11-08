@@ -4,6 +4,7 @@
  * `proxy-agency-reports.routes.ts`.
  */
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { hasPermission } from '@magick-agency/contracts/rbac';
 import type {
   AgencyReportErrorCode,
@@ -27,8 +28,15 @@ import {
 import { isMemberOfAccountEver, usersWithPermissionOnAccount } from '../../../agency/reports/access.js';
 import { resolveReportNames, type ReportNameRef, type ReportNames } from '../../../agency/reports/run-view.js';
 import { postgresKnowsZone } from '../../../agency/reports/zone.js';
+import { UUID_RE } from '../../../utils/uuid.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { sendRefusal } from '../helpers/refusal.js';
+
+/** A UUID in a body or query (validated at the edge: a non-UUID reaching a `uuid` cast is `22P02`). */
+export const uuid = z.string().regex(UUID_RE, 'must be a UUID');
+
+/** No item twice (a `.refine` on a list of formats or ids). */
+export const distinct = <T>(items: readonly T[]): boolean => new Set(items).size === items.length;
 
 /** `agency.reports` (`config/blocks/agency.ts`). */
 export type AgencyReportsConfig = AppConfig['agency']['reports'];
@@ -211,8 +219,9 @@ export async function resolveReportTarget(
   }
 }
 
-/** A run of the request's tenant AND account, or null. */
+/** A run of the request's tenant AND account, or null (also for an id that is not a UUID). */
 export async function findAccountRun(deps: ReportRouteDeps, request: FastifyRequest, id: string): Promise<ReportRunRecord | null> {
+  if (!UUID_RE.test(id)) return null;
   const run = await deps.runs.findById(request.tenantId!, id.toLowerCase());
   if (!run || !request.accountId || run.account_id !== request.accountId.toLowerCase()) return null;
   return run;
