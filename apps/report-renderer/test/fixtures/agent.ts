@@ -728,5 +728,8 @@ export function agentClockChangeFixture(change: 'back' | 'forward'): AgentReview
   if (cursor < dayEnd) segments.push({ start: cursor, end: dayEnd, state: 'offline', break_reason: null });
   d.range.timezone = 'Europe/London';
   d.timeline = { date, segments };
+  // The day's row agrees with the strip's logged-in time.
+  const row = d.daily.find((r) => r.date === date);
+  if (row) row.station_s = segments.filter((x) => x.state !== 'offline').reduce((t, x) => t + (Date.parse(x.end) - Date.parse(x.start)) / 1000, 0);
   return d;
 }
