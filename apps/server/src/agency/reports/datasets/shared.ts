@@ -18,7 +18,7 @@ import { tenantRepository } from '@magick-agency/db/repositories/tenant.reposito
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { ReportRunRecord } from '../../../db/repositories/agency/report-run.repository.js';
-import { agencyAgentStatsRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAgentStatsRepository, agencyReportDatasetRepository } from '../../../db/repositories/agency.repository.js';
 import { getPool } from '@magick-agency/db';
 import { parseRosterQuery, ROSTER_MAX_LIMIT } from '../../agent-record.js';
 import { enrichAttemptAgentNames } from '../../agency-spine.js';
@@ -82,6 +82,17 @@ export async function runTenancy(run: ReportRunRecord): Promise<{ tenant: { id: 
   ]);
   if (!tenant || !account) throw new ReportSubjectUnavailableError('the report\'s account no longer exists');
   return { tenant: { id: tenant.id, name: tenant.name }, account: { id: account.id, name: account.name } };
+}
+
+/**
+ * The run's zone as Postgres names it, resolved once per build. A zone Postgres does not know
+ * fails the build (`assembly_failed`) with a clear message: the shared reads would otherwise cut
+ * the account's days in UTC without saying so (`resolvedZoneCte`) or fail with a bare SQL error.
+ */
+export async function resolveReportZone(timezone: string): Promise<string> {
+  const zone = await agencyReportDatasetRepository.knownZone(timezone);
+  if (zone === null) throw new Error(`The report's time zone ${timezone} is not known to the database.`);
+  return zone;
 }
 
 /** The campaigns of `ids` in the tenant, by id (rows outside the tenant are absent). */

@@ -100,6 +100,13 @@ export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ ru
     runTenancy(run),
     runCampaign(run.subject_id, run.tenant_id, run.account_id),
   ]);
+  // The run's window was cut in the campaign's zone when it was requested (RP3); the Insights day
+  // buckets are cut in the zone the campaign has NOW. A zone changed in between would serve
+  // `range` in one zone and `trends` in the other (and break `campaign.timezone ===
+  // range.timezone`), so the run fails `subject_unavailable` and the user runs it again.
+  if (campaignZone(campaign.default_timezone) !== run.timezone) {
+    throw new ReportSubjectUnavailableError('The campaign\'s time zone changed after this report was requested; run it again.');
+  }
   const range = insightsRangeFor(campaign, run, now);
   const dayRange = insightsRangeFor(campaign, run, now, 'day');
   const [summary, activity, trends, health] = await Promise.all([
