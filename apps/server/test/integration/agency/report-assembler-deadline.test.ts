@@ -50,7 +50,7 @@ async function queued(kind: 'campaign' | 'account' = 'campaign') {
     localFrom: '2026-10-01', localTo: '2026-10-31', timezone: 'UTC',
     rangeFrom: new Date('2026-10-01T00:00:00Z'), rangeTo: new Date('2026-11-01T00:00:00Z'),
     formats: ['pdf', 'xlsx'], audience: 'supervisor', requestedBy: randomUUID(),
-  }, 1000);
+  }, { pendingLimit: 1000 });
   if (!outcome.ok) throw new Error('queue full');
   return outcome.run;
 }
