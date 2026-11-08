@@ -149,9 +149,15 @@ describe('analysis worker processes over real Postgres', () => {
     }, async () => ({ health: await f.supervisor.health(), jobs: (await rows()).map((r) => `${r.status}/${r.attempts}/${r.claim_generation}`) }));
     const h = await f.supervisor.health();
     expect(Math.abs(h[0]!.pausedForMs - h[1]!.pausedForMs)).toBeLessThan(2_000);
-    // The rate-limited job went back without using an attempt.
-    const requeued = (await rows()).filter((r) => r.status === 'queued' && r.claim_generation === 1 && r.attempts === 0 && r.attempts_total === 0);
-    expect(requeued.length).toBeGreaterThanOrEqual(1);
+    // The rate-limited job went back without using an attempt. The runner trips the breaker
+    // (and the primary relays the pause) BEFORE it writes the requeue, because the job's
+    // backoff is at least that pause: both slots can report the pause while the row still
+    // says `transcribing`. So wait for the row, not one read of it.
+    const requeued = async (): Promise<JobRow[]> =>
+      (await rows()).filter((r) => r.status === 'queued' && r.claim_generation === 1 && r.attempts === 0 && r.attempts_total === 0);
+    await until('the rate-limited job requeued without using an attempt', 10_000, async () => (await requeued()).length >= 1,
+      async () => ({ jobs: (await rows()).map((r) => `${r.status}/${r.attempts}/${r.attempts_total}/${r.claim_generation}`) }));
+    expect((await requeued()).length).toBeGreaterThanOrEqual(1);
     await f.supervisor.stop(10_000);
   }, 60_000);
 
