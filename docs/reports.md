@@ -339,15 +339,19 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
 - **One apply path**, `applyRenderOutcome` (`apply.ts`): the webhook, the inline renderer and the
   tick's reconcile all go through it (callback names the run and attempt; every key the run's own
   output key; a `rendered` result carries every requested format; then the attempt-fenced
-  `applyRenderResult`). A callback for a run that no longer exists is `stale`.
+  `applyRenderResult`). A callback for a run that no longer exists is `stale`. A `failed` result
+  stores its code's generic British-English copy (`failure-messages.ts`, one sentence per
+  `ReportFailureCode`); the renderer's own message is logged with the run id and attempt, never
+  stored or served, and the run view serves the copy from the code, never the stored text.
 - **Dispatch** (`dispatch.ts`): `sqs` sends the `ReportRenderMessage` JSON with
   `@aws-sdk/client-sqs` (region and keys from the `s3` block, else the SDK's default chain).
   `inline` loads `@magick-agency/report-renderer` with a dynamic `import()` of a non-literal
   specifier typed by the local `ReportRendererModule` (`renderRun(message, io, options)`; `io.writeObject(key, body, contentType, bytes)`),
   so the server's `tsc` never compiles the renderer's sources; the server must list the package as
   a dependency for the import to resolve, and until it does an inline render fails the run
-  `render_failed` ("could not run"). Inline renders one run at a time; boot warns when `inline` runs
-  with `NODE_ENV=production`.
+  `render_failed` (the reason logged). Inline renders one run at a time and passes `renderRun` a
+  `log` callback, so the renderer's events (stage, run id, attempt, format, bytes, ms) reach the
+  server log as structured lines; boot warns when `inline` runs with `NODE_ENV=production`.
 - **Assembler** (`assembler.ts`): a run `assembling` with no dataset for 30 minutes
   (`REPORT_ASSEMBLY_STALE_MS`) is reclaimed; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
   times fails `assembly_failed`. A failed run's stored message is generic copy; the error is logged

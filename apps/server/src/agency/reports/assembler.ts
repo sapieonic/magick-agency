@@ -57,6 +57,7 @@ import {
 import { reportDatasetKey, reportDetailKey, type ReportKeyScope } from './report-keys.js';
 import type { ReportRenderDispatcher } from './dispatch.js';
 import { countTerminalRun } from './apply.js';
+import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 
 const log = createChildLogger({ component: 'agency-reports-assembler' });
 
@@ -68,8 +69,8 @@ export const REPORT_BUILD_TIMEOUT_MS = 10 * 60_000;
 export const REPORT_DETAIL_CONTENT_TYPE = 'application/gzip';
 
 /** User-facing fallbacks stored on a failed run (the console keys its copy off the code). */
-export const ASSEMBLY_FAILED_MESSAGE = 'The report data could not be gathered.';
-export const SUBJECT_UNAVAILABLE_MESSAGE = 'The report subject is no longer available.';
+export const ASSEMBLY_FAILED_MESSAGE = REPORT_FAILURE_MESSAGES.assembly_failed;
+export const SUBJECT_UNAVAILABLE_MESSAGE = REPORT_FAILURE_MESSAGES.subject_unavailable;
 
 export interface ReportAssemblerOptions {
   intervalMs: number;

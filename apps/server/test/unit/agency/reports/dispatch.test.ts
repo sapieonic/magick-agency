@@ -9,6 +9,7 @@ import {
   buildRenderMessage,
   createInlineDispatcher,
   createSqsDispatcher,
+  rendererLogLine,
   type ReportRendererIO,
   type ReportRendererModule,
 } from '../../../../src/agency/reports/dispatch.js';
@@ -96,7 +97,7 @@ describe('the inline dispatcher', () => {
     const dispatcher = createInlineDispatcher({ bucket: 'b', chromePath: '/usr/bin/chromium', apply, io, loader: async () => r.mod });
     await dispatcher.dispatch(run, 1);
     await dispatcher.idle();
-    expect(r.mod.renderRun).toHaveBeenCalledWith(expect.objectContaining({ run_id: RUN, attempt: 1, bucket: 'b' }), io, { chromePath: '/usr/bin/chromium' });
+    expect(r.mod.renderRun).toHaveBeenCalledWith(expect.objectContaining({ run_id: RUN, attempt: 1, bucket: 'b' }), io, { chromePath: '/usr/bin/chromium', log: expect.any(Function) });
     expect(apply).toHaveBeenCalledWith(RUN, 1, expect.objectContaining({ status: 'rendered', renderer_version: 'fake' }));
   });
 
@@ -105,7 +106,41 @@ describe('the inline dispatcher', () => {
     const dispatcher = createInlineDispatcher({ bucket: 'b', apply: async () => ({}), io, loader: async () => r.mod });
     await dispatcher.dispatch(run, 1);
     await dispatcher.idle();
-    expect(r.mod.renderRun).toHaveBeenCalledWith(expect.anything(), io, {});
+    expect(r.mod.renderRun).toHaveBeenCalledWith(expect.anything(), io, { log: expect.any(Function) });
+  });
+
+  it('passes the renderer a log callback: each event becomes a structured line (run id, attempt, stage, bytes, ms)', async () => {
+    const events: unknown[] = [];
+    const mod: ReportRendererModule = {
+      renderRun: vi.fn(async (message: ReportRenderMessage, _io, options) => {
+        options?.log?.({ event: 'render.format_done', run_id: message.run_id, attempt: message.attempt, format: 'pdf', bytes: 1234, ms: 56 });
+        options?.log?.({ event: 'render.done', run_id: message.run_id, attempt: message.attempt, ms: 99, dataset: 'never logged' });
+        return { run_id: message.run_id, attempt: message.attempt, status: 'rendered' as const, files: [], error: null, renderer_version: 'fake' };
+      }),
+    };
+    const dispatcher = createInlineDispatcher({
+      bucket: 'b', apply: async () => ({}), io, loader: async () => mod, logEvent: (e) => events.push(rendererLogLine(e)),
+    });
+    await dispatcher.dispatch(run, 2);
+    await dispatcher.idle();
+    expect(events).toEqual([
+      { runId: RUN, attempt: 2, stage: 'render.format_done', format: 'pdf', bytes: 1234, ms: 56 },
+      { runId: RUN, attempt: 2, stage: 'render.done', ms: 99 },
+    ]);
+  });
+
+  it('a log sink that throws never fails the render', async () => {
+    const apply = vi.fn(async () => ({}));
+    const mod: ReportRendererModule = {
+      renderRun: async (message, _io, options) => {
+        options?.log?.({ event: 'render.start', run_id: message.run_id, attempt: message.attempt });
+        return { run_id: message.run_id, attempt: message.attempt, status: 'rendered', files: [], error: null, renderer_version: 'fake' };
+      },
+    };
+    const dispatcher = createInlineDispatcher({ bucket: 'b', apply, io, loader: async () => mod, logEvent: () => { throw new Error('sink down'); } });
+    await dispatcher.dispatch(run, 1);
+    await dispatcher.idle();
+    expect(apply).toHaveBeenCalledWith(RUN, 1, expect.objectContaining({ status: 'rendered' }));
   });
 
   it('renders one run at a time, in the order sent', async () => {

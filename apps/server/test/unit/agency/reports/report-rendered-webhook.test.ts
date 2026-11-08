@@ -17,6 +17,8 @@ vi.mock('@magick-agency/observability/metrics/agency', async (importOriginal) =>
 import { REPORT_SIGNATURE_HEADER, REPORT_TIMESTAMP_HEADER, type ReportRenderCallback } from '@magick-agency/contracts/reports';
 import { reportRenderedWebhookRoutes } from '../../../../src/api/routes/webhooks/report-rendered.js';
 import { applyRenderOutcome, type ApplyRenderOutcomeDeps } from '../../../../src/agency/reports/apply.js';
+import { REPORT_FAILURE_MESSAGES } from '../../../../src/agency/reports/failure-messages.js';
+import { toReportRunWire } from '../../../../src/agency/reports/run-view.js';
 import { signReportCallback, verifyReportCallback } from '../../../../src/agency/reports/callback-signature.js';
 import { reportOutputKey } from '../../../../src/agency/reports/report-keys.js';
 import { ACCOUNT, OTHER_ACCOUNT, RUN, TENANT, runRecord } from './run-fixture.js';
@@ -166,14 +168,16 @@ describe('POST /webhooks/reports/rendered', () => {
     expect(metrics.runs).not.toHaveBeenCalled();
   });
 
-  it('applies a failed callback with the renderer\'s code', async () => {
+  it('applies a failed callback with the renderer\'s code and the code\'s generic copy, never the renderer\'s text', async () => {
     await build();
-    const body = JSON.stringify(rendered({ status: 'failed', files: [], error: { code: 'upload_failed', message: 'S3 said no' } }));
+    const internal = 'AccessDenied: arn:aws:s3:::magick-agency-prod/reports/x at /var/task/index.js:12';
+    const body = JSON.stringify(rendered({ status: 'failed', files: [], error: { code: 'upload_failed', message: internal } }));
     const res = await post(body, signed(body));
     expect(res.statusCode).toBe(204);
     expect(r.applyRenderResult).toHaveBeenCalledWith(RUN, 2, expect.objectContaining({
-      status: 'failed', error: { code: 'upload_failed', message: 'S3 said no' },
+      status: 'failed', error: { code: 'upload_failed', message: REPORT_FAILURE_MESSAGES.upload_failed },
     }));
+    expect(JSON.stringify(r.applyRenderResult.mock.calls)).not.toContain('AccessDenied');
     expect(metrics.runs).toHaveBeenCalledWith({ kind: 'agent', status: 'failed' });
   });
 });
@@ -192,6 +196,24 @@ describe('applyRenderOutcome', () => {
     const outcome = await applyRenderOutcome(RUN, 2, rendered({ files: [rendered().files[0]!] }), deps(rp));
     expect(outcome).toMatchObject({ result: 'invalid' });
     expect(rp.applyRenderResult).not.toHaveBeenCalled();
+  });
+
+  it('a code outside the renderer\'s vocabulary is stored as render_failed with its copy', async () => {
+    const rp = repo();
+    await applyRenderOutcome(RUN, 2, rendered({
+      status: 'failed', files: [], error: { code: 'assembly_failed' as never, message: 'TypeError: x is undefined' },
+    }), deps(rp));
+    expect(rp.applyRenderResult).toHaveBeenCalledWith(RUN, 2, expect.objectContaining({
+      error: { code: 'render_failed', message: REPORT_FAILURE_MESSAGES.render_failed },
+    }));
+  });
+
+  it('the run view serves the code\'s copy, never a stored message (a row written before the copy rule included)', () => {
+    const names = { users: new Map(), campaigns: new Map(), accounts: new Map() };
+    const failed = runRecord({ status: 'failed', error_code: 'render_failed', error_message: 'The in-process renderer could not run: ENOENT /opt/chromium' });
+    expect(toReportRunWire(failed, names).error).toEqual({ code: 'render_failed', message: 'The report files could not be built.' });
+    const unknown = runRecord({ status: 'failed', error_code: 'something_new' as never, error_message: 'stack trace' });
+    expect(toReportRunWire(unknown, names).error?.message).toBe(REPORT_FAILURE_MESSAGES.render_failed);
   });
 
   it('acknowledges a callback for a run that no longer exists as stale', async () => {

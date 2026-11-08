@@ -17,6 +17,7 @@ import {
   type ReportKind,
 } from '@magick-agency/contracts/api/agency/reports';
 import { agentNamesOrNone } from '../agency-agent-identity.js';
+import { reportFailureMessage } from './failure-messages.js';
 import { agencyCampaignRepository } from '../../db/repositories/agency.repository.js';
 import type { ReportRunRecord } from '../../db/repositories/agency.repository.js';
 import type { ReportSubscriptionRecord } from '../../db/repositories/agency.repository.js';
@@ -126,7 +127,8 @@ export function toReportRunWire(run: ReportRunRecord, names: ReportNames): Agenc
     })),
     truncated: run.truncated,
     error: run.status === 'failed' && run.error_code !== null
-      ? { code: run.error_code, message: run.error_message ?? '' }
+      // From the code, never the stored text (`failure-messages.ts`).
+      ? { code: run.error_code, message: reportFailureMessage(run.error_code) }
       : null,
   };
 }

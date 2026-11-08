@@ -48,6 +48,7 @@ import type { ReportRenderDispatcher } from './dispatch.js';
 import type { ReportSubscriptionSubject } from './subscription-subject.js';
 import { isUsableTimezone } from '../calling-hours.js';
 import { countTerminalRun, type RenderOutcomeResult } from './apply.js';
+import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 
 const log = createChildLogger({ component: 'agency-reports-tick' });
 
@@ -57,7 +58,7 @@ export const REPORT_TICK_BATCH = 50;
 export const REPORT_UNSENT_GRACE_MS = 5 * 60_000;
 /** The renderer version recorded on a run the tick found finished in S3 after a lost callback. */
 export const RECONCILED_RENDERER_VERSION = 'reconciled';
-export const RENDER_TIMED_OUT_MESSAGE = 'The report files were not produced in time.';
+export const RENDER_TIMED_OUT_MESSAGE = REPORT_FAILURE_MESSAGES.render_timed_out;
 
 export interface ReportTickOptions {
   intervalMs: number;
