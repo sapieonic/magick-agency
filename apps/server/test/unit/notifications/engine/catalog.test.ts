@@ -297,19 +297,29 @@ describe('catalog shape invariants', () => {
     }
   });
 
-  it('has exactly the one event this build ships', () => {
+  it('has exactly the two events this build ships', () => {
     // A count, deliberately: adding an event is meant to be a catalog row plus
     // a renderer, and this is the line that makes the addition visible in a
     // diff rather than arriving as a silent fifth toggle on the settings page.
     //
-    // The catalog keeps only `agency.campaign.completed`; this also pins the
-    // absence of `campaign.dispatched`, `campaign.completed` and `usage.digest`.
+    // The catalog keeps `agency.campaign.completed` and the report-ready email
+    // (`agency.report.ready`, docs/reports.md); this also pins the absence of
+    // `campaign.dispatched`, `campaign.completed` and `usage.digest`.
     expect(NOTIFICATION_EVENT_KEYS).toEqual([
       'agency.campaign.completed',
+      'agency.report.ready',
     ]);
     for (const retired of ['campaign.dispatched', 'campaign.completed', 'usage.digest']) {
       expect(findNotificationEvent(retired), retired).toBeUndefined();
     }
+  });
+
+  it('addresses the report-ready email explicitly (its recipients travel on the run), to every role', () => {
+    // An agent can ask for their own review (RP5) and tick "email me", so the toggle must be
+    // offered at every role: a role floor would hide it from the agent it applies to.
+    expect(findNotificationEvent('agency.report.ready')).toMatchObject({
+      category: 'agency', cadence: 'immediate', audience: { kind: 'explicit' }, defaultEnabled: true,
+    });
   });
 
   it('offers exactly one channel, and it is `email`', () => {

@@ -11,9 +11,10 @@ import Fastify, { type FastifyInstance } from 'fastify';
  * module compiling.
  *
  * What it pins: these routes have NO permission floor, so an `agent`
- * — level 5, below `viewer` — reaches its own preferences. With agency's
- * one-event catalog it can receive nothing (`agency.campaign.completed` floors
- * at `agency.supervise` = `account_admin`), so GET is an empty list rather than
+ * — level 5, below `viewer` — reaches its own preferences. Of the catalog it can
+ * receive only the report-ready email (`agency.report.ready`, explicit audience:
+ * an agent may ask for their own review); `agency.campaign.completed` floors at
+ * `agency.supervise` = `account_admin`. So GET lists that one event rather than
  * a 403, and a PUT is accepted and stored against the session user. The
  * supervisor in the same tenant is the contrast, and the deleted digest
  * preview answers 404.
@@ -94,11 +95,11 @@ describe('/notifications/preferences through the real app (integration)', () => 
     return rows;
   }
 
-  it('an agent GETs its own preferences: 200 and an empty list, not a 403', async () => {
+  it('an agent GETs its own preferences: 200 and only the report-ready email, not a 403', async () => {
     const headers = signInAs('fb-agent', 'agent@acme.example');
     const res = await app.inject({ method: 'GET', url: '/notifications/preferences', headers });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ events: [] });
+    expect(res.json().events.map((e: { key: string }) => e.key)).toEqual(['agency.report.ready']);
   });
 
   it('an agent PUTs its own preferences: 200, stored against the session user', async () => {
@@ -110,8 +111,8 @@ describe('/notifications/preferences through the real app (integration)', () => 
       payload: { user_id: supervisorId, preferences: [{ event_key: 'agency.campaign.completed', enabled: false }] },
     });
     expect(res.statusCode).toBe(200);
-    // The agent cannot receive the event, so the response lists nothing…
-    expect(res.json()).toEqual({ preferences: [] });
+    // The agent cannot receive the supervisor notice, so the response lists only the report email…
+    expect(res.json().preferences.map((p: { event_key: string }) => p.event_key)).toEqual(['agency.report.ready']);
     // …but the row is stored (inert until a promotion), under the SESSION user.
     expect(await storedFor(agentId)).toEqual([{
       user_id: agentId, tenant_id: tenantId, event_key: 'agency.campaign.completed',
@@ -124,10 +125,13 @@ describe('/notifications/preferences through the real app (integration)', () => 
     const headers = signInAs('fb-supervisor', 'sup@acme.example');
     const before = await app.inject({ method: 'GET', url: '/notifications/preferences', headers });
     expect(before.statusCode).toBe(200);
-    expect(before.json().events).toEqual([expect.objectContaining({
-      key: 'agency.campaign.completed', category: 'agency', cadence: 'immediate',
-      enabled: true, frequency: null, is_default: true,
-    })]);
+    expect(before.json().events).toEqual([
+      expect.objectContaining({
+        key: 'agency.campaign.completed', category: 'agency', cadence: 'immediate',
+        enabled: true, frequency: null, is_default: true,
+      }),
+      expect.objectContaining({ key: 'agency.report.ready', enabled: true, is_default: true }),
+    ]);
 
     const put = await app.inject({
       method: 'PUT',
@@ -136,14 +140,15 @@ describe('/notifications/preferences through the real app (integration)', () => 
       payload: { preferences: [{ event_key: 'agency.campaign.completed', enabled: false }] },
     });
     expect(put.statusCode).toBe(200);
-    expect(put.json()).toEqual({ preferences: [{
+    expect(put.json().preferences).toEqual(expect.arrayContaining([{
       event_key: 'agency.campaign.completed', channel: 'email', enabled: false, frequency: null, is_default: false,
-    }] });
+    }]));
 
     const after = await app.inject({ method: 'GET', url: '/notifications/preferences', headers });
-    expect(after.json().events).toEqual([expect.objectContaining({
-      key: 'agency.campaign.completed', enabled: false, is_default: false,
-    })]);
+    expect(after.json().events).toEqual([
+      expect.objectContaining({ key: 'agency.campaign.completed', enabled: false, is_default: false }),
+      expect.objectContaining({ key: 'agency.report.ready', enabled: true, is_default: true }),
+    ]);
   });
 
   it('refuses a deleted catalog key with a 400 naming it', async () => {
