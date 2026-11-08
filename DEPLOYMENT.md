@@ -152,7 +152,8 @@ Agent, campaign and account reports ([`docs/reports.md`](docs/reports.md)) rende
 files with headless Chromium. In production that runs outside the server: an SQS queue and a
 Lambda, created by the same `aws/terraform` with `enable_reports = true`. It needs the Lambda zip
 built from the release, a Chromium layer and a callback secret; [`aws/README.md`](aws/README.md)
-("Reports") has the steps. Skip this section if reports stay off. Nothing here deploys it from
+("Reports") has the steps, and [`REPORTS_SETUP.md`](REPORTS_SETUP.md) walks through the whole
+first-time setup, Path B. Skip this section if reports stay off. Nothing here deploys it from
 CI: you build the zip and apply by hand, and on every release that changes the renderer you apply
 it **before** you deploy the server (aws/README.md, "Deploy order").
 
@@ -346,7 +347,8 @@ TRUST_PROXY_HOPS=2
 The first three come from `terraform output -raw reports_server_env`. The server's S3 key needs no
 change; Terraform has added `sqs:SendMessage` on the queue to its policy. The other reports
 settings have defaults ([`docs/reports.md`](docs/reports.md), "Config"). Reports stay hidden until
-the `agency_reports_enabled` flag is on for a tenant.
+the `agency_reports_enabled` flag is on for a tenant. The first-time walkthrough, with the checks
+to run after: [`REPORTS_SETUP.md`](REPORTS_SETUP.md).
 
 ## 7. Start the stack and put TLS in front
 

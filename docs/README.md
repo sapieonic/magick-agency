@@ -92,6 +92,7 @@ Details and next steps: [`status.md`](status.md).
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
+| [`../REPORTS_SETUP.md`](../REPORTS_SETUP.md) | Setting reports up for the first time, on a development machine (the in-process renderer) and in a deployment (the Lambda, the queue, the server's settings, the flag), with the first report and what to check when it fails |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |
 | [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo; each app and package has its own `CLAUDE.md` with its area's rules |
 | `../packages/db/BASELINE.md` | The baseline schema inventory |

@@ -199,6 +199,8 @@ source mappings, CloudWatch log groups and IAM roles.
 
 ### Enabling it
 
+The whole first-time setup, with the server's side and the checks: [`REPORTS_SETUP.md`](../REPORTS_SETUP.md), Path B.
+
 1. **Build the zip** at the release you are deploying:
 
    ```bash
