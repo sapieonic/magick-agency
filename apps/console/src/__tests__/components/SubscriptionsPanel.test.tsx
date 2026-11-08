@@ -130,13 +130,14 @@ describe('the list', () => {
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it('runs one now and toasts a link to the run', async () => {
+  it('runs one now and toasts the email and a link to the run', async () => {
     mocks.runReportSubscriptionNow.mockResolvedValue({ id: 'run-5' });
     renderPanel();
     await screen.findByTestId('subscription-row');
     fireEvent.click(within(row()).getByRole('button', { name: 'Run now' }));
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalled());
     expect(mocks.runReportSubscriptionNow).toHaveBeenCalledWith('sub-1', 'tenant-1', 'account-1');
+    expect(mocks.showToast.mock.calls[0]![0]).toBe('The report is being prepared. We’ll email you when it’s ready.');
     expect(mocks.showToast.mock.calls[0]![3].label).toBe('View report');
   });
 
@@ -264,7 +265,7 @@ describe('the form', () => {
     expect(extra.disabled).toBe(false);
   });
 
-  it('edits with the kind and subject fixed, and PATCHes the schedule', async () => {
+  it('edits with the kind and subject fixed, and PATCHes only what changed', async () => {
     mocks.updateReportSubscription.mockResolvedValue(reportSubscription({ cadence: 'daily', send_weekday: null }));
     renderPanel();
     await screen.findByTestId('subscription-row');
@@ -277,15 +278,48 @@ describe('the form', () => {
     await waitFor(() => expect(mocks.updateReportSubscription).toHaveBeenCalled());
     const [id, patch] = mocks.updateReportSubscription.mock.calls[0]!;
     expect(id).toBe('sub-1');
-    expect(patch).toEqual({
-      cadence: 'daily',
-      send_local_time: '08:30',
-      send_weekday: null,
-      send_monthday: null,
-      formats: ['pdf', 'xlsx'],
-      recipient_user_ids: ['sup-1', 'sup-2'],
-    });
+    // The cadence and the weekday it no longer has; not the time, formats or recipients.
+    expect(patch).toEqual({ cadence: 'daily', send_weekday: null });
     await waitFor(() => expect(within(row()).getByTestId('subscription-cadence').textContent).toBe('Daily at 08:30 (Asia/Kolkata)'));
+  });
+
+  async function openEdit() {
+    renderPanel();
+    await screen.findByTestId('subscription-row');
+    fireEvent.click(within(row()).getByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(screen.getByTestId('subscription-recipient-sup-1')).toBeTruthy());
+  }
+
+  it('sends a recipients-and-formats edit without any schedule field', async () => {
+    mocks.updateReportSubscription.mockResolvedValue(reportSubscription());
+    await openEdit();
+    fireEvent.click(screen.getByTestId('subscription-recipient-sup-2'));
+    fireEvent.click(screen.getByLabelText('Excel'));
+    fireEvent.click(screen.getByTestId('subscription-save'));
+    await waitFor(() => expect(mocks.updateReportSubscription).toHaveBeenCalled());
+    expect(mocks.updateReportSubscription.mock.calls[0]![1]).toEqual({ formats: ['pdf'], recipient_user_ids: ['sup-1'] });
+  });
+
+  it('sends only the zone of an agent review whose zone changed', async () => {
+    mocks.listReportSubscriptions.mockResolvedValue({
+      subscriptions: [reportSubscription({ kind: 'agent', subject: { id: 'agent-1', name: 'Priya S' }, timezone: 'Asia/Kolkata' })],
+    });
+    mocks.updateReportSubscription.mockResolvedValue(reportSubscription({ kind: 'agent', timezone: 'Europe/London' }));
+    await openEdit();
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'Europe/London' } });
+    fireEvent.click(screen.getByTestId('subscription-save'));
+    await waitFor(() => expect(mocks.updateReportSubscription).toHaveBeenCalled());
+    expect(mocks.updateReportSubscription.mock.calls[0]![1]).toEqual({ timezone: 'Europe/London' });
+  });
+
+  it('closes an edit that changed nothing without a request', async () => {
+    await openEdit();
+    // Untick and tick again: the same set, in another order.
+    fireEvent.click(screen.getByTestId('subscription-recipient-sup-1'));
+    fireEvent.click(screen.getByTestId('subscription-recipient-sup-1'));
+    fireEvent.click(screen.getByTestId('subscription-save'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(mocks.updateReportSubscription).not.toHaveBeenCalled();
   });
 
   it('shows the server’s refusal in the form', async () => {
