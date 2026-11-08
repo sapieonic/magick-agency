@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
+import { useId, useMemo, useState, type FormEvent } from 'react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import type {
@@ -19,18 +19,18 @@ import type { TenantMember } from '../../../types/team';
 import type { AgencyCampaign } from '../../../types/agency-campaign';
 import { useTenant } from '../../../contexts/TenantContext';
 import { createReportSubscription, reportErrorMessage, updateReportSubscription } from '../../../api/reports';
-import { hasPermission } from '../../../utils/permissions';
+import { hasPermission, type Permission } from '../../../utils/permissions';
 import { browserZone, reportZoneOptions } from '../../../utils/reports/reportWindow';
 import {
   CADENCE_PERIOD_NOTES,
   ISO_WEEKDAY_NAMES,
   REPORT_CADENCE_LABELS,
-  REPORT_FORMAT_LABELS,
   REPORT_KIND_LABELS,
   cadenceDescription,
   ordinal,
   subjectLabel,
 } from '../../../utils/reports/reportCopy';
+import { ReportFormatFields } from './ReportFormatFields';
 import styles from './Reports.module.css';
 
 /** A member as a picker option: their id and the name to show. */
@@ -52,18 +52,18 @@ function onAccount(m: TenantMember, accountId: string | null): boolean {
   );
 }
 
-/** The agents a review can be about: members on this account who can open a station. */
-export function agentOptions(members: readonly TenantMember[], accountId: string | null): MemberOption[] {
+/**
+ * The members on this account whose role holds `permission`, by name: the agents a
+ * review can be about (`agency.station.connect`), and who may receive a scheduled
+ * report (`agency.supervise`, RP4).
+ */
+export function membersWith(
+  members: readonly TenantMember[],
+  accountId: string | null,
+  permission: Permission,
+): MemberOption[] {
   return members
-    .filter((m) => onAccount(m, accountId) && hasPermission(m.membership.role, 'agency.station.connect'))
-    .map((m) => ({ userId: m.user.id, name: memberName(m) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** Who may receive a scheduled report (RP4): members on this account with `agency.supervise`. */
-export function recipientOptions(members: readonly TenantMember[], accountId: string | null): MemberOption[] {
-  return members
-    .filter((m) => onAccount(m, accountId) && hasPermission(m.membership.role, 'agency.supervise'))
+    .filter((m) => onAccount(m, accountId) && hasPermission(m.membership.role, permission))
     .map((m) => ({ userId: m.user.id, name: memberName(m) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -154,17 +154,12 @@ function OpenSubscriptionForm({ onClose, editing, members, campaigns, onSaved }:
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const agents = useMemo(() => agentOptions(members ?? [], accountId), [members, accountId]);
-  const supervisors = useMemo(() => recipientOptions(members ?? [], accountId), [members, accountId]);
+  const agents = useMemo(() => membersWith(members ?? [], accountId, 'agency.station.connect'), [members, accountId]);
+  const supervisors = useMemo(() => membersWith(members ?? [], accountId, 'agency.supervise'), [members, accountId]);
   const zoneOptions = useMemo(() => reportZoneOptions(zone), [zone]);
 
   // The account report is about the context account; there is nothing to pick.
-  useEffect(() => {
-    if (isEdit) return;
-    if (kind === 'account') setSubjectId(accountId ?? '');
-    else setSubjectId('');
-  }, [kind, isEdit, accountId]);
-
+  const subject = kind === 'account' ? accountId ?? '' : subjectId;
   const campaign = kind === 'campaign' ? campaigns?.find((c) => c.id === subjectId) ?? null : null;
   const campaignZone = isEdit && editing?.kind === 'campaign' ? editing.timezone : campaign?.default_timezone ?? null;
   const chosenFormats = REPORT_FORMATS.filter((f) => formats[f]);
@@ -178,7 +173,7 @@ function OpenSubscriptionForm({ onClose, editing, members, campaigns, onSaved }:
   ];
 
   const problems = {
-    subject: !subjectId ? (kind === 'agent' ? 'Choose an agent.' : 'Choose a campaign.') : null,
+    subject: !subject ? (kind === 'agent' ? 'Choose an agent.' : 'Choose a campaign.') : null,
     time: /^([01]\d|2[0-3]):[0-5]\d$/.test(time) ? null : 'Enter a time as HH:MM.',
     formats: chosenFormats.length === 0 ? 'Choose at least one format.' : null,
     recipients:
@@ -218,7 +213,7 @@ function OpenSubscriptionForm({ onClose, editing, members, campaigns, onSaved }:
       if (editing && patch) {
         onSaved(await updateReportSubscription(editing.id, patch, tenantId, accountId), 'updated');
       } else {
-        const request: AgencyCreateReportSubscriptionRequest = { kind, subject_id: subjectId, ...schedule };
+        const request: AgencyCreateReportSubscriptionRequest = { kind, subject_id: subject, ...schedule };
         onSaved(await createReportSubscription(request, tenantId, accountId), 'created');
       }
     } catch (err) {
@@ -263,7 +258,14 @@ function OpenSubscriptionForm({ onClose, editing, members, campaigns, onSaved }:
           <div className={styles.formGrid}>
             <div className="form-group">
               <label htmlFor={`${ids}-kind`}>Report</label>
-              <select id={`${ids}-kind`} value={kind} onChange={(e) => setKind(e.target.value as ReportKind)}>
+              <select
+                id={`${ids}-kind`}
+                value={kind}
+                onChange={(e) => {
+                  setKind(e.target.value as ReportKind);
+                  setSubjectId('');
+                }}
+              >
                 {REPORT_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {REPORT_KIND_LABELS[k]}
@@ -400,22 +402,13 @@ function OpenSubscriptionForm({ onClose, editing, members, campaigns, onSaved }:
           })}
         </p>
 
-        <fieldset className={styles.fieldset} aria-describedby={describedBy('formats')}>
-          <legend className={styles.legend}>Formats</legend>
-          <div className={styles.checkRow}>
-            {REPORT_FORMATS.map((f) => (
-              <label key={f} className={styles.checkOption}>
-                <input
-                  type="checkbox"
-                  checked={formats[f]}
-                  onChange={(e) => setFormats((prev) => ({ ...prev, [f]: e.target.checked }))}
-                />
-                {REPORT_FORMAT_LABELS[f]}
-              </label>
-            ))}
-          </div>
-          {err('formats')}
-        </fieldset>
+        <ReportFormatFields
+          formats={formats}
+          onChange={(format, checked) => setFormats((prev) => ({ ...prev, [format]: checked }))}
+          error={attempted ? problems.formats : null}
+          errorId={`${ids}-formats-error`}
+          errorTestId="subscription-formats-error"
+        />
 
         <fieldset className={styles.fieldset} aria-describedby={describedBy('recipients')}>
           <legend className={styles.legend}>
