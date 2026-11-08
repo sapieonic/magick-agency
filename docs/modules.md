@@ -397,7 +397,7 @@ Files: `report-keys.ts`, `schedule.ts`
 | `apps/server/test/unit/agency/reports/schedule.test.ts` | 30 |
 | `apps/server/test/unit/agency/reports/report-keys.test.ts` | 6 |
 | `apps/server/test/integration/agency/report-run-repository.test.ts` | 21 |
-| `apps/server/test/integration/agency/report-subscription-repository.test.ts` | 14 |
+| `apps/server/test/integration/agency/report-subscription-repository.test.ts` | 15 |
 
 The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/` under a wall-clock bound, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable` (a subscription disabled only when `probeSubscriptionSubject` agrees the subject is gone), `ReportZoneChangedError` → `subject_changed`, anything else `assembly_failed`; the first pass after start reclaims runs orphaned by a restart, and `stop()` waits at most 20 s), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback; `checkInlineRenderer`, the boot-time load under `inline`), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` (a period skipped while `agency_reports_enabled` is off for the account; a campaign's zone by `campaignZone`) with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first; no email while the flag is off), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
 
@@ -412,6 +412,9 @@ Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispat
 | `apps/server/test/unit/agency/reports/dispatch.test.ts` | 13 |
 | `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 16 |
 | `apps/server/test/integration/api/agency-reports.test.ts` | 3 |
+| `apps/server/test/integration/api/agency-reports-e2e.test.ts` (the real pipeline from config: routes, assembler, real builders, the inline renderer, download and email; and SQS mode, the renderer as the Lambda runs it and the signed callback) | 8 |
+| `apps/server/test/integration/agency/report-subscription-subject.test.ts` (`probeSubscriptionSubject` on Postgres) | 3 |
+| `apps/server/test/integration/agency/report-zone.test.ts` (`postgresKnowsZone` against `pg_timezone_names`) | 2 |
 
 ### `apps/server/src/agency/reports/datasets/`
 
@@ -422,7 +425,7 @@ Files: `account.ts`, `agent-presence.ts`, `agent.ts`, `campaign.ts`, `definition
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/agency/report-datasets.test.ts` | 25 |
-| `apps/server/test/integration/api/report-datasets-oracle.test.ts` | 23 |
+| `apps/server/test/integration/api/report-datasets-oracle.test.ts` | 27 |
 | `apps/server/test/integration/load/report-datasets-scale.test.ts` | 1 (opt-in, `REPORT_DATASETS_SCALE=1`) |
 
 ### `apps/server/src/ai/`
@@ -499,7 +502,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/auth.routes.test.ts` | ~19 |
 | `apps/server/test/integration/api/invite-every-role.test.ts` | 12 |
 | `apps/server/test/integration/api/invite-security-audit.test.ts` | 47 |
-| `apps/server/test/integration/api/notification.routes.test.ts` | ~6 |
+| `apps/server/test/integration/api/notification.routes.test.ts` | 6 |
 | `apps/server/test/integration/api/phone-number.routes.test.ts` | ~4 |
 | `apps/server/test/integration/api/platform-onboarding.e2e.test.ts` | ~2 |
 | `apps/server/test/integration/api/super-admin.routes.test.ts` | 51 |
@@ -879,7 +882,7 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/feature-flags/feature-flag.service.test.ts` | ~5 |
+| `apps/server/test/integration/feature-flags/feature-flag.service.test.ts` | 5 |
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
 | `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
@@ -1389,7 +1392,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | 8 |
-| `packages/db/test/integration/baseline.test.ts` | ~55 |
+| `packages/db/test/integration/baseline.test.ts` | 56 |
 | `packages/db/test/integration/db/carrier-account-unavailable-migration.test.ts` | ~2 |
 | `packages/db/test/integration/db/contact-assignment-migration.test.ts` | 15 |
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
