@@ -319,8 +319,10 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   and run-now create AD HOC runs through the same checks as `POST /reports` (rate and pending limit
   included): retry keeps the parameters and `email_me` only when the caller is the requester;
   run-now covers `periodFor(cadence, now)` (the latest complete period), `email_me` on. A
-  subscription PATCH recomputes `next_run_at` only when the schedule or `enabled` changes, so an edit
-  to formats or recipients never skips a due send; a campaign subscription keeps its zone. Audit
+  subscription PATCH recomputes `next_run_at` only when a schedule field (cadence, send time, day,
+  zone) or `enabled` changes VALUE against the stored row, not when it is merely present (the
+  console sends the whole schedule on every edit), so an edit to formats or recipients never skips
+  a due send; its audit `details.fields` names only the fields that changed; a campaign subscription keeps its zone. Audit
   actions (`platform_audit_log`, group "Reports"): `agency_report.requested` (`details.via`:
   `request`, `retry`, `run_now`), `agency_report.downloaded`, `agency_report_subscription.created`,
   `.updated`, `.deleted`.

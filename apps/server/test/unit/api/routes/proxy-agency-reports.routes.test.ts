@@ -547,6 +547,30 @@ describe('subscriptions', () => {
     expect(f.audits.at(-1)).toMatchObject({ action: 'agency_report_subscription.updated', details: { fields: ['cadence', 'enabled', 'send_weekday'], enabled: true } });
   });
 
+  it('PATCH: the whole unchanged schedule re-sent (as the console does) with a formats edit keeps next_run_at; fields name only what changed', async () => {
+    const due = new Date('2026-11-08T08:00:00Z'); // due before NOW: the tick has not sent it yet
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ next_run_at: due }));
+    const whole = {
+      cadence: 'daily', send_local_time: '08:00', send_weekday: null, send_monthday: null, timezone: 'Europe/London',
+      recipient_user_ids: [SUPERVISOR], enabled: true,
+    };
+    let res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { ...whole, formats: ['pdf', 'xlsx'] });
+    expect(res.statusCode).toBe(200);
+    expect(f.deps.subscriptions.update.mock.calls[0]![2]).not.toHaveProperty('nextRunAt');
+    expect(res.json().next_run_at).toBe(due.toISOString());
+    expect(f.audits.at(-1)).toMatchObject({ details: { fields: ['formats'], enabled: true } });
+
+    // `enabled: true` on an enabled subscription, nothing else changed: nothing recomputed, no field named.
+    res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { enabled: true });
+    expect(f.deps.subscriptions.update.mock.calls[1]![2]).not.toHaveProperty('nextRunAt');
+    expect(f.audits.at(-1)).toMatchObject({ details: { fields: [] } });
+
+    // A real change of the send time does recompute it.
+    res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { ...whole, formats: ['pdf', 'xlsx'], send_local_time: '11:00' });
+    expect(f.deps.subscriptions.update.mock.calls[2]![2]).toMatchObject({ nextRunAt: new Date('2026-11-08T11:00:00Z') });
+    expect(f.audits.at(-1)).toMatchObject({ details: { fields: ['send_local_time'] } });
+  });
+
   it('PATCH: the day fields are checked against the resulting cadence', async () => {
     f.subs.set(SUBSCRIPTION, subscriptionRecord({ cadence: 'weekly', send_weekday: 3 }));
     // Switching to daily drops the weekday it no longer uses.
