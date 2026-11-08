@@ -239,7 +239,8 @@ three at a time (`ACCOUNT_CAMPAIGN_CONCURRENCY`).
   to the next, clipped to `range.end` or to `generated_at` when earlier (the future is not drawn as
   offline time), `offline` in every gap, equal neighbours merged.
 - *Conversations* on the agent's days are the record's `connected` (both count
-  `CONVERSATION_ATTEMPT_SQL`).
+  `CONVERSATION_ATTEMPT_SQL`), so `daily.conversations` always equals `daily.connected`; the
+  campaign and account day rows are where the two differ.
 - *Outcome rows*: `is_success` when any conversation of the code counted as a success in its
   campaign; `avg_talk_s` the agent leg of those conversations ÷ conversations, whole seconds.
 

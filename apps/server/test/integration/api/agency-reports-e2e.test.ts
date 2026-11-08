@@ -418,6 +418,9 @@ describe('reports end to end: routes → assembler → real builders → inline 
     const firstDials = d.daily.reduce((s, r) => s + r.first_dials, 0);
     const humans = d.daily.reduce((s, r) => s + r.human_connects, 0);
     expect(firstDials).toBeGreaterThanOrEqual(d.floors.agent_rate_min_first_dials); // so the rate prints as a figure
+    // The day rows' two conversation counts are one count (the contract says so).
+    for (const day of d.daily) expect(day.conversations).toBe(day.connected);
+    expect(d.daily.reduce((s, r) => s + r.connected, 0)).toBe(d.record.connected);
 
     const text = await pdfOf(runs.review);
     expect(text).toContain('agent 0.0');
