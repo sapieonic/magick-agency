@@ -5,16 +5,13 @@
  */
 import type { ReactNode } from 'react';
 import type { AccountReportDataset, AccountReportFigures } from '@magick-agency/contracts/reports';
-import { average, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, servedRate, shortDate, type Rate } from '../../format';
+import { count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rateText, servedRate, shortDate, type Rate } from '../../format';
+import { accountFigures, recordingShare, rosterSuccessReportable } from '../../rates';
 import { StackedColumns } from '../charts';
 import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
 
 const STATUS_WORDS: Record<string, string> = { draft: 'Draft', running: 'Running', paused: 'Paused', stopping: 'Stopping', completed: 'Completed', stopped: 'Stopped' };
-
-function firstDials(f: AccountReportFigures): number {
-  return f.calls.dials - f.calls.redials.placed;
-}
 
 export function AccountReport({ d }: { d: AccountReportDataset }) {
   const small = (title: string) => <PageHeader compact tag="Account report" title={title} meta={[rangeLabel(d.range.from, d.range.to), d.account.name]} />;
@@ -36,7 +33,8 @@ function OverviewPage({ d }: { d: AccountReportDataset }) {
   const zone = d.range.timezone;
   const t = d.totals;
   const floor = d.floors.campaign_rate_min_first_dials;
-  const fd = firstDials(t);
+  const tf = accountFigures(t, floor);
+  const fd = tf.firstDials;
   const byStatus = new Map<string, number>();
   for (const c of d.campaigns) byStatus.set(c.status, (byStatus.get(c.status) ?? 0) + 1);
   return (
@@ -53,9 +51,9 @@ function OverviewPage({ d }: { d: AccountReportDataset }) {
           items={[
             { id: 'dials', label: 'Dials', value: count(t.calls.dials), detail: `${count(fd)} first dials` },
             { id: 'connected', label: 'Connected', value: count(t.calls.connected), detail: `${count(t.calls.conversations)} conversations` },
-            rateKpi('Connect rate', rate(t.calls.human_connects, fd, floor), `${count(t.calls.human_connects)} people / ${count(fd)} first dials`, 'connect_rate'),
-            rateKpi('Success rate', rate(t.calls.successes, t.calls.conversations, floor), `${count(t.calls.successes)} successes / ${count(t.calls.conversations)} conversations`, 'success_rate'),
-            rateKpi('Abandonment', rate(t.abandoned, t.answered, floor), `${count(t.abandoned)} of ${count(t.answered)} answered`, 'abandonment'),
+            rateKpi('Connect rate', tf.connect, `${count(t.calls.human_connects)} people / ${count(fd)} first dials`, 'connect_rate'),
+            rateKpi('Success rate', tf.success, `${count(t.calls.successes)} successes / ${count(t.calls.conversations)} conversations`, 'success_rate'),
+            rateKpi('Abandonment', tf.abandonment, `${count(t.abandoned)} of ${count(t.answered)} answered`, 'abandonment'),
             { id: 'callbacks', label: 'Callbacks booked', value: count(t.callbacks_booked), detail: `${duration(t.calls.talk_seconds)} talking` },
           ]}
         />
@@ -85,7 +83,7 @@ function OverviewPage({ d }: { d: AccountReportDataset }) {
           </tbody>
         </table>
         <p className="small muted" style={{ marginTop: 5 }}>
-          Recorded: {rateText(rate(t.recorded, t.recording_connected, 1))} of connected calls across the account ({count(t.recorded)} of {count(t.recording_connected)}). Handle time is average talk plus average measured wrap-up.
+          Recorded: {rateText(recordingShare(t.recorded, t.recording_connected))} of connected calls across the account ({count(t.recorded)} of {count(t.recording_connected)}). Handle time is average talk plus average measured wrap-up.
         </p>
       </Section>
     </div>
@@ -93,8 +91,7 @@ function OverviewPage({ d }: { d: AccountReportDataset }) {
 }
 
 function FiguresRow({ label, sub, status, f, floor, total }: { label: string; sub?: string; status: string; f: AccountReportFigures; floor: number; total?: boolean }) {
-  const talk = average(f.calls.talk_seconds, f.calls.connected);
-  const wrap = average(f.calls.wrapup_seconds, f.calls.wrapup_measured);
+  const fig = accountFigures(f, floor);
   return (
     <tr className={total ? 'total' : undefined}>
       <td>
@@ -104,12 +101,12 @@ function FiguresRow({ label, sub, status, f, floor, total }: { label: string; su
       <td className="small">{status}</td>
       <td className="num">{count(f.calls.dials)}</td>
       <td className="num">{count(f.calls.connected)}</td>
-      <RateCell rate={rate(f.calls.human_connects, firstDials(f), floor)} />
+      <RateCell rate={fig.connect} />
       <td className="num">{count(f.calls.conversations)}</td>
       <td className="num">{count(f.calls.successes)}</td>
-      <RateCell rate={rate(f.calls.successes, f.calls.conversations, floor)} />
-      <td className="num">{talk === null ? '—' : duration(talk + (wrap ?? 0))}</td>
-      <RateCell rate={rate(f.abandoned, f.answered, floor)} />
+      <RateCell rate={fig.success} />
+      <td className="num">{fig.handle === null ? '—' : duration(fig.handle)}</td>
+      <RateCell rate={fig.abandonment} />
       <td className="num">{count(f.callbacks_booked)}</td>
     </tr>
   );
@@ -186,7 +183,7 @@ function AgentsPage({ d, header }: { d: AccountReportDataset; header: ReactNode 
               <td />
             </tr>
             {d.agents.map((a) => {
-              const succOk = a.success_rate_reportable ?? a.rates_reportable;
+              const succOk = rosterSuccessReportable(a);
               const connect: Rate = servedRate(a.connect_rate_pct, a.rates_reportable);
               const success: Rate = servedRate(a.success_rate_pct, succOk);
               return (

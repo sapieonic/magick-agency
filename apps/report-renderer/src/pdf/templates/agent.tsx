@@ -27,7 +27,7 @@ import {
   type Rate,
 } from '../../format';
 import { bandDomain, FloorBands, SplitBar, StackedColumns, TimelineStrip, type BandRow } from '../charts';
-import { agentConnectRate, agentSuccessRate } from '../../rates';
+import { agentConnectRate, agentSuccessRate, rosterSuccessReportable } from '../../rates';
 import { DefinitionsPage, Kpis, Legend, Notes, PageHeader, RateCell, Section, rateKpi, type KpiProps } from '../components';
 import { STATE_COLOURS } from '../styles';
 
@@ -315,7 +315,7 @@ function FloorSection({ d }: { d: AgentReviewDataset }) {
     );
   }
   const connect = r ? servedRate(r.connect_rate_pct, r.rates_reportable) : ({ kind: 'none' } as Rate);
-  const succReportable = r ? (r.success_rate_reportable ?? r.rates_reportable) : false;
+  const succReportable = r ? rosterSuccessReportable(r) : false;
   const success = r ? servedRate(r.success_rate_pct, succReportable) : ({ kind: 'none' } as Rate);
   const aht = r && succReportable ? r.aht_seconds : null;
   const occ = d.occupancy.handling_pct;

@@ -22,7 +22,7 @@ import type {
 } from '@magick-agency/contracts/reports';
 import { average, bucketDate, count, pct, rate, rateText, servedRate, share, type Rate } from '../format';
 import type { DetailReader } from '../io';
-import { agentConnectRate, agentSuccessRate } from '../rates';
+import { accountFigures, agentConnectRate, agentSuccessRate, campaignFigures, recordingShare, rosterSuccessReportable } from '../rates';
 import { excelValue, NUM_FMT, sheetName, writeTable, type SheetColumn } from './sheet';
 
 type Row = unknown[];
@@ -331,7 +331,7 @@ async function agentWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: AgentRev
   if (d.benchmark) {
     const c = d.benchmark.cohort;
     const r = d.roster_row;
-    const succOk = r ? (r.success_rate_reportable ?? r.rates_reportable) : false;
+    const succOk = r ? rosterSuccessReportable(r) : false;
     const rows: Row[] = [
       ['Connect rate', '%', r ? rateCell(servedRate(r.connect_rate_pct, r.rates_reportable)) : 'No dials', c.connect_rate.p25, c.connect_rate.median, c.connect_rate.p75, d.benchmark.pool_size],
       ['Occupancy', '%', d.occupancy.handling_pct ?? 'Not measured', c.occupancy_pct.p25, c.occupancy_pct.median, c.occupancy_pct.p75, d.benchmark.pool_size],
@@ -363,11 +363,7 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
   const zone = d.range.timezone;
   const floor = d.floors.campaign_rate_min_first_dials;
   const calls = d.activity.calls;
-  const firstDials = calls.dials - calls.redials.placed;
-  const answered = d.trends.buckets.reduce((s, b) => s + b.answered, 0);
-  const abandoned = d.trends.buckets.reduce((s, b) => s + b.abandoned, 0);
-  const talk = average(calls.talk_seconds, calls.connected);
-  const wrap = average(calls.wrapup_seconds, calls.wrapup_measured);
+  const { firstDials, answered, abandoned, connect, success, abandonment, talk, wrap, handle } = campaignFigures(d);
   const roster = d.summary.roster;
   await writeSummary(wb, d, 'Campaign report', [
     { metric: 'Status (as of generation)', value: d.campaign.status, type: 'text' },
@@ -379,15 +375,15 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'Connected', value: calls.connected, type: 'int', definition: def(d, 'connected') },
     { metric: 'Conversations', value: calls.conversations, type: 'int' },
     { metric: 'People reached', value: calls.human_connects, type: 'int', definition: def(d, 'human_connects') },
-    { metric: 'Connect rate', value: rateCell(rate(calls.human_connects, firstDials, floor)), type: 'percent', definition: def(d, 'connect_rate') },
+    { metric: 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: calls.successes, type: 'int' },
-    { metric: 'Success rate', value: rateCell(rate(calls.successes, calls.conversations, floor)), type: 'percent', definition: def(d, 'success_rate') },
+    { metric: 'Success rate', value: rateCell(success), type: 'percent', definition: def(d, 'success_rate') },
     { metric: 'Answered', value: answered, type: 'int' },
     { metric: 'Abandoned', value: abandoned, type: 'int' },
-    { metric: 'Abandonment', value: rateCell(rate(abandoned, answered, floor)), type: 'percent', definition: def(d, 'abandonment') },
+    { metric: 'Abandonment', value: rateCell(abandonment), type: 'percent', definition: def(d, 'abandonment') },
     { metric: 'Average talk', value: talk ?? 'No connected calls', type: 'duration_s' },
     { metric: 'Average wrap-up', value: wrap ?? 'Not measured', type: 'duration_s' },
-    { metric: 'Average handle time', value: talk === null ? 'No connected calls' : talk + (wrap ?? 0), type: 'duration_s', definition: def(d, 'aht') },
+    { metric: 'Average handle time', value: handle ?? 'No connected calls', type: 'duration_s', definition: def(d, 'aht') },
     { metric: 'Wrap-up redials placed', value: calls.redials.placed, type: 'int' },
     { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks') },
     { metric: 'Numbers marked Do Not Call', value: d.activity.dnc_marked.total, type: 'int' },
@@ -560,7 +556,7 @@ async function accountWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Accoun
   const zone = d.range.timezone;
   const floor = d.floors.campaign_rate_min_first_dials;
   const t = d.totals;
-  const fd = (f: AccountReportFigures) => f.calls.dials - f.calls.redials.placed;
+  const tf = accountFigures(t, floor);
   await writeSummary(wb, d, 'Account report', [
     { metric: 'Campaigns', value: d.campaigns.length, type: 'int' },
     ...['running', 'paused', 'completed', 'stopped', 'stopping', 'draft']
@@ -568,31 +564,30 @@ async function accountWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Accoun
       .filter((x) => x.n > 0)
       .map((x) => ({ metric: `Campaigns ${x.s} (as of generation)`, value: x.n, type: 'int' as const })),
     { metric: 'Dials', value: t.calls.dials, type: 'int' },
-    { metric: 'First dials', value: fd(t), type: 'int' },
+    { metric: 'First dials', value: tf.firstDials, type: 'int' },
     { metric: 'Connected', value: t.calls.connected, type: 'int' },
     { metric: 'Conversations', value: t.calls.conversations, type: 'int' },
     { metric: 'People reached', value: t.calls.human_connects, type: 'int' },
-    { metric: 'Connect rate', value: rateCell(rate(t.calls.human_connects, fd(t), floor)), type: 'percent', definition: def(d, 'connect_rate') },
+    { metric: 'Connect rate', value: rateCell(tf.connect), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: t.calls.successes, type: 'int' },
-    { metric: 'Success rate', value: rateCell(rate(t.calls.successes, t.calls.conversations, floor)), type: 'percent', definition: def(d, 'success_rate') },
-    { metric: 'Abandonment', value: rateCell(rate(t.abandoned, t.answered, floor)), type: 'percent', definition: def(d, 'abandonment') },
+    { metric: 'Success rate', value: rateCell(tf.success), type: 'percent', definition: def(d, 'success_rate') },
+    { metric: 'Abandonment', value: rateCell(tf.abandonment), type: 'percent', definition: def(d, 'abandonment') },
     { metric: 'Talk', value: t.calls.talk_seconds, type: 'duration_s' },
     { metric: 'Callbacks booked', value: t.callbacks_booked, type: 'int' },
-    { metric: 'Recorded share of connected calls', value: rateCell(rate(t.recorded, t.recording_connected, 1)), type: 'percent', definition: def(d, 'recording') },
+    { metric: 'Recorded share of connected calls', value: rateCell(recordingShare(t.recorded, t.recording_connected)), type: 'percent', definition: def(d, 'recording') },
   ]);
   const figures = (f: AccountReportFigures): Row => {
-    const talk = average(f.calls.talk_seconds, f.calls.connected);
-    const wrap = average(f.calls.wrapup_seconds, f.calls.wrapup_measured);
+    const fig = accountFigures(f, floor);
     return [
       f.calls.dials,
       f.calls.connected,
-      rateCell(rate(f.calls.human_connects, fd(f), floor)),
+      rateCell(fig.connect),
       f.calls.conversations,
       f.calls.successes,
-      rateCell(rate(f.calls.successes, f.calls.conversations, floor)),
+      rateCell(fig.success),
       f.calls.talk_seconds,
-      talk === null ? null : talk + (wrap ?? 0),
-      rateCell(rate(f.abandoned, f.answered, floor)),
+      fig.handle,
+      rateCell(fig.abandonment),
       f.callbacks_booked,
       f.recorded,
     ];
@@ -643,7 +638,7 @@ async function accountWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Accoun
       ['Floor median', null, null, null, null, c.connect_rate.median, c.success_rate.median, c.aht?.median ?? null, c.occupancy_pct.median, null, null, null, null],
       ['Floor 75th percentile', null, null, null, null, c.connect_rate.p75, c.success_rate.p75, c.aht?.p75 ?? null, c.occupancy_pct.p75, null, null, null, null],
       ...d.agents.map((a) => {
-        const succOk = a.success_rate_reportable ?? a.rates_reportable;
+        const succOk = rosterSuccessReportable(a);
         return [
           a.agent_name ?? `Unknown user ${a.agent_user_id.slice(0, 8)}`,
           a.campaigns,
