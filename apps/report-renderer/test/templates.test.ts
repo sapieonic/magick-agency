@@ -147,6 +147,7 @@ describe('campaign report', () => {
 describe('account report', () => {
   const { dataset: d } = accountFixture();
   const html = renderReportHtml(d, NO_FONTS);
+  const t = text(html);
 
   it('lists every campaign with a totals row, recomputing the total rate from the sums', () => {
     const campaigns = text(block(html, 'data-block', 'campaigns'));
@@ -162,6 +163,22 @@ describe('account report', () => {
     expect(agents).toContain(pct(d.benchmark.cohort.connect_rate.median!));
     const kavya = agents.split('Kavya Nair')[1]!.slice(0, 160);
     expect(kavya).toContain('Not enough calls to rate');
+  });
+
+  it('prints no peak agents section or column clause when no day measures one (v1)', () => {
+    expect(d.daily.every((r) => r.agents_online_peak === null)).toBe(true);
+    expect(html).not.toContain('data-block="peaks"');
+    expect(t).not.toContain('Peak agents online');
+    expect(t).not.toMatch(/not measured/i);
+  });
+
+  it('prints the peaks when a dataset carries them', () => {
+    const { dataset: measured } = accountFixture({ attemptsCap: 5000, peaks: true });
+    const day = measured.daily.find((r) => r.agents_online_peak !== null && r.dials > 0)!;
+    const m = renderReportHtml(measured, NO_FONTS);
+    expect(text(block(m, 'data-block', 'peaks'))).toContain('Peak agents online per day');
+    expect(text(block(m, 'data-block', 'daily'))).toContain(`${count(day.agents_online_peak!)} agents at the peak`);
+    expect(text(block(m, 'data-block', 'daily'))).toContain('peak agents not measured');
   });
 
   it('prints health per campaign and the truncation note', () => {

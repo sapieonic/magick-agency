@@ -45,7 +45,14 @@ const LEGACY_BALANCES: CampaignSpec = {
   runId: ACCOUNT_RUN_ID,
 };
 
-export function accountFixture(options: { attemptsCap?: number } = { attemptsCap: 5000 }): { dataset: AccountReportDataset; details: Map<string, Buffer> } {
+/**
+ * `peaks`: carry a peak agents online per day, as a future dataset might. v1 measures none
+ * for the account (`agents_online_peak` is null on every day, `docs/reports.md`), so the
+ * default is the v1 shape.
+ */
+export function accountFixture(
+  options: { attemptsCap?: number; peaks?: boolean } = { attemptsCap: 5000 },
+): { dataset: AccountReportDataset; details: Map<string, Buffer> } {
   const specs = [{ ...SPRING_RECOVERY, runId: ACCOUNT_RUN_ID }, CARD_RENEWALS, LEGACY_BALANCES];
   const built = specs.map((s) => buildCampaign(s, { accountScope: ACCOUNT.id }));
 
@@ -84,8 +91,10 @@ export function accountFixture(options: { attemptsCap?: number } = { attemptsCap
       conversations: sum('conversations'),
       human_connects: sum('human_connects'),
       successes: sum('successes'),
-      // Not measurable on the two days the Dubai campaign's day straddled a pacing restart.
-      agents_online_peak: date === '2026-10-22' || date === '2026-10-23' ? null : peak + (bs.filter((b) => b.dials > 0).length > 1 ? 1 : 0),
+      // v1: a distinct count across campaigns is not measured. With `peaks`, a hypothetical
+      // dataset that measures it, except on two days.
+      agents_online_peak:
+        !options.peaks || date === '2026-10-22' || date === '2026-10-23' ? null : peak + (bs.filter((b) => b.dials > 0).length > 1 ? 1 : 0),
     };
   });
 

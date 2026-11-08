@@ -115,10 +115,16 @@ function FiguresRow({ label, sub, status, f, floor, total }: { label: string; su
   );
 }
 
+/** v1 measures no peak agents online for the account (null on every day): then nothing about it is printed. */
+function peaksMeasuredIn(d: AccountReportDataset): boolean {
+  return d.daily.some((r) => r.agents_online_peak !== null);
+}
+
 function AgentsPage({ d, header }: { d: AccountReportDataset; header: ReactNode }) {
   const tickEvery = d.daily.length > 16 ? 7 : d.daily.length > 8 ? 2 : 1;
   const totalDials = d.daily.reduce((s, r) => s + r.dials, 0);
   const totalHuman = d.daily.reduce((s, r) => s + r.human_connects, 0);
+  const peaksMeasured = peaksMeasuredIn(d);
   const c = d.benchmark.cohort;
   const flag = (value: number | null, band: { p25: number | null; p75: number | null }, lowerIsBetter = false) => {
     if (value === null || band.p25 === null || band.p75 === null) return '';
@@ -143,7 +149,9 @@ function AgentsPage({ d, header }: { d: AccountReportDataset; header: ReactNode 
             label: shortDate(r.date),
             tick: i % tickEvery === 0,
             values: [r.human_connects, Math.max(0, r.dials - r.human_connects)],
-            title: `${dayLabel(r.date)}: ${count(r.dials)} dials, ${count(r.human_connects)} people reached, ${r.agents_online_peak === null ? 'peak agents not measured' : `${count(r.agents_online_peak)} agents at the peak`}`,
+            title: `${dayLabel(r.date)}: ${count(r.dials)} dials, ${count(r.human_connects)} people reached${
+              peaksMeasured ? `, ${r.agents_online_peak === null ? 'peak agents not measured' : `${count(r.agents_online_peak)} agents at the peak`}` : ''
+            }`,
           }))}
         />
         <Legend
@@ -253,14 +261,16 @@ function HealthPage({ d, header }: { d: AccountReportDataset; header: ReactNode 
           </tbody>
         </table>
       </Section>
-      <Section title="Peak agents online per day" aside="distinct agents across the account at the day’s busiest moment" id="peaks">
-        <p>
-          {d.daily
-            .filter((r) => r.dials > 0)
-            .map((r) => `${shortDate(r.date)} ${r.agents_online_peak === null ? 'not measured' : count(r.agents_online_peak)}`)
-            .join(' · ')}
-        </p>
-      </Section>
+      {peaksMeasuredIn(d) ? (
+        <Section title="Peak agents online per day" aside="distinct agents across the account at the day’s busiest moment" id="peaks">
+          <p>
+            {d.daily
+              .filter((r) => r.dials > 0)
+              .map((r) => `${shortDate(r.date)} ${r.agents_online_peak === null ? 'not measured' : count(r.agents_online_peak)}`)
+              .join(' · ')}
+          </p>
+        </Section>
+      ) : null}
     </div>
   );
 }
