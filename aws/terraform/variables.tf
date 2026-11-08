@@ -143,6 +143,77 @@ variable "enable_ssm" {
   default     = true
 }
 
+# ── Reports (reports.tf) ──────────────────────────────────────────────────────────────
+
+variable "enable_reports" {
+  type        = bool
+  description = "Create the report-jobs queue (and its dead-letter queue), the report-renderer Lambda with its `live` alias, the bucket's lifecycle rules for report-datasets/ and reports/, and the server's sqs:SendMessage. Off by default: an environment plans no change until it is switched on (aws/README.md, \"Reports\")."
+  default     = false
+}
+
+variable "report_renderer_zip" {
+  type        = string
+  description = "Path to the renderer's Lambda zip, built by `pnpm --filter @magick-agency/report-renderer build:lambda` (apps/report-renderer/dist/report-renderer-lambda.zip; relative paths resolve from aws/terraform). Required with enable_reports."
+  default     = null
+}
+
+variable "report_renderer_handler" {
+  type        = string
+  description = "The function's handler: the bundle dist/lambda/index.mjs sits at the zip's root and exports `handler`."
+  default     = "index.handler"
+}
+
+variable "report_renderer_chromium_layer_arn" {
+  type        = string
+  description = "Versioned ARN of a Lambda layer carrying @sparticuz/chromium for x86_64, published in this account and region or a public one. Its Chromium must match the puppeteer-core the renderer pins. Required with enable_reports."
+  default     = null
+
+  validation {
+    condition     = var.report_renderer_chromium_layer_arn == null || can(regex("^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:layer:[A-Za-z0-9_-]+:[0-9]+$", var.report_renderer_chromium_layer_arn))
+    error_message = "report_renderer_chromium_layer_arn must be a versioned layer ARN, arn:aws:lambda:<region>:<account>:layer:<name>:<version>."
+  }
+}
+
+variable "reports_callback_secret" {
+  type        = string
+  description = "AGENCY_REPORTS_CALLBACK_SECRET: the HMAC key the renderer signs its callback with. The server's env must hold the same value. At least 32 characters (`openssl rand -base64 48`). Kept in this module's state and in the function's configuration. Required with enable_reports."
+  default     = null
+  sensitive   = true
+
+  validation {
+    condition     = var.reports_callback_secret == null || length(coalesce(var.reports_callback_secret, "x")) >= 32
+    error_message = "reports_callback_secret must be at least 32 characters, as the server requires."
+  }
+}
+
+variable "report_renderer_live_version" {
+  type        = string
+  description = "Published version the `live` alias points at. Null follows the version the latest apply published; set an older number to roll back (aws/README.md, \"Reports\")."
+  default     = null
+
+  validation {
+    condition     = var.report_renderer_live_version == null || can(regex("^[1-9][0-9]*$", coalesce(var.report_renderer_live_version, "1")))
+    error_message = "report_renderer_live_version must be a published version number, e.g. \"7\"."
+  }
+}
+
+variable "report_retention_days" {
+  type        = number
+  description = "Days the rendered files under reports/ are kept before S3 expires them (RP8). Keep it equal to the server's AGENCY_REPORTS_RETENTION_DAYS, which turns the run `expired` at the same age. Datasets under report-datasets/ expire after 7 days."
+  default     = 90
+
+  validation {
+    condition     = var.report_retention_days >= 1 && floor(var.report_retention_days) == var.report_retention_days
+    error_message = "report_retention_days must be a whole number of days, 1 or more."
+  }
+}
+
+variable "report_renderer_log_retention_days" {
+  type        = number
+  description = "Retention of the renderer's CloudWatch log group. One of CloudWatch's allowed values (1, 3, 5, 7, 14, 30, 60, 90, ...)."
+  default     = 30
+}
+
 variable "extra_tags" {
   type        = map(string)
   description = "Tags added to every resource, on top of Project, Environment, ManagedBy and Module."
