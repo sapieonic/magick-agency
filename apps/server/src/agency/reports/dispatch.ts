@@ -12,15 +12,17 @@
  *    (`@magick-agency/report-renderer`) called in this process, one run at a time, its returned
  *    callback applied through `applyRenderOutcome` (no HTTP, no signature); the renderer's
  *    structured log events (stage, run id, attempt, bytes, ms) go to the server log. Development
- *    and tests only: the production image carries no Chromium.
+ *    and tests only: the production image carries neither the renderer nor Chromium.
  *
  * ── How the inline dispatcher reaches the renderer ───────────────────────────
  * The renderer is its own workspace app (RP15) whose sources are `.tsx`. It is loaded with a
  * dynamic `import()` of a NON-literal specifier ({@link loadReportRenderer}), typed by the small
  * local {@link ReportRendererModule} interface, so the server's `tsc` never follows into the
- * renderer's sources and needs no JSX settings. The server lists the package as a dependency for
- * the import to resolve; until it does, an inline render fails the run `render_failed` with a
- * message saying the renderer is not installed. Tests inject a fake loader.
+ * renderer's sources and needs no JSX settings. The server lists the package as a
+ * devDependency: installed in development and CI, where the import resolves, and left out of
+ * the production image (`pnpm deploy --prod`, docker/Dockerfile), where it does not and an inline
+ * render fails the run `render_failed` with a message saying the renderer cannot be loaded
+ * ({@link checkInlineRenderer} says so at boot). Tests inject a fake loader.
  *
  * A dispatch that throws (SQS unreachable) leaves the run `rendering`; the tick re-sends it after
  * `AGENCY_REPORTS_RENDER_TIMEOUT_MS`, so a send is never lost, only late.
@@ -153,7 +155,7 @@ export const loadReportRenderer: ReportRendererLoader = async () => {
 
 /**
  * Load the renderer once at start under `inline`, so a server that cannot (the production image
- * has neither the package's sources nor Chromium) says so at boot, not only in each run's failure.
+ * has neither the package nor Chromium) says so at boot, not only in each run's failure.
  * True when it loaded. Never throws.
  */
 export async function checkInlineRenderer(loader: ReportRendererLoader = loadReportRenderer): Promise<boolean> {

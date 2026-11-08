@@ -35,21 +35,22 @@ RUN corepack enable
 # package.json changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/server/package.json apps/server/
-# The report renderer (RP15) is a workspace dependency of the server, for
-# AGENCY_REPORTS_RENDERER=inline in development. It is NOT bundled: the server loads it with a
-# dynamic import the bundle leaves alone, and this image has no Chromium, so production renders
-# on the Lambda (sqs). Its manifest is needed for the install to resolve; `pnpm deploy --prod`
-# below still copies it and its production dependencies (puppeteer-core, exceljs, react) into
-# the image, unused.
+# The report renderer (RP15) is a devDependency of the server, for
+# AGENCY_REPORTS_RENDERER=inline in development and the server's tests. This image does not carry
+# it: production renders on the Lambda (sqs) and the image has no Chromium. Only its manifest is
+# copied, because pnpm resolves every workspace link of the server (devDependencies included)
+# when it installs and deploys. `--filter-prod` keeps the renderer's own dependencies out of
+# the install, `deploy --prod` keeps the renderer out of /out, and the bundle never imports it
+# (a dynamic import the server makes only under `inline`, which then logs at boot that the
+# renderer cannot be loaded).
 COPY apps/report-renderer/package.json apps/report-renderer/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/db/package.json packages/db/
 COPY packages/domain/package.json packages/domain/
 COPY packages/observability/package.json packages/observability/
-RUN pnpm install --frozen-lockfile --filter @magick-agency/server...
+RUN pnpm install --frozen-lockfile --filter-prod @magick-agency/server...
 COPY tsconfig.base.json ./
 COPY packages/ packages/
-COPY apps/report-renderer/ apps/report-renderer/
 COPY apps/server/ apps/server/
 RUN pnpm --filter @magick-agency/server build
 # The server's production dependencies only, as a self-contained directory

@@ -46,7 +46,7 @@ console ──POST /proxy/agency/reports──► server (agency area, main proc
 | RP12 | Detail sheets hold at most `AGENCY_REPORTS_MAX_DETAIL_ROWS` (100,000) rows each; past the cap the run is `truncated` and the sheet's first row says so. | build |
 | RP13 | The render callback is applied only when its `run_id` and `attempt` match the row (fencing); the tick re-sends a run with no callback after `AGENCY_REPORTS_RENDER_TIMEOUT_MS`, up to `AGENCY_REPORTS_MAX_ATTEMPTS`, after first checking S3 for the files. | build |
 | RP14 | A subscription produces one run per `(subscription_id, period_start)` (unique index); catch-up sends only the most recent missed period. Cadences: daily, weekly, monthly. | build |
-| RP15 | The renderer is its own workspace app, `apps/report-renderer` (release-please component `report-renderer`), depending only on `@magick-agency/contracts`; one PDF path (React → HTML → headless Chromium via `puppeteer-core`), Excel via exceljs' streaming writer. | build |
+| RP15 | The renderer is its own workspace app, `apps/report-renderer` (release-please component `report-renderer`), depending only on `@magick-agency/contracts`; the server lists it as a devDependency (the `inline` renderer, for development and tests), so the production server image does not carry it; one PDF path (React → HTML → headless Chromium via `puppeteer-core`), Excel via exceljs' streaming writer. | build |
 | RP16 | Ad hoc runs email the requester only when the request sets `email_me`; the console shows readiness by polling. | build |
 
 ## Contracts (`packages/contracts`)
@@ -392,10 +392,12 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   `inline` loads `@magick-agency/report-renderer` with a dynamic `import()` of a non-literal
   specifier typed by the local `ReportRendererModule` (`renderRun(message, io, options)`; `io.writeObject(key, body, contentType, bytes)`),
   so the server's `tsc` never compiles the renderer's sources (the server lists the package as a
-  dependency so the import resolves in a workspace install). Under `inline` the renderer is loaded
+  devDependency, so the import resolves in a workspace install, in development and in its tests,
+  and `pnpm deploy --prod` leaves it, with puppeteer-core, exceljs, React and the fonts, out of the
+  production image). Under `inline` the renderer is loaded
   once at start (`checkInlineRenderer`) and a failure is logged then; a run that still cannot load
-  it fails `render_failed` with renderer version `inline-unavailable`. The production image has
-  neither the renderer's runnable sources nor Chromium, so production uses `sqs`. `sqs` stamps each message's
+  it fails `render_failed` with renderer version `inline-unavailable`. The production image
+  carries neither the renderer nor Chromium, so production uses `sqs`. `sqs` stamps each message's
   `superseded_after`. Inline renders one run at a time and passes `renderRun` a
   `log` callback, so the renderer's events (stage, run id, attempt, format, bytes, ms) reach the
   server log as structured lines; boot warns when `inline` runs with `NODE_ENV=production`.

@@ -25,7 +25,6 @@
     "@magick-agency/db": "workspace:*",
     "@magick-agency/domain": "workspace:*",
     "@magick-agency/observability": "workspace:*",
-    "@magick-agency/report-renderer": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.81.0",
     "@opentelemetry/exporter-metrics-otlp-proto": "^0.223.0",
@@ -53,6 +52,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@magick-agency/report-renderer": "workspace:*",
     "@opentelemetry/instrumentation-runtime-node": "^0.36.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.10",

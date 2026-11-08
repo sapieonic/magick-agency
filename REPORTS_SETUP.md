@@ -39,7 +39,8 @@ console and the emails are skipped.
 ## Path A: a development machine
 
 Reports render inside the server process. Use this for local work and demos, never in
-production (the production image has neither the renderer's runnable sources nor Chromium).
+production (the production image carries neither the renderer, a devDependency of the server,
+nor Chromium).
 
 1. **Have the dev stack running** as in [`README.md`](README.md), "Dev setup": Postgres on 5436,
    Redis on 6383, `apps/server/.env` in place, `pnpm migrate:up` run since you last pulled (it
