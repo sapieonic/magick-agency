@@ -36,6 +36,7 @@ export function agentDefinitions(audience: 'supervisor' | 'self'): ReportDefinit
     d('talk_time', 'Talk time', 'The agent\'s leg of each connected call: from the moment it was bridged to the agent until it ended. Calls the system closed after a fault are left out.'),
     d('wrapup_time', 'Wrap-up time', 'Measured wrap-up: from the end of the call until the agent submitted an outcome, returned early or was returned automatically. Wrap-ups ended by a supervisor, by the agent leaving or by the campaign stopping are left out.'),
     d('aht', 'Average handle time', '(Talk time + wrap-up time) ÷ connected calls.'),
+    d('outcome_talk', 'Average talk by outcome', 'The agent\'s leg of the call that carries each conversation\'s outcome ÷ conversations with that outcome. For a wrap-up redial chain only the redial\'s leg counts here, while talk time above counts every leg, so the outcome table can account for less talk than the talk time.'),
     d('logged_in_time', 'Logged-in time', 'Time in any state but offline, taken from the recorded state changes of the agent\'s sessions in this account, campaign and soft phone. Reserved time (a call being connected) counts as available.'),
     d('occupancy', 'Occupancy (handling)', '(Talk time + wrap-up time) ÷ logged-in time, breaks included. This is the figure compared with the floor.'),
     d('on_call_share', 'On-call share', 'Time in the on-call state ÷ logged-in time, breaks included.'),
@@ -52,7 +53,7 @@ export function agentDefinitions(audience: 'supervisor' | 'self'): ReportDefinit
     d('agent_retries', 'Agent retries', 'Dials the agent asked for themselves: contacts they reopened and numbers they dialled by hand.'),
     d('overrides', 'Overrides used', 'Dials that used an outcome override (an extra attempt, an early retry or calling outside hours).'),
     d('dnc_marked', 'Do Not Call marks', 'Numbers the agent added to the Do Not Call list.'),
-    d('softphone_calls', 'Soft-phone calls', 'Calls the agent placed on the soft phone. They are outside every campaign figure above.'),
+    d('softphone_calls', 'Soft-phone calls', 'Calls the agent placed on the soft phone, counted when the call was started; one started just before the end of the window counts in it even if it was dialled after. They are outside every campaign figure above.'),
   ];
   if (audience === 'supervisor') {
     out.push(

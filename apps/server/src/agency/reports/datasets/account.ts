@@ -12,7 +12,7 @@
  *  - `totals`: the campaigns' figures summed field by field (`sumFigures`); `abandoned_pct`
  *    recomputed from the summed counts with the screens' rate helper (`ratePct`), never averaged.
  *  - `agents`, `benchmark`: the roster screen's read for the window (`readAccountRoster`, the
- *    console's query and its departed-agent default), over the whole account whatever
+ *    report's query and the screen's departed-agent default), over the whole account whatever
  *    `campaign_ids` narrowed.
  *  - `daily`: the rollup's 15-minute UTC buckets of the covered campaigns, re-bucketed into local
  *    days of `range.timezone` by the rollup's own trend read (`bucket: 'day'` in that zone, DST

@@ -138,9 +138,10 @@ export interface ReportRoster {
 }
 
 /**
- * The account roster as `GET /proxy/agency/agents/stats` serves it to the console for the window
- * (no `campaign_id`, `sort=attempts`, `order=desc`, `limit=200`, the console's own maximum): the
- * internal handler's read (`parseRosterQuery` then `agencyAgentStatsRepository.roster`), the
+ * The account roster as `GET /proxy/agency/agents/stats` serves it for the window with the
+ * report's query (no `campaign_id`, `sort=attempts`, `order=desc`, `limit=200`, the route's
+ * maximum; the console's roster defaults to `sort=successes`, so past 200 dialling agents the
+ * rows, never the benchmark, can differ from its first page): the internal handler's read (`parseRosterQuery` then `agencyAgentStatsRepository.roster`), the
  * route's membership scope (`scopeRowsToMembers`, departed agents dropped unless
  * `includeInactive`) and its name enrichment. The benchmark is the handler's, untouched by the
  * membership filter, so `includeInactive` changes the rows only.
