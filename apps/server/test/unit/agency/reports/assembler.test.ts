@@ -21,7 +21,6 @@ import {
   createReportAssembler,
   startReportAssembler,
   streamDetailFile,
-  SUBJECT_CHANGED_MESSAGE,
   type ReportAssemblerDeps,
 } from '../../../../src/agency/reports/assembler.js';
 import type { ReportSubscriptionSubject } from '../../../../src/agency/reports/subscription-subject.js';
@@ -219,7 +218,7 @@ describe('assembling one run', () => {
     const [outcome] = await createReportAssembler(opts, d).drain(() => false);
     expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'assembly_failed' });
     expect(build).not.toHaveBeenCalled();
-    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'assembly_failed', expect.any(String), { claimGeneration: 4 });
+    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'assembly_failed', { claimGeneration: 4 });
     expect(metrics.runs).toHaveBeenCalledWith({ kind: 'agent', status: 'failed' });
   });
 
@@ -233,7 +232,7 @@ describe('assembling one run', () => {
     const d = deps({ builders: builders(async () => { throw new ReportSubjectUnavailableError('campaign deleted'); }) });
     const [outcome] = await createReportAssembler(opts, d).drain(() => false);
     expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'subject_unavailable' });
-    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'subject_unavailable', expect.any(String), { claimGeneration: 1 });
+    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'subject_unavailable', { claimGeneration: 1 });
     // An ad hoc run has no subscription to stop.
     expect(d.subscriptions.disable).not.toHaveBeenCalled();
   });
@@ -276,7 +275,7 @@ describe('assembling one run', () => {
     const d = deps({ builders: changed }, runRecord({ status: 'assembling', subscription_id: SUBSCRIPTION }));
     const [outcome] = await createReportAssembler(opts, d).drain(() => false);
     expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'subject_changed' });
-    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'subject_changed', SUBJECT_CHANGED_MESSAGE, { claimGeneration: 1 });
+    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'subject_changed', { claimGeneration: 1 });
     expect(d.subject).not.toHaveBeenCalled();
     expect(d.subscriptions.disable).not.toHaveBeenCalled();
   });
@@ -285,8 +284,9 @@ describe('assembling one run', () => {
     const d = deps({ builders: builders(async () => { throw new Error('relation "secret" does not exist'); }) });
     const [outcome] = await createReportAssembler(opts, d).drain(() => false);
     expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'assembly_failed' });
-    const message = String(d.repo.markFailed.mock.calls[0]![2]);
-    expect(message).not.toContain('secret');
+    // The repository writes the code's copy: nothing but the code and the fence reaches it.
+    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'assembly_failed', { claimGeneration: 1 });
+    expect(JSON.stringify(d.repo.markFailed.mock.calls)).not.toContain('secret');
 
     const d2 = deps();
     d2.storage.uploadJson.mockRejectedValue(new Error('S3 down'));

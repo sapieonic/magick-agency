@@ -18,6 +18,7 @@
  */
 import { REPORT_DETAIL_SHEETS, type ReportDetailSheet, REPORT_OUTPUT_FILE_NAMES } from '@magick-agency/contracts/reports';
 import { REPORT_FORMATS, type ReportFormat } from '@magick-agency/contracts/api/agency/reports';
+import { UUID_RE } from '../../utils/uuid.js';
 
 /** Datasets and detail files (7-day lifecycle). */
 export const REPORT_DATASETS_PREFIX = 'report-datasets/';
@@ -32,8 +33,6 @@ export interface ReportKeyScope {
   accountId: string | null;
   runId: string;
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function uuid(name: string, value: unknown): string {
   if (typeof value !== 'string' || !UUID_RE.test(value)) {

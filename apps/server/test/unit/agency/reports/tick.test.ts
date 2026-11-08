@@ -256,7 +256,7 @@ describe('reconcile', () => {
     const d = deps();
     d.runs.findRenderingSentBefore.mockResolvedValue([runRecord({ status: 'rendering', render_attempt: 3 })]);
     const result = await createReportTick(opts, d).runTick();
-    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', expect.any(String), { renderAttempt: 3 });
+    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', { renderAttempt: 3 });
     expect(d.dispatcher.dispatch).not.toHaveBeenCalled();
     expect(result.timedOut).toBe(1);
     expect(metrics.runs).toHaveBeenCalledWith({ kind: 'agent', status: 'failed' });
@@ -289,7 +289,7 @@ describe('reconcile', () => {
 
     d.runs.findRenderingSentBefore.mockResolvedValue([runRecord({ status: 'rendering', render_attempt: 3 })]);
     result = await createReportTick(opts, d).runTick();
-    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', expect.any(String), { renderAttempt: 3 });
+    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', { renderAttempt: 3 });
     expect(result.timedOut).toBe(1);
   });
 });

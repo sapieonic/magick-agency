@@ -26,7 +26,6 @@ import {
   type ReportRunRepository,
 } from '../../db/repositories/agency.repository.js';
 import { isReportOutputKey } from './report-keys.js';
-import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 
 const log = createChildLogger({ component: 'agency-reports' });
 
@@ -90,14 +89,14 @@ export async function applyRenderOutcome(
   } else {
     const code = (callback.error && RENDERER_CODES.has(callback.error.code) ? callback.error.code : 'render_failed') as ReportRendererFailureCode;
     // The renderer's own text (an exception message, a key, a path) is logged, never stored or
-    // served: the run keeps the code's generic copy (`failure-messages.ts`).
+    // served: the repository stores the code's generic copy (`failure-messages.ts`).
     log.warn({
       runId, attempt, code, rendererCode: callback.error?.code ?? null,
       rendererMessage: callback.error?.message?.slice(0, 2000) ?? null, rendererVersion: callback.renderer_version,
     }, 'Report renderer reported a failure');
     applied = await deps.repo.applyRenderResult(runId, attempt, {
       status: 'failed',
-      error: { code, message: REPORT_FAILURE_MESSAGES[code] },
+      error: { code },
       rendererVersion: callback.renderer_version,
     });
   }

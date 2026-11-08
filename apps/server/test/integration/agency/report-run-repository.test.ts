@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReportDetailFile } from '@magick-agency/contracts/reports';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertTenant } from '../setup/factories.js';
+import { REPORT_FAILURE_MESSAGES } from '../../../src/agency/reports/failure-messages.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -183,7 +184,7 @@ describe('the assembler claim', () => {
     const assembled = { datasetKey: 'old', detailFiles: DETAIL, truncated: true };
     expect(await repo.markAssembled(run.id, 1, assembled)).toBe(false);
     expect(await repo.markSent(run.id, { claimGeneration: 1 })).toBeNull();
-    expect(await repo.markFailed(run.id, 'assembly_failed', 'late', { claimGeneration: 1 })).toBeNull();
+    expect(await repo.markFailed(run.id, 'assembly_failed', { claimGeneration: 1 })).toBeNull();
     expect(await repo.findById(T, run.id)).toMatchObject({ status: 'assembling', dataset_key: null, render_attempt: 0 });
 
     // The new owner's writes land.
@@ -235,20 +236,20 @@ describe('sending and the render callback (RP13)', () => {
 
     expect(await repo.applyRenderResult(run.id, 2, rendered)).toEqual({ result: 'stale' });
     expect(await repo.applyRenderResult(run.id, 2, {
-      status: 'failed', error: { code: 'render_failed', message: 'late' }, rendererVersion: '1.2.0',
+      status: 'failed', error: { code: 'render_failed' }, rendererVersion: '1.2.0',
     })).toEqual({ result: 'stale' });
     expect(await repo.markSent(run.id, { renderAttempt: 2 })).toBeNull();
-    expect(await repo.markFailed(run.id, 'render_timed_out', 'x', { renderAttempt: 2 })).toBeNull();
+    expect(await repo.markFailed(run.id, 'render_timed_out', { renderAttempt: 2 })).toBeNull();
     expect(await status(run.id)).toBe('ready');
   });
 
-  it('a failed render ends the run failed with the renderer\'s code', async () => {
+  it('a failed render ends the run failed with the renderer\'s code and the code\'s copy', async () => {
     const run = await rendering();
     const applied = await repo.applyRenderResult(run.id, 1, {
-      status: 'failed', error: { code: 'dataset_version_unsupported', message: 'dataset_version 2' }, rendererVersion: '0.9.0',
+      status: 'failed', error: { code: 'dataset_version_unsupported' }, rendererVersion: '0.9.0',
     });
     expect(applied.result === 'applied' && applied.run).toMatchObject({
-      status: 'failed', error_code: 'dataset_version_unsupported', error_message: 'dataset_version 2',
+      status: 'failed', error_code: 'dataset_version_unsupported', error_message: REPORT_FAILURE_MESSAGES.dataset_version_unsupported,
       renderer_version: '0.9.0', expires_at: null, files: [],
     });
   });
@@ -258,9 +259,9 @@ describe('sending and the render callback (RP13)', () => {
     expect(await repo.findRenderingSentBefore(new Date(Date.now() - 60_000), 10)).toEqual([]);
     await pool().query(`UPDATE report_runs SET sent_at = now() - interval '20 minutes' WHERE id = $1`, [run.id]);
     expect((await repo.findRenderingSentBefore(new Date(Date.now() - 900_000), 10)).map((r) => r.id)).toEqual([run.id]);
-    expect(await repo.markFailed(run.id, 'render_timed_out', 'No callback after 3 sends', { renderAttempt: 0 })).toBeNull();
-    const failed = await repo.markFailed(run.id, 'render_timed_out', 'No callback after 3 sends', { renderAttempt: 1 });
-    expect(failed).toMatchObject({ status: 'failed', error_code: 'render_timed_out' });
+    expect(await repo.markFailed(run.id, 'render_timed_out', { renderAttempt: 0 })).toBeNull();
+    const failed = await repo.markFailed(run.id, 'render_timed_out', { renderAttempt: 1 });
+    expect(failed).toMatchObject({ status: 'failed', error_code: 'render_timed_out', error_message: REPORT_FAILURE_MESSAGES.render_timed_out });
     expect(failed!.finished_at).toBeInstanceOf(Date);
     expect(await repo.findRenderingSentBefore(new Date(), 10)).toEqual([]);
   });

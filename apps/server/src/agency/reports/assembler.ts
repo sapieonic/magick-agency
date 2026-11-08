@@ -59,6 +59,7 @@ import {
   type ReportSubscriptionRepository,
 } from '../../db/repositories/agency.repository.js';
 import { uploadJson, uploadStream } from '../../storage/s3.js';
+import { withTimeout } from '../../utils/with-timeout.js';
 import {
   REPORT_DATASET_BUILDERS,
   ReportSubjectUnavailableError,
@@ -69,7 +70,6 @@ import {
 import { reportDatasetKey, reportDetailKey, type ReportKeyScope } from './report-keys.js';
 import type { ReportRenderDispatcher } from './dispatch.js';
 import { countTerminalRun } from './apply.js';
-import { REPORT_FAILURE_MESSAGES } from './failure-messages.js';
 import { probeSubscriptionSubject, type ReportSubscriptionSubject, type SubjectRef } from './subscription-subject.js';
 
 const log = createChildLogger({ component: 'agency-reports-assembler' });
@@ -81,10 +81,6 @@ export const REPORT_BUILD_TIMEOUT_MS = 10 * 60_000;
 /** The detail files' content type: gzipped NDJSON. */
 export const REPORT_DETAIL_CONTENT_TYPE = 'application/gzip';
 
-/** User-facing fallbacks stored on a failed run (the console keys its copy off the code). */
-export const ASSEMBLY_FAILED_MESSAGE = REPORT_FAILURE_MESSAGES.assembly_failed;
-export const SUBJECT_UNAVAILABLE_MESSAGE = REPORT_FAILURE_MESSAGES.subject_unavailable;
-export const SUBJECT_CHANGED_MESSAGE = REPORT_FAILURE_MESSAGES.subject_changed;
 /** How long `stop()` waits for the run in flight before giving up on it (inside the 45 s grace). */
 export const REPORT_ASSEMBLER_STOP_WAIT_MS = 20_000;
 
@@ -140,21 +136,6 @@ export function defaultAssemblerDeps(dispatcher: ReportRenderDispatcher): Report
     dispatcher,
     now: () => new Date(),
   };
-}
-
-class BuildTimeoutError extends Error {}
-
-async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new BuildTimeoutError(`report build took longer than ${ms} ms`)), ms);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 /**
@@ -215,9 +196,8 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
   const fail = async (
     run: ReportRunRecord,
     code: 'assembly_failed' | 'subject_unavailable' | 'subject_changed',
-    message: string,
   ): Promise<ReportAssembleOutcome> => {
-    const failed = await deps.repo.markFailed(run.id, code, message, { claimGeneration: run.claim_generation });
+    const failed = await deps.repo.markFailed(run.id, code, { claimGeneration: run.claim_generation });
     if (!failed) return { runId: run.id, outcome: 'claim_lost' };
     countTerminalRun(failed);
     if (code === 'subject_unavailable' && run.subscription_id) {
@@ -242,7 +222,7 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
     const fence = { claimGeneration: run.claim_generation };
     if (run.claim_generation > options.maxAttempts) {
       log.error({ runId: run.id, claims: run.claim_generation }, 'Report run claimed too many times; failing it');
-      return fail(run, 'assembly_failed', ASSEMBLY_FAILED_MESSAGE);
+      return fail(run, 'assembly_failed');
     }
     const started = process.hrtime.bigint();
     const scope: ReportKeyScope = { tenantId: run.tenant_id, accountId: run.account_id, runId: run.id };
@@ -251,7 +231,7 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
     let truncated = false;
     try {
       const builder = deps.builders[run.kind];
-      const built = await withTimeout(builder({ run, now: deps.now() }), buildTimeoutMs);
+      const built = await withTimeout(builder({ run, now: deps.now() }), buildTimeoutMs, 'report build');
       detailFiles = [];
       for (const source of built.details) {
         const key = reportDetailKey(scope, source.sheet);
@@ -271,14 +251,14 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
     } catch (err) {
       if (err instanceof ReportSubjectUnavailableError) {
         log.warn({ runId: run.id, kind: run.kind, reason: err.message }, 'Report subject unavailable');
-        return fail(run, 'subject_unavailable', SUBJECT_UNAVAILABLE_MESSAGE);
+        return fail(run, 'subject_unavailable');
       }
       if (err instanceof ReportZoneChangedError) {
         log.warn({ runId: run.id, kind: run.kind, reason: err.message }, 'Report campaign zone changed after the run was made');
-        return fail(run, 'subject_changed', SUBJECT_CHANGED_MESSAGE);
+        return fail(run, 'subject_changed');
       }
       log.error({ runId: run.id, kind: run.kind, err }, 'Report assembly failed');
-      return fail(run, 'assembly_failed', ASSEMBLY_FAILED_MESSAGE);
+      return fail(run, 'assembly_failed');
     }
 
     try {

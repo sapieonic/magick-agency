@@ -31,12 +31,11 @@ import {
   reportsGate,
   resolveReportTarget,
   sendReportRefusal,
+  distinct,
+  uuid,
   type ReportRouteDeps,
 } from './shared.js';
 import { createAdHocRun } from './runs.js';
-
-const uuid = z.string().regex(UUID_RE, 'must be a UUID');
-const distinct = <T>(items: readonly T[]) => new Set(items).size === items.length;
 
 /** The schedule and delivery fields of a create; a PATCH takes any subset of them. */
 const scheduleFields = {
@@ -52,16 +51,7 @@ const scheduleFields = {
 };
 
 const createBody = z.object({ kind: z.enum(REPORT_KINDS), subject_id: uuid, ...scheduleFields }).strict();
-const patchBody = z.object({
-  cadence: scheduleFields.cadence.optional(),
-  send_local_time: scheduleFields.send_local_time.optional(),
-  send_weekday: scheduleFields.send_weekday,
-  send_monthday: scheduleFields.send_monthday,
-  timezone: scheduleFields.timezone,
-  formats: scheduleFields.formats.optional(),
-  recipient_user_ids: scheduleFields.recipient_user_ids.optional(),
-  enabled: scheduleFields.enabled,
-}).strict();
+const patchBody = z.object(scheduleFields).partial().strict();
 
 type IdParams = { Params: { id: string } };
 
@@ -262,8 +252,9 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
     const enabled = patch.enabled ?? existing.enabled;
     const formats = patch.formats ? orderedFormats(patch.formats) : existing.formats;
     const recipients = patch.recipient_user_ids ? patch.recipient_user_ids.map((r) => r.toLowerCase()) : existing.recipient_user_ids;
-    // By VALUE against the stored row, not by presence: the console sends the whole schedule on
-    // every edit, so a field merely present must not count as a change.
+    // By VALUE against the stored row, not by presence: the console sends only the fields the
+    // supervisor changed, but any client may re-send a field unchanged, and a field merely present
+    // must not count as a change.
     const changed = changedSubscriptionFields(existing, {
       cadence,
       send_local_time: schedule.send_local_time,

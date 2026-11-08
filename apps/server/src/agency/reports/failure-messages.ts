@@ -2,9 +2,10 @@
  * The copy a failed run shows (`AgencyReportRun.error.message`), one generic British-English
  * sentence per failure code. A failed run never stores or serves the text of whatever failed (a
  * renderer's exception, an SQL error, a path): that text is logged with the run id, and the
- * console keys its own copy off the code. Stored on the row by every path that fails a run (the
- * assembler, the render apply path, the tick's timeout) and served from the code by the run view,
- * so a row written before this rule still never shows its stored text.
+ * console keys its own copy off the code. Stored on the row by the run repository's two failing
+ * writes (`markFailed`: the assembler, the tick's timeout; `applyRenderResult`: the render apply
+ * path), which take the code only, and served from the code by the run view, so a row written
+ * before this rule still never shows its stored text.
  */
 import type { ReportFailureCode } from '@magick-agency/contracts/api/agency/reports';
 
