@@ -592,18 +592,27 @@ export function campaignFixture(options: { attemptsCap?: number } = {}): { datas
   return { dataset, details };
 }
 
+/** The server's campaign definitions (`datasets/definitions.ts`), keys, labels and texts as it writes them. */
 export function campaignDefinitions() {
   return [
-    { key: 'dials', label: 'Dials', text: 'Every placed attempt in the window, wrap-up redials and abandoned calls included.' },
-    { key: 'connected', label: 'Connected', text: 'Attempts bridged to an agent.' },
-    { key: 'human_connects', label: 'People reached', text: 'Conversations with an outcome written that was not voicemail.' },
-    { key: 'connect_rate', label: 'Connect rate', text: 'People reached divided by first dials (dials that were not wrap-up redials). Not quoted below 25 first dials.' },
-    { key: 'success_rate', label: 'Success rate', text: 'Conversations closed with a success outcome divided by conversations. Not quoted below 25 conversations.' },
-    { key: 'abandonment', label: 'Abandonment', text: 'Answered calls that reached no agent divided by answered calls. Not quoted below 25 answered calls.' },
-    { key: 'aht', label: 'Average handle time', text: 'Average talk per connected call plus average measured wrap-up.' },
-    { key: 'best_hours', label: 'Best hours', text: 'Dials and people reached by hour of day, in each contact’s own time zone.' },
-    { key: 'callbacks', label: 'Callbacks', text: 'Booked in the window. On time means dialled within 15 minutes of the booked time, or earlier; missed means never dialled before the contact closed.' },
-    { key: 'stalls', label: 'Stalls', text: 'Minutes the pacing engine was running but could not dial, by reason.' },
-    { key: 'catalog', label: 'Outcome labels', text: 'Outcomes carry the campaign’s current labels: editing the outcomes re-labels history.' },
+    { key: 'dials', label: 'Dials', text: 'Every call placed in the window, wrap-up redials included.' },
+    { key: 'first_dials', label: 'First dials', text: 'Dials that were not wrap-up redials: the connect rate\'s denominator.' },
+    { key: 'connected', label: 'Connected', text: 'Calls answered and bridged to an agent, not counting wrap-up redials.' },
+    { key: 'conversations', label: 'Conversations', text: 'Calls an agent spoke on, a wrap-up redial chain once: the success rate\'s denominator.' },
+    { key: 'connect_rate', label: 'Connect rate', text: 'People reached ÷ first dials. A person is reached when a conversation is closed with an outcome other than voicemail or "no outcome". Shown in words below 25 first dials.' },
+    { key: 'success_rate', label: 'Success rate', text: 'Successes ÷ conversations, by the campaign\'s current outcome list. Shown in words below 25 conversations.' },
+    { key: 'abandonment_rate', label: 'Abandonment rate', text: 'Answered calls that reached no agent ÷ answered calls. Shown in words below 25 answered calls.' },
+    { key: 'talk_time', label: 'Talk time', text: 'The agent\'s leg of each connected call, from the bridge to the end of the call; calls the system closed after a fault are left out.' },
+    { key: 'wrapup_time', label: 'Wrap-up time', text: 'Measured wrap-up, over wrap-ups that ended with a submitted outcome, an early return or an automatic return.' },
+    { key: 'callbacks_booked', label: 'Callbacks booked', text: 'Calls in the window that ended with a callback time set, counted at the dial that booked them.' },
+    { key: 'callbacks_on_time', label: 'Callbacks kept on time', text: 'Of the callbacks due in the window, those whose follow-up call was dialled no later than 15 minutes after the booked time (an early call counts as on time).' },
+    { key: 'callbacks_late', label: 'Callbacks kept late', text: 'Callbacks due in the window whose follow-up call was dialled more than 15 minutes after the booked time.' },
+    { key: 'callbacks_missed', label: 'Callbacks missed', text: 'Callbacks due in the window that were never dialled because the contact was closed first or the campaign ended.' },
+    { key: 'callbacks_pending', label: 'Callbacks pending', text: 'Callbacks due in the window that have not been dialled yet: upcoming while the booked time is still ahead, overdue once it has passed.' },
+    { key: 'agents_online_peak', label: 'Agents online (peak)', text: 'The most agents logged in to the campaign at the same moment in the day.' },
+    { key: 'best_hours', label: 'Best hours', text: 'Dials and people reached by the hour of day in each contact\'s own time zone (the campaign\'s when the contact has none).' },
+    { key: 'stalls', label: 'Stalled minutes', text: 'Minutes in which at least half of the dialler\'s checks on the running campaign placed no call, by the main reason.' },
+    { key: 'predial_blocks', label: 'Blocked before dialling', text: 'Contacts the dialler skipped because they were on the Do Not Call list, had an invalid number, or were outside calling hours.' },
+    { key: 'recording_share', label: 'Recording share', text: 'Connected calls with a recording ÷ connected calls.' },
   ];
 }

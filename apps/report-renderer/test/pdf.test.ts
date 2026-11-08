@@ -47,7 +47,10 @@ describe.runIf(chrome)('renderPdf', () => {
     // Section headings are upper-cased by the stylesheet.
     expect(all).toContain('AGAINST THE FLOOR');
     expect(text[0]).toContain(`Page 1 of ${pages}`);
-    expect(text.at(-1)).toContain('DEFINITIONS');
+    // The definitions come last; the server's run onto a second page, with the run's notes after them.
+    const defs = text.findIndex((t) => t.includes('DEFINITIONS'));
+    expect(defs).toBeGreaterThan(text.findIndex((t) => t.includes('AGAINST THE FLOOR')));
+    expect(text.slice(defs).join(' ')).toContain('NOTES ON THIS RUN');
   });
 
   it('prints the self copy without the floor', async () => {

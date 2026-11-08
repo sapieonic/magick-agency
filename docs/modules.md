@@ -2123,15 +2123,20 @@ checks the dataset (`parseDataset`, `dataset_version`), renders each requested f
 `report.pdf` / `report.xlsx` under the message's prefix and returns the callback; a failure is a
 `status: 'failed'` result with a `ReportRendererFailureCode`, never a throw), `io.ts` (`RendererIO`
 and the gzipped-NDJSON detail reader), `errors.ts` (`RenderFailure`), `signature.ts` (the callback's
-HMAC, as `packages/contracts` defines it), `rates.ts` (the rates the PDF and the workbook both
-print, derived once so the files cannot disagree), `version.ts` (`RENDERER_VERSION`).
+HMAC, as `packages/contracts` defines it), `rates.ts` (the rates and figures the PDF and the
+workbook both print: the agent's rates, `campaignFigures` / `accountFigures` (first dials, answered
+and abandoned, the three rates, handle time), `recordingShare`, `rosterSuccessReportable`, derived
+once so the files cannot disagree), `definitions.ts` (`DEFINITION_KEYS`: the definition keys each
+kind carries, mirroring the server's `datasets/definitions.ts`; the workbook's lookup is typed by
+kind, so a key the kind never carries fails `tsc`), `version.ts` (`RENDERER_VERSION`).
 
-Files: `errors.ts`, `index.ts`, `io.ts`, `rates.ts`, `render-run.ts`, `signature.ts`, `version.ts`
+Files: `definitions.ts`, `errors.ts`, `index.ts`, `io.ts`, `rates.ts`, `render-run.ts`, `signature.ts`, `version.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/report-renderer/test/render-run.test.ts` | 8 |
 | `apps/report-renderer/test/fixtures.test.ts` | 6 |
+| `apps/report-renderer/test/definitions.test.ts` | 3 |
 
 ### `apps/report-renderer/src/format/`
 
@@ -2173,7 +2178,7 @@ Files: `sheet.ts`, `workbook.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/report-renderer/test/workbook.test.ts` | 15 |
+| `apps/report-renderer/test/workbook.test.ts` | 18 |
 | `apps/report-renderer/test/workbook-memory.test.ts` | 1 |
 
 ### `apps/report-renderer/src/lambda/` and the Lambda entry

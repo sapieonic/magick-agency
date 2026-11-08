@@ -21,6 +21,7 @@ import type {
   ReportDetailSheet,
 } from '@magick-agency/contracts/reports';
 import { average, bucketDate, count, pct, rate, rateText, servedRate, share, unknownUser, type Rate } from '../format';
+import { definitionText as def } from '../definitions';
 import type { DetailReader } from '../io';
 import { accountFigures, agentConnectRate, agentSuccessRate, campaignFigures, recordingShare, rosterSuccessReportable } from '../rates';
 import { excelValue, NUM_FMT, sheetName, writeTable, type SheetColumn } from './sheet';
@@ -81,10 +82,6 @@ async function writeSummary(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: ReportDat
     row.commit();
   }
   sheet.commit();
-}
-
-function def(d: ReportDataset, key: string): string | undefined {
-  return d.definitions.find((x) => x.key === key)?.text;
 }
 
 function detailFile(d: ReportDataset, sheet: ReportDetailSheet): ReportDetailFile | undefined {
@@ -183,7 +180,7 @@ async function agentWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: AgentRev
   const conversations = d.daily.reduce((s, r) => s + r.conversations, 0);
   const ft = d.follow_through;
   const metrics: Metric[] = [
-    { metric: 'Time on station', value: d.presence.station_seconds, type: 'duration_s', definition: def(d, 'station_time') },
+    { metric: 'Time on station', value: d.presence.station_seconds, type: 'duration_s', definition: def(d, 'logged_in_time') },
     { metric: 'Days worked', value: d.presence.days_worked, type: 'int' },
     { metric: 'On a call (state time)', value: d.presence.by_state.on_call, type: 'duration_s' },
     { metric: 'Wrap-up (state time)', value: d.presence.by_state.wrapup, type: 'duration_s' },
@@ -196,14 +193,14 @@ async function agentWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: AgentRev
     { metric: 'Dials', value: d.record.attempts, type: 'int' },
     { metric: 'First dials', value: firstDials, type: 'int' },
     { metric: 'Connected', value: d.record.connected, type: 'int' },
-    { metric: 'Conversations', value: conversations, type: 'int', definition: def(d, 'conversations') },
+    { metric: 'Conversations', value: conversations, type: 'int' },
     { metric: 'People reached', value: humans, type: 'int' },
     { metric: 'Connect rate', value: rateCell(agentConnectRate(d)), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: d.record.successes, type: 'int' },
     { metric: 'Success rate', value: rateCell(agentSuccessRate(d)), type: 'percent', definition: def(d, 'success_rate') },
     { metric: 'Average handle time', value: d.record.aht_seconds ?? 'No connected calls', type: 'duration_s', definition: def(d, 'aht') },
     { metric: 'Drops', value: d.presence.drops, type: 'int', definition: def(d, 'drops') },
-    { metric: 'Callbacks booked', value: ft.callbacks.booked, type: 'int', definition: def(d, 'callbacks') },
+    { metric: 'Callbacks booked', value: ft.callbacks.booked, type: 'int', definition: def(d, 'callbacks_booked') },
     { metric: 'Wrap-up redials placed', value: ft.redials_placed, type: 'int' },
     { metric: 'Wrap-up redials connected', value: ft.redials_connected, type: 'int' },
     { metric: 'Agent retries', value: ft.agent_retries, type: 'int' },
@@ -374,18 +371,18 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     { metric: 'First dials', value: firstDials, type: 'int' },
     { metric: 'Connected', value: calls.connected, type: 'int', definition: def(d, 'connected') },
     { metric: 'Conversations', value: calls.conversations, type: 'int' },
-    { metric: 'People reached', value: calls.human_connects, type: 'int', definition: def(d, 'human_connects') },
+    { metric: 'People reached', value: calls.human_connects, type: 'int' },
     { metric: 'Connect rate', value: rateCell(connect), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: calls.successes, type: 'int' },
     { metric: 'Success rate', value: rateCell(success), type: 'percent', definition: def(d, 'success_rate') },
     { metric: 'Answered', value: answered, type: 'int' },
     { metric: 'Abandoned', value: abandoned, type: 'int' },
-    { metric: 'Abandonment', value: rateCell(abandonment), type: 'percent', definition: def(d, 'abandonment') },
+    { metric: 'Abandonment', value: rateCell(abandonment), type: 'percent', definition: def(d, 'abandonment_rate') },
     { metric: 'Average talk', value: talk ?? 'No connected calls', type: 'duration_s' },
     { metric: 'Average wrap-up', value: wrap ?? 'Not measured', type: 'duration_s' },
-    { metric: 'Average handle time', value: handle ?? 'No connected calls', type: 'duration_s', definition: def(d, 'aht') },
+    { metric: 'Average handle time', value: handle ?? 'No connected calls', type: 'duration_s' },
     { metric: 'Wrap-up redials placed', value: calls.redials.placed, type: 'int' },
-    { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks') },
+    { metric: 'Callbacks booked', value: d.activity.callbacks.booked, type: 'int', definition: def(d, 'callbacks_booked') },
     { metric: 'Numbers marked Do Not Call', value: d.activity.dnc_marked.total, type: 'int' },
   ]);
   const dates = d.trends.buckets.map((b) => bucketDate(b.bucket_start, d.range.timezone));
@@ -571,10 +568,10 @@ async function accountWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Accoun
     { metric: 'Connect rate', value: rateCell(tf.connect), type: 'percent', definition: def(d, 'connect_rate') },
     { metric: 'Successes', value: t.calls.successes, type: 'int' },
     { metric: 'Success rate', value: rateCell(tf.success), type: 'percent', definition: def(d, 'success_rate') },
-    { metric: 'Abandonment', value: rateCell(tf.abandonment), type: 'percent', definition: def(d, 'abandonment') },
+    { metric: 'Abandonment', value: rateCell(tf.abandonment), type: 'percent', definition: def(d, 'abandonment_rate') },
     { metric: 'Talk', value: t.calls.talk_seconds, type: 'duration_s' },
     { metric: 'Callbacks booked', value: t.callbacks_booked, type: 'int' },
-    { metric: 'Recorded share of connected calls', value: rateCell(recordingShare(t.recorded, t.recording_connected)), type: 'percent', definition: def(d, 'recording') },
+    { metric: 'Recorded share of connected calls', value: rateCell(recordingShare(t.recorded, t.recording_connected)), type: 'percent', definition: def(d, 'recording_share') },
   ]);
   const figures = (f: AccountReportFigures): Row => {
     const fig = accountFigures(f, floor);

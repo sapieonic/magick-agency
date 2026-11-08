@@ -5,6 +5,7 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { ReportDataset } from '@magick-agency/contracts/reports';
+import { definitionText, type DefinitionKey } from '../src/definitions';
 import { detailReaderFromIO } from '../src/io';
 import { detailSheetNames, FIXED_SHEETS, writeWorkbook } from '../src/xlsx/workbook';
 import { accountFixture } from './fixtures/account';
@@ -22,6 +23,28 @@ async function build(dataset: ReportDataset, details: Map<string, Buffer>): Prom
   await writeWorkbook(dataset, detailReaderFromIO(io), out);
   await ended;
   return Buffer.concat(chunks);
+}
+
+/** The Summary's Definition cell (column C) per metric (column A). */
+function summaryDefinitions(wb: import('exceljs').Workbook): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  wb.getWorksheet('Summary')!.eachRow((r, n) => {
+    if (n > 1) out.set(String(r.getCell(1).value), r.getCell(3).value);
+  });
+  return out;
+}
+
+/** Every Summary metric the workbook gives a definition, with the key it reads: each cell holds that definition's text. */
+function expectDefinitions<D extends ReportDataset>(wb: import('exceljs').Workbook, d: D, expected: Array<[string, DefinitionKey<D['kind']>]>): void {
+  const cells = summaryDefinitions(wb);
+  for (const [metric, key] of expected) {
+    const text = definitionText(d, key);
+    expect(text, key).toBeTruthy();
+    expect(cells.get(metric), metric).toBe(text);
+  }
+  // No other metric has one (but the time zone, whose sentence is the workbook's own).
+  const filled = [...cells].filter(([, v]) => v !== null && v !== undefined && v !== '').map(([m]) => m);
+  expect(filled.sort()).toEqual([...expected.map(([m]) => m), 'Time zone'].sort());
 }
 
 describe('agent workbook', async () => {
@@ -57,6 +80,21 @@ describe('agent workbook', async () => {
     expect(rowOf('Sentiment: mixed').getCell(2).value).toBe(q.sentiment.mixed);
     expect(rowOf('Sentiment: neutral').getCell(2).value).toBe(q.sentiment.neutral);
     expect(q.sentiment.positive + q.sentiment.neutral + q.sentiment.negative + q.sentiment.mixed).toBe(q.analysed_calls);
+  });
+
+  it('fills the Summary’s Definition cells from the dataset’s definitions', () => {
+    expectDefinitions(wb, d, [
+      ['Time on station', 'logged_in_time'],
+      ['Talking (agent leg)', 'talk_time'],
+      ['Occupancy (talk + wrap-up ÷ station)', 'occupancy'],
+      ['On a call, share of station time', 'on_call_share'],
+      ['Connect rate', 'connect_rate'],
+      ['Success rate', 'success_rate'],
+      ['Average handle time', 'aht'],
+      ['Drops', 'drops'],
+      ['Callbacks booked', 'callbacks_booked'],
+      ['Analysed calls', 'sentiment'],
+    ]);
   });
 
   it('writes the detail sheets with every row, a frozen header and an autofilter', () => {
@@ -136,6 +174,16 @@ describe('campaign workbook', async () => {
       'Summary', 'Daily', 'By hour', 'Outcomes', 'Agents', 'Callbacks', 'Health', 'Caller IDs', 'Attempts', 'Sessions', 'Definitions',
     ]);
   });
+  it('fills the Summary’s Definition cells from the dataset’s definitions', () => {
+    expectDefinitions(wb, d, [
+      ['Dials', 'dials'],
+      ['Connected', 'connected'],
+      ['Connect rate', 'connect_rate'],
+      ['Success rate', 'success_rate'],
+      ['Abandonment', 'abandonment_rate'],
+      ['Callbacks booked', 'callbacks_booked'],
+    ]);
+  });
   it('writes one Daily row per day and every attempt', () => {
     expect(wb.getWorksheet('Daily')!.actualRowCount).toBe(d.range.days + 1);
     expect(wb.getWorksheet('Attempts')!.actualRowCount).toBe(d.activity.calls.dials + 1);
@@ -177,6 +225,14 @@ describe('account workbook', async () => {
     const attempts = wb.getWorksheet('Attempts')!;
     expect(String(attempts.getCell('A1').value)).toContain('stops at 5,000 rows');
     expect(attempts.actualRowCount).toBe(5000 + 2);
+  });
+  it('fills the Summary’s Definition cells from the dataset’s definitions', () => {
+    expectDefinitions(wb, d, [
+      ['Connect rate', 'connect_rate'],
+      ['Success rate', 'success_rate'],
+      ['Abandonment', 'abandonment_rate'],
+      ['Recorded share of connected calls', 'recording_share'],
+    ]);
   });
 });
 
