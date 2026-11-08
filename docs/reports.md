@@ -224,10 +224,9 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   it: everything the agency plugin registers is a session-guarded console route). Its own JSON
   parser keeps the raw body; HMAC verified before parsing; every answer counted in
   `agency_reports_callbacks_total`. In the app limiter's `webhook` bucket (`/webhooks/reports`
-  prefix). With no `AGENCY_REPORTS_CALLBACK_SECRET` (inline) every callback is refused. Deployments
-  route `/webhooks/` to the server: the web image's nginx (`docker/nginx.conf`) proxies only the API
-  prefixes, so `AGENCY_REPORTS_CALLBACK_BASE_URL` must be the server's own origin or nginx must add
-  `/webhooks`.
+  prefix). With no `AGENCY_REPORTS_CALLBACK_SECRET` (inline) every callback is refused. The web
+  image's nginx (`docker/nginx.conf`) proxies `/webhooks` to the server, so
+  `AGENCY_REPORTS_CALLBACK_BASE_URL` may be the console's public origin.
 - **One apply path**, `applyRenderOutcome` (`apply.ts`): the webhook, the inline renderer and the
   tick's reconcile all go through it (callback names the run and attempt; every key the run's own
   output key; a `rendered` result carries every requested format; then the attempt-fenced
