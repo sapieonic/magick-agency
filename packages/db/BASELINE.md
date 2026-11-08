@@ -977,16 +977,17 @@ Agent, campaign and account reports (`docs/reports.md`, RP1–RP16).
   `updated_at` (set by the repository's UPDATE; no trigger). **`idx_report_subscriptions_due`**
   `(next_run_at) WHERE enabled`; **`idx_report_subscriptions_account`** `(tenant_id, account_id,
   created_at DESC, id DESC)`.
-- **Agent-first read indexes** for the agent review, which reads one agent across every campaign:
-  **`idx_agency_insights_rollup_agents_agent`** `(agent_user_id, bucket_start)` and
-  **`idx_agency_agent_sessions_agent`** `(agent_user_id, joined_at)`.
+- **Agent-first read index** for the agent review, which reads one agent's sessions across every
+  campaign: **`idx_agency_agent_sessions_agent`** `(agent_user_id, joined_at)`. No agent-first
+  rollup index: the review's call figures come from the agent record's attempt reads, and such an
+  index draws the allocation counters' campaign-first plan off the unique index.
 - **Repositories** (server, B12): `apps/server/src/db/repositories/agency/report-run.repository.ts`
   (claims with `MATERIALIZED` + `SKIP LOCKED`, the per-tenant pending limit under a per-tenant
   advisory lock, every pipeline write fenced on `claim_generation` or `render_attempt`) and
   `report-subscription.repository.ts` (the due claim advances `next_run_at` in the transaction
   that creates the run).
-- **Locking.** Two new tables; plain `CREATE INDEX` on `agency_insights_rollup_agents` and
-  `agency_agent_sessions` (SHARE, one scan each); one transaction, at container start.
+- **Locking.** Two new tables; plain `CREATE INDEX` on `agency_agent_sessions` (SHARE, one
+  scan); one transaction, at container start.
 
 **Down** drops both indexes and both tables (every run record and subscription is lost; files stay
 in S3 until their lifecycle). **Tests**: `test/integration/db/reports-migration.test.ts` (columns,

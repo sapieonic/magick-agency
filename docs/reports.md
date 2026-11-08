@@ -151,8 +151,10 @@ doc comments are the field-level contract; this section is the summary.
 31-days-plus-an-hour CHECK, `audience`, `claim_generation`/`claimed_at` for the assembler,
 `render_attempt`/`sent_at` for the renderer, `files` JSONB, `truncated`, `dataset_key`,
 `notified_at`, `expires_at`), the unique `(subscription_id, period_start)` index, a work index on
-pending statuses, and two agent-first read indexes: `agency_insights_rollup_agents
-(agent_user_id, bucket_start)` and `agency_agent_sessions (agent_user_id, joined_at)`. No roles.
+pending statuses, and one agent-first read index, `agency_agent_sessions (agent_user_id,
+joined_at)`. No agent-first rollup index: the agent review's call figures come from the agent
+record's attempt reads, and such an index drew the Insights allocation counters' campaign-first
+plan off the unique index (`insights-reads.test.ts`). No roles.
 Repositories in `apps/server/src/db/repositories/agency/report-run.repository.ts` and
 `report-subscription.repository.ts`, from the `agency.repository.ts` barrel. Claims use
 `WITH picked AS MATERIALIZED (… FOR UPDATE SKIP LOCKED)`.

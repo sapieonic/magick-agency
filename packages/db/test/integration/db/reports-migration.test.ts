@@ -223,17 +223,13 @@ describe('0023 — reports', () => {
       'CREATE INDEX idx_report_subscriptions_due ON public.report_subscriptions USING btree (next_run_at) WHERE enabled');
   });
 
-  it('the agent-first read indexes, and the planner reads one agent through them', async () => {
-    expect(await indexDef('idx_agency_insights_rollup_agents_agent')).toBe(
-      'CREATE INDEX idx_agency_insights_rollup_agents_agent ON public.agency_insights_rollup_agents USING btree (agent_user_id, bucket_start)');
+  it('the agent-first sessions index, and the planner reads one agent through it', async () => {
+    // No agent-first rollup index: it would draw the allocation counters' campaign-first plan off
+    // the unique index (insights-reads.test.ts pins that plan).
+    expect(await indexDef('idx_agency_insights_rollup_agents_agent')).toBeUndefined();
     expect(await indexDef('idx_agency_agent_sessions_agent')).toBe(
       'CREATE INDEX idx_agency_agent_sessions_agent ON public.agency_agent_sessions USING btree (agent_user_id, joined_at)');
     const agent = randomUUID();
-    const rollup = await planOf(
-      `SELECT sum(dials) FROM agency_insights_rollup_agents
-        WHERE agent_user_id = $1::uuid AND bucket_start >= $2::timestamptz AND bucket_start < $3::timestamptz`,
-      [agent, '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z']);
-    expect(rollup).toMatch(/idx_agency_insights_rollup_agents_agent/);
     const sessions = await planOf(
       `SELECT id FROM agency_agent_sessions
         WHERE agent_user_id = $1::uuid AND joined_at < $3::timestamptz AND (left_at IS NULL OR left_at > $2::timestamptz)`,
@@ -241,14 +237,14 @@ describe('0023 — reports', () => {
     expect(sessions).toMatch(/idx_agency_agent_sessions_agent/);
   });
 
-  it('down drops both tables and both indexes; up re-applies', async () => {
+  it('down drops both tables and the sessions index; up re-applies', async () => {
     const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
     await migrate('down', files.length - files.indexOf(FILE));
     try {
       const { rows } = await pool().query(
         `SELECT tablename AS name FROM pg_tables WHERE tablename IN ('report_runs', 'report_subscriptions')
          UNION ALL SELECT indexname FROM pg_indexes
-          WHERE indexname IN ('idx_agency_insights_rollup_agents_agent', 'idx_agency_agent_sessions_agent')`);
+          WHERE indexname = 'idx_agency_agent_sessions_agent'`);
       expect(rows).toEqual([]);
     } finally {
       await migrate('up');

@@ -251,7 +251,9 @@ export function defaultReportRouteDeps(config: AgencyReportsConfig): ReportRoute
       return new Set(rows.map((r) => r.id));
     },
     names: resolveReportNames,
-    presign: getPresignedUrl,
+    // Read at call time, not registration: suites that build the app with a partial
+    // `storage/s3.js` mock (the load and fuzz suites) must not need this export to register routes.
+    presign: (key, opts) => getPresignedUrl(key, opts),
     audit: (entry) => platformAuditLogger.log(entry),
     now: () => new Date(),
   };

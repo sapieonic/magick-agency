@@ -45,18 +45,18 @@
 -- `recipient_user_ids`: 1–20 tenant members, re-checked against RBAC at send time (RP4).
 -- No `updated_at` trigger: the repository's one UPDATE sets it.
 --
--- ── Agent-first read indexes ─────────────────────────────────────────────────
--- The agent review reads one agent across every campaign of the account. Both tables were
--- indexed campaign-first only, so those reads scanned every campaign's rows:
---  - idx_agency_insights_rollup_agents_agent (agent_user_id, bucket_start): the rollup's
---    per-agent measures over a window, across campaigns;
---  - idx_agency_agent_sessions_agent (agent_user_id, joined_at): the agent's sessions (campaign
---    and soft phone) that overlap a window.
+-- ── Agent-first read index ──────────────────────────────────────────────────
+-- The agent review reads one agent's sessions across every campaign of the account;
+-- agency_agent_sessions was indexed for live sessions only (left_at IS NULL), so that read scanned
+-- every session: idx_agency_agent_sessions_agent (agent_user_id, joined_at). No agent-first index
+-- on agency_insights_rollup_agents: the review takes its call figures from the agent record's
+-- attempt reads, not the rollup, and such an index draws the allocation counters' plan
+-- (campaign-first by design, insights-reads.test.ts) off the unique index.
 --
 -- ── Locking ─────────────────────────────────────────────────────────────────
--- Two new, empty tables. The two indexes are plain CREATE INDEX, as in 0003, 0004, 0015, 0016 and
--- 0017: node-pg-migrate runs each SQL file in one transaction, where CONCURRENTLY is not allowed.
--- Each build holds a SHARE lock on its table (writes wait) while it scans the table once.
+-- Two new, empty tables. The sessions index is a plain CREATE INDEX, as in 0003, 0004, 0015, 0016
+-- and 0017: node-pg-migrate runs each SQL file in one transaction, where CONCURRENTLY is not
+-- allowed. The build holds a SHARE lock on the table (writes wait) while it scans it once.
 -- Migrations run at container start, before the server listens.
 --
 -- ── Down ────────────────────────────────────────────────────────────────────
@@ -250,12 +250,6 @@ COMMENT ON COLUMN report_runs.subscription_id IS
 COMMENT ON COLUMN report_runs.period_start IS
   'The subscription period''s first local day (local_from); NULL for an ad hoc run.';
 
-CREATE INDEX idx_agency_insights_rollup_agents_agent
-  ON agency_insights_rollup_agents (agent_user_id, bucket_start);
-
-COMMENT ON INDEX idx_agency_insights_rollup_agents_agent IS
-  'Reports: one agent''s rollup measures over a window across every campaign (the agent review).';
-
 CREATE INDEX idx_agency_agent_sessions_agent
   ON agency_agent_sessions (agent_user_id, joined_at);
 
@@ -265,6 +259,5 @@ COMMENT ON INDEX idx_agency_agent_sessions_agent IS
 -- Down Migration
 
 DROP INDEX IF EXISTS idx_agency_agent_sessions_agent;
-DROP INDEX IF EXISTS idx_agency_insights_rollup_agents_agent;
 DROP TABLE IF EXISTS report_runs;
 DROP TABLE IF EXISTS report_subscriptions;
