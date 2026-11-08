@@ -694,12 +694,47 @@ after `AGENCY_REPORTS_RETENTION_DAYS`. Where to look, in order:
    (`AGENCY_REPORTS_CALLBACK_BASE_URL` wrong or unreachable from the internet, or refused:
    `agency_reports_callbacks_total{result="bad_signature"}`).
 
-The tick re-sends a run with no callback after `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (15 min) as a
+The tick re-sends a run with no callback after `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (15 min; size it
+against the renderer's backlog, "Reports: sizing the render timeout" below) as a
 new attempt, after first checking S3 for its files, and fails it `render_timed_out` after
 `AGENCY_REPORTS_MAX_ATTEMPTS` (3). So a fixed cause clears on its own; runs already failed are
 re-run from the console ("Run again"). Nothing replays the dead-letter queue, and nothing needs to:
 an older attempt's callback is ignored once a newer one was sent (`stale` on the callbacks panel).
 Purge the DLQ once you have read what it holds.
+
+### Reports: sizing the render timeout
+
+`AGENCY_REPORTS_RENDER_TIMEOUT_MS` (default 15 minutes) counts from the send, so a run's time in
+the `report-jobs` queue counts against it, not only its render. The renderer takes at most 3
+messages at once (`maximum_concurrency` in `aws/terraform/reports.tf`, one message per invocation)
+and each render may run up to the function's 300 s timeout. Runs sent together queue behind each
+other: the `n`-th run of a burst starts after about `ceil(n / 3)` renders. Size the timeout so the
+last run of the largest burst still calls back in time:
+
+    AGENCY_REPORTS_RENDER_TIMEOUT_MS > ceil(burst / 3) × p95 render time + p95 render time + a margin
+
+`burst` is the runs sent within a few minutes of each other: every subscription sharing a send
+time (they all fall due on the same tick; the assembler sends them one after another, a few
+seconds apart, which spreads them only a little) plus the ad hoc runs in flight (at most
+`AGENCY_REPORTS_TENANT_PENDING_LIMIT` per tenant). Read the p95 render time from the dashboard's *Reports — Assembly and Render Duration (p95)*
+panel (`agency_reports_render_seconds`, send to applied callback, so it includes the queue wait:
+read it outside a burst) or the
+function's logs (`record.done … ms`). With renders of about a minute, 15 minutes covers a burst of
+about 40 runs; at the function's 300 s ceiling it covers 6.
+
+**When it is too short**, a queued message is not lost, only late, but the tick cannot tell the
+two apart: it re-sends the run as a new attempt (another message in the same backlog, so the
+queue grows), the first attempt's render still runs and its callback is acknowledged `stale`, and
+after `AGENCY_REPORTS_MAX_ATTEMPTS` sends the run fails `render_timed_out` although nothing was
+broken. A late render is not wasted: every attempt writes the run's same output keys, and before
+re-sending or failing a run the tick looks for them in S3 and applies the run as rendered when
+they are all there. The signs: `agency_reports_callbacks_total{result="stale"}` climbing, the
+queue's `ApproximateAgeOfOldestMessage` near or above the timeout, the DLQ empty, and runs failing
+`render_timed_out` right after a burst (a scheduled send time). The remedies, cheapest first:
+raise `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (a lost message is then retried that much later), spread
+subscriptions' send times, or raise the mapping's `maximum_concurrency` (each render holds a
+Chromium of 2 GB). The default stays at 15 minutes: it is ample for the bursts reports see today,
+and a longer one only delays the retry of a genuinely lost message.
 
 ## Alert runbooks
 

@@ -367,7 +367,14 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   5 minutes is sent; a run found rendered in S3 after a lost callback records `renderer_version =
   'reconciled'`; a HEAD that fails for any reason other than not-found is logged and counts as a
   file missing (re-sent under the attempt fence, or failed `render_timed_out` at the last attempt),
-  so a `rendering` run is never stuck on S3 errors. Each due subscription's subject is probed at the claim
+  so a `rendering` run is never stuck on S3 errors. `AGENCY_REPORTS_RENDER_TIMEOUT_MS` counts from
+  the send, queue wait included: with the renderer at 3 renders at once, a burst of runs (every
+  subscription sharing a send time, plus ad hoc runs) waits `ceil(n / 3)` renders, so the timeout
+  must exceed that backlog or a run that is only late is re-sent (another message in the same
+  backlog) and, after the last attempt, failed `render_timed_out`. A late attempt's files still
+  count: every attempt writes the same output keys and the tick applies a run whose files are all
+  in S3 before re-sending or failing it. Sizing and signs: `operations.md`, "Reports: sizing the
+  render timeout"; the default (15 minutes) is unchanged. Each due subscription's subject is probed at the claim
   (`subscription-subject.ts`, the builders' own `subject_unavailable` rule: the account exists; an
   agent's membership, any status, reaches it; the campaign is still the account's; an account
   report is about its own account): a subject that is gone DISABLES the subscription (no run, so no
