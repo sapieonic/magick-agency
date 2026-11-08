@@ -1,6 +1,6 @@
 /*
  * What the report routes share: their dependencies (injectable for tests), the refusal body, the
- * flag gate, the caller's reach over a subject, and the zone check. Part of
+ * flag gate, the caller's reach over a subject, and the zone check (`Intl`, then Postgres). Part of
  * `proxy-agency-reports.routes.ts`.
  */
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -26,6 +26,7 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import { isMemberOfAccountEver, usersWithPermissionOnAccount } from '../../../agency/reports/access.js';
 import { resolveReportNames, type ReportNameRef, type ReportNames } from '../../../agency/reports/run-view.js';
+import { postgresKnowsZone } from '../../../agency/reports/zone.js';
 import { fetchOwnedCoreCampaign } from '../helpers/core-campaign.js';
 import { sendRefusal } from '../helpers/refusal.js';
 
@@ -55,6 +56,8 @@ export interface ReportRouteDeps {
   /** The ids among `campaignIds` that the tenant and account own. */
   ownedCampaignIds(campaignIds: readonly string[], tenantId: string, accountId: string): Promise<Set<string>>;
   names(tenantId: string, refs: readonly ReportNameRef[]): Promise<ReportNames>;
+  /** Is the zone in Postgres's zone database (`pg_timezone_names`, case-insensitive)? */
+  zoneKnownToDatabase(zone: string): Promise<boolean>;
   presign(key: string, options: PresignOptions): Promise<string>;
   audit(entry: PlatformCreateAuditLogInput): void;
   now(): Date;
@@ -122,6 +125,15 @@ export function callerSupervises(request: FastifyRequest): boolean {
 /** An IANA zone this server can cut days in (`Area/Location` or `UTC`, untrimmed text refused). */
 export function isReportTimezone(timezone: unknown): timezone is string {
   return typeof timezone === 'string' && timezone === timezone.trim() && timezone.length <= 64 && isUsableTimezone(timezone);
+}
+
+/**
+ * A zone a report may be cut in: {@link isReportTimezone} (`Intl`) AND known to Postgres, whose
+ * `AT TIME ZONE` the dataset reads cut the window with (`agency/reports/zone.ts`). Else the
+ * route answers `report_timezone_invalid` (null here).
+ */
+export async function usableReportZone(deps: Pick<ReportRouteDeps, 'zoneKnownToDatabase'>, timezone: unknown): Promise<string | null> {
+  return isReportTimezone(timezone) && (await deps.zoneKnownToDatabase(timezone)) ? timezone : null;
 }
 
 /** What a run or subscription about one subject resolves to, for this caller. */
@@ -251,6 +263,7 @@ export function defaultReportRouteDeps(config: AgencyReportsConfig): ReportRoute
       return new Set(rows.map((r) => r.id));
     },
     names: resolveReportNames,
+    zoneKnownToDatabase: postgresKnowsZone,
     // Read at call time, not registration: suites that build the app with a partial
     // `storage/s3.js` mock (the load and fuzz suites) must not need this export to register routes.
     presign: (key, opts) => getPresignedUrl(key, opts),

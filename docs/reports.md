@@ -311,7 +311,9 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   `agency.station.connect`, subscriptions `agency.supervise`), the flag (`403 feature_disabled`,
   body `{ error: 'Feature Not Enabled', code: 'feature_disabled', message: 'Reports are not enabled
   for this account.' }`), then ids, body (the generic agency 400), reach over the subject ("Who may
-  run what"; 403 without a code, or `report_subject_not_found`), zone, window, per-user rate,
+  run what"; 403 without a code, or `report_subject_not_found`), zone (an IANA name `Intl` knows AND
+  Postgres's `pg_timezone_names` holds, case-insensitively as `AT TIME ZONE` matches, so a run is
+  never queued in a zone the dataset reads cannot cut days in; `report_timezone_invalid`), window, per-user rate,
   pending limit. A malformed, unknown or foreign run id is `report_not_found` (404), never 403. A run
   is visible (detail, history, retry) to its requester and to supervisors of its account; a download
   only to someone who could create the same run now (the agent for a `self` review; for a

@@ -27,7 +27,7 @@ import {
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import {
   auditReport,
-  isReportTimezone,
+  usableReportZone,
   reportsGate,
   resolveReportTarget,
   sendReportRefusal,
@@ -186,8 +186,8 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
 
     const target = await resolveReportTarget(deps, request, reply, { kind: body.kind, subjectId: body.subject_id, supervisorOnly: true });
     if (!target) return reply;
-    const timezone = target.campaignTimezone ?? body.timezone;
-    if (!isReportTimezone(timezone)) return sendReportRefusal(reply, 'report_timezone_invalid');
+    const timezone = await usableReportZone(deps, target.campaignTimezone ?? body.timezone);
+    if (timezone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
 
     const recipientIssue = await recipientsProblem(deps, request, body.recipient_user_ids);
     if (recipientIssue) return sendReportRefusal(reply, 'report_recipient_invalid', recipientIssue);
@@ -249,9 +249,10 @@ export async function registerReportSubscriptionRoutes(app: FastifyInstance, dep
 
     // A campaign subscription keeps the campaign's zone (RP3): a `timezone` in the PATCH is ignored.
     let timezone = existing.timezone;
-    if (existing.kind !== 'campaign' && patch.timezone !== undefined) {
-      if (!isReportTimezone(patch.timezone)) return sendReportRefusal(reply, 'report_timezone_invalid');
-      timezone = patch.timezone;
+    if (existing.kind !== 'campaign' && patch.timezone !== undefined && patch.timezone !== existing.timezone) {
+      const zone = await usableReportZone(deps, patch.timezone);
+      if (zone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
+      timezone = zone;
     }
     if (patch.recipient_user_ids) {
       const recipientIssue = await recipientsProblem(deps, request, patch.recipient_user_ids);

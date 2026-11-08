@@ -36,7 +36,7 @@ import {
   callerSeesRun,
   callerSupervises,
   findAccountRun,
-  isReportTimezone,
+  usableReportZone,
   reportsGate,
   resolveReportTarget,
   sendReportRefusal,
@@ -113,8 +113,8 @@ export async function createAdHocRun(
   const tenantId = request.tenantId!;
   const accountId = request.accountId!.toLowerCase();
 
-  const timezone = target.campaignTimezone ?? input.timezone;
-  if (!isReportTimezone(timezone)) return sendReportRefusal(reply, 'report_timezone_invalid');
+  const timezone = await usableReportZone(deps, target.campaignTimezone ?? input.timezone);
+  if (timezone === null) return sendReportRefusal(reply, 'report_timezone_invalid');
 
   const now = deps.now();
   const { from, to } = typeof input.window === 'function' ? input.window(timezone) : input.window;

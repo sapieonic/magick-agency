@@ -33,6 +33,7 @@ import {
 const OTHER_AGENT = '99999999-9999-4999-8999-999999999999';
 const FOREIGN_CAMPAIGN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const NOW = new Date('2026-11-08T10:00:00Z');
+const ZONE_NOT_IN_POSTGRES = 'America/Ciudad_Juarez';
 const config = agencyConfigSchema.parse({}).agency.reports;
 
 interface Caller { userId: string; role: MembershipRole; accountId?: string }
@@ -116,6 +117,8 @@ function fakeDeps() {
       accounts: new Map([[ACCOUNT, 'North']]),
     })),
     presign: vi.fn(async (key: string) => `https://s3.example/${key}?sig=1`),
+    // Postgres's zone database, as if it lacked one zone this process's ICU knows.
+    zoneKnownToDatabase: vi.fn(async (zone: string) => zone !== ZONE_NOT_IN_POSTGRES),
     audit: vi.fn((entry: { action: string; resource_id?: string; details?: Record<string, unknown> }) => { audits.push(entry); }),
     now: () => NOW,
   };
@@ -286,6 +289,30 @@ describe('POST /reports: validation', () => {
       expect(res.json().code).toBe('report_timezone_invalid');
     }
     expect((await req('POST', '/proxy/agency/reports', agentReview({ timezone: 'UTC' }))).statusCode).toBe(202);
+  });
+
+  it('the zone must also be in Postgres\'s zone database (the dataset reads cut days with AT TIME ZONE)', async () => {
+    let res = await req('POST', '/proxy/agency/reports', agentReview({ timezone: ZONE_NOT_IN_POSTGRES }));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('report_timezone_invalid');
+    expect(f.deps.zoneKnownToDatabase).toHaveBeenCalledWith(ZONE_NOT_IN_POSTGRES);
+    expect(f.deps.runs.create).not.toHaveBeenCalled();
+    // A zone Intl refuses never reaches the database.
+    f.deps.zoneKnownToDatabase.mockClear();
+    await req('POST', '/proxy/agency/reports', agentReview({ timezone: 'Mars/Olympus' }));
+    expect(f.deps.zoneKnownToDatabase).not.toHaveBeenCalled();
+    // Subscriptions: create and a zone PATCH, the same rule.
+    caller = supervisor;
+    res = await req('POST', '/proxy/agency/report-subscriptions', {
+      kind: 'agent', subject_id: AGENT, cadence: 'daily', send_local_time: '08:00', timezone: ZONE_NOT_IN_POSTGRES,
+      formats: ['pdf'], recipient_user_ids: [SUPERVISOR],
+    });
+    expect(res.json().code).toBe('report_timezone_invalid');
+    f.subs.set(SUBSCRIPTION, subscriptionRecord({ kind: 'agent', subject_id: AGENT }));
+    res = await req('PATCH', `/proxy/agency/report-subscriptions/${SUBSCRIPTION}`, { timezone: ZONE_NOT_IN_POSTGRES });
+    expect(res.json().code).toBe('report_timezone_invalid');
+    expect(f.deps.subscriptions.create).not.toHaveBeenCalled();
+    expect(f.deps.subscriptions.update).not.toHaveBeenCalled();
   });
 
   it('the window rule (RP2): 30 days, or exactly one calendar month; not after today in the zone', async () => {
