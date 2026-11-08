@@ -61,9 +61,11 @@ export interface NotificationPreferenceUpdate {
 // credits-spend digest has no meaning when v1 has no credits and no broadcasts.
 //
 // Agency-relevant events: the served catalog keeps this file's
-// "no key union" rule, and only `agency.campaign.completed`
+// "no key union" rule, and the agency events are `agency.campaign.completed`
 // (category `agency`, cadence `immediate`, audience: role floor
-// `agency.supervise`) is an agency event. The agent invite email is sent on
+// `agency.supervise`) and `agency.report.ready` (category `agency`, cadence
+// `immediate`, audience: explicit — the requester who asked to be emailed, or a
+// report subscription's recipients; `docs/reports.md`). The agent invite email is sent on
 // every invite and is not a preference. `campaign.dispatched`,
 // `campaign.completed` (broadcasts) and `usage.digest` do not exist.
 // `NotificationCadence` / `NotificationFrequency` stay because they are part of
