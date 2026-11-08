@@ -17,12 +17,8 @@ import {
   todayIn,
   type ReportWindowPreset,
 } from '../../../utils/reports/reportWindow';
-import {
-  REPORT_FORMAT_LABELS,
-  REPORT_KIND_LABELS,
-  SELF_REVIEW_NOTE,
-  formatReportWindow,
-} from '../../../utils/reports/reportCopy';
+import { REPORT_KIND_LABELS, SELF_REVIEW_NOTE, formatReportWindow } from '../../../utils/reports/reportCopy';
+import { ReportFormatFields } from './ReportFormatFields';
 import styles from './Reports.module.css';
 
 /** What an export is about, preset by the entry point that opened the dialog. */
@@ -255,26 +251,13 @@ function OpenExportReportDialog({ onClose, target, entry, now }: ExportReportDia
           </div>
         )}
 
-        <fieldset className={styles.fieldset} aria-describedby={attempted && formatError ? formatErrorId : undefined}>
-          <legend className={styles.legend}>Formats</legend>
-          <div className={styles.checkRow}>
-            {REPORT_FORMATS.map((format) => (
-              <label key={format} className={styles.checkOption}>
-                <input
-                  type="checkbox"
-                  checked={formats[format]}
-                  onChange={(e) => setFormats((prev) => ({ ...prev, [format]: e.target.checked }))}
-                />
-                {REPORT_FORMAT_LABELS[format]}
-              </label>
-            ))}
-          </div>
-          {attempted && formatError ? (
-            <p id={formatErrorId} className={styles.inlineError} role="alert" data-testid="report-format-error">
-              {formatError}
-            </p>
-          ) : null}
-        </fieldset>
+        <ReportFormatFields
+          formats={formats}
+          onChange={(format, checked) => setFormats((prev) => ({ ...prev, [format]: checked }))}
+          error={attempted ? formatError : null}
+          errorId={formatErrorId}
+          errorTestId="report-format-error"
+        />
 
         <label className={styles.checkOption}>
           <input type="checkbox" checked={emailMe} onChange={(e) => setEmailMe(e.target.checked)} />

@@ -46,7 +46,7 @@ vi.mock('../../utils/reports/reportWindow', async () => {
 });
 
 import { SubscriptionsPanel } from '../../components/agency/reports/SubscriptionsPanel';
-import { agentOptions, recipientOptions } from '../../components/agency/reports/SubscriptionFormDialog';
+import { membersWith } from '../../components/agency/reports/SubscriptionFormDialog';
 import { ApiError } from '../../api/client';
 
 const MEMBERS = [
@@ -225,6 +225,23 @@ describe('the form', () => {
     expect(body).not.toHaveProperty('timezone');
   });
 
+  it('clears the picked subject when the kind changes, and takes this account for an account report', async () => {
+    mocks.createReportSubscription.mockResolvedValue(reportSubscription({ id: 'sub-4' }));
+    await openNew();
+    await waitFor(() => expect(screen.getByLabelText('Agent').tagName).toBe('SELECT'));
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'agent-1' } });
+    fireEvent.change(screen.getByLabelText('Report'), { target: { value: 'campaign' } });
+    await waitFor(() => expect(screen.getByLabelText('Campaign').tagName).toBe('SELECT'));
+    fireEvent.click(screen.getByTestId('subscription-save'));
+    expect(screen.getByTestId('subscription-subject-error').textContent).toBe('Choose a campaign.');
+    expect(mocks.createReportSubscription).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Report'), { target: { value: 'account' } });
+    expect(screen.getByTestId('subscription-account').textContent).toBe('North');
+    fireEvent.click(screen.getByTestId('subscription-save'));
+    await waitFor(() => expect(mocks.createReportSubscription).toHaveBeenCalled());
+    expect(mocks.createReportSubscription.mock.calls[0]![0]).toMatchObject({ kind: 'account', subject_id: 'account-1' });
+  });
+
   it('needs a subject, a format and a recipient before it sends', async () => {
     await openNew();
     await waitFor(() => expect(screen.getByLabelText('Agent').tagName).toBe('SELECT'));
@@ -334,7 +351,7 @@ describe('the form', () => {
 
 describe('the pickers', () => {
   it('offer agents and recipients from active memberships on this account only', () => {
-    expect(agentOptions(MEMBERS, 'account-1').map((m) => m.userId)).toEqual(['sup-1', 'agent-1', 'sup-2']);
-    expect(recipientOptions(MEMBERS, 'account-1').map((m) => m.userId)).toEqual(['sup-1', 'sup-2']);
+    expect(membersWith(MEMBERS, 'account-1', 'agency.station.connect').map((m) => m.userId)).toEqual(['sup-1', 'agent-1', 'sup-2']);
+    expect(membersWith(MEMBERS, 'account-1', 'agency.supervise').map((m) => m.userId)).toEqual(['sup-1', 'sup-2']);
   });
 });

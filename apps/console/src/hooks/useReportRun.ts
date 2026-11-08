@@ -5,8 +5,11 @@ import { getReport, reportErrorMessage } from '../api/reports';
 import { ApiError } from '../api/client';
 import { isPendingStatus } from '../utils/reports/reportCopy';
 
-/** How often a run still being prepared is re-read. */
+/** How soon a run still being prepared is re-read, and again after each change of status. */
 export const REPORT_POLL_INTERVAL_MS = 3_000;
+
+/** The longest wait between reads of a run that stays in one pending status. */
+export const REPORT_POLL_MAX_INTERVAL_MS = 30_000;
 
 export interface UseReportRunOptions {
   /**
@@ -28,15 +31,23 @@ export interface ReportRunState {
 }
 
 /**
- * One report run, polled every {@link REPORT_POLL_INTERVAL_MS} while it is pending
- * (`queued`, `assembling`, `rendering`) and left alone once it is `ready`, `failed`
- * or `expired`, or when the component unmounts.
+ * One report run, polled while it is pending (`queued`, `assembling`, `rendering`)
+ * and left alone once it is `ready`, `failed` or `expired`, or when the component
+ * unmounts.
  *
- * A read that fails is retried at the next interval (or after the server's
- * `Retry-After`, when that is longer), except a refusal that will not change by
- * waiting (a 4xx other than 429: the run is gone or not this caller's), which stops
- * polling and is shown. One timer at a time: each answer schedules the next read, so
- * a slow answer can never overlap the next request.
+ *  - **Backs off.** The first re-read waits {@link REPORT_POLL_INTERVAL_MS}; each
+ *    answer that brings the same pending status doubles the wait, up to
+ *    {@link REPORT_POLL_MAX_INTERVAL_MS} (3 s, 6, 12, 24, 30, ...). A new status
+ *    starts again at 3 s.
+ *  - **Visible only.** A read that falls due while the tab is hidden is not sent;
+ *    the tab becoming visible again sends one at once. The history mounts one of
+ *    these per row, so a backgrounded tab would otherwise keep reading.
+ *  - **Failures.** A read that fails is retried at the current interval (or after
+ *    the server's `Retry-After`, when that is longer), except a refusal that will not
+ *    change by waiting (a 4xx other than 429: the run is gone or not this caller's),
+ *    which stops polling and is shown.
+ *  - **One timer at a time.** Each answer schedules the next read, so a slow answer
+ *    can never overlap the next request.
  */
 export function useReportRun(runId: string | null, options: UseReportRunOptions = {}): ReportRunState {
   const { tenantId, accountId } = useTenant();
@@ -59,6 +70,10 @@ export function useReportRun(runId: string | null, options: UseReportRunOptions 
     if (runId === null || !tenantId || !accountId) return undefined;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // A read fell due while the tab was hidden: send it when the tab comes back.
+    let dueWhileHidden = false;
+    let interval = REPORT_POLL_INTERVAL_MS;
+    let lastStatus = startedFromInitial.current && reloadToken === 0 ? initial?.status : undefined;
 
     const schedule = (ms: number) => {
       if (cancelled) return;
@@ -67,13 +82,20 @@ export function useReportRun(runId: string | null, options: UseReportRunOptions 
 
     function read() {
       timer = null;
+      if (document.visibilityState === 'hidden') {
+        dueWhileHidden = true;
+        return;
+      }
       getReport(runId as string, tenantId ?? undefined, accountId ?? undefined)
         .then((next) => {
           if (cancelled) return;
           setRun(next);
           setError(null);
           setLoading(false);
-          if (isPendingStatus(next.status)) schedule(REPORT_POLL_INTERVAL_MS);
+          if (!isPendingStatus(next.status)) return;
+          interval = next.status === lastStatus ? Math.min(interval * 2, REPORT_POLL_MAX_INTERVAL_MS) : REPORT_POLL_INTERVAL_MS;
+          lastStatus = next.status;
+          schedule(interval);
         })
         .catch((err: unknown) => {
           if (cancelled) return;
@@ -82,9 +104,16 @@ export function useReportRun(runId: string | null, options: UseReportRunOptions 
           const final = err instanceof ApiError && err.statusCode >= 400 && err.statusCode < 500 && err.statusCode !== 429;
           if (final) return;
           const wait = err instanceof ApiError && err.retryAfterSeconds ? err.retryAfterSeconds * 1000 : 0;
-          schedule(Math.max(REPORT_POLL_INTERVAL_MS, wait));
+          schedule(Math.max(interval, wait));
         });
     }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible' || !dueWhileHidden) return;
+      dueWhileHidden = false;
+      read();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     // A run handed in already: wait one interval, and only while it is pending. A
     // reload (the token) always reads at once.
@@ -97,6 +126,7 @@ export function useReportRun(runId: string | null, options: UseReportRunOptions 
     return () => {
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
     // `initial` is read only to decide the first step; its status is the dependency.
   }, [runId, tenantId, accountId, reloadToken, initialStatus]);
