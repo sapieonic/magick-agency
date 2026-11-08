@@ -167,17 +167,24 @@ export async function createAdHocRun(
 }
 
 /**
- * May the caller download this run's files? The requester, or anyone who could create the same
- * run now (re-checked on every download): a supervisor of the account (for a campaign run, while
- * the account still owns the campaign), or, for an agent's `self` review, the agent themselves.
+ * May the caller download this run's files? Only someone who could create the same run NOW,
+ * re-checked on every download (docs/reports.md "Who may run what"):
+ *  - a `self` review: the agent it is about (its requester), with `agency.station.connect`;
+ *  - a `supervisor` run: a caller holding `agency.supervise` on the account now, whoever requested
+ *    it (a supervisor demoted since keeps seeing their run in the history, but its files are
+ *    refused); for a campaign run, while the account still owns the campaign; for an agent run,
+ *    while the agent's membership reaches the account.
+ * A refusal is the route's `404 report_not_found`, as for a run the caller cannot reach at all.
  */
 async function callerMayDownload(deps: ReportRouteDeps, request: FastifyRequest, run: ReportRunRecord): Promise<boolean> {
-  if (run.requested_by !== null && run.requested_by === request.user?.id) return true;
-  if (run.kind === 'agent' && run.audience === 'self') {
-    return run.subject_id === request.user?.id && hasPermission(request.membership?.role, 'agency.station.connect');
+  const userId = request.user?.id.toLowerCase();
+  if (run.audience === 'self') {
+    return run.kind === 'agent' && userId !== undefined && run.subject_id === userId
+      && hasPermission(request.membership?.role, 'agency.station.connect');
   }
   if (!callerSupervises(request)) return false;
   if (run.kind === 'campaign') return (await deps.campaign(request, run.subject_id)) !== null;
+  if (run.kind === 'agent') return deps.agentInAccount(run.subject_id, request.tenantId!, request.accountId!.toLowerCase());
   return true;
 }
 

@@ -416,6 +416,31 @@ describe('GET /reports/:id/files/:format', () => {
     expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(404);
   });
 
+  it('a requester demoted since may still see a supervisor run, but not download it (404); a self review stays its agent\'s', async () => {
+    // Requested as a supervisor; the caller now holds only the agent role.
+    const demoted: Caller = { userId: SUPERVISOR, role: 'agent' };
+    for (const run of [
+      ready({ requested_by: SUPERVISOR }),
+      ready({ kind: 'campaign', subject_id: CAMPAIGN, requested_by: SUPERVISOR }),
+      ready({ kind: 'account', subject_id: ACCOUNT, requested_by: SUPERVISOR }),
+    ]) {
+      f.runs.set(RUN, run);
+      caller = demoted;
+      expect((await req('GET', `/proxy/agency/reports/${RUN}`)).statusCode, run.kind).toBe(200);
+      const res = await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`);
+      expect(res.statusCode, run.kind).toBe(404);
+      expect(res.json().code).toBe('report_not_found');
+      caller = supervisor;
+      expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode, run.kind).toBe(200);
+    }
+    expect(f.deps.presign).toHaveBeenCalledTimes(3);
+  });
+
+  it('a supervisor run about an agent whose membership no longer reaches the account: 404 even for its requester', async () => {
+    f.runs.set(RUN, ready({ subject_id: FOREIGN_CAMPAIGN, requested_by: SUPERVISOR }));
+    expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(404);
+  });
+
   it('another account\'s run is 404 even for its requester', async () => {
     f.runs.set(RUN, ready({ account_id: OTHER_ACCOUNT }));
     expect((await req('GET', `/proxy/agency/reports/${RUN}/files/pdf`)).statusCode).toBe(404);

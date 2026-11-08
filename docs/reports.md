@@ -292,8 +292,14 @@ campaigns adds about one campaign's Insights reads per campaign, three at a time
   tenant-wide admins on any account of the tenant).
 - **subscriptions**: `agency.supervise`; every recipient must be a member with `agency.supervise`
   on the account (checked at create and again at send).
-- **downloads**: the requester, or anyone who could create the same run; re-checked per download,
-  audited `agency_report.downloaded`.
+- **downloads**: only someone who could create the same run now, re-checked per download and
+  audited `agency_report.downloaded`. A `self` review: the agent it is about (who requested it). A
+  `supervisor` run: a caller with `agency.supervise` on the account now, whoever requested it; for
+  a campaign run while the account still owns the campaign, for an agent run while the agent's
+  membership reaches the account. Having requested a `supervisor` run is not enough: a supervisor
+  demoted since still sees it in the history and on its page (`GET /reports/:id`; the run's
+  metadata, never its contents), but each download answers `404 report_not_found`, the same
+  refusal as a run the caller cannot reach.
 
 ## Pipeline (`agency/reports/`, routes, callback, email)
 
@@ -308,8 +314,8 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   run what"; 403 without a code, or `report_subject_not_found`), zone, window, per-user rate,
   pending limit. A malformed, unknown or foreign run id is `report_not_found` (404), never 403. A run
   is visible (detail, history, retry) to its requester and to supervisors of its account; a download
-  is allowed to the requester or to anyone who could create the same run now (a supervisor; for a
-  campaign run, while the account still owns the campaign; for a `self` review, the agent). Retry
+  only to someone who could create the same run now (the agent for a `self` review; for a
+  `supervisor` run a current supervisor, whoever requested it: "Who may run what"). Retry
   and run-now create AD HOC runs through the same checks as `POST /reports` (rate and pending limit
   included): retry keeps the parameters and `email_me` only when the caller is the requester;
   run-now covers `periodFor(cadence, now)` (the latest complete period), `email_me` on. A
