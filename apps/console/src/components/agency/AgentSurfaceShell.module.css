@@ -64,6 +64,18 @@
   min-width: 0;
 }
 
+/* Optional controls at the heading line's far end (`actions`). */
+.headerActions {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.headerActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .icon {
   display: inline-flex;
   align-items: center;

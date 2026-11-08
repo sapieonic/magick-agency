@@ -36,6 +36,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
 import type { AgencyRosterSort } from '../../types/agency-stats';
 import { RosterToolbar } from './RosterToolbar';
 import { useAgentAnalyticsNav } from './useAgentAnalyticsNav';
+import { ExportReportButton } from './reports/ExportReportButton';
 import styles from './AgentAnalyticsSection.module.css';
 
 /**
@@ -889,6 +890,14 @@ function SelectedAgent({
           {backLabel}
         </button>
         <h3 className={styles.drilldownName}>{label}</h3>
+        {/* "Export agent review" (`docs/reports.md`): this person's review as PDF and
+            Excel. Renders nothing while reports are off or for a non-supervisor. */}
+        <span className={styles.drilldownActions}>
+          <ExportReportButton
+            entry="agent_record"
+            target={{ kind: 'agent', subject: { id: userId, name: agent.agent_name } }}
+          />
+        </span>
       </div>
 
       {/*

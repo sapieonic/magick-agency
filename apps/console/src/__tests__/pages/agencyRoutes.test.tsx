@@ -131,3 +131,49 @@ describe('customer history routes', () => {
     expect(matchRoutes(declared, '/customers')?.[0]?.route.path).toBe('customers');
   });
 });
+
+/**
+ * Reports (`docs/reports.md`): `/agency/reports` and `/agency/reports/:runId` in the
+ * agency shell, and their twins `/dialer/reports*` for a dedicated agent; every one
+ * behind the `agency_reports_enabled` flag on top of the dialer gate.
+ */
+describe('reports routes', () => {
+  const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+  const agencyBlock = app.slice(app.indexOf('path="/agency"'), app.indexOf('<Route path="/app"'));
+
+  /** The text of one flat route element: from its path to the next `<Route`. */
+  const routeAt = (source: string, path: string) => {
+    const start = source.indexOf(`path="${path}"`);
+    expect(start, path).toBeGreaterThan(-1);
+    const next = source.indexOf('<Route', start);
+    return source.slice(start, next === -1 ? source.length : next);
+  };
+
+  it.each([
+    ['reports', '<ReportsPage />'],
+    ['reports/:runId', '<ReportRunPage />'],
+  ])('declares %s inside the agency shell, behind the reports flag', (path, page) => {
+    const route = routeAt(agencyBlock, path);
+    expect(route).toContain('<RequireFlag flag="agency_reports_enabled">');
+    expect(route).toContain(page);
+  });
+
+  it.each([
+    ['/dialer/reports', '<AgentReportsPage />'],
+    ['/dialer/reports/:runId', '<AgentReportRunPage />'],
+  ])('declares %s for agents, gated like the other agent surfaces plus the reports flag', (path, page) => {
+    const route = routeAt(app, path);
+    expect(route).toContain('<RequireAuth>');
+    expect(route).toContain('capability="agency"');
+    expect(route).toContain('flag="agency_dialer_enabled"');
+    expect(route).toContain('flag="agency_reports_enabled"');
+    expect(route).toContain(page);
+    expect(agencyBlock).not.toContain(`path="${path}"`);
+  });
+
+  it('resolves a run id to the run page and the bare path to the list', () => {
+    const declared = [...agencyBlock.matchAll(/path="(reports[^"]*)"/g)].map((m) => ({ path: m[1]! }));
+    expect(matchRoutes(declared, '/reports')?.[0]?.route.path).toBe('reports');
+    expect(matchRoutes(declared, '/reports/3f2a1b0c-1111-4222-8333-444455556666')?.[0]?.route.path).toBe('reports/:runId');
+  });
+});
