@@ -399,7 +399,7 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   (`REPORT_ASSEMBLY_STALE_MS`) is reclaimed, and the first pass after start reclaims any such run
   at once (one replica: a claim older than that pass belongs to a process that is gone, so a
   restart mid-build does not park a run for 30 minutes); `stop()` waits at most 20 s
-  (`REPORT_ASSEMBLER_STOP_WAIT_MS`) for the build in flight, inside the container's 45 s grace; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
+  (`REPORT_ASSEMBLER_STOP_WAIT_MS`; the pipeline hands it its own budget) for the build in flight, inside the container's 45 s grace; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
   times fails `assembly_failed`. A failed run's stored message is generic copy; the error is logged
   with the run id only. Detail files are `application/gzip`.
 - **Read timeouts (for the dataset builders).** The builder seam hands a builder no database
@@ -449,8 +449,15 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   per recipient in `agency_reports_emails_total` (`skipped` covers recipients without access or without an email
   address, users who turned it off, a deleted subscription, no mail transport, and an already-claimed inbox).
 - **Bootstrap**: `startReportPipeline` from `bootstrap/agency.ts` after the runtime starts, main
-  process only, whatever the flag; stopped first on shutdown (assembler, tick, then the inline
-  queue drains).
+  process only, whatever the flag. On shutdown its stop is bounded as a whole by
+  `REPORT_PIPELINE_STOP_WAIT_MS` (20 s) and runs beside the completion-notice drain (≤ 30 s), so
+  the two overlap: among the plan's concurrent drains with media workers (`index.ts`,
+  `cluster/shutdown-order.ts`), beside the runtime's stop in one process (`bootstrap/agency.ts`).
+  The assembler and the tick stop together, then the inline queue gets what is left. The
+  stopping tick starts no further step and no further run in its unsent, reconcile and notify
+  loops (the run in hand finishes); a run it has not marked notified is emailed after the restart,
+  and one already marked is never emailed twice. A render cut off stays `rendering` for the
+  tick's reconcile.
 
 ## Where things are
 

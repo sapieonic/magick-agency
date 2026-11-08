@@ -414,7 +414,8 @@ schema when it seeds) and refuses any other name or port. How to run it, its set
 
 On SIGTERM or SIGINT the server closes HTTP first, then halts pacing (waiting up to 5 s for
 ticks in flight), stops analysis, then agency (in-flight campaign-completion mails get up to
-30 s), voice (the bridge hangs up live calls and releases their slots) and platform (audit
+30 s, and beside them the report pipeline stops: 20 s at most for its assembler, tick and inline
+renders together, `REPORT_PIPELINE_STOP_WAIT_MS`), voice (the bridge hangs up live calls and releases their slots) and platform (audit
 buffers flushed), then closes Redis and Postgres (`apps/server/src/index.ts`,
 `cluster/shutdown-order.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
 so the production compose file sets `stop_grace_period: 45s` on the server. On any other runtime,

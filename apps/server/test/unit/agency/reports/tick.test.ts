@@ -17,7 +17,7 @@ vi.mock('@magick-agency/observability/metrics/agency', async (importOriginal) =>
   agencyReportsRunsTotal: { inc: metrics.runs },
 }));
 
-import { createReportTick, dueSendAt, type ReportTickDeps } from '../../../../src/agency/reports/tick.js';
+import { createReportTick, dueSendAt, startReportTick, type ReportTickDeps } from '../../../../src/agency/reports/tick.js';
 import { reportOutputKey } from '../../../../src/agency/reports/report-keys.js';
 import type { ReportSubscriptionSubject } from '../../../../src/agency/reports/subscription-subject.js';
 import type {
@@ -385,5 +385,86 @@ describe('notify, expire, gauges', () => {
     expect(result.errors).toBe(2);
     expect(d.runs.expireDue).toHaveBeenCalled();
     expect(d.runs.pendingStats).toHaveBeenCalled();
+  });
+});
+
+describe('stopping', () => {
+  it('once stopping, the notify loop takes no further run: one not started stays unnotified for the restart', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' }), runRecord({ id: RUN_B, status: 'ready' })]);
+    let stopping = false;
+    // SIGTERM lands while the first run's emails are going out.
+    d.notify.mockImplementation(async () => { stopping = true; });
+    const result = await createReportTick(opts, d).runTick(() => stopping);
+    expect(d.runs.markNotified.mock.calls).toEqual([[RUN]]);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(result.notified).toBe(1);
+    // And no step after it starts.
+    expect(d.runs.expireDue).not.toHaveBeenCalled();
+    expect(d.runs.pendingStats).not.toHaveBeenCalled();
+  });
+
+  it('the unsent and reconcile loops stop between runs too, and a stopped tick starts no step', async () => {
+    const d = deps();
+    let stopping = false;
+    d.runs.findAssembledUnsent.mockResolvedValue([runRecord({ id: RUN, dataset_key: 'k' }), runRecord({ id: RUN_B, dataset_key: 'k' })]);
+    d.dispatcher.dispatch.mockImplementation(async () => { stopping = true; });
+    await createReportTick(opts, d).runTick(() => stopping);
+    expect(d.runs.markSent.mock.calls.map((c) => c[0])).toEqual([RUN]);
+    expect(d.runs.findRenderingSentBefore).not.toHaveBeenCalled();
+
+    const d2 = deps();
+    stopping = false;
+    d2.runs.findRenderingSentBefore.mockResolvedValue([
+      runRecord({ id: RUN, status: 'rendering', render_attempt: 3 }),
+      runRecord({ id: RUN_B, status: 'rendering', render_attempt: 3 }),
+    ]);
+    d2.runs.markFailed.mockImplementation(async (id: string) => { stopping = true; return runRecord({ id, status: 'failed' }); });
+    await createReportTick(opts, d2).runTick(() => stopping);
+    expect(d2.runs.markFailed.mock.calls.map((c) => c[0])).toEqual([RUN]);
+    expect(d2.runs.findFinishedUnnotified).not.toHaveBeenCalled();
+
+    const d3 = deps();
+    await createReportTick(opts, d3).runTick(() => true);
+    expect(d3.subscriptions.claimDue).not.toHaveBeenCalled();
+    expect(d3.runs.pendingStats).not.toHaveBeenCalled();
+  });
+
+  it('stop() returns within its limit while a tick hangs, and stops the tick taking further runs', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' }), runRecord({ id: RUN_B, status: 'ready' })]);
+    let release!: () => void;
+    // The first email hangs (a slow mail transport); the tick started at boot is parked on it.
+    d.notify.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+    const tick = startReportTick({ ...opts, intervalMs: 3_600_000 }, d);
+    await vi.waitFor(() => expect(d.notify).toHaveBeenCalledTimes(1));
+    const started = Date.now();
+    const outcome = await Promise.race([
+      tick.stop(50).then(() => 'stopped'),
+      new Promise((r) => setTimeout(() => r('hung'), 2_000)),
+    ]);
+    expect(outcome).toBe('stopped');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // The email in hand finishes; the second run is never taken.
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(d.runs.markNotified.mock.calls).toEqual([[RUN]]);
+    expect(d.runs.pendingStats).not.toHaveBeenCalled();
+    expect(await tick.runTick()).toBeNull();
+  });
+
+  it('stop() waits for a tick that finishes inside its limit', async () => {
+    const d = deps();
+    let release!: () => void;
+    d.runs.expireDue.mockImplementationOnce(() => new Promise<number>((r) => { release = () => r(0); }));
+    const tick = startReportTick({ ...opts, intervalMs: 3_600_000 }, d);
+    await vi.waitFor(() => expect(d.runs.expireDue).toHaveBeenCalled());
+    let stopped = false;
+    const stopping = tick.stop(5_000).then(() => { stopped = true; });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
   });
 });

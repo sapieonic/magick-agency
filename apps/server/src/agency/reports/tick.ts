@@ -30,6 +30,13 @@
  *
  * Every item is isolated: one bad run or subscription is logged and skipped, never stopping the
  * tick, and each step runs even when the one before it failed.
+ *
+ * Stopping (`stop()`, on shutdown): no new tick starts, and the tick in flight starts no further
+ * step and no further item in the unsent, reconcile and notify loops; the item in hand finishes.
+ * Everything left is picked up after the restart (a run not yet marked notified is still
+ * unnotified; one marked is never emailed twice). The subscriptions step, once begun, runs its
+ * batch out: each subscription is a short transaction. `stop()` waits at most `stopWaitMs` for
+ * the tick in flight.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import {
@@ -54,6 +61,7 @@ import type { ReportRenderDispatcher } from './dispatch.js';
 import type { ReportSubscriptionSubject } from './subscription-subject.js';
 import { campaignZone } from '../insights/range.js';
 import { countTerminalRun, type RenderOutcomeResult } from './apply.js';
+import { withTimeout } from '../../utils/with-timeout.js';
 
 const log = createChildLogger({ component: 'agency-reports-tick' });
 
@@ -63,6 +71,8 @@ export const REPORT_TICK_BATCH = 50;
 export const REPORT_UNSENT_GRACE_MS = 5 * 60_000;
 /** The renderer version recorded on a run the tick found finished in S3 after a lost callback. */
 export const RECONCILED_RENDERER_VERSION = 'reconciled';
+/** How long `stop()` waits for the tick in flight, unless the caller names less (`pipeline.ts`). */
+export const REPORT_TICK_STOP_WAIT_MS = 20_000;
 
 export interface ReportTickOptions {
   intervalMs: number;
@@ -70,6 +80,8 @@ export interface ReportTickOptions {
   maxAttempts: number;
   batch?: number;
   unsentGraceMs?: number;
+  /** `stop()`'s default wait for the tick in flight ({@link REPORT_TICK_STOP_WAIT_MS}). */
+  stopWaitMs?: number;
 }
 
 export interface ReportTickDeps {
@@ -214,9 +226,10 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
     await deps.dispatcher.dispatch(run, attempt);
   };
 
-  const resendUnsent = async (now: Date, result: ReportTickResult): Promise<void> => {
+  const resendUnsent = async (now: Date, result: ReportTickResult, stopping: () => boolean): Promise<void> => {
     const runs = await deps.runs.findAssembledUnsent(new Date(now.getTime() - unsentGraceMs), batch);
     for (const run of runs) {
+      if (stopping()) return;
       try {
         await resend(run, result);
       } catch (err) {
@@ -267,9 +280,10 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
     }
   };
 
-  const reconcileStep = async (now: Date, result: ReportTickResult): Promise<void> => {
+  const reconcileStep = async (now: Date, result: ReportTickResult, stopping: () => boolean): Promise<void> => {
     const runs = await deps.runs.findRenderingSentBefore(new Date(now.getTime() - options.renderTimeoutMs), batch);
     for (const run of runs) {
+      if (stopping()) return;
       try {
         await reconcileRendering(run, result);
       } catch (err) {
@@ -279,9 +293,12 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
     }
   };
 
-  const notifyStep = async (result: ReportTickResult): Promise<void> => {
+  const notifyStep = async (result: ReportTickResult, stopping: () => boolean): Promise<void> => {
     const runs = await deps.runs.findFinishedUnnotified(batch);
     for (const run of runs) {
+      // Checked before the mark: a run not started stays unnotified for the next process, while
+      // one marked is emailed by this tick or never (at most once).
+      if (stopping()) return;
       try {
         // The flag is read before the mark, so a flag read that throws leaves the run to retry.
         const enabled = await deps.reportsEnabled({ tenantId: run.tenant_id, accountId: run.account_id });
@@ -309,14 +326,15 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
     );
   };
 
-  /** One tick. Never throws. */
-  const runTick = async (): Promise<ReportTickResult> => {
+  /** One tick. Never throws. Once `stopping()` answers true it starts no further step or item. */
+  const runTick = async (stopping: () => boolean = () => false): Promise<ReportTickResult> => {
     const now = deps.now();
     const result: ReportTickResult = {
       subscriptions: { created: 0, duplicate: 0, disabled: 0, flagOff: 0, errors: 0 },
       resent: 0, reconciled: 0, timedOut: 0, notified: 0, notifySkipped: 0, expired: 0, errors: 0,
     };
     const step = async (name: string, work: () => Promise<void>): Promise<void> => {
+      if (stopping()) return;
       try {
         await work();
       } catch (err) {
@@ -325,9 +343,9 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
       }
     };
     await step('subscriptions', () => subscriptionsStep(now, result));
-    await step('unsent', () => resendUnsent(now, result));
-    await step('reconcile', () => reconcileStep(now, result));
-    await step('notify', () => notifyStep(result));
+    await step('unsent', () => resendUnsent(now, result, stopping));
+    await step('reconcile', () => reconcileStep(now, result, stopping));
+    await step('notify', () => notifyStep(result, stopping));
     await step('expire', async () => { result.expired = await deps.runs.expireDue(now); });
     await step('gauges', () => gaugesStep(now));
     return result;
@@ -339,17 +357,22 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
 export interface ReportTick {
   /** One tick now. Null when one is already running. */
   runTick(): Promise<ReportTickResult | null>;
-  stop(): Promise<void>;
+  /**
+   * No new tick; the one in flight starts no further step or item (module header). Resolves when
+   * it has finished, or after `waitMs` (default `stopWaitMs`) with it still running, logged.
+   */
+  stop(waitMs?: number): Promise<void>;
 }
 
 /** Start the tick loop: one tick now, then every `intervalMs`. */
 export function startReportTick(options: ReportTickOptions, deps: ReportTickDeps): ReportTick {
   const tick = createReportTick(options, deps);
+  const stopWaitMs = options.stopWaitMs ?? REPORT_TICK_STOP_WAIT_MS;
   let stopping = false;
   let running: Promise<ReportTickResult> | null = null;
   const runTick = async (): Promise<ReportTickResult | null> => {
     if (running || stopping) return null;
-    running = tick.runTick();
+    running = tick.runTick(() => stopping);
     try {
       return await running;
     } finally {
@@ -362,10 +385,13 @@ export function startReportTick(options: ReportTickOptions, deps: ReportTickDeps
   log.info({ intervalMs: options.intervalMs }, 'Reports tick started');
   return {
     runTick,
-    async stop() {
+    async stop(waitMs = stopWaitMs) {
       stopping = true;
       clearInterval(timer);
-      if (running) await running.catch(() => undefined);
+      if (running) {
+        const waited = await withTimeout(running, waitMs, 'reports tick stop').then(() => true, () => false);
+        if (!waited) log.warn({ waitMs }, 'Reports tick stopped with a tick in flight; what it had not reached runs after the restart');
+      }
       log.info('Reports tick stopped');
     },
   };

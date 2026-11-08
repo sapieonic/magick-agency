@@ -4,8 +4,16 @@
  * Started by `startAgency` (`bootstrap/agency.ts`) in the main process only, whatever the
  * `agency_reports_enabled` flag says: the flag gates the routes, and the tick reads it per tenant
  * and account before a subscription's run and before an email (`tick.ts`); a run already queued
- * when the flag goes off still finishes, its files hidden behind the gated download. Stopped assembler first (its run in flight records or is
- * reclaimed later), then the tick, then the inline renderer's queue is drained.
+ * when the flag goes off still finishes, its files hidden behind the gated download.
+ *
+ * Stopped within ONE budget, `REPORT_PIPELINE_STOP_WAIT_MS` (20 s) from the call, never more: the
+ * assembler and the tick stop together (both stop starting work at once; the assembler's run in
+ * flight records or is reclaimed by the next boot, the tick's item in hand finishes and the rest
+ * waits for the restart), then the inline renderer's queue is waited for in what is left of the
+ * budget (a render cut off stays `rendering` and the tick's reconcile re-sends it). On shutdown it
+ * runs beside the completion-notice drain (≤ 30 s), so the 20 s overlaps it inside the container's
+ * 45 s grace: among the plan's concurrent drains with media workers (`index.ts`), beside the
+ * runtime's stop in one process (`bootstrap/agency.ts`). Idempotent: the same promise each call.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import type { ReportRenderCallback } from '@magick-agency/contracts/reports';
@@ -25,10 +33,14 @@ import { defaultAssemblerDeps, startReportAssembler, type ReportAssembler } from
 import { defaultTickRepos, startReportTick, type ReportTick } from './tick.js';
 import { probeSubscriptionSubject } from './subscription-subject.js';
 import { FLAGS, getFeatureFlagService } from '../../feature-flags/index.js';
+import { withTimeout } from '../../utils/with-timeout.js';
 
 const log = createChildLogger({ component: 'agency-reports' });
 
 type ReportsConfig = AppConfig['agency']['reports'];
+
+/** The whole of `ReportPipeline.stop()`'s waiting: the assembler, the tick and the inline queue together. */
+export const REPORT_PIPELINE_STOP_WAIT_MS = 20_000;
 
 /** `applyRenderOutcome` on the real repository, bound to the config's retention. */
 type ReportApply = (runId: string, attempt: number, callback: ReportRenderCallback) => Promise<RenderOutcomeResult>;
@@ -80,14 +92,16 @@ export interface ReportPipeline {
   dispatcher: ReportRenderDispatcher;
   assembler: ReportAssembler;
   tick: ReportTick;
+  /** Stop everything within `stopWaitMs` (module header). Idempotent. */
   stop(): Promise<void>;
 }
 
 export function startReportPipeline(
   config: Pick<AppConfig, 's3'> & { agency: { reports: ReportsConfig } },
-  opts: { loader?: ReportRendererLoader; nodeEnv?: string } = {},
+  opts: { loader?: ReportRendererLoader; nodeEnv?: string; stopWaitMs?: number } = {},
 ): ReportPipeline {
   const reports = config.agency.reports;
+  const stopWaitMs = opts.stopWaitMs ?? REPORT_PIPELINE_STOP_WAIT_MS;
   if (reports.renderer === 'inline' && (opts.nodeEnv ?? process.env['NODE_ENV']) === 'production') {
     log.warn(
       'AGENCY_REPORTS_RENDERER=inline in production: reports render in this process, which needs the renderer '
@@ -102,11 +116,11 @@ export function startReportPipeline(
   const dispatcher = createReportDispatcher(config, { ...opts, apply });
   if (reports.renderer === 'inline') void checkInlineRenderer(opts.loader);
   const assembler = startReportAssembler(
-    { intervalMs: reports.assemblerIntervalMs, maxDetailRows: reports.maxDetailRows, maxAttempts: reports.maxAttempts },
+    { intervalMs: reports.assemblerIntervalMs, maxDetailRows: reports.maxDetailRows, maxAttempts: reports.maxAttempts, stopWaitMs },
     defaultAssemblerDeps(dispatcher),
   );
   const tick = startReportTick(
-    { intervalMs: reports.tickIntervalMs, renderTimeoutMs: reports.renderTimeoutMs, maxAttempts: reports.maxAttempts },
+    { intervalMs: reports.tickIntervalMs, renderTimeoutMs: reports.renderTimeoutMs, maxAttempts: reports.maxAttempts, stopWaitMs },
     {
       ...defaultTickRepos,
       dispatcher,
@@ -121,14 +135,22 @@ export function startReportPipeline(
       now: () => new Date(),
     },
   );
+  const stopAll = async (): Promise<void> => {
+    const deadline = Date.now() + stopWaitMs;
+    const left = (): number => Math.max(0, deadline - Date.now());
+    // Together, each bounded by the budget: the assembler by its `stopWaitMs`, the tick by `left()`.
+    await Promise.all([assembler.stop(), tick.stop(left())]);
+    // Last, so neither loop can queue a render after it: the inline queue (a no-op under `sqs`).
+    await withTimeout(dispatcher.idle(), left(), 'inline report renders').catch((err: unknown) => {
+      log.warn({ err, stopWaitMs }, 'Report pipeline stopped with inline renders unfinished; the tick re-sends them after the restart');
+    });
+    log.info('Report pipeline stopped');
+  };
+  let stopped: Promise<void> | null = null;
   return {
     dispatcher,
     assembler,
     tick,
-    async stop() {
-      await assembler.stop();
-      await tick.stop();
-      await dispatcher.idle();
-    },
+    stop: () => (stopped ??= stopAll()),
   };
 }
