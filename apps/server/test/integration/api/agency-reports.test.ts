@@ -173,6 +173,10 @@ beforeAll(async () => {
   loaded = await startLoadApp({
     configure: (c) => ({ ...c, agency: { ...c.agency, reports: { ...c.agency.reports, callbackSecret: SECRET } } }),
   });
+  // The assembler and the tick take every queued run and due subscription in the database, and the
+  // integration files share one: start from none, whatever an earlier file left.
+  await getTestPool().query('DELETE FROM report_runs');
+  await getTestPool().query('DELETE FROM report_subscriptions');
   floors = await seedFloor({ tenants: 2, agentsPerTenant: 2, supervisorsPerTenant: 1 });
   floor = floors[0]!;
   for (const f of floors) {

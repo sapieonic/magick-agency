@@ -354,6 +354,10 @@ beforeAll(async () => {
       },
     }),
   });
+  // The assembler and the tick take every queued run and due subscription in the database, and the
+  // integration files share one: start from none, whatever an earlier file left.
+  await getTestPool().query('DELETE FROM report_runs');
+  await getTestPool().query('DELETE FROM report_subscriptions');
   await seed();
   // The pipeline exactly as boot starts it from config: inline renderer, real builders, real email.
   pipeline = startReportPipeline(loaded.ctx.config);
