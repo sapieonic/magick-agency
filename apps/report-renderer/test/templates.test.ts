@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { count, dayLabel, duration, pct } from '../src/format';
 import { renderReportHtml } from '../src/pdf/render-pdf';
 import { accountFixture } from './fixtures/account';
-import { agentFixture } from './fixtures/agent';
+import { agentClockChangeFixture, agentFixture } from './fixtures/agent';
 import { campaignFixture } from './fixtures/campaign';
 
 const NO_FONTS = { fonts: { css: '', embedded: false } };
@@ -67,6 +67,46 @@ describe('agent review', () => {
     const last = text(block(html, 'data-page', 'definitions'));
     for (const def of d.definitions) expect(last).toContain(def.label);
     expect(last).toContain(d.notes[0]!);
+  });
+});
+
+describe('agent review, the representative day on a clock change', () => {
+  /** The timeline strip's state rectangles (x, width) in order, and its hour tick labels. */
+  function strip(html: string) {
+    const svg = block(html, 'data-block', 'timeline');
+    const rects = [...svg.matchAll(/<rect x="([\d.]+)" y="4" width="([\d.]+)" height="26" fill="(?!#f6f7f9)[^"]+"><title>/g)].map((m) => ({
+      x: Number(m[1]),
+      w: Number(m[2]),
+    }));
+    const ticks = [...svg.matchAll(/font-family="[^"]*Mono[^"]*"[^>]*>([^<]+)<\/text>/g)].map((m) => m[1]);
+    return { rects, ticks, text: text(svg) };
+  }
+
+  it('draws a 25-hour day by elapsed time: segments in order, an hour of the scale twice', () => {
+    const d = agentClockChangeFixture('back');
+    const { rects, ticks, text: t } = strip(renderReportHtml(d, NO_FONTS));
+    expect(rects.length).toBe(d.timeline!.segments.length);
+    // Every segment starts where the one before it ended: none drawn over another.
+    for (let i = 1; i < rects.length; i++) expect(rects[i]!.x).toBeCloseTo(rects[i - 1]!.x + rects[i - 1]!.w, 1);
+    // 01 twice (BST, then GMT), then on to 23: the scale runs past 24 hours in.
+    expect(ticks.filter((h) => h === '01')).toHaveLength(2);
+    expect(ticks.at(-1)).toBe('23');
+    expect(ticks.length).toBe(24);
+    expect(t).toContain('last out 22:30');
+    expect(t).toContain('A 25-hour day: the clocks went back');
+  });
+
+  it('draws a 23-hour day with the skipped hour missing from the scale', () => {
+    const d = agentClockChangeFixture('forward');
+    const { rects, ticks, text: t } = strip(renderReportHtml(d, NO_FONTS));
+    for (let i = 1; i < rects.length; i++) expect(rects[i]!.x).toBeCloseTo(rects[i - 1]!.x + rects[i - 1]!.w, 1);
+    expect(ticks).not.toContain('01');
+    expect(ticks.slice(0, 2)).toEqual(['00', '02']);
+    expect(t).toContain('A 23-hour day: the clocks went forward');
+  });
+
+  it('says nothing about clocks on an ordinary day', () => {
+    expect(renderReportHtml(agentFixture().dataset, NO_FONTS)).not.toContain('data-note="clock-change"');
   });
 });
 

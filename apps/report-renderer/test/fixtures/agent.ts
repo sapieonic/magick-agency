@@ -689,3 +689,44 @@ function agentDefinitions(self: boolean) {
   }
   return defs;
 }
+
+/**
+ * The agent review with its representative day moved to a clock change in Europe/London:
+ * `back` is Sunday 25 Oct 2026 (BST to GMT at 02:00, a 25-hour day: 01:00–02:00 happens twice),
+ * `forward` is Sunday 29 Mar 2026 (GMT to BST at 01:00, a 23-hour day: no 01:00–02:00). The
+ * shift crosses the change; segments run from local midnight to the next, offline between.
+ */
+export function agentClockChangeFixture(change: 'back' | 'forward'): AgentReviewDataset {
+  const d = structuredClone(agentFixture().dataset);
+  const back = change === 'back';
+  const date = back ? '2026-10-25' : '2026-03-29';
+  // Local midnight to the next local midnight, in UTC.
+  const [dayStart, dayEnd] = back ? ['2026-10-24T23:00:00Z', '2026-10-26T00:00:00Z'] : ['2026-03-29T00:00:00Z', '2026-03-29T23:00:00Z'];
+  const work: Array<[string, string, ReportTimelineState]> = back
+    ? [
+        ['2026-10-25T00:10:00Z', '2026-10-25T00:40:00Z', 'available'], // 01:10–01:40 BST
+        ['2026-10-25T00:40:00Z', '2026-10-25T01:20:00Z', 'on_call'], // 01:40 BST – 01:20 GMT, across the change
+        ['2026-10-25T01:20:00Z', '2026-10-25T01:30:00Z', 'wrapup'],
+        ['2026-10-25T01:30:00Z', '2026-10-25T03:00:00Z', 'available'],
+        ['2026-10-25T03:00:00Z', '2026-10-25T03:30:00Z', 'break'],
+        ['2026-10-25T03:30:00Z', '2026-10-25T05:00:00Z', 'on_call'],
+        ['2026-10-25T19:00:00Z', '2026-10-25T22:30:00Z', 'on_call'], // 19:00–22:30 GMT: 20–23.5 hours in
+      ]
+    : [
+        ['2026-03-29T00:20:00Z', '2026-03-29T00:50:00Z', 'available'], // 00:20–00:50 GMT
+        ['2026-03-29T00:50:00Z', '2026-03-29T01:40:00Z', 'on_call'], // 00:50 GMT – 02:40 BST, across the change
+        ['2026-03-29T01:40:00Z', '2026-03-29T04:00:00Z', 'available'],
+        ['2026-03-29T19:00:00Z', '2026-03-29T22:00:00Z', 'on_call'], // 20:00–23:00 BST: 19–22 hours in
+      ];
+  const segments: AgentReviewTimelineSegment[] = [];
+  let cursor = dayStart;
+  for (const [start, end, state] of work) {
+    if (start > cursor) segments.push({ start: cursor, end: start, state: 'offline', break_reason: null });
+    segments.push({ start, end, state, break_reason: state === 'break' ? 'Lunch' : null });
+    cursor = end;
+  }
+  if (cursor < dayEnd) segments.push({ start: cursor, end: dayEnd, state: 'offline', break_reason: null });
+  d.range.timezone = 'Europe/London';
+  d.timeline = { date, segments };
+  return d;
+}

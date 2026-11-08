@@ -12,6 +12,7 @@ import {
   count,
   dayLabel,
   dateTime,
+  dayHours,
   duration,
   hoursIntoDay,
   pct,
@@ -22,6 +23,7 @@ import {
   servedRate,
   share,
   shortDate,
+  wallClockInto,
   type Rate,
 } from '../../format';
 import { bandDomain, FloorBands, SplitBar, StackedColumns, TimelineStrip, type BandRow } from '../charts';
@@ -271,8 +273,10 @@ function TimelineSection({ d, zone }: { d: AgentReviewDataset; zone: string }) {
   const on = marks.filter((m) => m.state !== 'offline');
   const first = on[0];
   const last = on.at(-1);
+  // Placed by time elapsed since local midnight, so a clock-change day is 23 or 25 hours long.
+  const length = dayHours(tl.date, zone);
   const startHour = first ? Math.max(0, Math.floor(first.from) - 0.5) : 0;
-  const endHour = last ? Math.min(24, Math.ceil(last.to) + 0.5) : 24;
+  const endHour = last ? Math.min(length, Math.ceil(last.to) + 0.5) : length;
   const row = d.daily.find((r) => r.date === tl.date);
   return (
     <Section title={`A representative day: ${dayLabel(tl.date)}`} aside={row ? `the most time on station, ${duration(row.station_s)}` : undefined} id="timeline">
@@ -285,7 +289,15 @@ function TimelineSection({ d, zone }: { d: AgentReviewDataset; zone: string }) {
           ...(first ? [{ hour: first.from, text: `↑ first in ${clockTime(first.start, zone)}`, anchor: 'start' as const }] : []),
           ...(last ? [{ hour: last.to, text: `last out ${clockTime(last.end, zone)} ↑`, anchor: 'end' as const }] : []),
         ]}
+        hourLabel={(h) => wallClockInto(h, tl.date, zone)}
       />
+      {length !== 24 ? (
+        <p className="small muted" data-note="clock-change">
+          {length > 24
+            ? `A ${count(length)}-hour day: the clocks went back, so an hour of the scale appears twice.`
+            : `A ${count(length)}-hour day: the clocks went forward, so an hour of the scale is missing.`}
+        </p>
+      ) : null}
       <Legend items={(['on_call', 'wrapup', 'available', 'break', 'offline'] as const).map((k) => ({ colour: STATE_COLOURS[k], label: STATE_LABELS[k] }))} />
     </Section>
   );

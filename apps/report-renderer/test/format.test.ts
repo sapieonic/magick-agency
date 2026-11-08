@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bucketDate, clockTime, count, dateTime, dayLabel, duration, hoursIntoDay, pct, rangeLabel, rate, rateText, servedRate } from '../src/format';
+import { bucketDate, clockTime, count, dateTime, dayHours, dayLabel, duration, hoursIntoDay, localDayStart, wallClockInto, pct, rangeLabel, rate, rateText, servedRate } from '../src/format';
 import { excelValue, localExcelDate } from '../src/xlsx/sheet';
 
 describe('format', () => {
@@ -52,5 +52,22 @@ describe('workbook cells', () => {
     // 20:00 UTC on 10 Oct is already 11 Oct in Kolkata.
     expect(bucketDate('2026-10-10T20:00:00.000Z', 'Asia/Kolkata')).toBe('2026-10-11');
     expect(bucketDate('2026-10-10T20:00:00.000Z', 'Europe/London')).toBe('2026-10-10');
+  });
+
+  it('measures a day by elapsed time, 23 or 25 hours on a clock change', () => {
+    expect(dayHours('2026-10-24', 'Europe/London')).toBe(24);
+    expect(dayHours('2026-10-25', 'Europe/London')).toBe(25);
+    expect(dayHours('2026-03-29', 'Europe/London')).toBe(23);
+    expect(dayHours('2026-11-07', 'Asia/Kolkata')).toBe(24);
+    expect(new Date(localDayStart('2026-10-25', 'Europe/London')).toISOString()).toBe('2026-10-24T23:00:00.000Z');
+    // 01:30 GMT, the second 01:30 of the day: two and a half hours in, not one and a half.
+    expect(hoursIntoDay('2026-10-25T01:30:00Z', '2026-10-25', 'Europe/London')).toBeCloseTo(2.5, 6);
+    expect(hoursIntoDay('2026-10-25T00:30:00Z', '2026-10-25', 'Europe/London')).toBeCloseTo(1.5, 6);
+    expect(wallClockInto(1, '2026-10-25', 'Europe/London')).toBe('01');
+    expect(wallClockInto(2, '2026-10-25', 'Europe/London')).toBe('01');
+    expect(wallClockInto(1, '2026-03-29', 'Europe/London')).toBe('02');
+    // Midnight that does not exist (Santiago's clocks skip from 00:00 to 01:00): the day starts after the gap.
+    expect(new Date(localDayStart('2026-09-06', 'America/Santiago')).toISOString()).toBe('2026-09-06T04:00:00.000Z');
+    expect(dayHours('2026-09-06', 'America/Santiago')).toBe(23);
   });
 });

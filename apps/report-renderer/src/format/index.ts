@@ -185,12 +185,50 @@ export function zonedParts(
   return { year: get('year'), month: get('month'), day: get('day'), hour: get('hour'), minute: get('minute'), second: get('second') };
 }
 
-/** Hours since local midnight of `date` in the zone, for placing an instant on a day's axis. */
+/** The zone's offset from UTC at an instant, in milliseconds. */
+function offsetAt(ms: number, zone: string): number {
+  const p = zonedParts(new Date(ms), zone);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(ms / 1000) * 1000;
+}
+
+/**
+ * The instant (epoch ms) the local day `date` starts in the zone: its midnight, or, where the
+ * clocks skip midnight, the first instant after the gap.
+ */
+export function localDayStart(date: string, zone: string): number {
+  const wall = Date.parse(`${date}T00:00:00Z`);
+  let t = wall - offsetAt(wall, zone);
+  t = wall - offsetAt(t, zone);
+  // Midnight fell in a gap: the wall clock reads the previous evening, so step past the gap.
+  const p = zonedParts(new Date(t), zone);
+  const shown = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return shown < wall ? t + (wall - shown) : t;
+}
+
+/** The day after a `YYYY-MM-DD`. */
+function nextDate(date: string): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+}
+
+/** The length of the local day `date` in the zone, in hours: 24, or 23 or 25 on a clock change. */
+export function dayHours(date: string, zone: string): number {
+  return (localDayStart(nextDate(date), zone) - localDayStart(date, zone)) / 3_600_000;
+}
+
+/**
+ * Hours ELAPSED since the start of the local day `date` in the zone, for placing an instant on a
+ * day's axis. Elapsed, not read off the wall clock: on a day the clocks go back the repeated
+ * hour is drawn after the first, and the day runs to 25.
+ */
 export function hoursIntoDay(iso: string, date: string, zone: string): number {
-  const p = zonedParts(iso, zone);
-  const local = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-  const midnight = Date.parse(`${date}T00:00:00Z`);
-  return (local - midnight) / 3_600_000;
+  return (Date.parse(iso) - localDayStart(date, zone)) / 3_600_000;
+}
+
+/** The wall clock `hours` elapsed into the local day `date`: `01`, or `01:30` off the hour. */
+export function wallClockInto(hours: number, date: string, zone: string): string {
+  const p = zonedParts(new Date(localDayStart(date, zone) + hours * 3_600_000), zone);
+  const hh = String(p.hour).padStart(2, '0');
+  return p.minute === 0 ? hh : `${hh}:${String(p.minute).padStart(2, '0')}`;
 }
 
 /**
