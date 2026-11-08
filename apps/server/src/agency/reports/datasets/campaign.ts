@@ -97,11 +97,12 @@ async function summaryLiveStats(campaign: AgencyCampaignRecord): Promise<Partial
   }
 }
 
-export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ run, now }) => {
+export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ run, now, signal }) => {
   const [tenancy, campaign] = await Promise.all([
     runTenancy(run),
     runCampaign(run.subject_id, run.tenant_id, run.account_id),
   ]);
+  signal?.throwIfAborted();
   // The run's window was cut in the campaign's zone when it was requested (RP3); the Insights day
   // buckets are cut in the zone the campaign has NOW. A zone changed in between would serve
   // `range` in one zone and `trends` in the other (and break `campaign.timezone ===
@@ -121,9 +122,11 @@ export const buildCampaignReport: ReportDatasetBuilder<'campaign'> = async ({ ru
     ReturnType<typeof computeSummary>, ReturnType<typeof computeActivity>, ReturnType<typeof computeTrends>, ReturnType<typeof computeHealth>,
   ]);
 
+  signal?.throwIfAborted();
   const ids = agentIdsIn(summary, activity, trends, health);
   // Also the detail sheets' first names: they look up only the agents these do not cover.
   const names = await agentNamesOrNone(ids, run.tenant_id, 'report campaign');
+  signal?.throwIfAborted();
   const agentNames: Record<string, string | null> = {};
   for (const id of ids.sort()) agentNames[id] = names.get(id) ?? null;
 
@@ -203,9 +206,9 @@ export function attemptsSource(
     sheet: 'attempts',
     label: 'Call attempts',
     columns: attemptColumns(withCampaign),
-    async *rows() {
+    async *rows(signal) {
       const { text, values } = campaignAttemptsStatement(q);
-      const named = withAgentNames(reportCursorRows<ReportAttemptRow>(text, values), (r) => r.agent_user_id, {
+      const named = withAgentNames(reportCursorRows<ReportAttemptRow>(text, values, { signal }), (r) => r.agent_user_id, {
         tenantId: q.tenantId, surface: 'report attempts', ...(knownNames ? { known: knownNames } : {}),
       });
       for await (const [r, agentName] of named) {
@@ -239,9 +242,9 @@ function campaignSessionsSource(
     sheet: 'sessions',
     label: 'Sessions',
     columns: [col('agent', 'Agent', 'text'), ...sessionColumns()],
-    async *rows() {
+    async *rows(signal) {
       const { text, values } = campaignSessionsStatement({ campaignId: campaign.id, tenantId: campaign.tenant_id, from, to });
-      const named = withAgentNames(reportCursorRows<ReportSessionDetailRow>(text, values), (r) => r.agent_user_id, {
+      const named = withAgentNames(reportCursorRows<ReportSessionDetailRow>(text, values, { signal }), (r) => r.agent_user_id, {
         tenantId: campaign.tenant_id, surface: 'report sessions', known: knownNames,
       });
       for await (const [r, agentName] of named) yield sessionCells(r, true, agentName ?? r.agent_user_id);

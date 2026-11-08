@@ -22,6 +22,13 @@ export interface ReportBuildContext {
   run: ReportRunRecord;
   /** The `generated_at` of the dataset and the "as of" of every as-of-now read. */
   now: Date;
+  /**
+   * The assembler's deadline (`REPORT_BUILD_TIMEOUT_MS`, the whole assembly). A builder checks it
+   * between its stages of reads (`signal?.throwIfAborted()`), so past the deadline it starts no
+   * further statement; the statements already sent on the shared pool finish on their own (the
+   * seam hands a builder no client to cancel them on).
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -29,13 +36,14 @@ export interface ReportBuildContext {
  * `columns[i].type` says (ISO strings for `datetime`, `YYYY-MM-DD` for `date`, seconds for
  * `duration_s`, numbers for `percent` in 0–100). The assembler stops iterating at the cap and
  * calls `return()` on the iterator, so a source backed by a cursor or keyset pages must release
- * it in a `finally`.
+ * it in a `finally`. `signal` is the assembler's deadline: a cursor-backed source passes it to
+ * `reportCursorRows`, which cancels a statement in flight when it fires.
  */
 export interface ReportDetailSource {
   sheet: ReportDetailSheet;
   label: string;
   columns: ReportDetailColumn[];
-  rows(): AsyncIterable<unknown[]>;
+  rows(signal?: AbortSignal): AsyncIterable<unknown[]>;
 }
 
 /** A builder's answer: the dataset minus `detail_files`, and its detail sources in sheet order. */

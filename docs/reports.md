@@ -402,13 +402,28 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   (`REPORT_ASSEMBLER_STOP_WAIT_MS`; the pipeline hands it its own budget) for the build in flight, inside the container's 45 s grace; one claimed more than `AGENCY_REPORTS_MAX_ATTEMPTS`
   times fails `assembly_failed`. A failed run's stored message is generic copy; the error is logged
   with the run id only. Detail files are `application/gzip`.
+- **Build deadline.** One deadline, `REPORT_BUILD_TIMEOUT_MS` (10 minutes, a constant, not a
+  setting), covers the whole build: the builder, every detail file and `dataset.json` together,
+  because that whole span holds the single assembler and every tenant's queued run behind it
+  (separate deadlines would allow their sum). Past it the run fails `assembly_failed`, fenced on
+  the claim. The deadline is an `AbortSignal` that stops the work, not only the wait for it. The
+  detail loop checks it before every row and while it waits on the upload, then calls the
+  iterator's `return()` before anything else, so the cursor's REPEATABLE READ transaction ends at
+  once rather than holding a snapshot (and vacuum) for as long as a slow S3 takes. The cursor
+  (`reportCursorRows`, given the signal through `rows(signal)`) cancels a `FETCH` in flight with
+  `pg_cancel_backend`. `uploadStream` and `uploadJson` cancel their S3 requests in flight;
+  `uploadStream` destroys the body (a truncated file is never completed) and rejects only after
+  lib-storage has sent `AbortMultipartUpload`, which gets its own 10 s bound
+  (`UPLOAD_STREAM_CLEANUP_TIMEOUT_MS`). The bucket's lifecycle rule (incomplete multipart uploads
+  aborted after 7 days) is the backstop for an abort that does not get through, not the plan.
 - **Read timeouts (for the dataset builders).** The builder seam hands a builder no database
   client, and the builders read through the shared pool (the screens' own reads), so the assembler
-  cannot run their statements under `SET LOCAL statement_timeout`. It bounds each builder call by
-  wall clock instead (`REPORT_BUILD_TIMEOUT_MS`, 10 minutes): past it the run fails
-  `assembly_failed` while the statements already sent finish on their own. Builders should keep
-  each read bounded by its window and paging (detail sources by keyset pages, released in
-  `finally` when the assembler calls `return()` at the row cap).
+  cannot cancel their statements or run them under `SET LOCAL statement_timeout`. A builder gets
+  the deadline as `ctx.signal` and checks it between its stages of reads, so past the deadline it
+  starts no further statement; the statements already sent finish on their own, and the assembler
+  does not wait for them. Builders should keep each read bounded by its window and paging (detail
+  sources stream through the cursor above, released in `finally` when the assembler calls
+  `return()` at the row cap or the deadline).
 - **Tick** (`tick.ts`): each step handles at most 50 items a tick; a run assembled but unsent for
   5 minutes is sent; a run found rendered in S3 after a lost callback records `renderer_version =
   'reconciled'`; a HEAD that fails for any reason other than not-found is logged and counts as a

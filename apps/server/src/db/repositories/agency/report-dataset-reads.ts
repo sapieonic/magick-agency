@@ -117,21 +117,59 @@ export const SENTIMENT_LABELS = ['positive', 'neutral', 'negative', 'mixed'] as 
 
 const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
+/** What {@link reportCursorRows} takes beyond the statement. */
+export interface ReportCursorOptions {
+  /** Rows per `FETCH` (default {@link REPORT_CURSOR_BATCH}). */
+  batch?: number;
+  /**
+   * The report assembler's deadline. Once aborted no further `FETCH` is sent, a statement in
+   * flight is cancelled (`pg_cancel_backend` on the cursor's backend), and the generator throws
+   * the abort's reason, so the transaction ends and the client goes back however long the
+   * statement would have run.
+   */
+  signal?: AbortSignal;
+}
+
 /**
  * Rows of `text` through a server-side cursor (`DECLARE … NO SCROLL CURSOR` in a read-only
- * REPEATABLE READ transaction, so every batch reads one snapshot), {@link REPORT_CURSOR_BATCH}
- * at a time, on a client of its own. Nothing is acquired until the first row is asked for. The
- * client is released in `finally`, so a consumer that stops early (the assembler's row cap calls
- * `return()`) or throws gives it back; a client that failed is destroyed rather than reused.
+ * REPEATABLE READ transaction, so every batch reads one snapshot), `batch` at a time, on a client
+ * of its own. Nothing is acquired until the first row is asked for. The client is released in
+ * `finally`, so a consumer that stops early (the assembler's row cap calls `return()`) or throws
+ * gives it back; a client that failed is destroyed rather than reused. `signal`: see
+ * {@link ReportCursorOptions}.
  */
-export async function* reportCursorRows<T>(text: string, values: unknown[], batch = REPORT_CURSOR_BATCH): AsyncGenerator<T> {
+export async function* reportCursorRows<T>(text: string, values: unknown[], opts: ReportCursorOptions = {}): AsyncGenerator<T> {
+  const { batch = REPORT_CURSOR_BATCH, signal } = opts;
+  signal?.throwIfAborted();
   const client = await getPool().connect();
   let broken: Error | undefined;
+  // A cancel is sent only while one of this cursor's statements runs: the backend serves this
+  // client alone, and an idle one (the consumer holding a row) has nothing to cancel.
+  let running = false;
+  const pid = (client as unknown as { processID?: number | null }).processID;
+  const cancel = () => {
+    if (!running || pid == null) return;
+    getPool().query('SELECT pg_cancel_backend($1::int)', [pid]).catch(() => undefined);
+  };
+  const query = async (sql: string, params?: unknown[]) => {
+    signal?.throwIfAborted();
+    running = true;
+    try {
+      return await client.query(sql, params);
+    } catch (err) {
+      // A statement cancelled for the deadline reports the deadline, not `57014`.
+      signal?.throwIfAborted();
+      throw err;
+    } finally {
+      running = false;
+    }
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
-    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    await client.query(`DECLARE report_rows NO SCROLL CURSOR FOR ${text}`, values);
+    await query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await query(`DECLARE report_rows NO SCROLL CURSOR FOR ${text}`, values);
     for (;;) {
-      const { rows } = await client.query(`FETCH ${batch} FROM report_rows`);
+      const { rows } = await query(`FETCH ${batch} FROM report_rows`);
       for (const row of rows) yield row as T;
       if (rows.length < batch) break;
     }
@@ -139,6 +177,7 @@ export async function* reportCursorRows<T>(text: string, values: unknown[], batc
     broken = err instanceof Error ? err : new Error(String(err));
     throw err;
   } finally {
+    signal?.removeEventListener('abort', cancel);
     try {
       await client.query('ROLLBACK');
     } catch (err) {

@@ -14,13 +14,14 @@
  *  1. `claimNextQueued(now − staleAfterMs)`: the oldest queued run, or an `assembling` run whose
  *     assembler died before recording a dataset. A run claimed more than `maxAttempts` times (it
  *     crashed the process each time) fails `assembly_failed` instead of being tried forever.
- *  2. The builder (`REPORT_DATASET_BUILDERS[kind]`), bounded by `buildTimeoutMs` of wall clock.
+ *  2. The builder (`REPORT_DATASET_BUILDERS[kind]`).
  *  3. Each detail source streamed as gzipped NDJSON (one JSON array per line) to
  *     `report-datasets/…/details-<sheet>.ndjson.gz` through `uploadStream`, stopping at
  *     `maxDetailRows` (RP12): the iterator's `return()` is called, the file is `truncated` and so
  *     is the run.
  *  4. `dataset.json` (the builder's dataset plus `detail_files`) through `uploadJson`.
  *  5. `markAssembled`, then `markSent` (both fenced on the claim), then the dispatch.
+ * Steps 2–4 share ONE deadline, `buildTimeoutMs` of wall clock ("Deadline" below).
  *
  * Errors: `ReportSubjectUnavailableError` fails the run `subject_unavailable`, and disables the
  * subscription that produced it only when the tick's own probe (`probeSubscriptionSubject`) agrees
@@ -37,12 +38,25 @@
  * reclaim only claims older than `staleAfterMs`. The claim fence keeps a mistaken reclaim (a
  * clock skew) harmless.
  *
- * ── Read timeouts ───────────────────────────────────────────────────────────
- * The builders read through the shared pool (the screens' own reads, RP1), and the builder seam
- * hands them no client, so the assembler cannot put their statements under a
- * `SET LOCAL statement_timeout`. It bounds the whole build by wall clock instead
- * (`buildTimeoutMs`): past it the run fails `assembly_failed` (its statements are not cancelled;
- * they finish on their own). docs/reports.md "Pipeline" records this for the dataset builders.
+ * ── Deadline ────────────────────────────────────────────────────────────────
+ * One deadline, `buildTimeoutMs` (`REPORT_BUILD_TIMEOUT_MS`, 10 minutes) from the start of the
+ * build, covers the builder, every detail file and `dataset.json` together: what holds the single
+ * assembler (and every tenant's queued run behind it) is the whole of steps 2–4, and a split
+ * deadline would let a slow builder plus slow uploads run for the sum. Past it the run fails
+ * `assembly_failed`, fenced on the claim like every failure. The deadline is an `AbortSignal`
+ * that STOPS the work rather than only the wait for it:
+ *  - the detail loop checks it before every row and while it waits on the upload; the iterator's
+ *    `return()` then runs before anything else, so the cursor's REPEATABLE READ transaction ends
+ *    and its client goes back at once (a snapshot held open for a slow upload holds back vacuum);
+ *  - the cursor (`reportCursorRows`) gets the signal through `rows(signal)` and cancels a `FETCH`
+ *    in flight (`pg_cancel_backend`), so a slow statement does not hold it either;
+ *  - `uploadStream` and `uploadJson` get it too: the S3 requests in flight are cancelled and the
+ *    multipart upload is aborted (`AbortMultipartUpload`) before the file's promise settles;
+ *  - the builder gets it as `ctx.signal` and checks it between its stages of reads. Its reads go
+ *    through the shared pool (the screens' own code, RP1) and the seam hands it no client, so a
+ *    statement already sent cannot be cancelled or put under `SET LOCAL statement_timeout`; it
+ *    finishes on its own, and no further statement starts. The assembler does not wait for it.
+ * docs/reports.md "Pipeline" records this.
  */
 import { createGzip } from 'node:zlib';
 import { once } from 'node:events';
@@ -59,7 +73,6 @@ import {
   type ReportSubscriptionRepository,
 } from '../../db/repositories/agency.repository.js';
 import { uploadJson, uploadStream } from '../../storage/s3.js';
-import { withTimeout } from '../../utils/with-timeout.js';
 import {
   REPORT_DATASET_BUILDERS,
   ReportSubjectUnavailableError,
@@ -76,7 +89,7 @@ const log = createChildLogger({ component: 'agency-reports-assembler' });
 
 /** A claimed `assembling` run with no dataset this long is reclaimed (its assembler died). */
 export const REPORT_ASSEMBLY_STALE_MS = 30 * 60_000;
-/** The wall-clock bound on one builder call. */
+/** The wall-clock deadline on one run's build: the builder, its detail files and `dataset.json`. */
 export const REPORT_BUILD_TIMEOUT_MS = 10 * 60_000;
 /** The detail files' content type: gzipped NDJSON. */
 export const REPORT_DETAIL_CONTENT_TYPE = 'application/gzip';
@@ -93,9 +106,10 @@ export interface ReportAssemblerOptions {
   stopWaitMs?: number;
 }
 
+/** S3 for the assembler. `signal` is the run's deadline: an upload must stop when it fires. */
 export interface ReportAssemblerStorage {
-  uploadStream(key: string, body: Readable, contentType: string): Promise<number>;
-  uploadJson(key: string, value: unknown): Promise<number>;
+  uploadStream(key: string, body: Readable, contentType: string, signal?: AbortSignal): Promise<number>;
+  uploadJson(key: string, value: unknown, signal?: AbortSignal): Promise<number>;
 }
 
 export interface ReportAssemblerDeps {
@@ -138,51 +152,71 @@ export function defaultAssemblerDeps(dispatcher: ReportRenderDispatcher): Report
   };
 }
 
+/** Settles with `promise`, or rejects with `signal`'s reason once it fires, whichever is first. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  return Promise.race([promise, aborted]).finally(() => signal.removeEventListener('abort', onAbort!));
+}
+
 /**
  * Stream one detail source into a gzipped NDJSON object, at most `maxRows` rows. Reads one row
  * past the cap to learn whether the source had more (then `truncated`); calls the iterator's
  * `return()` whenever it stops before the source ended, so a cursor-backed source releases it.
+ * `signal` (the run's deadline) is checked before every row and ends a wait on the upload; it is
+ * handed to the source and the upload, which stop their own work. On any failure the iterator is
+ * released FIRST, then the upload is failed and awaited, so a stalled S3 never holds the cursor.
  */
 export async function streamDetailFile(
   source: ReportDetailSource,
   key: string,
   maxRows: number,
   storage: Pick<ReportAssemblerStorage, 'uploadStream'>,
+  signal?: AbortSignal,
 ): Promise<{ rows: number; truncated: boolean }> {
+  signal?.throwIfAborted();
   const gzip = createGzip();
-  const upload = storage.uploadStream(key, gzip, REPORT_DETAIL_CONTENT_TYPE);
+  const upload = storage.uploadStream(key, gzip, REPORT_DETAIL_CONTENT_TYPE, signal);
   // An upload that settles early (S3 refused) must end a wait on `drain`, which would never come.
   const uploadEnded = upload.then(
     () => { throw new Error('the detail upload ended before its rows were written'); },
     (err: unknown) => { throw err; },
   );
   uploadEnded.catch(() => undefined);
-  const iterator = source.rows()[Symbol.asyncIterator]();
+  const iterator = source.rows(signal)[Symbol.asyncIterator]();
   let rows = 0;
   let truncated = false;
   let finished = false;
   try {
-    for (;;) {
-      const next = await iterator.next();
-      if (next.done) {
-        finished = true;
-        break;
+    try {
+      for (;;) {
+        signal?.throwIfAborted();
+        const next = await iterator.next();
+        if (next.done) {
+          finished = true;
+          break;
+        }
+        if (rows >= maxRows) {
+          truncated = true;
+          break;
+        }
+        if (!gzip.write(`${JSON.stringify(next.value)}\n`)) {
+          await untilAborted(Promise.race([once(gzip, 'drain'), uploadEnded]), signal);
+        }
+        rows += 1;
       }
-      if (rows >= maxRows) {
-        truncated = true;
-        break;
-      }
-      if (!gzip.write(`${JSON.stringify(next.value)}\n`)) {
-        await Promise.race([once(gzip, 'drain'), uploadEnded]);
-      }
-      rows += 1;
+    } finally {
+      if (!finished) await iterator.return?.();
     }
   } catch (err) {
     gzip.destroy(err instanceof Error ? err : new Error(String(err)));
     await upload.catch(() => undefined);
     throw err;
-  } finally {
-    if (!finished) await iterator.return?.();
   }
   gzip.end();
   await upload;
@@ -229,13 +263,22 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
     let datasetKey: string;
     let detailFiles: ReportDetailFile[];
     let truncated = false;
+    // The deadline on steps 2–4 together (module header, "Deadline").
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => deadline.abort(new Error(`report build timed out after ${buildTimeoutMs}ms`)),
+      buildTimeoutMs,
+    );
+    timer.unref();
+    const { signal } = deadline;
     try {
       const builder = deps.builders[run.kind];
-      const built = await withTimeout(builder({ run, now: deps.now() }), buildTimeoutMs, 'report build');
+      // The builder stops at its next stage once the signal fires; this wait stops at once.
+      const built = await untilAborted(builder({ run, now: deps.now(), signal }), signal);
       detailFiles = [];
       for (const source of built.details) {
         const key = reportDetailKey(scope, source.sheet);
-        const written = await streamDetailFile(source, key, options.maxDetailRows, deps.storage);
+        const written = await streamDetailFile(source, key, options.maxDetailRows, deps.storage, signal);
         truncated ||= written.truncated;
         detailFiles.push({
           sheet: source.sheet,
@@ -247,7 +290,7 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
         });
       }
       datasetKey = reportDatasetKey(scope);
-      await deps.storage.uploadJson(datasetKey, { ...built.dataset, detail_files: detailFiles });
+      await deps.storage.uploadJson(datasetKey, { ...built.dataset, detail_files: detailFiles }, signal);
     } catch (err) {
       if (err instanceof ReportSubjectUnavailableError) {
         log.warn({ runId: run.id, kind: run.kind, reason: err.message }, 'Report subject unavailable');
@@ -257,8 +300,10 @@ export function createReportAssembler(options: ReportAssemblerOptions, deps: Rep
         log.warn({ runId: run.id, kind: run.kind, reason: err.message }, 'Report campaign zone changed after the run was made');
         return fail(run, 'subject_changed');
       }
-      log.error({ runId: run.id, kind: run.kind, err }, 'Report assembly failed');
+      log.error({ runId: run.id, kind: run.kind, err, timedOut: signal.aborted }, 'Report assembly failed');
       return fail(run, 'assembly_failed');
+    } finally {
+      clearTimeout(timer);
     }
 
     try {

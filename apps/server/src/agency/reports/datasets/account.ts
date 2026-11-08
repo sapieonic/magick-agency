@@ -179,7 +179,7 @@ async function coveredCampaigns(run: Parameters<ReportDatasetBuilder>[0]['run'],
   return out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
-export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run, now }) => {
+export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run, now, signal }) => {
   const accountId = run.account_id;
   if (!accountId || run.subject_id !== accountId) throw new ReportSubjectUnavailableError('an account report is about its own account');
   const [tenancy, campaigns, roster, zone] = await Promise.all([
@@ -189,7 +189,10 @@ export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run,
     resolveReportZone(run.timezone),
   ]);
 
+  signal?.throwIfAborted();
   const reads = await mapWithConcurrency(campaigns, ACCOUNT_CAMPAIGN_CONCURRENCY, async (campaign) => {
+    // Past the deadline no further campaign's reads start.
+    signal?.throwIfAborted();
     const range = insightsRangeFor(campaign, run, now);
     const [activity, health, days] = await Promise.all([
       computeActivity(campaign, range, { now }).then(wire),
@@ -203,6 +206,7 @@ export const buildAccountReport: ReportDatasetBuilder<'account'> = async ({ run,
     return { campaign, activity, health, days: days.buckets, pending: activity.pending_buckets + health.pending_buckets };
   });
 
+  signal?.throwIfAborted();
   const rows: AccountReportCampaignRow[] = reads.map(({ campaign, activity, health, days }) => ({
     id: campaign.id,
     name: campaign.name,

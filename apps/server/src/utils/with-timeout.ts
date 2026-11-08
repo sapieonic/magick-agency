@@ -1,7 +1,8 @@
 /**
  * Settle with a promise, or reject after a bound, whichever is first. Imports nothing, so
  * `instrumentation.ts` (the first import of `src/index.ts`, which must not pull the app graph in
- * ahead of the OTel SDK) can use it as freely as the report assembler.
+ * ahead of the OTel SDK) can use it. It stops only the WAIT: for work that holds a resource (a
+ * cursor, an upload) use an `AbortSignal` the work honours, as the report assembler does.
  */
 
 /**

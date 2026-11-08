@@ -138,7 +138,7 @@ function labelAcross(catalogs: ReadonlyArray<readonly AgencyDisposition[]>, code
   return dispositionLabel(code, null);
 }
 
-export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now }) => {
+export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now, signal }) => {
   const agentUserId = run.subject_id;
   const accountId = run.account_id;
   if (!accountId) throw new ReportSubjectUnavailableError('an agent review needs an account');
@@ -152,6 +152,7 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
     membershipRepository.findAnyByUserAndTenant(agentUserId, run.tenant_id),
     resolveReportZone(run.timezone),
   ]);
+  signal?.throwIfAborted();
   const inAccount = memberships.filter((m) => m.account_id === null || m.account_id === accountId);
   if (inAccount.length === 0) {
     throw new ReportSubjectUnavailableError('the agent is not a member of the report\'s account');
@@ -178,11 +179,13 @@ export const buildAgentReview: ReportDatasetBuilder<'agent'> = async ({ run, now
     agencySoftphoneSettingsRepository.get(run.tenant_id, accountId),
   ]);
 
+  signal?.throwIfAborted();
   const campaignIds = [...new Set([
     ...stats.by_campaign.map((c) => c.campaign_id),
     ...intervals.map((i) => i.campaign_id).filter((id): id is string => id !== null),
   ])];
   const campaigns = await campaignsByIds(campaignIds, run.tenant_id);
+  signal?.throwIfAborted();
   const catalogs = [...campaigns.values()].map((c) => (Array.isArray(c.disposition_catalog) ? c.disposition_catalog : []));
   const nameOf = (id: string) => campaigns.get(id)?.name ?? id;
 
@@ -333,9 +336,9 @@ function agentSessionsSource(scope: ReportAgentScope): ReportDetailSource {
     sheet: 'sessions',
     label: 'Sessions',
     columns: sessionColumns(),
-    async *rows() {
+    async *rows(signal) {
       const { text, values } = agentSessionsStatement(scope);
-      for await (const r of reportCursorRows<ReportSessionDetailRow>(text, values)) yield sessionCells(r, false);
+      for await (const r of reportCursorRows<ReportSessionDetailRow>(text, values, { signal })) yield sessionCells(r, false);
     },
   };
 }
@@ -373,9 +376,9 @@ function agentStateLogSource(scope: ReportAgentScope, breakCatalogs: ReadonlyArr
       col('campaign', 'Campaign', 'text'),
       col('seconds', 'Duration', 'duration_s'),
     ],
-    async *rows() {
+    async *rows(signal) {
       const { text, values } = agentStateLogStatement(scope);
-      for await (const r of reportCursorRows<ReportStateLogRow>(text, values)) {
+      for await (const r of reportCursorRows<ReportStateLogRow>(text, values, { signal })) {
         yield [
           instantCell(r.started),
           instantCell(r.ended),
@@ -444,9 +447,9 @@ function agentCallsSource(
     sheet: 'calls',
     label: 'Calls',
     columns: agentCallColumns(supervisor),
-    async *rows() {
+    async *rows(signal) {
       const { text, values } = agentCallsStatement({ ...scope, analysis: supervisor });
-      for await (const r of reportCursorRows<ReportAgentCallRow>(text, values)) yield agentCallCells(r, supervisor, catalogOf);
+      for await (const r of reportCursorRows<ReportAgentCallRow>(text, values, { signal })) yield agentCallCells(r, supervisor, catalogOf);
     },
   };
 }

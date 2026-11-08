@@ -43,18 +43,20 @@ function getClient(): S3Client {
   return s3Client;
 }
 
-export async function uploadFile(key: string, body: Buffer, contentType: string): Promise<void> {
+/** Write one object. `signal` cancels the request (the report assembler's deadline). */
+export async function uploadFile(key: string, body: Buffer, contentType: string, signal?: AbortSignal): Promise<void> {
   return withSpan('s3.upload', {
     'storage.key': key,
     'storage.content_type': contentType,
   }, async () => {
     const client = getClient();
+    signal?.throwIfAborted();
     await client.send(new PutObjectCommand({
       Bucket: audioBucket,
       Key: key,
       Body: body,
       ContentType: contentType,
-    }));
+    }), signal ? { abortSignal: signal } : {});
     log.info({ key, contentType, size: body.length }, 'File uploaded to S3');
   });
 }
@@ -170,17 +172,49 @@ export const UPLOAD_STREAM_PART_BYTES = 8 * 1024 * 1024;
 export const UPLOAD_STREAM_QUEUE_SIZE = 2;
 
 /**
+ * How long the requests an aborted {@link uploadStream} still sends (in practice its
+ * `AbortMultipartUpload`) may take before they are given up on, and the bucket's lifecycle rule
+ * (incomplete multipart uploads aborted after 7 days, `aws/terraform/s3.tf`) is left to clear it.
+ */
+export const UPLOAD_STREAM_CLEANUP_TIMEOUT_MS = 10_000;
+
+/**
+ * `client` with `signal` on every request it sends while the signal is live, so an abort cancels
+ * the requests in flight (an `UploadPart` stalled on a slow or throttled S3). A request sent
+ * after the abort (lib-storage's `AbortMultipartUpload`, which must still go out) gets its own
+ * {@link UPLOAD_STREAM_CLEANUP_TIMEOUT_MS} bound instead. lib-storage calls `send(command)` with
+ * no options of its own.
+ */
+function clientUnder(client: S3Client, signal: AbortSignal): S3Client {
+  return new Proxy(client, {
+    get(target, prop) {
+      if (prop !== 'send') return Reflect.get(target, prop, target) as unknown;
+      return (command: Parameters<S3Client['send']>[0]) => target.send(command, {
+        abortSignal: signal.aborted ? AbortSignal.timeout(UPLOAD_STREAM_CLEANUP_TIMEOUT_MS) : signal,
+      });
+    },
+  });
+}
+
+/**
  * Upload a stream of unknown length without buffering it whole (the report assembler's gzipped
  * detail files, up to `AGENCY_REPORTS_MAX_DETAIL_ROWS` rows each): a multipart upload through
  * `@aws-sdk/lib-storage`'s `Upload` (one `PutObject` when the body fits in one part). Resolves to
  * the bytes written once S3 has the whole object; rejects, with the multipart upload aborted,
  * when the body stream errors or S3 refuses. Counted as `s3_operations_total{operation=
  * "upload_stream"}` and timed in `s3_operation_duration_seconds`.
+ *
+ * `signal` (the report assembler's deadline) stops the upload rather than only the wait for it:
+ * the requests in flight are cancelled, the body is destroyed with the abort's reason (so no
+ * part is read after it, and a truncated body is never completed as the object), and the
+ * promise rejects once lib-storage has sent `AbortMultipartUpload` for the parts already
+ * stored, each request after the abort bounded by {@link UPLOAD_STREAM_CLEANUP_TIMEOUT_MS}.
  */
-export async function uploadStream(key: string, body: Readable, contentType: string): Promise<number> {
+export async function uploadStream(key: string, body: Readable, contentType: string, signal?: AbortSignal): Promise<number> {
   return withSpan('s3.upload_stream', { 's3.key': key, 'storage.content_type': contentType }, async (span) => {
     const startedAt = process.hrtime.bigint();
-    const client = getClient();
+    signal?.throwIfAborted();
+    const client = signal ? clientUnder(getClient(), signal) : getClient();
     let bytes = 0;
     const counter = new Transform({
       transform(chunk: Buffer, _encoding, done) {
@@ -191,6 +225,8 @@ export async function uploadStream(key: string, body: Readable, contentType: str
     // `pipe` does not forward errors: a failed source must fail the upload, not stall it.
     body.on('error', (err) => counter.destroy(err));
     body.pipe(counter);
+    const onAbort = () => counter.destroy(signal?.reason instanceof Error ? signal.reason : new Error('upload aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
     const upload = new Upload({
       client,
       params: { Bucket: audioBucket, Key: key, Body: counter, ContentType: contentType },
@@ -205,6 +241,8 @@ export async function uploadStream(key: string, body: Readable, contentType: str
       body.unpipe(counter);
       body.destroy();
       throw err;
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
     s3OperationsTotal.inc({ operation: 'upload_stream', status: 'success' });
     s3OperationDurationSeconds.observe({ operation: 'upload_stream' }, Number(process.hrtime.bigint() - startedAt) / 1e9);
@@ -214,10 +252,10 @@ export async function uploadStream(key: string, body: Readable, contentType: str
   });
 }
 
-/** Write a JSON document (the report `dataset.json`): `application/json`, UTF-8. Returns its bytes. */
-export async function uploadJson(key: string, value: unknown): Promise<number> {
+/** Write a JSON document (the report `dataset.json`): `application/json`, UTF-8. Returns its bytes. `signal` as {@link uploadFile}. */
+export async function uploadJson(key: string, value: unknown, signal?: AbortSignal): Promise<number> {
   const body = Buffer.from(JSON.stringify(value), 'utf8');
-  await uploadFile(key, body, 'application/json; charset=utf-8');
+  await uploadFile(key, body, 'application/json; charset=utf-8', signal);
   return body.length;
 }
 

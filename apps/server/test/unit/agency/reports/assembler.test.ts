@@ -192,7 +192,9 @@ describe('assembling one run', () => {
     const build = vi.fn<ReportDatasetBuilder>(async (ctx) => ({ dataset: datasetOf(ctx.run), details: [] }));
     const d = deps({ builders: builders(build) });
     await createReportAssembler(opts, d).drain(() => false);
-    expect(build).toHaveBeenCalledWith({ run: expect.objectContaining({ id: RUN }), now: new Date('2026-11-08T10:00:00Z') });
+    expect(build).toHaveBeenCalledWith({
+      run: expect.objectContaining({ id: RUN }), now: new Date('2026-11-08T10:00:00Z'), signal: expect.any(AbortSignal),
+    });
   });
 
   it('stops when the claim fence refuses the record: nothing sent', async () => {
@@ -293,10 +295,14 @@ describe('assembling one run', () => {
     expect((await createReportAssembler(opts, d2).drain(() => false))[0]).toMatchObject({ code: 'assembly_failed' });
   });
 
-  it('fails a build that runs past its wall-clock bound', async () => {
-    const d = deps({ builders: builders(() => new Promise(() => {})) });
+  it('fails a build that runs past its wall-clock bound, and tells the builder to stop', async () => {
+    let seen: AbortSignal | undefined;
+    const d = deps({ builders: builders((ctx) => { seen = ctx.signal; return new Promise(() => {}); }) });
     const [outcome] = await createReportAssembler({ ...opts, buildTimeoutMs: 20 }, d).drain(() => false);
     expect(outcome).toMatchObject({ outcome: 'failed', code: 'assembly_failed' });
+    // The builder's own checkpoints (`signal?.throwIfAborted()` between its stages) now throw.
+    expect(seen?.aborted).toBe(true);
+    expect(() => seen!.throwIfAborted()).toThrow('report build timed out after 20ms');
   });
 
   it('reports a dispatch that throws (the tick re-sends it) and keeps going', async () => {
@@ -317,6 +323,121 @@ describe('assembling one run', () => {
     await createReportAssembler(opts, d).drain(() => false, { reclaimOrphans: true });
     // Not the 30-minute stale cutoff: the pass's own start.
     expect(d.repo.claimNextQueued).toHaveBeenCalledWith(new Date('2026-11-08T10:00:00Z'));
+  });
+});
+
+/**
+ * The deadline covers the detail files and `dataset.json` too, and stops them rather than only
+ * the wait (module header, "Deadline"). Mutation-checked: handing `streamDetailFile` no signal
+ * (the builder alone under the deadline, as before) makes the slow-upload cases hang to the test
+ * timeout; releasing the iterator after awaiting the upload reds the release-order case.
+ */
+describe('the deadline over the detail files', () => {
+  /** A source that never ends, recording `return()` and when it ran. */
+  function endless(events: string[]) {
+    const state = { returned: false, signal: undefined as AbortSignal | undefined };
+    const src: ReportDetailSource = {
+      sheet: 'attempts', label: 'Attempts', columns: [{ key: 'i', label: 'Row', type: 'int' }],
+      rows: (signal) => {
+        state.signal = signal;
+        let i = 0;
+        return {
+          [Symbol.asyncIterator]: () => ({
+            next: async () => ({ done: false as const, value: [i++, 'x'.repeat(200)] }),
+            return: async () => { state.returned = true; events.push('return'); return { done: true as const, value: undefined }; },
+          }),
+        };
+      },
+    };
+    return { src, state };
+  }
+
+  /** S3 throttled: never reads the body, and gives up only when the signal fires (a beat later). */
+  function stalledUpload(events: string[]) {
+    const seen: { signal?: AbortSignal | undefined } = {};
+    const uploadStream = vi.fn((_key: string, _body: Readable, _type: string, signal?: AbortSignal) => {
+      seen.signal = signal;
+      return new Promise<number>((_, reject) => {
+        signal?.addEventListener('abort', () => setTimeout(() => { events.push('upload settled'); reject(signal.reason); }, 30));
+      });
+    });
+    return { uploadStream, seen };
+  }
+
+  it('a detail upload stalled past the deadline fails the run assembly_failed, fenced, with the source released', async () => {
+    const events: string[] = [];
+    const { src, state } = endless(events);
+    const stalled = stalledUpload(events);
+    const d = deps({ builders: builders(async (ctx) => ({ dataset: datasetOf(ctx.run), details: [src] })) });
+    d.storage.uploadStream = stalled.uploadStream as never;
+    const started = Date.now();
+    const [outcome] = await createReportAssembler({ ...opts, maxDetailRows: 1_000_000, buildTimeoutMs: 50 }, d).drain(() => false);
+    expect(outcome).toEqual({ runId: RUN, outcome: 'failed', code: 'assembly_failed' });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(d.repo.markFailed).toHaveBeenCalledWith(RUN, 'assembly_failed', { claimGeneration: 1 });
+    expect(d.repo.markAssembled).not.toHaveBeenCalled();
+    // The source and the upload were both handed the deadline, and both stopped.
+    expect(state.signal?.aborted).toBe(true);
+    expect(stalled.seen.signal).toBe(state.signal);
+    expect(state.returned).toBe(true);
+    // The cursor goes back BEFORE the upload is waited out.
+    expect(events).toEqual(['return', 'upload settled']);
+    expect(d.storage.uploadJson).not.toHaveBeenCalled();
+  });
+
+  it('one deadline covers the builder and the files: a slow build leaves the files only what is left', async () => {
+    const events: string[] = [];
+    const { src, state } = endless(events);
+    const stalled = stalledUpload(events);
+    const d = deps({
+      builders: builders(async (ctx) => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return { dataset: datasetOf(ctx.run), details: [src] };
+      }),
+    });
+    d.storage.uploadStream = stalled.uploadStream as never;
+    const started = Date.now();
+    let abortedAfter = -1;
+    const resolved = createReportAssembler({ ...opts, maxDetailRows: 1_000_000, buildTimeoutMs: 300 }, d).drain(() => false);
+    await vi.waitFor(() => { expect(stalled.seen.signal).toBeDefined(); });
+    stalled.seen.signal!.addEventListener('abort', () => { abortedAfter = Date.now() - started; });
+    const [outcome] = await resolved;
+    expect(outcome).toMatchObject({ outcome: 'failed', code: 'assembly_failed' });
+    // The file got what was left of the 300 ms after a 200 ms build (aborted near 300 ms from the
+    // start), not a deadline of its own (near 500 ms).
+    expect(abortedAfter).toBeGreaterThanOrEqual(250);
+    expect(abortedAfter).toBeLessThan(450);
+    expect(state.returned).toBe(true);
+  });
+
+  it('a dataset.json upload stalled past the deadline fails the run, cancelled through its signal', async () => {
+    const d = deps();
+    let seen: AbortSignal | undefined;
+    d.storage.uploadJson.mockImplementation((_key: string, _value: unknown, signal?: AbortSignal) => {
+      seen = signal;
+      return new Promise<number>((_, reject) => { signal?.addEventListener('abort', () => reject(signal.reason)); });
+    });
+    const [outcome] = await createReportAssembler({ ...opts, buildTimeoutMs: 30 }, d).drain(() => false);
+    expect(outcome).toMatchObject({ outcome: 'failed', code: 'assembly_failed' });
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it('a source that keeps yielding past the deadline, into an upload that keeps up, is stopped too', async () => {
+    const events: string[] = [];
+    const { src, state } = endless(events);
+    const d = deps({ builders: builders(async (ctx) => ({ dataset: datasetOf(ctx.run), details: [src] })) });
+    const [outcome] = await createReportAssembler({ ...opts, maxDetailRows: Number.MAX_SAFE_INTEGER, buildTimeoutMs: 50 }, d).drain(() => false);
+    expect(outcome).toMatchObject({ outcome: 'failed', code: 'assembly_failed' });
+    expect(state.returned).toBe(true);
+  });
+
+  it('a run within its deadline is not disturbed by it', async () => {
+    const { src } = source('calls', 3);
+    const d = deps({ builders: builders(async (ctx) => ({ dataset: datasetOf(ctx.run), details: [src] })) });
+    const [outcome] = await createReportAssembler({ ...opts, buildTimeoutMs: 5_000 }, d).drain(() => false);
+    expect(outcome).toEqual({ runId: RUN, outcome: 'sent', attempt: 1 });
+    const signal = (d.storage.uploadJson.mock.calls[0] as unknown[])[2] as AbortSignal | undefined;
+    expect(signal?.aborted).toBe(false);
   });
 });
 
