@@ -20,13 +20,14 @@ import {
   rangeLabel,
   rate,
   rateText,
+  rateValue,
   servedRate,
   share,
   shortDate,
   wallClockInto,
   type Rate,
 } from '../../format';
-import { bandDomain, FloorBands, SplitBar, StackedColumns, TimelineStrip, type BandRow } from '../charts';
+import { bandDomain, FloorBands, SplitBar, StackedColumns, TimelineStrip, tickEvery, type BandRow } from '../charts';
 import { agentConnectRate, agentSuccessRate, rosterSuccessReportable } from '../../rates';
 import { DefinitionsPage, Kpis, Legend, Notes, PageHeader, RateCell, Section, rateKpi, type KpiProps } from '../components';
 import { STATE_COLOURS } from '../styles';
@@ -99,7 +100,7 @@ function PresencePage({ d, meta, self }: { d: AgentReviewDataset; meta: string[]
     const wd = new Date(`${date}T12:00:00Z`).getUTCDay();
     return wd === 0 || wd === 6;
   };
-  const tickEvery = d.daily.length > 16 ? 7 : d.daily.length > 8 ? 2 : 1;
+  const every = tickEvery(d.daily.length);
 
   return (
     <div className="page" data-page="presence">
@@ -137,7 +138,7 @@ function PresencePage({ d, meta, self }: { d: AgentReviewDataset; meta: string[]
             series={parts.map((x) => ({ label: x.label, colour: x.colour }))}
             columns={d.daily.map((r, i) => ({
               label: shortDate(r.date),
-              tick: i % tickEvery === 0,
+              tick: i % every === 0,
               shade: weekend(r.date),
               values: [r.on_call_s, r.wrapup_s, r.available_s, r.break_s],
               title: `${dayLabel(r.date)}: station ${duration(r.station_s)}`,
@@ -321,9 +322,8 @@ function FloorSection({ d }: { d: AgentReviewDataset }) {
   const occ = d.occupancy.handling_pct;
   const pctBand = (p: { p25: number | null; median: number | null; p75: number | null }) =>
     p.p25 === null || p.p75 === null ? 'no band' : `floor ${pct(p.p25)}–${pct(p.p75)}, median ${p.median === null ? '—' : pct(p.median)}`;
-  const value = (rt: Rate) => (rt.kind === 'value' ? rt.pct : null);
   const rows: BandRow[] = [
-    { label: 'Connect rate', value: value(connect), valueText: rateText(connect), ...c.connect_rate, ...bandDomain([value(connect), c.connect_rate.p25, c.connect_rate.p75]), bandText: pctBand(c.connect_rate) },
+    { label: 'Connect rate', value: rateValue(connect), valueText: rateText(connect), ...c.connect_rate, ...bandDomain([rateValue(connect), c.connect_rate.p25, c.connect_rate.p75]), bandText: pctBand(c.connect_rate) },
     { label: 'Occupancy', value: occ, valueText: occ === null ? 'Not measured' : pct(occ), ...c.occupancy_pct, ...bandDomain([occ, c.occupancy_pct.p25, c.occupancy_pct.p75]), bandText: pctBand(c.occupancy_pct) },
   ];
   if (c.aht) {
@@ -336,7 +336,7 @@ function FloorSection({ d }: { d: AgentReviewDataset }) {
       bandText: c.aht.p25 === null || c.aht.p75 === null ? 'no band' : `floor ${duration(c.aht.p25)}–${duration(c.aht.p75)} (lower is faster)`,
     });
   }
-  rows.push({ label: 'Success rate', value: value(success), valueText: rateText(success), ...c.success_rate, ...bandDomain([value(success), c.success_rate.p25, c.success_rate.p75]), bandText: pctBand(c.success_rate) });
+  rows.push({ label: 'Success rate', value: rateValue(success), valueText: rateText(success), ...c.success_rate, ...bandDomain([rateValue(success), c.success_rate.p25, c.success_rate.p75]), bandText: pctBand(c.success_rate) });
   return (
     <Section title="Against the floor" aside={`same window, compared with ${plural(b.pool_size, 'agent')} · supervisors’ copy only`} id="floor">
       <FloorBands rows={rows} title="This agent against the floor’s middle half and median" colour={STATE_COLOURS.on_call} />

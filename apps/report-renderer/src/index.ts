@@ -12,5 +12,5 @@ export { renderPdf, renderReportHtml, reportTitle, type PdfOptions, type HtmlOpt
 export { findChrome, launchBrowser, CHROME_ARGS, type ChromeOptions } from './pdf/chrome';
 export { loadFonts, type FontSet } from './pdf/fonts';
 export { writeWorkbook, truncationNote } from './xlsx/workbook';
-export { signCallback, verifyCallbackSignature } from './signature';
+export { signCallback } from './signature';
 export { RENDERER_VERSION } from './version';

@@ -47,11 +47,6 @@ export function duration(seconds: number): string {
   return `${total} s`;
 }
 
-/** Hours with one decimal for chart axes and tooltips: `7.4 h`. */
-export function hours(seconds: number): string {
-  return `${Number((seconds / 3600).toFixed(1))} h`;
-}
-
 // ── Rates ───────────────────────────────────────────────────────────────────
 
 /** A rate under the floor rules: a value, no denominator at all, or withheld below the floor. */
@@ -106,15 +101,40 @@ export function average(total: number, n: number): number | null {
   return total / n;
 }
 
+/** A user id whose name no longer resolves, as printed: `Unknown user 1a2b3c4d`. */
+export function unknownUser(id: string): string {
+  return `Unknown user ${id.slice(0, 8)}`;
+}
+
 // ── Dates and times in a zone ─────────────────────────────────────────────────
 
-const formatters = new Map<string, Intl.DateTimeFormat>();
+// Each option set is a module constant, and its formatters are cached per zone under it: the
+// workbook formats every instant cell through `zonedParts`, so the lookup is kept cheap.
+const DAY_MONTH_YEAR: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
+const DAY_MONTH: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+const WEEKDAY: Intl.DateTimeFormatOptions = { weekday: 'short' };
+const CLOCK: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+const PARTS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+};
+
+const formatters = new Map<Intl.DateTimeFormatOptions, Map<string, Intl.DateTimeFormat>>();
 function fmt(zone: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const key = `${zone}|${JSON.stringify(options)}`;
-  let f = formatters.get(key);
+  let byZone = formatters.get(options);
+  if (!byZone) {
+    byZone = new Map();
+    formatters.set(options, byZone);
+  }
+  let f = byZone.get(zone);
   if (!f) {
     f = new Intl.DateTimeFormat(DATE_LOCALE, { timeZone: zone, ...options });
-    formatters.set(key, f);
+    byZone.set(zone, f);
   }
   return f;
 }
@@ -126,20 +146,20 @@ function dateAsUtc(date: string): Date {
 
 /** `9 Oct 2026` for a `YYYY-MM-DD`. */
 export function longDate(date: string): string {
-  return fmt('UTC', { day: 'numeric', month: 'short', year: 'numeric' }).format(dateAsUtc(date));
+  return fmt('UTC', DAY_MONTH_YEAR).format(dateAsUtc(date));
 }
 
 /** `Fri 7 Nov` for a `YYYY-MM-DD`. */
 export function dayLabel(date: string): string {
   const d = dateAsUtc(date);
-  const weekday = fmt('UTC', { weekday: 'short' }).format(d);
-  const dm = fmt('UTC', { day: 'numeric', month: 'short' }).format(d);
+  const weekday = fmt('UTC', WEEKDAY).format(d);
+  const dm = fmt('UTC', DAY_MONTH).format(d);
   return `${weekday} ${dm}`;
 }
 
 /** `7 Nov` for a `YYYY-MM-DD`. */
 export function shortDate(date: string): string {
-  return fmt('UTC', { day: 'numeric', month: 'short' }).format(dateAsUtc(date));
+  return fmt('UTC', DAY_MONTH).format(dateAsUtc(date));
 }
 
 /** `9 Oct – 7 Nov 2026` (the year once when both ends share it). */
@@ -152,13 +172,13 @@ export function rangeLabel(from: string, to: string): string {
 
 /** `09:04` for an instant, in the zone, 24-hour. */
 export function clockTime(iso: string, zone: string): string {
-  return fmt(zone, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+  return fmt(zone, CLOCK).format(new Date(iso));
 }
 
 /** `8 Nov 2026 09:00` for an instant, in the zone. */
 export function dateTime(iso: string, zone: string): string {
   const d = new Date(iso);
-  return `${fmt(zone, { day: 'numeric', month: 'short', year: 'numeric' }).format(d)} ${clockTime(iso, zone)}`;
+  return `${fmt(zone, DAY_MONTH_YEAR).format(d)} ${clockTime(iso, zone)}`;
 }
 
 /** The wall-clock parts of an instant in a zone. */
@@ -167,15 +187,7 @@ export function zonedParts(
   zone: string,
 ): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
   const d = typeof iso === 'string' ? new Date(iso) : iso;
-  const parts = fmt(zone, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(d);
+  const parts = fmt(zone, PARTS).formatToParts(d);
   const get = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find((p) => p.type === type)?.value ?? 0);
   return { year: get('year'), month: get('month'), day: get('day'), hour: get('hour'), minute: get('minute'), second: get('second') };
 }

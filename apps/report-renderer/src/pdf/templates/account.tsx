@@ -4,14 +4,12 @@
  * from the summed counts, never from averaging the campaigns' rates.
  */
 import type { ReactNode } from 'react';
-import type { AccountReportDataset, AccountReportFigures } from '@magick-agency/contracts/reports';
+import type { AccountReportCampaignRow, AccountReportDataset, AccountReportFigures } from '@magick-agency/contracts/reports';
 import { count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rateText, servedRate, shortDate, type Rate } from '../../format';
 import { accountFigures, recordingShare, rosterSuccessReportable } from '../../rates';
-import { StackedColumns } from '../charts';
-import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, rateKpi } from '../components';
+import { StackedColumns, tickEvery } from '../charts';
+import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, STATUS_WORDS, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
-
-const STATUS_WORDS: Record<string, string> = { draft: 'Draft', running: 'Running', paused: 'Paused', stopping: 'Stopping', completed: 'Completed', stopped: 'Stopped' };
 
 export function AccountReport({ d }: { d: AccountReportDataset }) {
   const small = (title: string) => <PageHeader compact tag="Account report" title={title} meta={[rangeLabel(d.range.from, d.range.to), d.account.name]} />;
@@ -35,14 +33,14 @@ function OverviewPage({ d }: { d: AccountReportDataset }) {
   const floor = d.floors.campaign_rate_min_first_dials;
   const tf = accountFigures(t, floor);
   const fd = tf.firstDials;
-  const byStatus = new Map<string, number>();
+  const byStatus = new Map<AccountReportCampaignRow['status'], number>();
   for (const c of d.campaigns) byStatus.set(c.status, (byStatus.get(c.status) ?? 0) + 1);
   return (
     <div className="page" data-page="overview">
       <PageHeader
         tag="Account report"
         title={d.account.name}
-        sub={`${plural(d.campaigns.length, 'campaign')}: ${[...byStatus.entries()].map(([s, n]) => `${count(n)} ${STATUS_WORDS[s]?.toLowerCase() ?? s}`).join(', ')} (as of generation)`}
+        sub={`${plural(d.campaigns.length, 'campaign')}: ${[...byStatus.entries()].map(([s, n]) => `${count(n)} ${STATUS_WORDS[s].toLowerCase()}`).join(', ')} (as of generation)`}
         meta={[`${rangeLabel(d.range.from, d.range.to)} (${plural(d.range.days, 'day')})`, zone, `Generated ${dateTime(d.generated_at, zone)}`]}
       />
       <Notes notes={d.notes} />
@@ -77,7 +75,7 @@ function OverviewPage({ d }: { d: AccountReportDataset }) {
           </thead>
           <tbody>
             {d.campaigns.map((c) => (
-              <FiguresRow key={c.id} label={c.name} sub={c.timezone !== zone ? c.timezone : undefined} status={STATUS_WORDS[c.status] ?? c.status} f={c} floor={floor} />
+              <FiguresRow key={c.id} label={c.name} sub={c.timezone !== zone ? c.timezone : undefined} status={STATUS_WORDS[c.status]} f={c} floor={floor} />
             ))}
             <FiguresRow total label="All campaigns" status="" f={t} floor={floor} />
           </tbody>
@@ -118,7 +116,7 @@ function peaksMeasuredIn(d: AccountReportDataset): boolean {
 }
 
 function AgentsPage({ d, header }: { d: AccountReportDataset; header: ReactNode }) {
-  const tickEvery = d.daily.length > 16 ? 7 : d.daily.length > 8 ? 2 : 1;
+  const every = tickEvery(d.daily.length);
   const totalDials = d.daily.reduce((s, r) => s + r.dials, 0);
   const totalHuman = d.daily.reduce((s, r) => s + r.human_connects, 0);
   const peaksMeasured = peaksMeasuredIn(d);
@@ -144,7 +142,7 @@ function AgentsPage({ d, header }: { d: AccountReportDataset; header: ReactNode 
           ]}
           columns={d.daily.map((r, i) => ({
             label: shortDate(r.date),
-            tick: i % tickEvery === 0,
+            tick: i % every === 0,
             values: [r.human_connects, Math.max(0, r.dials - r.human_connects)],
             title: `${dayLabel(r.date)}: ${count(r.dials)} dials, ${count(r.human_connects)} people reached${
               peaksMeasured ? `, ${r.agents_online_peak === null ? 'peak agents not measured' : `${count(r.agents_online_peak)} agents at the peak`}` : ''

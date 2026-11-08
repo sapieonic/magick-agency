@@ -87,8 +87,6 @@ export interface WriteTableOptions {
   zone: string;
   /** A sentence in the first row (the header moves to row 2). */
   note?: string;
-  /** Rows used to size the columns, when the rows themselves are a stream. */
-  sample?: unknown[][];
 }
 
 /** Add a worksheet, write the table into it, commit it. Returns the data rows written. */
@@ -103,7 +101,8 @@ export async function writeTable(
   const sheet = workbook.addWorksheet(sheetName(name), {
     views: [{ state: 'frozen', ySplit: headerRow, xSplit: 0 }],
   });
-  const sample = options.sample ?? (Array.isArray(rows) ? (rows as unknown[][]).slice(0, 200) : []);
+  // A streamed table has no sample: its columns take the default or the given widths.
+  const sample = Array.isArray(rows) ? (rows as unknown[][]).slice(0, 200) : [];
   sheet.columns = columns.map((c, i) => ({ width: c.width ?? columnWidth(c, sample.map((r) => r[i])) }));
   sheet.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow, column: Math.max(1, columns.length) } };
 

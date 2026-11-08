@@ -6,20 +6,12 @@
  */
 import type { ReactNode } from 'react';
 import type { CampaignReportDataset } from '@magick-agency/contracts/reports';
-import { bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate } from '../../format';
+import { bucketDate, count, dateTime, dayLabel, duration, pct, plural, rangeLabel, rate, rateText, share, shortDate, unknownUser } from '../../format';
 import { campaignFigures, recordingShare } from '../../rates';
-import { HourColumns, StackedColumns } from '../charts';
-import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, rateKpi } from '../components';
+import { HourColumns, StackedColumns, tickEvery } from '../charts';
+import { DefinitionsPage, Kpis, Legend, NameOrId, Notes, PageHeader, RateCell, Section, STATUS_WORDS, rateKpi } from '../components';
 import { INK, STATE_COLOURS } from '../styles';
 
-const STATUS_WORDS: Record<CampaignReportDataset['campaign']['status'], string> = {
-  draft: 'Draft',
-  running: 'Running',
-  paused: 'Paused',
-  stopping: 'Stopping',
-  completed: 'Completed',
-  stopped: 'Stopped',
-};
 const STALL_WORDS: Record<string, string> = {
   no_agents: 'No agents available',
   no_slots: 'No call slots free',
@@ -179,7 +171,7 @@ function Headline({ d }: { d: CampaignReportDataset }) {
 
 function TrendsPage({ d, floor, header }: { d: CampaignReportDataset; floor: number; header: ReactNode }) {
   const b = d.trends.buckets;
-  const tickEvery = b.length > 16 ? 7 : b.length > 8 ? 2 : 1;
+  const every = tickEvery(b.length);
   const dates = b.map((x) => bucketDate(x.bucket_start, d.range.timezone));
   const totalHuman = b.reduce((s, x) => s + x.human_connects, 0);
   const totalDials = b.reduce((s, x) => s + x.dials, 0);
@@ -204,7 +196,7 @@ function TrendsPage({ d, floor, header }: { d: CampaignReportDataset; floor: num
           ]}
           columns={b.map((x, i) => ({
             label: shortDate(dates[i]!),
-            tick: i % tickEvery === 0,
+            tick: i % every === 0,
             values: [x.human_connects, Math.max(0, x.dials - x.human_connects)],
             title: `${dayLabel(dates[i]!)}: ${count(x.dials)} dials, ${count(x.human_connects)} people reached`,
           }))}
@@ -451,8 +443,7 @@ function HealthPage({ d, floor, header }: { d: CampaignReportDataset; floor: num
 }
 
 function nameOf(d: CampaignReportDataset, id: string): string {
-  const n = d.agent_names[id];
-  return n ?? `Unknown user ${id.slice(0, 8)}`;
+  return d.agent_names[id] ?? unknownUser(id);
 }
 
 function busiest(b: CampaignReportDataset['trends']['buckets'], dates: string[]): string {

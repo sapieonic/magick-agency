@@ -20,7 +20,7 @@ import type {
   ReportDetailFile,
   ReportDetailSheet,
 } from '@magick-agency/contracts/reports';
-import { average, bucketDate, count, pct, rate, rateText, servedRate, share, type Rate } from '../format';
+import { average, bucketDate, count, pct, rate, rateText, servedRate, share, unknownUser, type Rate } from '../format';
 import type { DetailReader } from '../io';
 import { accountFigures, agentConnectRate, agentSuccessRate, campaignFigures, recordingShare, rosterSuccessReportable } from '../rates';
 import { excelValue, NUM_FMT, sheetName, writeTable, type SheetColumn } from './sheet';
@@ -72,7 +72,7 @@ async function writeSummary(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: ReportDat
   });
   header.commit();
   for (const m of all) {
-    const v = typeof m.value === 'string' && m.type !== 'text' && m.type !== 'date' && m.type !== 'datetime' ? m.value : excelValue(m.value, m.type, zone);
+    const v = excelValue(m.value, m.type, zone);
     const row = sheet.addRow([m.metric, v, m.definition ?? null]);
     const fmt = NUM_FMT[m.type];
     if (fmt && (typeof v === 'number' || v instanceof Date)) row.getCell(2).numFmt = fmt;
@@ -435,7 +435,7 @@ async function campaignWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Campa
     d.activity.outcomes.map((o) => [o.label ?? (o.code === null ? 'No outcome written' : `${o.code} (retired)`), o.code, o.is_success, o.count, share(o.count, calls.conversations)]),
     { zone },
   );
-  const name = (id: string | null, served?: string | null) => (id === null ? 'Not reserved to an agent' : (served ?? d.agent_names[id] ?? `Unknown user ${id.slice(0, 8)}`));
+  const name = (id: string | null, served?: string | null) => (id === null ? 'Not reserved to an agent' : (served ?? d.agent_names[id] ?? unknownUser(id)));
   await writeTable(
     wb,
     'Agents',
@@ -640,7 +640,7 @@ async function accountWorkbook(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Accoun
       ...d.agents.map((a) => {
         const succOk = rosterSuccessReportable(a);
         return [
-          a.agent_name ?? `Unknown user ${a.agent_user_id.slice(0, 8)}`,
+          a.agent_name ?? unknownUser(a.agent_user_id),
           a.campaigns,
           a.attempts,
           a.connected,
