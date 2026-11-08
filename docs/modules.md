@@ -397,6 +397,18 @@ Files: `report-keys.ts`, `schedule.ts`
 | `apps/server/test/integration/agency/report-run-repository.test.ts` | 21 |
 | `apps/server/test/integration/agency/report-subscription-repository.test.ts` | 14 |
 
+The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/` under a wall-clock bound, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable`, anything else `assembly_failed`), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
+
+Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispatch.ts`, `pipeline.ts`, `run-view.ts`, `tick.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/agency/reports/assembler.test.ts` | 17 |
+| `apps/server/test/unit/agency/reports/tick.test.ts` | 17 |
+| `apps/server/test/unit/agency/reports/dispatch.test.ts` | 10 |
+| `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 14 |
+| `apps/server/test/integration/api/agency-reports.test.ts` | 3 |
+
 ### `apps/server/src/ai/`
 
 The AI client layer every AI request goes through: `createAiClient` (a builder per provider, typed over `AiProvider`) and the clients for `openai_compatible` and `azure_openai` (one Chat Completions mapping, `openai-chat.ts`) and `gemini` (native SDK, Files API, per-family thinking and sampling).
@@ -523,7 +535,7 @@ Files: `agency-campaign.response.ts`, `call-error-message.ts`, `webrtc-call.resp
 
 ### `apps/server/src/api/routes/`
 
-Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`, `notification`, `feature-flags`, `super-admin*`, `proxy-agency-*`, `dnc`, `phone-number`, `call-analysis-profiles`. Internal handler instance: `agency.routes.ts`, `agency-campaigns.routes.ts`, `agency-agents.routes.ts`. Voice engine: `webhooks.routes.ts`, `webrtc-call.routes.ts`. Analysis: `webrtc-recordings.routes.ts`.
+Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`, `notification`, `feature-flags`, `super-admin*`, `proxy-agency-*`, `dnc`, `phone-number`, `call-analysis-profiles`. Internal handler instance: `agency.routes.ts`, `agency-campaigns.routes.ts`, `agency-agents.routes.ts`. Voice engine: `webhooks.routes.ts`, `webrtc-call.routes.ts`. The agency area's one session-less route: `webhooks/report-rendered.ts` (`POST /webhooks/reports/rendered`, the report renderer's HMAC-signed callback, registered by `agencyWebhooksPlugin` beside the agency plugin, in the limiter's `webhook` bucket). Reports: `proxy-agency-reports.routes.ts` with `proxy-agency-reports/` (`runs.ts`, `subscriptions.ts`, `shared.ts`: the injectable deps, the flag gate, `resolveReportTarget`). Analysis: `webrtc-recordings.routes.ts`.
 
 Route families: a large plugin keeps its exported function, hooks and module note in `<family>.routes.ts` and registers its routes from `<family>/` on the same instance, so the hooks apply to every one of them and the area plugins are unchanged: `agency/` (sessions, attempts, the soft phone's internal handlers and their refusal statuses and envelope, the agent's dial of one of their own contacts, `my-contact-call.ts`, shared helpers), `agency-campaigns/` (guards with the `ownedCampaign` preHandler, crud with the batched `GET /summaries`, stats, spine, retry, lifecycle), `proxy-agency-campaigns/` (ownership, crud, stats, activity, spine with the CSV export drain, lifecycle, retry, ingest), `proxy-agency-performance/` (the per-agent pairs, the whole-floor reads, shared), `proxy-agency-staffing/` (the `my-*` reads, campaign agents), `proxy-agency-softphone/` (the soft phone, docs/softphone.md §6: sessions and the switch, calls, reads, settings, shared actor / flag / envelope / enrichment), `proxy-agency-assignment/` (contact assignment, served without an internal handler hop: the supervisor's preview, commit, progress and history; the agents' dedicated caller IDs, `agent-caller-ids.ts`, DN5: list, set, release, only the set behind the flag (DN9); the agent's own contacts (`my-contacts.ts`; the summary's `caller_id` falls back to null when its read fails, `my-contacts-summary-caller-id.test.ts`) and their actions, retry and the per-contact call; the shared flag gate and refusals), `proxy-agency-insights/` (the campaign insights reads, docs/insights.md "API": summary, readiness, allocation, uploads in `as-of-now.ts`; activity, trends, health in `range.ts`, their query refused `400 invalid_insights_query` after the guards; the shared guard chain after `agency.supervise`: dialer flag, id shape, ownership probe), `proxy-agency-customers/` (customer history, docs/customer-history.md §2, served without an internal handler hop: `search.ts`, `timeline.ts`, `export.ts`, `options.ts` (`GET /customers/options`, the search box's default calling code); `shared.ts`, the guard chain after `agency.customer_history.read` (dialer flag, then the per-user search cap for search and export), the family's own JSON parser (`useFamilyJsonParser`: a body that is not JSON is `400 invalid_search_request`), the refusal bodies, the search lookup, `no-store` and the audit row), `super-admin/` (login, own account, tenants, admins, concurrency). Source-text guards read a whole family (`test/helpers/route-source.ts`).
 
@@ -570,6 +582,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 50 |
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 22 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
+| `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 37 |
 
 ### `apps/server/src/api/validators/`
 
@@ -652,6 +665,7 @@ Files: `agency.ts`, `analysis.ts`, `platform.ts`, `voice.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/bootstrap/agency-reaper-wiring.test.ts` | 4 |
+| `apps/server/test/unit/bootstrap/agency-reports-wiring.test.ts` | 3 |
 | `apps/server/test/unit/bootstrap/platform.test.ts` | 4 |
 | `apps/server/test/unit/bootstrap/voice-credential-housekeeping.test.ts` | 6 |
 
@@ -880,17 +894,18 @@ Files: `retention-purge.ts`
 
 ### `apps/server/src/notifications/`
 
-Mailjet client, notification engine (audience, catalog, delivery, period), invite mailer and token, campaign-completion mail, HTML escaping.
+Mailjet client, notification engine (audience, catalog, delivery, period), invite mailer and token, campaign-completion mail, the report-ready mail (`agency.report.ready`: the requester with `email_me`, or a subscription's recipients re-checked against RBAC at send time; per-user preference; one claim per run and recipient; a link to the run page), HTML escaping.
 
-Files: `agency-campaign-completion.ts`, `engine/audience.ts`, `engine/catalog.ts`, `engine/deliver.ts`, `engine/period.ts`, `escape-html.ts`, `invite-mailer.ts`, `invite-token.ts`, `mailjet.client.ts`, `templates/agent-invite.template.ts`, `templates/invite-email.layout.ts`, `templates/invite-email.ts`, `templates/workspace-invite.template.ts`
+Files: `agency-campaign-completion.ts`, `agency-report-ready.ts`, `engine/audience.ts`, `engine/catalog.ts`, `engine/deliver.ts`, `engine/period.ts`, `escape-html.ts`, `invite-mailer.ts`, `invite-token.ts`, `mailjet.client.ts`, `templates/agency-report-ready.template.ts`, `templates/agent-invite.template.ts`, `templates/invite-email.layout.ts`, `templates/invite-email.ts`, `templates/workspace-invite.template.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/notifications/agency-campaign-completion.test.ts` | 45 |
 | `apps/server/test/unit/notifications/agency-campaign-unsubscribe.test.ts` | 8 |
+| `apps/server/test/unit/notifications/agency-report-ready.test.ts` | 13 |
 | `apps/server/test/unit/notifications/agent-invite.template.test.ts` | 29 |
 | `apps/server/test/unit/notifications/engine/audience.test.ts` | 34 |
-| `apps/server/test/unit/notifications/engine/catalog.test.ts` | 28 |
+| `apps/server/test/unit/notifications/engine/catalog.test.ts` | 29 |
 | `apps/server/test/unit/notifications/engine/deliver.test.ts` | 6 |
 | `apps/server/test/unit/notifications/engine/period.test.ts` | 4 |
 | `apps/server/test/unit/notifications/invite-email.test.ts` | 25 |
