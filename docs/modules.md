@@ -25,6 +25,8 @@ that day, and so do the server, db and console files the dedicated caller ID (DN
 and its review fixes added or changed. The files Plivo steps 3 and 4 (2026-11-07) added are counted
 statically and marked `~` (an `it.each` table or a loop counts as one, so they undercount); a file
 they changed shows its earlier count plus the cases the change added or removed, marked `~` too.
+The files the reports feature (RP1–RP16, 2026-11-08) added or changed show the counts Vitest
+printed that day for unit files and for the integration files of the final run.
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -246,7 +248,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
 | `apps/server/test/unit/agency/my-contacts-summary-caller-id.test.ts` | 2 |
 | `apps/server/test/unit/agency/insights-rollup-job.test.ts` | 4 |
-| `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 5 |
+| `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 6 |
 | `apps/server/test/unit/agency/our-fault-redial.test.ts` | 20 |
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-assignment.test.ts` | 25 |
@@ -397,29 +399,29 @@ Files: `report-keys.ts`, `schedule.ts`
 | `apps/server/test/integration/agency/report-run-repository.test.ts` | 21 |
 | `apps/server/test/integration/agency/report-subscription-repository.test.ts` | 14 |
 
-The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/` under a wall-clock bound, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable`, anything else `assembly_failed`), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
+The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/` under a wall-clock bound, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable` (a subscription disabled only when `probeSubscriptionSubject` agrees the subject is gone), `ReportZoneChangedError` → `subject_changed`, anything else `assembly_failed`; the first pass after start reclaims runs orphaned by a restart, and `stop()` waits at most 20 s), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback; `checkInlineRenderer`, the boot-time load under `inline`), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` (a period skipped while `agency_reports_enabled` is off for the account; a campaign's zone by `campaignZone`) with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first; no email while the flag is off), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
 
-Also `failure-messages.ts` (one British-English sentence per `ReportFailureCode`: the run view and every stored error read it, never the renderer's or assembler's own text), `subscription-subject.ts` (`probeSubscriptionSubject`: the tick's check that a subscription's subject is still reportable under the builders' own rule, and the campaign's current zone), `zone.ts` (`postgresKnowsZone`: a request's zone must exist in `pg_timezone_names`, matched as `AT TIME ZONE` matches).
+Also `failure-messages.ts` (one British-English sentence per `ReportFailureCode`: the run view and every stored error read it, never the renderer's or assembler's own text), `subscription-subject.ts` (`probeSubscriptionSubject`: the tick's check that a subscription's subject is still reportable under the builders' own rule, and the campaign's current zone), `zone.ts` (`postgresKnowsZone`: a request's zone must exist in `pg_timezone_names`, matched as `AT TIME ZONE` matches; found zones cached in lower case).
 
 Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispatch.ts`, `failure-messages.ts`, `pipeline.ts`, `run-view.ts`, `subscription-subject.ts`, `tick.ts`, `zone.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/agency/reports/assembler.test.ts` | 17 |
-| `apps/server/test/unit/agency/reports/tick.test.ts` | 17 |
-| `apps/server/test/unit/agency/reports/dispatch.test.ts` | 10 |
-| `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 14 |
+| `apps/server/test/unit/agency/reports/assembler.test.ts` | 23 |
+| `apps/server/test/unit/agency/reports/tick.test.ts` | 23 |
+| `apps/server/test/unit/agency/reports/dispatch.test.ts` | 13 |
+| `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 16 |
 | `apps/server/test/integration/api/agency-reports.test.ts` | 3 |
 
 ### `apps/server/src/agency/reports/datasets/`
 
-The report dataset builders (docs/reports.md "Datasets", RP1): `index.ts` (`REPORT_DATASET_BUILDERS`, one per kind), `types.ts` (the seam with the assembler: `ReportBuildContext`, `ReportDetailSource`, `BuiltReport`, `ReportSubjectUnavailableError`), `agent.ts` (`buildAgentReview`: the agent record and roster reads, presence, days, timeline, outcomes, follow-through, sentiment for supervisors; the `self` audience's stripped blocks and masked calls sheet), `campaign.ts` (`buildCampaignReport`: the Insights `compute*` reads verbatim and agent names; the attempts sheet shared with the account), `account.ts` (`buildAccountReport`: per-campaign Insights figures, totals summed with the rate recomputed, the roster, the rollup re-bucketed into the report's zone), `agent-presence.ts` (pure: state intervals into local days, sum-preserving rounding, the timeline), `definitions.ts` (each kind's definitions page), `shared.ts` (the window as `ReportRange` and local days, tenancy, `readAccountRoster` (the roster screen's chain), `insightsRangeFor` (the Insights routes' parser), labels, `maskPhone` (RP7), `roundPreservingSum`). Their own SQL is `db/repositories/agency/report-dataset-reads.ts` (from the barrel: the agent's intervals, attempt days, outcomes, callback classes, Do Not Call marks, soft-phone calls, sentiment, the account's covered campaigns, the detail statements, and `reportCursorRows`, the server-side cursor every detail source streams through and releases in `finally`).
+The report dataset builders (docs/reports.md "Datasets", RP1): `index.ts` (`REPORT_DATASET_BUILDERS`, one per kind), `types.ts` (the seam with the assembler: `ReportBuildContext`, `ReportDetailSource`, `BuiltReport`, `ReportSubjectUnavailableError`, `ReportZoneChangedError`), `agent.ts` (`buildAgentReview`: the agent record and roster reads, presence, days, timeline, outcomes, follow-through, sentiment for supervisors; the `self` audience's stripped blocks and masked calls sheet), `campaign.ts` (`buildCampaignReport`: the Insights `compute*` reads verbatim and agent names; the attempts sheet shared with the account), `account.ts` (`buildAccountReport`: per-campaign Insights figures, totals summed with the rate recomputed, the roster, the rollup re-bucketed into the report's zone), `agent-presence.ts` (pure: state intervals into local days, sum-preserving rounding, the timeline), `definitions.ts` (each kind's definitions page), `shared.ts` (the window as `ReportRange` and local days, tenancy, `readAccountRoster` (the roster screen's chain), `insightsRangeFor` (the Insights routes' parser), labels, `maskPhone` (RP7), `roundPreservingSum`). Their own SQL is `db/repositories/agency/report-dataset-reads.ts` (from the barrel: the agent's intervals, attempt days, outcomes, callback classes, Do Not Call marks, soft-phone calls, sentiment, the account's covered campaigns, the detail statements, and `reportCursorRows`, the server-side cursor every detail source streams through and releases in `finally`).
 
 Files: `account.ts`, `agent-presence.ts`, `agent.ts`, `campaign.ts`, `definitions.ts`, `index.ts`, `shared.ts`, `types.ts`; `db/repositories/agency/report-dataset-reads.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/agency/report-datasets.test.ts` | 23 |
+| `apps/server/test/unit/agency/report-datasets.test.ts` | 25 |
 | `apps/server/test/integration/api/report-datasets-oracle.test.ts` | 23 |
 | `apps/server/test/integration/load/report-datasets-scale.test.ts` | 1 (opt-in, `REPORT_DATASETS_SCALE=1`) |
 
@@ -596,7 +598,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 50 |
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 22 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
-| `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 37 |
+| `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 42 |
 
 ### `apps/server/src/api/validators/`
 
@@ -756,7 +758,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 9 |
+| `apps/server/test/unit/config/config.test.ts` | 18 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
@@ -1721,11 +1723,11 @@ Files: `ExportReportButton.tsx`, `ExportReportDialog.tsx`, `ReportDownloads.tsx`
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/components/ExportReportDialog.test.tsx` | 20 |
+| `apps/console/src/__tests__/components/ExportReportDialog.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/reportEntryPoints.test.tsx` | 24 |
-| `apps/console/src/__tests__/components/SubscriptionsPanel.test.tsx` | 14 |
+| `apps/console/src/__tests__/components/SubscriptionsPanel.test.tsx` | 17 |
 | `apps/console/src/__tests__/hooks/useReportRun.test.tsx` | 10 |
-| `apps/console/src/__tests__/pages/ReportRunPage.test.tsx` | 9 |
+| `apps/console/src/__tests__/pages/ReportRunPage.test.tsx` | 10 |
 | `apps/console/src/__tests__/pages/ReportsPage.test.tsx` | 11 |
 | `apps/console/src/__tests__/utils/reportWindow.test.ts` | 17 |
 
@@ -2103,6 +2105,90 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/super-admin/src/__tests__/branding/brandAssets.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/branding/noParentBrand.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/saStatus.test.ts` | 21 |
+
+## `apps/report-renderer`
+
+Report PDFs and workbooks from a dataset (RP15, [`reports.md`](reports.md)); depends only on the
+contracts and rendering libraries, never on the database, the server or the clock. Runs as a
+Lambda (SQS, `index.handler`) or in the server's process under `AGENCY_REPORTS_RENDERER=inline`.
+Rules and gotchas: `apps/report-renderer/CLAUDE.md`.
+
+### `apps/report-renderer/src/`
+
+`index.ts` (the public entry, free of Lambda-only imports), `render-run.ts` (`renderRun`: reads and
+checks the dataset (`parseDataset`, `dataset_version`), renders each requested format, writes
+`report.pdf` / `report.xlsx` under the message's prefix and returns the callback; a failure is a
+`status: 'failed'` result with a `ReportRendererFailureCode`, never a throw), `io.ts` (`RendererIO`
+and the gzipped-NDJSON detail reader), `errors.ts` (`RenderFailure`), `signature.ts` (the callback's
+HMAC, as `packages/contracts` defines it), `rates.ts` (the rates the PDF and the workbook both
+print, derived once so the files cannot disagree), `version.ts` (`RENDERER_VERSION`).
+
+Files: `errors.ts`, `index.ts`, `io.ts`, `rates.ts`, `render-run.ts`, `signature.ts`, `version.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/render-run.test.ts` | 8 |
+| `apps/report-renderer/test/fixtures.test.ts` | 6 |
+
+### `apps/report-renderer/src/format/`
+
+Numbers in `en-IN`, British dates and times, durations and percentages, all in the dataset's zone.
+
+Files: `index.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/format.test.ts` | 8 |
+
+### `apps/report-renderer/src/pdf/`
+
+The PDF path: `render-pdf.tsx` (`renderReportHtml`: the kind's template through
+`renderToStaticMarkup`; `renderPdf`: headless Chromium through `puppeteer-core`, A4 with the header
+and "Page X of Y" footer, every request but `data:` and `about:` blocked), `templates/` (`agent.tsx`,
+`campaign.tsx`, `account.tsx`), `components.tsx` and `charts.tsx` (tables, tiles, static SVG charts at
+the 688 px content width), `styles.ts`, `fonts.ts` (IBM Plex embedded as data URIs:
+`REPORT_RENDERER_FONTS_DIR`, a `fonts/` directory beside the module, then the `@fontsource`
+packages), `chrome.ts` (`findChrome`, `launchBrowser`).
+
+Files: `charts.tsx`, `chrome.ts`, `components.tsx`, `fonts.ts`, `render-pdf.tsx`, `styles.ts`, `templates/account.tsx`, `templates/agent.tsx`, `templates/campaign.tsx`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/templates.test.ts` | 22 |
+| `apps/report-renderer/test/pdf.test.ts` | 9 (8 need a Chrome; the ninth fails in CI without one) |
+| `apps/report-renderer/test/chrome.test.ts` | 2 |
+| `apps/report-renderer/test/preview.test.ts` | 1 (opt-in, `REPORT_PREVIEW_DIR`) |
+
+### `apps/report-renderer/src/xlsx/`
+
+The workbook: exceljs' streaming `WorkbookWriter` (`workbook.ts`: summary sheets, then each detail
+sheet streamed from its NDJSON file with the RP12 truncation note on its first row, sheet names made
+unique; `sheet.ts`: one typed table to a streaming worksheet, a frozen header, dataset units
+converted to Excel's, widths, Excel's sheet-name rules).
+
+Files: `sheet.ts`, `workbook.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/workbook.test.ts` | 15 |
+| `apps/report-renderer/test/workbook-memory.test.ts` | 1 |
+
+### `apps/report-renderer/src/lambda/` and the Lambda entry
+
+`src/lambda.ts` (the SQS handler: one record at a time, `renderRun` over S3, the signed callback; an
+undeliverable callback is a batch item failure, a final refusal is logged and not redelivered),
+`lambda/callback.ts` (three tries with backoff, each signed afresh and bounded by 15 s; a 4xx other
+than 408 and 429 is final), `lambda/s3-io.ts` (`RendererIO` over `@aws-sdk/client-s3`, one
+`PutObject` per file), `lambda/chromium.ts` (the `@sparticuz/chromium` layer, imported by file URL
+from `/opt/nodejs/node_modules`). `scripts/build-lambda.mjs` bundles `index.mjs` and `fonts/` into
+`dist/report-renderer-lambda.zip`.
+
+Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts`; `scripts/build-lambda.mjs`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/lambda.test.ts` | 9 |
+| `apps/report-renderer/test/build-lambda.test.ts` | 1 |
 
 ## `apps/mobile`
 
