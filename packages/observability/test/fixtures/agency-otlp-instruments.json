@@ -370,7 +370,7 @@
   {
     "name": "agency_reports_subscription_runs_total",
     "kind": "Counter",
-    "description": "Subscription periods turned into runs, by result: created, or duplicate (the period already had one)",
+    "description": "Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)",
     "attributes": [
       "result"
     ]
