@@ -214,3 +214,26 @@ export type {
   ReportSubscriptionPatch,
   ReportSubscriptionRecord,
 } from './agency/report-subscription.repository.js';
+// The report builders' own reads and detail statements (agency/reports/datasets/).
+export {
+  AgencyReportDatasetRepository,
+  agencyReportDatasetRepository,
+  agentCallsStatement,
+  agentSessionsStatement,
+  agentStateLogStatement,
+  campaignAttemptsStatement,
+  campaignSessionsStatement,
+  REPORT_CURSOR_BATCH,
+  reportCursorRows,
+} from './agency/report-dataset-reads.js';
+export type {
+  ReportAgentAttemptDayRow,
+  ReportAgentCallRow,
+  ReportAgentOutcomeRow,
+  ReportAgentScope,
+  ReportAttemptRow,
+  ReportSessionDetailRow,
+  ReportStateIntervalRow,
+  ReportStateLogRow,
+  ReportStatement,
+} from './agency/report-dataset-reads.js';

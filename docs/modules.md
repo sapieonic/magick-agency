@@ -409,6 +409,18 @@ Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispat
 | `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 14 |
 | `apps/server/test/integration/api/agency-reports.test.ts` | 3 |
 
+### `apps/server/src/agency/reports/datasets/`
+
+The report dataset builders (docs/reports.md "Datasets", RP1): `index.ts` (`REPORT_DATASET_BUILDERS`, one per kind), `types.ts` (the seam with the assembler: `ReportBuildContext`, `ReportDetailSource`, `BuiltReport`, `ReportSubjectUnavailableError`), `agent.ts` (`buildAgentReview`: the agent record and roster reads, presence, days, timeline, outcomes, follow-through, sentiment for supervisors; the `self` audience's stripped blocks and masked calls sheet), `campaign.ts` (`buildCampaignReport`: the Insights `compute*` reads verbatim and agent names; the attempts sheet shared with the account), `account.ts` (`buildAccountReport`: per-campaign Insights figures, totals summed with the rate recomputed, the roster, the rollup re-bucketed into the report's zone), `agent-presence.ts` (pure: state intervals into local days, sum-preserving rounding, the timeline), `definitions.ts` (each kind's definitions page), `shared.ts` (the window as `ReportRange` and local days, tenancy, `readAccountRoster` (the roster screen's chain), `insightsRangeFor` (the Insights routes' parser), labels, `maskPhone` (RP7), `roundPreservingSum`). Their own SQL is `db/repositories/agency/report-dataset-reads.ts` (from the barrel: the agent's intervals, attempt days, outcomes, callback classes, Do Not Call marks, soft-phone calls, sentiment, the account's covered campaigns, the detail statements, and `reportCursorRows`, the server-side cursor every detail source streams through and releases in `finally`).
+
+Files: `account.ts`, `agent-presence.ts`, `agent.ts`, `campaign.ts`, `definitions.ts`, `index.ts`, `shared.ts`, `types.ts`; `db/repositories/agency/report-dataset-reads.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/agency/report-datasets.test.ts` | 23 |
+| `apps/server/test/integration/api/report-datasets-oracle.test.ts` | 23 |
+| `apps/server/test/integration/load/report-datasets-scale.test.ts` | 1 (opt-in, `REPORT_DATASETS_SCALE=1`) |
+
 ### `apps/server/src/ai/`
 
 The AI client layer every AI request goes through: `createAiClient` (a builder per provider, typed over `AiProvider`) and the clients for `openai_compatible` and `azure_openai` (one Chat Completions mapping, `openai-chat.ts`) and `gemini` (native SDK, Files API, per-family thinking and sampling).

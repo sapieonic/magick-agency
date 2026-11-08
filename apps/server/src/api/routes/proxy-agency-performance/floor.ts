@@ -1,13 +1,13 @@
 /*
  * The two whole-floor reads, the roster (`agents/stats`) and the grouped aggregate
  * (`agents/grouped-stats`), with the three facts they add over the handler's page in one
- * place (`scopeRowsToMembers`). Part of `proxy-agency-performance.routes.ts`.
+ * place (`scopeRowsToMembers`, `agency/agency-agent-identity.ts`, which the report builders
+ * share). Part of `proxy-agency-performance.routes.ts`.
  */
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { callCore } from '../../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
-import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import {
   forwardAllowedQuery,
   unknownQueryParamsError,
@@ -16,7 +16,7 @@ import {
 } from '../../../agency/agency-spine.js';
 import {
   resolveAgentNames,
-  filterRowsByMembership,
+  scopeRowsToMembers,
   groupedRowAgentId,
   groupedRowHasAgentKey,
   enrichGroupedRowAgentNames,
@@ -170,66 +170,6 @@ function withOmissionCounters(
     inactive_omitted: inactiveOmitted,
     unattributed_omitted: unattributedOmitted,
   };
-}
-
-/**
- * The three facts the two whole-floor reads (the roster and the grouped read) add over the
- * internal handler's page, in one place so the two cannot drift.
- *
- *  1. **ONE membership read for the whole page, never one per row** — and not wrapped in a
- *     try/catch, unlike the name lookup: a name is an improvement on an id, while this
- *     decides WHICH ROWS EXIST. Degrading it would mean either serving departed agents with
- *     `inactive_omitted: 0` — a payload that states, falsely, that nothing was hidden — or
- *     dropping everybody. Both are confident wrong answers. A database fault propagates.
- *  2. **The filter** (`filterRowsByMembership`), judged against THIS account, and its two
- *     counters. An id with no membership row of ANY status is the third state: dropped
- *     under either flag and never folded into `inactive_omitted` (reporting a stranger as
- *     a departed colleague is a different lie from hiding one). It is served as
- *     `unattributed_omitted` AND logged — the field lets a console account for the rows
- *     that vanished; the log line says an operator should find out why the handler's
- *     scope and `memberships` disagree. Reachable, not hypothetical: the handler scoping
- *     every statement on `tenant_id` AND `account_id` rules out a FOREIGN agent and says
- *     nothing about a FORMER one — attempt history is kept forever while a `memberships`
- *     row goes away with the user.
- *  3. **The body is SPREAD** with `rows` and the two counters on top — TWO numbers, never
- *     one, since a departure and an id with no membership at all are different facts —
- *     and only then named (`enrich`), so no name is looked up for a row that is not
- *     served. The enrichers degrade to `agent_name: null` with a warn, never a 500.
- */
-async function scopeRowsToMembers<TRow>(
-  request: FastifyRequest,
-  params: {
-    body: Record<string, unknown>;
-    rows: readonly TRow[];
-    agentIdOf: (row: TRow) => string | null;
-    accountId: string;
-    includeInactive: boolean;
-    /** The read's name in its log line: `roster`, `grouped stats`. */
-    surface: string;
-    enrich: (scoped: unknown) => Promise<unknown>;
-  },
-): Promise<unknown> {
-  const memberships = await membershipRepository.findAnyByUsersAndTenant(
-    params.rows.map(params.agentIdOf).filter((id): id is string => id !== null),
-    request.tenantId!,
-  );
-  const filtered = filterRowsByMembership(
-    params.rows, memberships, params.accountId, params.includeInactive, params.agentIdOf,
-  );
-
-  if (filtered.unknownOmitted > 0) {
-    log.warn(
-      { tenantId: request.tenantId, accountId: params.accountId, unknownOmitted: filtered.unknownOmitted },
-      `agency ${params.surface}: the internal handler returned agent ids with no membership in this tenant; rows dropped`,
-    );
-  }
-
-  return params.enrich({
-    ...params.body,
-    rows: filtered.rows,
-    inactive_omitted: filtered.inactiveOmitted,
-    unattributed_omitted: filtered.unknownOmitted,
-  });
 }
 
 /**
@@ -410,7 +350,7 @@ export async function registerFloorPerformanceRoutes(app: FastifyInstance): Prom
     // pre-`limit`, post-scope count on purpose: it answers "how many agents dialled in
     // this window", which is what the benchmark is computed over, and the two counters
     // are the separate facts about what this route hid.
-    const body = await scopeRowsToMembers(request, {
+    const body = await scopeRowsToMembers(request.tenantId!, {
       body: result.body as Record<string, unknown>,
       rows,
       agentIdOf: (row) => row.agent_user_id,
@@ -608,7 +548,7 @@ export async function registerFloorPerformanceRoutes(app: FastifyInstance): Prom
     // and anything the handler adds next; `total_groups` stays the handler's
     // pre-`limit`, post-scope count of groups, so it, `rows.length` and the two
     // counters are independent facts and no "showing X of Y" fraction is derivable.
-    const body = await scopeRowsToMembers(request, {
+    const body = await scopeRowsToMembers(request.tenantId!, {
       body: result.body as Record<string, unknown>,
       rows,
       agentIdOf: groupedRowAgentId,

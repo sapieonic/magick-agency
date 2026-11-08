@@ -184,6 +184,102 @@ must be a UUID (refused otherwise) and is written in lower case.
 | `AGENCY_REPORTS_TENANT_PENDING_LIMIT` | 5 | runs queued, assembling or rendering per tenant |
 | `AGENCY_REPORTS_USER_PER_MINUTE` | 3 | ad hoc requests per user per minute |
 
+## Datasets (`apps/server/src/agency/reports/datasets/`)
+
+One builder per kind behind `REPORT_DATASET_BUILDERS` (`index.ts`): `buildAgentReview`
+(`agent.ts`), `buildCampaignReport` (`campaign.ts`), `buildAccountReport` (`account.ts`), each
+`(ctx: { run, now }) => { dataset, details }` (`types.ts`, the seam with the assembler). A builder
+reads with `getPool()`; it throws `ReportSubjectUnavailableError` when the subject is not in the
+run's tenant and account. RP1 is held by `test/integration/api/report-datasets-oracle.test.ts`,
+which checks every block a screen serves against that screen's response for the same window,
+fetched through `buildApp` + `inject`.
+
+**The window.** A run's `[range_from, range_to)` (local midnights of `range.timezone`). Every
+Insights read is served the range its route would serve for those two instants
+(`insightsRangeFor`: the routes' own `parseInsightsRange`, so the same buckets; `to` stops at the
+bucket "now" falls in, as on the tab). The agent record and roster reads take the window through
+their handlers' own parsers (`parseAgentStatsQuery`, `parseRosterQuery`).
+
+**Where each block comes from** (no figure a screen serves is computed a second time):
+
+| Kind | Block | Source |
+|---|---|---|
+| agent | `record`, `per_campaign` | `agencyAgentStatsRepository.stats` (the read behind `/agents/:userId/stats` and `/my-stats`), `bucket=day`, the window |
+| agent | `roster_row`, `benchmark` | `readAccountRoster` (`shared.ts`): the roster handler's read with the console's query (`sort=attempts`, `order=desc`, `limit=200`, no `campaign_id`), the route's membership scope (`scopeRowsToMembers`, now in `agency-agent-identity.ts`) and its names; departed agents kept (`include_inactive`) so a supervisor can review someone who left; `benchmark` null for `self` (RP5); `pool_size` = `cohort.agents_rated` |
+| agent | `occupancy` | RP11: `handling_pct` = the roster row's `occupancy_pct`; `on_call_pct` = `record.occupancy` on-call ÷ shift; `on_call_pct_excl_break` the same over shift minus break |
+| agent | `presence`, `daily` (time half), `timeline` | the shared occupancy intervals (`occupancyIntervalsCtes('agent')`, which now carry `session_id`), non-offline, folded in TypeScript (`agent-presence.ts`) into local days of `range.timezone` |
+| agent | `daily` (attempt half), `presence.drops`, follow-through counters | `agentAttemptDays`: the record's join and `AGENCY_ATTEMPT_METRICS_SQL` grouped by local date, the rollup's measure expressions (`INSIGHTS_MEASURES`: redials placed and connected, reopened and manual dials, overrides, callbacks booked) and drops |
+| agent | `outcomes` | conversations (`CONVERSATION_ATTEMPT_SQL`) by disposition code with the record's metrics; labels from each campaign's current catalog |
+| agent | `follow_through.callbacks` (classes) | `agentCallbackTiming`: IN4's columns and CASE (`CALLBACK_BOOKING_COLUMNS_SQL`, `callbackClassSql`, shared with Insights) over the callbacks the agent booked, booked time in the window |
+| agent | `dnc_marked`, `softphone_calls` | agent-written Do Not Call entries in the window (this account or tenant-wide); placed soft-phone calls (`created_at` in the window, Insights' rule, by agent) |
+| agent | `quality` | supervisor only: analysed calls (`analysis_status = 'completed'`, `callSentimentLabelSql`) among the agent's placed attempts and soft-phone calls; `mixed` counted as neutral; null when none |
+| campaign | `summary`, `activity`, `trends`, `health` | `computeSummary` (with the route's `liveStats` through `callCore`; null when that fails, as on a refusal), `computeActivity`, `computeTrends` (`bucket: 'day'`), `computeHealth`; not through the routes' cache |
+| campaign | `agent_names` | every id under `agent_user_id` / `user_id` / `never_joined` in the four objects (`agentIdsIn`), through `agentNamesOrNone` |
+| account | campaign rows | per covered campaign: `computeActivity` (`calls`, `callbacks.booked`), `computeHealth` (`recording`, the health row), and abandoned / answered summed over the rollup's trend read (`agencyInsightsRollupRepository.trends`, the read `computeTrends` serves its buckets from) |
+| account | `totals` | the campaign figures summed field by field (`sumCounts`), `abandoned_pct` recomputed from the sums with `ratePct` |
+| account | `agents`, `benchmark` | `readAccountRoster` as the console asks it (departed agents dropped), the whole account whatever `campaign_ids` narrowed |
+| account | `daily` | the rollup's trend read with `bucket: 'day'` and `timezone` = the REPORT's zone, per campaign, summed by date: the 15-minute UTC buckets re-bucketed into local days (DST aware; every zone offset is a multiple of 15 minutes, so no bucket straddles a local midnight); `agents_online_peak` null (a distinct count across campaigns is not measured, and a sum of per-campaign peaks would over-count) |
+
+**Covered campaigns (account).** `run.campaign_ids` when set (each must be a campaign of the
+account, else `subject_unavailable`); otherwise every campaign of the account with a rollup bucket
+of dials in the window, or running, paused or stopping now; by name. They are read at most
+three at a time (`ACCOUNT_CAMPAIGN_CONCURRENCY`).
+
+**New definitions** (for blocks no screen serves; spelled in `agent-presence.ts`):
+
+- *Logged-in time*: every non-offline second of the occupancy intervals, the agent's sessions in
+  this account (campaign and soft phone), reserved folded into available. Whole seconds: each
+  column is rounded across the days so the days sum to the window's rounded total
+  (`roundPreservingSum`), and break reasons to the break total.
+- *Day*: midnight to midnight in `range.timezone`; an interval crossing midnight is split there.
+  `first_in` / `last_out` are the day's first and last logged-in instants, clipped to the day.
+  `sessions`: sessions with logged-in time that day.
+- *Drops*: the agent's placed attempts that ended `agent_disconnected`, by dial date.
+- *Timeline*: the day with the most logged-in seconds (latest on a tie), from its local midnight
+  to the next, clipped to `range.end` or to `generated_at` when earlier (the future is not drawn as
+  offline time), `offline` in every gap, equal neighbours merged.
+- *Conversations* on the agent's days are the record's `connected` (both count
+  `CONVERSATION_ATTEMPT_SQL`).
+- *Outcome rows*: `is_success` when any conversation of the code counted as a success in its
+  campaign; `avg_talk_s` the agent leg of those conversations ÷ conversations, whole seconds.
+
+**Definitions and notes.** `definitions.ts` holds each kind's definitions page in print order
+(British English, final copy; the agent's `self` copy leaves out the floor comparison and
+sentiment); each builder adds its notes (time from recorded state changes, reserved counted as
+available, this account's sessions only, catalog relabelling, the day rule, rollup freshness, a
+window running past `generated_at`, the `self` copy's omissions).
+
+**Detail sheets.** Each source streams through `reportCursorRows`
+(`db/repositories/agency/report-dataset-reads.ts`): a `DECLARE … NO SCROLL CURSOR` in a read-only
+REPEATABLE READ transaction on a client of its own, 1,000 rows a fetch, released in `finally`
+(destroyed after an error), acquired only when the first row is asked for.
+
+| Sheet | Rows | Notes |
+|---|---|---|
+| agent `sessions` | the agent's sessions in the account overlapping the window | seconds per state in the window from the occupancy intervals, dials and drops per session |
+| agent `state_log` | every non-offline state interval, clipped to the window | the state in words, break reason label, campaign or "Soft phone" |
+| agent `calls` | placed campaign attempts reserved to the agent and placed soft-phone calls, by dial time | `self`: phone `****1234` (RP7), no Recorded or Sentiment column (RP5), the call table not read at all |
+| campaign `attempts` | every placed attempt in the window | full phone, agent name (resolved per 500 rows), result, outcome code and label, talk (agent leg), measured wrap-up, caller ID, redial, callback |
+| campaign `sessions` | every session on the campaign overlapping the window | the agent's sessions columns, the agent's name first |
+| account `attempts` | every placed attempt of the covered campaigns | as the campaign sheet, with a Campaign column |
+
+**Limits, stated.** The agent's `roster_row` is found in the roster read the console makes
+(`limit=200` by attempts): on a floor of more than 200 dialling agents an agent below the 200th is
+served `roster_row: null` and `handling_pct: null`. Whole-second rounding makes the days sum to the
+window's ROUNDED totals: where the record serves fractional seconds (`talk_seconds`, the occupancy
+block), Σ `daily.talk_s` and `presence.by_state` can differ from it by under a second. The
+campaign report's summary reads the stats strip through `callCore`, so it needs the internal
+handler instance the main process builds; without it the headline's live part is null (logged).
+
+**Cost** (`test/integration/load/report-datasets-scale.test.ts`, opt-in `REPORT_DATASETS_SCALE=1
+LOAD_SCALE=20`: one campaign, 1,000,000 attempts over 31 days by 50 agents, a state change every ten
+minutes per agent; tables ANALYZEd; shared 4-CPU dev host, cold insights cache, best of two,
+2026-11-08), a 30-day window: the agent review builds in 1.9 s, the campaign report in 1.0 s, the
+account report (one campaign) in 2.9 s. Draining the sheets: the agent's 19,328 calls in 0.27 s and
+4,321 state intervals in 0.06 s; the campaign's 967,284 attempts in 10.9 s (the assembler stops at
+100,000), with the heap staying under 170 MB (rows are never held). An account with several
+campaigns adds about one campaign's Insights reads per campaign, three at a time.
+
 ## Who may run what
 
 - **agent**: `agency.supervise` over the context account → `supervisor` audience; otherwise the

@@ -1,4 +1,5 @@
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
+import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import { ROLE_HIERARCHY, type MembershipRole } from '@magick-agency/contracts/rbac';
 import type { AgencyCampaignAgentRecord } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { createChildLogger } from '@magick-agency/observability';
@@ -603,4 +604,68 @@ export async function enrichGroupedRowAgentNames(
       return { ...row, agent_name: id === null ? null : names.get(id) ?? null };
     }),
   };
+}
+
+// ─── The whole-floor reads' membership scope ─────────────────────────────────
+
+/**
+ * The three facts the two whole-floor reads (the roster and the grouped read) add over the
+ * internal handler's page, in one place so the two cannot drift. The report builders
+ * (`agency/reports/datasets/`) apply it to the same handler read, so a report's roster rows are
+ * the roster screen's (RP1). `tenantId` is the request's tenant context.
+ *
+ *  1. **ONE membership read for the whole page, never one per row** — and not wrapped in a
+ *     try/catch, unlike the name lookup: a name is an improvement on an id, while this
+ *     decides WHICH ROWS EXIST. Degrading it would mean either serving departed agents with
+ *     `inactive_omitted: 0` — a payload that states, falsely, that nothing was hidden — or
+ *     dropping everybody. Both are confident wrong answers. A database fault propagates.
+ *  2. **The filter** (`filterRowsByMembership`), judged against THIS account, and its two
+ *     counters. An id with no membership row of ANY status is the third state: dropped
+ *     under either flag and never folded into `inactive_omitted` (reporting a stranger as
+ *     a departed colleague is a different lie from hiding one). It is served as
+ *     `unattributed_omitted` AND logged — the field lets a console account for the rows
+ *     that vanished; the log line says an operator should find out why the handler's
+ *     scope and `memberships` disagree. Reachable, not hypothetical: the handler scoping
+ *     every statement on `tenant_id` AND `account_id` rules out a FOREIGN agent and says
+ *     nothing about a FORMER one — attempt history is kept forever while a `memberships`
+ *     row goes away with the user.
+ *  3. **The body is SPREAD** with `rows` and the two counters on top — TWO numbers, never
+ *     one, since a departure and an id with no membership at all are different facts —
+ *     and only then named (`enrich`), so no name is looked up for a row that is not
+ *     served. The enrichers degrade to `agent_name: null` with a warn, never a 500.
+ */
+export async function scopeRowsToMembers<TRow>(
+  tenantId: string,
+  params: {
+    body: Record<string, unknown>;
+    rows: readonly TRow[];
+    agentIdOf: (row: TRow) => string | null;
+    accountId: string;
+    includeInactive: boolean;
+    /** The read's name in its log line: `roster`, `grouped stats`. */
+    surface: string;
+    enrich: (scoped: unknown) => Promise<unknown>;
+  },
+): Promise<unknown> {
+  const memberships = await membershipRepository.findAnyByUsersAndTenant(
+    params.rows.map(params.agentIdOf).filter((id): id is string => id !== null),
+    tenantId,
+  );
+  const filtered = filterRowsByMembership(
+    params.rows, memberships, params.accountId, params.includeInactive, params.agentIdOf,
+  );
+
+  if (filtered.unknownOmitted > 0) {
+    log.warn(
+      { tenantId, accountId: params.accountId, unknownOmitted: filtered.unknownOmitted },
+      `agency ${params.surface}: the internal handler returned agent ids with no membership in this tenant; rows dropped`,
+    );
+  }
+
+  return params.enrich({
+    ...params.body,
+    rows: filtered.rows,
+    inactive_omitted: filtered.inactiveOmitted,
+    unattributed_omitted: filtered.unknownOmitted,
+  });
 }
