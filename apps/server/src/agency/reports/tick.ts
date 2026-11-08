@@ -15,7 +15,8 @@
  *      in between) is sent; a run `rendering` past `renderTimeoutMs` with no callback first has
  *      its expected output keys checked in S3: all present → applied as rendered (the lost
  *      callback's work was done) through `applyRenderOutcome`, the same fenced path as the
- *      webhook; else re-sent while `render_attempt < maxAttempts`, else failed `render_timed_out`;
+ *      webhook; else (a file missing, or the HEAD itself failing) re-sent while
+ *      `render_attempt < maxAttempts`, else failed `render_timed_out`;
  *  (c) **notify**: each finished run that emails someone is marked notified first, and only the
  *      tick that marked it sends (at most once);
  *  (d) **expire** ready runs past `expires_at` (RP8);
@@ -190,7 +191,17 @@ export function createReportTick(options: ReportTickOptions, deps: ReportTickDep
   const reconcileRendering = async (run: ReportRunRecord, result: ReportTickResult): Promise<void> => {
     const scope = { tenantId: run.tenant_id, accountId: run.account_id, runId: run.id };
     const keys = run.formats.map((format) => ({ format, key: reportOutputKey(scope, format) }));
-    const heads = await Promise.all(keys.map((k) => deps.headObject(k.key)));
+    // A HEAD that fails (S3 throttling, a permission, the network) is not proof the files are
+    // there: the run falls through to the re-send / fail branch below, which the attempt fence
+    // makes safe, instead of retrying the HEAD on every tick forever while the run stays
+    // `rendering`.
+    let heads: Array<{ bytes: number } | null>;
+    try {
+      heads = await Promise.all(keys.map((k) => deps.headObject(k.key)));
+    } catch (err) {
+      log.warn({ runId: run.id, attempt: run.render_attempt, err }, 'Report output HEAD failed; treating the files as missing');
+      heads = keys.map(() => null);
+    }
     if (heads.every((h) => h !== null)) {
       const outcome = await deps.apply(run.id, run.render_attempt, {
         run_id: run.id,

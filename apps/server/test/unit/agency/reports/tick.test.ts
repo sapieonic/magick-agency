@@ -235,13 +235,29 @@ describe('reconcile', () => {
       runRecord({ id: RUN, status: 'rendering', render_attempt: 1 }),
       runRecord({ id: RUN_B, status: 'rendering', render_attempt: 1 }),
     ]);
-    d.headObject.mockImplementation(async (key: string) => {
-      if (key.includes(RUN)) throw new Error('S3 500');
-      return null;
+    d.runs.markSent.mockImplementation(async (id: string, fence: ReportRunFence) => {
+      if (id === RUN) throw new Error('db hiccup');
+      return ('renderAttempt' in fence ? fence.renderAttempt : 0) + 1;
     });
     const result = await createReportTick(opts, d).runTick();
     expect(result.errors).toBe(1);
     expect(d.runs.markSent).toHaveBeenCalledWith(RUN_B, { renderAttempt: 1 });
+  });
+
+  it('a HEAD that fails (not a 404) counts as files missing: re-sent while attempts remain, then failed, never stuck', async () => {
+    const d = deps();
+    d.headObject.mockRejectedValue(Object.assign(new Error('Access Denied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }));
+    const run = runRecord({ status: 'rendering', render_attempt: 1 });
+    d.runs.findRenderingSentBefore.mockResolvedValue([run]);
+    let result = await createReportTick(opts, d).runTick();
+    expect(result.errors).toBe(0);
+    expect(d.apply).not.toHaveBeenCalled();
+    expect(d.dispatcher.dispatch).toHaveBeenCalledWith(run, 2);
+
+    d.runs.findRenderingSentBefore.mockResolvedValue([runRecord({ status: 'rendering', render_attempt: 3 })]);
+    result = await createReportTick(opts, d).runTick();
+    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', expect.any(String), { renderAttempt: 3 });
+    expect(result.timedOut).toBe(1);
   });
 });
 

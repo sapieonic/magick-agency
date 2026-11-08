@@ -361,7 +361,9 @@ What W1 built, beside the contract above. Module detail and tests: [`modules.md`
   `finally` when the assembler calls `return()` at the row cap).
 - **Tick** (`tick.ts`): each step handles at most 50 items a tick; a run assembled but unsent for
   5 minutes is sent; a run found rendered in S3 after a lost callback records `renderer_version =
-  'reconciled'`. Each due subscription's subject is probed at the claim
+  'reconciled'`; a HEAD that fails for any reason other than not-found is logged and counts as a
+  file missing (re-sent under the attempt fence, or failed `render_timed_out` at the last attempt),
+  so a `rendering` run is never stuck on S3 errors. Each due subscription's subject is probed at the claim
   (`subscription-subject.ts`, the builders' own `subject_unavailable` rule: the account exists; an
   agent's membership, any status, reaches it; the campaign is still the account's; an account
   report is about its own account): a subject that is gone DISABLES the subscription (no run, so no
