@@ -4,10 +4,10 @@
  * block at all (RP5).
  */
 import { describe, expect, it } from 'vitest';
-import { count, duration, pct } from '../src/format';
+import { count, dayLabel, duration, pct } from '../src/format';
 import { renderReportHtml } from '../src/pdf/render-pdf';
 import { accountFixture } from './fixtures/account';
-import { agentFixture } from './fixtures/agent';
+import { agentClockChangeFixture, agentFixture } from './fixtures/agent';
 import { campaignFixture } from './fixtures/campaign';
 
 const NO_FONTS = { fonts: { css: '', embedded: false } };
@@ -67,6 +67,46 @@ describe('agent review', () => {
     const last = text(block(html, 'data-page', 'definitions'));
     for (const def of d.definitions) expect(last).toContain(def.label);
     expect(last).toContain(d.notes[0]!);
+  });
+});
+
+describe('agent review, the representative day on a clock change', () => {
+  /** The timeline strip's state rectangles (x, width) in order, and its hour tick labels. */
+  function strip(html: string) {
+    const svg = block(html, 'data-block', 'timeline');
+    const rects = [...svg.matchAll(/<rect x="([\d.]+)" y="4" width="([\d.]+)" height="26" fill="(?!#f6f7f9)[^"]+"><title>/g)].map((m) => ({
+      x: Number(m[1]),
+      w: Number(m[2]),
+    }));
+    const ticks = [...svg.matchAll(/font-family="[^"]*Mono[^"]*"[^>]*>([^<]+)<\/text>/g)].map((m) => m[1]);
+    return { rects, ticks, text: text(svg) };
+  }
+
+  it('draws a 25-hour day by elapsed time: segments in order, an hour of the scale twice', () => {
+    const d = agentClockChangeFixture('back');
+    const { rects, ticks, text: t } = strip(renderReportHtml(d, NO_FONTS));
+    expect(rects.length).toBe(d.timeline!.segments.length);
+    // Every segment starts where the one before it ended: none drawn over another.
+    for (let i = 1; i < rects.length; i++) expect(rects[i]!.x).toBeCloseTo(rects[i - 1]!.x + rects[i - 1]!.w, 1);
+    // 01 twice (BST, then GMT), then on to 23: the scale runs past 24 hours in.
+    expect(ticks.filter((h) => h === '01')).toHaveLength(2);
+    expect(ticks.at(-1)).toBe('23');
+    expect(ticks.length).toBe(24);
+    expect(t).toContain('last out 22:30');
+    expect(t).toContain('A 25-hour day: the clocks went back');
+  });
+
+  it('draws a 23-hour day with the skipped hour missing from the scale', () => {
+    const d = agentClockChangeFixture('forward');
+    const { rects, ticks, text: t } = strip(renderReportHtml(d, NO_FONTS));
+    for (let i = 1; i < rects.length; i++) expect(rects[i]!.x).toBeCloseTo(rects[i - 1]!.x + rects[i - 1]!.w, 1);
+    expect(ticks).not.toContain('01');
+    expect(ticks.slice(0, 2)).toEqual(['00', '02']);
+    expect(t).toContain('A 23-hour day: the clocks went forward');
+  });
+
+  it('says nothing about clocks on an ordinary day', () => {
+    expect(renderReportHtml(agentFixture().dataset, NO_FONTS)).not.toContain('data-note="clock-change"');
   });
 });
 
@@ -136,6 +176,25 @@ describe('campaign report', () => {
     expect(text(block(html, 'data-block', 'callbacks'))).toContain(count(d.activity.callbacks.booked));
   });
 
+  it('dates each day bucket by its bucket_start, not by counting from range.from', () => {
+    // A trend read that starts two days into the window (the first two days had no rollup rows).
+    const late = structuredClone(d);
+    late.trends.buckets = late.trends.buckets.slice(2);
+    const first = late.trends.buckets[0]!.bucket_start;
+    expect(first).not.toBe(late.range.from);
+    const trends = text(block(renderReportHtml(late, NO_FONTS), 'data-block', 'trends'));
+    expect(trends).toContain(`${dayLabel(first)}: ${count(late.trends.buckets[0]!.dials)} dials`);
+    expect(trends).not.toContain(`${dayLabel(late.range.from)}:`);
+  });
+
+  it('rounds the live pace to whole dials an hour', () => {
+    const live = structuredClone(d);
+    live.summary.headline.running!.dials_per_hour = 1234.567;
+    const headline = text(block(renderReportHtml(live, NO_FONTS), 'data-block', 'headline'));
+    expect(headline).toContain('1,235 dials an hour');
+    expect(headline).not.toContain('1,234.567');
+  });
+
   it('withholds an agent rate below the Insights floor', () => {
     const thin = structuredClone(d);
     thin.activity.agents[0] = { ...thin.activity.agents[0]!, dials: 20, redials: 0, human_connects: 9, conversations: 12, successes: 4 };
@@ -147,6 +206,7 @@ describe('campaign report', () => {
 describe('account report', () => {
   const { dataset: d } = accountFixture();
   const html = renderReportHtml(d, NO_FONTS);
+  const t = text(html);
 
   it('lists every campaign with a totals row, recomputing the total rate from the sums', () => {
     const campaigns = text(block(html, 'data-block', 'campaigns'));
@@ -162,6 +222,22 @@ describe('account report', () => {
     expect(agents).toContain(pct(d.benchmark.cohort.connect_rate.median!));
     const kavya = agents.split('Kavya Nair')[1]!.slice(0, 160);
     expect(kavya).toContain('Not enough calls to rate');
+  });
+
+  it('prints no peak agents section or column clause when no day measures one (v1)', () => {
+    expect(d.daily.every((r) => r.agents_online_peak === null)).toBe(true);
+    expect(html).not.toContain('data-block="peaks"');
+    expect(t).not.toContain('Peak agents online');
+    expect(t).not.toMatch(/not measured/i);
+  });
+
+  it('prints the peaks when a dataset carries them', () => {
+    const { dataset: measured } = accountFixture({ attemptsCap: 5000, peaks: true });
+    const day = measured.daily.find((r) => r.agents_online_peak !== null && r.dials > 0)!;
+    const m = renderReportHtml(measured, NO_FONTS);
+    expect(text(block(m, 'data-block', 'peaks'))).toContain('Peak agents online per day');
+    expect(text(block(m, 'data-block', 'daily'))).toContain(`${count(day.agents_online_peak!)} agents at the peak`);
+    expect(text(block(m, 'data-block', 'daily'))).toContain('peak agents not measured');
   });
 
   it('prints health per campaign and the truncation note', () => {

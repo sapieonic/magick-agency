@@ -68,6 +68,46 @@ export function recipientOptions(members: readonly TenantMember[], accountId: st
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** The same members, in any order. */
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  const sa = new Set(a);
+  const sb = new Set(b);
+  return sa.size === sb.size && [...sa].every((x) => sb.has(x));
+}
+
+/**
+ * The edit's PATCH: only the fields whose value differs from the subscription being
+ * edited, so a change of recipients or formats is not sent as a change of schedule.
+ * The day fields follow the cadence (a field the old cadence set and the new one does
+ * not becomes null), so a cadence change carries both. Formats and recipients compare
+ * as sets.
+ */
+export function subscriptionPatch(
+  editing: AgencyReportSubscription,
+  form: AgencyUpdateReportSubscriptionRequest,
+): AgencyUpdateReportSubscriptionRequest {
+  const patch: AgencyUpdateReportSubscriptionRequest = {};
+  if (form.cadence !== undefined && form.cadence !== editing.cadence) patch.cadence = form.cadence;
+  if (form.send_local_time !== undefined && form.send_local_time !== editing.send_local_time) {
+    patch.send_local_time = form.send_local_time;
+  }
+  if (form.send_weekday !== undefined && form.send_weekday !== editing.send_weekday) patch.send_weekday = form.send_weekday;
+  if (form.send_monthday !== undefined && form.send_monthday !== editing.send_monthday) patch.send_monthday = form.send_monthday;
+  if (form.timezone !== undefined && form.timezone !== editing.timezone) patch.timezone = form.timezone;
+  if (form.formats !== undefined && !sameSet(form.formats, editing.formats)) patch.formats = form.formats;
+  if (
+    form.recipient_user_ids !== undefined &&
+    !sameSet(
+      form.recipient_user_ids,
+      editing.recipients.map((r) => r.user_id),
+    )
+  ) {
+    patch.recipient_user_ids = form.recipient_user_ids;
+  }
+  if (form.enabled !== undefined && form.enabled !== editing.enabled) patch.enabled = form.enabled;
+  return patch;
+}
+
 export interface SubscriptionFormDialogProps {
   open: boolean;
   onClose: () => void;
@@ -167,10 +207,15 @@ function OpenSubscriptionForm({ onClose, editing, members, campaigns, onSaved }:
       formats: chosenFormats,
       recipient_user_ids: recipients,
     };
+    const patch = editing ? subscriptionPatch(editing, schedule) : null;
+    // An edit that changed nothing has nothing to send.
+    if (patch && Object.keys(patch).length === 0) {
+      onClose();
+      return;
+    }
     setSaving(true);
     try {
-      if (editing) {
-        const patch: AgencyUpdateReportSubscriptionRequest = schedule;
+      if (editing && patch) {
         onSaved(await updateReportSubscription(editing.id, patch, tenantId, accountId), 'updated');
       } else {
         const request: AgencyCreateReportSubscriptionRequest = { kind, subject_id: subjectId, ...schedule };

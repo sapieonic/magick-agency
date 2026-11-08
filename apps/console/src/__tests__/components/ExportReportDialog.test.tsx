@@ -165,6 +165,22 @@ describe('ExportReportDialog — zone, formats and email', () => {
     });
   });
 
+  it('names no zone for a campaign whose zone is unknown, and bounds dates by the browser’s', async () => {
+    renderDialog({ ...CAMPAIGN, campaignTimezone: null });
+    expect(screen.getByTestId('report-campaign-zone').textContent).toBe('Days are cut in the campaign’s time zone.');
+    // The browser is in Kolkata, where it is already 9 Nov (UTC would still say 8 Nov).
+    expect(screen.getByTestId('report-window-summary').textContent).toBe('3 Nov – 9 Nov 2026');
+    submit();
+    await waitFor(() => expect(mocks.createReport).toHaveBeenCalled());
+    expect(sent()).toEqual({
+      kind: 'campaign',
+      subject_id: 'camp-1',
+      from: '2026-11-03',
+      to: '2026-11-09',
+      formats: ['pdf', 'xlsx'],
+    });
+  });
+
   it('requires at least one format', async () => {
     renderDialog();
     fireEvent.click(screen.getByLabelText('PDF'));

@@ -8,7 +8,7 @@ import { describe, it } from 'vitest';
 import { launchBrowser } from '../src/pdf/chrome';
 import { renderPdf, renderReportHtml } from '../src/pdf/render-pdf';
 import { accountFixture } from './fixtures/account';
-import { agentFixture } from './fixtures/agent';
+import { agentClockChangeFixture, agentFixture } from './fixtures/agent';
 import { campaignFixture } from './fixtures/campaign';
 
 const dir = process.env.REPORT_PREVIEW_DIR;
@@ -16,7 +16,14 @@ const dir = process.env.REPORT_PREVIEW_DIR;
 describe.runIf(Boolean(dir))('preview', () => {
   it('writes HTML and PDF per fixture', async () => {
     mkdirSync(dir!, { recursive: true });
-    const sets = { agent: agentFixture().dataset, 'agent-self': agentFixture({ audience: 'self' }).dataset, campaign: campaignFixture().dataset, account: accountFixture().dataset };
+    const sets = {
+      agent: agentFixture().dataset,
+      'agent-self': agentFixture({ audience: 'self' }).dataset,
+      // The representative day on a clock change (Europe/London, 25 hours).
+      'agent-clock-change': agentClockChangeFixture('back'),
+      campaign: campaignFixture().dataset,
+      account: accountFixture().dataset,
+    };
     const browser = await launchBrowser();
     try {
       for (const [name, ds] of Object.entries(sets)) {

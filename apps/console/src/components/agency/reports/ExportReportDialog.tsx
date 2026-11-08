@@ -81,7 +81,10 @@ function OpenExportReportDialog({ onClose, target, entry, now }: ExportReportDia
   const isCampaign = target.kind === 'campaign';
   const [preset, setPreset] = useState<ReportWindowPreset>('last_7_days');
   const [zone, setZone] = useState<string>(() => browserZone());
-  const reportZone = isCampaign ? target.campaignTimezone || 'UTC' : zone;
+  // A campaign whose zone this page does not know yet bounds its dates by the browser's zone;
+  // the server cuts the days in the campaign's own zone either way (RP3).
+  const campaignZone = isCampaign ? target.campaignTimezone || null : null;
+  const reportZone = campaignZone ?? zone;
   const [clock] = useState<Date>(() => now ?? new Date());
   const today = todayIn(reportZone, clock);
   const [customFrom, setCustomFrom] = useState('');
@@ -230,7 +233,7 @@ function OpenExportReportDialog({ onClose, target, entry, now }: ExportReportDia
 
         {isCampaign ? (
           <p className={styles.hint} data-testid="report-campaign-zone">
-            {`Days are cut in ${reportZone}, the campaign’s time zone.`}
+            {campaignZone ? `Days are cut in ${campaignZone}, the campaign’s time zone.` : 'Days are cut in the campaign’s time zone.'}
           </p>
         ) : (
           <div className="form-group">

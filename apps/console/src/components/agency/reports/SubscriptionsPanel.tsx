@@ -124,7 +124,8 @@ export function SubscriptionsPanel() {
         const run = await runReportSubscriptionNow(sub.id, tenantId, accountId);
         trackAgencyReportSubscriptionChanged({ kind: sub.kind, cadence: sub.cadence, action: 'run_now' });
         const path = reportRunPath(role, run.id);
-        showToast('The report is being prepared.', 'success', 8000, { label: 'View report', onClick: () => navigate(path) });
+        // Run now emails the requester (the server sets `email_me`), as the export dialog's own copy says.
+        showToast('The report is being prepared. We’ll email you when it’s ready.', 'success', 8000, { label: 'View report', onClick: () => navigate(path) });
       } else {
         const updated = await updateReportSubscription(sub.id, { enabled: action === 'resume' }, tenantId, accountId);
         replace(updated);

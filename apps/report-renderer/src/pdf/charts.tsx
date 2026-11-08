@@ -162,7 +162,7 @@ function formatTick(t: number): string {
 // ── Day timeline ─────────────────────────────────────────────────────────────
 
 export interface TimelineMark {
-  /** Hours since local midnight. */
+  /** Hours elapsed since the start of the local day (to 25 on a day the clocks go back). */
   from: number;
   to: number;
   colour: string;
@@ -176,6 +176,7 @@ export function TimelineStrip({
   endHour,
   title,
   annotations,
+  hourLabel = (h) => String(h % 24).padStart(2, '0'),
   width = CONTENT_WIDTH,
 }: {
   marks: TimelineMark[];
@@ -183,6 +184,8 @@ export function TimelineStrip({
   endHour: number;
   title: string;
   annotations: Array<{ hour: number; text: string; anchor: 'start' | 'end' }>;
+  /** The wall clock at an elapsed hour (on a clock-change day an hour repeats or is skipped). */
+  hourLabel?: (hour: number) => string;
   width?: number;
 }) {
   const left = 4;
@@ -206,7 +209,7 @@ export function TimelineStrip({
         <g key={h}>
           <line x1={x(h)} x2={x(h)} y1={32} y2={36} stroke={INK.axis} />
           <text x={x(h)} y={46} textAnchor="middle" fontSize={9} fill={INK.ink2} fontFamily={MONO}>
-            {String(h % 24).padStart(2, '0')}
+            {hourLabel(h)}
           </text>
         </g>
       ))}

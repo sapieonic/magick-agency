@@ -77,6 +77,11 @@ export function headerFooter(dataset: ReportDataset, fonts: FontSet): { headerTe
   return { headerTemplate, footerTemplate };
 }
 
+/** The only URLs the page may load: inline data and the blank document itself. */
+export function isInlineUrl(url: string): boolean {
+  return url.startsWith('data:') || url.startsWith('about:');
+}
+
 /** Render a dataset to PDF bytes. Closes any browser it launched, whatever happens. */
 export async function renderPdf(dataset: ReportDataset, options: PdfOptions = {}): Promise<Buffer> {
   const fonts = options.fonts ?? loadFonts();
@@ -87,6 +92,14 @@ export async function renderPdf(dataset: ReportDataset, options: PdfOptions = {}
   try {
     const page = await browser.newPage();
     try {
+      // Defence in depth: the document is self-contained (fonts are data URIs, charts inline SVG),
+      // so nothing it names off the page is ever fetched, whatever a template or a dataset string emits.
+      await page.setRequestInterception(true);
+      page.on('request', (request) => {
+        if (request.isInterceptResolutionHandled()) return;
+        if (isInlineUrl(request.url())) void request.continue();
+        else void request.abort('blockedbyclient');
+      });
       await page.setContent(html, { waitUntil: 'load', timeout });
       // Wait for the embedded faces to decode before printing (a string, so no DOM types are needed here).
       await page.evaluate('document.fonts.ready.then(() => true)');
