@@ -23,7 +23,7 @@ import type {
 import { average, bucketDate, count, pct, rate, rateText, servedRate, share, type Rate } from '../format';
 import type { DetailReader } from '../io';
 import { agentConnectRate, agentSuccessRate } from '../rates';
-import { excelValue, NUM_FMT, writeTable, type SheetColumn } from './sheet';
+import { excelValue, NUM_FMT, sheetName, writeTable, type SheetColumn } from './sheet';
 
 type Row = unknown[];
 
@@ -96,11 +96,45 @@ export function truncationNote(file: ReportDetailFile): string {
   return `This sheet stops at ${count(file.rows)} rows: the report’s limit was reached, so later rows are not listed. The report’s totals count every row.`;
 }
 
+/**
+ * The sheets each kind writes from the dataset itself (the order is in this module's comment).
+ * A detail sheet's label may not take one of these names.
+ */
+export const FIXED_SHEETS = {
+  agent: ['Summary', 'Daily', 'Breaks', 'Outcomes', 'Callbacks', 'Campaigns', 'Benchmark', 'Definitions'],
+  campaign: ['Summary', 'Daily', 'By hour', 'Outcomes', 'Agents', 'Callbacks', 'Health', 'Caller IDs', 'Definitions'],
+  account: ['Summary', 'Campaigns', 'Agents', 'Daily', 'Health', 'Definitions'],
+} as const satisfies Record<ReportDataset['kind'], readonly string[]>;
+
+/** A name Excel keeps for itself. */
+const EXCEL_RESERVED_SHEETS = ['History'];
+
+/**
+ * Each detail file's sheet name: its label made valid for Excel ({@link sheetName}) and, when
+ * that matches a fixed sheet, Excel's own reserved name or an earlier detail sheet (Excel
+ * compares names without case), numbered `Label (2)`, `Label (3)`… within the 31 characters.
+ */
+export function detailSheetNames(d: ReportDataset): Map<ReportDetailSheet, string> {
+  const taken = new Set([...FIXED_SHEETS[d.kind], ...EXCEL_RESERVED_SHEETS].map((n) => n.toLowerCase()));
+  const names = new Map<ReportDetailSheet, string>();
+  for (const f of d.detail_files) {
+    const base = sheetName(f.label);
+    let name = base;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) {
+      const suffix = ` (${n})`;
+      name = `${base.slice(0, 31 - suffix.length).trimEnd()}${suffix}`;
+    }
+    taken.add(name.toLowerCase());
+    names.set(f.sheet, name);
+  }
+  return names;
+}
+
 async function writeDetail(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: ReportDataset, file: ReportDetailFile | undefined, read: DetailReader): Promise<void> {
   if (!file) return;
   await writeTable(
     wb,
-    file.label,
+    detailSheetNames(d).get(file.sheet)!,
     file.columns.map((c) => ({ header: c.label, type: c.type, width: c.type === 'text' ? Math.max(14, Math.min(28, c.label.length + 10)) : undefined })),
     read(file),
     { zone: d.range.timezone, note: file.truncated ? truncationNote(file) : undefined },
@@ -121,7 +155,10 @@ async function writeDefinitions(wb: ExcelJS.stream.xlsx.WorkbookWriter, d: Repor
   const rows: Row[] = [
     ...d.definitions.map((x) => ['All sheets', x.label, x.text]),
     ['All sheets', 'Rates', 'A rate without enough calls behind it is written in words (“Not enough calls to rate”), never as 0.'],
-    ...d.detail_files.flatMap((f) => f.columns.map((c) => [f.label, c.label, typeWords[c.type] ?? c.type])),
+    ...(() => {
+      const names = detailSheetNames(d);
+      return d.detail_files.flatMap((f) => f.columns.map((c) => [names.get(f.sheet) ?? f.label, c.label, typeWords[c.type] ?? c.type]));
+    })(),
     ...d.notes.map((n) => ['Notes', 'This run', n]),
   ];
   await writeTable(

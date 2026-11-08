@@ -6,7 +6,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { ReportDataset } from '@magick-agency/contracts/reports';
 import { detailReaderFromIO } from '../src/io';
-import { writeWorkbook } from '../src/xlsx/workbook';
+import { detailSheetNames, FIXED_SHEETS, writeWorkbook } from '../src/xlsx/workbook';
 import { accountFixture } from './fixtures/account';
 import { agentFixture } from './fixtures/agent';
 import { campaignFixture } from './fixtures/campaign';
@@ -177,5 +177,61 @@ describe('account workbook', async () => {
     const attempts = wb.getWorksheet('Attempts')!;
     expect(String(attempts.getCell('A1').value)).toContain('stops at 5,000 rows');
     expect(attempts.actualRowCount).toBe(5000 + 2);
+  });
+});
+
+describe('detail sheet names', async () => {
+  it('every sheet a workbook writes from the dataset itself is a fixed sheet of its kind', async () => {
+    const sets: Array<[ReportDataset, Map<string, Buffer>]> = [
+      [agentFixture().dataset, agentFixture().details],
+      [campaignFixture().dataset, campaignFixture().details],
+      [accountFixture().dataset, accountFixture().details],
+    ];
+    for (const [d, details] of sets) {
+      const names = (await readWorkbook(await build(d, details))).worksheets.map((w) => w.name);
+      const detail = new Set(detailSheetNames(d).values());
+      expect(names.filter((n) => !detail.has(n)).every((n) => (FIXED_SHEETS[d.kind] as readonly string[]).includes(n))).toBe(true);
+      // The fixtures' own labels never collide: their sheets keep their labels.
+      expect([...detail]).toEqual(d.detail_files.map((f) => f.label));
+    }
+  });
+
+  it('renames a label that collides with a fixed sheet (any case) or breaks Excel’s rules', async () => {
+    const { dataset, details } = agentFixture();
+    const d = structuredClone(dataset);
+    const label = (sheet: string, l: string) => (d.detail_files.find((f) => f.sheet === sheet)!.label = l);
+    label('sessions', 'daily');
+    label('state_log', "'State log: every change [in/out]? of the whole window'");
+    label('calls', 'Definitions');
+    const wb = await readWorkbook(await build(d, details));
+    const names = wb.worksheets.map((w) => w.name);
+    expect(names).toEqual([
+      'Summary', 'Daily', 'daily (2)', 'State log  every change  in out', 'Breaks', 'Definitions (2)', 'Outcomes', 'Callbacks', 'Campaigns', 'Benchmark', 'Definitions',
+    ]);
+    expect(new Set(names.map((n) => n.toLowerCase())).size).toBe(names.length);
+    for (const n of names) {
+      expect(n.length).toBeLessThanOrEqual(31);
+      expect(n).not.toMatch(/[[\]:*?/\\]|^'|'$/);
+    }
+    // Every row still lands in its renamed sheet, and Definitions names the sheets as written.
+    const calls = d.detail_files.find((f) => f.sheet === 'calls')!;
+    expect(wb.getWorksheet('Definitions (2)')!.actualRowCount).toBe(calls.rows + 1);
+    const sheetsNamed = new Set<string>();
+    wb.getWorksheet('Definitions')!.eachRow((r, n) => {
+      if (n > 1) sheetsNamed.add(String(r.getCell(1).value));
+    });
+    expect(sheetsNamed).toContain('Definitions (2)');
+    expect(sheetsNamed).toContain('daily (2)');
+    expect(sheetsNamed).not.toContain('Definitions');
+  });
+
+  it('numbers two labels that are the same once cut to 31 characters, within 31', () => {
+    const { dataset } = campaignFixture();
+    const d = structuredClone(dataset);
+    d.detail_files[0]!.label = 'Every attempt placed in the window, in full';
+    d.detail_files[1]!.label = 'Every attempt placed in the window, by agent';
+    const names = [...detailSheetNames(d).values()];
+    expect(names).toEqual(['Every attempt placed in the win', 'Every attempt placed in the (2)']);
+    for (const n of names) expect(n.length).toBeLessThanOrEqual(31);
   });
 });

@@ -135,9 +135,18 @@ export async function writeTable(
   return n;
 }
 
-/** Excel's sheet-name rules: at most 31 characters, none of `[]:*?/\`. */
+/**
+ * Excel's sheet-name rules: at most 31 characters, none of `[]:*?/\`, no apostrophe first or
+ * last, not blank.
+ */
 export function sheetName(name: string): string {
-  return name.replace(/[[\]:*?/\\]/g, ' ').slice(0, 31) || 'Sheet';
+  return (
+    name
+      .replace(/[[\]:*?/\\]/g, ' ')
+      .replace(/^[\s']+/, '')
+      .slice(0, 31)
+      .replace(/[\s']+$/, '') || 'Sheet'
+  );
 }
 
 function columnWidth(c: SheetColumn, values: unknown[]): number {
