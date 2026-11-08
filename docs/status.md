@@ -1075,19 +1075,21 @@ this branch: every count below is a local run, so the renderer's PDF suite on Gi
 ## Test counts
 
 Latest run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
-gate on schedules and emails, `subject_changed`, the restart reclaim, final callback refusals),
-from inside each package, with no other run sharing this worktree's database: `pnpm lint` clean in
+gate on schedules and emails, `subject_changed`, the restart reclaim, final callback refusals) and
+the simplification pass (shared helpers, one definition-key list in the contracts, the workbook's
+Definition cells filled, the console's outcome words in the workbook, lighter dataset reads,
+report polling paused in a hidden tab and backed off), from inside each package, with no other run sharing this worktree's database: `pnpm lint` clean in
 9 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass; `pnpm build` clean;
 `contracts-literals --check` up to date (51 vocabularies); `aws/terraform` unchanged since its
 `terraform test` 7 pass and `validate` clean earlier the same day. `apps/mobile` was not run (no Flutter or Dart in this environment).
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 9120 passed + 1 expected fail + 42 skipped (455 files) | rest lane 2276 passed + 9 expected fail + 2 skipped (222 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
+| `apps/server` | 9123 passed + 1 expected fail + 42 skipped (455 files) | rest lane 2278 passed + 9 expected fail + 2 skipped (222 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
 | `packages/db` | 428 (25 files) | 632 (64 files) |
-| `apps/console` | 5871 (305 files) | — |
+| `apps/console` | 5876 (305 files) | — |
 | `apps/super-admin` | 471 (35 files) | — |
-| `apps/report-renderer` | 80 passed + 2 skipped (10 files + 1 skipped: the opt-in preview and a CI-only browser check) | — |
+| `apps/report-renderer` | 86 passed + 2 skipped (11 files + 1 skipped: the opt-in preview and a CI-only browser check) | — |
 | `packages/contracts` | 352 (12 files) | — |
 | `packages/web-ui` | 240 (20 files) | — |
 | `packages/domain` | 142 (9 files) | — |

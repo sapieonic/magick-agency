@@ -55,8 +55,8 @@ is merged over Plivo the same day (its migration is 0022): db unit 428, console 
 Reports (2026-11-08: agent performance reviews, campaign and account reports as PDF and Excel,
 ad hoc or on a schedule, behind a flag, RP1–RP16) are built through the server, a renderer app that
 runs as a Lambda or in process, the console and the infrastructure, reviewed independently twice
-and re-run: server 9120 unit / 2276 + 15 integration + 9 expected fail, db 428 / 632, console 5871,
-renderer 80 ([`reports.md`](reports.md); `status.md`, "Test counts"). They have not run on AWS or
+and re-run: server 9123 unit / 2278 + 15 integration + 9 expected fail, db 428 / 632, console 5876,
+renderer 86 ([`reports.md`](reports.md); `status.md`, "Test counts"). They have not run on AWS or
 in CI.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).

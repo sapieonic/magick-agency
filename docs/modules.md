@@ -424,7 +424,7 @@ Files: `account.ts`, `agent-presence.ts`, `agent.ts`, `campaign.ts`, `definition
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/agency/report-datasets.test.ts` | 27 |
+| `apps/server/test/unit/agency/report-datasets.test.ts` | 28 |
 | `apps/server/test/integration/api/report-datasets-oracle.test.ts` | 27 |
 | `apps/server/test/integration/load/report-datasets-scale.test.ts` | 1 (opt-in, `REPORT_DATASETS_SCALE=1`) |
 
@@ -513,7 +513,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/unit/api/agency-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
-| `apps/server/test/unit/api/core-dispatch.test.ts` | 13 |
+| `apps/server/test/unit/api/core-dispatch.test.ts` | 14 |
 | `apps/server/test/unit/api/core-route-owners.test.ts` | 6 |
 | `apps/server/test/unit/api/platform-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/profile-route-auth.test.ts` | 13 |
