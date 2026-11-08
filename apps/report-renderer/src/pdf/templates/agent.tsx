@@ -344,6 +344,7 @@ function QualitySection({ q }: { q: NonNullable<AgentReviewDataset['quality']> }
     { label: 'Positive', value: q.sentiment.positive, colour: STATE_COLOURS.available },
     { label: 'Neutral', value: q.sentiment.neutral, colour: '#9aa5b5' },
     { label: 'Negative', value: q.sentiment.negative, colour: STATE_COLOURS.wrapup },
+    { label: 'Mixed', value: q.sentiment.mixed, colour: STATE_COLOURS.break },
   ];
   return (
     <Section title="Call analysis" aside={`${plural(q.analysed_calls, 'analysed call')} · supervisors’ copy only`} id="quality">

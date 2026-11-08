@@ -44,6 +44,7 @@ import {
   type ReportTimelineState,
 } from '../src/reports/index';
 import type { AgencyApi } from '../src/index';
+import type { SentimentLabel } from '../src/api/agency/webrtc-call';
 import type { Equals } from './type-equals';
 
 // ── Type-level: each list is exactly its union, and the dataset union discriminates on `kind`.
@@ -73,9 +74,11 @@ const _campaignAudience: Equals<CampaignReportDataset['audience'], 'supervisor'>
 const _accountAudience: Equals<AccountReportDataset['audience'], 'supervisor'> = true;
 // The update body cannot move a subscription to another subject.
 const _updateKeys: Equals<Extract<keyof AgencyUpdateReportSubscriptionRequest, 'kind' | 'subject_id'>, never> = true;
+// One sentiment count per label the call analysis emits (`mixed` included, never folded).
+const _sentiment: Equals<keyof NonNullable<AgentReviewDataset['quality']>['sentiment'], SentimentLabel> = true;
 void [_kinds, _formats, _audiences, _statuses, _cadences, _failures, _columns, _sheets, _timeline, _datasetKinds,
   _agentOf, _campaignOf, _accountOf, _record, _rosterRow, _summary, _activity, _trends, _health, _calls,
-  _campaignAudience, _accountAudience, _updateKeys];
+  _campaignAudience, _accountAudience, _updateKeys, _sentiment];
 
 function rendererTitle(dataset: ReportDataset): string {
   // Narrowing on `kind` reaches each kind's own block; a fourth kind fails `never`.

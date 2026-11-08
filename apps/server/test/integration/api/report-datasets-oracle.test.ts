@@ -129,7 +129,7 @@ const dnc: Row[] = [];
 /** What the seed says agent 0 did, for the blocks no screen serves. */
 const truth = {
   callbacks: { on_time: 0, late: 0, missed: 0, pending_future: 0, pending_due: 0, booked: 0 },
-  sentiment: { positive: 0, neutral: 0, negative: 0 },
+  sentiment: { positive: 0, neutral: 0, negative: 0, mixed: 0 },
   dnc: 0,
   softphone: 0,
   drops: 0,
@@ -212,7 +212,7 @@ function seedAgent(i: number, campaigns: [string, string]): void {
     attempt(floor, { ...mine, contact_id: contact(floor, campaign), dialed_at: at(0), ...talked(at(0), 'interested', 60 + i), webrtc_call_id: callId });
     if (i === 0) {
       if (k === 3) truth.sentiment.neutral += 1;
-      else truth.sentiment[(['positive', 'negative', 'neutral'] as const)[k]!] += 1;
+      else truth.sentiment[(['positive', 'negative', 'mixed'] as const)[k]!] += 1;
     }
     // 1: voicemail. 2: rang out.
     attempt(floor, { ...mine, contact_id: contact(floor, campaign), dialed_at: at(1), ...talked(at(1), 'voicemail', 20) });

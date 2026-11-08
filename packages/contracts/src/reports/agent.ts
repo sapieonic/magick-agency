@@ -183,9 +183,13 @@ export interface AgentReviewFollowThrough {
  * and null when analysis is off or no call in the window was analysed.
  */
 export interface AgentReviewQuality {
+  /** Analysed calls whose overall sentiment is one of the analysis's four labels (`SentimentLabel`). */
   analysed_calls: number;
-  /** Sums to `analysed_calls`. */
-  sentiment: { positive: number; neutral: number; negative: number };
+  /**
+   * Those calls by overall sentiment, one count per `SentimentLabel` (`mixed` is its own count,
+   * never folded into `neutral`). Sums to `analysed_calls`.
+   */
+  sentiment: { positive: number; neutral: number; negative: number; mixed: number };
 }
 
 /** RP11: occupancy shown three ways, each with its numerator and denominator stated. */

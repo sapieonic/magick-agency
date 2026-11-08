@@ -423,8 +423,15 @@ describe('reports end to end: routes → assembler → real builders → inline 
     expect(text).toContain('agent 0.0');
     expect(text).toContain(`of ${d.record.attempts} dials`);
     expect(text).toContain(`${humans} people / ${firstDials} first dials`);
+    // Call analysis: the mixed call is its own count, from the builder through the PDF.
+    expect(d.quality).toEqual({ analysed_calls: 3, sentiment: { positive: 1, neutral: 0, negative: 1, mixed: 1 } });
+    expect(text).toContain('Mixed 1 (');
+    expect(text).toContain('Neutral 0 (');
 
     const wb = await workbookOf(runs.review);
+    const summary: Record<string, unknown> = {};
+    wb.getWorksheet('Summary')!.eachRow((row) => { summary[String(row.getCell(1).value)] = row.getCell(2).value; });
+    expect(summary).toMatchObject({ 'Dials': 30, 'Sentiment: mixed': 1, 'Sentiment: neutral': 0, 'Sentiment: positive': 1 });
     expect(sheetNames(wb)).toEqual([
       'Summary', 'Daily', 'Sessions', 'State log', 'Breaks', 'Calls', 'Outcomes', 'Callbacks', 'Campaigns', 'Benchmark', 'Definitions',
     ]);
