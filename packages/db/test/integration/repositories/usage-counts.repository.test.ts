@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, afterEach } from 'vitest';
+import type { PoolClient } from 'pg';
 import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertAccount, insertTenant, insertWebrtcCall } from '../setup/factories.js';
+import { PLAN_ROSTER_TIMEOUT_MS, endPlanTransactions, inPlanTransaction } from '../plan-transaction.js';
 
 /*
  * `usageCountsRepository` on the real
@@ -217,11 +219,45 @@ const NO_INBOUND = {
   inbound_hold_seconds: 0, inbound_talk_seconds: 0, inbound_analysis_audio_seconds: 0,
 };
 
+/**
+ * A year of placed dials for the plan test: 50 campaigns of `accountId`, 400 contacts each, one
+ * ended attempt per contact, dialled once every ~26 minutes across the 365 days up to `TO` (so the
+ * one-month window holds a twelfth of them), ANALYZEd. Inside the caller's transaction, which rolls
+ * back (plan-transaction.ts: the statistics go with the rows).
+ */
+async function seedYearOfDials(client: PoolClient, tenantId: string, accountId: string): Promise<void> {
+  await client.query(
+    `WITH c AS (
+       INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids)
+       SELECT $1::uuid, $2::uuid, 'Plan ' || g, ARRAY['+14155550100'] FROM generate_series(1, 50) g
+       RETURNING id
+     )
+     INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164)
+     SELECT c.id, $1::uuid, $2::uuid, '+1415' || lpad((row_number() OVER ())::text, 7, '0')
+       FROM c, generate_series(1, 400)`,
+    [tenantId, accountId],
+  );
+  await client.query(
+    `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, dialed_at, ended_at)
+     SELECT ct.campaign_id, ct.id, ct.tenant_id, ct.account_id, 1, '+14155550100', 'ended',
+            $3::timestamptz - (row_number() OVER (ORDER BY ct.id)) * interval '26 minutes',
+            $3::timestamptz - (row_number() OVER (ORDER BY ct.id)) * interval '26 minutes' + interval '1 minute'
+       FROM agency_contacts ct
+       JOIN agency_campaigns cam ON cam.id = ct.campaign_id AND cam.name LIKE 'Plan %'
+      WHERE ct.tenant_id = $1::uuid AND ct.account_id = $2::uuid`,
+    [tenantId, accountId, TO],
+  );
+  await client.query('ANALYZE agency_call_attempts');
+}
+
 describe('usageCountsRepository.countByAccount (integration)', () => {
   beforeEach(async () => {
     await truncateAll();
     captured.length = 0;
   });
+
+  // A plan test that timed out with its seeding transaction open must not hold the tables for the next.
+  afterEach(endPlanTransactions);
 
   afterAll(async () => {
     await closeTestPool();
@@ -430,21 +466,27 @@ describe('usageCountsRepository.countByAccount (integration)', () => {
     await usageCountsRepository.countByAccount({ from: FROM, to: TO });
     expect(captured).toHaveLength(2);
 
-    const client = await getTestPool().connect();
-    try {
-      await client.query('BEGIN');
-      // A handful of rows would otherwise always be a sequential scan; this asks
-      // whether the planner CAN use the index for this predicate, which is what
-      // a production-sized table needs.
+    // Over a year of dials of the test's own, ANALYZEd in a rolled-back transaction: on the
+    // near-empty table a full run leaves, the window scan of idx_agency_attempts_billing and a full
+    // scan of idx_agency_attempts_campaign_dialed (campaign_id, dialed_at) tie on their page counts,
+    // and the pick followed whatever rows and statistics earlier files left behind. Over these rows
+    // the month's range scan is what the planner chooses on its merits. Sequential scans are priced
+    // out: the property is the index the query uses on a production-sized table, not whether a
+    // 20,000-row table is small enough to read whole.
+    const plans = await inPlanTransaction(async (client) => {
+      await seedYearOfDials(client, w.tenant.id, w.accountA.id);
       await client.query('SET LOCAL enable_seqscan = off');
+      const out: string[] = [];
       for (const { text, values } of captured) {
         const plan = await client.query(`EXPLAIN ${text}`, values);
-        const lines = plan.rows.map((r: Record<string, string>) => r['QUERY PLAN']).join('\n');
-        expect(lines).toContain('idx_agency_attempts_billing');
+        out.push(plan.rows.map((r: Record<string, string>) => r['QUERY PLAN']).join('\n'));
       }
-    } finally {
-      await client.query('ROLLBACK');
-      client.release();
+      return out;
+    });
+    expect(plans).toHaveLength(2);
+    for (const lines of plans) {
+      expect(lines).toContain('idx_agency_attempts_billing');
+      expect(lines).not.toContain('idx_agency_attempts_campaign_dialed');
     }
-  });
+  }, PLAN_ROSTER_TIMEOUT_MS);
 });
