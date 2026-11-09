@@ -101,10 +101,10 @@ deferred hangup while unbound, its own queue timer; the call's maximum duration 
 bridge, not from answer.
 
 With `MEDIA_WORKERS > 0` a call lives on its agent's worker (`slotFor(sessionId)`, `scaling.md`
-§1.4), and an inbound call has no agent at answer time. IB8: P2 supports the single-process layout;
-with workers on, the answer is placed on the sticky agent's worker when one is known and the pool is
-limited to that worker. Cross-worker handover (a Plivo transfer to a new `<Stream>` URL on the
-agent's worker) is P3, after the P0 check.
+§1.4), and an inbound call has no agent at answer time. IB8: P2 supports the single-process layout
+only; with workers on, P2 keeps P1's answer (nobody is connected, logged once, Q13). Placing an
+inbound call on an agent's worker, and the cross-worker handover (a Plivo transfer to a new
+`<Stream>` URL on the agent's worker), are P3, after the P0 check.
 
 ### 3.3 The fallback answer XML
 
@@ -352,12 +352,60 @@ after); a reconnect asks `GET /inbound/calls/:id` and retires a copy the server 
 for this session (`inbound_call_not_found`, another `session_id`). A call that leaves without the
 agent's outcome says why on the station for 30 s (the caller hung up first; it went back to the
 queue). At phone width the panel's columns stack and the body scrolls. "Your customer is
-waiting" (`customer_waiting`) is a pill in the station's action bar; no frame says the caller
-stopped waiting, so it goes on an offer, a `ready` (re-sent while they wait) and the agent leaving
-reserved / on a call / wrap-up. Supervisors: `InboundQueueTiles` (`GET /inbound/queue`, every 5 s,
+waiting" (`customer_waiting`) is a pill in the station's action bar; it goes on the server's
+`customer_waiting` with `cleared: true` for that caller, and as a backstop on an offer, a `ready`
+(re-sent while they wait) and the agent leaving reserved / on a call / wrap-up. Supervisors: `InboundQueueTiles` (`GET /inbound/queue`, every 5 s,
 visible-only, last numbers kept and marked stale on a failed read) on the agency home and the
 Missed calls page; the floor reads "Inbound call" for `on_inbound_call`. Every call path is in
 `api/inbound.ts`'s `INBOUND_PATHS`.
+
+**The server (built, WP-C1; §2's state machine).** The router (`inbound-call-router.ts`) plans
+`queue` for an open route's admitted caller (a slot, or over the account's own limit: IB5) when the
+call's account has `agency_inbound_enabled` on and the server runs one process (IB8, Q12, Q13);
+the stream is taken connectable (parked for `parkedSecondsFor(route)`: the maximum wait, a minute of
+preamble and the exit's 150 s; the 8 s station grace; recorded from the bind when the route records
+and the account allows it) and handed to the connector (`inbound-connector.ts`, `runtime.inbound`).
+The connector plays the greeting and, for a recorded call, the notice (IB7) through
+`playInboundHold`, and queues the caller only when the preamble has played (`onPreambleDone`, Q5):
+the spine `queued`, the per-route FIFO (`inbound-queue.ts`; a requeued caller at the head; over
+`max_waiting` only an agent free now keeps them; the maximum wait and the loose sticky wait as
+timers), "Your customer is waiting" to a busy sticky agent, `inbound_waiting` for pacing (§5.2),
+and the search (`eligibility.ts`, §4.3: the call's account's console campaign sessions on this
+process, open, in the route's pool when the account is the route's, `available` and holding
+nothing; a caller whose sticky agent is free matched to them first; then FIFO, the sticky agent
+alone in the sticky phase (loose: the wait; strict: the maximum wait; an agent away: the team at
+once, Q6), else longest idle by Redis `since`, `planTick`'s order). The agent is reserved by
+compare-and-swap (`reserveForInbound` from `available`), the spine offered (guarded on the
+session), and with no await between: `agent_state: reserved` then the `inbound_call` frame
+(`connects_at` = the offer + 1.5 s, Q4). At `connects_at` the station socket must be open (else the
+offer is cancelled: back to the head of the queue, the next agent searched) and the bridge binds
+it; on `bridged` the spine is `connected`, the agent `on_call`, the lease renewed. When the call ends
+the spine is `answered` with the outcome owed and the agent `wrapup` with the `inbound` field kept
+(no auto-return, Q11); a caller who hangs up on offer ends `abandoned_in_queue` with the Missed row
+and callback and the agent goes back to the pool. Every step of one call runs on its serial chain.
+**The release hook:** `releaseAgent`, with no queued break, asks the connector first; an agent
+coming out of a call or a wrap-up is CASed from `reserved` / `on_call` / `wrapup` straight to a
+waiting caller (theirs first), so a sticky agent is taken from wrap-up with no `available` instant.
+The station's close cancels an offer not yet bound; a bound call keeps presence for the bridge's
+8 s grace (the close handler and the silent sweep); a reconnect re-adopts the leg and restates the
+call and the waiting notices after `ready`; `/leave` refuses while a call is offered or connected;
+a restart lands an agent owing an outcome on `break` with the call re-claimed (`rehydrateAgent`).
+The finish routes (`proxy-agency-inbound/calls.ts` → `agency/inbound-calls.ts` →
+`inbound-disposition.ts`, not behind the flag): the call, its notes, hang up, the outcome (the
+catalog of Q10, the soft phone's validation and decision, DNC for a suppress code, the contact
+settled forward only by `inbound-settlement.ts`, never charged, then the agent returned) and Mark
+DNC (the matched campaign's scope, else the account's), by the agent who took the call or a
+supervisor on behalf; audited `agency_inbound_call.dispositioned` / `.hung_up` / `.dnc_marked`. A
+minute's sweep closes outcomes owed past 30 minutes (`no_disposition`) and returns the agent. At a
+graceful shutdown the connector stops taking work and the bridge's `service_shutdown` ends settle a
+caller nobody took `failed` with its follow-up and callback (Q18); a crash leaves them to the next
+start's sweep (`abandoned_in_queue`), and an answered call owing its outcome stays owed.
+`GET /inbound/queue` (`agency.supervise`, the flag) answers a tile per route from the connector's
+queue. Metrics: `agency_inbound_queue_waiting{route_id}`, `agency_inbound_wait_seconds{result}`,
+`agency_inbound_offers_total{result}`. A caller who reaches nobody hears the route's call-back
+message (closed for a withheld number) and is put down; with no recording for it, no words (a
+stream cannot fall back to the carrier's spoken message). Not built here: the in-flight clash
+(§5.4) and voicemail, which build on the connector's handover and the router's `overflow`.
 
 ## 7. Follow-ups
 
@@ -688,7 +736,7 @@ inbound section in account reports.
 |---|---|---|
 | P0 | Live Plivo checks, alongside the planned real Plivo call (step 5): create an Application and link/unlink a number; answer-URL params, timeout and inbound `CallStatus`; hangup URL params; fallback answer URL; moving a live streamed call to new XML (voicemail, worker handover); DTMF over the stream. Results into `plivo-carrier.fixture.json` | not started (needs a Plivo account) |
 | P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | **done** (the review's fixes below): foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). **Super-admin slice done** (`feat(server,super-admin,contracts,db): inbound Plivo Application, number links and the lifecycle cascade`, §8.1, §8.2, §3.3): Enable / Disable / Health / Re-point, Link / Unlink, the cascade at every write that exists, revoke refused, the routes, the credential page's Inbound section and the numbers page's Link / Unlink and badge, the fixture's Application and number shapes (unverified until P0), the mock carrier's; `agency_inbound_enabled` is toggled on the generic flag screens. Rollout: link a pilot tenant's numbers first. **Webhook slice done** (§3.4): the answer, hangup and fallback webhooks, the inbound seam, the bridge's `acceptInboundCall` / `playClipSequenceThenHangUp`, caller identification, admission (IB5, `0026_inbound_live_indexes.sql`), the Missed row and the inbound callback (IB4) on the dialer's claims, the sweep, metrics. Open: recorded built-in clips (an unset message slot is spoken by the carrier, §3.4), Plivo's answer-URL params and timeout (P0). **Console slice done** (`feat(server,console,contracts): inbound routes and the Missed calls list in the console`, §8.4): the routes API with the editor's number and clip choices, the Missed list and Mark handled, Settings → Inbound calls, Missed calls for supervisors and agents with Call back into the soft phone; voicemail refused until P2; the campaign's `inbound_sticky_enabled` toggle and tenant-default Missed rows left open (§8.4). **Review fixes** (`fix(server,db,console,contracts,super-admin): inbound P1 review fixes`): a `CallUUID` held by another tenant or credential is refused (§3.4); the migration renumbered `0026` (no gap; the fixes needed no new migration, so the next one is `0027`); IB5's arm counts admitted calls only; CA5's code-less sweep reads an index of inbound callbacks; read-only carrier calls out of the operator transactions and the Application list bounded (§8.1); an answer past its budget leaves no follow-up; a second Re-point refused while the first's token is still needed (§8.1); an unrecorded message spoken by the carrier, never silence (§3.4) |
-| P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | in progress. **Foundation done** (`feat(db,contracts,server,console,mobile): inbound P2 foundation`, §9.1): `0027_inbound_connect.sql`; the contracts (`AgencyInboundCall`, the `inbound_call` and `customer_waiting` frames for console stations only, release reason `inbound_call`, the inbound call codes, `customer_on_inbound_call`, the queue tile, `voicemail_url`, `on_inbound_call`, the constants, the reserved code `inbound_call`); the `inbound_waiting` bus event with no consumer; the agent hash's `inbound` field (`reserveForInbound`, `releaseInbound`, `rehydrateInbound`, `available` refused `-3` and answered `409 inbound_call_live`, no attempt reserved onto it); the spine's agent-side writes; the busy probe's inbound arm (pacing, the agent's own dial and retry, the soft phone's pre-dial); `settleFromInbound` and `unclaimUncharged`; the campaign's `inbound_sticky_enabled` on create, PATCH and retry. Nothing connects yet: the connector, queue, hold loop, voicemail and the console panel follow. `AGENCY_INBOUND_AVAILABLE_ACTIONS` stays `callback` until the voicemail flow lands. **Bridge and voice done** (WP-B, docs/seams.md §3.1): a connectable call is parked (borrowed-unbound; its budget, answer XML stream timeout and slot TTL are parked + max duration; a parked backstop), `playInboundHold` (the preamble once, then the hold clip or the built-in generated hold tone on a loop, Q24; never hangs up), `stopInboundHold`, `recordInboundAudio` (prompt, beep, a bounded carrier tap with nobody bound), the bind stopping the hold synchronously, re-arming the max duration and counting talk time from it, and the recording from `bridged` through Plivo's Record API (its request and callback shapes unverified until P0). The agency side (queue, connector, outcome) is not built yet. **Console done** (WP-D, §6): the station's `inbound_call` and `customer_waiting` handling and restore after `ready`, the inbound chime, `InboundCallView` in the station's geometry with the outcome, notes, callback, hang-up, mute, DNC and the lapse countdown, the waiting pill, the supervisor's queue tiles and the floor's "Inbound call", the campaign's "Put callers through to their agent", voicemail playback on the Missed list and the route editor's actions from `AGENCY_INBOUND_AVAILABLE_ACTIONS`; built against the call routes' paths in `api/inbound.ts` (`INBOUND_PATHS`) and mock answers, its end-to-end check waits for the server's routes |
+| P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | in progress. **Foundation done** (`feat(db,contracts,server,console,mobile): inbound P2 foundation`, §9.1): `0027_inbound_connect.sql`; the contracts (`AgencyInboundCall`, the `inbound_call` and `customer_waiting` frames for console stations only, release reason `inbound_call`, the inbound call codes, `customer_on_inbound_call`, the queue tile, `voicemail_url`, `on_inbound_call`, the constants, the reserved code `inbound_call`); the `inbound_waiting` bus event with no consumer; the agent hash's `inbound` field (`reserveForInbound`, `releaseInbound`, `rehydrateInbound`, `available` refused `-3` and answered `409 inbound_call_live`, no attempt reserved onto it); the spine's agent-side writes; the busy probe's inbound arm (pacing, the agent's own dial and retry, the soft phone's pre-dial); `settleFromInbound` and `unclaimUncharged`; the campaign's `inbound_sticky_enabled` on create, PATCH and retry. Nothing connects yet: the connector, queue, hold loop, voicemail and the console panel follow. `AGENCY_INBOUND_AVAILABLE_ACTIONS` stays `callback` until the voicemail flow lands. **Bridge and voice done** (WP-B, docs/seams.md §3.1): a connectable call is parked (borrowed-unbound; its budget, answer XML stream timeout and slot TTL are parked + max duration; a parked backstop), `playInboundHold` (the preamble once, then the hold clip or the built-in generated hold tone on a loop, Q24; never hangs up), `stopInboundHold`, `recordInboundAudio` (prompt, beep, a bounded carrier tap with nobody bound), the bind stopping the hold synchronously, re-arming the max duration and counting talk time from it, and the recording from `bridged` through Plivo's Record API (its request and callback shapes unverified until P0). **Connector done** (WP-C1, §6 "The server"): the `queue` plan gated on the flag and one process, the preamble then the queue, sticky loose/strict, the team queue and its limits, the offer and the bind, the release hook taking an agent from wrap-up, `inbound_waiting` consumed by pacing, the station's drop and reconnect, the restart, the outcome routes and their audit, the lapse sweep, the queue tiles route, the metrics; `onPreambleDone` added to the hold seam and `cleared` to `customer_waiting`. Open: the in-flight clash (§5.4) and voicemail. **Console done** (WP-D, §6): the station's `inbound_call` and `customer_waiting` handling and restore after `ready`, the inbound chime, `InboundCallView` in the station's geometry with the outcome, notes, callback, hang-up, mute, DNC and the lapse countdown, the waiting pill, the supervisor's queue tiles and the floor's "Inbound call", the campaign's "Put callers through to their agent", voicemail playback on the Missed list and the route editor's actions from `AGENCY_INBOUND_AVAILABLE_ACTIONS`; built against the call routes' paths in `api/inbound.ts` (`INBOUND_PATHS`) and mock answers, its end-to-end check waits for the server's routes |
 | P3 | Mobile app frames (Dart wire), pickups from break and soft phone, media-worker handover, reports/Insights, "press 1 for a callback" if DTMF works | not started |
 | P4 | VoiceLink behind a carrier-module `inbound` capability | not started |
 

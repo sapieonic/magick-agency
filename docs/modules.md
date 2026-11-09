@@ -255,7 +255,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 90 |
 | `apps/server/test/unit/agency/pacing-round.test.ts` | ~31 |
-| `apps/server/test/unit/agency/pacing-skip.test.ts` | 54 |
+| `apps/server/test/unit/agency/pacing-skip.test.ts` (with `inbound_waiting` holding agents back for waiting inbound callers) | 59 |
 | `apps/server/test/unit/agency/pre-dial-gates-hours-override.test.ts` | 13 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
@@ -436,7 +436,9 @@ Inbound calls (docs/inbound.md, IB1–IB8). `route-config.ts`: the route body as
 
 P1's answering half (docs/inbound.md §3, §7, §10, §12). `inbound-call-router.ts`: `AgencyInboundCallRouter`, the agency side of the inbound seam (`seams/inbound-call-router.ts`, docs/seams.md §3.5): the answer (the number rung on the credential, refused as `rejected` when not linked, active and the tenant's; the route and account by §8.3; the caller identified; DNC flagged; the plan `closed` or `overflow` from the credential's status and the route's hours; admission under the route's `max_concurrent` counted under a per-route advisory lock in the transaction that writes the spine and leg; a `CallUUID` another tenant or credential holds refused with nothing written; a message with no recording answered `spoken` by the carrier and ended at once with its follow-up; the bridge's `acceptInboundCall`, a call its shared scopes turn away un-admitted (`refuseAdmission`); our stream; an answer past its budget (the seam's abort signal) placing nothing more and ending `failed` with no follow-up), the clip sequence in the background and the call's settlement from how it ended (`outcomeAfterPlayback`), the hangup (`ended`: the play loop owns a live call, else it is settled `abandoned_in_queue`, or `failed` with no follow-up when the fallback answered it), every follow-up (the Missed row, and the matched contact's inbound callback booked in the transaction that ends the spine, due at the route's next opening, re-checked against DNC failing closed), the sweep, and `startInboundCalls` (startup sweep, then the seam registered, then the periodic sweep; called by `bootstrap/agency.ts`). `identify-caller.ts`: `identifyInboundCaller` and the pure `rankInboundCaller` (§4.1: the match, ranked candidates with their signal; reusable for P2's sticky routing). `inbound-clips.ts`: a route's clip slots to clip-cache hashes, tenant and account scoped as the abandon clip; a clip set but unplayable is skipped (an unset message slot never streams, it is spoken). The reads are `db/repositories/agency/inbound-answer.repository.ts`; the contact's callback is `contact.repository.ts`'s `bookInboundCallback`.
 
-Files: `identify-caller.ts`, `inbound-call-router.ts`, `inbound-clips.ts`, `route-config.ts`
+P2's connecting half (docs/inbound.md §2, §5, §6 "The server"). The router plans `queue` (flag on for the call's account, one process, the call admitted) and takes the stream connectable (`parkedSecondsFor`), then hands the call to `inbound-connector.ts`: `InboundConnector` (`runtime.inbound`), which plays the preamble and the hold (`playInboundHold`'s `onPreambleDone` queues the caller), queues (`inbound-queue.ts`: per-route FIFO, a requeued caller at the head, `max_waiting`, the maximum and the sticky waits, `inbound_waiting`'s summary, the tile snapshot), searches (`eligibility.ts`: pure, §4.3, the sticky phase, longest idle, the release hook's choice), reserves by CAS, offers (`inbound_call` after `agent_state: reserved`, no await between), binds at `connects_at`, connects, ends (an answered call owes its outcome), cancels an offer whose station was lost (head of the queue), takes an agent at their release (`takeOnRelease`, `AgencyDialer.registerInboundTake`), and leaves a caller nobody took to the router's exits (`settleCall`, `overflow`). `inbound-call-wire.ts`: `AgencyInboundCall` (the panel context read once, the row built with no await) and the catalog choice (Q10). `inbound-disposition.ts`: `InboundCallService` (`runtime.inboundCalls`): the finish routes' runtime (read, notes, hang up, the outcome with the soft phone's validation and decision, DNC, Mark DNC), the supervisor's queue tiles and the outcome-lapse sweep. `inbound-settlement.ts`: the outcome → the matched contact's settlement (SP6, never charged). The pacing consumer is `pacing/inbound-hold-back.ts`.
+
+Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inbound-call-wire.ts`, `inbound-clips.ts`, `inbound-connector.ts`, `inbound-disposition.ts`, `inbound-queue.ts`, `inbound-settlement.ts`, `route-config.ts`
 
 | Test file | Cases |
 |---|---|
@@ -451,6 +453,14 @@ Files: `identify-caller.ts`, `inbound-call-router.ts`, `inbound-clips.ts`, `rout
 | `apps/server/test/integration/agency/inbound-agent-claim.test.ts` (real Lua: `reserveForInbound` from each state and every refusal, `available` refused `-3`, no attempt reserved onto a held session, `releaseInbound` by its own id, the rehydrate, an inbound offer racing a pacing reservation, 64 calls racing for one agent) | 10 |
 | `apps/server/test/unit/agency/pacing-inbound-waiting-event.test.ts` (the `inbound_waiting` bus event: round trip, bounds, clamps, malformed input) | 20 |
 | `apps/server/test/integration/telephony/plivo-inbound-e2e.test.ts` (mock Plivo rings a linked number: open, closed, unknown, withheld, DNC, terminal, exhausted, disabled credential, unlinked, tenant default, a message with no recording spoken by the carrier, bad signature, replay, over `max_concurrent`, caller hangs up mid-message, restart sweep) | 18 |
+| `apps/server/test/unit/agency/inbound-eligibility.test.ts` (every §4.3 row, the sticky status and phase, loose / strict / off, the order, the search order, the release hook's choice) | 27 |
+| `apps/server/test/unit/agency/inbound-queue.test.ts` (FIFO and the head, `max_waiting`, the maximum and sticky waits, the `inbound_waiting` summary, the snapshot) | 6 |
+| `apps/server/test/unit/agency/inbound-hold-back.test.ts` (pacing's hold-back helper) | 7 |
+| `apps/server/test/unit/agency/inbound-settlement.test.ts` (the settlement table, the catalog choice, how an unconnected call ends, the panel row) | 13 |
+| `apps/server/test/integration/agency/inbound-connector-races.test.ts` (real Redis and Postgres, the bridge and stations faked: two callers for one agent, pacing and inbound for one agent, two connectors, the caller hanging up on offer and against the bind, the station lost before the bind, the lease lost, the search never taking a wrap-up (a stale view too), the release hook and the queued break, the lapse, a graceful shutdown (Q18)) | 12 |
+| `apps/server/test/integration/telephony/inbound-connect-e2e.test.ts` (end to end on mock Plivo and the station fleet: auto-connect with the panel before media; loose sticky taken from wrap-up, the sticky wait lapsing, strict; the queue's order, limits and pacing yielding; the caller hanging up on offer; the station dropped during the offer and after the bind; restart; recording; concurrency) | 13 |
+| `apps/server/test/integration/agency/chaos/inbound-floor.test.ts` (callers and agents at random under `LOAD_SEED` / `LOAD_SCALE`: the five invariants) | 1 |
+| `apps/server/test/integration/api/inbound-calls-routes.test.ts` (the finish routes and the queue tiles through the public layer: who may act, the outcome's refusals and replay, DNC scopes, not flag-gated, the audit rows) | 6 |
 | `apps/server/test/integration/telephony/plivo-inbound-connect-bridge.test.ts` (P2's bridge half on mock Plivo: a connectable call held, the agent's real station socket bound with no hold frame after it, audio both ways, the Record API at the bind and its callback on the leg, talk time from the bind; a caller who hangs up on hold; a voicemail recorded with nobody bound and ended by the wall clock over a silence) | 3 |
 
 ### `apps/server/src/ai/`
@@ -646,7 +656,9 @@ route `FOR UPDATE`; the agent's Missed scope forced from `supervise`) and `agenc
 `helpers/inbound-missed-query.ts` is the Missed query, parsed at both layers. Repository additions:
 `listNumberOptions` and a locked `findById` on the route repository, a `reason` filter on `listMissed`.
 
-Files: `../proxy-agency-inbound.routes.ts`, `missed.ts`, `routes.ts`, `shared.ts`, `../agency/inbound.ts`, `../agency/inbound-answer.ts`, `../helpers/inbound-missed-query.ts`
+P2 adds `calls.ts` (the answered call's finish: `GET` / `PATCH /inbound/calls/:id`, `…/hangup`, `…/disposition`, `…/dnc`, `agency.inbound.read`, never behind the flag; and `GET /inbound/queue`, `agency.supervise` and the flag), audited `agency_inbound_call.hung_up` / `.dispositioned` / `.dnc_marked` and `dnc_entry.created`; its internal handlers are `agency/inbound-calls.ts` (owners `none`: inbound calls connect in one process, IB8), over `runtime.inboundCalls`.
+
+Files: `../proxy-agency-inbound.routes.ts`, `calls.ts`, `missed.ts`, `routes.ts`, `shared.ts`, `../agency/inbound.ts`, `../agency/inbound-answer.ts`, `../agency/inbound-calls.ts`, `../helpers/inbound-missed-query.ts`
 
 | Test file | Cases |
 |---|---|
@@ -874,7 +886,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline; `playClipSequenceThenHangUp`) | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind, the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token) | 24 |
+| `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind, the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token, `onPreambleDone`) | 26 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
 | `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | 63 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
