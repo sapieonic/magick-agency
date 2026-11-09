@@ -236,7 +236,8 @@ export interface WebRtcInboundCallParams {
    * whole budget is `parkedSeconds` + the account's maximum duration: the answer's
    * `maxDurationSeconds` (and so the stream's own timeout) and the slot and token lifetimes are
    * that sum, while the bridge's own timer ends a call still unbound after `parkedSeconds`, as a
-   * backstop, and is re-armed with the full maximum duration at the bind.
+   * backstop, and is re-armed with the full maximum duration at the bind. Never taken as less than
+   * the media deadline (`INBOUND_MEDIA_DEADLINE_SECONDS`).
    */
   parkedSeconds: number;
   /**
