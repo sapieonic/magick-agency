@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.18.0](https://github.com/sapieonic/magick-agency/compare/console-v0.17.0...console-v0.18.0) (2026-11-09)
+
+
+### Features
+
+* **server,console,report-renderer,contracts,db,web-ui,observability:** agent, campaign and account reports as PDF and Excel ([#60](https://github.com/sapieonic/magick-agency/issues/60)) ([9506c81](https://github.com/sapieonic/magick-agency/commit/9506c81f33fae5a8d0ce56fb885b63857fa462c3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.16.0
+    * @magick-agency/domain bumped to 0.7.1
+    * @magick-agency/web-ui bumped to 0.3.0
+
 ## [0.17.0](https://github.com/sapieonic/magick-agency/compare/console-v0.16.0...console-v0.17.0) (2026-11-07)
 
 
