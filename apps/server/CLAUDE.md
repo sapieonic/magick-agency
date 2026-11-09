@@ -46,7 +46,8 @@ validation, enrichment) call the dialer's handlers in-process through `callCore`
 
 **Seams** (`src/seams/`, `docs/seams.md` §3): bridge → dialer runtime (the `WebRtcBridgeManager`
 member set, pinned by a type-level test), bridge → analysis hooks, super-admin → concurrency
-control, super-admin credential routes → carrier credential service. Change a seam in one commit
+control, super-admin credential routes → carrier credential service, inbound carrier callbacks → the
+agency inbound router (`seams/inbound-call-router.ts`). Change a seam in one commit
 with its consumers and its pinning test, never by adapting one side to the other.
 
 **Large route plugins:** the plugin function, its hooks and module note stay in

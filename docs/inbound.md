@@ -130,6 +130,72 @@ being down. To host one:
    until then (the health check says `stored_urls_current: false` meanwhile). The Application then
    fetches it with GET; our own route is fetched with POST.
 
+### 3.4 What P1 builds of this (the webhook slice)
+
+Built: the three webhooks, the answer and the hangup, what the caller hears, the follow-ups and the
+sweep; nobody is connected (P2). Code: `api/routes/webhooks/plivo-inbound.ts` (voice) hands verified
+calls through `seams/inbound-call-router.ts` (docs/seams.md §3.5) to
+`agency/inbound/inbound-call-router.ts`; the bridge takes the call in with `acceptInboundCall` and
+plays with `playClipSequenceThenHangUp` (docs/seams.md §3.1).
+
+- **Verification** (answer and hangup URLs): the purpose token's hash (current, or the previous
+  inside its grace), the V3 signature against the credential's auth tokens resolved for
+  `call_control` (so a disabled or invalid credential still verifies), over the URL stored on the
+  credential plus the request's query, and the signed nonce once per credential (Redis `SET NX`,
+  6 h; fails open as the per-call guard). A refusal is `<Hangup/>` on the answer URL, 403 on the
+  hangup URL; a fault is the fallback message, 503 on the hangup URL, the nonce given back. The
+  fallback answer URL answers fixed XML to anyone.
+- **The answer is bounded**: 4 s (`INBOUND_ANSWER_BUDGET_MS`, Plivo's own timeout is a P0 check),
+  past which the caller hears the fallback message; whatever was taken in ends at the bridge's
+  media deadline (30 s, `INBOUND_MEDIA_DEADLINE_SECONDS`: a stream never opened or negotiated is
+  ended `failed` and hung up by REST).
+- **Refused** (`rejected` spine row, no Missed row, `<Hangup/>`): a number the credential does not
+  have, not linked, not `active`, or not assigned to the credential's tenant.
+- **Account** (§8.3): the matched contact's (its account may use the number) → the route's (while
+  its account may still use the number) → the tenant default: no account, no leg, the carrier
+  speaks the closed message (`<Speak>`), the Missed row has no account.
+- **Plan**: `closed` when the credential is not `active` (§10), there is no route, or the route is
+  closed now (`unresolvable` is closed); else `overflow` (open, and P1 has nobody to connect).
+- **Admission** (IB5): under a per-route advisory lock in the transaction that writes the spine
+  and leg, the route's live admitted calls (`state` past `arrived`) against `max_concurrent`; at the
+  cap the call stays `arrived` and hears "busy" (`overflow_no_capacity`), else it moves to
+  `greeting`. The bridge then takes the shared slots: over the account's own limit the call is
+  held with no slot; with the global or carrier scope full it hears "busy" too. Every live inbound
+  call is in the account's live total (`countLiveForAccount`'s third arm, index 0027), so pacing
+  shrinks.
+- **What the caller hears**: `greeting`, then `callback` (`overflow`), `closed` or `busy`
+  (`overflow_no_capacity`), then a REST hangup. The recording notice (IB7) plays only before a
+  recorded call; P1 records no inbound call (nobody is bridged; a recording starts at the bridge,
+  §6), so it never plays in P1. **A slot with no clip plays nothing**: there is no built-in audio
+  (launch decision 4: uploaded files only, no TTS; the abandon clip's own default is no clip), so
+  "NULL is the built-in clip" has no recording behind it yet (open, §12).
+- **Outcome**: the plan's once every message played. A caller who hangs up mid-message: on the
+  `overflow` plan (they would have queued) `abandoned_in_queue`; on `closed` and
+  `overflow_no_capacity` the reason stays (an after-hours caller rang after hours). No media ever:
+  `failed`, unless the carrier's hangup came first. One writer ends a call: the play loop while
+  this process holds it, else the hangup webhook (`abandoned_in_queue`), else the sweep.
+- **Follow-up** (§7): the Missed row on every call that reached nobody, assigned to the sticky
+  candidate if they can see the account, else the account. The matched contact's callback
+  (`bookInboundCallback`, in the transaction that ends the spine): campaign `running` or `paused`;
+  contact `pending` (a sooner due time is kept) or `exhausted` (reopened, IB4); never `completed`,
+  `suppressed`, DNC-suppressed or live; the caller not flagged DNC and the registry re-checked
+  (anything but `clear` books none, B8); due at the route's next opening (`nextInboundOpening`; no
+  route: now; a route that never opens: none). The callback is read by `isCallbackSql` (buckets,
+  agent retry, insights, drill-downs, CA5's fallback, which now runs on catalogs with no callback
+  code too), dialled by the ordinary claims (an owned contact by its owner on `strict` /
+  `preferred`; on `pool` by anyone, from the owner's dedicated caller ID, DN2), and cleared when
+  the contact's next placed call settles (`chargeAttempt`, a placed soft-phone call); an our-fault
+  redial keeps it. An owner-less contact on a `strict` campaign is not assigned one: it waits for a
+  supervisor, as CA5's fallen-back callbacks do.
+- **Sweep** (§10): at agency start, every call not ended that arrived before the process started
+  (`abandoned_in_queue`, its Missed row, its callback), then the router is registered; every 5 min,
+  calls older than the longest call (4 h) + 10 min. Inbound calls live in the process that answered
+  them (with media workers, the primary: the stream URL carries no worker hint).
+- **Metrics**: `agency_inbound_calls_total{outcome}`, `agency_inbound_answer_seconds{result}`.
+- **Fixture**: `plivo-inbound.fixture.json`, every entry unverified until P0; the reader depends on
+  neither `CallStatus` nor `Direction` being present (it refuses only `Direction` naming another
+  direction).
+
 ## 4. Identifying the caller and the sticky agent
 
 ### 4.1 Signals (IB2)
@@ -428,7 +494,7 @@ inbound section in account reports.
 | Phase | Scope | Status |
 |---|---|---|
 | P0 | Live Plivo checks, alongside the planned real Plivo call (step 5): create an Application and link/unlink a number; answer-URL params, timeout and inbound `CallStatus`; hangup URL params; fallback answer URL; moving a live streamed call to new XML (voicemail, worker handover); DTMF over the stream. Results into `plivo-carrier.fixture.json` | not started (needs a Plivo account) |
-| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | in progress: foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). **Super-admin slice done** (`feat(server,super-admin,contracts,db): inbound Plivo Application, number links and the lifecycle cascade`, §8.1, §8.2, §3.3): Enable / Disable / Health / Re-point, Link / Unlink, the cascade at every write that exists, revoke refused, the routes, the credential page's Inbound section and the numbers page's Link / Unlink and badge, the fixture's Application and number shapes (unverified until P0), the mock carrier's; `agency_inbound_enabled` is toggled on the generic flag screens. Rollout: link a pilot tenant's numbers first. In parallel: the webhook slice (answer and status, route resolution, clips, spine writes, follow-ups, sweep, metrics) and the console slice (routes and Missed list API and screens) |
+| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | in progress: foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). **Super-admin slice done** (`feat(server,super-admin,contracts,db): inbound Plivo Application, number links and the lifecycle cascade`, §8.1, §8.2, §3.3): Enable / Disable / Health / Re-point, Link / Unlink, the cascade at every write that exists, revoke refused, the routes, the credential page's Inbound section and the numbers page's Link / Unlink and badge, the fixture's Application and number shapes (unverified until P0), the mock carrier's; `agency_inbound_enabled` is toggled on the generic flag screens. Rollout: link a pilot tenant's numbers first. **Webhook slice done** (§3.4): the answer, hangup and fallback webhooks, the inbound seam, the bridge's `acceptInboundCall` / `playClipSequenceThenHangUp`, caller identification, admission (IB5, `0027_inbound_live_indexes.sql`), the Missed row and the inbound callback (IB4) on the dialer's claims, the sweep, metrics. Open: built-in clips (no audio exists; an unset slot is silent), Plivo's answer-URL params and timeout (P0). In parallel: the console slice (routes and Missed list API and screens) |
 | P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | not started |
 | P3 | Mobile app frames (Dart wire), pickups from break and soft phone, media-worker handover, reports/Insights, "press 1 for a callback" if DTMF works | not started |
 | P4 | VoiceLink behind a carrier-module `inbound` capability | not started |

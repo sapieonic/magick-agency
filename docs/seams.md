@@ -76,6 +76,10 @@ class WebRtcBridgeManager {
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
   getActiveCallIds(): string[];
   gracefulShutdown(): Promise<void>;
+  // Inbound calls (docs/inbound.md §3), P1:
+  acceptInboundCall(params: WebRtcInboundCallParams): Promise<WebRtcInboundAcceptance>;
+  playClipSequenceThenHangUp(correlationId: string,
+    opts: { clipHashes: readonly string[]; outcome: string }): Promise<ClipSequenceResult>;
 }
 export class WebRtcCallError extends Error {}
 export interface WebRtcOutboundParams {}
@@ -123,6 +127,18 @@ which provides the concurrency guard (`acquireTelephonyConcurrency`, `releaseTel
 `wakeSelfHeal`). A type-level test, `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts`,
 checks that `WebRtcBridgeManager` satisfies an interface listing exactly these members, so a
 signature change fails `tsc`.
+
+The two inbound members take in a call a customer placed, whose `origin = 'inbound'` leg the
+inbound answer webhook wrote: `acceptInboundCall` registers its session (answered at once, a media
+deadline in place of the ring deadline, no browser leg), takes the shared slots and returns the
+stream URL the answer XML names; admission never refuses it (IB5: `capacity` is `admitted`,
+`account_full` (held with no slot), `no_capacity` (global or carrier scope full: held with no slot
+to hear why) or `not_requested`), and a retried answer gets the live session's stream.
+`playClipSequenceThenHangUp` waits for the carrier's media, plays the clips paced, then hangs up
+under the outcome (`completed`); a caller who leaves mid-clip stops it with no hangup of ours
+(`aborted`); `no_media`, `not_found` otherwise. The session's `correlationId` is the inbound call's
+id. `WebRtcInboundCallParams`, `WebRtcInboundAcceptance` and `ClipSequenceResult` are in
+`bridge-types.ts`, pinned by the same contract test.
 
 ### 3.2 Voice engine → analysis
 
@@ -180,6 +196,22 @@ same reason (no bootstrap state), and none of them opens a secret except through
 - every recording fetch (the attempt and soft-phone recording proxies, signed playback, the
   analysis runner) asks `telephony/recording-access.ts` for the call's hosts and headers, which
   resolves the pinned credential through the service lazily (`getRecordingAccessResolver`).
+
+### 3.5 Voice engine (inbound carrier callbacks) → agency (inbound router)
+
+`apps/server/src/seams/inbound-call-router.ts`. The voice area owns the carrier-facing surface of
+an inbound call (`api/routes/webhooks/plivo-inbound.ts` under `/api/v1/webhooks/plivo`: the
+credential's purpose token, the V3 signature over the URL stored on the credential plus the query,
+the per-credential nonce, the XML Plivo runs); what the call means is the agency area's, reached
+only through `InboundCallRouter`: `answer(arrival)` returns a decision (`stream` with the URL,
+`closed`, `hangup`, `fallback`) and `ended(hangup)` settles the call and returns its media leg,
+which the route then hands to the bridge as a carrier hangup (`handleCarrierStatus`). The
+implementation is `agency/inbound/inbound-call-router.ts`, registered by `bootstrap/agency.ts`
+(`startInboundCalls`, after the startup sweep) and cleared at its stop; until then an arriving call
+is answered with the fixed fallback message and nothing is written. Tests:
+`test/unit/api/routes/plivo-inbound-webhooks.test.ts` (the route with a stub router, the unwired
+default included) and `test/integration/telephony/plivo-inbound-e2e.test.ts` (through `buildApp`
+and the bootstraps).
 
 ## 4. Shared infrastructure
 
