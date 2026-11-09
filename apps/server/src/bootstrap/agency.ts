@@ -9,6 +9,8 @@ import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurren
 import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
 import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
 import { startReportPipeline, type ReportPipeline } from '../agency/reports/pipeline.js';
+import { startInboundCalls } from '../agency/inbound/inbound-call-router.js';
+import { DncRegistry } from '../agency/dnc-registry.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -119,6 +121,11 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   // occupancy from dead rows and quietly dial nothing forever.
   await agencyRuntime.start();
 
+  // Inbound calls (docs/inbound.md, P1): the startup sweep ends calls a restart left open, then
+  // the router takes the inbound answer and hangup webhooks (`seams/inbound-call-router.ts`).
+  // Not gated on `agency_inbound_enabled`: a call on a linked number is always answered (§8.1).
+  const inbound = await startInboundCalls({ bridge: ensureVoiceEngine(ctx.redis).bridge, dnc: new DncRegistry() });
+
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
   // Main process only, like the rollup job: one assembler and one tick per deployment.
@@ -128,6 +135,8 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
+    // First: an arriving call now hears the fallback message rather than reaching a stopping runtime.
+    inbound.stop();
     // The report pipeline stops beside the rest (it needs none of it), so its bounded wait
     // overlaps the runtime's completion-notice drain, which in one process runs in
     // `agencyRuntime.stop()`. With media workers it already stopped as a shutdown drain

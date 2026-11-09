@@ -62,6 +62,8 @@ export class WebRtcBridgeSession {
   /** The recording-ready callback URL our answer response names (with its webhook token). */
   recordingCallbackUrl: string | null = null;
   status: WebRtcCallStatus = 'initiating';
+  /** An inbound call's admission (`WebRtcBridgeManager.acceptInboundCall`); null for a leg we placed. */
+  inboundCapacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' | null = null;
 
   /**
    * For providers that negotiate the media stream via a `start` frame (VoiceLink):
@@ -70,6 +72,13 @@ export class WebRtcBridgeSession {
    * for VoiceLink in the manager.
    */
   providerMediaReady: boolean = true;
+
+  /**
+   * Who waits for the carrier's media to be ready to play into ({@link whenCarrierMediaReady}):
+   * told `true` by {@link noteCarrierMediaReady}, `false` by {@link destroy}. Each is told once.
+   */
+  private mediaReadyWaiters: Array<(ready: boolean) => void> = [];
+  private destroyed = false;
 
   /**
    * Idempotent teardown lifecycle:
@@ -442,6 +451,29 @@ export class WebRtcBridgeSession {
     return true;
   }
 
+  /**
+   * Resolves `true` once the carrier's media is negotiated on an open PSTN socket (so audio sent
+   * now is heard), `false` if the session is torn down first. Already true, or already torn down,
+   * resolves at once. Never rejects; teardown always settles it, so nothing waits past the call.
+   */
+  whenCarrierMediaReady(): Promise<boolean> {
+    if (this.destroyed || this.endHandled) return Promise.resolve(false);
+    if (this.providerMediaReady && this.pstnWs?.readyState === 1) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => { this.mediaReadyWaiters.push(resolve); });
+  }
+
+  /** The carrier's media is ready on an open PSTN socket: tell every {@link whenCarrierMediaReady} waiter. */
+  noteCarrierMediaReady(): void {
+    if (!this.providerMediaReady || this.pstnWs?.readyState !== 1) return;
+    this.flushMediaReadyWaiters(true);
+  }
+
+  private flushMediaReadyWaiters(ready: boolean): void {
+    const waiters = this.mediaReadyWaiters;
+    this.mediaReadyWaiters = [];
+    for (const resolve of waiters) resolve(ready);
+  }
+
   /** Connected talk time in whole seconds (0 if never answered). */
   getTalkTimeSeconds(): number {
     if (this.answeredAt === null) return 0;
@@ -628,6 +660,8 @@ export class WebRtcBridgeSession {
    * to the caller, outlives this call, and closing it would end the agent's shift.
    */
   destroy(): void {
+    this.destroyed = true;
+    this.flushMediaReadyWaiters(false);
     this.clearMaxDurationTimer();
     this.clearRingDeadlineTimer();
     this.clearEndConfirmationTimer();

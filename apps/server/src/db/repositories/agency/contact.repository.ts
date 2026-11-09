@@ -619,7 +619,7 @@ export class AgencyContactRepository {
     batchId: string;
     limit: number;
   }): Promise<AgencyCallbackFallbackMove[]> {
-    if (input.callbackCodes.length === 0 || input.limit <= 0) return [];
+    if (input.limit <= 0) return [];
     const { rows } = await getPool().query<{ contact_id: string; from_user_id: string }>(
       `WITH due AS MATERIALIZED (
          SELECT c.id, c.assigned_user_id
@@ -946,6 +946,9 @@ export class AgencyContactRepository {
                                      + CASE WHEN cur.held AND $3::varchar = 'our_fault' THEN 1 ELSE 0 END,
                 last_outcome = CASE WHEN cur.held THEN COALESCE($4::varchar, c.last_outcome) ELSE c.last_outcome END,
                 last_disposition = COALESCE($5::varchar, c.last_disposition),
+                -- A placed soft-phone call settles an inbound callback, as chargeAttempt does.
+                callback_source = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_source END,
+                callback_due_at = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_due_at END,
                 next_attempt_at = CASE
                                     WHEN c.suppressed_reason = 'dnc' OR NOT cur.held THEN c.next_attempt_at
                                     ELSE COALESCE($6::timestamptz, c.next_attempt_at)
@@ -1100,18 +1103,86 @@ export class AgencyContactRepository {
    * nothing can pick it up, and a crash in the gap leaves a stuck `in_flight`
    * row behind a terminal attempt, which the reaper's stranded-contact sweep
    * ({@link findStrandedInFlight}) requeues.
+   *
+   * **It settles an inbound callback.** A placed call to the contact is the call an inbound
+   * callback (`callback_source`, docs/inbound.md §7) asked for, so its source and due time are
+   * cleared here, with the charge. An our-fault redial ({@link chargeOurFaultAttempt}) is not a
+   * call the customer took part in and keeps it.
    */
   async chargeAttempt(contactId: string, outcome: string | null): Promise<number> {
     const { rows } = await getPool().query<{ attempt_count: number }>(
       `UPDATE agency_contacts
           SET attempt_count = attempt_count + 1,
               last_outcome  = COALESCE($2, last_outcome),
+              callback_source = NULL,
+              callback_due_at = NULL,
               updated_at    = now()
         WHERE id = $1
         RETURNING attempt_count`,
       [contactId, outcome],
     );
     return rows[0]?.attempt_count ?? 0;
+  }
+
+  /**
+   * Book an INBOUND callback on a contact whose customer rang in and reached nobody
+   * (docs/inbound.md §7, decisions IB3 and IB4): `callback_source = 'inbound'` with its due time,
+   * and the contact due by then, so the dialer's ordinary claims dial it.
+   *
+   * Only while, on the locked row:
+   *  - its campaign is `running` or `paused` (a completed, stopped or draft campaign dials no one);
+   *  - it is `pending` or `exhausted`. IB4: an exhausted contact (retries used up) is REOPENED,
+   *    `pending` again; a terminal outcome never is: `completed` (a success or a terminal
+   *    disposition) and `suppressed` stay as they are, and a live contact (`in_flight`,
+   *    `connected`: a call to it right now) is left to that call's settlement;
+   *  - it is not DNC-suppressed (`suppressed_reason IS DISTINCT FROM 'dnc'`: a pre-fix `pending`
+   *    row carrying it is never reopened by this, B8). The caller's number is checked against the
+   *    DNC registry by the caller before, and again at dial time by the pre-dial gate.
+   *
+   * Due time: a `pending` contact already due sooner keeps its sooner time (`LEAST`), so an
+   * inbound call never delays a call the dialer owed; an exhausted one is due at `dueAt`. A
+   * contact already holding an inbound callback keeps the earlier of the two due times.
+   * Ownership is untouched: on a `strict` / `preferred` campaign the owner's claim dials it
+   * (CA4 / CA5's grace and fallback read it through `isCallbackSql`), on `pool` any agent does,
+   * from the owner's dedicated caller ID if they have one (DN2, read at dial time).
+   *
+   * Run it on the transaction that ends the inbound call (`AgencyInboundCallRepository.end`), so
+   * the Missed row's `callback_due_at` and the contact's callback commit together.
+   *
+   * @returns the callback that landed (`reopened`: the contact was `exhausted`), or null when the
+   *   contact is missing, of another tenant, or in a state or campaign that takes none.
+   */
+  async bookInboundCallback(
+    input: { tenantId: string; contactId: string; dueAt: Date },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<{ contactId: string; dueAt: Date; nextAttemptAt: Date; reopened: boolean } | null> {
+    const { rows } = await (deps.client ?? getPool()).query<{
+      id: string; callback_due_at: Date; next_attempt_at: Date; reopened: boolean;
+    }>(
+      `WITH target AS (
+         SELECT c.id, c.state AS prior_state
+           FROM agency_contacts c
+           JOIN agency_campaigns cam ON cam.id = c.campaign_id
+          WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid
+            AND cam.status IN ('running', 'paused')
+            AND c.state IN ('pending', 'exhausted')
+            AND c.suppressed_reason IS DISTINCT FROM 'dnc'
+            FOR UPDATE OF c
+       )
+       UPDATE agency_contacts c
+          SET state = 'pending',
+              next_attempt_at = CASE WHEN t.prior_state = 'pending' THEN LEAST(c.next_attempt_at, $3::timestamptz)
+                                     ELSE $3::timestamptz END,
+              callback_source = 'inbound',
+              callback_due_at = LEAST(COALESCE(c.callback_due_at, $3::timestamptz), $3::timestamptz),
+              updated_at = now()
+         FROM target t
+        WHERE c.id = t.id
+       RETURNING c.id, c.callback_due_at, c.next_attempt_at, t.prior_state = 'exhausted' AS reopened`,
+      [input.contactId, input.tenantId, input.dueAt],
+    );
+    const row = rows[0];
+    return row ? { contactId: row.id, dueAt: row.callback_due_at, nextAttemptAt: row.next_attempt_at, reopened: row.reopened } : null;
   }
 
   /**

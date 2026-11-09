@@ -1,8 +1,9 @@
 // Carrier webhooks, under `/api/v1/webhooks`: the plugin-scoped form-urlencoded
 // content-type parser, VoiceLink's `POST /voicelink/webrtc-status/:callId` (VoiceLink
 // posts every lifecycle event of a bridge leg there, token-gated by the purpose-bound
-// webhook token), and Plivo's answer, status and recording callbacks
-// (`webhooks/plivo.ts`, token-gated and signature-checked).
+// webhook token), Plivo's answer, status and recording callbacks
+// (`webhooks/plivo.ts`, token-gated and signature-checked), and Plivo's inbound answer, hangup
+// and fallback callbacks (`webhooks/plivo-inbound.ts`, docs/inbound.md §3.1).
 import querystring from 'node:querystring';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
@@ -10,6 +11,7 @@ import { parseVoicelinkWebhook } from '../../telephony/voicelink/voicelink.webho
 import type { VoicelinkWebhookBody } from '../../telephony/voicelink/voicelink.types.js';
 import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
 import { registerPlivoWebhookRoutes, type PlivoCallbackForwarder } from './webhooks/plivo.js';
+import { registerPlivoInboundWebhookRoutes } from './webhooks/plivo-inbound.js';
 
 const log = createChildLogger({ component: 'webhooks-routes' });
 
@@ -87,6 +89,11 @@ export async function webhooksRoutes(
   // POST /api/v1/webhooks/plivo/webrtc-{answer,status,recording}/:callId?token=<webhook token>
   // With media workers a hinted callback runs in its worker (`setPlivoCallbackForwarder`).
   registerPlivoWebhookRoutes(app, { webrtcBridge, forwarder: () => plivoForwarder });
+
+  // ─── Plivo inbound (calls customers place to a tenant's linked numbers) ──
+  // POST /api/v1/webhooks/plivo/inbound-{answer,status}/:credentialId?token=<purpose token>
+  // POST /api/v1/webhooks/plivo/inbound-fallback (fixed XML). docs/inbound.md §3.1.
+  registerPlivoInboundWebhookRoutes(app, { webrtcBridge });
 }
 
 /** What the status webhook answers: the HTTP status and body the carrier gets. */

@@ -20,6 +20,9 @@ import {
   type WebRtcLifecycleEvent,
   type WebRtcLifecycleListener,
   type WebRtcRejectReason,
+  type WebRtcInboundCallParams,
+  type WebRtcInboundAcceptance,
+  type ClipSequenceResult,
 } from '../../../src/core/webrtc-bridge-manager.js';
 import {
   browserLegMediaFormatOf,
@@ -40,6 +43,10 @@ interface BridgeSeam {
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
   getActiveCallIds(): string[];
   gracefulShutdown(): Promise<void>;
+  /** Inbound calls (docs/inbound.md §3): the answer webhook's leg taken in, and its messages played. */
+  acceptInboundCall(params: CoreInboundCallParams): Promise<CoreInboundAcceptance>;
+  playClipSequenceThenHangUp(correlationId: string,
+    opts: { clipHashes: readonly string[]; outcome: string }): Promise<CoreClipSequenceResult>;
 }
 
 /** The bridge's exported types (`sipConnectionId` is excluded: docs/seams.md allows it, SIP is out). */
@@ -79,6 +86,22 @@ interface CoreLifecycleEvent {
   answeredAt?: Date;
   talkTimeSeconds?: number;
 }
+interface CoreInboundCallParams {
+  callId: string;
+  correlationId: string;
+  tenantId: string;
+  accountId: string;
+  provider: string;
+  telephonyCredentialId: string | null;
+  callerId: string;
+  destinationPhone: string;
+  carrierCallId: string;
+  takeSlots: boolean;
+}
+type CoreInboundAcceptance =
+  | { accepted: true; streamUrl: string; maxDurationSeconds: number; capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' }
+  | { accepted: false; reason: 'stream_unavailable' | 'ended' };
+type CoreClipSequenceResult = 'completed' | 'aborted' | 'no_media' | 'not_found';
 type CoreRejectReason =
   | 'global_concurrency_limit'
   | 'account_concurrency_limit'
@@ -102,6 +125,8 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcBridgeManager['playClipToCarrierThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipToCarrierThenHangUp']>();
     expectTypeOf<WebRtcBridgeManager['getActiveCallIds']>().toEqualTypeOf<BridgeSeam['getActiveCallIds']>();
     expectTypeOf<WebRtcBridgeManager['gracefulShutdown']>().toEqualTypeOf<BridgeSeam['gracefulShutdown']>();
+    expectTypeOf<WebRtcBridgeManager['acceptInboundCall']>().toEqualTypeOf<BridgeSeam['acceptInboundCall']>();
+    expectTypeOf<WebRtcBridgeManager['playClipSequenceThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipSequenceThenHangUp']>();
     // And the class as a whole satisfies the interface.
     expectTypeOf<WebRtcBridgeManager>().toMatchTypeOf<BridgeSeam>();
     expect(true).toBe(true);
@@ -115,6 +140,9 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcLifecycleEvent>().toEqualTypeOf<CoreLifecycleEvent>();
     expectTypeOf<WebRtcLifecycleListener>().toEqualTypeOf<(event: CoreLifecycleEvent) => void>();
     expectTypeOf<WebRtcRejectReason>().toEqualTypeOf<CoreRejectReason>();
+    expectTypeOf<WebRtcInboundCallParams>().toEqualTypeOf<CoreInboundCallParams>();
+    expectTypeOf<WebRtcInboundAcceptance>().toEqualTypeOf<CoreInboundAcceptance>();
+    expectTypeOf<ClipSequenceResult>().toEqualTypeOf<CoreClipSequenceResult>();
     expect(true).toBe(true);
   });
 

@@ -181,7 +181,7 @@ export async function handlePlivoCallback(
 }
 
 /** Form params as one string per key (a repeated key keeps its first value). */
-function formParams(body: unknown): Record<string, string> {
+export function formParams(body: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!body || typeof body !== 'object') return out;
   for (const [k, v] of Object.entries(body as Record<string, unknown>)) {

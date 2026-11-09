@@ -186,3 +186,66 @@ export interface WebRtcLifecycleEvent {
 }
 
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
+
+/**
+ * A call a customer placed to one of a tenant's numbers, already answered by the inbound answer
+ * webhook (docs/inbound.md §3): its media leg is the `agency_calls` row the webhook wrote
+ * (`origin = 'inbound'`), and the bridge holds the caller on our stream (principle 2). The
+ * bridge places nothing: it registers the session, takes the shared slots and hands back the
+ * stream the answer XML names.
+ */
+export interface WebRtcInboundCallParams {
+  /** The `agency_calls` leg the answer webhook wrote: the session's call id. */
+  callId: string;
+  /** What lifecycle events carry and the correlation-keyed members take: the inbound call's id. */
+  correlationId: string;
+  tenantId: string;
+  accountId: string;
+  provider: string;
+  /** The tenant carrier credential the call arrived on (resolved for `call_control` to hang it up). */
+  telephonyCredentialId: string | null;
+  /** The number rung. */
+  callerId: string;
+  /** The caller's number, '' when withheld. */
+  destinationPhone: string;
+  /** The carrier's own call id (Plivo's `CallUUID`). */
+  carrierCallId: string;
+  /**
+   * Take the shared slots (global, account, provider). False when the caller has already turned the
+   * call away (its route is at its own `max_concurrent`): it is streamed only to hear why, and
+   * holds no slot.
+   */
+  takeSlots: boolean;
+}
+
+/**
+ * How an inbound call was taken in. `capacity` says what the caller hears next:
+ *  - `admitted`: the slots are held;
+ *  - `account_full`: the account's own limit refused a slot, and the call is held anyway, with no
+ *    slot (decision IB5: an inbound call is never refused for the account limit; its live row
+ *    counts in the account's live total instead);
+ *  - `no_capacity`: the global or the carrier's scope is full (or cannot be read): the caller is to
+ *    hear "all lines are busy" and be put down (`overflow_no_capacity`), on a session with no slot;
+ *  - `not_requested`: `takeSlots` was false.
+ * `accepted: false`: no stream can be offered (no webhook base configured), or the leg has
+ * already ended here; the caller answers the call another way.
+ */
+export type WebRtcInboundAcceptance =
+  | {
+    accepted: true;
+    streamUrl: string;
+    maxDurationSeconds: number;
+    capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested';
+  }
+  | { accepted: false; reason: 'stream_unavailable' | 'ended' };
+
+/**
+ * How `WebRtcBridgeManager.playClipSequenceThenHangUp` ended:
+ *  - `completed`: every clip played (or was skipped as unavailable) and the call was hung up under
+ *    the caller's outcome;
+ *  - `aborted`: the far end went (the stream closed or the call ended) before the last clip
+ *    finished; the call ends by its own path, never under the caller's outcome;
+ *  - `no_media`: the call ended before the carrier's media was negotiated;
+ *  - `not_found`: no live call by that correlation id.
+ */
+export type ClipSequenceResult = 'completed' | 'aborted' | 'no_media' | 'not_found';

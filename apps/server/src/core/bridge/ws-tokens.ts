@@ -219,6 +219,39 @@ export class BridgeWsTokens {
     }
   }
 
+  private credentialNonceKey(credentialId: string, nonce: string): string {
+    return `${this.keyPrefix}webrtc:credential-callback-nonce:${credentialId}:${nonce}`;
+  }
+
+  /**
+   * The same replay guard for a callback that names no call of ours: the inbound Application's
+   * credential-level URLs (docs/inbound.md §3.1), whose token is the credential's and does not
+   * die with a call. One key per (credential, nonce), `SET NX` with
+   * {@link CALLBACK_NONCE_TTL_SECONDS}: a set per credential would grow with every call the
+   * number ever took. Past the TTL a replay is answered idempotently by the call it names (the
+   * spine is unique on the carrier's call id). Fails OPEN on Redis, as the per-call guard.
+   */
+  async claimCredentialCallbackNonce(credentialId: string, nonce: string): Promise<boolean> {
+    if (!this.redis) return true;
+    try {
+      const set = await this.redis.set(this.credentialNonceKey(credentialId, nonce), '1', 'EX', CALLBACK_NONCE_TTL_SECONDS, 'NX');
+      return set === 'OK';
+    } catch (err) {
+      log.warn({ err, credentialId }, 'Credential callback nonce not recorded (Redis) — accepting the callback unchecked for replay');
+      return true;
+    }
+  }
+
+  /** Forget a credential callback's nonce whose processing failed, so the carrier's retry is not a replay. Never throws. */
+  async releaseCredentialCallbackNonce(credentialId: string, nonce: string): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.del(this.credentialNonceKey(credentialId, nonce));
+    } catch (err) {
+      log.warn({ err, credentialId }, 'Credential callback nonce not released (Redis) — a retry of it may be refused');
+    }
+  }
+
   async clearWsToken(callId: string): Promise<void> {
     // Q6: the media legs' tokens die with the call; the WEBHOOK token (and a remembered
     // unstored one) outlives it by the grace window, because the carrier's terminal report

@@ -560,6 +560,29 @@ export class MockPlivoCarrier {
     send(201, { api_id: randomUUID(), message: 'call fired', request_uuid: requestUuid });
   }
 
+  /**
+   * A customer rings one of the account's numbers linked to the inbound Application whose answer
+   * and hangup URLs are `answerUrl` / `hangupUrl` (each with its `?token=` query, as the
+   * Application names them): an inbound {@link PlivoCall} runs `script` (typically `answer`,
+   * `connect`, `start`, then wait for our REST hangup). `from` and `to` as Plivo sends them
+   * (digits, or `anonymous` for a withheld caller). Our REST hangup reaches it by its `CallUUID`.
+   */
+  ringInbound(opts: { from: string; to: string; answerUrl: string; hangupUrl: string; script: PlivoCallScript }): PlivoCall {
+    const call = new PlivoCall({
+      request: { from: opts.from, to: opts.to, answer_url: opts.answerUrl, hangup_url: opts.hangupUrl },
+      requestUuid: '',
+      authId: this.authId,
+      authToken: () => this.authToken,
+      rewrite: (u) => this.rewrite(u),
+      sockets: this.mediaSockets,
+      direction: 'inbound',
+    });
+    this.calls.set(`inbound:${call.callUuid}`, call);
+    this.callOrder.push(call);
+    this.runs.push(call.run(opts.script));
+    return call;
+  }
+
   private handleCancel(requestUuid: string, send: (s: number, p: unknown) => void): void {
     const call = this.callOrder.find((c) => c.requestUuid === requestUuid);
     if (!call || call.answered || call.ended || call.dequeued) {

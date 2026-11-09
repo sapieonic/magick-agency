@@ -83,9 +83,18 @@ export function callbackCodes(catalog: readonly AgencyDisposition[] | null | und
  * half a callback that was dialled and NOT answered would read as a callback for ever: kept from
  * the agent's retry, swept by the callback fallback, and told to the station as
  * `callbacks_later`. Once a later call settles not-connected, it is not reached like any other.
+ *
+ * Or the customer rang in and reached nobody: an inbound callback (`callback_source`, booked by
+ * the inbound follow-up, docs/inbound.md §7, IB3/IB4) is a callback until the contact's next call
+ * settles, which clears it (`chargeAttempt`, `settleFromManual`). Every reader of this fragment
+ * (the buckets, the agent's retry, the CA5 fallback, insights, the drill-downs) therefore sees an
+ * inbound callback as a callback, with no change of its own. The disposition half stays NULL when
+ * `last_disposition` is NULL, so the whole is NULL exactly when it was before and no inbound
+ * callback is booked; readers that COALESCE it keep working. `callback_source` is an INCLUDE
+ * column of `idx_agency_contacts_insights` (0027), so the insights reads stay index-only.
  */
 export function isCallbackSql(alias: string, callbackCodesParam: string): string {
-  return `(${alias}.last_disposition = ANY(${callbackCodesParam}::text[]) AND ${alias}.last_outcome IS NOT DISTINCT FROM 'connected')`;
+  return `(${alias}.callback_source IS NOT NULL OR (${alias}.last_disposition = ANY(${callbackCodesParam}::text[]) AND ${alias}.last_outcome IS NOT DISTINCT FROM 'connected'))`;
 }
 
 /**

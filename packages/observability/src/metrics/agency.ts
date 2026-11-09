@@ -879,3 +879,28 @@ export const agencyReportsEmailsTotal = counter<'result'>(meter, 'agency_reports
 export const agencyReportsSubscriptionRunsTotal = counter<'result'>(meter, 'agency_reports_subscription_runs_total', {
   description: 'Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)',
 });
+
+// ─── Inbound calls (docs/inbound.md; apps/server/src/agency/inbound/) ──────────────────────
+
+/** What the inbound answer webhook answered: the router's decision, or why it never decided. */
+export type InboundAnswerResult = 'stream' | 'closed' | 'hangup' | 'fallback' | 'refused' | 'timed_out';
+
+export const agencyInboundCallsTotal = counter<'outcome'>(meter, 'agency_inbound_calls_total', {
+  description: 'Inbound calls ended, by outcome: answered, abandoned_in_queue, overflow, overflow_no_capacity, closed, voicemail, rejected or failed',
+});
+
+export const agencyInboundAnswerSeconds = histogram<'result'>(meter, 'agency_inbound_answer_seconds', {
+  description: 'Seconds the inbound answer webhook took to answer the carrier, by result: stream, closed, hangup, fallback, refused or timed_out',
+  unit: 's',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
+});
+
+/** One inbound answer webhook answered (the carrier's answer-URL timeout bounds it). */
+export function trackInboundAnswer(result: InboundAnswerResult, seconds: number): void {
+  agencyInboundAnswerSeconds.observe({ result }, seconds);
+}
+
+/** One inbound call ended (its spine row's outcome), once per call. */
+export function trackInboundCallEnded(outcome: string): void {
+  agencyInboundCallsTotal.inc({ outcome });
+}

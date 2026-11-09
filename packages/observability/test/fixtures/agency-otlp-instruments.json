@@ -156,6 +156,35 @@
     ]
   },
   {
+    "name": "agency_inbound_answer_seconds",
+    "kind": "Histogram",
+    "description": "Seconds the inbound answer webhook took to answer the carrier, by result: stream, closed, hangup, fallback, refused or timed_out",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2,
+        4,
+        8
+      ]
+    },
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_inbound_calls_total",
+    "kind": "Counter",
+    "description": "Inbound calls ended, by outcome: answered, abandoned_in_queue, overflow, overflow_no_capacity, closed, voicemail, rejected or failed",
+    "attributes": [
+      "outcome"
+    ]
+  },
+  {
     "name": "agency_insights_rollup_buckets_total",
     "kind": "Counter",
     "description": "Insights rollup buckets recomputed",

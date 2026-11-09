@@ -154,9 +154,11 @@ describe('0011 — insights foundation', () => {
   });
 
   it('the insights indexes exist with their definitions and comments', async () => {
+    // 0027 rebuilt it with `callback_source` (the inbound callback isCallbackSql reads); its own test
+    // pins that its down restores this file's definition.
     expect(await indexDef('idx_agency_contacts_insights')).toBe(
       'CREATE INDEX idx_agency_contacts_insights ON public.agency_contacts USING btree (campaign_id, state) '
-      + 'INCLUDE (next_attempt_at, suppressed_reason, attempt_count, dials_placed, last_outcome, last_disposition, assigned_user_id)',
+      + 'INCLUDE (next_attempt_at, suppressed_reason, attempt_count, dials_placed, last_outcome, last_disposition, assigned_user_id, callback_source)',
     );
     expect(await indexDef('idx_agency_attempts_campaign_dialed')).toBe(
       'CREATE INDEX idx_agency_attempts_campaign_dialed ON public.agency_call_attempts USING btree (campaign_id, dialed_at) '

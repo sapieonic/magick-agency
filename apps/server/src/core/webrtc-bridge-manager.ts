@@ -6,7 +6,8 @@
 // createBridgedCall, createUnboundBridgedCall, bindBorrowedBrowserLeg,
 // reattachBorrowedBrowserLeg, forceEndWithOutcome, playClipToCarrierThenHangUp,
 // getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
-// `test/unit/core/webrtc-bridge-seam-contract.test.ts`.
+// `test/unit/core/webrtc-bridge-seam-contract.test.ts`. The inbound members
+// (acceptInboundCall, playClipSequenceThenHangUp: docs/inbound.md §3) are part of that seam too.
 import crypto from 'node:crypto';
 import { releaseTelephonyLease } from './telephony-release.js';
 import type Redis from 'ioredis';
@@ -35,8 +36,11 @@ import type { CallEvent, TelephonyProvider } from '../telephony/types.js';
 import type { WebRtcCallRecord, WebRtcCallStatus } from '@magick-agency/db/models/agency-call.model';
 import {
   WebRtcCallError,
+  type ClipSequenceResult,
   type WebRtcBridgedCallParams,
   type WebRtcCallCorrelation,
+  type WebRtcInboundAcceptance,
+  type WebRtcInboundCallParams,
   type WebRtcLifecycleEvent,
   type WebRtcLifecycleListener,
   type WebRtcOutboundParams,
@@ -78,6 +82,9 @@ export type LeaseChange =
 
 export {
   WebRtcCallError,
+  type ClipSequenceResult,
+  type WebRtcInboundAcceptance,
+  type WebRtcInboundCallParams,
   type WebRtcBridgedCallParams,
   type WebRtcCallCorrelation,
   type WebRtcLifecycleEvent,
@@ -201,6 +208,14 @@ const CLIP_STREAM_GRACE_MS = 2000;
  * `account_settings.webrtc_max_duration_seconds` is NULL or cannot be read.
  */
 const DEFAULT_WEBRTC_MAX_DURATION_SECONDS = 1800;
+
+/**
+ * How long an inbound call waits, from our answer, for the carrier to open and negotiate the
+ * stream our answer XML names before it is ended `failed` and hung up at the carrier
+ * ({@link WebRtcBridgeManager.acceptInboundCall}). The outbound start timeout's length
+ * (`PROVIDER_START_TIMEOUT_SECONDS`), which also bounds a stream opened but never started.
+ */
+export const INBOUND_MEDIA_DEADLINE_SECONDS = 30;
 
 /**
  * Orchestrates WebRTC human-bridge calls: browser leg ⇄ this service ⇄ the carrier's
@@ -1258,6 +1273,213 @@ export class WebRtcBridgeManager {
     };
   }
 
+  // ─── Inbound calls (docs/inbound.md §3, §3.2) ──────────────────────────────
+
+  /**
+   * Take in a call a customer placed to one of a tenant's numbers, already answered by the
+   * inbound answer webhook, whose media leg (`params.callId`) that webhook wrote: register a
+   * session for it, take the shared slots, mint the provider token and hand back the stream the
+   * answer XML names. Nothing is placed at the carrier: the carrier connects the stream when it
+   * runs our answer XML, and the call is hung up through the credential it arrived on
+   * (`call_control`).
+   *
+   * What differs from an outbound leg, and why:
+   *  - **answered at once**: our answer XML answers the call, so the session is anchored here
+   *    (talk time and the `answered` lifecycle event count from our answer) and there is no ring
+   *    deadline. In its place, the **media deadline** ({@link INBOUND_MEDIA_DEADLINE_SECONDS}): a
+   *    stream the carrier never opens, or never negotiates, ends the call `failed` and hangs it up
+   *    at the carrier, so a lost stream never holds a caller in silence or a slot until the max
+   *    duration;
+   *  - **no browser leg**: media from the caller is dropped (nobody is bound); audio to the caller
+   *    is what {@link playClipSequenceThenHangUp} plays;
+   *  - **admission never refuses** (IB5): over the account's own limit the call is held with no
+   *    slot (`account_full`); with the global or the carrier's scope full it is held with no slot
+   *    to hear why (`no_capacity`). The caller decides what is played from `capacity`;
+   *  - **no webhook token**: the carrier's status for an inbound call goes to the credential-level
+   *    hangup URL, which the caller verifies; nothing posts to `…/webrtc-status/:callId`.
+   *
+   * Idempotent per leg: a retried answer webhook (Plivo's own retry) is answered with the live
+   * session's stream. A leg that has already ended here is `accepted: false` (`ended`): its
+   * answer is a hangup. Never throws.
+   */
+  async acceptInboundCall(params: WebRtcInboundCallParams): Promise<WebRtcInboundAcceptance> {
+    const existing = this.sessions.get(params.callId);
+    if (existing) {
+      if (existing.isTearingDown || !existing.answerStreamUrl) return { accepted: false, reason: 'ended' };
+      return {
+        accepted: true,
+        streamUrl: existing.answerStreamUrl,
+        maxDurationSeconds: existing.maxDurationSeconds ?? DEFAULT_WEBRTC_MAX_DURATION_SECONDS,
+        capacity: existing.inboundCapacity ?? 'not_requested',
+      };
+    }
+    const provider = params.provider;
+    const carrier = findCarrierModule(provider);
+    let base: string;
+    try {
+      base = this.webhookUrls.baseUrl(provider);
+    } catch {
+      base = '';
+    }
+    if (!carrier || base === '') {
+      log.error({ callId: params.callId, provider }, 'Inbound call on a carrier with no stream to offer (no carrier module or no webhook base)');
+      return { accepted: false, reason: 'stream_unavailable' };
+    }
+    const providerToken = crypto.randomUUID();
+    let urls: CarrierUrls;
+    try {
+      urls = buildCarrierUrls({
+        base, callId: params.callId, mediaUrlInDialRequest: false, providerToken, webhookToken: undefined,
+        routeHint: this.options.carrierRouteHint ?? null,
+      });
+    } catch (err) {
+      log.error({ err, callId: params.callId, provider }, 'Inbound call: the webhook base is not a URL — no stream to offer');
+      return { accepted: false, reason: 'stream_unavailable' };
+    }
+    if (!urls.answerStreamUrl) return { accepted: false, reason: 'stream_unavailable' };
+
+    const maxDuration = await this.resolveMaxDuration(params.tenantId, params.accountId);
+    const slotTtlSeconds = maxDuration + SLOT_TTL_GRACE_SECONDS;
+    const concurrencyKey = crypto.randomUUID();
+    let capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' = 'not_requested';
+    if (params.takeSlots) {
+      try {
+        await admitBridgeCall(this.guardHost, {
+          concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, slotTtlSeconds,
+        });
+        capacity = 'admitted';
+        this.noteLease({ op: 'held', lease: { callId: params.callId, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider } });
+      } catch (err) {
+        capacity = err instanceof WebRtcCallError && err.code === 'account_concurrency_limit' ? 'account_full' : 'no_capacity';
+        log.warn({ err, callId: params.callId, capacity }, 'Inbound call admitted with no telephony slot');
+      }
+    }
+    // The admission awaited: a retry of the same answer may have registered the leg meanwhile.
+    const raced = this.sessions.get(params.callId);
+    if (raced) {
+      if (capacity === 'admitted') await this.releaseSlotsByKey(concurrencyKey, params.tenantId, params.accountId, provider, params.callId);
+      return this.acceptInboundCall(params);
+    }
+
+    const session = new WebRtcBridgeSession({
+      callId: params.callId,
+      tenantId: params.tenantId,
+      accountId: params.accountId,
+      callerId: params.callerId,
+      destinationPhone: params.destinationPhone,
+      provider,
+    });
+    session.correlationId = params.correlationId;
+    session.telephonyCredentialId = params.telephonyCredentialId;
+    session.carrierCallId = params.carrierCallId;
+    session.providerCallId = params.carrierCallId;
+    session.status = 'in_progress';
+    session.inboundCapacity = capacity;
+    session.answerStreamUrl = urls.answerStreamUrl;
+    session.maxDurationSeconds = maxDuration;
+    if (capacity === 'admitted') {
+      session.concurrencyKey = concurrencyKey;
+      session.slotsHeld = true;
+    }
+    if (carrier.media.negotiatesOnStart) session.providerMediaReady = false;
+    this.sessions.set(params.callId, session);
+    this.anchorAnswer(session);
+    session.setMaxDurationTimer(maxDuration, () => {
+      this.inBackground(this.localHangup(params.callId, { status: session.localEndStatus(), outcome: 'max_duration_reached' }),
+        params.callId, 'Error ending an inbound call on max duration');
+    });
+    session.setRingDeadlineTimer(INBOUND_MEDIA_DEADLINE_SECONDS, () => {
+      if (session.providerMediaReady && session.pstnWs?.readyState === 1) return;
+      log.warn({ callId: params.callId }, 'Inbound call: the carrier never opened or negotiated our stream — ending it');
+      this.inBackground(this.endCall(params.callId, {
+        status: 'failed', outcome: 'inbound_media_timeout', errorCode: 'INBOUND_MEDIA_TIMEOUT', hangupProvider: true,
+      }), params.callId, 'Error ending an inbound call past its media deadline');
+    });
+    await this.tokens.storeWsToken(params.callId, providerToken, slotTtlSeconds, 'provider');
+    log.info({ callId: params.callId, provider, capacity }, 'Inbound call taken in — waiting for the carrier stream');
+    return { accepted: true, streamUrl: urls.answerStreamUrl, maxDurationSeconds: maxDuration, capacity };
+  }
+
+  /**
+   * Play `clipHashes` to the carrier leg in order, then hang up under `outcome`: the inbound
+   * caller's greeting and messages (docs/inbound.md §3, P1). The sequence counterpart of
+   * {@link playClipToCarrierThenHangUp}, keyed on the correlation id the same way, with what an
+   * inbound call needs that an abandoned outbound one does not:
+   *
+   *  - it **waits for the carrier's media** (the stream opening and negotiating, which follows our
+   *    answer XML), rather than refusing a leg that is not up yet. The wait is bounded by the
+   *    teardown, which always settles it: the media deadline, a caller who hangs up first, the max
+   *    duration;
+   *  - each clip is paced exactly as the apology clip is ({@link PacedAudioStreamer}, the
+   *    carrier's framing); a clip not on this replica's disk is skipped, logged, and the rest play;
+   *  - a caller who goes mid-clip (the stream closes, the call ends) **stops the sequence with no
+   *    hangup of ours**: the call ends by its own path (the stream's close, the carrier's hangup),
+   *    and the answer is `aborted` so the caller can tell a caller who left from one who heard it
+   *    all. A clip cut by its own deadline with the leg still up is hung up as `completed`.
+   * Never throws.
+   */
+  async playClipSequenceThenHangUp(
+    correlationId: string,
+    opts: { clipHashes: readonly string[]; outcome: string },
+  ): Promise<ClipSequenceResult> {
+    const session = this.findByCorrelationId(correlationId);
+    if (!session || session.isTearingDown) return 'not_found';
+    try {
+      if (!await session.whenCarrierMediaReady() || session.isTearingDown) return 'no_media';
+      const sink = this.makeClipSink(session);
+      for (const clipHash of opts.clipHashes) {
+        if (!sink.isOpen()) return 'aborted';
+        const clip = this.convertClipForCarrier(session, clipHash);
+        if (!clip) {
+          log.warn({ callId: session.callId, clipHash }, 'Inbound clip unavailable on this replica — skipping it');
+          continue;
+        }
+        const clipMs = Math.ceil((clip.buffer.length / clip.byteRate) * 1000);
+        const streamer = new PacedAudioStreamer({
+          frameBytes: Math.max(2, Math.round((clip.byteRate * CLIP_FRAME_MS) / 1000)),
+          frameMs: CLIP_FRAME_MS,
+          maxDurationMs: clipMs + CLIP_STREAM_GRACE_MS,
+          callId: session.callId,
+        });
+        if (await streamer.stream(clip.buffer, sink) === 'aborted' && !sink.isOpen()) return 'aborted';
+      }
+      if (!sink.isOpen()) return 'aborted';
+      await new Promise<void>((resolve) => { setTimeout(resolve, CLIP_TAIL_GRACE_MS); });
+      if (!sink.isOpen()) return 'aborted';
+      await this.localHangup(session.callId, { status: session.localEndStatus(), outcome: opts.outcome });
+      return 'completed';
+    } catch (err) {
+      log.error({ err, callId: session.callId }, 'Inbound clip sequence failed — hanging the call up');
+      await this.localHangup(session.callId, { status: session.localEndStatus(), outcome: opts.outcome }).catch(() => undefined);
+      return 'aborted';
+    }
+  }
+
+  /**
+   * The adapter an inbound callback is checked against: the tenant credential in its URL, resolved
+   * for `call_control` (anything not shredded still serves: a disabled or invalid credential's
+   * calls are still verified, docs/inbound.md §10) and checked to be of `tenantId` and `provider`.
+   * Null when it cannot be resolved: the callback is refused. Not part of the dialer seam.
+   */
+  async inboundCallbackAdapter(credentialId: string, tenantId: string, provider: string): Promise<TelephonyProvider | null> {
+    try {
+      return await this.telephonyRegistry.getForCredentialId(provider, credentialId, 'call_control', tenantId);
+    } catch (err) {
+      log.warn({ err, credentialId, provider }, 'Cannot resolve the carrier account an inbound callback must be checked against — refusing it');
+      return null;
+    }
+  }
+
+  /** Record a verified inbound callback's nonce for its credential: false for a replay (`BridgeWsTokens.claimCredentialCallbackNonce`). */
+  claimInboundCallbackNonce(credentialId: string, nonce: string): Promise<boolean> {
+    return this.tokens.claimCredentialCallbackNonce(credentialId, nonce);
+  }
+
+  /** Give back an inbound callback's nonce whose processing failed, so the carrier's retry is not a replay. */
+  releaseInboundCallbackNonce(credentialId: string, nonce: string): Promise<void> {
+    return this.tokens.releaseCredentialCallbackNonce(credentialId, nonce);
+  }
+
   /**
    * The live session a caller-supplied correlation id names, if any.
    *
@@ -1455,6 +1677,7 @@ export class WebRtcBridgeManager {
       // answer event was dropped, so we never record 0 talk time / misclassify a
       // talked call as no_answer. First-write-wins, so a prior anchor is preserved.
       this.anchorAnswer(session);
+      session.noteCarrierMediaReady();
     } else {
       // VoiceLink, Plivo: the socket opens BEFORE the carrier `start` frame. Do NOT anchor
       // answer here (an open-but-silent WS is not a connected call) — wait for a
@@ -1724,6 +1947,8 @@ export class WebRtcBridgeManager {
 
     session.clearEndConfirmationTimer(); // cancel the start-timeout
     session.providerMediaReady = true;
+    // A clip waiting to play into this leg (an inbound call's messages) may go now.
+    session.noteCarrierMediaReady();
     // The negotiated stream is the connect/answer moment for such a carrier.
     this.anchorAnswer(session);
     log.info(

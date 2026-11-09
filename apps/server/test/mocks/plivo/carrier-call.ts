@@ -102,6 +102,14 @@ export interface PlivoCallOptions {
   authToken: () => string;
   rewrite: (url: string) => string;
   sockets: Set<WebSocket>;
+  /**
+   * `inbound`: a customer rang one of the account's numbers and Plivo runs its inbound
+   * Application (docs/inbound.md §3): the callbacks go to the Application's answer and hangup
+   * URLs, carry `Direction=inbound` and no `RequestUUID`, and the answer callback's `CallStatus`
+   * is `ringing` (the call is answered by the XML it fetches). Unverified until P0. Default
+   * `outbound`.
+   */
+  direction?: 'outbound' | 'inbound';
 }
 
 const DEFAULT_WAIT_TIMEOUT_MS = 15_000;
@@ -188,6 +196,7 @@ export class PlivoCall {
   closedBy: 'carrier' | 'server' | null = null;
   scriptName = '';
 
+  readonly direction: 'outbound' | 'inbound';
   private readonly authId: string;
   private readonly authToken: () => string;
   private readonly rewrite: (url: string) => string;
@@ -203,6 +212,7 @@ export class PlivoCall {
     this.authToken = opts.authToken;
     this.rewrite = opts.rewrite;
     this.sockets = opts.sockets;
+    this.direction = opts.direction ?? 'outbound';
     this.callId = PlivoCall.callIdFromUrl(opts.request.answer_url);
     this.done = new Promise<void>((resolve) => { this.resolveDone = resolve; });
   }
@@ -237,6 +247,9 @@ export class PlivoCall {
   }
 
   private baseParams(): Record<string, string> {
+    if (this.direction === 'inbound') {
+      return { CallUUID: this.callUuid, From: this.request.from, To: this.request.to, Direction: 'inbound', CallerName: '' };
+    }
     return {
       CallUUID: this.callUuid,
       RequestUUID: this.requestUuid,
@@ -338,7 +351,7 @@ export class PlivoCall {
       // unanswered end is its `CallStatus` in upper case, an answered one `ANSWER`, a value
       // outside the bridge's vocabulary on purpose, so the reader's `answer_time` fallback runs.
       call_state: answered ? 'ANSWER' : status.toUpperCase().replace('-', '_'),
-      call_direction: 'outbound',
+      call_direction: this.direction,
       from_number: this.request.from,
       to_number: this.request.to,
       initiation_time: now,
@@ -371,7 +384,12 @@ export class PlivoCall {
         this.named = true;
         this.answered = true;
         const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-        const res = await this.callback('answer', { ...this.baseParams(), CallStatus: 'in-progress', Event: 'StartApp', AnswerTime: now }, step.sign);
+        const res = await this.callback('answer', {
+          ...this.baseParams(),
+          CallStatus: this.direction === 'inbound' ? 'ringing' : 'in-progress',
+          Event: 'StartApp',
+          ...(this.direction === 'inbound' ? {} : { AnswerTime: now }),
+        }, step.sign);
         this.answerXml = res.body;
         const stream = /<Stream\b[^>]*>([^<]*)<\/Stream>/.exec(res.body);
         this.streamUrl = stream ? xmlUnescape(stream[1]!.trim()) : null;

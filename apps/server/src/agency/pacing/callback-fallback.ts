@@ -91,8 +91,9 @@ async function returnBatchToPool(
  */
 export async function sweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<number> {
   if (!callbackFallbackApplies(campaign)) return 0;
+  // No early return for a catalog with no callback codes: an inbound callback
+  // (`callback_source`, docs/inbound.md §7) is a callback on any campaign, and falls back too.
   const codes = callbackCodes(campaign.disposition_catalog);
-  if (codes.length === 0) return 0;
   return returnBatchToPool(
     campaign,
     'agency_contacts.callback_fallback',

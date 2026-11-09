@@ -267,3 +267,11 @@ export type {
   AgencyInboundMissedRow,
   AgencyInboundTransitionTarget,
 } from './agency/inbound-call.repository.js';
+// The inbound answer webhook's reads: route admission, caller identification (docs/inbound.md §4.1).
+export {
+  AgencyInboundAnswerRepository,
+  agencyInboundAnswerRepository,
+  INBOUND_CALLS_PER_ACCOUNT,
+  INBOUND_CONTACT_CANDIDATES_PER_ACCOUNT,
+} from './agency/inbound-answer.repository.js';
+export type { InboundCallSignalRow, InboundContactCandidateRow, InboundRouteSchedule } from './agency/inbound-answer.repository.js';
