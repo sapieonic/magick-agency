@@ -624,6 +624,30 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 | `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 49 |
 
+### `apps/server/src/api/routes/proxy-agency-inbound/`
+
+Inbound calls in the console (docs/inbound.md §8.4). `../proxy-agency-inbound.routes.ts` is the
+family's plugin (session, tenant context, path-escape guard; the agency plugin's wrapper answers a
+malformed id with `inbound_route_not_found` / `inbound_missed_call_not_found`). `routes.ts`: the
+routes (list, read, create, PATCH, delete) and the editor's choices (`numbers`, `clips`), all
+`agency.inbound.write`, audited `agency_inbound_route.*`. `missed.ts`: the Missed list and Mark
+handled (`agency.inbound.read`), names filled through `agentNamesOrNone`, `agency_inbound_call.handled`
+audited when the request marked the row. `shared.ts`: the actor and its role-derived `supervise`,
+`requireInboundEnabled` (`403 inbound_disabled`, after the permission), the envelope's unwrap.
+The internal handlers are `agency/inbound.ts` (validation past the shape: P1's voicemail refusal,
+the account's clips / profile / pool campaigns; one transaction per write, the PATCH reading the
+route `FOR UPDATE`; the agent's Missed scope forced from `supervise`) and `agency/inbound-answer.ts`
+(each code's status and body, the envelope, the route and Missed wire mappers);
+`helpers/inbound-missed-query.ts` is the Missed query, parsed at both layers. Repository additions:
+`listNumberOptions` and a locked `findById` on the route repository, a `reason` filter on `listMissed`.
+
+Files: `../proxy-agency-inbound.routes.ts`, `missed.ts`, `routes.ts`, `shared.ts`, `../agency/inbound.ts`, `../agency/inbound-answer.ts`, `../helpers/inbound-missed-query.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/api/routes/proxy-agency-inbound.test.ts` | 5 |
+| `apps/server/test/integration/api/inbound-routes.test.ts` | 13 |
+
 ### `apps/server/src/api/validators/`
 
 Zod request validators for the platform, super-admin and profile routes.
@@ -1768,6 +1792,32 @@ Files: `ExportReportButton.tsx`, `ExportReportDialog.tsx`, `ReportDownloads.tsx`
 | `apps/console/src/__tests__/pages/ReportRunPage.test.tsx` | 10 |
 | `apps/console/src/__tests__/pages/ReportsPage.test.tsx` | 11 |
 | `apps/console/src/__tests__/utils/reportWindow.test.ts` | 17 |
+
+### `apps/console/src/components/agency/inbound/`
+
+Inbound calls (docs/inbound.md §8.4), behind `agency_inbound_enabled` (`utils/inbound/inboundFlag.ts`).
+`MissedCallsList.tsx`: To follow up / Handled, filters (dates, reason; for `agency.supervise`, who it
+is assigned to), keyset paging, a DNC badge, Call back (`/dialer/phone` with the number and campaign
+in history state, `utils/softphone/prefill.ts`, read by `SoftphonePage` and `useSoftphone`'s
+`presetNumber`) and Mark handled; rows stack to labelled cards at phone width. Pages:
+`pages/agency/MissedCallsPage.tsx` (`/agency/inbound/missed`; `AgentMissedCallsPage` at
+`/dialer/missed` in `AgentSurfaceShell`, "Missed calls" in `AgentNav`), `pages/settings/InboundRoutesPage.tsx`
+(`/app/inbound`, the routes with delete) and `pages/settings/InboundRouteEditorPage.tsx`
+(`/app/inbound/new`, `/app/inbound/:routeId`). The form's rules are `utils/inbound/routeForm.ts`
+(defaults, the midnight mapping, overnight stretches, client checks keyed by body path, the PATCH of
+what changed, why a number cannot be chosen); copy and the Missed query in `utils/inbound/inboundCopy.ts`;
+the client is `api/inbound.ts` (writes resolve to a refusal value, reads throw). Navigation: Inbound
+calls in `Sidebar` and Inbound settings in `AgencySidebar` (`agency.inbound.write`), Missed calls in
+`AgencySidebar` (the workspace floor) and `AgentNav`.
+
+Files: `Inbound.module.css`, `MissedCallsList.tsx`
+
+| Test file | Cases |
+|---|---|
+| `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` | 10 |
+| `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
+| `apps/console/src/__tests__/utils/inboundRouteForm.test.ts` | 9 |
+| `apps/console/src/__tests__/utils/inboundCopy.test.ts` | 6 |
 
 ### `apps/console/src/contexts/`
 

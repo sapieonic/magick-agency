@@ -477,6 +477,14 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   campaigns". A second refusal of the other kind keeps the first note.
   `dnc_unavailable` and `dial_failed` are plain errors with no override; `contact_in_flight` says
   the campaign is calling that customer right now.
+- **Opened with a number (a Missed inbound call's Call back, `docs/inbound.md` §8.4).**
+  `/dialer/phone` reads a prefill from history state, never the URL (`utils/softphone/prefill.ts`):
+  the number goes on the pad as Redial puts it (Call takes focus, nothing is dialled) and the
+  campaign is preselected as "Log to" when the agent may log to it (`presetCampaignId`, the
+  station's mechanism), else the call is untagged. A call that is live or owes its outcome keeps
+  the screen; the number is filled once it settles. Every rule of a typed number applies, the DNC
+  check and its override note included (SP1). Live on a campaign, the page shows its
+  `session_on_campaign` screen and the prefill is not carried through the switch.
 - **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
   agent is reserved, on a call or in wrap-up the switch is queued: the button stays in place,
   disabled, reading "Switching after this call", and a pill with ✕ cancels it. When `agent_state`

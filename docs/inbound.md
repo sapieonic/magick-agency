@@ -407,6 +407,78 @@ Plivo numbers sync to the tenant untagged, so several accounts may share one:
 matched contact's account (if it may use the number) → the number's route → tenant default
 (closed message + Missed row, no account).
 
+### 8.4 The account's console (built)
+
+Behind `agency_inbound_enabled`: every route below answers `403 inbound_disabled` with it off, and
+the console shows none of it. Wire: `packages/contracts/src/api/agency/inbound.ts`.
+
+**API** (`/proxy/agency/inbound/*`, B16): the public routes
+(`apps/server/src/api/routes/proxy-agency-inbound.routes.ts` with `proxy-agency-inbound/`) check
+the session, the permission, then the flag, derive the actor and `agency.supervise` from the
+role, fill names and write the audit rows; the internal handlers
+(`api/routes/agency/inbound.ts`, every one `none` in `core-owners.ts`) validate and write.
+
+| Route | Permission | What it does |
+|---|---|---|
+| `GET /inbound/routes`, `GET /inbound/routes/:id` | `agency.inbound.write` | the account's live routes, oldest first, with their numbers |
+| `POST /inbound/routes` | `agency.inbound.write` | create with `phone_number_ids`, one transaction: a refused number writes nothing |
+| `PATCH /inbound/routes/:id` | `agency.inbound.write` | the fields present; `phone_number_ids` is the whole set. The route is read `FOR UPDATE` in the write's transaction and the merged route is judged whole, so two PATCHes cannot each pass the cross-field rules and together break them |
+| `DELETE /inbound/routes/:id` | `agency.inbound.write` | soft delete, numbers detached; 204 |
+| `GET /inbound/numbers` | `agency.inbound.write` | every active number the account may use, with `linked`, this account's route holding it, and `held_elsewhere` (another account's route; never named) |
+| `GET /inbound/clips` | `agency.inbound.write` | the account's `audio_files`, newest first, at most 200 |
+| `GET /inbound/missed` | `agency.inbound.read` | keyset page, newest first; `status` (default `open`), `assignee`, `reason`, `from`/`to` |
+| `POST /inbound/missed/:id/handled` | `agency.inbound.read` | idempotent: first handler and time kept, audited once |
+
+Validation past the body's shape (`route-config.ts`): each clip must be one of the account's audio
+files (the FK has no tenant: the abandon clip's scoped check, so another tenant's recording can
+never be played), the summary profile an active profile of the account, each pool campaign one of
+the account's (a PATCH checks only the references it sets). Problems answer
+`inbound_route_invalid` with `{ path, message }` per field. A number the account may not use,
+an unlinked one, or one on another route answers its own 409 with `phone_number_id`
+(`inbound_number_in_use` names the holder's `route_id` only when it is this account's). A
+malformed id is the family's 404. Audit: `agency_inbound_route.created` (`numbers_added`),
+`.updated` (`fields`, `numbers_added`, `numbers_removed`; not written when nothing changed),
+`.deleted` (`numbers_removed`), `agency_inbound_call.handled` (`reason`; only when this request
+marked it).
+
+**Who sees which Missed rows.** An agent (no `agency.supervise`) reads and marks only the rows
+assigned to them: the list is forced to `assignee=me` whatever was asked, and another's row
+answers `inbound_missed_call_not_found`. A row assigned to the account (no sticky agent) is
+therefore a supervisor's to work; §8.1 gives an agent "their own Missed rows", and a row nobody
+owns shown to every agent would be worked twice or by nobody. Supervisors read the account's,
+filtering by `me`, `unassigned` or a person.
+
+**Voicemail in P1.** `voicemail` stays in the vocabulary and the column, but nothing records one
+before P2, so a create or PATCH that leaves either action on it is refused `inbound_route_invalid`
+at `after_hours_action` / `overflow_action` (`AGENCY_INBOUND_AVAILABLE_ACTIONS`, the contract's
+list of what a route may be set to in this build); the console offers no choice and says
+"Voicemail isn't available yet". Widening the list is P2's change, with its recorder.
+
+**Console.** Settings → **Inbound calls** (`/app/inbound`, `/app/inbound/new`, `/app/inbound/:id`;
+account admins; also "Inbound settings" in the agency sidebar): the routes and the route editor
+(name, time zone, numbers with why one cannot be chosen, weekly hours, holidays, the six clips from
+the account's audio files ("No recording" plays nothing, §3.4),
+their agent first (IB2 defaults), the team (pool campaigns), waiting and limits, recording and the
+notice, summary profile, outcomes for unmatched callers). In the hours editor a closing time
+earlier than the opening runs overnight and belongs to its opening day; a closing time of `00:00`
+is midnight (sent as `24:00`), so `00:00`–`00:00` is the whole day. A save sends only what
+changed. **Missed calls** is in the agency sidebar (`/agency/inbound/missed`) and, for a
+dedicated agent, in the agent nav (`/dialer/missed`): To follow up / Handled, filters, keyset
+paging, a DNC badge, and per row **Call back** and **Mark handled**. Call back opens the soft
+phone (`/dialer/phone`) with the caller's number on the pad and the matched campaign as "Log to"
+when the agent may log to it, carried in history state, never the URL
+(`utils/softphone/prefill.ts`): nothing is dialled until the agent presses Call, a DNC caller
+meets the soft phone's DNC check and override note (SP1), a withheld number cannot be called
+back, and with the soft phone off the button is not offered. At phone width each row becomes a
+card.
+
+Not built here: the campaign's `inbound_sticky_enabled` on the campaign wire and settings (the
+campaign form sends every behaviour field on every save, builder included, so the toggle would put
+an inbound field on every campaign write; it waits for P2's sticky routing, which reads it); a
+console surface for tenant-default Missed rows (`account_id` NULL: the API lists only the
+request account's); uploading audio files (the console lists the account's; none can be added
+from it yet).
+
 ## 9. Data model (built: `0024_inbound.sql`, `0025_inbound_checks_validate.sql`)
 
 What P1 and the spine need; P2 adds what connecting agents needs (a later migration, never an edit).
@@ -494,7 +566,7 @@ inbound section in account reports.
 | Phase | Scope | Status |
 |---|---|---|
 | P0 | Live Plivo checks, alongside the planned real Plivo call (step 5): create an Application and link/unlink a number; answer-URL params, timeout and inbound `CallStatus`; hangup URL params; fallback answer URL; moving a live streamed call to new XML (voicemail, worker handover); DTMF over the stream. Results into `plivo-carrier.fixture.json` | not started (needs a Plivo account) |
-| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | in progress: foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). **Super-admin slice done** (`feat(server,super-admin,contracts,db): inbound Plivo Application, number links and the lifecycle cascade`, §8.1, §8.2, §3.3): Enable / Disable / Health / Re-point, Link / Unlink, the cascade at every write that exists, revoke refused, the routes, the credential page's Inbound section and the numbers page's Link / Unlink and badge, the fixture's Application and number shapes (unverified until P0), the mock carrier's; `agency_inbound_enabled` is toggled on the generic flag screens. Rollout: link a pilot tenant's numbers first. **Webhook slice done** (§3.4): the answer, hangup and fallback webhooks, the inbound seam, the bridge's `acceptInboundCall` / `playClipSequenceThenHangUp`, caller identification, admission (IB5, `0027_inbound_live_indexes.sql`), the Missed row and the inbound callback (IB4) on the dialer's claims, the sweep, metrics. Open: built-in clips (no audio exists; an unset slot is silent), Plivo's answer-URL params and timeout (P0). In parallel: the console slice (routes and Missed list API and screens) |
+| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | in progress: foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). **Super-admin slice done** (`feat(server,super-admin,contracts,db): inbound Plivo Application, number links and the lifecycle cascade`, §8.1, §8.2, §3.3): Enable / Disable / Health / Re-point, Link / Unlink, the cascade at every write that exists, revoke refused, the routes, the credential page's Inbound section and the numbers page's Link / Unlink and badge, the fixture's Application and number shapes (unverified until P0), the mock carrier's; `agency_inbound_enabled` is toggled on the generic flag screens. Rollout: link a pilot tenant's numbers first. **Webhook slice done** (§3.4): the answer, hangup and fallback webhooks, the inbound seam, the bridge's `acceptInboundCall` / `playClipSequenceThenHangUp`, caller identification, admission (IB5, `0027_inbound_live_indexes.sql`), the Missed row and the inbound callback (IB4) on the dialer's claims, the sweep, metrics. Open: built-in clips (no audio exists; an unset slot is silent), Plivo's answer-URL params and timeout (P0). **Console slice done** (`feat(server,console,contracts): inbound routes and the Missed calls list in the console`, §8.4): the routes API with the editor's number and clip choices, the Missed list and Mark handled, Settings → Inbound calls, Missed calls for supervisors and agents with Call back into the soft phone; voicemail refused until P2; the campaign's `inbound_sticky_enabled` toggle and tenant-default Missed rows left open (§8.4) |
 | P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | not started |
 | P3 | Mobile app frames (Dart wire), pickups from break and soft phone, media-worker handover, reports/Insights, "press 1 for a callback" if DTMF works | not started |
 | P4 | VoiceLink behind a carrier-module `inbound` capability | not started |
