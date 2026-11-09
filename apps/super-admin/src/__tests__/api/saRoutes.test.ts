@@ -87,6 +87,14 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   enableTelephonyCredential: () => api.enableTelephonyCredential('c1'),
   revokeTelephonyCredential: () => api.revokeTelephonyCredential('c1'),
   syncTelephonyCredentialNumbers: () => api.syncTelephonyCredentialNumbers('c1'),
+  getCredentialInbound: () => api.getCredentialInbound('c1'),
+  enableCredentialInbound: () => api.enableCredentialInbound('c1'),
+  disableCredentialInbound: () => api.disableCredentialInbound('c1'),
+  repointCredentialInbound: () => api.repointCredentialInbound('c1'),
+  checkCredentialInboundHealth: () => api.checkCredentialInboundHealth('c1'),
+  getPhoneNumberInbound: () => api.getPhoneNumberInbound('p1'),
+  linkPhoneNumberInbound: () => api.linkPhoneNumberInbound('p1'),
+  unlinkPhoneNumberInbound: () => api.unlinkPhoneNumberInbound('p1'),
 };
 
 describe('api/super-admin.ts ↔ SA_ROUTES', () => {
@@ -134,13 +142,15 @@ const ROUTES_DIR = join(process.cwd(), '..', 'server', 'src', 'api', 'routes');
 
 function serverSuperAdminRoutes(): Set<string> {
   const found = new Set<string>();
-  // A route family is `super-admin.routes.ts` plus the `super-admin/` folder it
-  // registers on the same instance, so the scan reads both.
+  // A route family is `super-admin….routes.ts` plus the folder of the same name it
+  // registers on the same instance (`super-admin/`, `super-admin-telephony-credentials/`),
+  // so the scan reads both.
+  const families = readdirSync(ROUTES_DIR, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && /^super-admin/.test(d.name))
+    .map((d) => d.name);
   const files = [
     ...readdirSync(ROUTES_DIR).filter((f) => /^super-admin.*\.routes\.ts$/.test(f)),
-    ...readdirSync(join(ROUTES_DIR, 'super-admin'))
-      .filter((f) => f.endsWith('.ts'))
-      .map((f) => join('super-admin', f)),
+    ...families.flatMap((dir) => readdirSync(join(ROUTES_DIR, dir)).filter((f) => f.endsWith('.ts')).map((f) => join(dir, f))),
   ];
   for (const f of files) {
     const src = readFileSync(join(ROUTES_DIR, f), 'utf8')
@@ -170,6 +180,8 @@ describe('SA_ROUTES ↔ server route table', () => {
     expect(server.has(key('POST', '/super-admin/login'))).toBe(true);
     expect(server.has(key('DELETE', '/super-admin/phone-numbers/:id/assign/:tenantId'))).toBe(true);
     expect(server.has(key('GET', '/super-admin/usage'))).toBe(true);
+    // A family's folder other than `super-admin/` is read too.
+    expect(server.has(key('POST', '/super-admin/phone-numbers/:id/inbound/link'))).toBe(true);
   });
 
   it('every path the UI calls is registered on the server', () => {

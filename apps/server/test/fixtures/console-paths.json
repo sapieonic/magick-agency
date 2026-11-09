@@ -1064,6 +1064,62 @@
     },
     {
       "method": "GET",
+      "path": "/super-admin/telephony-credentials/:id/inbound",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound on a tenant's Plivo credential (docs/inbound.md §8.1, IB6): the Application's state and the credential's numbers' links"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-credentials/:id/inbound/enable",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): create the Plivo Application on the tenant's account; audited"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-credentials/:id/inbound/disable",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): delete the Application; refused while numbers are linked; audited"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-credentials/:id/inbound/repoint",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): give the Application this server's URLs and a new token; audited"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/telephony-credentials/:id/inbound/health",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): the Application's live URLs against the stored ones"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/phone-numbers/:id/inbound",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): a number's link and whether it can be linked"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers/:id/inbound/link",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): link a synced number to its credential's Application; audited"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers/:id/inbound/unlink",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): restore the number's previous app; audited"
+    },
+    {
+      "method": "GET",
       "path": "/super-admin/tenants/:id/byoc-phone-numbers",
       "status": "not_served",
       "reason": "super-admin telephony providers / credentials / BYOC: not served (out of scope)"

@@ -261,6 +261,13 @@ export interface PhoneNumber {
    * a number on the service's own account. Optional: older servers do not send it.
    */
   telephony_credential_id?: string | null;
+  /**
+   * When a super-admin linked the number to its credential's inbound Application
+   * (`./super-admin-inbound`); null when not linked. Optional: older servers do not send it.
+   */
+  inbound_linked_at?: string | null;
+  /** The carrier app the number pointed at before it was linked, restored by Unlink. */
+  inbound_previous_app_id?: string | null;
   created_at: string;
   updated_at: string;
   assignment_count?: number;

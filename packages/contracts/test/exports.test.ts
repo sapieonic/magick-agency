@@ -154,6 +154,15 @@ describe('package surface', () => {
       'in_use',
       'credential_not_active',
       'too_many_numbers',
+      'inbound_enabled',
+      'inbound_not_enabled',
+      'inbound_numbers_linked',
+      'inbound_unconfigured',
+      'phone_number_not_found',
+      'phone_number_not_linkable',
+      'phone_number_not_linked',
+      'carrier_number_missing',
+      'carrier_refused',
     ]);
     expect(new Set(TELEPHONY_CREDENTIAL_ERROR_CODES).size).toBe(TELEPHONY_CREDENTIAL_ERROR_CODES.length);
   });

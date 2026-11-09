@@ -1,9 +1,10 @@
 /*
- * Super-admin phone-number routes. There is no unassign inbound-config cascade,
- * `pool_eligible` is never on the wire, there are no metadata/phone cache busts, and the
- * telephony-provider routes are read-only.
- *  - DELETE …/assign/:tenantId: unassigns and answers 200 with no phone lookup and no
- *    inbound cascade; the two 404 cases assert nothing about a cascade.
+ * Super-admin phone-number routes. `pool_eligible` is never on the wire, there are no
+ * metadata/phone cache busts, and the telephony-provider routes are read-only.
+ *  - DELETE …/assign/:tenantId: unassigns and answers 200 with no phone lookup, then runs the
+ *    inbound cascade for the number (docs/inbound.md §8.2; the service decides whether it was
+ *    linked); the two 404 cases run no cascade. Retire, delete and a PUT to a retired or deleted
+ *    status run it too.
  *  - pool_eligible: POST and PUT strip it before the repository and never return it, and
  *    POST defaults to dedicated when it is omitted. GET list/detail strip it from every row
  *    (`toWirePhoneNumber`).
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   findCredentialById: vi.fn(),
   auditLog: vi.fn().mockResolvedValue(undefined),
   logWarn: vi.fn(),
+  reconcileNumber: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock('../../../../src/auth/super-admin.middleware.js', () => ({
@@ -95,7 +97,7 @@ import { superAdminPhoneRoutes } from '../../../../src/api/routes/super-admin-ph
 
 async function buildApp() {
   const app = Fastify({ logger: false });
-  await app.register(superAdminPhoneRoutes, { prefix: '/super-admin' });
+  await app.register(superAdminPhoneRoutes, { prefix: '/super-admin', inbound: () => ({ reconcileNumber: mocks.reconcileNumber }) as never });
   await app.ready();
   return app;
 }
@@ -105,7 +107,7 @@ async function buildApp() {
 describe('DELETE /super-admin/phone-numbers/:id/assign/:tenantId — cascade inbound cleanup', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('unassigns and answers 200 with no phone lookup and no inbound cascade', async () => {
+  it('unassigns, answers 200 with no phone lookup, and runs the inbound cascade for the number', async () => {
     mocks.unassign.mockResolvedValue(true);
 
     const app = await buildApp();
@@ -117,8 +119,8 @@ describe('DELETE /super-admin/phone-numbers/:id/assign/:tenantId — cascade inb
     expect(res.statusCode).toBe(200);
     expect(res.json().message).toBe('Phone number unassigned from tenant');
     expect(mocks.unassign).toHaveBeenCalledWith('tenant-x', 'pn-1');
-    // The lookup existed only to feed the deleted cascade.
     expect(mocks.findPhoneById).not.toHaveBeenCalled();
+    expect(mocks.reconcileNumber).toHaveBeenCalledWith('pn-1', 'unassigned', { adminId: 'super-1', adminEmail: 'admin@example.com' });
     expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: 'unassign_phone_number',
       resource_type: 'tenant_phone_assignment',
@@ -138,7 +140,7 @@ describe('DELETE /super-admin/phone-numbers/:id/assign/:tenantId — cascade inb
     });
 
     expect(res.statusCode).toBe(404);
-    // There is no cascade to fire (module note).
+    expect(mocks.reconcileNumber).not.toHaveBeenCalled();
   });
 
   it('skips cascade when phone lookup returns null but still returns 404 from unassign', async () => {
@@ -153,6 +155,29 @@ describe('DELETE /super-admin/phone-numbers/:id/assign/:tenantId — cascade inb
     });
 
     expect(res.statusCode).toBe(404);
+    expect(mocks.reconcileNumber).not.toHaveBeenCalled();
+  });
+
+  it('retire, delete and a PUT to a retired or deleted status run the cascade; any other PUT does not', async () => {
+    const actor = { adminId: 'super-1', adminEmail: 'admin@example.com' };
+    const app = await buildApp();
+    mocks.findPhoneById.mockResolvedValue({ id: 'pn-1', phone_number: '+14155550101', status: 'active' });
+    expect((await app.inject({ method: 'DELETE', url: '/super-admin/phone-numbers/pn-1' })).statusCode).toBe(200);
+    expect(mocks.reconcileNumber).toHaveBeenLastCalledWith('pn-1', 'retired', actor);
+
+    mocks.findPhoneById.mockResolvedValue({ id: 'pn-1', phone_number: '+14155550101', status: 'retired' });
+    const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
+    vi.mocked(phoneNumberRepository.softDelete).mockResolvedValue(true);
+    expect((await app.inject({ method: 'POST', url: '/super-admin/phone-numbers/pn-1/delete' })).statusCode).toBe(200);
+    expect(mocks.reconcileNumber).toHaveBeenLastCalledWith('pn-1', 'deleted', actor);
+
+    mocks.reconcileNumber.mockClear();
+    mocks.updatePhone.mockResolvedValue({ id: 'pn-1', phone_number: '+14155550101', status: 'active' });
+    await app.inject({ method: 'PUT', url: '/super-admin/phone-numbers/pn-1', payload: { label: 'x' } });
+    expect(mocks.reconcileNumber).not.toHaveBeenCalled();
+    mocks.updatePhone.mockResolvedValue({ id: 'pn-1', phone_number: '+14155550101', status: 'retired' });
+    await app.inject({ method: 'PUT', url: '/super-admin/phone-numbers/pn-1', payload: { status: 'retired' } });
+    expect(mocks.reconcileNumber).toHaveBeenCalledWith('pn-1', 'retired', actor);
   });
 });
 

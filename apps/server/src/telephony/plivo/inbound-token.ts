@@ -13,6 +13,12 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 
+/**
+ * How long a token a Re-point replaced is still accepted: calls answered before the Re-point
+ * post their hangup with it, and a call can last hours. The credential secret's rotation grace.
+ */
+export const INBOUND_TOKEN_REPOINT_GRACE_SECONDS = 24 * 60 * 60;
+
 /** 32 random bytes, base64url (43 characters): URL-safe with no escaping, 256 bits. */
 const TOKEN_BYTES = 32;
 

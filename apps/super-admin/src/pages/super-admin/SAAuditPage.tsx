@@ -24,6 +24,12 @@ const ACTION_LABELS: Record<string, string> = {
   change_membership_role: 'Changed membership role',
   revoke_membership: 'Revoked membership',
   update_account_settings: 'Updated account settings',
+  // Inbound calls on a tenant's Plivo credential (`INBOUND_SUPER_ADMIN_AUDIT_ACTIONS`).
+  'telephony_credential.inbound_enabled': 'Enabled inbound calls',
+  'telephony_credential.inbound_disabled': 'Disabled inbound calls',
+  'telephony_credential.inbound_repointed': 'Re-pointed the inbound Application',
+  'phone_number.inbound_linked': 'Linked number to inbound',
+  'phone_number.inbound_unlinked': 'Unlinked number from inbound',
 };
 
 function formatAction(action: string): string {

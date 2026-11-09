@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   retirePhoneNumber: vi.fn(),
   reactivatePhoneNumber: vi.fn(),
   deletePhoneNumber: vi.fn(),
+  getPhoneNumberInbound: vi.fn(),
+  linkPhoneNumberInbound: vi.fn(),
+  unlinkPhoneNumberInbound: vi.fn(),
 }));
 
 vi.mock('../../api/super-admin', () => ({
@@ -22,6 +25,9 @@ vi.mock('../../api/super-admin', () => ({
   retirePhoneNumber: mocks.retirePhoneNumber,
   reactivatePhoneNumber: mocks.reactivatePhoneNumber,
   deletePhoneNumber: mocks.deletePhoneNumber,
+  getPhoneNumberInbound: mocks.getPhoneNumberInbound,
+  linkPhoneNumberInbound: mocks.linkPhoneNumberInbound,
+  unlinkPhoneNumberInbound: mocks.unlinkPhoneNumberInbound,
 }));
 
 import SAPhoneNumbersPage from '../../pages/super-admin/SAPhoneNumbersPage';
@@ -402,5 +408,46 @@ describe('SAPhoneNumbersPage — bulk concurrency', () => {
     expect(mocks.retirePhoneNumber).toHaveBeenCalledTimes(10);
     expect(peak).toBeLessThanOrEqual(6);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe('SAPhoneNumbersPage — inbound calls (docs/inbound.md §8.1)', () => {
+  const synced = makePhone({
+    id: 'pn-synced', phone_number: '+14155550101', provider_id: 'prov-byoc', provider_name: 'plivo', provider_display_name: 'Plivo',
+    telephony_credential_id: 'cred-1', inbound_linked_at: '2026-11-09T10:05:00Z', inbound_previous_app_id: null,
+  });
+
+  it('badges a linked number, and offers Link/Unlink only on a synced number, refreshing the badge after a change', async () => {
+    mocks.listPhoneNumbers.mockResolvedValue([synced, first]);
+    mocks.getPhoneNumberDetail.mockResolvedValue({ phone_number: synced, assignments: [] });
+    mocks.getPhoneNumberInbound.mockResolvedValue({
+      phone_number_id: 'pn-synced', phone_number: '+14155550101',
+      link: { linked: true, linked_at: '2026-11-09T10:05:00Z', previous_app_id: null, route: null },
+      credential: { id: 'cred-1', label: 'Acme main', status: 'active', inbound_enabled: true }, link_blocker: null,
+    });
+    mocks.unlinkPhoneNumberInbound.mockResolvedValue({
+      phone_number_id: 'pn-synced', phone_number: '+14155550101',
+      link: { linked: false, linked_at: null, previous_app_id: null, route: null },
+      credential: { id: 'cred-1', label: 'Acme main', status: 'active', inbound_enabled: true }, link_blocker: null,
+    });
+    render(<SAPhoneNumbersPage />);
+    const row = (await screen.findByText('+14155550101')).closest('tr')!;
+    expect(within(row).getByText('Inbound')).toBeTruthy();
+    expect(within(screen.getByText('+918046733449').closest('tr')!).queryByText('Inbound')).toBeNull();
+
+    fireEvent.click(row);
+    const unlink = await screen.findByRole('button', { name: /Unlink from inbound/ });
+    mocks.listPhoneNumbers.mockResolvedValue([{ ...synced, inbound_linked_at: null }, first]);
+    fireEvent.click(unlink);
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Unlink' }));
+    await waitFor(() => expect(mocks.unlinkPhoneNumberInbound).toHaveBeenCalledWith('pn-synced'));
+    await waitFor(() => expect(within(screen.getByText('+14155550101').closest('tr')!).queryByText('Inbound')).toBeNull());
+    // The row stays open on the panel.
+    expect(await screen.findByRole('button', { name: /Link to inbound/ })).toBeTruthy();
+
+    // A number on the service's own account has no inbound panel.
+    fireEvent.click(screen.getByText('+918046733449').closest('tr')!);
+    await waitFor(() => expect(screen.queryByTestId('number-inbound')).toBeNull());
+    expect(mocks.getPhoneNumberInbound).toHaveBeenCalledTimes(1);
   });
 });

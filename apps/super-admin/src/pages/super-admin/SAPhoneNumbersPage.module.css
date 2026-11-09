@@ -253,6 +253,34 @@
   color: var(--danger);
 }
 
+/* Inbound calls (PhoneNumberInboundPanel, and the row badge). */
+.inboundBadge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: var(--success-subtle);
+  color: var(--success);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inboundLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 6px;
+}
+
+.inboundError {
+  color: var(--danger);
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
 .successBtn {
   color: var(--success);
 }

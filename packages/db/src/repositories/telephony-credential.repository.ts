@@ -300,11 +300,14 @@ export class TelephonyCredentialRepository {
   }
 
   /**
-   * Revoke (terminal), unless a live campaign is pinned to it. The row lock (FOR
-   * UPDATE) conflicts with the key-share lock a campaign write takes through the
-   * foreign key, so a pin being written concurrently either commits first and is
-   * seen here, or waits for this revoke. Returns null when it did not land (already
-   * revoked, or pinned: the caller re-reads to tell which).
+   * Revoke (terminal), unless a live campaign is pinned to it or inbound is enabled on it
+   * (docs/inbound.md §8.2: a revoked credential's secret is shredded, so it could never remove
+   * its Application or restore a linked number; `ck_telephony_credentials_inbound_revoked`
+   * holds it in the schema too). The row lock (FOR UPDATE) conflicts with the key-share lock a
+   * campaign write takes through the foreign key, so a pin being written concurrently either
+   * commits first and is seen here, or waits for this revoke; an inbound enable takes the same
+   * row lock. Returns null when it did not land (already revoked, pinned, or inbound enabled:
+   * the caller re-reads to tell which).
    */
   async revoke(id: string, updatedBy: string): Promise<TelephonyCredentialRecord | null> {
     return inTransaction(async (client) => {
@@ -312,7 +315,7 @@ export class TelephonyCredentialRepository {
       const result = await client.query<TelephonyCredentialRecord>(
         `UPDATE telephony_credentials
             SET status = 'revoked', revoked_at = NOW(), updated_by = $2
-          WHERE id = $1 AND status <> 'revoked'
+          WHERE id = $1 AND status <> 'revoked' AND inbound_app_id IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM agency_campaigns
                WHERE telephony_credential_id = $1 AND status IN ${LIVE_CAMPAIGN})
@@ -412,6 +415,21 @@ export class TelephonyCredentialRepository {
   }
 
   /**
+   * The credential's inbound state, its row locked `FOR UPDATE` on `client` (which must be in a
+   * transaction): an inbound change that calls the carrier holds it until its own write commits,
+   * so an enable, a Re-point, a disable and a revoke of one credential run one after another,
+   * and a number link (which takes the row `FOR SHARE`, `phoneNumberRepository.linkInbound`)
+   * never lands beside a disable. Null when there is no such credential.
+   */
+  async lockInbound(id: string, client: PoolClient): Promise<TelephonyCredentialInboundRecord | null> {
+    const result = await client.query<TelephonyCredentialInboundRecord>(
+      `SELECT ${INBOUND_COLUMNS} FROM telephony_credentials c WHERE c.id = $1 FOR UPDATE OF c`,
+      [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
    * Store an enabled inbound Application. Only on an `active` credential with inbound not yet
    * enabled (decided in the UPDATE, so two concurrent enables store one); null otherwise: the
    * caller re-reads to tell a missing, inactive or already-enabled credential apart, and deletes
@@ -421,8 +439,9 @@ export class TelephonyCredentialRepository {
     id: string,
     input: EnableTelephonyCredentialInboundInput,
     updatedBy: string,
+    opts: { client?: PoolClient } = {},
   ): Promise<TelephonyCredentialInboundRecord | null> {
-    const result = await getPool().query<TelephonyCredentialInboundRecord>(
+    const result = await (opts.client ?? getPool()).query<TelephonyCredentialInboundRecord>(
       `UPDATE telephony_credentials c
           SET inbound_app_id = $2, inbound_answer_url = $3, inbound_hangup_url = $4,
               inbound_fallback_answer_url = $5, inbound_token_hash = $6, inbound_enabled_at = NOW(),
@@ -446,8 +465,9 @@ export class TelephonyCredentialRepository {
     id: string,
     input: RepointTelephonyCredentialInboundInput,
     updatedBy: string,
+    opts: { client?: PoolClient } = {},
   ): Promise<TelephonyCredentialInboundRecord | null> {
-    const result = await getPool().query<TelephonyCredentialInboundRecord>(
+    const result = await (opts.client ?? getPool()).query<TelephonyCredentialInboundRecord>(
       `UPDATE telephony_credentials c
           SET inbound_app_id = COALESCE($2::varchar, c.inbound_app_id),
               inbound_answer_url = $3, inbound_hangup_url = $4, inbound_fallback_answer_url = $5,
@@ -468,13 +488,15 @@ export class TelephonyCredentialRepository {
    * Refused while any of the credential's numbers is still linked (`numbers_linked`): the §8.2
    * cascade unlinks them first, so no number is left pointing at an Application nothing
    * remembers. The row lock orders it against a concurrent link. `not_enabled` covers a missing
-   * credential too.
+   * credential too. With `client` it runs in the caller's transaction (which then owns the
+   * commit, e.g. after deleting the Application on the carrier); a refusal writes nothing.
    */
   async disableInbound(
     id: string,
     updatedBy: string,
+    opts: { client?: PoolClient } = {},
   ): Promise<{ ok: true; inbound: TelephonyCredentialInboundRecord } | { ok: false; reason: 'not_enabled' | 'numbers_linked' }> {
-    const out = await inTransaction(async (client) => {
+    const run = async (client: PoolClient) => {
       const locked = await client.query<{ enabled: boolean }>(
         `SELECT inbound_app_id IS NOT NULL AS enabled FROM telephony_credentials WHERE id = $1 FOR UPDATE`,
         [id],
@@ -496,7 +518,9 @@ export class TelephonyCredentialRepository {
         [id, updatedBy],
       );
       return { ok: true as const, inbound: result.rows[0]! };
-    });
+    };
+    if (opts.client) return run(opts.client);
+    const out = await inTransaction(run);
     return out ?? { ok: false, reason: 'not_enabled' };
   }
 

@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { getPool } from '../connection.js';
 import { withTransaction } from '../utils/transaction.js';
 import { LIVE_CAMPAIGN } from './live-campaign.js';
@@ -8,7 +9,27 @@ import type {
   SyncedNumberInput,
   NumberSyncResult,
   CampaignHoldingInactiveNumbers,
+  ClearedInboundLink,
+  PhoneNumberInboundLinkRecord,
 } from '../models/phone-number.model.js';
+
+/**
+ * The inbound link read (`PhoneNumberInboundLinkRecord`): the number, its credential, whether it
+ * is assigned to that credential's tenant, and the live route answering it. `pn` is the number.
+ */
+const INBOUND_LINK_SELECT = `
+  SELECT pn.id AS phone_number_id, pn.phone_number, pn.status, pn.telephony_credential_id,
+         pn.inbound_linked_at, pn.inbound_previous_app_id,
+         c.label AS credential_label, c.status AS credential_status, c.tenant_id AS credential_tenant_id,
+         c.inbound_app_id AS credential_app_id,
+         (c.id IS NOT NULL AND EXISTS (
+           SELECT 1 FROM tenant_phone_assignments tpa
+            WHERE tpa.phone_number_id = pn.id AND tpa.tenant_id = c.tenant_id)) AS assigned,
+         r.id AS route_id, r.name AS route_name, r.account_id AS route_account_id
+    FROM phone_numbers pn
+    LEFT JOIN telephony_credentials c ON c.id = pn.telephony_credential_id
+    LEFT JOIN agency_inbound_route_numbers rn ON rn.phone_number_id = pn.id AND rn.detached_at IS NULL
+    LEFT JOIN agency_inbound_routes r ON r.id = rn.route_id`;
 
 export class PhoneNumberRepository {
   async findAll(filters?: { provider_id?: string; status?: string; region?: string }): Promise<PhoneNumberRecord[]> {
@@ -389,6 +410,89 @@ export class PhoneNumberRepository {
        LIMIT 1`,
     );
     return result.rows[0] || null;
+  }
+  // ── Inbound links (0024; docs/inbound.md §8.1, §8.2) ───────────────────────────
+  // A link is `inbound_linked_at` (+ the app the number pointed at before, restored by Unlink).
+  // Only a super-admin links (IB6); the writes run inside the caller's transaction, which also
+  // holds the carrier call that the write records, so a carrier refusal rolls the write back.
+
+  /** A number's inbound link and what Link checks; null when there is no such number. */
+  async findInboundLink(phoneNumberId: string): Promise<PhoneNumberInboundLinkRecord | null> {
+    const result = await getPool().query<PhoneNumberInboundLinkRecord>(
+      `${INBOUND_LINK_SELECT} WHERE pn.id = $1::uuid`,
+      [phoneNumberId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** The credential's numbers that are not deleted, with their inbound links, by number. */
+  async listInboundForCredential(credentialId: string): Promise<PhoneNumberInboundLinkRecord[]> {
+    const result = await getPool().query<PhoneNumberInboundLinkRecord>(
+      `${INBOUND_LINK_SELECT}
+        WHERE pn.telephony_credential_id = $1::uuid AND pn.status <> 'deleted'
+        ORDER BY pn.phone_number`,
+      [credentialId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Link a number to its credential's inbound Application `appId`, remembering `previousAppId`
+   * (the app the carrier had it on; NULL: none). Run inside the caller's transaction (`client`):
+   * the credential row is taken `FOR SHARE` first, so a disable or Re-point (`FOR UPDATE`,
+   * `lockInbound`) cannot interleave, and the caller commits only once the carrier has the
+   * number on the Application. Lands only when: the credential is `active` with Application
+   * `appId`; the number is synced from it, `active`, assigned to its tenant, and not linked yet.
+   * Null otherwise: the caller re-reads to say why.
+   */
+  async linkInbound(
+    input: { phoneNumberId: string; credentialId: string; appId: string; previousAppId: string | null },
+    client: PoolClient,
+  ): Promise<PhoneNumberRecord | null> {
+    const cred = await client.query<{ tenant_id: string }>(
+      `SELECT tenant_id FROM telephony_credentials
+        WHERE id = $1::uuid AND status = 'active' AND inbound_app_id = $2::varchar
+          FOR SHARE`,
+      [input.credentialId, input.appId],
+    );
+    const tenantId = cred.rows[0]?.tenant_id;
+    if (!tenantId) return null;
+    const result = await client.query<PhoneNumberRecord>(
+      `UPDATE phone_numbers pn
+          SET inbound_linked_at = now(), inbound_previous_app_id = $3::varchar
+        WHERE pn.id = $1::uuid AND pn.telephony_credential_id = $2::uuid
+          AND pn.status = 'active' AND pn.inbound_linked_at IS NULL
+          AND EXISTS (SELECT 1 FROM tenant_phone_assignments tpa
+                       WHERE tpa.phone_number_id = pn.id AND tpa.tenant_id = $4::uuid)
+        RETURNING pn.*`,
+      [input.phoneNumberId, input.credentialId, input.previousAppId, tenantId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Clear a number's inbound link and return it as it was (the app to restore on the carrier);
+   * null when it was not linked. The row is locked, so of two concurrent clears one gets the
+   * link and the other null. With `client` it runs in the caller's transaction (the §8.2
+   * cascade detaches the number's route in the same one).
+   */
+  async clearInboundLink(phoneNumberId: string, opts: { client?: PoolClient } = {}): Promise<ClearedInboundLink | null> {
+    const result = await (opts.client ?? getPool()).query<ClearedInboundLink>(
+      `WITH old AS MATERIALIZED (
+         SELECT id, phone_number, status, telephony_credential_id, inbound_linked_at, inbound_previous_app_id
+           FROM phone_numbers
+          WHERE id = $1::uuid AND inbound_linked_at IS NOT NULL
+            FOR UPDATE
+       )
+       UPDATE phone_numbers pn
+          SET inbound_linked_at = NULL, inbound_previous_app_id = NULL
+         FROM old
+        WHERE pn.id = old.id
+        RETURNING old.id AS phone_number_id, old.phone_number, old.status, old.telephony_credential_id,
+                  old.inbound_linked_at, old.inbound_previous_app_id`,
+      [phoneNumberId],
+    );
+    return result.rows[0] ?? null;
   }
 }
 

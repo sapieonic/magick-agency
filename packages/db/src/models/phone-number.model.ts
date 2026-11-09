@@ -107,3 +107,40 @@ export interface NumberSyncResult {
   /** The credential's active numbers after the sync. */
   active: number;
 }
+
+/**
+ * A number's inbound link (0024; docs/inbound.md §8.1) and everything Link checks, as
+ * `findInboundLink` and `listInboundForCredential` read it. The route is the account route
+ * answering the number now (its one live `agency_inbound_route_numbers` row), if any.
+ */
+export interface PhoneNumberInboundLinkRecord {
+  phone_number_id: string;
+  phone_number: string;
+  status: PhoneNumberRecord['status'];
+  /** NULL: a number on the service's own account, which can never be linked. */
+  telephony_credential_id: string | null;
+  inbound_linked_at: Date | null;
+  inbound_previous_app_id: string | null;
+  /** The credential's, when the number is synced from one (else NULL). */
+  credential_label: string | null;
+  credential_status: string | null;
+  credential_tenant_id: string | null;
+  /** The credential's inbound Application; NULL when inbound is not enabled on it. */
+  credential_app_id: string | null;
+  /** Assigned to the credential's tenant (false for a number on the service's own account). */
+  assigned: boolean;
+  route_id: string | null;
+  route_name: string | null;
+  route_account_id: string | null;
+}
+
+/** What `clearInboundLink` cleared: the link as it was. */
+export interface ClearedInboundLink {
+  phone_number_id: string;
+  phone_number: string;
+  status: PhoneNumberRecord['status'];
+  telephony_credential_id: string;
+  inbound_linked_at: Date;
+  /** The app the number pointed at before linking: the one to restore on the carrier. */
+  inbound_previous_app_id: string | null;
+}

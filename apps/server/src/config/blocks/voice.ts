@@ -128,6 +128,31 @@ const plivoSchema = z.object({
   requestTimeoutMs: z.coerce.number().int().min(1000).max(120_000).default(15_000),
   /** `PLIVO_RING_TIMEOUT_SECONDS`: how long Plivo lets a dial ring. Default 45 s. */
   ringTimeoutSeconds: z.coerce.number().int().min(5).max(120).default(45),
+  /**
+   * `PLIVO_INBOUND_FALLBACK_ANSWER_URL`: the fallback answer URL an inbound Plivo Application is
+   * given (docs/inbound.md §3.1, §10): XML Plivo runs when our answer URL fails, so an outage of
+   * this server still tells the caller something. Set it to a static XML file hosted somewhere
+   * else (fetched with GET; docs/inbound.md "The fallback answer XML"), so a full outage of this
+   * deployment is covered. Empty: our own `…/inbound-fallback` route (POST), which covers a
+   * failing answer route but not this server being down. Read when inbound is enabled or
+   * re-pointed; changing it later needs a Re-point. Empty or an absolute https: URL.
+   */
+  inboundFallbackAnswerUrl: z.string().optional().default('').superRefine((value, ctx) => {
+    if (value === '') return;
+    let url: URL | null = null;
+    try {
+      url = new URL(value);
+    } catch {
+      url = null;
+    }
+    if (!url || url.protocol !== 'https:' || url.hash !== '' || value.includes('#')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'PLIVO_INBOUND_FALLBACK_ANSWER_URL must be empty or an absolute https: URL with no fragment, '
+          + 'e.g. https://static.example.com/plivo/inbound-fallback.xml',
+      });
+    }
+  }),
 });
 
 /**
@@ -348,6 +373,7 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
         dialRateMaxWaitMs: env['PLIVO_DIAL_RATE_MAX_WAIT_MS'],
         requestTimeoutMs: env['PLIVO_REQUEST_TIMEOUT_MS'],
         ringTimeoutSeconds: env['PLIVO_RING_TIMEOUT_SECONDS'],
+        inboundFallbackAnswerUrl: env['PLIVO_INBOUND_FALLBACK_ANSWER_URL'],
       },
     },
     telephonyCredentials: {

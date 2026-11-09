@@ -4,10 +4,16 @@ import { keyringEntries } from '../../config/blocks/voice.js';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { phoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
+import { getPool } from '@magick-agency/db';
 import { CredentialSealer, EnvKeyringWrapper } from './credential-sealer.js';
 import { TelephonyCredentialService } from './credential-service.js';
+import { TelephonyInboundService } from './inbound-service.js';
+import { agencyInboundRouteRepository } from '../../db/repositories/agency.repository.js';
+import { createPlivoAdapter } from '../plivo/plivo.adapter.js';
+import { recordSuperAdminAudit } from '../../audit/super-admin-audit.js';
 
 let service: TelephonyCredentialService | null = null;
+let inboundService: TelephonyInboundService | null = null;
 
 /**
  * The sealer for the configured keyring, or null when `TELEPHONY_CREDENTIAL_KEYS` has no
@@ -35,7 +41,38 @@ export function getTelephonyCredentialService(): TelephonyCredentialService {
 
 export function setTelephonyCredentialServiceForTests(s: TelephonyCredentialService | null): void {
   service = s;
+  inboundService = null;
+}
+
+/**
+ * The process's inbound service (`inbound-service.ts`): the credential's Plivo Application and
+ * the numbers' links, on the credential service above (it opens the secrets), the Plivo adapter
+ * (fixed host; tests reach the mock carrier with `setPlivoTransportForTests`) and the env's
+ * public callback base, read per call.
+ */
+export function getTelephonyInboundService(): TelephonyInboundService {
+  if (!inboundService) {
+    inboundService = new TelephonyInboundService({
+      credentials: getTelephonyCredentialService(),
+      repo: telephonyCredentialRepository,
+      numbers: phoneNumberRepository,
+      routes: agencyInboundRouteRepository,
+      carrierFor: (credential) => createPlivoAdapter(credential, config),
+      settings: () => ({
+        webhookBaseUrl: config.telephony.plivo.webhookBaseUrl,
+        inboundFallbackAnswerUrl: config.telephony.plivo.inboundFallbackAnswerUrl,
+      }),
+      audit: (entry) => { void recordSuperAdminAudit(entry); },
+      pool: getPool(),
+    });
+  }
+  return inboundService;
+}
+
+export function setTelephonyInboundServiceForTests(s: TelephonyInboundService | null): void {
+  inboundService = s;
 }
 
 export { TelephonyCredentialService, CredentialUnavailableError, ROTATION_GRACE_SECONDS } from './credential-service.js';
+export { TelephonyInboundService } from './inbound-service.js';
 export type { ResolvedCredential, ResolvePurpose } from './credential-service.js';

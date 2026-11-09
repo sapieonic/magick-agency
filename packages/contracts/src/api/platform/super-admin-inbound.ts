@@ -4,9 +4,19 @@
  * number's link to it. Only super-admins enable inbound and link numbers: both write to the
  * tenant's carrier account, which tenant admins cannot see (PL15).
  *
- * These are the shapes the credential and number screens read; which routes serve them (and
- * whether they ride on `TelephonyCredential` / `PhoneNumber` or come on their own) is the
- * super-admin slice's to decide. Every write is audited in `super_admin_audit_log` with one of
+ * Routes (all under `/super-admin`, super-admin JWT; served beside the credential routes, through
+ * the same carrier credential service, docs/seams.md §3.4):
+ *  - `GET  /telephony-credentials/:id/inbound`           → `TelephonyCredentialInboundResponse`
+ *  - `POST /telephony-credentials/:id/inbound/enable`    → `TelephonyCredentialInboundResponse`
+ *  - `POST /telephony-credentials/:id/inbound/disable`   → `TelephonyCredentialInboundResponse`
+ *  - `POST /telephony-credentials/:id/inbound/repoint`   → `TelephonyCredentialInboundResponse`
+ *  - `GET  /telephony-credentials/:id/inbound/health`    → `TelephonyCredentialInboundHealthResponse`
+ *  - `GET  /phone-numbers/:id/inbound`                   → `PhoneNumberInboundResponse`
+ *  - `POST /phone-numbers/:id/inbound/link`              → `PhoneNumberInboundResponse`
+ *  - `POST /phone-numbers/:id/inbound/unlink`            → `PhoneNumberInboundResponse`
+ * Refusals are the credential routes' (`TelephonyCredentialErrorCode`, its inbound codes).
+ *
+ * Every write is audited in `super_admin_audit_log` with one of
  * {@link INBOUND_SUPER_ADMIN_AUDIT_ACTIONS}: ids, the app id and numbers only, never a token or
  * a URL's query.
  */
@@ -33,6 +43,8 @@ export interface TelephonyCredentialInbound {
   enabled_at: string | null;
   /** The credential's numbers linked to the Application now. */
   linked_numbers: number;
+  /** Until when the token a Re-point replaced is still accepted (calls answered before it). NULL: none is. */
+  previous_token_expires_at: string | null;
 }
 
 /** One health check of the Application (not stored: asked of the carrier when shown). */
@@ -40,6 +52,12 @@ export interface TelephonyCredentialInboundHealthCheck {
   health: TelephonyCredentialInboundHealth;
   /** Only with `url_mismatch`: the URLs that differ from the stored ones. */
   mismatched: TelephonyCredentialInboundUrl[];
+  /**
+   * Whether the stored URLs are the ones this server would give the carrier now. False after the
+   * deployment's public callback base or the fallback answer URL setting changed: the carrier
+   * still calls the old ones until a Re-point.
+   */
+  stored_urls_current: boolean;
   checked_at: string;
 }
 
@@ -67,3 +85,57 @@ export const INBOUND_SUPER_ADMIN_AUDIT_ACTIONS = [
   'phone_number.inbound_unlinked',
 ] as const;
 export type InboundSuperAdminAuditAction = (typeof INBOUND_SUPER_ADMIN_AUDIT_ACTIONS)[number];
+
+/** Why a number cannot be linked now (`PhoneNumberInboundResponse.link_blocker`). */
+export const PHONE_NUMBER_INBOUND_BLOCKERS = [
+  /** On the service's own carrier account: only a number synced from a tenant credential can be. */
+  'not_synced',
+  /** Retired or deleted. */
+  'not_active',
+  /** Not assigned to its credential's tenant (unassigned since the sync). */
+  'not_assigned',
+  /** Its credential is disabled, invalid or revoked. */
+  'credential_not_active',
+  /** Its credential has no inbound Application yet (Enable inbound on the credential first). */
+  'inbound_not_enabled',
+] as const;
+export type PhoneNumberInboundBlocker = (typeof PHONE_NUMBER_INBOUND_BLOCKERS)[number];
+
+/** One of a credential's synced numbers, with its inbound link (the credential page's list). */
+export interface TelephonyCredentialInboundNumber {
+  phone_number_id: string;
+  /** E.164. */
+  phone_number: string;
+  status: 'active' | 'retired' | 'deleted';
+  /** Assigned to the credential's tenant. */
+  assigned: boolean;
+  link: PhoneNumberInboundLink;
+}
+
+/** A credential's inbound state and its numbers. Every inbound credential route answers it. */
+export interface TelephonyCredentialInboundResponse {
+  inbound: TelephonyCredentialInbound;
+  /**
+   * Whether this server can give the carrier inbound URLs (`PLIVO_WEBHOOK_BASE_URL` is set).
+   * False: Enable and Re-point are refused (`inbound_unconfigured`).
+   */
+  webhook_base_configured: boolean;
+  /** The credential's numbers that are not deleted, by number. */
+  numbers: TelephonyCredentialInboundNumber[];
+}
+
+export interface TelephonyCredentialInboundHealthResponse {
+  inbound: TelephonyCredentialInbound;
+  health: TelephonyCredentialInboundHealthCheck;
+}
+
+/** A number's inbound link, and whether it can be linked now (the numbers page). */
+export interface PhoneNumberInboundResponse {
+  phone_number_id: string;
+  phone_number: string;
+  link: PhoneNumberInboundLink;
+  /** The credential the number was synced from; null for a number on the service's own account. */
+  credential: { id: string; label: string; status: string; inbound_enabled: boolean } | null;
+  /** Why Link is refused now; null when it would be accepted (or the number is linked already). */
+  link_blocker: PhoneNumberInboundBlocker | null;
+}

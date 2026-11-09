@@ -15,8 +15,8 @@ const plivo = (env: Record<string, string>) => {
 };
 
 describe('telephony.plivo config', () => {
-  it('defaults match the adapter’s own defaults, with no webhook base', () => {
-    expect(plivo({})).toEqual(DEFAULT_PLIVO_SETTINGS);
+  it('defaults match the adapter’s own defaults, with no webhook base and no inbound fallback URL', () => {
+    expect(plivo({})).toEqual({ ...DEFAULT_PLIVO_SETTINGS, inboundFallbackAnswerUrl: '' });
     expect(DEFAULT_PLIVO_SETTINGS).toEqual({
       webhookBaseUrl: '', callsPerSecond: 2, dialRateMaxWaitMs: 5000, requestTimeoutMs: 15000, ringTimeoutSeconds: 45,
     });
@@ -29,13 +29,28 @@ describe('telephony.plivo config', () => {
       PLIVO_DIAL_RATE_MAX_WAIT_MS: '0',
       PLIVO_REQUEST_TIMEOUT_MS: '8000',
       PLIVO_RING_TIMEOUT_SECONDS: '30',
+      PLIVO_INBOUND_FALLBACK_ANSWER_URL: 'https://static.example.com/plivo/fallback.xml',
     })).toEqual({
       webhookBaseUrl: 'https://srv.example.com/api/v1/webhooks/plivo',
       callsPerSecond: 10,
       dialRateMaxWaitMs: 0,
       requestTimeoutMs: 8000,
       ringTimeoutSeconds: 30,
+      inboundFallbackAnswerUrl: 'https://static.example.com/plivo/fallback.xml',
     });
+  });
+
+  it.each([
+    'http://static.example.com/fallback.xml',
+    'static.example.com/fallback.xml',
+    'https://static.example.com/fallback.xml#x',
+    'not a url',
+  ])('refuses PLIVO_INBOUND_FALLBACK_ANSWER_URL=%s at load, saying what it must be', (value) => {
+    const result = parseConfig({ ...valid, PLIVO_INBOUND_FALLBACK_ANSWER_URL: value });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const issue = result.issues.find((i) => i.path.join('.') === 'telephony.plivo.inboundFallbackAnswerUrl');
+    expect(issue?.message).toMatch(/PLIVO_INBOUND_FALLBACK_ANSWER_URL must be empty or an absolute https: URL/);
   });
 
   it.each([

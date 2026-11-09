@@ -491,10 +491,41 @@ describe('telephony credentials (integration)', () => {
       expect(await repo.disableInbound(randomUUID(), admin)).toEqual({ ok: false, reason: 'not_enabled' });
     });
 
-    it('a revoke of an inbound-enabled credential is refused by the schema (disable inbound first)', async () => {
+    it('a revoke of an inbound-enabled credential is refused, by the revoke and by the schema (disable inbound first)', async () => {
       const c = await create();
       await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
-      expect(await pgError(repo.revoke(c.id, admin))).toMatchObject({ code: '23514', constraint: 'ck_telephony_credentials_inbound_revoked' });
+      // The revoke's own statement does not land (the service re-reads and answers `inbound_enabled`)…
+      expect(await repo.revoke(c.id, admin)).toBeNull();
+      expect((await repo.findById(c.id))!.status).toBe('active');
+      // …and a write that skips it is still refused by the CHECK.
+      expect(await pgError(getTestPool().query(
+        `UPDATE telephony_credentials SET status = 'revoked', revoked_at = now() WHERE id = $1`, [c.id],
+      ))).toMatchObject({ code: '23514', constraint: 'ck_telephony_credentials_inbound_revoked' });
+      expect((await repo.disableInbound(c.id, admin)).ok).toBe(true);
+      expect((await repo.revoke(c.id, admin))!.status).toBe('revoked');
+    });
+
+    it('lockInbound holds the row: an enable waits for the locking transaction, and a joined disable rolls back with it', async () => {
+      const c = await create();
+      await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      const client = await getTestPool().connect();
+      try {
+        await client.query('BEGIN');
+        expect(await repo.lockInbound(randomUUID(), client)).toBeNull();
+        expect(await repo.lockInbound(c.id, client)).toMatchObject({ credential_id: c.id, app_id: 'app-1' });
+        // A second writer on the row blocks until the lock is released.
+        let repointed = false;
+        const other = repo.repointInbound(c.id, { tokenHash: H2, previousTokenGraceSeconds: 60, ...urls('b') }, admin)
+          .then((r) => { repointed = true; return r; });
+        await new Promise((r) => setTimeout(r, 150));
+        expect(repointed).toBe(false);
+        // Disable joined to the locking transaction, then rolled back: nothing changed.
+        expect((await repo.disableInbound(c.id, admin, { client })).ok).toBe(true);
+        await client.query('ROLLBACK');
+        expect(await other).toMatchObject({ app_id: 'app-1', answer_url: urls('b').answerUrl });
+      } finally {
+        client.release();
+      }
     });
   });
 
