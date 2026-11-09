@@ -701,7 +701,7 @@ Files: `../proxy-agency-inbound.routes.ts`, `calls.ts`, `clips.ts`, `missed.ts`,
 | `apps/server/test/unit/api/routes/proxy-agency-inbound.test.ts` (and the reassign body, the summary's range, the rate) | 9 |
 | `apps/server/test/integration/api/inbound-missed-work.test.ts` (the count, reassign, a departed assignee, a call back that connects closing the row and its outcome settling the contact's callback, the summary's numbers and gates, the voicemail never cached; all with the flag off too) | 12 |
 | `apps/server/test/integration/api/inbound-routes.test.ts` (and P2: voicemail taken with the route's warnings on every read and write; a Missed row's voicemail streamed whole and by range under the list's rules; the flag gates the routes, never the Missed list, its voicemails or Mark handled; the recordings listed with the routes playing each) | 17 |
-| `apps/server/test/integration/api/inbound-clips-routes.test.ts` (recordings: an upload decoded for real and stored under the account's key, cached, audited, playable at once; every refusal before storing; the name taken and its object deleted; no storage; the internal handler refusing another account's key; delete refused while a route or an announcement uses it; another account's; access and the flag) | 10 |
+| `apps/server/test/integration/api/inbound-clips-routes.test.ts` (recordings: an upload decoded for real and stored under the account's key, cached, audited, playable at once; every refusal before storing; the name taken and its object deleted; no storage; the internal handler refusing another account's key; delete refused while a route or an announcement uses it; another account's; access and the flag; an upload naming no account refused before anything is stored; the preview of a recording and of each standard recording, never cached, another account's or a gone object not found, the list's access) | 16 |
 
 ### `apps/server/src/api/validators/`
 
@@ -1349,7 +1349,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/flags.test.ts` | 11 |
 | `packages/contracts/test/rbac.test.ts` | 71 |
 | `packages/contracts/test/reports.test.ts` (report vocabularies, constants, the RP2 window rule, `reportFileName`, the subpath export, and type-level pins that each dataset block is the screen's wire type) | 13 |
-| `packages/contracts/test/inbound-route-warnings.test.ts` (`inboundRouteWarnings`: no opening hours, a deployment that cannot connect, a call recorded unannounced; the actions offered; the standard recordings' words and slots, only call-back and voicemail promising a call back) | 9 |
+| `packages/contracts/test/inbound-route-warnings.test.ts` (`inboundRouteWarnings`: no opening hours, a deployment that cannot connect, a call recorded unannounced; the actions offered; the standard recordings' words and slots, only call-back and voicemail promising a call back; the `connect_unavailable` words naming the call-back message) | 10 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
 `packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
@@ -1868,9 +1868,15 @@ in history state, `utils/softphone/prefill.ts`, read by `SoftphonePage` and `use
 (`/app/inbound`, the routes with delete) and `pages/settings/InboundRouteEditorPage.tsx`
 (`/app/inbound/new`, `/app/inbound/:routeId`; a new route open Monday to Friday 09:00–17:30; the route's
 warnings, live from the contract's `inboundRouteWarnings`, beside their fields, advisory; what each
-clip slot plays without a recording, our standard recording's words quoted) with
-`pages/settings/InboundRecordingsPanel.tsx` (+ `InboundRecordings.module.css`: upload, the account's
-recordings with the routes playing each, delete of one nothing uses; client `api/inboundRecordings.ts`). The form's rules are `utils/inbound/routeForm.ts`
+clip slot plays without a recording, our standard recording's words quoted; the page holds the
+draft, the loads and the save, its cards are in `pages/settings/inbound-route/`: `RouteHoursCards.tsx`
+(opening hours, naming the zone, and holidays), `RouteClipsCard.tsx` (the clip slots, each with a
+Play of what its choice means, `slotPreview`), `RouteRoutingCard.tsx` (their agent first and the
+team), `fields.tsx` (`NumberField`, `RouteWarnings`, `ActionChoice`) and `RecordingPreview.tsx` (Play,
+then the browser's player over a blob URL)) with `pages/settings/InboundRecordingsPanel.tsx`
+(+ `InboundRecordings.module.css`: upload, the account's recordings with a Play and the routes
+playing each, delete of one nothing uses; client `api/inboundRecordings.ts`, with
+`fetchRecordingBlobUrl` for the previews). The form's rules are `utils/inbound/routeForm.ts`
 (defaults, the midnight mapping, overnight stretches, client checks keyed by body path, the PATCH of
 what changed, why a number cannot be chosen); copy and the Missed query in `utils/inbound/inboundCopy.ts`;
 the client is `api/inbound.ts` (writes resolve to a refusal value, reads throw; every path in
@@ -1894,7 +1900,8 @@ one shared read per tab, polled while inbound is on, `refreshMissedCallsCount`) 
 on or rows to read) drive the badges in `AgencySidebar` and `AgentNav` and keep `MissedCallsPage`
 readable with the flag off; `pages/agency/InboundSummaryPage.tsx` (`/agency/inbound/summary`,
 ranges in `utils/inbound/inboundSummary.ts`); the floor's inbound wrap-up ("Close and make
-available", `AgentFloorDrawer.tsx`, `isInboundWrapup` and its copy in `utils/agencyAgentFloor.ts`). The station's reducer holds `inboundCall` and `customerWaiting`;
+available", `AgentFloorDrawer.tsx`, `owesInboundOutcome` and its copy in `utils/agencyAgentFloor.ts`; also offered
+for an agent on a break who owes the outcome, round 2). The station's reducer holds `inboundCall` and `customerWaiting`;
 `utils/agencyCues.ts` has the `inbound_ring` cue (`CueDispatcher.onInboundCall`).
 
 Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `InboundCallView.tsx` (+ `.module.css`), `InboundQueueTiles.tsx` (+ `.module.css`), `MissedCalls.module.css`, `MissedCallsList.tsx`, `VoicemailPlayer.tsx`, `useInboundShortcuts.ts`
@@ -1905,14 +1912,14 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 | `apps/console/src/__tests__/pages/InboundSummaryPage.test.tsx` (the ranges, the tiles and agents, no calls, a dash for no rate, the gates) | 8 |
 | `apps/console/src/__tests__/hooks/useMissedCallsCount.test.tsx` (one shared read, the poll only with inbound on, the re-read, a failed read, another account, the badge text) | 6 |
 | `apps/console/src/__tests__/components/missedNavBadge.test.tsx` (the badge in the sidebar and the agent's nav, the entries with the flag off) | 6 |
-| `apps/console/src/__tests__/components/AgentFloorInboundWrapup.test.tsx` (the inbound wrap-up's label, Close and make available, its confirm and refusal) | 5 |
+| `apps/console/src/__tests__/components/AgentFloorInboundWrapup.test.tsx` (the inbound wrap-up's label, Close and make available, its confirm and refusal; an agent on a break owing the outcome; the row's control) | 7 |
 | `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
-| `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (both actions offered, the voicemail saved; the route's warnings beside their fields, advisory) | 5 |
-| `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` (the recordings panel: listed with lengths and routes, delete only of one nothing uses or chose, upload and the selects offering it, refusals, the size limit, delete and the in-use reload, no storage) | 8 |
-| `apps/console/src/__tests__/api/inboundRecordings.test.ts` (the multipart body, name first; refusals read) | 7 |
+| `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (both actions offered, the voicemail saved; the route's warnings beside their fields, advisory; the hours' zone named, the sticky wait's own label, withheld/DNC callers hearing the busy message in opening hours) | 8 |
+| `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` (the recordings panel: listed with lengths and routes, delete only of one nothing uses or chose, upload and the selects offering it, refusals, the size limit, delete and the in-use reload, no storage; each message's Play of what its choice means, a new choice from Play again, the list's Play and a gone recording) | 11 |
+| `apps/console/src/__tests__/api/inboundRecordings.test.ts` (the multipart body, name first; refusals read; the preview's paths, blob URL and refusals) | 9 |
 | `apps/console/src/__tests__/utils/inboundRouteCopy.test.ts` (each slot's standard words, "Wait for their agent", "Nobody free to answer", recordings in words) | 6 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.inbound.test.tsx` (the panel on the offer, the frozen geometry across offered / connected / owing, hang-up, outcome, notes, DNC, the early hang-up notice, restore after `ready`, the waiting pill) | 12 |
-| `apps/console/src/__tests__/hooks/useInboundCall.test.ts` | 21 |
+| `apps/console/src/__tests__/hooks/useInboundCall.test.ts` (and round 2: a call closed with no outcome says its window ran out or a supervisor closed it; "already saved" after the window) | 24 |
 | `apps/console/src/__tests__/components/InboundQueueTiles.test.tsx` (with "Open, but no one can take calls") | 7 |
 | `apps/console/src/__tests__/api/inboundCalls.test.ts` (the call routes, the queue, reassign, the count and the summary, and the voicemail URL: never anywhere but its own route) | 14 |
 | `apps/console/src/__tests__/utils/inboundCall.test.ts` | 16 |
@@ -2116,7 +2123,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyPersona.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyPriorAttempts.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/agencyRedialCopy.test.ts` | 12 |
-| `apps/console/src/__tests__/utils/agencyReleaseCopy.test.ts` | 46 |
+| `apps/console/src/__tests__/utils/agencyReleaseCopy.test.ts` | 50 |
 | `apps/console/src/__tests__/utils/agencyRetrySelector.test.ts` | 48 |
 | `apps/console/src/__tests__/utils/agencyRosterFilters.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/agencyShellBoundary.test.ts` | 2 |

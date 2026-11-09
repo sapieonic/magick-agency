@@ -851,6 +851,8 @@ role, fill names and write the audit rows; the internal handlers
 | `GET /inbound/clips` | `agency.inbound.write` | the account's recordings (`audio_files`), newest first, at most 200, each with the live routes playing it; `upload_available` (audio storage configured) and `connects_agents` (one process, IB8) |
 | `POST /inbound/clips` | `agency.inbound.write` | upload a recording (multipart: `name`, then `file`): WAV, MP3 or OGG, at most 5 MB and 120 s, decoded whole before anything is stored; 201 `{ clip }`; refused `inbound_clip_invalid` (400, 413 for the size; `upload_reason`), `inbound_clip_name_taken`, `inbound_clip_storage_unavailable` (503) |
 | `DELETE /inbound/clips/:id` | `agency.inbound.write` | delete one no live route (or active announcement) uses; 204; `inbound_clip_in_use` (409, naming the routes), `inbound_clip_not_found` |
+| `GET /inbound/clips/:id/audio` | `agency.inbound.write` | the editor's preview of one of the account's recordings: its bytes as stored, streamed from the bucket (the internal handler says where, tenant and account scoped); `inbound_clip_not_found` for another account's, an unknown or malformed id, or an object gone from the bucket |
+| `GET /inbound/clips/standard/:recording/audio` | `agency.inbound.write` | the preview of one of our standard recordings (`AGENCY_INBOUND_STANDARD_RECORDINGS`), `audio/wav` from the image; an unknown name is `inbound_clip_not_found` |
 | `GET /inbound/missed` | `agency.inbound.read` | keyset page, newest first; `status` (default `open`), `assignee`, `reason`, `from`/`to` |
 | `POST /inbound/missed/:id/handled` | `agency.inbound.read` | idempotent: first handler and time kept, audited once; `handled_reason = 'marked'` |
 | `GET /inbound/missed/count` | `agency.inbound.read` | the nav badge: the open rows of the caller's scope (an agent's own; with `agency.supervise`, the account's), counted to 100 (`open_capped` past it), and whether the scope has any row (`has_rows`); not behind the flag |
@@ -898,7 +900,21 @@ accepts only a key of the request's tenant and account; a row that cannot be wri
 taken) deletes the object again. Delete refuses while a live route or an active announcement uses
 the recording, under the file's row lock (a route write naming it waits and then fails its FK
 check), and removes the object after the row. Audited `agency_inbound_clip.uploaded` (size and
-length) and `.deleted`, filed under the recording (`agency_inbound_clip`).
+length) and `.deleted`, filed under the recording (`agency_inbound_clip`). An upload naming no
+account (no `X-Account-Id`) is refused `400 account_scope_required` before the body is read or
+anything stored (the key names the account).
+
+**Hearing a recording (round 2).** The editor plays what each message's choice means: beside each
+clip slot a **Play** for the recording chosen, else our standard recording for that slot
+(`AGENCY_INBOUND_SLOT_STANDARD`; the hold with none chosen has no Play: the built-in hold tone is
+made as it plays), and a Play on every recording in the list. Both preview routes (the table
+above) take the list's permission and flag, need the account, answer `Cache-Control: private,
+no-store` and `X-Content-Type-Options: nosniff`, register no automatic HEAD and send the whole file
+(no ranges: a recording is at most 5 MB). The console fetches the audio with its token into a blob
+URL when Play is pressed and revokes it when the preview goes (`pages/settings/inbound-route/RecordingPreview.tsx`,
+`fetchRecordingBlobUrl`), as the Missed list's voicemail; a new choice starts from Play again. A
+seventh standard recording added to the contract's list is offered by the standard route with no
+change here.
 
 **Voicemail (P2).** `AGENCY_INBOUND_AVAILABLE_ACTIONS` (the contract's list of what a route may be
 set to in this build) is `callback` and `voicemail` since P2 records one (§7); in P1 it was
@@ -911,8 +927,9 @@ the console's token only when pressed, played from a blob URL).
 contracts; advisory, never a refusal), and the editor shows the same, live, beside the field each
 is about: a route with no opening hours is closed at all times (`no_opening_hours`), calls recorded
 with the notice switched off (`recording_without_notice`), and, for the whole route, a deployment
-that cannot put callers through to agents (`connect_unavailable`: media workers on, IB8; every
-open-hours caller is told everyone is busy). The server reads the deployment as the router does
+that cannot put callers through to agents (`connect_unavailable`: media workers on, IB8; nobody is
+put through, and an open-hours caller hears the call-back message, or the busy one when they may
+not be promised a callback; the warning says so in the editor's names for the two messages). The server reads the deployment as the router does
 (`MEDIA_WORKERS`); the editor reads it from `GET /inbound/clips` (`connects_agents`). A message
 with no recording is no warning: our standard recording plays (§3.4). The P2 warnings about a
 silent overflow and a voicemail with no prompt are gone with the silence they described.
@@ -920,12 +937,15 @@ silent overflow and a voicemail with no prompt are gone with the silence they de
 **Console.** Settings → **Inbound calls** (`/app/inbound`, `/app/inbound/new`, `/app/inbound/:id`;
 account admins; also "Inbound settings" in the agency sidebar): the routes and the route editor
 (name, time zone, numbers with why one cannot be chosen, weekly hours (a new route starts open
-Monday to Friday, 09:00–17:30, in the browser's zone: the account has none of its own; editable),
-holidays, the six clips from the account's recordings (with none chosen, "Our standard recording",
-the words quoted under each; the hold, "Built-in hold tone", §3.4), the recordings themselves
-(upload, the list with the routes playing each, delete of one nothing uses; without audio storage
-the editor says uploads are unavailable),
-their agent first (IB2 defaults), the team (pool campaigns), waiting and limits, recording and the
+Monday to Friday, 09:00–17:30, in the browser's zone: the account has none of its own; editable;
+the hours card names the zone they are read in), holidays, the six clips from the account's
+recordings (with none chosen, "Our standard recording", the words quoted under each; the hold,
+"Built-in hold tone", §3.4), each with a Play, the recordings themselves (upload, the list with the
+routes playing each and a Play, delete of one nothing uses; without audio storage the editor says
+uploads are unavailable), their agent first (IB2 defaults; the seconds a `loose` caller is offered
+to their agent are "How long to wait for their agent (seconds)", never the strict mode's name),
+the team (pool campaigns), waiting and limits, what callers nobody answers hear (a withheld or DNC
+caller hears the All lines busy message in opening hours, never the closed one), recording and the
 notice, summary profile, outcomes for unmatched callers). In the hours editor a closing time
 earlier than the opening runs overnight and belongs to its opening day; a closing time of `00:00`
 is midnight (sent as `24:00`), so `00:00`–`00:00` is the whole day. A save sends only what
@@ -941,7 +961,14 @@ supervisors) is §11. On the supervisor's floor an agent owing an ended inbound 
 (`inbound_outcome_owed` on the floor's agent row) reads "Wrapping up an inbound call", and the
 drawer's force-return is **Close and make available**: `force-available`, which closes the call's
 outcome as lapsed ("closed by a supervisor") and returns the agent, with its own confirm; a server
-that refuses (`409 inbound_call_live`) is said in plain words. Call back opens the soft
+that refuses (`409 inbound_call_live`) is said in plain words. An agent on a break who owes one (a
+restart rehydrates them there, §6) is offered the same close, its confirm adding that the break
+ends (the server closes it whatever the state); the row's control reads "Close inbound call…".
+The agent's station says why a call closed with no outcome saved: "The time to save this call's
+outcome ran out, so it was closed without one." once its window has ended (`outcome_due_at` on the
+server's clock; also the words of an "already saved" refusal after the window), else "A
+supervisor closed this call without an outcome." (the wire carries no reason: bridged, settled,
+no code). Call back opens the soft
 phone (`/dialer/phone`) with the caller's number on the pad and the matched campaign as "Log to"
 when the agent may log to it, carried in history state, never the URL
 (`utils/softphone/prefill.ts`): nothing is dialled until the agent presses Call, a DNC caller
