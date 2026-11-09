@@ -115,9 +115,12 @@
   margin: 0;
 }
 
+/* The value above its label (the label first in the DOM, so it is read first), every value on
+   one line whatever its label wraps to: in a column-reverse box, flex-end is the top. */
 .stat {
   display: flex;
   flex-direction: column-reverse;
+  justify-content: flex-end;
   gap: 2px;
   min-width: 0;
 }

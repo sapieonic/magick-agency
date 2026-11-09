@@ -101,7 +101,7 @@ export function InboundCallView({
       </div>
 
       <div
-        className={station.body}
+        className={`${station.body} ${styles.body}`}
         ref={bodyRef}
         tabIndex={-1}
         data-testid="inbound-body"
@@ -223,7 +223,9 @@ export function LapseCountdown({ due, clock }: { due: string; clock: ServerClock
   return (
     <span className={styles.lapse} data-testid="inbound-lapse">
       <span aria-hidden="true">
-        {LAPSE_PREFIX} <span className={styles.lapseDigits}>{formatDuration(ms)}</span>
+        <span className={styles.lapseLong}>{LAPSE_PREFIX}</span>
+        <span className={styles.lapseShort}>Closes in</span>{' '}
+        <span className={styles.lapseDigits}>{formatDuration(ms)}</span>
       </span>
       <span className={station.srOnly}>Without an outcome, the call closes at {clockTime}.</span>
     </span>
@@ -290,7 +292,7 @@ function CallerColumn({ call }: { call: AgencyInboundCall }) {
       <dl className={sp.factGrid}>
         <div className={sp.fact}>
           <dt className={sp.factLabel}>They rang</dt>
-          <dd className={`${sp.factValue} ${sp.mono}`} data-testid="inbound-to">
+          <dd className={`${sp.factValue} ${sp.mono} ${styles.factNumber}`} data-testid="inbound-to">
             {formatDialNumber(call.to_e164)}
           </dd>
         </div>

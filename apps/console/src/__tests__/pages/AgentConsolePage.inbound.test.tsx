@@ -204,7 +204,7 @@ describe('the frozen geometry', () => {
     await call(owing());
     expect(screen.getByTestId('rail-label').textContent).toBe('Outcome needed');
     expect(screen.queryByTestId('inbound-talk-timer')).toBeNull();
-    expect(screen.getByTestId('inbound-lapse').textContent).toMatch(/Without one, it closes in \d+:\d\d/);
+    expect(screen.getByTestId('inbound-lapse').textContent).toMatch(/^Without one, it closes in(Closes in)? \d+:\d\d/);
     expect(screen.getByTestId('inbound-lapse').textContent).toMatch(/the call closes at \d\d:\d\d/);
   });
 });
