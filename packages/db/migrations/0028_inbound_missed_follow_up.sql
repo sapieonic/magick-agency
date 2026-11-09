@@ -17,7 +17,7 @@
 -- a second, needless call. "Put through" is the product's conversation: `bridged_at` set
 -- (CONVERSATION_ATTEMPT_SQL counts the same instant).
 --
--- agency_inbound_close_reached_missed(tenant, account, phone, reached_at, user, except) closes,
+-- agency_inbound_close_reached_missed(tenant, account, phone, reached_at, user) closes,
 -- in one guarded UPDATE, every OPEN Missed row of the account from that number that arrived no
 -- later than the conversation began: `handled`, `handled_reason = 'reached'`, handled by the
 -- agent who took the conversation, now. Rows from a withheld number never match (NULL), nor do
@@ -35,7 +35,8 @@
 --  - trg_agency_manual_calls_inbound_reached (agency_manual_calls): destination_e164 and the
 --    call's agent_user_id;
 --  - trg_agency_inbound_calls_inbound_reached (agency_inbound_calls): the caller's from_e164 and
---    answered_by_user_id, the call itself excepted.
+--    answered_by_user_id (the call itself is live, not a Missed row, so the open-row predicate
+--    leaves it alone).
 -- Each costs one probe of idx_agency_inbound_calls_missed_open_from (below), which holds only
 -- OPEN Missed rows with a number: empty for an account with no inbound, so an outbound-only
 -- tenant pays one empty index probe per conversation. The triggers write only
@@ -97,7 +98,7 @@ COMMENT ON INDEX idx_agency_inbound_calls_account_arrived IS
   'One account''s inbound calls by arrival: the inbound summary''s date range (0028).';
 
 CREATE FUNCTION agency_inbound_close_reached_missed(
-  p_tenant UUID, p_account UUID, p_phone TEXT, p_reached_at TIMESTAMPTZ, p_user UUID, p_except UUID
+  p_tenant UUID, p_account UUID, p_phone TEXT, p_reached_at TIMESTAMPTZ, p_user UUID
 ) RETURNS VOID AS $$
 BEGIN
   IF p_account IS NULL OR p_phone IS NULL THEN
@@ -112,11 +113,10 @@ BEGIN
      AND m.account_id = p_account
      AND m.from_e164 = p_phone
      AND m.follow_up_status = 'open'
-     AND m.arrived_at <= p_reached_at
-     AND m.id IS DISTINCT FROM p_except;
+     AND m.arrived_at <= p_reached_at;
 END $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION agency_inbound_close_reached_missed(UUID, UUID, TEXT, TIMESTAMPTZ, UUID, UUID) IS
+COMMENT ON FUNCTION agency_inbound_close_reached_missed(UUID, UUID, TEXT, TIMESTAMPTZ, UUID) IS
   'Closes the account''s open Missed inbound rows from a number that arrived by the time the customer was put through to an agent: handled, reason reached (0028).';
 
 CREATE FUNCTION agency_attempt_inbound_reached() RETURNS TRIGGER AS $$
@@ -126,8 +126,7 @@ BEGIN
     NEW.account_id,
     (SELECT c.phone_e164 FROM agency_contacts c WHERE c.id = NEW.contact_id),
     NEW.bridged_at,
-    (SELECT s.agent_user_id FROM agency_agent_sessions s WHERE s.id = NEW.reserved_agent_id),
-    NULL
+    (SELECT s.agent_user_id FROM agency_agent_sessions s WHERE s.id = NEW.reserved_agent_id)
   );
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
@@ -143,7 +142,7 @@ CREATE TRIGGER trg_agency_attempts_inbound_reached
 CREATE FUNCTION agency_manual_call_inbound_reached() RETURNS TRIGGER AS $$
 BEGIN
   PERFORM agency_inbound_close_reached_missed(
-    NEW.tenant_id, NEW.account_id, NEW.destination_e164, NEW.bridged_at, NEW.agent_user_id, NULL
+    NEW.tenant_id, NEW.account_id, NEW.destination_e164, NEW.bridged_at, NEW.agent_user_id
   );
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
@@ -159,7 +158,7 @@ CREATE TRIGGER trg_agency_manual_calls_inbound_reached
 CREATE FUNCTION agency_inbound_call_inbound_reached() RETURNS TRIGGER AS $$
 BEGIN
   PERFORM agency_inbound_close_reached_missed(
-    NEW.tenant_id, NEW.account_id, NEW.from_e164, NEW.bridged_at, NEW.answered_by_user_id, NEW.id
+    NEW.tenant_id, NEW.account_id, NEW.from_e164, NEW.bridged_at, NEW.answered_by_user_id
   );
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
@@ -180,7 +179,7 @@ DROP TRIGGER IF EXISTS trg_agency_attempts_inbound_reached ON agency_call_attemp
 DROP FUNCTION IF EXISTS agency_inbound_call_inbound_reached();
 DROP FUNCTION IF EXISTS agency_manual_call_inbound_reached();
 DROP FUNCTION IF EXISTS agency_attempt_inbound_reached();
-DROP FUNCTION IF EXISTS agency_inbound_close_reached_missed(UUID, UUID, TEXT, TIMESTAMPTZ, UUID, UUID);
+DROP FUNCTION IF EXISTS agency_inbound_close_reached_missed(UUID, UUID, TEXT, TIMESTAMPTZ, UUID);
 DROP INDEX IF EXISTS idx_agency_inbound_calls_account_arrived;
 DROP INDEX IF EXISTS idx_agency_inbound_calls_missed_open_from;
 
