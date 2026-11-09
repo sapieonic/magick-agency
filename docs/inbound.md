@@ -156,15 +156,21 @@ plays with `playClipSequenceThenHangUp` (docs/seams.md §3.1).
   inside its grace), the V3 signature against the credential's auth tokens resolved for
   `call_control` (so a disabled or invalid credential still verifies), over the URL stored on the
   credential plus the request's query, and the signed nonce once per credential (Redis `SET NX`,
-  6 h; fails open as the per-call guard; a request with no signed nonce is refused). A refusal is
-  `<Hangup/>` on the answer URL, 403 on the hangup URL; a fault is the fallback message, 503 on the
-  hangup URL, the nonce given back. The fallback answer URL answers fixed XML to anyone.
+  6 h; a request with no signed nonce is refused). The nonce check fails CLOSED: when Redis cannot
+  answer, both URLs answer 503, so Plivo answers the caller from the Application's fallback answer
+  URL (and retries the hangup), and no captured callback can be replayed through a Redis outage
+  (`claimCredentialCallbackNonce` answers `claimed`, `replay` or `unavailable`; with no Redis
+  configured at all, a dev process, every nonce is claimed). A refusal is `<Hangup/>` on the
+  answer URL, 403 on the hangup URL; a fault is the fallback message, 503 on the hangup URL, the
+  nonce given back. The fallback answer URL answers fixed XML to anyone.
 - **Tenant isolation**: a `CallUUID` is unique per provider (`uq_agency_inbound_calls_provider_call`),
   not per credential, so the answer's insert, on a conflict, uses the existing row only when it is
   this tenant's and arrived on this credential (a retried answer). A row of another tenant or
   credential is `foreign`: the call is hung up, nothing is written, and nothing of that row is read
-  or ended, on the answer path and the refusal path alike (`insertArrival`; the hangup webhook
-  already ignored such a row). A real `CallUUID` names one call on one carrier account, so the
+  or ended, on the answer path and the refusal path alike (`insertArrival`). The hangup webhook
+  likewise ends only a row of its own tenant and credential: one naming another tenant's, or
+  another credential's, `CallUUID` names no leg and changes nothing (pinned by
+  `inbound-call-router-hangup.test.ts`). A real `CallUUID` names one call on one carrier account, so the
   collision only comes from a forged or replayed id on a credential that verifies. The index stays
   per provider: widened to the credential, a forged id would write a second row for one carrier
   call, and the hangup lookup would need the credential to choose between them.
@@ -218,6 +224,15 @@ plays with `playClipSequenceThenHangUp` (docs/seams.md §3.1).
   `failed`, unless the carrier's hangup came first. One writer ends a call: the play loop while
   this process holds it, else the hangup webhook (`abandoned_in_queue`; `failed` with no follow-up
   for a caller the fallback answered), else the sweep.
+- **A hangup before the answer finishes** (the caller gave up during our answer-URL work, so
+  Plivo's hangup lands first and finds no row): the router remembers it for 30 s
+  (`INBOUND_EARLY_HANGUP_MS`), under the credential and tenant that verified it, and the answer
+  that follows ends its freshly written row at once as the caller who left (the early-hangup rule
+  above: an open route's caller `abandoned_in_queue`, a closed or busy reason kept), with its
+  Missed row and callback, and answers `<Hangup/>`: no stream promised, no bridge session or slot
+  held until the media deadline, never `failed`. A hangup that finds the row while the answer is
+  still taking its stream ends the row and the answer lets that stream go at once. Another
+  credential's hangup for the `CallUUID` changes nothing.
 - **Follow-up** (§7): the Missed row on every call that reached nobody, assigned to the sticky
   candidate if they can see the account, else the account. The matched contact's callback
   (`bookInboundCallback`, in the transaction that ends the spine): campaign `running` or `paused`;
@@ -234,8 +249,12 @@ plays with `playClipSequenceThenHangUp` (docs/seams.md §3.1).
   reads only the campaign's inbound callbacks (`idx_agency_contacts_inbound_callback`, `0026`), so
   a tenant with no inbound pays one probe of an empty index per sweep, not a walk of the roster.
 - **Sweep** (§10): at agency start, every call not ended that arrived before the process started
-  (`abandoned_in_queue`, its Missed row, its callback), then the router is registered; every 5 min,
-  calls older than the longest call (4 h) + 10 min. Inbound calls live in the process that answered
+  (a bridged one `answered`, still owing its outcome; any other `failed`, its Missed row reason
+  `failed`, its callback: we lost the caller, nobody knows they hung up), then the router is
+  registered; every 5 min, calls whose latest start (`COALESCE(bridged_at, arrived_at)`: the bind
+  re-arms the max duration) is older than the longest parked budget (`INBOUND_MAX_PARKED_SECONDS`,
+  the longest maximum wait + the preamble + the exit) + the longest call (4 h) + 10 min, so a live
+  call, however long it was parked, is never swept. Inbound calls live in the process that answered
   them (with media workers, the primary: the stream URL carries no worker hint).
 - **Metrics**: `agency_inbound_calls_total{outcome}`, `agency_inbound_answer_seconds{result}`
   (`stream`, `spoken`, `hangup`, `fallback`, `refused`, `timed_out`); with P2 the queue's
@@ -446,8 +465,8 @@ offer is cancelled: back to the head of the queue, the next agent searched) and 
 it; on `bridged` the spine is `connected`, the agent `on_call`, the lease renewed (a `connected`
 write that fails, a database blip, leaves the call connected in memory and is retried at its end,
 before `answered`: a pair who talked is never recorded as a caller who hung up on offer). When the call ends
-the spine is `answered` with the outcome owed and the agent `wrapup` with the `inbound` field kept
-(no auto-return, Q11); a caller who hangs up on offer ends `abandoned_in_queue` with the Missed row
+the spine is `answered` with the outcome owed and the agent `wrapup` with the `inbound` field kept;
+the wrap-up then follows the outbound wrap-up's auto-return rule (below, "The wrap-up"); a caller who hangs up on offer ends `abandoned_in_queue` with the Missed row
 and callback and the agent goes back to the pool. Every step of one call runs on its serial chain.
 **The release hook:** `releaseAgent`, with no queued break, asks the connector first; an agent
 coming out of a call or a wrap-up is CASed from `reserved` / `on_call` / `wrapup` straight to a
@@ -472,16 +491,40 @@ The finish routes (`proxy-agency-inbound/calls.ts` → `agency/inbound-calls.ts`
 catalog of Q10, the soft phone's validation and decision, DNC for a suppress code, the contact
 settled forward only by `inbound-settlement.ts`, never charged, then the agent returned) and Mark
 DNC (the matched campaign's scope, else the account's), by the agent who took the call or a
-supervisor on behalf; audited `agency_inbound_call.dispositioned` / `.hung_up` / `.dnc_marked`. A
-minute's sweep closes outcomes owed past 30 minutes (`no_disposition`) and returns the agent. By
-design (Q9, Q19) the busy probe's inbound arm holds the number while its outcome is owed, so an
-agent who leaves without saving keeps the customer undialable for the whole account until that
-lapse (up to 30 minutes); an agent who saves frees it with the save. At a graceful shutdown the
+supervisor on behalf; audited `agency_inbound_call.dispositioned` / `.hung_up` / `.dnc_marked`.
+**The wrap-up** (`inbound-wrapup.ts`; replaces Q11's "no auto-return"): the outbound wrap-up's
+auto-return rule (`wrapup-manager.ts`) for the call's matched campaign: with `wrapup_auto_return` on
+and a `wrapup_seconds` window the outcome lapses that long after the call ended; with auto-return
+off, or `wrapup_seconds = 0` ("no timer"), the agent keeps the call until they save it. A caller
+who matched no campaign (or whose campaign row is gone) takes the account default, which is what a
+new campaign of the account starts with, 30 s with auto-return (there is no account-level wrap-up
+setting; `INBOUND_DEFAULT_WRAPUP`, pinned to the column defaults by a test). The 30-minute lapse
+(`AGENCY_INBOUND_OUTCOME_LAPSE_MS`) stays as the backstop: no outcome waits longer. The panel's
+`outcome_due_at` and the lapse sweep's SQL (`lapseUnsettled`) read the one rule. The sweep runs
+every 5 s (`INBOUND_LAPSE_SWEEP_INTERVAL_MS`) and closes each lapsed outcome `no_disposition`
+(nobody recorded it), clears the session's `inbound` field and tells the panel; it returns the
+agent (`releaseAgent`: a queued break, the release hook, else `available`) **only from the state
+the call holds them in** (`returnsToPool`: `wrapup`, `reserved` or `on_call` with the field naming
+this call). An agent who chose a break since (a restart lands an agent owing an outcome on `break`
+with the call re-claimed, and a break pressed there applies at once), or whom the station's close
+wrote `offline`, stays where they are, and their own "Go available" brings them back; the outcome
+saved from such a break does the same. The connector's `session_busy` give-back (the spine says a
+session it reserved holds another unsettled call: its Redis field was lost) puts the agent on
+`break`, re-claimed for the owed call, never back in the pool, also when the spine cannot be read.
+**A supervisor's force-available** on an agent who owes an inbound outcome closes it as the lapse
+would (`closeOwedForSupervisor`: `no_disposition`, the claim cleared, the panel told) and returns the
+agent as from any wrap-up; the public layer audits `agency_inbound_call.closed` ("Inbound call
+closed by a supervisor", the supervisor the actor, `details.via: force_available`). A call still
+offered or connected is not forced: `409 inbound_call_live` ("The agent is on an inbound call: they
+can be made available once it has ended."). By design (Q9, Q19) the busy probe's inbound arm holds
+the number while its outcome is owed, so an agent who leaves without saving keeps the customer
+undialable for the whole account until the call's window lapses (the campaign's wrap-up window,
+at most 30 minutes); an agent who saves frees it with the save. At a graceful shutdown the
 inbound stop (`startInboundCalls`), first in the agency stop and before the runtime stops, takes no
 more work, ends every call it holds `service_shutdown` and waits up to 10 s for their settles: a
 caller nobody took `failed` with its follow-up and callback (Q18), an answered call owing its
-outcome. A crash leaves them to the next start's sweep (`abandoned_in_queue`), and an answered call
-owing its outcome stays owed.
+outcome. A crash leaves them to the next start's sweep (`failed`: we dropped them, not a caller who
+hung up; still followed up), and an answered call owing its outcome stays owed.
 `GET /inbound/queue` (`agency.supervise`, the flag) answers a tile per route from the connector's
 queue. Metrics: `agency_inbound_queue_waiting{route_id}`, `agency_inbound_wait_seconds{result}`,
 `agency_inbound_offers_total{result}`. A caller who reaches nobody leaves through the router's
@@ -859,8 +902,9 @@ The agent side of `agency_inbound_calls` (inventory and every CHECK: `packages/d
   when, on behalf), `settled_at`, `voicemail_seconds`, `clash_attempt_id`.
 - An `offered` or `connected` call has its session; earlier states have none. One unsettled call
   per session (`uq_agency_inbound_calls_session_unsettled`). An unbridged call settles in the
-  UPDATE that ends it; a bridged one when its outcome is saved or lapses (`no_disposition`,
-  `AGENCY_INBOUND_OUTCOME_LAPSE_MS`, 30 min), never by the end or the startup sweep, which leave
+  UPDATE that ends it; a bridged one when its outcome is saved or lapses (`no_disposition`, at
+  its wrap-up window, §6, at most `AGENCY_INBOUND_OUTCOME_LAPSE_MS`, 30 min) or a supervisor's
+  force-available closes it the same way, never by the end or the startup sweep, which leave
   the outcome owed for the agent's return.
 - The busy probe (`numberLiveSql`, MC4, §5.4) gains an inbound arm over
   `idx_agency_inbound_calls_live_from_digits`: a number whose customer is on an admitted, live
@@ -882,8 +926,9 @@ The agent side of `agency_inbound_calls` (inventory and every CHECK: `packages/d
 
 ## 10. Restart and failure
 
-- Startup and periodic sweep: non-terminal `agency_inbound_calls` rows become `abandoned_in_queue`
-  with a follow-up (the spine is durable, so the follow-up survives).
+- Startup and periodic sweep: non-terminal `agency_inbound_calls` rows become `failed` (a bridged
+  one `answered`, its outcome still owed) with a follow-up (the spine is durable, so the follow-up
+  survives); `failed`, not `abandoned_in_queue`, because we dropped those callers.
 - While we are unreachable Plivo plays the Application's fallback answer XML.
 - A disabled or invalid credential: answered if the signature still verifies (closed message +
   Missed row), flagged on the credential page. Its links and routes are kept (§8.2), so enabling

@@ -251,7 +251,7 @@ the router places nothing more and leaves no follow-up; `ended(hangup)` settles 
 returns its media leg, which the route then hands to the bridge as a carrier hangup
 (`handleCarrierStatus`). The
 implementation is `agency/inbound/inbound-call-router.ts`, registered by `bootstrap/agency.ts`
-(`startInboundCalls`, after the startup sweep) and cleared at its stop; until then an arriving call
+(`startInboundCalls` in `agency/inbound/start.ts`, after the startup sweep) and cleared at its stop; until then an arriving call
 is answered with the fixed fallback message and nothing is written. Tests:
 `test/unit/api/routes/plivo-inbound-webhooks.test.ts` (the route with a stub router, the unwired
 default included, each spoken message, the signal), `test/integration/agency/inbound-call-router.test.ts`
