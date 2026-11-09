@@ -1713,6 +1713,9 @@ account their browser last had open. Every signed-in console page is now served 
       `TELEPHONY_CREDENTIAL_ACTIVE_KEY` set and backed up apart from the database;
       `PLIVO_WEBHOOK_BASE_URL` the public https origin plus `/api/v1/webhooks/plivo`
       (`operations.md`, "Enabling Plivo for a tenant").
+- [ ] Inbound calls (only if a credential will have inbound enabled): `MEDIA_WORKERS=0` for as long as
+      any credential has inbound enabled, and `PLIVO_INBOUND_FALLBACK_ANSWER_URL` set to the fallback
+      XML hosted off this deployment (`DEPLOYMENT.md` 8.6); the Grafana inbound rules applied.
 - [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `node dist/create-super-admin.js`
       inside the server container (`operations.md` "First super-admin").
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.

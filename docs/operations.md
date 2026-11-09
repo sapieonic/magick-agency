@@ -410,6 +410,11 @@ schema when it seeds) and refuses any other name or port. How to run it, its set
    `/agency/join/:token` for an agent, `/join/:token` for every other role. A console build without
    `/join` sends that link through its `*` route to `/app` and then `/login`, and the single-use
    token is lost. So a server that mails `/join` links needs a web image that has the page.
+8. **`MEDIA_WORKERS=0` while any credential has inbound enabled** ([`inbound.md`](inbound.md) §3.2,
+   IB8). With media workers on, inbound calls are answered but nobody is put through to an agent:
+   every caller to an open route hears the call-back message. The server warns at boot, the
+   super-admin credential page says so, `agency_inbound_connect_available` reads 0 and
+   `agy-inbound-connect-unavailable` pages.
 
 ## Shutdown and grace period
 
@@ -536,16 +541,55 @@ Then per tenant:
 
 **Inbound calls** ([`inbound.md`](inbound.md) §8; IB6, super-admins only). On the credential's
 row, the Inbound calls section: **Enable inbound** creates one Application on the tenant's Plivo
-account (needs `PLIVO_WEBHOOK_BASE_URL`; optionally host the fallback XML first, §3.3). Then link
+account (needs `PLIVO_WEBHOOK_BASE_URL`; host the fallback XML first, `DEPLOYMENT.md` 8.6). Then link
 numbers one by one on the Phone Numbers page (a synced number's row → Inbound calls → **Link to
 inbound**); the app the number was on is remembered and **Unlink** restores it. Pilot one tenant
-first. **Check health** compares the Application with what is stored; after `url_mismatch`,
-`app_missing` or a change of `PLIVO_WEBHOOK_BASE_URL` / `PLIVO_INBOUND_FALLBACK_ANSWER_URL`,
-**Re-point** (calls already answered keep working for 24 h on the old token). Unassigning, retiring
-or deleting a linked number, a sync that retires it, and disabling the credential unlink it
-automatically (each restored at Plivo when possible; the audit row `phone_number.inbound_unlinked`
-says `carrier: failed` with the app to put back by hand otherwise). A credential with inbound enabled
-cannot be revoked (409 `inbound_enabled`): unlink its numbers, **Disable inbound**, then revoke.
+first; the whole order is "Setting up inbound calls for a tenant" below. **Check health** compares
+the Application with what is stored (the server also checks every Application every 15 minutes:
+`agy-inbound-application-broken`); after `url_mismatch`, `app_missing` or a change of
+`PLIVO_WEBHOOK_BASE_URL` / `PLIVO_INBOUND_FALLBACK_ANSWER_URL`, **Re-point** (calls already
+answered keep working for 24 h on the old token). Unassigning, retiring or deleting a linked number,
+and a sync that retires it, unlink it automatically (each restored at Plivo when possible; the audit
+row `phone_number.inbound_unlinked` says `carrier: failed` with the app to put back by hand
+otherwise). **Disabling the credential keeps its links and routes**: while it is disabled its callers
+hear the closed message (with a Missed row), and enabling it again answers them as before. A
+credential with inbound enabled cannot be revoked (409 `inbound_enabled`): unlink its numbers,
+**Disable inbound**, then revoke.
+
+**Switching inbound off for a tenant or an account** is the `agency_inbound_enabled` flag (Feature
+Flags). With it off, every call to its linked numbers is answered with the closed message by the
+carrier (no queue, no stream, no voicemail) and leaves a Missed row; the route editor and the queue
+tiles are hidden, while the Missed list, its voicemails and calls already taken stay readable and
+workable. Use it as the kill switch; unlink numbers only to hand them back to their own app.
+
+### Setting up inbound calls for a tenant
+
+The order, once the deployment is ready for inbound (`DEPLOYMENT.md` 8.6: `MEDIA_WORKERS=0`, the
+fallback XML hosted off the deployment and `PLIVO_INBOUND_FALLBACK_ANSWER_URL` set):
+
+1. **The credential.** The tenant's Plivo credential is added, `active` and its numbers synced
+   (above). On its row, **Enable inbound**, then **Check health**: `ok`. The section must not say
+   "Calls can't be put through to agents" (media workers on).
+2. **The flag.** Feature Flags: `agency_inbound_enabled` on for the tenant, or only for the pilot
+   account. With it off, callers hear the closed message.
+3. **The route first, then the link.** The account admin creates a route in the console (Settings
+   → Inbound calls): opening hours, the team (pool campaigns), recordings. A number can be added to
+   a route only once it is linked, so link the number and have the route take it straight away:
+   until a route answers a linked number, its callers hear the closed message, and callers who
+   match no contact leave Missed rows no account sees (the number's Inbound panel in super-admin
+   counts them, and the numbers list badges such a number "Inbound · no route"). Link on the Phone
+   Numbers page (a synced number's row → Inbound calls → **Link to inbound**), then the account
+   admin adds it to the route.
+4. **A test call.** An agent of the route's pool logged in on the console, available. Ring the
+   number from a phone: the agent's station gets the inbound panel and the call connects. Then ring
+   with nobody available: the caller hears the hold audio, and after the route's maximum wait the
+   call-back message; the Missed calls list has the row. Ring out of hours (or with a holiday
+   today): the closed message.
+5. **Watch it.** The dashboard's *Inbound calls* row (outcomes, the answer webhook, callers waiting
+   and offers, wait time, the share reaching nobody, connect availability and Application health)
+   and the `inbound` alert group (runbooks below). The super-admin Usage page counts inbound calls,
+   their carrier time and hold time apart from dials.
+
 
 **Automatic pauses.** Three reasons on a campaign's pause say its carrier account cannot dial. The
 first two are set on the first refused dial, the third after five in a row; each is written to the activity trail as "Auto-paused" with the reason,
@@ -777,8 +821,8 @@ and a longer one only delays the retry of a genuinely lost message.
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page, for the carrier credential rules, and for the reports rules (warn
-only). The insights rules first: a stale or holed Insights page costs no
+warn (Slack) and never page, for the carrier credential rules, for the inbound rules, and for the
+reports rules (warn only). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -931,6 +975,57 @@ retention B20 promises.
 Postgres or its pool; a lock wait on a credential row being revoked or rotated clears on its own.
 
 **Do:** fix Postgres. The sweep is idempotent: the next hourly pass, or a restart, catches up.
+
+### The inbound rules (`agy-inbound-*`)
+
+The `inbound` group ([`inbound.md`](inbound.md)); its panels are the dashboard's *Inbound calls*
+row. Thresholds are for a pilot (tens of calls an hour); re-read them against the pilot's first
+weeks. Two page: a broken Application and the media-workers condition, both of which stop every
+caller of a tenant (or of the deployment) from reaching anyone.
+
+- **`agy-inbound-application-broken`** (pages). **Means:** the scheduled health check (every 15
+  min, `telephony/credentials/inbound-monitor.ts`) found a credential's Application changed in
+  Plivo's console (`url_mismatch`: its calls are refused with a hangup) or gone (`app_missing`: its
+  calls never reach us). **Check:** the WARN "Inbound Application does not match what is stored"
+  (`credentialId`, `tenantId`, `mismatched`). **Do:** super-admin → Telephony Credentials → that
+  credential → Check health, then **Re-point** (recreates a missing Application and moves the
+  linked numbers onto it). The gauge falls on the next pass.
+- **`agy-inbound-application-unchecked`**. **Means:** a credential's Application could not be
+  checked for 45 minutes: `unreachable` (Plivo did not answer) or `failed` (Plivo refused the
+  stored credentials, or the secret cannot be opened). **Check:** the WARN "Inbound Application
+  health check refused for a credential" (`code`). **Do:** `carrier_rejected`: the tenant rotated
+  or closed their Plivo account; rotate the credential's secret. `secret_unavailable`: the keyring
+  (`agy-credential-keyring-missing-keys`). `unreachable`: Plivo's status, our egress.
+- **`agy-inbound-connect-unavailable`** (pages). **Means:** the server runs with `MEDIA_WORKERS`
+  above 0 while a credential has inbound enabled: nobody is put through, every open-route caller is
+  told "we'll call you back" (IB8; deployment invariant 8). **Do:** `MEDIA_WORKERS=0` and redeploy;
+  or disable inbound on every credential first if the workers must stay.
+- **`agy-inbound-answer-fallback`**. **Means:** 2+ answers in an hour fell back (the answer threw)
+  or ran past the 4 s budget (`timed_out`): callers told to try again, with no Missed row.
+  **Check:** the ERRORs "Inbound answer over its budget" and "Inbound Plivo callback failed";
+  `agy-inbound-answer-slow`. **Do:** almost always Postgres (the answer's one transaction) or Redis
+  (the stream slot); fix that.
+- **`agy-inbound-answer-slow`**. **Means:** the answer's p95 is above 2 s (half its budget) over
+  15 minutes with 5+ answers. Plivo's own answer timeout is not verified yet (P0), so a slow answer
+  may already fail at the carrier. **Do:** as above.
+- **`agy-inbound-answer-refused`**. **Means:** 5+ answer callbacks in 15 minutes did not verify
+  (token, signature or nonce) and were hung up. **Check:** whether
+  `agy-inbound-application-broken` fires too (a stale token after a failed Re-point: Re-point);
+  else the WARN logs of `component=plivo-inbound-webhooks` name the credential: something else is posting
+  to the answer URL.
+- **`agy-inbound-calls-failed`**. **Means:** 3+ calls in an hour ended `failed`: answered, but the
+  carrier never opened our stream (or the slot was refused, or the answer ran out of budget after
+  writing). **Check:** those rows' `agency_calls` leg `error_code`; the carrier reaching
+  `PLIVO_WEBHOOK_BASE_URL`'s host for the media socket.
+- **`agy-inbound-callers-unserved`**. **Means:** callers have waited for 15 minutes with no offer
+  in the last 10: nobody who can take them is on the route's pool (all on a break, on a phone, or
+  outside the pool), or the connector is stuck. **Check:** the console's queue tiles; then the logs
+  of `component=agency-inbound-connector`. **Do:** staff the pool; a stuck connector clears on a
+  restart (callers on the line are ended `service_shutdown` with their Missed rows).
+- **`agy-inbound-unanswered-share`**. **Means:** over an hour, more than half of the open-hours
+  calls (at least 10) reached nobody (overflow, over capacity, hung up waiting). Usually staffing or
+  a route's limits, not a fault; a fault shows as offers ending `station_lost` / `lease_lost` on
+  the dashboard. **Do:** tell the account's supervisors; the Missed list has every caller.
 
 ### `agy-reports-pending-too-long`
 

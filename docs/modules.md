@@ -454,6 +454,7 @@ Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inboun
 | `apps/server/test/integration/agency/inbound-call-repository.test.ts` | 20 |
 | `apps/server/test/integration/agency/inbound-follow-up.test.ts` (the callback against the real claims, CA5, the clears, the live count of admitted calls, the identification reads) | 17 |
 | `apps/server/test/integration/agency/inbound-call-router.test.ts` (the router with a fake bridge: a `CallUUID` another tenant or credential holds refused on both paths, unrecorded messages spoken, the bridge's refusal un-admitting, an answer past its budget) | 15 |
+| `apps/server/test/integration/agency/inbound-kill-switch.test.ts` (the router with `agency_inbound_enabled` off: the closed message spoken by the carrier, no stream, a Missed row; on, as before; a failed flag read is not off) | 3 |
 | `apps/server/test/integration/agency/inbound-connect-repository.test.ts` (P2's agent side: offer / requeue / connect guarded on the session and racing, settlement at the end, the outcome and its replay, the lapse and the startup sweep, the busy probe's inbound arm and its plan, `settleFromInbound` per state, `unclaimUncharged`, `endSupersededByInbound`, the floor's marker, the campaign's `inbound_sticky_enabled`) | 35 |
 | `apps/server/test/integration/agency/inbound-agent-claim.test.ts` (real Lua: `reserveForInbound` from each state and every refusal, `available` refused `-3`, no attempt reserved onto a held session, `releaseInbound` by its own id, the rehydrate, an inbound offer racing a pacing reservation, 64 calls racing for one agent) | 10 |
 | `apps/server/test/unit/agency/pacing-inbound-waiting-event.test.ts` (the `inbound_waiting` bus event: round trip, bounds, clamps, malformed input) | 20 |
@@ -631,7 +632,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 62 |
 | `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 78 |
-| `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 22 |
+| `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 23 |
 | `apps/server/test/unit/api/routes/tenant.routes.test.ts` | 9 |
 | `apps/server/test/unit/api/routes/user-cache-invalidation.wiring.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/user-invite-mailer-isolation.test.ts` | 6 |
@@ -670,7 +671,7 @@ Files: `../proxy-agency-inbound.routes.ts`, `calls.ts`, `missed.ts`, `routes.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/api/routes/proxy-agency-inbound.test.ts` | 5 |
-| `apps/server/test/integration/api/inbound-routes.test.ts` (and P2: voicemail taken with the route's warnings on every read and write; a Missed row's voicemail streamed whole and by range under the list's rules, the flag) | 17 |
+| `apps/server/test/integration/api/inbound-routes.test.ts` (and P2: voicemail taken with the route's warnings on every read and write; a Missed row's voicemail streamed whole and by range under the list's rules; the flag gates the routes, never the Missed list, its voicemails or Mark handled) | 17 |
 
 ### `apps/server/src/api/validators/`
 
@@ -1095,23 +1096,24 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | `apps/server/test/unit/telephony/plivo/plivo-carrier.fixture.test.ts` | 64 |
 | `apps/server/test/unit/telephony/plivo/plivo-config.test.ts` | 20 |
 | `apps/server/test/unit/telephony/plivo/plivo-inbound-adapter.test.ts` (with `startRecording`, the Record API) | 19 |
-| `apps/server/test/integration/telephony/plivo-inbound-admin.test.ts` | 22 |
+| `apps/server/test/integration/telephony/plivo-inbound-admin.test.ts` | 23 |
 | `apps/server/test/unit/telephony/plivo/plivo-dial-rate.test.ts` | ~15 |
 | `apps/server/test/unit/telephony/plivo/plivo-signature.test.ts` | ~5 |
 | `apps/server/test/unit/telephony/plivo/plivo.adapter.test.ts` | 89 |
 
 ### `apps/server/src/telephony/credentials/`
 
-Per-tenant carrier credentials (BYOC, decisions B18–B22). `credential-sealer.ts`: AES-256-GCM envelope encryption under the env keyring (`TELEPHONY_CREDENTIAL_KEYS`), bound to tenant, credential, provider and version. `credential-specs.ts`: each BYOC carrier's form fields, validation and carrier check (Plivo); its number rule `plivoNumberToE164` lives in `packages/domain/src/plivo-number.ts`, shared with the inbound webhooks, and is re-exported here. `credential-service.ts`: create, rotate, verify, disable, enable, revoke, the hourly sweep (shred revoked once their calls are past the 2 h post-end hold, prune retired versions), `peek(id, purpose)` (row checks only, nothing opened) and `resolve(id, purpose)` (grace versions opened best effort) for the registry; `CredentialUnavailableError` carries a `kind`, and `verify` opens only the current secret and answers `invalid_transition` or `version_conflict` when its version-pinned write does not land. `secret.ts`: a box that never prints its value. `safe-issues.ts`: validation messages with no submitted value. `index.ts`: the process's one service, built from config; a keyring with no entries after trim (`keyringEntries`) is no store. `syncNumbers` copies an `active` credential's numbers from the carrier (`CredentialSpec.listNumbers`; Plivo: paged, fixed host, Basic auth, no redirects, at most 50 pages) into `phone_numbers`, pinned to the credential and assigned to its tenant untagged: a number registered elsewhere is a conflict, never taken over, and a number gone from the account is retired, never deleted. `revoke` is refused while inbound is enabled (`inbound_enabled`). `inbound-service.ts` (`TelephonyInboundService`, `getTelephonyInboundService` in `index.ts`): inbound on a Plivo credential (docs/inbound.md §8.1, §8.2, IB6): Enable (the Application made, or adopted by its name `inbound-<credential id>`), Disable, Health, Re-point (a missing Application recreated and the linked numbers moved), Link / Unlink a number (its previous app kept and restored), and the §8.2 cascade (`reconcileNumber`, `reconcileCredential`: route detached and link cleared in one transaction, then the previous app restored at the carrier; never throws). Each carrier call runs inside the transaction that records it, the credential row locked; every write audited in `super_admin_audit_log`.
+Per-tenant carrier credentials (BYOC, decisions B18–B22). `credential-sealer.ts`: AES-256-GCM envelope encryption under the env keyring (`TELEPHONY_CREDENTIAL_KEYS`), bound to tenant, credential, provider and version. `credential-specs.ts`: each BYOC carrier's form fields, validation and carrier check (Plivo); its number rule `plivoNumberToE164` lives in `packages/domain/src/plivo-number.ts`, shared with the inbound webhooks, and is re-exported here. `credential-service.ts`: create, rotate, verify, disable, enable, revoke, the hourly sweep (shred revoked once their calls are past the 2 h post-end hold, prune retired versions), `peek(id, purpose)` (row checks only, nothing opened) and `resolve(id, purpose)` (grace versions opened best effort) for the registry; `CredentialUnavailableError` carries a `kind`, and `verify` opens only the current secret and answers `invalid_transition` or `version_conflict` when its version-pinned write does not land. `secret.ts`: a box that never prints its value. `safe-issues.ts`: validation messages with no submitted value. `index.ts`: the process's one service, built from config; a keyring with no entries after trim (`keyringEntries`) is no store. `syncNumbers` copies an `active` credential's numbers from the carrier (`CredentialSpec.listNumbers`; Plivo: paged, fixed host, Basic auth, no redirects, at most 50 pages) into `phone_numbers`, pinned to the credential and assigned to its tenant untagged: a number registered elsewhere is a conflict, never taken over, and a number gone from the account is retired, never deleted. `revoke` is refused while inbound is enabled (`inbound_enabled`). `inbound-service.ts` (`TelephonyInboundService`, `getTelephonyInboundService` in `index.ts`): inbound on a Plivo credential (docs/inbound.md §8.1, §8.2, IB6): Enable (the Application made, or adopted by its name `inbound-<credential id>`), Disable, Health, Re-point (a missing Application recreated and the linked numbers moved), Link / Unlink a number (its previous app kept and restored), and the §8.2 cascade (`reconcileNumber`, `reconcileCredential` after a sync: route detached and link cleared in one transaction, then the previous app restored at the carrier; never throws; a credential disable runs none and keeps every link). Each carrier call runs inside the transaction that records it, the credential row locked; every write audited in `super_admin_audit_log`. The credential's inbound state says whether this deployment connects agents (`connects_agents`, `MEDIA_WORKERS`); a number's carries its open tenant-default Missed rows (`unrouted_missed`). `inbound-monitor.ts` (`startInboundMonitor`, from `bootstrap/voice.ts`, main process): `agency_inbound_connect_available` at boot, the boot warnings (inbound enabled with media workers on; in production with no `PLIVO_INBOUND_FALLBACK_ANSWER_URL`) and the Application health check every 15 minutes over every inbound-enabled credential (`runInboundHealthPass`, `agency_inbound_applications{health}`).
 
-Files: `credential-sealer.ts`, `credential-service.ts`, `credential-specs.ts`, `inbound-service.ts`, `index.ts`, `safe-issues.ts`, `secret.ts`
+Files: `credential-sealer.ts`, `credential-service.ts`, `credential-specs.ts`, `inbound-monitor.ts`, `inbound-service.ts`, `index.ts`, `safe-issues.ts`, `secret.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/telephony/credential-number-sync.test.ts` | 46 |
 | `apps/server/test/unit/telephony/credential-sealer.test.ts` | 30 |
 | `apps/server/test/unit/telephony/credential-service.test.ts` | 58 |
-| `apps/server/test/unit/telephony/inbound-service.test.ts` | 17 |
+| `apps/server/test/unit/telephony/inbound-monitor.test.ts` | 7 |
+| `apps/server/test/unit/telephony/inbound-service.test.ts` | 19 |
 
 ### `apps/server/src/transcription/`
 
@@ -1381,7 +1383,7 @@ _No dedicated test files._
 
 ### `packages/db/src/repositories/`
 
-Shared repositories: tenants, accounts, users, memberships, super-admins and their audit, phone numbers and assignments, account settings, provider concurrency, agency calls, staffing, call-analysis profiles, analysis jobs, audio files, announcements, feature flags, audit, usage counts. Inbound (`0024_inbound.sql`): `telephony-credential.repository.ts` stores a credential's inbound Application, its URLs and the token's hash (`findInbound`, `enableInbound`, `repointInbound` with the previous token's grace, `disableInbound` refused while numbers are linked, `inboundTokenMatches`; the hashes are never read back); `phone-number.repository.ts` reads a number's inbound link with what Link checks (`findInboundLink`, `listInboundForCredential`), links it under the credential's `FOR SHARE` lock in the caller's transaction (`linkInbound`) and clears it, returning it as it was (`clearInboundLink`); `telephony-credential.repository.ts`'s `lockInbound` holds the credential row for an inbound change, and `revoke` does not land while inbound is enabled; `usage-counts.repository.ts` UNION ALLs inbound calls with an account as the third arm; `agency-call.repository.ts`'s `'agency'` scope takes `origin = 'inbound'` legs.
+Shared repositories: tenants, accounts, users, memberships, super-admins and their audit, phone numbers and assignments, account settings, provider concurrency, agency calls, staffing, call-analysis profiles, analysis jobs, audio files, announcements, feature flags, audit, usage counts. Inbound (`0024_inbound.sql`): `telephony-credential.repository.ts` stores a credential's inbound Application, its URLs and the token's hash (`findInbound`, `enableInbound`, `repointInbound` with the previous token's grace, `disableInbound` refused while numbers are linked, `inboundTokenMatches`; the hashes are never read back); `phone-number.repository.ts` reads a number's inbound link with what Link checks (`findInboundLink`, `listInboundForCredential`), links it under the credential's `FOR SHARE` lock in the caller's transaction (`linkInbound`) and clears it, returning it as it was (`clearInboundLink`); `telephony-credential.repository.ts`'s `lockInbound` holds the credential row for an inbound change, and `revoke` does not land while inbound is enabled; `usage-counts.repository.ts` counts inbound calls with an account apart from the dials (calls, answered, connected, carrier time, hold time, talk and analysis seconds), the dial columns placed calls only; `telephony-credential.repository.ts`'s `listInboundEnabled` lists the credentials the scheduled health check walks; `phone-number.repository.ts`'s `findAll` names a number's live route (`inbound_route_name`) and `findUnroutedMissed` counts a number's open tenant-default Missed rows; `agency-call.repository.ts`'s `'agency'` scope takes `origin = 'inbound'` legs.
 
 Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.repository.ts`, `agency-campaign-agent.repository.ts`, `announcement.repository.ts`, `audio-file.repository.ts`, `audit.repository.ts`, `call-analysis-profile.repository.ts`, `dialer-analysis-job.repository.ts`, `feature-flag.repository.ts`, `membership.repository.ts`, `phone-number.repository.ts`, `provider-concurrency.repository.ts`, `super-admin-audit.repository.ts`, `super-admin.repository.ts`, `telephony-credential.repository.ts`, `tenant-phone-assignment.repository.ts`, `tenant.repository.ts`, `usage-counts.repository.ts`, `user.repository.ts`
 
@@ -1404,14 +1406,14 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/credential-call-insert.repository.test.ts` | ~7 |
 | `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~10 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
-| `packages/db/test/integration/repositories/phone-number-inbound.repository.test.ts` | 7 |
+| `packages/db/test/integration/repositories/phone-number-inbound.repository.test.ts` | 9 |
 | `packages/db/test/integration/repositories/phone-number-sync.repository.test.ts` | 18 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
-| `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 38 |
+| `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 39 |
 | `packages/db/test/integration/repositories/tenant.repository.test.ts` | ~13 |
-| `packages/db/test/integration/repositories/usage-counts.repository.test.ts` | 9 |
+| `packages/db/test/integration/repositories/usage-counts.repository.test.ts` | 10 |
 | `packages/db/test/integration/repositories/user-addressable-members.repository.test.ts` | ~11 |
 | `packages/db/test/unit/db/repositories/account-settings.repository.test.ts` | 24 |
 | `packages/db/test/unit/db/repositories/account.repository.test.ts` | 23 |
@@ -2207,15 +2209,15 @@ Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `s
 |---|---|
 | `apps/super-admin/src/__tests__/pages/SAAuditPage.test.tsx` | 1 |
 | `apps/super-admin/src/__tests__/pages/SAFeatureFlagsPage.test.tsx` | 34 |
-| `apps/super-admin/src/__tests__/pages/CredentialInboundSection.test.tsx` | 13 |
-| `apps/super-admin/src/__tests__/pages/PhoneNumberInboundPanel.test.tsx` | 7 |
-| `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 18 |
+| `apps/super-admin/src/__tests__/pages/CredentialInboundSection.test.tsx` | 15 |
+| `apps/super-admin/src/__tests__/pages/PhoneNumberInboundPanel.test.tsx` | 9 |
+| `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 19 |
 | `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 21 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.createAccount.test.tsx` | 9 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 16 |
 | `apps/super-admin/src/__tests__/pages/SATenantsPage.test.tsx` | 4 |
-| `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 22 |
+| `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 23 |
 | `apps/super-admin/src/__tests__/pages/SAUsersPage.test.tsx` | 9 |
 | `apps/super-admin/src/__tests__/pages/TenantMembersTab.test.tsx` | 4 |
 

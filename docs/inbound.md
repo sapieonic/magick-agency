@@ -107,6 +107,15 @@ only; with workers on, P2 keeps P1's answer (nobody is connected, logged once, Q
 inbound call on an agent's worker, and the cross-worker handover (a Plivo transfer to a new
 `<Stream>` URL on the agent's worker), are P3, after the P0 check.
 
+**It is loud, not silent** (`telephony/credentials/inbound-monitor.ts`, started by
+`bootstrap/voice.ts`): `MEDIA_WORKERS=0` is a deployment invariant while any credential has inbound
+enabled (`operations.md`, "Deployment invariants"; `DEPLOYMENT.md` 8.6). At boot the server sets
+`agency_inbound_connect_available` (1 with no workers, 0 with) and, when a credential has inbound
+enabled with workers on, logs a warning; the super-admin credential section says "Calls can't be
+put through to agents: media workers are on" (`connects_agents` on the credential's inbound state);
+`agy-inbound-connect-unavailable` pages while the gauge reads 0 and a credential has inbound
+enabled; and the route editor warns (S2's route warning).
+
 ### 3.3 The fallback answer XML
 
 Plivo fetches the Application's fallback answer URL when the answer URL fails or times out. Our own
@@ -130,6 +139,10 @@ being down. To host one:
 3. **Re-point** every credential with inbound enabled: an Application keeps the URL it was given
    until then (the health check says `stored_urls_current: false` meanwhile). The Application then
    fetches it with GET; our own route is fetched with POST.
+
+It is on the pre-deploy checklist (`DEPLOYMENT.md` 8.6 and 9), and with `NODE_ENV=production` the
+server warns at boot while a credential has inbound enabled and the variable is unset
+(`inbound-monitor.ts`).
 
 ### 3.4 What P1 builds of this (the webhook slice)
 
@@ -225,7 +238,12 @@ plays with `playClipSequenceThenHangUp` (docs/seams.md §3.1).
   calls older than the longest call (4 h) + 10 min. Inbound calls live in the process that answered
   them (with media workers, the primary: the stream URL carries no worker hint).
 - **Metrics**: `agency_inbound_calls_total{outcome}`, `agency_inbound_answer_seconds{result}`
-  (`stream`, `spoken`, `hangup`, `fallback`, `refused`, `timed_out`).
+  (`stream`, `spoken`, `hangup`, `fallback`, `refused`, `timed_out`); with P2 the queue's
+  (`agency_inbound_queue_waiting`, `agency_inbound_wait_seconds`, `agency_inbound_offers_total`);
+  and the two operations gauges, `agency_inbound_connect_available` (§3.2) and
+  `agency_inbound_applications{health}` (§8.1, the scheduled health check). Grafana: the
+  dashboard's *Inbound calls* row and the `inbound` alert group (`grafana/README.md`; runbooks in
+  `operations.md`, "Alert runbooks").
 - **Fixture**: `plivo-inbound.fixture.json`, every entry unverified until P0; the reader depends on
   neither `CallStatus` nor `Direction` being present (it refuses only `Direction` naming another
   direction).
@@ -554,7 +572,7 @@ Analysis of voicemails is P3.
 |---|---|---|
 | Tenant's Plivo credential | super-admin | **Enable inbound**: create one Plivo Application on the tenant's account (answer, hangup and fallback answer URLs); store `inbound_app_id`, the URLs, the token's hash. Health check and Re-point on the credential page; **Disable** deletes it, refused while numbers are linked |
 | Each number | super-admin (IB6) | **Link to inbound** per number, never on sync. Store the number's previous Plivo app (`inbound_previous_app_id`) so Unlink restores it |
-| Tenant / account | super-admin | Flag `agency_inbound_enabled` (default off) gates the console surfaces; calls on linked numbers are always answered |
+| Tenant / account | super-admin | Flag `agency_inbound_enabled` (default off), the kill switch: off, every call on the account's linked numbers is answered with the closed message by the carrier (no queue, no stream, no voicemail) with its Missed row, and the route editor and queue tiles are hidden; the Missed list, its voicemails and Mark handled, and the finish routes of calls already taken stay available |
 | Account | account admin (`agency.inbound.write`) | Inbound routes: name, numbers, hours/timezone/holidays, clips (greeting, hold, closed, busy, recording notice), sticky mode/wait/lookback, agent pool, queue limits, after-hours and overflow actions, recording and summary profile, outcome catalog for unmatched callers |
 | Campaign | supervisor | Optional `inbound_sticky_enabled` (default on) |
 | Agent | — | No setting. Sees their own Missed rows (`agency.inbound.read`, floored at `agent`) |
@@ -606,28 +624,49 @@ Refusals are the credential routes' codes (`inbound_enabled`, `inbound_not_enabl
 - A credential the carrier refuses (the tenant closed or rotated the account) that is not active may
   Disable inbound without deleting the Application, audited `application_deleted: false` with the
   app id to remove by hand; an active one must delete it.
+- **Health on a timer** (`telephony/credentials/inbound-monitor.ts`, main process, from
+  `bootstrap/voice.ts`): every 15 minutes, and once at boot, every credential with inbound enabled
+  and not revoked (`listInboundEnabled`; a disabled one too, since it still answers) is checked as
+  the button does, one at a time; the results are counted in `agency_inbound_applications{health}`
+  (`ok`, `url_mismatch`, `app_missing`, `unreachable`, and `failed` when the check could not run:
+  the carrier refused the credential or its secret cannot be opened), every series set each pass,
+  and each one not `ok` is logged with its credential and tenant. With none enabled nothing is
+  asked or logged and the gauges read 0. Alerts: `agy-inbound-application-broken` (pages) and
+  `agy-inbound-application-unchecked`.
+- **Before a route exists.** The Link confirmation says that until an account route answers the
+  number its callers hear the closed message. The numbers list badges a linked number no route
+  answers "Inbound · no route" (`inbound_route_name` on the list, `GET /super-admin/phone-numbers`),
+  the credential's numbers say "no route", and a number's Inbound panel counts its open Missed rows
+  that reached no account (§8.3: `unrouted_missed`, count and the latest;
+  `phoneNumberRepository.findUnroutedMissed`, on `idx_agency_inbound_calls_missed`), since no
+  console screen lists them. The setup order is `operations.md`, "Setting up inbound calls for a
+  tenant".
 
 ### 8.2 Number lifecycle cascade
 
-One function, called from account tagging, unassign, retire by sync (PL5), credential disable and
-revoke: marks the route number inactive, clears the link, and while the credential still works
-unlinks the Plivo number back to its previous app. Revoke is refused while numbers are linked.
-Each step audited.
+One function, called from account tagging, unassign, retire by sync (PL5) and revoke: marks the
+route number inactive, clears the link, and while the credential still works unlinks the Plivo
+number back to its previous app. Revoke is refused while numbers are linked. Each step audited.
+A credential disable is not a cascade (below): its numbers stay linked.
 
 **As built:** `TelephonyInboundService.reconcileNumber` / `reconcileCredential`. For each linked
-number that may no longer be (not `active`, or not assigned to its credential's tenant; on a
-credential disable, every linked number): its route detached (`detachNumberEverywhere`,
+number that may no longer be (not `active`, or not assigned to its credential's tenant): its route detached (`detachNumberEverywhere`,
 `number_unlinked`) and its link cleared in one transaction, committed whatever the carrier says;
 then, while the number is still the account's (`active`), put back on its previous app through the
 credential (`call_control`: a disabled credential still opens). Audited `phone_number.inbound_unlinked`
-with `cause` (`unlinked` by hand, `unassigned`, `retired_by_sync`, `retired`, `deleted`,
-`credential_disabled`) and `carrier` (`restored`, `number_missing`, `skipped_not_active`, `failed`:
+with `cause` (`unlinked` by hand, `unassigned`, `retired_by_sync`, `retired`, `deleted`; rows
+written before credential disables stopped unlinking may say `credential_disabled`) and `carrier` (`restored`, `number_missing`, `skipped_not_active`, `failed`:
 the previous app id is in the row, to put back by hand). It never fails the write that called it (a
 failure is logged; the next sync's reconcile retries). Call sites: `DELETE /super-admin/phone-numbers/:id/assign/:tenantId`,
 `DELETE /super-admin/phone-numbers/:id` (retire), `POST …/:id/delete`, `PUT /super-admin/phone-numbers/:id`
-to a retired or deleted status, `POST /telephony-credentials/:id/sync-numbers` (after the sync) and
-`POST /telephony-credentials/:id/disable`. The Application stays on a credential disable (Disable
-inbound removes it). **Revoke** is refused while inbound is enabled (`inbound_enabled`, 409, naming
+to a retired or deleted status and `POST /telephony-credentials/:id/sync-numbers` (after the sync).
+**A credential disable keeps every link, route attachment and the Application**
+(`POST /telephony-credentials/:id/disable` runs no cascade): the numbers stay on our Application at
+Plivo, and while the credential is disabled its calls are answered with the closed message and a
+Missed row (§10, the answer's `credentialStatus`); enabling it again answers them as before, with
+nothing to rebuild. It used to unlink every number and detach it from its route, so a disable and
+an enable lost every account's route numbers; the number is still the tenant's, so nothing
+requires that. **Revoke** is refused while inbound is enabled (`inbound_enabled`, 409, naming
 the linked count), in the service and in the revoking statement (and by
 `ck_telephony_credentials_inbound_revoked`). **Account tagging** has no write path in this build
 (`tenantPhoneAssignmentRepository.tagToAccount` / `untagFromAccount` have no caller): tags do not
@@ -638,12 +677,15 @@ for the route's own attach rule; a tagging route, when one is added, should call
 
 Plivo numbers sync to the tenant untagged, so several accounts may share one:
 matched contact's account (if it may use the number) → the number's route → tenant default
-(closed message + Missed row, no account).
+(closed message + Missed row, no account). The tenant default's Missed rows are shown to
+super-admins on the number's Inbound panel (count and latest, §8.1), the only screen that can.
 
 ### 8.4 The account's console (built)
 
-Behind `agency_inbound_enabled`: every route below answers `403 inbound_disabled` with it off, and
-the console shows none of it. Wire: `packages/contracts/src/api/agency/inbound.ts`.
+Behind `agency_inbound_enabled`: the routes below answer `403 inbound_disabled` with it off,
+except the Missed list, a row's voicemail and Mark handled, which stay readable and workable (the
+kill switch, §8.1: the follow-ups of calls taken before it stay someone's to work), as the finish
+routes do. Wire: `packages/contracts/src/api/agency/inbound.ts`.
 
 **API** (`/proxy/agency/inbound/*`, B16): the public routes
 (`apps/server/src/api/routes/proxy-agency-inbound.routes.ts` with `proxy-agency-inbound/`) check
@@ -724,7 +766,7 @@ The campaign's `inbound_sticky_enabled` is "Put callers through to their agent" 
 settings and builder (P2), shown with `agency_inbound_enabled` on and sent on every save like the
 other behaviour fields (with the flag off, the loaded value goes back as it came). Not built here: a
 console surface for tenant-default Missed rows (`account_id` NULL: the API lists only the
-request account's); uploading audio files (the console lists the account's; none can be added
+request account's; super-admins see them per number, §8.1); uploading audio files (the console lists the account's; none can be added
 from it yet).
 
 ## 9. Data model (built: `0024_inbound.sql`, `0025_inbound_checks_validate.sql`, `0026_inbound_live_indexes.sql`)
@@ -781,8 +823,13 @@ holds are `packages/contracts/src/agency/inbound.ts`, pinned by
   revoked credential cannot hold an Application.
   **`phone_numbers`**: `inbound_linked_at` (the link flag, only on a synced number) and
   `inbound_previous_app_id`.
-- **Usage counts**: the third arm (`usage-counts.repository.ts`): inbound calls with an account
-  count as `dials` (every agency call that began in the window), windowed on `arrived_at`.
+- **Usage counts** (`usage-counts.repository.ts`, the super-admin Usage page): inbound calls with
+  an account are counted apart from the dials, windowed on `arrived_at`: `inbound_calls`,
+  `inbound_answered_calls`, `inbound_connected_calls`, carrier time `inbound_seconds` (answer to
+  end, what the carrier bills, messages and holding included), `inbound_hold_seconds` (queued to
+  bridged, else to the end), `inbound_talk_seconds`, `inbound_analysis_audio_seconds`. The dial
+  columns count placed calls only, as before inbound. A tenant-default call (no account) is not
+  counted (no row to land in).
 
 The two big tables' CHECKs are added `NOT VALID` by 0024 and validated by 0025 (0009 / 0010's split).
 `0026` adds the indexes the reads need: `idx_agency_inbound_calls_account_live` (IB5's per-account
@@ -839,7 +886,10 @@ The agent side of `agency_inbound_calls` (inventory and every CHECK: `packages/d
   with a follow-up (the spine is durable, so the follow-up survives).
 - While we are unreachable Plivo plays the Application's fallback answer XML.
 - A disabled or invalid credential: answered if the signature still verifies (closed message +
-  Missed row), flagged on the credential page.
+  Missed row), flagged on the credential page. Its links and routes are kept (§8.2), so enabling
+  it again answers as before.
+- An Application changed or deleted in Plivo's console: found by the scheduled health check
+  (§8.1) within 15 minutes, `agy-inbound-application-broken`.
 
 ## 11. Reporting (P3)
 
@@ -857,6 +907,13 @@ inbound section in account reports.
 | P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | **done**. **Foundation done** (`feat(db,contracts,server,console,mobile): inbound P2 foundation`, §9.1): `0027_inbound_connect.sql`; the contracts (`AgencyInboundCall`, the `inbound_call` and `customer_waiting` frames for console stations only, release reason `inbound_call`, the inbound call codes, `customer_on_inbound_call`, the queue tile, `voicemail_url`, `on_inbound_call`, the constants, the reserved code `inbound_call`); the `inbound_waiting` bus event with no consumer; the agent hash's `inbound` field (`reserveForInbound`, `releaseInbound`, `rehydrateInbound`, `available` refused `-3` and answered `409 inbound_call_live`, no attempt reserved onto it); the spine's agent-side writes; the busy probe's inbound arm (pacing, the agent's own dial and retry, the soft phone's pre-dial); `settleFromInbound` and `unclaimUncharged`; the campaign's `inbound_sticky_enabled` on create, PATCH and retry. Nothing connects yet: the connector, queue, hold loop, voicemail and the console panel follow. `AGENCY_INBOUND_AVAILABLE_ACTIONS` stays `callback` until the voicemail flow lands. **Bridge and voice done** (WP-B, docs/seams.md §3.1): a connectable call is parked (borrowed-unbound; its budget, answer XML stream timeout and slot TTL are parked + max duration; a parked backstop), `playInboundHold` (the preamble once, then the hold clip or the built-in generated hold tone on a loop, Q24; never hangs up), `stopInboundHold`, `recordInboundAudio` (prompt, beep, a bounded carrier tap with nobody bound), the bind stopping the hold synchronously, re-arming the max duration and counting talk time from it, and the recording from `bridged` through Plivo's Record API (its request and callback shapes unverified until P0). **Connector done** (WP-C1, §6 "The server"): the `queue` plan gated on the flag and one process, the preamble then the queue, sticky loose/strict, the team queue and its limits, the offer and the bind, the release hook taking an agent from wrap-up, `inbound_waiting` consumed by pacing, the station's drop and reconnect, the restart, the outcome routes and their audit, the lapse sweep, the queue tiles route, the metrics; `onPreambleDone` added to the hold seam and `cleared` to `customer_waiting`. **In-flight clash and voicemail done** (WP-C2, `feat(server,contracts,console): inbound P2 in-flight clash and voicemail`; §5.4, §7, §8.4): a queued caller's ringing dial cancelled on Plivo and its agent handed the call (held through the caller's preamble, never `available`; the dial `canceled` / `inbound_call`, its contact uncharged, released `inbound_call`; the bridged-first race kept as a call; VoiceLink and the soft phone's own dial left alone); a caller past the maximum wait marked leaving at once so no lock waits behind an exit; voicemail after hours and from the queue (recorded from our stream, kept when the caller spoke, a WAV in the bucket on the call-data retention, the Missed row with `voicemail_url`, streamed by `GET /inbound/missed/:id/voicemail` with ranges); `AGENCY_INBOUND_AVAILABLE_ACTIONS` widened; route warnings for a silent overflow or a voicemail with no prompt (API and editor, advisory). No migration. Tests (on the code commit): `pnpm lint` clean; unit: server 477 files, 9458 passed (1 expected fail, 42 skipped), console 316 files, 6014, contracts 13 files, 367; server integration `INTEGRATION_LANE=rest` 239 files, 2513 passed (9 expected fail, 2 skipped), `wall-clock` 3 files, 15; new suites `inbound-clash-voicemail-e2e` 5, `agency-dialer-inbound-clash` 7, `inbound-voicemail` 5, `inbound-route-warnings` 6, the connector races +7 (19), the routes +4 (17). Open for P0: the overflow message's spoken stand-in (above). **Review fix pass done** (`fix(server,console): inbound P2 review fixes`; §4.3, §5.2, §5.4, §6, §7, §8.4): the station heartbeat renews a `wrapup` lease this process vouches for (45 s, as `available`'s), so the release hook takes an agent from a wrap-up of any length with no `available` instant and a `/break` asked for during it is queued, while an unvouched `wrapup` key lapses and rehydrates as `break`; `releaseAgent` announces `available` only after its mirror and frame; `inbound_waiting` holds no team agent for a strict caller whose sticky agent is not away or for a hand-over, and the connector searches again on each republish; no hand-over (so no cancelled dial) to a phone, a station not OPEN or the soft phone; a failed `connected` write ends `answered`, not `abandoned_in_queue`; the inbound stop ends and settles its calls before the runtime stops; a turned-away caller asks for no recording; a voicemail's budget covers its recording whatever the account's ceiling, a voicemail whose row cannot be written is discarded, the purge's voicemail step runs last and survives a failed delete or a missing bucket, and playback has no automatic HEAD; the Insights override lookup skips `inbound_call` (docs/insights.md "System dispositions"); the console says a call on offer went back to the queue when a reconnect finds it gone. By design and documented: the outcome window's busy number (§6). No migration. Tests (on the code commit): `pnpm lint` clean; unit: server 478 files, 9467 passed (1 expected fail, 42 skipped), console 316 files, 6016; server integration `INTEGRATION_LANE=rest` 239 files, 2520 passed (9 expected fail, 2 skipped; one unhandled timer error from `report-assembler-deadline.test.ts`, a flake in a file this pass does not touch), `wall-clock` 4 files, 19; `packages/db` integration 68 files, 696; new suites `inbound-wrapup-lease` 4 (wall-clock), `station-heartbeat-lease` 5; the connector races +3 (22), `inbound-connect-e2e` +1 (14), `inbound-clash-voicemail-e2e` +1 (6), the insights oracle +1 (8), the state cycle +1 (2). **Console done** (WP-D, §6): the station's `inbound_call` and `customer_waiting` handling and restore after `ready`, the inbound chime, `InboundCallView` in the station's geometry with the outcome, notes, callback, hang-up, mute, DNC and the lapse countdown, the waiting pill, the supervisor's queue tiles and the floor's "Inbound call", the campaign's "Put callers through to their agent", voicemail playback on the Missed list and the route editor's actions from `AGENCY_INBOUND_AVAILABLE_ACTIONS`; built against the call routes' paths in `api/inbound.ts` (`INBOUND_PATHS`) and mock answers; since the connector landed, those paths are in the route table's console-paths fixture (`agency-route-table.test.ts`: served, at the console's path and method). Not run here: the console in a browser against a running server. **Verification pass done** (`test(db): …`, `test(server): …`; no product change): the full run's three reds were test-order assumptions, each reproduced and made deterministic. The 0003 and 0004 partial-index plan tests plan over a roster and attempts of their own (`insertPlanRoster`): over what earlier files left (`agency_contacts` analyzed empty, the partial indexes bloated by dead rows, `idx_agency_contacts_insights` rebuilt small by a down → up across `0026`) the planner priced indexes by pages and took the insights index; over a campaign-shaped roster it takes the partial indexes with or without `0026`, so no index changed. `inbound-connect-e2e` 2b read B's offer and A's cleared "customer waiting" frame at the instant the spine row read `offered`, which the connector commits before it sends them; it now waits for both and pins A's notices as exactly [waiting, cleared]. Counts in `status.md` "Test counts" |
 | P3 | Mobile app frames (Dart wire), pickups from break and soft phone, media-worker handover, reports/Insights, "press 1 for a callback" if DTMF works | not started |
 | P4 | VoiceLink behind a carrier-module `inbound` capability | not started |
+
+**Operations review fixes** (`fix(server,super-admin,db,contracts,observability,grafana): inbound operations, monitoring, kill switch and usage`):
+media workers on made loud (§3.2), the fallback URL on the checklist with a boot warning (§3.3),
+the Application health check on a timer (§8.1), the Grafana inbound rules and dashboard row, the
+onboarding hole closed in super-admin (§8.1, §8.3), the flag as the kill switch with the Missed
+list readable (§8.1, §8.4), a credential disable that keeps its links (§8.2), inbound counted
+apart in usage with carrier and hold time (§9). No migration.
 
 P1 can be built and tested end to end against the mock Plivo carrier before P0 runs; P0's results
 then correct the fixture. Contract changes run the mobile `agency_wire` `dart test` before commit
