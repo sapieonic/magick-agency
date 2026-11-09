@@ -203,15 +203,20 @@ same reason (no bootstrap state), and none of them opens a secret except through
 an inbound call (`api/routes/webhooks/plivo-inbound.ts` under `/api/v1/webhooks/plivo`: the
 credential's purpose token, the V3 signature over the URL stored on the credential plus the query,
 the per-credential nonce, the XML Plivo runs); what the call means is the agency area's, reached
-only through `InboundCallRouter`: `answer(arrival)` returns a decision (`stream` with the URL,
-`closed`, `hangup`, `fallback`) and `ended(hangup)` settles the call and returns its media leg,
-which the route then hands to the bridge as a carrier hangup (`handleCarrierStatus`). The
+only through `InboundCallRouter`: `answer(arrival, { signal })` returns a decision (`stream` with
+the URL; `spoken` with an `InboundSpokenMessage`, `closed`, `callback` or `busy`, whose words and
+XML are the voice area's, `PLIVO_INBOUND_SPOKEN_XML`; `hangup`; `fallback`), and the route aborts
+`signal` when the answer's budget runs out and it has answered the fallback message, after which
+the router places nothing more and leaves no follow-up; `ended(hangup)` settles the call and
+returns its media leg, which the route then hands to the bridge as a carrier hangup
+(`handleCarrierStatus`). The
 implementation is `agency/inbound/inbound-call-router.ts`, registered by `bootstrap/agency.ts`
 (`startInboundCalls`, after the startup sweep) and cleared at its stop; until then an arriving call
 is answered with the fixed fallback message and nothing is written. Tests:
 `test/unit/api/routes/plivo-inbound-webhooks.test.ts` (the route with a stub router, the unwired
-default included) and `test/integration/telephony/plivo-inbound-e2e.test.ts` (through `buildApp`
-and the bootstraps).
+default included, each spoken message, the signal), `test/integration/agency/inbound-call-router.test.ts`
+(the router on real Postgres with a fake bridge) and `test/integration/telephony/plivo-inbound-e2e.test.ts`
+(through `buildApp` and the bootstraps).
 
 ## 4. Shared infrastructure
 

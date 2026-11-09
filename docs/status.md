@@ -1075,16 +1075,24 @@ this branch: every count below is a local run, so the renderer's PDF suite on Gi
 ### Inbound calls 2026-11-09 (IB1–IB8, [`inbound.md`](inbound.md))
 
 Customers ringing back the Plivo numbers agency dials from, answered on our stream and turned into
-follow-ups when nobody takes them. Designed and locked the same day (IB1–IB8). **P1's foundation is
-built**; the three P1 slices that build on it (the super-admin's Application and number links, the
-webhooks and follow-ups, the console's routes and Missed list) are not.
+follow-ups when nobody takes them. Designed and locked the same day (IB1–IB8). **P1 is built**: the
+foundation below, then three slices on it (the super-admin's Application and number links with the
+§8.2 cascade; the answer, hangup and fallback webhooks with what callers hear, the Missed row, the
+inbound callback and the sweep; the console's routes and Missed list with Call back), then an
+independent review's fixes (`inbound.md` §12): a `CallUUID` another tenant or credential holds is
+refused; the live-index migration renumbered `0026`; IB5 counts admitted callers only; CA5's
+code-less sweep reads an index of inbound callbacks; read-only carrier calls out of the operator
+transactions; an answer past its budget leaves no follow-up; a second Re-point refused while the
+first's token is still needed; a message with no recording is spoken by the carrier, never
+silence. Nobody is connected to an agent yet (P2).
 
 | Area | What was built |
 |---|---|
-| Database | `0024_inbound.sql`: `agency_inbound_routes`, `agency_inbound_route_numbers` (one live route per number), the spine `agency_inbound_calls` (also the Missed row), `agency_calls.origin = 'inbound'` with `inbound_call_id`, contact `callback_source` / `callback_due_at`, `agency_campaigns.inbound_sticky_enabled`, the credential's inbound Application, URLs and token hash, numbers' `inbound_linked_at`; `0025_inbound_checks_validate.sql` validates the big tables' CHECKs (`packages/db/BASELINE.md`) |
+| Database | `0026_inbound_live_indexes.sql`: IB5's per-account live index, the inbound callbacks index, `callback_source` in the insights index. `0024_inbound.sql`: `agency_inbound_routes`, `agency_inbound_route_numbers` (one live route per number), the spine `agency_inbound_calls` (also the Missed row), `agency_calls.origin = 'inbound'` with `inbound_call_id`, contact `callback_source` / `callback_due_at`, `agency_campaigns.inbound_sticky_enabled`, the credential's inbound Application, URLs and token hash, numbers' `inbound_linked_at`; `0025_inbound_checks_validate.sql` validates the big tables' CHECKs (`packages/db/BASELINE.md`) |
 | Contracts | `src/agency/inbound.ts` (vocabularies, route config, defaults, limits), `src/api/agency/inbound.ts` (route DTOs, the Missed list), `src/api/platform/super-admin-inbound.ts` (credential inbound state and health, number link, super-admin audit actions), error codes `errors.ts` §6, flag `agency_inbound_enabled` (default off), permissions `agency.inbound.read` (agent) and `agency.inbound.write` (account admin) |
 | Domain | `inbound-schedule.ts` (open at an instant; the exact next opening across DST and holidays), `plivo-number.ts` (moved from the credential specs: one number rule for sync and webhooks), `zone-clock.ts` (the wall-clock primitives moved out of `calling-hours.ts`) |
-| Server | `agency/inbound/route-config.ts` (the route body's zod schemas; a PATCH judged as the route it makes), `db/repositories/agency/inbound-route.repository.ts` and `inbound-call.repository.ts`, `telephony/plivo/inbound-token.ts`; the credential's inbound storage in `packages/db`; usage counts' third arm; the `'agency'` call scope takes inbound legs; audit vocabulary |
+| Server | `agency/inbound/route-config.ts` (the route body's zod schemas; a PATCH judged as the route it makes), `db/repositories/agency/inbound-route.repository.ts` and `inbound-call.repository.ts`, `telephony/plivo/inbound-token.ts`; the credential's inbound storage in `packages/db`; usage counts' third arm; the `'agency'` call scope takes inbound legs; audit vocabulary. Then the slices: `telephony/credentials/inbound-service.ts` and the super-admin inbound routes; `api/routes/webhooks/plivo-inbound.ts`, `seams/inbound-call-router.ts`, `agency/inbound/inbound-call-router.ts`, `identify-caller.ts`, `inbound-clips.ts`, the bridge's `acceptInboundCall` / `playClipSequenceThenHangUp`; the console routes `proxy-agency-inbound/` |
+| Console, super-admin | Settings → Inbound calls (routes and the route editor), Missed calls (supervisors and agents) with Call back into the soft phone; the credential page's Inbound section, the numbers page's Link / Unlink |
 
 **Not verified here:** the mobile `agency_wire` Dart tests (no Dart or Flutter in this environment;
 the contract change the app sees is one new flag key in `platform.json`, which `FeatureFlags`
@@ -1093,7 +1101,37 @@ account.
 
 ## Test counts
 
-Latest run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
+Latest run, 2026-11-09, inbound calls P1 (the foundation, the three slices and the review's fixes,
+`inbound.md` §12), from inside each package, on this worktree's own test database and Redis db with
+no other run sharing them: `pnpm lint` clean in 9 packages; `pnpm test:grafana` 33 and
+`pnpm test:release` 10 pass; `contracts-literals --check` up to date (51 vocabularies). Not rerun
+(untouched by the fix pass): `apps/report-renderer`, `packages/web-ui`, `packages/domain`,
+`pnpm build`, and `apps/mobile` (no Flutter or Dart here; the only contract change since the
+slices is a super-admin error code, which the app does not decode).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9305 passed + 1 expected fail + 42 skipped (468 files) | rest lane 2416 passed + 9 expected fail + 2 skipped (231 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 684 (67 files) |
+| `apps/console` | 5913 (309 files) | — |
+| `apps/super-admin` | 500 (37 files) | — |
+| `packages/contracts` | 361 (12 files) | — |
+| `packages/observability` | 14 (3 files) | — |
+
+Inbound's own files within those counts: server unit `plivo-inbound-webhooks` 17,
+`inbound-service` 17, `plivo-inbound-adapter` 12, `agency/inbound/*` 25, `webrtc-bridge-inbound`
+12; server integration `inbound-call-router` 15, `inbound-call-repository` 20, `inbound-follow-up`
+17, `inbound-route-repository` 18, `api/inbound-routes` 13, `plivo-inbound-e2e` 18,
+`plivo-inbound-admin` 22; db integration `inbound-migration` 31, `inbound-live-indexes-migration` 6,
+`phone-number-inbound.repository` 7. `multiple-running-campaigns-migration`'s busy-probe plan test,
+which failed once in a full `packages/db` run and passed alone, now seeds and analyzes its own
+roster inside its rolled-back transaction: its plan had followed the statistics and index sizes
+earlier files left on `agency_contacts`. Reproduced red on the old test (and green on the new) with
+the live-number index bloated by earlier inserts and `idx_agency_contacts_customer_history` rebuilt
+small, as another file's down → up leaves it: the planner then served the probe from that index.
+Not caused by the inbound indexes or a widened probe (`numberLiveSql` is unchanged).
+
+Previous run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
 gate on schedules and emails, `subject_changed`, the restart reclaim, final callback refusals) and
 the simplification pass (shared helpers, one definition-key list in the contracts, the workbook's
 Definition cells filled, the console's outcome words in the workbook, lighter dataset reads,
@@ -1448,10 +1486,10 @@ files are listed in [`modules.md`](modules.md).
 Chromium layer, S3 lifecycle and the signed callback over the internet are tested only with
 mocks and the in-process renderer); see "Reports 2026-11-08" above.
 
-**Inbound calls** ([`inbound.md`](inbound.md) §12): P1's three slices on the foundation (the
-super-admin's Application and number links with the §8.2 cascade, the answer and status webhooks
-with follow-ups and the sweep, the console's routes and Missed list), then P2 (connecting agents),
-P3 and P4. P0 needs a Plivo account.
+**Inbound calls** ([`inbound.md`](inbound.md) §12): P1 is built; next is P2 (connecting agents:
+parked mode, the queue, sticky routing, voicemail), then P3 and P4. P0 needs a Plivo account. Open
+from P1: recorded built-in clips (an unset message is spoken by the carrier), the campaign's
+`inbound_sticky_enabled` toggle, a surface for tenant-default Missed rows.
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
@@ -1466,7 +1504,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Shutdown grace | Ratify `stop_grace_period: 45s`, now in `docker/docker-compose.prod.yml` (the completion-email drain is 30 s; Docker's default grace is 10 s), and the new wait for in-flight pacing ticks (5 s bound) |
 | Tidy-up defaults | Ratify the **default, pending Manas** rows of the 2026-10-16/17 rulings, including the `en-IN` display locale and the rounding rule |
 | Rate floors | Campaign rates withheld under 25 dials, agent rates under 20: one number or two? |
-| Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up (superseded for Plivo numbers linked to inbound by IB1–IB8, `inbound.md`, not built); abandon clip upload-only; no API keys; super-admins created fresh |
+| Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up (superseded for Plivo numbers linked to inbound by IB1–IB8, `inbound.md`: P1 built, answering and following up, nobody connected yet); abandon clip upload-only; no API keys; super-admins created fresh |
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused; when built, it also clears the owner of every contact it retires (CA11, "Contact assignment" above) |

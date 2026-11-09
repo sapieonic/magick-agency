@@ -434,7 +434,7 @@ Files: `account.ts`, `agent-presence.ts`, `agent.ts`, `campaign.ts`, `definition
 
 Inbound calls (docs/inbound.md, IB1–IB8). `route-config.ts`: the route body as zod schemas (`inboundRouteCreateSchema`, `inboundRouteUpdateSchema`), `parseInboundRouteCreate` (defaults from `AGENCY_INBOUND_ROUTE_DEFAULTS`) and `parseInboundRouteUpdate` (the patch merged onto the stored route and judged whole, so the cross-field rules hold; the changed fields for the audit), refusals as `{ path, message }`; times, dates and the zone judged by the domain's schedule rule, the outcome catalog by the campaign catalog's rules without overrides. The rows are `db/repositories/agency/inbound-route.repository.ts` and `inbound-call.repository.ts`; the token `telephony/plivo/inbound-token.ts`.
 
-P1's answering half (docs/inbound.md §3, §7, §10, §12). `inbound-call-router.ts`: `AgencyInboundCallRouter`, the agency side of the inbound seam (`seams/inbound-call-router.ts`, docs/seams.md §3.5): the answer (the number rung on the credential, refused as `rejected` when not linked, active and the tenant's; the route and account by §8.3; the caller identified; DNC flagged; the plan `closed` or `overflow` from the credential's status and the route's hours; admission under the route's `max_concurrent` counted under a per-route advisory lock in the transaction that writes the spine and leg; the bridge's `acceptInboundCall`; our stream), the clip sequence in the background and the call's settlement from how it ended (`outcomeAfterPlayback`), the hangup (`ended`: the play loop owns a live call, else it is settled `abandoned_in_queue`), every follow-up (the Missed row, and the matched contact's inbound callback booked in the transaction that ends the spine, due at the route's next opening, re-checked against DNC failing closed), the sweep, and `startInboundCalls` (startup sweep, then the seam registered, then the periodic sweep; called by `bootstrap/agency.ts`). `identify-caller.ts`: `identifyInboundCaller` and the pure `rankInboundCaller` (§4.1: the match, ranked candidates with their signal; reusable for P2's sticky routing). `inbound-clips.ts`: a route's clip slots to clip-cache hashes, tenant and account scoped as the abandon clip; a slot with no clip plays nothing. The reads are `db/repositories/agency/inbound-answer.repository.ts`; the contact's callback is `contact.repository.ts`'s `bookInboundCallback`.
+P1's answering half (docs/inbound.md §3, §7, §10, §12). `inbound-call-router.ts`: `AgencyInboundCallRouter`, the agency side of the inbound seam (`seams/inbound-call-router.ts`, docs/seams.md §3.5): the answer (the number rung on the credential, refused as `rejected` when not linked, active and the tenant's; the route and account by §8.3; the caller identified; DNC flagged; the plan `closed` or `overflow` from the credential's status and the route's hours; admission under the route's `max_concurrent` counted under a per-route advisory lock in the transaction that writes the spine and leg; a `CallUUID` another tenant or credential holds refused with nothing written; a message with no recording answered `spoken` by the carrier and ended at once with its follow-up; the bridge's `acceptInboundCall`, a call its shared scopes turn away un-admitted (`refuseAdmission`); our stream; an answer past its budget (the seam's abort signal) placing nothing more and ending `failed` with no follow-up), the clip sequence in the background and the call's settlement from how it ended (`outcomeAfterPlayback`), the hangup (`ended`: the play loop owns a live call, else it is settled `abandoned_in_queue`, or `failed` with no follow-up when the fallback answered it), every follow-up (the Missed row, and the matched contact's inbound callback booked in the transaction that ends the spine, due at the route's next opening, re-checked against DNC failing closed), the sweep, and `startInboundCalls` (startup sweep, then the seam registered, then the periodic sweep; called by `bootstrap/agency.ts`). `identify-caller.ts`: `identifyInboundCaller` and the pure `rankInboundCaller` (§4.1: the match, ranked candidates with their signal; reusable for P2's sticky routing). `inbound-clips.ts`: a route's clip slots to clip-cache hashes, tenant and account scoped as the abandon clip; a clip set but unplayable is skipped (an unset message slot never streams, it is spoken). The reads are `db/repositories/agency/inbound-answer.repository.ts`; the contact's callback is `contact.repository.ts`'s `bookInboundCallback`.
 
 Files: `identify-caller.ts`, `inbound-call-router.ts`, `inbound-clips.ts`, `route-config.ts`
 
@@ -445,8 +445,9 @@ Files: `identify-caller.ts`, `inbound-call-router.ts`, `inbound-clips.ts`, `rout
 | `apps/server/test/unit/agency/inbound/inbound-outcome.test.ts` | 4 |
 | `apps/server/test/integration/agency/inbound-route-repository.test.ts` | 18 |
 | `apps/server/test/integration/agency/inbound-call-repository.test.ts` | 20 |
-| `apps/server/test/integration/agency/inbound-follow-up.test.ts` (the callback against the real claims, CA5, the clears, the live count, the identification reads) | 17 |
-| `apps/server/test/integration/telephony/plivo-inbound-e2e.test.ts` (mock Plivo rings a linked number: open, closed, unknown, withheld, DNC, terminal, exhausted, disabled credential, unlinked, tenant default, bad signature, replay, over `max_concurrent`, caller hangs up mid-message, restart sweep) | 17 |
+| `apps/server/test/integration/agency/inbound-follow-up.test.ts` (the callback against the real claims, CA5, the clears, the live count of admitted calls, the identification reads) | 17 |
+| `apps/server/test/integration/agency/inbound-call-router.test.ts` (the router with a fake bridge: a `CallUUID` another tenant or credential holds refused on both paths, unrecorded messages spoken, the bridge's refusal un-admitting, an answer past its budget) | 15 |
+| `apps/server/test/integration/telephony/plivo-inbound-e2e.test.ts` (mock Plivo rings a linked number: open, closed, unknown, withheld, DNC, terminal, exhausted, disabled credential, unlinked, tenant default, a message with no recording spoken by the carrier, bad signature, replay, over `max_concurrent`, caller hangs up mid-message, restart sweep) | 18 |
 
 ### `apps/server/src/ai/`
 
@@ -600,7 +601,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/phone-numbers-byoc-merge.test.ts` | 6 |
 | `apps/server/test/unit/api/routes/client-config.routes.test.ts` | 28 |
 | `apps/server/test/unit/api/routes/plivo-webhooks.test.ts` | ~17 |
-| `apps/server/test/unit/api/routes/plivo-inbound-webhooks.test.ts` (the inbound answer, hangup and fallback routes: verified over the stored URL, token, nonce, each decision rendered, the budget) | 16 |
+| `apps/server/test/unit/api/routes/plivo-inbound-webhooks.test.ts` (the inbound answer, hangup and fallback routes: verified over the stored URL, token, nonce, each decision rendered, the budget and its abort signal) | 17 |
 | `apps/server/test/unit/api/routes/proxy-agency-carriers.test.ts` | ~3 |
 | `apps/server/test/unit/api/routes/proxy-feature-flags.routes.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
@@ -1068,8 +1069,8 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | `apps/server/test/unit/telephony/plivo/plivo-inbound.webhook.test.ts` | 15 |
 | `apps/server/test/unit/telephony/plivo/plivo-carrier.fixture.test.ts` | 60 |
 | `apps/server/test/unit/telephony/plivo/plivo-config.test.ts` | 20 |
-| `apps/server/test/unit/telephony/plivo/plivo-inbound-adapter.test.ts` | 11 |
-| `apps/server/test/integration/telephony/plivo-inbound-admin.test.ts` | 21 |
+| `apps/server/test/unit/telephony/plivo/plivo-inbound-adapter.test.ts` | 12 |
+| `apps/server/test/integration/telephony/plivo-inbound-admin.test.ts` | 22 |
 | `apps/server/test/unit/telephony/plivo/plivo-dial-rate.test.ts` | ~15 |
 | `apps/server/test/unit/telephony/plivo/plivo-signature.test.ts` | ~5 |
 | `apps/server/test/unit/telephony/plivo/plivo.adapter.test.ts` | 89 |
@@ -1085,7 +1086,7 @@ Files: `credential-sealer.ts`, `credential-service.ts`, `credential-specs.ts`, `
 | `apps/server/test/unit/telephony/credential-number-sync.test.ts` | 46 |
 | `apps/server/test/unit/telephony/credential-sealer.test.ts` | 30 |
 | `apps/server/test/unit/telephony/credential-service.test.ts` | 58 |
-| `apps/server/test/unit/telephony/inbound-service.test.ts` | 15 |
+| `apps/server/test/unit/telephony/inbound-service.test.ts` | 17 |
 
 ### `apps/server/src/transcription/`
 
@@ -1430,13 +1431,13 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 Scenario, flow, guard and setup tests that span several modules. The migrations themselves are SQL
 files in `packages/db/migrations/`, `0001_baseline.sql` to
-`0027_inbound_live_indexes.sql` (0009 and 0010 are contact assignment's; tested by
+`0026_inbound_live_indexes.sql` (0009 and 0010 are contact assignment's; tested by
 `db/contact-assignment-migration.test.ts`; `0008_wrapup_redial.sql`, the wrap-up redial's, by
 `db/wrapup-redial-migration.test.ts`; 0011, the insights page's shared schema, by
 `db/insights-foundation-migration.test.ts`; 0012, the insights rollup and its dirty-marking
 triggers, by `db/insights-rollup-migration.test.ts`; 0013, the pacing history, by
 `db/insights-pacing-history-migration.test.ts`; 0014, the rollup's connect-rate measures and carrier
-errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`; 0016, the customer-history soft-phone destination index (CH9), by `db/customer-history-indexes-migration.test.ts`; 0017, the customer-history roster index that bounds every read to the newest 2,000 rows (CH14), by `db/customer-history-contacts-index-migration.test.ts`; 0018, the dedicated caller IDs per agent per campaign (DN1), by `db/agent-caller-ids-migration.test.ts`; 0019, Plivo numbers (the `plivo` provider row active, `phone_numbers.telephony_credential_id`) and the `carrier_auth` pause reason, by `db/plivo-numbers-migration.test.ts`; 0020, the `carrier_account_unavailable` pause reason, by `db/carrier-account-unavailable-migration.test.ts`; 0021, the `carrier_refusing_calls` pause reason, by `db/carrier-refusing-calls-migration.test.ts`; 0022, automatic outcomes for unanswered calls (OD4), by `db/outcome-dispositions-migration.test.ts`; 0023, report runs and subscriptions and the agent-first sessions index (docs/reports.md), by `db/reports-migration.test.ts`; 0024 and 0025, inbound calls (routes, route numbers, the spine, `agency_calls.origin = 'inbound'`, contact callbacks, credential and number inbound state; 0025 validates 0024's big-table CHECKs, docs/inbound.md §9), by `db/inbound-migration.test.ts`; 0027, the per-account live inbound calls index pacing's count reads (IB5) and `callback_source` in the insights roster index, by `db/inbound-live-indexes-migration.test.ts`).
+errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`; 0016, the customer-history soft-phone destination index (CH9), by `db/customer-history-indexes-migration.test.ts`; 0017, the customer-history roster index that bounds every read to the newest 2,000 rows (CH14), by `db/customer-history-contacts-index-migration.test.ts`; 0018, the dedicated caller IDs per agent per campaign (DN1), by `db/agent-caller-ids-migration.test.ts`; 0019, Plivo numbers (the `plivo` provider row active, `phone_numbers.telephony_credential_id`) and the `carrier_auth` pause reason, by `db/plivo-numbers-migration.test.ts`; 0020, the `carrier_account_unavailable` pause reason, by `db/carrier-account-unavailable-migration.test.ts`; 0021, the `carrier_refusing_calls` pause reason, by `db/carrier-refusing-calls-migration.test.ts`; 0022, automatic outcomes for unanswered calls (OD4), by `db/outcome-dispositions-migration.test.ts`; 0023, report runs and subscriptions and the agent-first sessions index (docs/reports.md), by `db/reports-migration.test.ts`; 0024 and 0025, inbound calls (routes, route numbers, the spine, `agency_calls.origin = 'inbound'`, contact callbacks, credential and number inbound state; 0025 validates 0024's big-table CHECKs, docs/inbound.md §9), by `db/inbound-migration.test.ts`; 0026, the per-account live inbound calls index pacing's count of admitted calls reads (IB5), the inbound callbacks index CA5's code-less sweep reads and `callback_source` in the insights roster index, by `db/inbound-live-indexes-migration.test.ts`).
 
 | Test file | Cases |
 |---|---|
@@ -1445,7 +1446,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/outcome-dispositions-migration.test.ts` | 7 |
 | `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/inbound-migration.test.ts` | 31 |
-| `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 4 |
+| `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | 8 |
 | `packages/db/test/integration/baseline.test.ts` | 56 |

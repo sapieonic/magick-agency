@@ -1084,28 +1084,43 @@ uses them, NOT VALID then validated, the Down's refusals, down then up), the ser
 `test/integration/repositories/telephony-credential.repository.test.ts` (the inbound storage), the
 table set and triggers in `baseline.test.ts` and the down → up suite.
 
-### 0027 — `migrations/0027_inbound_live_indexes.sql`
+### 0026 — `migrations/0026_inbound_live_indexes.sql`
 
-Inbound calls counted in their account's live-call total (`docs/inbound.md` §5.3, decision IB5).
+Inbound calls counted in their account's live-call total (`docs/inbound.md` §5.3, decision IB5),
+and the inbound callbacks the callback fallback reads (§7, CA5). (Numbered 0026 after review: it was
+first written as 0027 and never applied outside development databases; the next migration is 0027.)
 
-- **`idx_agency_inbound_calls_account_live`** `(tenant_id, account_id) WHERE state <> 'ended'`:
-  the third arm of pacing's per-account live read (`countLiveForAccount`, every pacing round),
-  partial on the same literal predicate as its attempt and soft-phone halves. 0024's
+- **`idx_agency_inbound_calls_account_live`** `(tenant_id, account_id) WHERE state <> 'ended' AND
+  state <> 'arrived'`: the third arm of pacing's per-account live read (`countLiveForAccount`,
+  every pacing round), partial on the arm's literal predicate. Only admitted calls count: one still
+  `arrived` was turned away (the route at its `max_concurrent`, or the bridge's global or carrier
+  scope full, whose admission is taken back) and holds no line. 0024's
   `idx_agency_inbound_calls_open` is keyed on `arrived_at` alone and would walk every tenant's
-  live inbound calls each round. The answer webhook's per-route admission count (once per call)
-  stays on `idx_agency_inbound_calls_open`.
+  live inbound calls each round. The answer webhook's per-route admission count (once per call,
+  the same predicate) stays on `idx_agency_inbound_calls_open`.
+- **`idx_agency_contacts_inbound_callback`** `(campaign_id) WHERE callback_source IS NOT NULL`: a
+  campaign's open inbound callbacks. CA5's fallback sweep runs on every running owner-mode
+  campaign every 30 s; on a catalog with no callback code its pick adds `callback_source IS NOT
+  NULL` (implied by the bucket there, so the same rows move) and reads this index instead of the
+  campaign's pending roster. Empty for a tenant with no inbound; its columns are already indexed
+  elsewhere, so it costs no HOT update.
 - **`idx_agency_contacts_insights`** (0011) rebuilt with `callback_source` added to its INCLUDE
   list: the inbound follow-up widens `isCallbackSql` to read it, and the insights as-of-now reads
   bucket every contact through that fragment, so without it they would leave their index-only
   scan. Same name, key and comment.
 - **Locking.** Plain `CREATE INDEX` (SHARE on the table, one scan each; `agency_contacts` scanned
-  once, as 0017 did); the insights index is built under a temporary name, then the old one dropped
-  and the new one renamed, so ACCESS EXCLUSIVE is held only from the swap to the commit. One
-  transaction, at container start.
+  twice, each of the size 0011 measured for the insights index, ~4 s on 1.2M contacts); the
+  insights index is built under a temporary name, then the old one dropped and the new one
+  renamed, so ACCESS EXCLUSIVE is held only from the swap to the commit. One transaction, at
+  container start, with no writer running: a deploy stops the one server, then the new container
+  migrates before it listens (`DEPLOYMENT.md`), the model 0003, 0004, 0015, 0016 and 0017 rely on.
+  A deploy that overlapped the old process would have pacing's contact writes wait for the scans;
+  that layout is not supported by these files.
 
-**Down** drops the live index and rebuilds the insights index exactly as 0011 made it (the same
-swap). **Tests**: `test/integration/db/inbound-live-indexes-migration.test.ts` (both definitions,
-the planner using the live index on a large history with a busy floor elsewhere, down restoring
+**Down** drops both partial indexes and rebuilds the insights index exactly as 0011 made it (the
+same swap). **Tests**: `test/integration/db/inbound-live-indexes-migration.test.ts` (the three
+definitions, the planner using the live index on a large history with a busy floor elsewhere and
+the callback index for the code-less fallback pick on a large pending roster, down restoring
 0011's insights index, up again), `insights-foundation-migration.test.ts` (the definition after
 every migration), the down → up suite, the server's `test/integration/agency/insights-reads.test.ts`
 (the as-of-now reads still covered) and `inbound-follow-up.test.ts` (the count itself).
