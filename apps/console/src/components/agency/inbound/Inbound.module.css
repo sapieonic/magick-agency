@@ -407,3 +407,27 @@
   color: var(--text-secondary);
   font-size: 13px;
 }
+
+/* A Missed row's voicemail (P2): Play first, then the browser's own player in its place. */
+.voicemailRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.voicemailRow button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.voicemail {
+  display: block;
+  width: 100%;
+  max-width: 280px;
+  height: 36px;
+  margin-top: 6px;
+}

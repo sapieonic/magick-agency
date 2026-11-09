@@ -11,6 +11,8 @@ import { useHangup } from './station/useHangup';
 import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
+import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
+import { useInboundCall } from '../../hooks/useInboundCall';
 import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader';
 import { StateRail } from '../../components/agency/StateRail';
 import {
@@ -208,12 +210,31 @@ export default function AgentConsolePage() {
     userId: user?.id ?? null,
   });
 
-  // Suspended under the soft phone (its own keyboard) and under My contacts: the
-  // panel is a modal with its own focus trap, and a station key behind it (`b`
-  // opening the break menu, `/` pulling focus out of the trap) acts on a screen
-  // the agent cannot see.
+  /*
+    ── An inbound call (P2, `docs/inbound.md` §6) ──────────────────────────────
+    Offered to this session while it was available, or connected, or ended owing its outcome:
+    the inbound panel takes the station in place, like the soft phone, on this station's
+    socket, microphone and header. Its routes finish a call the inbound flag may have been
+    turned off under, so nothing here reads the flag.
+  */
+  const inbound = useInboundCall({
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    sessionId: bootstrap?.session_id ?? null,
+    connection,
+    frameCall: station.inboundCall,
+    clock,
+    audio: { muted: audio.muted, sending: audio.sending, toggleMute: audio.toggleMute },
+    mayMarkDnc,
+  });
+  const inboundActive = inbound.call !== null;
+
+  // Suspended under the soft phone (its own keyboard), under an inbound call (its own) and
+  // under My contacts: the panel is a modal with its own focus trap, and a station key behind
+  // it (`b` opening the break menu, `/` pulling focus out of the trap) acts on a screen the
+  // agent cannot see.
   useStationShortcuts(
-    { agentState, cons, bootstrap, suspended: softphone.active || myContactsShown },
+    { agentState, cons, bootstrap, suspended: softphone.active || inboundActive || myContactsShown },
     { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef },
   );
 
@@ -297,6 +318,65 @@ export default function AgentConsolePage() {
     </>
   );
 
+  const leaveDialog = (
+    <ConfirmDialog
+      open={exit.leaveConfirm}
+      title={LEAVE_CONFIRM_TITLE}
+      message={
+        exit.leaveFailure
+          ? `Your station is still open — ${exit.leaveFailure}`
+          : LEAVE_CONFIRM_MESSAGE
+      }
+      confirmLabel={exit.leaving ? 'Leaving…' : LEAVE_CONFIRM_ACTION}
+      disabled={exit.leaving}
+      onConfirm={exit.confirmLeave}
+      onCancel={exit.cancelLeave}
+    />
+  );
+
+  /*
+    ── On an inbound call (P2) ─────────────────────────────────────────────────
+    The caller's panel in place of the campaign's, under this station's header. Leaving is
+    refused by the menu's own "finish this call first" rule while it is live or owes its
+    outcome (the server refuses `/leave` too), read off the call as the soft phone's is.
+  */
+  if (inbound.call) {
+    return (
+      <div
+        className={styles.shell}
+        data-testid="station-inbound"
+        data-connect-flash={cons.connectFlashAttemptId === inbound.call.id ? 'true' : undefined}
+      >
+        <StationHeader
+          user={user}
+          campaignName={bootstrap?.campaign_name}
+          recordCalls={inbound.call.recording}
+          muted={audio.muted}
+          cuePrefs={cons.cuePrefs}
+          onCuePrefsChange={cons.setCuePrefs}
+          agentState={inbound.phase === 'outcome' ? 'wrapup' : 'on_call'}
+          canExit={exit.canExitToCampaign}
+          leaving={exit.leaving}
+          onLeave={exit.openLeave}
+          onExit={exit.exitStation}
+          connection={connection}
+          missedPings={missedPings}
+        />
+        {micBanner}
+        <InboundCallView
+          ib={inbound}
+          call={inbound.call}
+          connection={connection}
+          clock={clock}
+          cueFlash={cons.cueFlash}
+          onReconnect={station.reconnect}
+          shortcutsEnabled={!exit.leaveConfirm}
+        />
+        {leaveDialog}
+      </div>
+    );
+  }
+
   /*
     ── On the soft phone (SP7) ─────────────────────────────────────────────────
     The session is on `break/soft_phone`: the soft phone renders in place, on this
@@ -361,19 +441,7 @@ export default function AgentConsolePage() {
           onReconnect={station.reconnect}
           shortcutsEnabled={!exit.leaveConfirm}
         />
-        <ConfirmDialog
-          open={exit.leaveConfirm}
-          title={LEAVE_CONFIRM_TITLE}
-          message={
-            exit.leaveFailure
-              ? `Your station is still open — ${exit.leaveFailure}`
-              : LEAVE_CONFIRM_MESSAGE
-          }
-          confirmLabel={exit.leaving ? 'Leaving…' : LEAVE_CONFIRM_ACTION}
-          disabled={exit.leaving}
-          onConfirm={exit.confirmLeave}
-          onCancel={exit.cancelLeave}
-        />
+        {leaveDialog}
       </div>
     );
   }
@@ -475,6 +543,10 @@ export default function AgentConsolePage() {
       */}
       {cons.presenceRefusal ? (
         <p className={styles.presenceRefusal}>{cons.presenceRefusal}</p>
+      ) : null}
+      {/* Why the inbound call that was on screen has gone, when the agent did not end it. */}
+      {inbound.notice ? (
+        <p className={styles.presenceRefusal} data-testid="inbound-notice">{inbound.notice}</p>
       ) : null}
 
       {/* Assertive region, used ONLY for connect, disconnect and the direct
@@ -633,19 +705,7 @@ export default function AgentConsolePage() {
         />
       ) : null}
 
-      <ConfirmDialog
-        open={exit.leaveConfirm}
-        title={LEAVE_CONFIRM_TITLE}
-        message={
-          exit.leaveFailure
-            ? `Your station is still open — ${exit.leaveFailure}`
-            : LEAVE_CONFIRM_MESSAGE
-        }
-        confirmLabel={exit.leaving ? 'Leaving…' : LEAVE_CONFIRM_ACTION}
-        disabled={exit.leaving}
-        onConfirm={exit.confirmLeave}
-        onCancel={exit.cancelLeave}
-      />
+      {leaveDialog}
     </div>
   );
 }

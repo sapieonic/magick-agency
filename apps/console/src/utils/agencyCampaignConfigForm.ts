@@ -193,6 +193,7 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   wrapupSeconds: 30,
   autoReturn: true,
   allowWrapupRedial: false,
+  inboundSticky: true,
   abandonmentCeilingPct: DEFAULT_ABANDONMENT_CEILING_PCT,
   abandonmentCeilingStoredPct: null,
   assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
@@ -405,6 +406,8 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     autoReturn: campaign.wrapup_auto_return ?? EMPTY_CAMPAIGN_CONFIG.autoReturn,
     // Absent on a campaign read from a server that predates the setting: off.
     allowWrapupRedial: campaign.allow_wrapup_redial ?? EMPTY_CAMPAIGN_CONFIG.allowWrapupRedial,
+    // Absent on a campaign read from a server that predates the setting: on, the column's default.
+    inboundSticky: campaign.inbound_sticky_enabled ?? EMPTY_CAMPAIGN_CONFIG.inboundSticky,
     // Loaded as stored and remembered as stored (`abandonmentCeiling.ts`, "The
     // range"); the settings page re-seeds from each save's response.
     abandonmentCeilingPct: campaign.abandonment_ceiling_pct ?? EMPTY_CAMPAIGN_CONFIG.abandonmentCeilingPct,
@@ -720,6 +723,10 @@ export function buildConfigPayload(
     // Sent unconditionally for the same reason: `false` must be sendable to turn
     // it back off.
     allow_wrapup_redial: state.allowWrapupRedial,
+    // Sent on every save, flag on or off, for the same reason: optional on the wire (the column
+    // defaults to true), so an absent key could never turn it back on. With the inbound flag
+    // off the control is hidden and the loaded value goes back as it came.
+    inbound_sticky_enabled: state.inboundSticky,
     // Sent on every save, the builder's first one included, so the value on screen
     // is the value the guardrail pauses at. A PATCH that changes it is written to the
     // campaign's activity with its old and new value (`agency_campaign.config_changed`).

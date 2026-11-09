@@ -665,4 +665,11 @@ describe('floorStateLabel — the state as a supervisor reads it', () => {
     expect(floorStateLabel({ state: 'break', break_reason: null })).toBe('On break');
     expect(floorStateLabel({ state: 'on_call', break_reason: null })).toBe(AGENCY_FLOOR_STATE_LABELS.on_call);
   });
+
+  it('names an inbound call, offered (reserved) or connected (on a call), as "Inbound call" (P2)', () => {
+    expect(floorStateLabel({ state: 'reserved', break_reason: null, on_inbound_call: true })).toBe('Inbound call');
+    expect(floorStateLabel({ state: 'on_call', break_reason: null, on_inbound_call: true })).toBe('Inbound call');
+    // An inbound call that ended and owes its outcome is not flagged: it reads as wrap-up.
+    expect(floorStateLabel({ state: 'wrapup', break_reason: null, on_inbound_call: false })).toBe(AGENCY_FLOOR_STATE_LABELS.wrapup);
+  });
 });

@@ -1,0 +1,73 @@
+/*
+ * The inbound call on the station (P2). The shell, the rail, the three columns and the action
+ * bar are the station's own (`AgentStation.module.css`, `StateRail.module.css`) and the soft
+ * phone's cards and bar (`SoftphoneView.module.css`); this adds only what an inbound caller has
+ * and they do not. Tokens only, so both themes hold.
+ */
+
+.railIcon {
+  flex: none;
+  color: currentColor;
+}
+
+.callerName {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* "Number withheld" is words, not a number: not monospaced, not as loud. */
+.withheld {
+  font-family: inherit;
+  font-size: 20px;
+  color: var(--text-secondary);
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The DNC badge: a fact the agent must see before they speak, so danger's colours, but a pill
+   rather than an alarm — nothing failed. Its sentence sits below it. */
+.dncBadge {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.recDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/* The owed outcome's countdown, after the rail's sub-text. Never wraps, so the rail's height
+   does not move as the digits change. */
+.lapse {
+  margin-left: auto;
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.lapseDigits {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .lapse {
+    margin-left: 0;
+  }
+}

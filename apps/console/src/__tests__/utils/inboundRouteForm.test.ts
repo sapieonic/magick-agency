@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  offeredUnconnectedActions,
+  UNCONNECTED_ACTION_LABELS,
   configFromDraft,
   createRequestFromDraft,
   draftChanged,
@@ -14,7 +16,7 @@ import {
   weekdayHours,
   weeklyHoursSummary,
 } from '../../utils/inbound/routeForm';
-import { AGENCY_INBOUND_ROUTE_DEFAULTS, type AgencyInboundRoute } from '../../types/inbound';
+import { AGENCY_INBOUND_AVAILABLE_ACTIONS, AGENCY_INBOUND_ROUTE_DEFAULTS, type AgencyInboundRoute } from '../../types/inbound';
 
 /**
  * The inbound route editor's rules (`utils/inbound/routeForm.ts`): IB2 / §5.1 defaults for a new
@@ -146,5 +148,21 @@ describe('number choices', () => {
     expect(numberAvailability({ ...option, route_id: 'r-2', route_name: 'Sales' }, 'r-1')).toEqual({ available: false, reason: 'Already answers “Sales”.' });
     expect(numberAvailability({ ...option, route_id: 'r-1', route_name: 'Main' }, 'r-1')).toEqual({ available: true });
     expect(numberAvailability({ ...option, route_id: 'r-2', route_name: 'Sales' }, null).available).toBe(false);
+  });
+});
+
+describe('offeredUnconnectedActions (P2): what the editor offers for a call nobody answers', () => {
+  it('is the server’s list, in the contract’s order', () => {
+    expect(offeredUnconnectedActions(['callback'])).toEqual(['callback']);
+    expect(offeredUnconnectedActions(['voicemail', 'callback'])).toEqual(['callback', 'voicemail']);
+  });
+
+  it('keeps a stored action the server no longer offers, so it is shown rather than replaced', () => {
+    expect(offeredUnconnectedActions(['callback'], ['voicemail', 'callback'])).toEqual(['callback', 'voicemail']);
+  });
+
+  it('this build offers callback alone, so the editor shows no choice yet', () => {
+    expect(offeredUnconnectedActions(AGENCY_INBOUND_AVAILABLE_ACTIONS)).toEqual(['callback']);
+    expect(UNCONNECTED_ACTION_LABELS.voicemail.hint).toMatch(/up to 2 minutes/);
   });
 });

@@ -6,6 +6,7 @@ import {
   fireEscalatedVisualHaptics,
   type CueName,
   type CueSink,
+  type VisualCueName,
 } from '../utils/agencyCues';
 import {
   normalizeCuePrefs,
@@ -70,7 +71,7 @@ import type { DiagnosticsSink } from '../utils/agencyDiagnostics';
  * hang-up. The treatment is looked up in `VISUAL_CUE_SPECS`, never invented here.
  */
 export interface CueFlash {
-  cue: CueName;
+  cue: VisualCueName;
   attemptId: string;
 }
 

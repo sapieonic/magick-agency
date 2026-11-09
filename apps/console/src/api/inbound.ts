@@ -1,8 +1,17 @@
 import { API_BASE } from '../config';
 import { apiFetch } from './client';
+import { buildAuthHeaders } from './authHeaders';
+import { captureApiError } from './error-analytics';
 import { errorCode, errorStatus } from '../utils/agencyErrors';
 import {
   AGENCY_INBOUND_ERROR_CODES,
+  type AgencyInboundCall,
+  type AgencyInboundCallDispositionRequest,
+  type AgencyInboundCallDispositionResponse,
+  type AgencyInboundCallDncResponse,
+  type AgencyInboundCallResponse,
+  type AgencyInboundErrorResponse,
+  type AgencyInboundQueueResponse,
   type AgencyInboundClipsResponse,
   type AgencyInboundErrorCode,
   type AgencyInboundMarkHandledResponse,
@@ -29,15 +38,44 @@ import {
  *   GET    /proxy/agency/inbound/clips                 → the account's audio files
  *   GET    /proxy/agency/inbound/missed                → a page of Missed rows
  *   POST   /proxy/agency/inbound/missed/:id/handled    → the row, handled
+ *   GET    <voicemail_url> (the Missed row's)          → the voicemail's audio
  *
- * Every route is account-scoped and behind `agency_inbound_enabled` (`403 inbound_disabled`).
+ * And the agent's inbound call (P2, §6) and the supervisor's queue, under the same prefix:
+ *
+ *   GET    /proxy/agency/inbound/calls/:id             → { call }
+ *   PATCH  /proxy/agency/inbound/calls/:id             → { call }   (notes autosave)
+ *   POST   /proxy/agency/inbound/calls/:id/hangup      → { call }
+ *   POST   /proxy/agency/inbound/calls/:id/disposition → AgencyInboundCallDispositionResponse
+ *   POST   /proxy/agency/inbound/calls/:id/dnc         → AgencyInboundCallDncResponse
+ *   GET    /proxy/agency/inbound/queue                 → AgencyInboundQueueResponse
+ *
+ * Every path is built by {@link INBOUND_PATHS}, so a renamed route is one edit here.
+ *
+ * Every route is account-scoped and behind `agency_inbound_enabled` (`403 inbound_disabled`),
+ * except the five call routes, which finish a call the flag may have been turned off under (the
+ * soft phone's rule).
  * Reads throw like the rest of the console's clients (their failure is a page state). The
  * writes resolve to an {@link InboundResult}: a refusal is something the admin acts on (a
  * field to fix, a number to drop), so it is a value the form switches on, not an exception.
  */
 
-const INBOUND = `${API_BASE}/proxy/agency/inbound`;
 const enc = encodeURIComponent;
+
+/**
+ * Every inbound path the console calls, in one place. The call routes and the queue are the
+ * server's P2 build, named against the contract (`AgencyInboundCall*`,
+ * `AgencyInboundQueueResponse`): a server-side rename is one edit here.
+ */
+export const INBOUND_PATHS = {
+  base: `${API_BASE}/proxy/agency/inbound`,
+  call: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}`,
+  callHangup: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/hangup`,
+  callDisposition: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/disposition`,
+  callDnc: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/dnc`,
+  queue: `${API_BASE}/proxy/agency/inbound/queue`,
+} as const;
+
+const INBOUND = INBOUND_PATHS.base;
 
 // ─── Refusals ───────────────────────────────────────────────────────────────
 
@@ -50,11 +88,26 @@ export interface InboundRefusal {
   details: Array<{ path: string; message: string }>;
   phoneNumberId: string | null;
   routeId: string | null;
+  /** `inbound_call_live` and the call routes' refusals: the call refused for. */
+  inboundCallId: string | null;
+  /** `inbound_disposition_invalid` (`unknown_code`): the codes the call's catalog accepts. */
+  allowedCodes: string[] | null;
+  /** `inbound_disposition_invalid`: which rule refused. */
+  reason: InboundDispositionRule | null;
 }
+
+/** Which rule refused an outcome (`inbound_disposition_invalid`). */
+export type InboundDispositionRule = NonNullable<AgencyInboundErrorResponse['reason']>;
 
 export type InboundResult<T> = { ok: true; value: T } | { ok: false; refusal: InboundRefusal };
 
 const KNOWN: ReadonlySet<string> = new Set(AGENCY_INBOUND_ERROR_CODES);
+const DISPOSITION_RULES: ReadonlySet<string> = new Set<InboundDispositionRule>([
+  'unknown_code',
+  'note_required',
+  'datetime_required',
+  'invalid_callback_at',
+]);
 
 /** Read an inbound refusal off whatever `apiFetch` threw (`ApiError.details` / `.statusCode`). */
 export function parseInboundRefusal(err: unknown): InboundRefusal {
@@ -76,6 +129,13 @@ export function parseInboundRefusal(err: unknown): InboundRefusal {
     details,
     phoneNumberId: typeof body['phone_number_id'] === 'string' ? body['phone_number_id'] : null,
     routeId: typeof body['route_id'] === 'string' ? body['route_id'] : null,
+    inboundCallId: typeof body['inbound_call_id'] === 'string' ? body['inbound_call_id'] : null,
+    allowedCodes: Array.isArray(body['allowed_codes'])
+      ? (body['allowed_codes'] as unknown[]).filter((c): c is string => typeof c === 'string')
+      : null,
+    reason: typeof body['reason'] === 'string' && DISPOSITION_RULES.has(body['reason'])
+      ? (body['reason'] as InboundDispositionRule)
+      : null,
   };
 }
 
@@ -170,4 +230,125 @@ export function markMissedInboundCallHandled(
     );
     return body.call;
   });
+}
+
+// ─── The voicemail on a Missed row (P2) ─────────────────────────────────────
+
+/**
+ * Where a Missed row's `voicemail_url` is fetched from. The contract states it relative to the
+ * proxy (`/inbound/missed/:id/voicemail`, under `/proxy/agency`); a path that already starts
+ * `/proxy/`, or an absolute URL, is taken as it is.
+ */
+export function voicemailFetchUrl(voicemailUrl: string): string {
+  if (/^https?:\/\//i.test(voicemailUrl)) return voicemailUrl;
+  const path = voicemailUrl.startsWith('/') ? voicemailUrl : `/${voicemailUrl}`;
+  return path.startsWith('/proxy/') ? `${API_BASE}${path}` : `${API_BASE}/proxy/agency${path}`;
+}
+
+export type VoicemailAudio = { status: 'ready'; url: string } | { status: 'unavailable'; message: string };
+
+export const VOICEMAIL_GONE_COPY = 'This voicemail is no longer available.';
+export const VOICEMAIL_FAILED_COPY = 'We couldn’t load the voicemail. Try again in a moment.';
+
+/**
+ * The voicemail as a blob URL for an `<audio>` element: the route needs the console's bearer
+ * token, which an `<audio src>` cannot send (the manual call's recording is fetched the same way).
+ * The caller revokes the URL when it is done with it.
+ */
+export async function fetchVoicemailBlobUrl(
+  voicemailUrl: string,
+  tenantId: string,
+  accountId?: string,
+): Promise<VoicemailAudio> {
+  const url = voicemailFetchUrl(voicemailUrl);
+  try {
+    const headers = await buildAuthHeaders(tenantId, accountId);
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      captureApiError(url, res);
+      return { status: 'unavailable', message: res.status === 404 ? VOICEMAIL_GONE_COPY : VOICEMAIL_FAILED_COPY };
+    }
+    const blob = await res.blob();
+    return { status: 'ready', url: URL.createObjectURL(blob) };
+  } catch {
+    return { status: 'unavailable', message: VOICEMAIL_FAILED_COPY };
+  }
+}
+
+// ─── The agent's inbound call (P2, §6) ──────────────────────────────────────
+
+/**
+ * `GET /inbound/calls/:id`: the call as the server holds it. A read, so it throws: the
+ * reconnect's reconciliation decides what a refusal means.
+ */
+export async function getInboundCall(callId: string, tenantId?: string, accountId?: string): Promise<AgencyInboundCall> {
+  const body = await apiFetch<AgencyInboundCallResponse>(INBOUND_PATHS.call(callId), {}, tenantId, accountId);
+  return body.call;
+}
+
+/** `PATCH /inbound/calls/:id`: the notes (`''` clears them). Last write wins, while unsettled. */
+export function updateInboundCallNotes(
+  callId: string,
+  notes: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<InboundResult<AgencyInboundCall>> {
+  return result(async () => {
+    const body = await apiFetch<AgencyInboundCallResponse>(
+      INBOUND_PATHS.call(callId), { method: 'PATCH', body: JSON.stringify({ notes }) }, tenantId, accountId,
+    );
+    return body.call;
+  });
+}
+
+/**
+ * `POST /inbound/calls/:id/hangup`. The answer is the call as read when the hang-up was issued
+ * and may still say `connected`: the `inbound_call` frame is the authority for "the call is over".
+ */
+export function hangupInboundCall(callId: string, tenantId?: string, accountId?: string): Promise<InboundResult<AgencyInboundCall>> {
+  return result(async () => {
+    const body = await apiFetch<AgencyInboundCallResponse>(
+      INBOUND_PATHS.callHangup(callId), { method: 'POST', body: JSON.stringify({}) }, tenantId, accountId,
+    );
+    return body.call;
+  });
+}
+
+/** `POST /inbound/calls/:id/disposition`: the outcome, once the call has ended after it was answered. */
+export function dispositionInboundCall(
+  callId: string,
+  request: AgencyInboundCallDispositionRequest,
+  tenantId?: string,
+  accountId?: string,
+): Promise<InboundResult<AgencyInboundCallDispositionResponse>> {
+  return result(() =>
+    apiFetch<AgencyInboundCallDispositionResponse>(
+      INBOUND_PATHS.callDisposition(callId), { method: 'POST', body: JSON.stringify(request) }, tenantId, accountId,
+    ),
+  );
+}
+
+/** `POST /inbound/calls/:id/dnc`: campaign scope when the call matched a campaign, else the account (the server decides). */
+export function markInboundCallDnc(
+  callId: string,
+  reason: string | undefined,
+  tenantId?: string,
+  accountId?: string,
+): Promise<InboundResult<AgencyInboundCallDncResponse>> {
+  const trimmed = reason?.trim();
+  return result(() =>
+    apiFetch<AgencyInboundCallDncResponse>(
+      INBOUND_PATHS.callDnc(callId),
+      { method: 'POST', body: JSON.stringify(trimmed ? { reason: trimmed } : {}) },
+      tenantId,
+      accountId,
+    ),
+  );
+}
+
+// ─── The supervisor's queue (P2, §6) ────────────────────────────────────────
+
+/** `GET /inbound/queue` (`agency.supervise`): one tile per live route. Polled every 5 s; throws. */
+export function getInboundQueue(tenantId?: string, accountId?: string): Promise<AgencyInboundQueueResponse> {
+  return apiFetch<AgencyInboundQueueResponse>(INBOUND_PATHS.queue, {}, tenantId, accountId);
 }

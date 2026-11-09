@@ -12,6 +12,7 @@ import { AgentSurfaceShell } from '../../components/agency/AgentSurfaceShell';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { PageDescription } from '../../components/common/PageDescription';
 import { MissedCallsList } from '../../components/agency/inbound/MissedCallsList';
+import { InboundQueueTiles } from '../../components/agency/inbound/InboundQueueTiles';
 import styles from '../../components/agency/inbound/Inbound.module.css';
 
 /**
@@ -78,6 +79,8 @@ export default function MissedCallsPage({ surface = 'agency' }: { surface?: 'age
           'A caller on a Do Not Call list is marked DNC. The soft phone asks for a reason before it calls them.',
         ]}
       />
+      {/* The live queue beside the calls it misses (P2): supervisors only, as the route is. */}
+      <InboundQueueTiles />
       {list}
     </div>
   );

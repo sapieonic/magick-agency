@@ -6,6 +6,7 @@ import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { FiltersCard } from '../FiltersCard';
+import { VoicemailPlayer } from './VoicemailPlayer';
 import { useTenant } from '../../../contexts/TenantContext';
 import { listMissedInboundCalls, markMissedInboundCallHandled } from '../../../api/inbound';
 import { listTenantMembers } from '../../../api/tenants';
@@ -333,6 +334,10 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
                     <td data-label="Why it was missed">
                       <span className={styles.reason}>{MISSED_REASON_LABELS[call.reason]}</span>
                       {call.has_voicemail ? <span className={styles.sub}>Left a voicemail</span> : null}
+                      {/* P2: playable once the server serves it (`voicemail_url`). */}
+                      {call.has_voicemail && call.voicemail_url ? (
+                        <VoicemailPlayer voicemailUrl={call.voicemail_url} callerLabel={callerLabel(call)} />
+                      ) : null}
                     </td>
                     <td data-label="Campaign">
                       {call.matched_campaign_name ?? <span className={styles.muted}>Not matched</span>}

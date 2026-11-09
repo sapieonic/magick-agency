@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   listMissedInboundCalls: vi.fn(),
   markMissedInboundCallHandled: vi.fn(),
   listTenantMembers: vi.fn(),
+  getInboundQueue: vi.fn(),
+  fetchVoicemailBlobUrl: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -36,6 +38,8 @@ vi.mock('../../api/inbound', async () => {
     ...actual,
     listMissedInboundCalls: mocks.listMissedInboundCalls,
     markMissedInboundCallHandled: mocks.markMissedInboundCallHandled,
+    getInboundQueue: mocks.getInboundQueue,
+    fetchVoicemailBlobUrl: mocks.fetchVoicemailBlobUrl,
   };
 });
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
@@ -85,6 +89,9 @@ beforeEach(() => {
     { user: { id: 'u-2', display_name: 'Ravi', email: 'r@x' } },
   ]);
   mocks.listMissedInboundCalls.mockResolvedValue({ rows: [missed()], next_cursor: null, limit: 50 });
+  mocks.getInboundQueue.mockResolvedValue({
+    tiles: [{ route_id: 'r-1', route_name: 'Main line', open_now: true, waiting: 1, longest_wait_seconds: 30, connected: 2, eligible_agents: 1 }],
+  });
 });
 
 describe('who sees what', () => {
@@ -200,5 +207,59 @@ describe('Call back and Mark handled', () => {
     expect(mocks.listMissedInboundCalls).toHaveBeenLastCalledWith({ status: 'open', cursor: 'cur-1', limit: 50 }, 'tenant-1', 'account-1');
     expect(screen.getByTestId('missed-row-m-older')).toBeTruthy();
     expect(screen.queryByTestId('missed-load-more')).toBeNull();
+  });
+});
+
+describe('P2: the queue beside the list, and the voicemail', () => {
+  it('a supervisor sees the live queue above the list; an agent does not', async () => {
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    expect(screen.getByTestId('inbound-queue-tile-r-1')).toBeTruthy();
+    expect(mocks.getInboundQueue).toHaveBeenCalledWith('tenant-1', 'account-1');
+  });
+
+  it('an agent’s own frame has no queue tiles', async () => {
+    await renderAt('/dialer/missed', 'agent');
+    expect(screen.queryByTestId('inbound-queue')).toBeNull();
+    expect(mocks.getInboundQueue).not.toHaveBeenCalled();
+  });
+
+  it('plays a voicemail only when asked, from the row’s voicemail_url', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({
+      rows: [
+        missed({ has_voicemail: true, voicemail_url: '/inbound/missed/m-1/voicemail' }),
+        missed({ id: 'm-2', has_voicemail: true }),
+      ],
+      next_cursor: null,
+      limit: 50,
+    });
+    mocks.fetchVoicemailBlobUrl.mockResolvedValue({ status: 'ready', url: 'blob:vm-1' });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    // A row whose voicemail this build cannot serve says it was left, and offers no player.
+    expect(within(screen.getByTestId('missed-row-m-2')).queryByTestId('missed-voicemail-play')).toBeNull();
+    const row = within(screen.getByTestId('missed-row-m-1'));
+    expect(mocks.fetchVoicemailBlobUrl).not.toHaveBeenCalled();
+    const play = row.getByTestId('missed-voicemail-play');
+    expect(play.getAttribute('aria-label')).toMatch(/^Play the voicemail from /);
+    await act(async () => {
+      fireEvent.click(play);
+    });
+    expect(mocks.fetchVoicemailBlobUrl).toHaveBeenCalledWith('/inbound/missed/m-1/voicemail', 'tenant-1', 'account-1');
+    const audio = row.getByTestId('missed-voicemail-audio') as HTMLAudioElement;
+    expect(audio.getAttribute('src')).toBe('blob:vm-1');
+    expect(audio.hasAttribute('controls')).toBe(true);
+  });
+
+  it('a voicemail that cannot be fetched says so beside the button', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({
+      rows: [missed({ has_voicemail: true, voicemail_url: '/inbound/missed/m-1/voicemail' })],
+      next_cursor: null,
+      limit: 50,
+    });
+    mocks.fetchVoicemailBlobUrl.mockResolvedValue({ status: 'unavailable', message: 'This voicemail is no longer available.' });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('missed-voicemail-play'));
+    });
+    expect(screen.getByTestId('missed-voicemail-error').textContent).toBe('This voicemail is no longer available.');
   });
 });

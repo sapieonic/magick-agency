@@ -37,6 +37,8 @@ import {
   isOvernight,
   newRouteDraft,
   numberAvailability,
+  offeredUnconnectedActions,
+  UNCONNECTED_ACTION_LABELS,
   patchFromDraft,
   routeErrorsFromDetails,
   validateRouteDraft,
@@ -44,12 +46,14 @@ import {
   type InboundRouteDraft,
 } from '../../utils/inbound/routeForm';
 import {
+  AGENCY_INBOUND_AVAILABLE_ACTIONS,
   AGENCY_INBOUND_CLIP_SLOTS,
   AGENCY_INBOUND_ROUTE_LIMITS as L,
   AGENCY_INBOUND_STICKY_MODES,
   type AgencyInboundClipOption,
   type AgencyInboundNumberOption,
   type AgencyInboundRoute,
+  type AgencyInboundUnconnectedAction,
 } from '../../types/inbound';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from '../../components/agency/inbound/Inbound.module.css';
@@ -68,8 +72,9 @@ const COMMON_TIMEZONES = [
  *
  * Every rule is in `utils/inbound/routeForm.ts`; the server judges the whole route again and its
  * `inbound_route_invalid` details land on the same fields. A save of an existing route sends
- * only what changed. Voicemail is not offered: this build cannot record one, and the server
- * refuses it (`AGENCY_INBOUND_AVAILABLE_ACTIONS`).
+ * only what changed. What happens to a call nobody answers is offered from the server's own list
+ * (`AGENCY_INBOUND_AVAILABLE_ACTIONS`): while that is callback alone there is no choice to make
+ * and the card says so; voicemail is offered the moment the list includes it.
  */
 export default function InboundRouteEditorPage() {
   const { routeId } = useParams<{ routeId: string }>();
@@ -204,6 +209,10 @@ export default function InboundRouteEditorPage() {
   const usingBuiltIn = draft.catalog.length === 0;
   const profileKnown = draft.profileId === null || profiles.some((p) => p.id === draft.profileId);
   const stickyOff = draft.stickyMode === 'off';
+  const actionChoices = offeredUnconnectedActions(AGENCY_INBOUND_AVAILABLE_ACTIONS, [
+    draft.afterHoursAction,
+    draft.overflowAction,
+  ]);
 
   return (
     <div className={styles.page}>
@@ -554,7 +563,28 @@ export default function InboundRouteEditorPage() {
               otherwise your We’ll call you back message. The call then ends and appears under Missed calls, assigned to their
               agent or the account. A customer on a campaign also gets a callback booked for when you next open.
             </p>
-            <p className={styles.note} data-testid="inbound-voicemail-note">Voicemail isn’t available yet.</p>
+            {actionChoices.length > 1 ? (
+              <>
+                <ActionChoice
+                  name="ib-after-hours-action"
+                  legend="Out of hours"
+                  actions={actionChoices}
+                  value={draft.afterHoursAction}
+                  onChange={(afterHoursAction) => update({ afterHoursAction })}
+                  testId="inbound-after-hours-action"
+                />
+                <ActionChoice
+                  name="ib-overflow-action"
+                  legend="When nobody can answer"
+                  actions={actionChoices}
+                  value={draft.overflowAction}
+                  onChange={(overflowAction) => update({ overflowAction })}
+                  testId="inbound-overflow-action"
+                />
+              </>
+            ) : (
+              <p className={styles.note} data-testid="inbound-voicemail-note">Voicemail isn’t available yet.</p>
+            )}
             {errors.render('after_hours_action')}
             {errors.render('overflow_action')}
           </section>
@@ -655,5 +685,44 @@ function NumberField({
       <span className={styles.hint} id={`${id}-hint`}>{hint}</span>
       {errors.render(path)}
     </div>
+  );
+}
+
+/** One of the two "when nobody answers" choices: the actions the server accepts, as radios. */
+function ActionChoice({
+  name,
+  legend,
+  actions,
+  value,
+  onChange,
+  testId,
+}: {
+  name: string;
+  legend: string;
+  actions: readonly AgencyInboundUnconnectedAction[];
+  value: AgencyInboundUnconnectedAction;
+  onChange: (next: AgencyInboundUnconnectedAction) => void;
+  testId: string;
+}) {
+  return (
+    <fieldset className={styles.radioGroup} data-testid={testId}>
+      <legend>{legend}</legend>
+      {actions.map((action) => (
+        <label key={action} className={styles.choice}>
+          <input
+            type="radio"
+            name={name}
+            value={action}
+            checked={value === action}
+            onChange={() => onChange(action)}
+            data-testid={`${testId}-${action}`}
+          />
+          <span>
+            {UNCONNECTED_ACTION_LABELS[action].label}
+            <span className={styles.sub}>{UNCONNECTED_ACTION_LABELS[action].hint}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
   );
 }

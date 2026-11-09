@@ -1,6 +1,8 @@
 import {
   AGENCY_INBOUND_ROUTE_DEFAULTS as D,
   AGENCY_INBOUND_ROUTE_LIMITS as L,
+  AGENCY_INBOUND_UNCONNECTED_ACTIONS,
+  AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS,
   type AgencyInboundClips,
   type AgencyInboundNumberOption,
   type AgencyInboundRoute,
@@ -81,6 +83,31 @@ function wireEnd(end: string): string {
 function cloneDisposition(entry: AgencyDisposition): AgencyDisposition {
   return { ...entry, ...(entry.retry ? { retry: { ...entry.retry } } : {}) };
 }
+
+/**
+ * The actions the editor offers for a call nobody answers (IB3): those this build's server
+ * accepts (`AGENCY_INBOUND_AVAILABLE_ACTIONS`, passed in), in the contract's order, plus the
+ * route's own when it is one the server no longer offers, so a stored choice is shown rather than
+ * silently replaced. Voicemail appears the moment the server's list includes it.
+ */
+export function offeredUnconnectedActions(
+  available: readonly AgencyInboundUnconnectedAction[],
+  current: readonly AgencyInboundUnconnectedAction[] = [],
+): AgencyInboundUnconnectedAction[] {
+  return AGENCY_INBOUND_UNCONNECTED_ACTIONS.filter((action) => available.includes(action) || current.includes(action));
+}
+
+/** Each action, said as what the caller gets. */
+export const UNCONNECTED_ACTION_LABELS: Record<AgencyInboundUnconnectedAction, { label: string; hint: string }> = {
+  callback: {
+    label: 'Play the message and call them back',
+    hint: 'The call ends after the message and appears under Missed calls for someone to call back.',
+  },
+  voicemail: {
+    label: 'Take a voicemail',
+    hint: `After the message the caller can leave a voicemail of up to ${AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS / 60} minutes, played back from Missed calls.`,
+  },
+};
 
 /** A new route's draft: every IB2 / §5.1 default, no hours, the browser's zone when it is usable. */
 export function newRouteDraft(browserZone: string | undefined = safeBrowserZone()): InboundRouteDraft {

@@ -12,9 +12,11 @@ import {
   CUE_SPECS,
   VISUAL_CUE_SPECS,
   type CueName,
+  type VisualCueName,
 } from '../../utils/agencyCues';
 import { WebAudioCueSink, type CueAudioContext } from '../../utils/agencyWebAudioCueSink';
 import { useAgencyStation } from '../../hooks/useAgencyStation';
+import { connected, inboundCall, owing } from '../helpers/inbound';
 import type {
   AgencyActiveAttempt,
   AgencyReservedAttempt,
@@ -444,8 +446,8 @@ describe('the visual cues are three different things, not one flash three times'
    * These assertions are what the "collapse the three treatments into one" mutation
    * has to fail against.
    */
-  const CUES: CueName[] = ['get_ready', 'connect', 'disconnect'];
-  const pairs: Array<[CueName, CueName]> = [
+  const CUES: VisualCueName[] = ['get_ready', 'connect', 'disconnect'];
+  const pairs: Array<[VisualCueName, VisualCueName]> = [
     ['get_ready', 'connect'],
     ['get_ready', 'disconnect'],
     ['connect', 'disconnect'],
@@ -629,5 +631,117 @@ describe('WebAudioCueSink — the half that touches the hardware', () => {
     new WebAudioCueSink(suspended.ctx).play('connect', 1);
     expect(suspended.oscillators).toHaveLength(0);
     expect(suspended.gains).toHaveLength(0);
+  });
+});
+
+describe('the inbound chime (IB1), through the frame handler', () => {
+  const callFrame = (call: ReturnType<typeof inboundCall>) => ({ event: 'inbound_call', call });
+
+  it('chimes on the offer, inside the handler, before React commits', async () => {
+    const { dispatcher, h } = buildDispatcher();
+    await station(dispatcher);
+    let atReturn: CueName[] = [];
+    act(() => {
+      latest().emit(callFrame(inboundCall()));
+      atReturn = h.played.map((p) => p.cue);
+    });
+    expect(atReturn).toEqual(['inbound_ring']);
+  });
+
+  it('chimes once per offer: a restated frame is silent, a re-offer after a requeue rings again', async () => {
+    const { dispatcher, h } = buildDispatcher();
+    await station(dispatcher);
+    act(() => {
+      latest().emit(callFrame(inboundCall()));
+      latest().emit(callFrame(inboundCall()));
+    });
+    expect(h.played.map((p) => p.cue)).toEqual(['inbound_ring']);
+    act(() => latest().emit(callFrame(inboundCall({ offered_at: '2026-11-09T10:02:00.000Z' }))));
+    expect(h.played.map((p) => p.cue)).toEqual(['inbound_ring', 'inbound_ring']);
+  });
+
+  it('then the station’s own connect and disconnect, once each, keyed on the call', async () => {
+    const { dispatcher, h } = buildDispatcher();
+    await station(dispatcher);
+    act(() => {
+      latest().emit(callFrame(inboundCall()));
+      latest().emit(callFrame(connected()));
+      latest().emit(callFrame(connected()));
+      latest().emit(callFrame(owing()));
+      latest().emit(callFrame(owing({ notes: 'restated' })));
+    });
+    expect(h.played.map((p) => p.cue)).toEqual(['inbound_ring', 'connect', 'disconnect']);
+    expect(h.logs.find((l) => l.event === 'cue:connect')?.detail).toContain('attempt=ib-1');
+  });
+
+  it('a call already under way when the page loads is silent until it ends', async () => {
+    const { dispatcher, h } = buildDispatcher();
+    await station(dispatcher);
+    act(() => latest().emit(callFrame(connected())));
+    expect(h.played).toEqual([]);
+    act(() => latest().emit(callFrame(owing())));
+    expect(h.played.map((p) => p.cue)).toEqual(['disconnect']);
+  });
+
+  it('a caller who hangs up before audio bound gets no disconnect: nothing connected', async () => {
+    const { dispatcher, h } = buildDispatcher();
+    await station(dispatcher);
+    act(() => {
+      latest().emit(callFrame(inboundCall()));
+      latest().emit(callFrame(inboundCall({ state: 'ended', outcome: 'abandoned_in_queue', settled_at: '2026-11-09T10:00:01Z' })));
+    });
+    expect(h.played.map((p) => p.cue)).toEqual(['inbound_ring']);
+  });
+
+  it('has no rail flash of its own (the panel is its visual); connect still escalates', async () => {
+    const { dispatcher, h } = buildDispatcher({ volume: 0 });
+    await station(dispatcher);
+    act(() => {
+      latest().emit(callFrame(inboundCall()));
+      latest().emit(callFrame(connected()));
+    });
+    expect(h.played).toEqual([]);
+    expect(h.escalations).toEqual([{ cue: 'connect', attemptId: 'ib-1' }]);
+  });
+
+  it('drops a malformed frame without touching the cues', async () => {
+    const { dispatcher, h } = buildDispatcher();
+    await station(dispatcher);
+    act(() => {
+      latest().emit({ event: 'inbound_call' });
+      latest().emit({ event: 'inbound_call', call: { id: 'ib-1' } });
+    });
+    expect(h.played).toEqual([]);
+  });
+
+  it('sounds unlike the station’s three: two falling-and-rising pairs of long tones', () => {
+    const oscillators: Array<{ frequency: { value: number } }> = [];
+    const ctx = {
+      state: 'running',
+      currentTime: 0,
+      destination: {} as AudioNode,
+      createOscillator: () => {
+        const osc = { type: '', frequency: { value: 0 }, connect: vi.fn(), start: vi.fn(), stop: vi.fn() };
+        oscillators.push(osc);
+        return osc as unknown as OscillatorNode;
+      },
+      createGain: () =>
+        ({ gain: { setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() }, connect: vi.fn() }) as unknown as GainNode,
+      resume: async () => {},
+    } as unknown as CueAudioContext;
+    new WebAudioCueSink(ctx).play('inbound_ring', 1);
+    const tones = oscillators.map((o) => o.frequency.value);
+    expect(tones).toEqual(CUE_SPECS.inbound_ring.tones.map((t) => t.hz));
+    // Falls, rises, falls: a contour none of the station's cues has (flat, rising, falling).
+    expect(tones).toHaveLength(4);
+    expect(tones[1]!).toBeLessThan(tones[0]!);
+    expect(tones[2]!).toBeGreaterThan(tones[1]!);
+    expect(tones[3]!).toBeLessThan(tones[2]!);
+    // Longer tones than any station cue: rhythm, not pitch alone.
+    const longest = Math.max(
+      ...(['get_ready', 'connect', 'disconnect'] as const).flatMap((c) => CUE_SPECS[c].tones.map((t) => t.holdS)),
+    );
+    expect(Math.min(...CUE_SPECS.inbound_ring.tones.map((t) => t.holdS))).toBeGreaterThan(longest);
+    expect(Object.keys(VISUAL_CUE_SPECS)).not.toContain('inbound_ring');
   });
 });

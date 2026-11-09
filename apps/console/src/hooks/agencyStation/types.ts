@@ -9,6 +9,7 @@ import type {
 } from '../../types/agency';
 import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 import type { AgencyManualCall } from '../../types/softphone';
+import type { AgencyInboundCall, AgencyStationCustomerWaitingFrame } from '../../types/inbound';
 import type { AgencyUplinkFrame } from '../../utils/agencyMedia';
 import type { WrapupAnchor } from '../../utils/agencyWrapup';
 import type { DiagnosticEntry } from '../../utils/agencyDiagnostics';
@@ -229,6 +230,15 @@ export interface UseAgencyStationResult {
    * back to the bootstrap's `queue`; `null` when the campaign states none.
    */
   queue: AgencyQueueState | null | undefined;
+  /**
+   * The inbound call offered to or connected with this session, as the last `inbound_call`
+   * frame stated it (P2, `docs/inbound.md` §6): the WHOLE row, replaced on every frame. `null`
+   * until a frame arrives. A `ready` keeps it; the server re-sends it after a reconnect while the
+   * call still holds the station, and `useInboundCall` reconciles one that does not.
+   */
+  inboundCall: AgencyInboundCall | null;
+  /** "Your customer is waiting" (`customer_waiting`), until something makes it untrue. */
+  customerWaiting: AgencyStationCustomerWaitingFrame | null;
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
   reconnect: () => void;
   /**

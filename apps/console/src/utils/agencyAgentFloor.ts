@@ -300,6 +300,9 @@ export const AGENCY_FLOOR_STATE_LABELS: Record<AgencyAgentLiveState, string> = {
   break: 'On break',
 };
 
+/** The floor's label for an agent on an inbound call (P2). */
+export const INBOUND_CALL_FLOOR_LABEL = 'Inbound call';
+
 /**
  * Whether this agent's break is the soft phone (`break` with the reserved reason
  * `soft_phone`, SP7): pacing cannot reserve them, but they are working.
@@ -317,8 +320,16 @@ export function isOnSoftphone(agent: Pick<AgencySupervisorAgent, 'state' | 'brea
  * Whether a soft-phone agent is on a call right now is not on the wire
  * (`AgencySupervisorAgent` carries the session's state and reason only), so the
  * label says where they are and nothing it cannot know.
+ *
+ * An agent offered or connected to an inbound call (`on_inbound_call`, P2) reads "Inbound call"
+ * whatever the state beneath it says (`reserved` while the call is offered, `on_call` once
+ * connected): it is the one thing a supervisor needs to know about them. An inbound call that
+ * ended and owes its outcome is not flagged (the server's rule), so it reads "Wrapping up".
  */
-export function floorStateLabel(agent: Pick<AgencySupervisorAgent, 'state' | 'break_reason'>): string {
+export function floorStateLabel(
+  agent: Pick<AgencySupervisorAgent, 'state' | 'break_reason'> & Partial<Pick<AgencySupervisorAgent, 'on_inbound_call'>>,
+): string {
+  if (agent.on_inbound_call) return INBOUND_CALL_FLOOR_LABEL;
   if (isOnSoftphone(agent)) return SOFTPHONE_BREAK_REASON_LABEL;
   const label = AGENCY_FLOOR_STATE_LABELS[agent.state];
   if (agent.state !== 'break' || !agent.break_reason) return label;
