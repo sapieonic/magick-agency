@@ -268,6 +268,9 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_agency_calls_insights_error_update` (0014) | AFTER UPDATE OF `error_code`, WHEN it changed | `agency_calls` | `agency_insights_mark_call_error()` |
 | `trg_agency_contacts_insights_zone` (0012) | AFTER UPDATE OF `timezone`, WHEN it changed | `agency_contacts` | `agency_insights_mark_contact_zone()` |
 | `trg_agency_campaigns_insights_zone` (0012) | AFTER UPDATE OF `default_timezone`, WHEN it changed | `agency_campaigns` | `agency_insights_mark_campaign_zone()` |
+| `trg_agency_attempts_inbound_reached` (0028) | AFTER UPDATE OF `bridged_at`, WHEN `OLD.bridged_at IS NULL AND NEW.bridged_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_inbound_reached()` |
+| `trg_agency_manual_calls_inbound_reached` (0028) | AFTER UPDATE OF `bridged_at`, WHEN it is first set | `agency_manual_calls` | `agency_manual_call_inbound_reached()` |
+| `trg_agency_inbound_calls_inbound_reached` (0028) | AFTER UPDATE OF `bridged_at`, WHEN it is first set | `agency_inbound_calls` | `agency_inbound_call_inbound_reached()` |
 
 Functions:
 
@@ -284,6 +287,11 @@ Functions:
 - `agency_insights_mark_attempt_buckets()`, `agency_insights_mark_call_recording()`,
   `agency_insights_mark_contact_zone()`, `agency_insights_mark_campaign_zone()` (0012): append a
   dirty mark per insights bucket the write touched (see 0012 below).
+- `agency_inbound_close_reached_missed(tenant, account, phone, reached_at, user)` (0028): closes
+  the account's open Missed inbound rows from `phone` that arrived by `reached_at` (`handled`,
+  `handled_reason = 'reached'`, handled by `user`). Its three callers, `agency_attempt_inbound_reached()`,
+  `agency_manual_call_inbound_reached()` and `agency_inbound_call_inbound_reached()`, pass the
+  conversation's account, number, start and agent (see 0028 below).
 
 `super_admins` and `account_settings` have `updated_at` columns but no trigger.
 
@@ -1166,6 +1174,39 @@ every CHECK from both sides, the disposition sources against the contract's list
 index, both partial indexes by definition and by the planner on a large history, the backfill,
 the Down's refusals, down then up), the down → up suite, and the server's
 `test/integration/agency/inbound-connect-repository.test.ts`.
+
+### 0028 — `migrations/0028_inbound_missed_follow_up.sql`
+
+The Missed inbound row's follow-up and the inbound summary (`docs/inbound.md` §7, §11).
+
+- **`agency_inbound_calls.handled_reason`** VARCHAR(16): how a Missed row was handled, `marked`
+  (a person) or `reached` (the customer was put through to an agent afterwards). NULL while open,
+  and on a row handled before 0028 (read as `marked`). `ck_agency_inbound_calls_handled_reason`:
+  NULL, or the row is `handled` and the reason is one of the contract's
+  `AGENCY_INBOUND_HANDLED_REASONS`.
+- **The reached triggers**: when `bridged_at` is first set on a campaign attempt, a soft-phone
+  call or an inbound call, `agency_inbound_close_reached_missed` closes the open Missed rows of
+  the same account from that number (the contact's `phone_e164`, the soft-phone call's
+  `destination_e164`, the caller's `from_e164`) that arrived no later than the conversation began,
+  handled by its agent (the attempt's session's `agent_user_id`, the soft-phone call's
+  `agent_user_id`, the inbound call's `answered_by_user_id`). In the transaction that records the
+  conversation; `follow_up_status = 'open'` in the UPDATE's WHERE, so two conversations at once,
+  or one beside a person's Mark handled, close a row once. The contact is never touched (its
+  inbound callback is settled by the call that reaches it).
+- **`idx_agency_inbound_calls_missed_open_from`** `(tenant_id, account_id, from_e164) WHERE
+  follow_up_status = 'open' AND from_e164 IS NOT NULL`: the triggers' probe, the size of the open
+  follow-ups.
+- **`idx_agency_inbound_calls_account_arrived`** `(tenant_id, account_id, arrived_at) WHERE state =
+  'ended'`: the inbound summary's range read (ended calls only, the predicate repeated literally).
+  Partial so it never offers the Missed list a backward scan to prefer over
+  `idx_agency_inbound_calls_missed`.
+
+**Down** drops the triggers, the functions, the indexes and the column (a reached row stays
+handled, with no reason). **Tests**: `test/integration/db/inbound-missed-follow-up-migration.test.ts`
+(the CHECK against the contract's list, each trigger and what it leaves alone, two closes at once
+and a close beside a Mark handled, both indexes by definition and by the planner over a 40-account
+history, down then up), the trigger list in `baseline.test.ts`, the down → up suite, and the
+server's `test/integration/api/inbound-missed-work.test.ts`.
 
 ## Tests
 

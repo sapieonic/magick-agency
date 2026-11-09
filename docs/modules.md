@@ -462,7 +462,7 @@ Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inboun
 | `apps/server/test/integration/agency/inbound-follow-up.test.ts` (the callback against the real claims, CA5, the clears, the live count of admitted calls, the identification reads) | 17 |
 | `apps/server/test/integration/agency/inbound-call-router.test.ts` (the router with a fake bridge: a `CallUUID` another tenant or credential holds refused on both paths, unrecorded messages spoken, the bridge's refusal un-admitting with our busy, an answer past its budget; our standard recordings on the queue's exit, the voicemail prompt and the preamble, DNC callers never promised a callback) | 22 |
 | `apps/server/test/integration/agency/inbound-kill-switch.test.ts` (the router with `agency_inbound_enabled` off: the closed message spoken by the carrier, no stream, a Missed row; on, as before; a failed flag read is not off) | 3 |
-| `apps/server/test/integration/agency/inbound-connect-repository.test.ts` (P2's agent side: offer / requeue / connect guarded on the session and racing, settlement at the end, the outcome and its replay, the lapse and the startup sweep, the busy probe's inbound arm and its plan, `settleFromInbound` per state, `unclaimUncharged`, `endSupersededByInbound`, the floor's marker, the campaign's `inbound_sticky_enabled`) | 35 |
+| `apps/server/test/integration/agency/inbound-connect-repository.test.ts` (P2's agent side: offer / requeue / connect guarded on the session and racing, settlement at the end, the outcome and its replay, the lapse and the startup sweep, the busy probe's inbound arm and its plan, `settleFromInbound` per state, `unclaimUncharged`, `endSupersededByInbound`, the floor's marker and its inbound wrap-up, the campaign's `inbound_sticky_enabled`) | 37 |
 | `apps/server/test/integration/agency/inbound-agent-claim.test.ts` (real Lua: `reserveForInbound` from each state and every refusal, `available` refused `-3`, no attempt reserved onto a held session, `releaseInbound` by its own id, the rehydrate, an inbound offer racing a pacing reservation, 64 calls racing for one agent) | 10 |
 | `apps/server/test/unit/agency/pacing-inbound-waiting-event.test.ts` (the `inbound_waiting` bus event: round trip, bounds, clamps, malformed input) | 20 |
 | `apps/server/test/integration/telephony/plivo-inbound-e2e.test.ts` (mock Plivo rings a linked number: open, closed, unknown, withheld, DNC, terminal, exhausted, disabled credential, unlinked, tenant default, a message with no recording spoken by the carrier, bad signature, replay, over `max_concurrent`, caller hangs up mid-message, restart sweep) | 18 |
@@ -683,11 +683,23 @@ The final review's fix pass adds `clips.ts`: `POST /inbound/clips` (multipart in
 
 P2 adds `calls.ts` (the answered call's finish: `GET` / `PATCH /inbound/calls/:id`, `…/hangup`, `…/disposition`, `…/dnc`, `agency.inbound.read`, never behind the flag; and `GET /inbound/queue`, `agency.supervise` and the flag), audited `agency_inbound_call.hung_up` / `.dispositioned` / `.dnc_marked` and `dnc_entry.created`; its internal handlers are `agency/inbound-calls.ts` (owners `none`: inbound calls connect in one process, IB8), over `runtime.inboundCalls`.
 
-Files: `../proxy-agency-inbound.routes.ts`, `calls.ts`, `clips.ts`, `missed.ts`, `routes.ts`, `shared.ts`, `../agency/inbound.ts`, `../agency/inbound-answer.ts`, `../agency/inbound-calls.ts`, `../agency/inbound-clips.ts`, `../helpers/inbound-missed-query.ts`
+The final fix pass adds `missed-work.ts` (docs/inbound.md §7, §8.4, §11): the badge's
+`GET /inbound/missed/count` (`agency.inbound.read`), a supervisor's `POST /inbound/missed/:id/assign`
+(`agency.supervise`, audited `agency_inbound_call.reassigned`) and `GET /inbound/summary`
+(`agency.supervise`), none behind the flag; its internal handlers are `agency/inbound-missed-work.ts`
+over `countMissed` / `reassignMissed` (`inbound-call.repository.ts`) and
+`db/repositories/agency/inbound-report.repository.ts` (`AgencyInboundReportRepository`: the
+summary's totals and per-agent reads). `missed.ts` fills `assignee_departed` (`filterAccountMembers`)
+and answers a voicemail `Cache-Control: private, no-store`. A Missed row closing itself when the
+customer is reached is 0028's triggers (`packages/db/BASELINE.md`). The floor's agent row carries
+`inbound_outcome_owed` (`campaign-stats.ts`).
+
+Files: `../proxy-agency-inbound.routes.ts`, `calls.ts`, `clips.ts`, `missed.ts`, `missed-work.ts`, `routes.ts`, `shared.ts`, `../agency/inbound.ts`, `../agency/inbound-answer.ts`, `../agency/inbound-calls.ts`, `../agency/inbound-clips.ts`, `../agency/inbound-missed-work.ts`, `../helpers/inbound-missed-query.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/api/routes/proxy-agency-inbound.test.ts` | 6 |
+| `apps/server/test/unit/api/routes/proxy-agency-inbound.test.ts` (and the reassign body, the summary's range, the rate) | 9 |
+| `apps/server/test/integration/api/inbound-missed-work.test.ts` (the count, reassign, a departed assignee, a call back that connects closing the row and its outcome settling the contact's callback, the summary's numbers and gates, the voicemail never cached; all with the flag off too) | 12 |
 | `apps/server/test/integration/api/inbound-routes.test.ts` (and P2: voicemail taken with the route's warnings on every read and write; a Missed row's voicemail streamed whole and by range under the list's rules; the flag gates the routes, never the Missed list, its voicemails or Mark handled; the recordings listed with the routes playing each) | 17 |
 | `apps/server/test/integration/api/inbound-clips-routes.test.ts` (recordings: an upload decoded for real and stored under the account's key, cached, audited, playable at once; every refusal before storing; the name taken and its object deleted; no storage; the internal handler refusing another account's key; delete refused while a route or an announcement uses it; another account's; access and the flag) | 10 |
 
@@ -1493,6 +1505,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/inbound-migration.test.ts` | 31 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
+| `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the reached triggers and their races, the indexes and their plans, down and up) | 11 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | 8 |
 | `packages/db/test/integration/baseline.test.ts` | 56 |
@@ -1869,14 +1882,28 @@ routes' answers, the reconnect's reconciliation, notes autosave, the outcome, ha
 its pure rules `utils/inbound/inboundCall.ts` (phase, `newerInboundCall`, the rail, the copy).
 `CustomerWaitingPill.tsx` (the station's action bar), `InboundQueueTiles.tsx` (the supervisor's
 queue, `hooks/useInboundQueue.ts`, on the campaigns home and Missed calls), `VoicemailPlayer.tsx`
-(a Missed row's `voicemail_url`). The station's reducer holds `inboundCall` and `customerWaiting`;
+(a Missed row's `voicemail_url`, fetched only from its own route).
+
+The final fix pass (docs/inbound.md §7, §8.4, §11): `MissedCallsList.tsx` gains a supervisor's
+Reassign and "Former member" (copy in `utils/inbound/missedCopy.ts`, styles in
+`MissedCalls.module.css`) and the reached label; `hooks/useMissedCallsCount.ts` (the badge's count,
+one shared read per tab, polled while inbound is on, `refreshMissedCallsCount`) and
+`hooks/useMissedCallsAccess.ts` (whether the caller gets Missed calls: the permission, and the flag
+on or rows to read) drive the badges in `AgencySidebar` and `AgentNav` and keep `MissedCallsPage`
+readable with the flag off; `pages/agency/InboundSummaryPage.tsx` (`/agency/inbound/summary`,
+ranges in `utils/inbound/inboundSummary.ts`); the floor's inbound wrap-up ("Close and make
+available", `AgentFloorDrawer.tsx`, `isInboundWrapup` and its copy in `utils/agencyAgentFloor.ts`). The station's reducer holds `inboundCall` and `customerWaiting`;
 `utils/agencyCues.ts` has the `inbound_ring` cue (`CueDispatcher.onInboundCall`).
 
-Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `InboundCallView.tsx` (+ `.module.css`), `InboundQueueTiles.tsx` (+ `.module.css`), `MissedCallsList.tsx`, `VoicemailPlayer.tsx`, `useInboundShortcuts.ts`
+Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `InboundCallView.tsx` (+ `.module.css`), `InboundQueueTiles.tsx` (+ `.module.css`), `MissedCalls.module.css`, `MissedCallsList.tsx`, `VoicemailPlayer.tsx`, `useInboundShortcuts.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` (with the queue tiles and the voicemail player) | 14 |
+| `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` (with the queue tiles and the voicemail player; the flag off with and without rows; reassign, a departed assignee, reached rows, the badge re-read) | 23 |
+| `apps/console/src/__tests__/pages/InboundSummaryPage.test.tsx` (the ranges, the tiles and agents, no calls, a dash for no rate, the gates) | 8 |
+| `apps/console/src/__tests__/hooks/useMissedCallsCount.test.tsx` (one shared read, the poll only with inbound on, the re-read, a failed read, another account, the badge text) | 6 |
+| `apps/console/src/__tests__/components/missedNavBadge.test.tsx` (the badge in the sidebar and the agent's nav, the entries with the flag off) | 6 |
+| `apps/console/src/__tests__/components/AgentFloorInboundWrapup.test.tsx` (the inbound wrap-up's label, Close and make available, its confirm and refusal) | 5 |
 | `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (both actions offered, the voicemail saved; the route's warnings beside their fields, advisory) | 5 |
 | `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` (the recordings panel: listed with lengths and routes, delete only of one nothing uses or chose, upload and the selects offering it, refusals, the size limit, delete and the in-use reload, no storage) | 8 |
@@ -1885,7 +1912,7 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 | `apps/console/src/__tests__/pages/AgentConsolePage.inbound.test.tsx` (the panel on the offer, the frozen geometry across offered / connected / owing, hang-up, outcome, notes, DNC, the early hang-up notice, restore after `ready`, the waiting pill) | 12 |
 | `apps/console/src/__tests__/hooks/useInboundCall.test.ts` | 21 |
 | `apps/console/src/__tests__/components/InboundQueueTiles.test.tsx` (with "Open, but no one can take calls") | 7 |
-| `apps/console/src/__tests__/api/inboundCalls.test.ts` (the call routes, the queue and the voicemail URL) | 11 |
+| `apps/console/src/__tests__/api/inboundCalls.test.ts` (the call routes, the queue, reassign, the count and the summary, and the voicemail URL: never anywhere but its own route) | 14 |
 | `apps/console/src/__tests__/utils/inboundCall.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/agencyStationReducer.inbound.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/inboundRouteForm.test.ts` | 12 |
@@ -2039,7 +2066,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyActivityCopy.test.ts` | 60 |
 | `apps/console/src/__tests__/utils/agencyOutcomeDispositions.test.ts` | 27 |
 | `apps/console/src/__tests__/utils/agencyAgentCallerIdCopy.test.ts` | 7 |
-| `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 69 |
+| `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 70 |
 | `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 73 |
 | `apps/console/src/__tests__/utils/agencyAssignmentCopy.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyAssignmentOps.test.ts` | 21 |
