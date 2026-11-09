@@ -144,6 +144,9 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_inbound_call.hung_up',
   'agency_inbound_call.dispositioned',
   'agency_inbound_call.dnc_marked',
+  // A supervisor's force-available closed an outcome the agent owed (`no_disposition`, as the
+  // lapse would): filed under the call, the supervisor the actor (`details.via`, the session).
+  'agency_inbound_call.closed',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────

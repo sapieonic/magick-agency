@@ -465,7 +465,7 @@ describe('an inbound call on a linked Plivo number, P1 (nobody is connected)', (
     await waitFor('the leg ended', async () => (await legOf(row)).ended_at !== null);
   });
 
-  it('restart: the startup sweep ends a call a restart left open as abandoned_in_queue, with its follow-up and callback', async () => {
+  it('restart: the startup sweep ends a call a restart left open as failed (we lost the caller, QA-F9), with its follow-up and callback', async () => {
     const { campaignId, contactId } = await campaignWithCaller({ state: 'exhausted', attempt_count: 3 });
     const call = (await agencyInboundCallRepository.insertArrival({
       tenantId: TENANT, accountId: ACCOUNT, routeId, phoneNumberId, provider: 'plivo', telephonyCredentialId: rig!.credentialId,
@@ -478,7 +478,7 @@ describe('an inbound call on a linked Plivo number, P1 (nobody is connected)', (
     const restarted = await startInboundCalls({ bridge: rig!.bridge, dnc: new DncRegistry() });
     try {
       const row = (await agencyInboundCallRepository.findByIdAnyTenant(call.id))!;
-      expect(row).toMatchObject({ state: 'ended', outcome: 'abandoned_in_queue', follow_up_status: 'open', follow_up_assignee_user_id: AGENT });
+      expect(row).toMatchObject({ state: 'ended', outcome: 'failed', follow_up_status: 'open', follow_up_reason: 'failed', follow_up_assignee_user_id: AGENT });
       expect(row.callback_due_at).not.toBeNull();
       expect(await contactRow(contactId)).toMatchObject({ state: 'pending', callback_source: 'inbound' });
     } finally {

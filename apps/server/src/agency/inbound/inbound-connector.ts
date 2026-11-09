@@ -1053,18 +1053,20 @@ export class InboundConnector {
 
   /**
    * Undo a reservation whose offer was refused: the `inbound` field cleared, and (from the
-   * search, where the agent was `available`) the agent returned. A session the spine says owes
-   * another inbound call's outcome (its Redis field was lost) is put back on that call instead
-   * (`break`, the field re-claimed), never into the pool.
+   * search, where the agent was `available`) the agent returned. A session the spine says holds
+   * another unsettled inbound call (`session_busy`: its Redis field was lost) never goes to the
+   * pool (SWE-M1): it is put on `break`, re-claimed for that call when its outcome is owed; the
+   * same when the spine cannot be read (fails closed). The settle that follows never lifts that
+   * break (`InboundCallService.returnAgent`): the agent's own "Go available" does.
    */
   private async giveBack(sessionId: string, callId: string, why: 'call_gone' | 'session_busy', opts: { release?: boolean } = {}): Promise<void> {
     await this.deps.agents.releaseInbound(sessionId, callId);
     if (why === 'session_busy') {
-      const owed = await agencyInboundCallRepository.findUnsettledForSession(sessionId).catch(() => null);
-      if (owed && owed.state === 'ended' && owed.bridged_at !== null) {
-        log.warn({ sessionId, owedInboundCallId: owed.id }, 'Session reserved for an inbound call while it owes another one\'s outcome — re-claiming that call');
+      const owed = await agencyInboundCallRepository.findUnsettledForSession(sessionId).catch(() => undefined);
+      if (owed !== null) {
+        log.warn({ sessionId, owedInboundCallId: owed?.id ?? null }, 'Session reserved for an inbound call while it holds another — on break, never the pool');
         await this.deps.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
-        await this.deps.agents.rehydrateInbound(sessionId, owed.id);
+        if (owed && owed.state === 'ended' && owed.bridged_at !== null) await this.deps.agents.rehydrateInbound(sessionId, owed.id);
         await agencyAgentSessionRepository.setState(sessionId, 'break').catch(() => undefined);
         this.deps.stations.send(sessionId, { event: 'agent_state', state: 'break', since: new Date(this.now()).toISOString() });
         return;

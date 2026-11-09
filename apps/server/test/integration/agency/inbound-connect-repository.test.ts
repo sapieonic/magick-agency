@@ -360,10 +360,13 @@ describe('the startup sweep', () => {
     const queued = await arrived();
     await repo.transition(queued.id, 'queued');
     await pool().query(`UPDATE agency_inbound_calls SET arrived_at = now() - interval '1 hour'`);
+    // Bridged a minute after it arrived: the bind is the call's latest start.
+    await pool().query(`UPDATE agency_inbound_calls SET bridged_at = now() - interval '59 minutes' WHERE id = $1`, [live.call.id]);
     const swept = await repo.sweepStale(new Date(Date.now() - 60_000), 100);
     expect(swept.find((r) => r.id === live.call.id)).toMatchObject({ outcome: 'answered', settled_at: null });
-    expect(swept.find((r) => r.id === waiting.call.id)).toMatchObject({ outcome: 'abandoned_in_queue', settled_at: expect.any(Date) });
-    expect(swept.find((r) => r.id === queued.id)).toMatchObject({ outcome: 'abandoned_in_queue', settled_at: expect.any(Date) });
+    // We lost the ones nobody took (QA-F9): `failed`, with the Missed row's reason the same.
+    expect(swept.find((r) => r.id === waiting.call.id)).toMatchObject({ outcome: 'failed', follow_up_reason: 'failed', settled_at: expect.any(Date) });
+    expect(swept.find((r) => r.id === queued.id)).toMatchObject({ outcome: 'failed', follow_up_reason: 'failed', settled_at: expect.any(Date) });
     expect(await repo.findUnsettledForSession(live.session)).toMatchObject({ id: live.call.id });
     expect(await repo.findUnsettledForSession(waiting.session)).toBeNull();
   });

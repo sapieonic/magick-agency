@@ -343,7 +343,7 @@ describe('the Missed inbound list', () => {
 });
 
 describe('the sweep (§10)', () => {
-  it('ends the calls left non-terminal before the cutoff: abandoned with a Missed row for its sticky agent, or answered once bridged', async () => {
+  it('ends the calls left non-terminal before the cutoff: failed (we lost them, QA-F9) with a Missed row for its sticky agent, or answered once bridged', async () => {
     const old = new Date(Date.now() - 3_600_000);
     const sticky = randomUUID();
     const waiting = await arrived({ identification: { match: null, callerDnc: false, sticky: { userId: sticky, reason: 'owner' } } });
@@ -355,15 +355,16 @@ describe('the sweep (§10)', () => {
     await repo.connect(bridged.id, { sessionId: session, answeredByUserId: randomUUID() });
     const recent = await arrived();
     const done = await missedCall();
-    await pool().query(`UPDATE agency_inbound_calls SET arrived_at = $1 WHERE id <> $2`, [old, recent.id]);
+    // Started before the cutoff: arrived, and bridged (the bind re-arms the call's max duration).
+    await pool().query(`UPDATE agency_inbound_calls SET arrived_at = $1::timestamptz, bridged_at = CASE WHEN bridged_at IS NULL THEN NULL ELSE $1::timestamptz END WHERE id <> $2`, [old, recent.id]);
 
     const swept = await repo.sweepStale(new Date(Date.now() - 60_000), 100);
     expect(swept.map((r) => r.id).sort()).toEqual([waiting.id, nobody.id, bridged.id].sort());
     expect(swept.find((r) => r.id === waiting.id)).toMatchObject({
-      state: 'ended', outcome: 'abandoned_in_queue', follow_up_status: 'open', follow_up_reason: 'abandoned_in_queue',
+      state: 'ended', outcome: 'failed', follow_up_status: 'open', follow_up_reason: 'failed',
       follow_up_assignee_user_id: sticky,
     });
-    expect(swept.find((r) => r.id === nobody.id)).toMatchObject({ outcome: 'abandoned_in_queue', follow_up_assignee_user_id: null });
+    expect(swept.find((r) => r.id === nobody.id)).toMatchObject({ outcome: 'failed', follow_up_assignee_user_id: null });
     expect(swept.find((r) => r.id === bridged.id)).toMatchObject({ outcome: 'answered', follow_up_status: null });
     expect((await repo.findById(T, recent.id))!.state).toBe('arrived');
     expect((await repo.findById(T, done))!.follow_up_reason).toBe('closed');

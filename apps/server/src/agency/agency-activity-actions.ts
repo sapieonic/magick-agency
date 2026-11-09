@@ -194,6 +194,7 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_inbound_call.hung_up', label: 'Inbound call ended', group: 'Calls' },
   { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls' },
   { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls' },
+  { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls' },
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned', group: 'Staffing' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },

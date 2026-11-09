@@ -20,6 +20,7 @@ import {
 // The pure row → wire projection the station panel's history uses too (from its leaf, as there).
 import { projectPriorAttempt } from '../../db/repositories/agency/projections.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../../db/models/agency.model.js';
+import { inboundOutcomeWindowMs, inboundWrapupRule } from './inbound-wrapup.js';
 
 const log = createChildLogger({ component: 'agency-inbound-wire' });
 
@@ -54,6 +55,12 @@ export interface InboundPanelContext {
    * route's read): the row's own `sticky_user_id` / `sticky_reason` then decide.
    */
   stickyCandidates: ReadonlyArray<{ userId: string; reason: AgencyInboundStickyReason }>;
+  /**
+   * How long after its end the call's outcome lapses (`inbound-wrapup.ts`: the matched campaign's
+   * auto-return window, else the account default, never past the backstop). Absent: the backstop,
+   * {@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}.
+   */
+  outcomeWindowMs?: number;
 }
 
 function nonEmpty(catalog: unknown): catalog is AgencyDisposition[] {
@@ -126,6 +133,8 @@ export async function loadInboundPanelContext(
     catalogSource: source,
     catalog,
     stickyCandidates: opts.stickyCandidates ?? [],
+    // The matched campaign's wrap-up rule; a call whose campaign row could not be read takes the default.
+    outcomeWindowMs: inboundOutcomeWindowMs(inboundWrapupRule(ownCampaign)),
   };
 }
 
@@ -172,7 +181,7 @@ export function inboundCallToWire(
     bridged_at: iso(call.bridged_at),
     ended_at: iso(call.ended_at),
     talk_seconds: call.state === 'ended' ? call.talk_seconds : null,
-    outcome_due_at: owed ? new Date(new Date(call.ended_at!).getTime() + AGENCY_INBOUND_OUTCOME_LAPSE_MS).toISOString() : null,
+    outcome_due_at: owed ? new Date(new Date(call.ended_at!).getTime() + (ctx.outcomeWindowMs ?? AGENCY_INBOUND_OUTCOME_LAPSE_MS)).toISOString() : null,
     disposition_code: call.disposition_code,
     notes: call.notes,
     callback_at: iso(call.callback_at),

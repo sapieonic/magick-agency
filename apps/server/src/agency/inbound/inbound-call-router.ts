@@ -4,7 +4,7 @@ import type {
   AgencyInboundMissedReason,
   AgencyInboundStickyReason,
 } from '@magick-agency/contracts/agency';
-import { AGENCY_INBOUND_ROUTE_DEFAULTS } from '@magick-agency/contracts/agency';
+import { AGENCY_INBOUND_ROUTE_DEFAULTS, AGENCY_INBOUND_ROUTE_LIMITS } from '@magick-agency/contracts/agency';
 import { inboundScheduleState, nextInboundOpening } from '@magick-agency/domain/inbound-schedule';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
@@ -190,6 +190,13 @@ export function spokenMessageFor(planned: PlannedOutcome, fromE164: string | nul
 /** How many answers given up on (their callers heard the fallback) this process remembers until their hangup. */
 const GIVEN_UP_MAX = 10_000;
 
+/**
+ * How long a hangup that found no call to end is remembered for an answer still in flight
+ * (QA-F4): the caller gave up during our answer-URL work, so the hangup webhook can land before
+ * the answer writes the spine row. Well past the answer's budget (`INBOUND_ANSWER_BUDGET_MS`).
+ */
+export const INBOUND_EARLY_HANGUP_MS = 30_000;
+
 const carrierKey = (provider: string, carrierCallId: string): string => `${provider}:${carrierCallId}`;
 
 /**
@@ -275,6 +282,12 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
   private warnedWorkers = false;
   /** Answers given up on (`provider:carrierCallId`): their callers heard the fallback, so they end with no follow-up. */
   private readonly givenUp = new Set<string>();
+  /**
+   * Hangups that came while the answer was still deciding (`provider:carrierCallId` → the
+   * credential and tenant that verified it, and when), for {@link INBOUND_EARLY_HANGUP_MS}: the
+   * answer ends its row at once instead of promising a stream nobody will open (QA-F4).
+   */
+  private readonly hungUpEarly = new Map<string, { tenantId: string; credentialId: string; at: number }>();
   private readonly running = new Set<Promise<void>>();
   private readonly now: () => Date;
 
@@ -414,6 +427,15 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       return { kind: 'fallback' };
     }
 
+    // The caller hung up while this answer was deciding (QA-F4): the call ends now as the caller
+    // who left (`outcomeAfterPlayback`'s early hangup: an open route's caller `abandoned_in_queue`,
+    // the closed and busy reasons kept), with its follow-up. No stream promised, no slot held.
+    if (this.tookEarlyHangup(arrival)) {
+      await this.endLeg(legId, { status: 'completed', outcome: 'inbound_caller_hung_up' });
+      await this.settle(call, outcomeAfterPlayback(planned, 'aborted', true));
+      return { kind: 'hangup' };
+    }
+
     // No recording for the plan's message: the carrier speaks it, and the call ends here with its
     // follow-up (no stream, no session, no slot). A caller who may queue is put through instead.
     // A caller nobody will take leaves a voicemail when the route's action for their case says so
@@ -465,6 +487,14 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       planned = 'overflow_no_capacity';
     }
 
+    // The hangup came while the stream was being taken (it found the row, ended it, and nothing
+    // played yet): the session just taken is let go now, not at the media deadline.
+    if (!this.live.has(call.id) && this.tookEarlyHangup(arrival)) {
+      await this.deps.bridge.forceEndWithOutcome(call.id, 'inbound_caller_hung_up').catch(() => false);
+      await this.settle(call, outcomeAfterPlayback(planned, 'aborted', true));
+      return { kind: 'hangup' };
+    }
+
     // A retried answer for a call already playing: the same stream, and no second sequence.
     if (!this.live.has(call.id)) {
       if (queue && accepted.capacity !== 'no_capacity' && route) {
@@ -485,7 +515,14 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
 
   async ended(hangup: InboundCallHangup): Promise<{ legId: string | null }> {
     const call = await agencyInboundCallRepository.findByProviderCallId(hangup.provider, hangup.carrierCallId);
-    if (!call || call.tenant_id !== hangup.tenantId || call.telephony_credential_id !== hangup.credentialId) {
+    if (!call) {
+      // No row yet: the answer may still be deciding (QA-F4). Remembered for it, under the
+      // credential and tenant that verified this hangup, so only that answer can read it.
+      this.noteEarlyHangup(hangup);
+      log.info({ credentialId: hangup.credentialId }, 'Inbound hangup before its answer wrote the call — remembered for the answer');
+      return { legId: null };
+    }
+    if (call.tenant_id !== hangup.tenantId || call.telephony_credential_id !== hangup.credentialId) {
       log.warn({ credentialId: hangup.credentialId }, 'Inbound hangup for a call this credential never answered — ignoring');
       return { legId: null };
     }
@@ -496,16 +533,21 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       live.callerHungUp = true;
     } else {
       // Not being played to: a caller who hung up before we put them anywhere, or one the fallback
-      // answered (`settle` leaves that one no follow-up, and its outcome is `failed`).
-      if (call.state !== 'ended') await this.settle(call, this.givenUp.has(key) ? 'failed' : 'abandoned_in_queue');
+      // answered (`settle` leaves that one no follow-up, and its outcome is `failed`). Remembered
+      // too, for an answer that wrote the row and is still taking its stream.
+      if (call.state !== 'ended') {
+        await this.settle(call, this.givenUp.has(key) ? 'failed' : 'abandoned_in_queue');
+        this.noteEarlyHangup(hangup);
+      }
       this.givenUp.delete(key);
     }
     return { legId: call.webrtc_call_id };
   }
 
   /**
-   * The startup and periodic sweep (§10): every call not ended that arrived before `olderThan`
-   * ends (`sweepStale`: bridged → `answered`, else `abandoned_in_queue` with its Missed row), and
+   * The startup and periodic sweep (§10): every call not ended that started before `olderThan`
+   * ends (`sweepStale`: bridged → `answered`, else `failed` with its Missed row: we lost the
+   * caller, QA-F9), and
    * each one that reached nobody gets its callback booked here. Batches of `batch` until none is
    * left. Returns how many calls it ended.
    */
@@ -514,7 +556,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     for (;;) {
       const ended = await agencyInboundCallRepository.sweepStale(olderThan, batch);
       for (const call of ended) {
-        trackInboundCallEnded(call.outcome ?? 'abandoned_in_queue');
+        trackInboundCallEnded(call.outcome ?? 'failed');
         if (call.follow_up_status === null) continue;
         try {
           const owed = await this.callbackOwed(call);
@@ -922,6 +964,27 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       .catch((err: unknown) => log.error({ err, legId }, 'Could not end the media leg of an inbound call that never streamed'));
   }
 
+  private noteEarlyHangup(hangup: InboundCallHangup): void {
+    const now = Date.now();
+    // Oldest first: drop what has expired, and the oldest beyond the bound.
+    for (const [key, seen] of this.hungUpEarly) {
+      if (now - seen.at < INBOUND_EARLY_HANGUP_MS && this.hungUpEarly.size < GIVEN_UP_MAX) break;
+      this.hungUpEarly.delete(key);
+    }
+    const key = carrierKey(hangup.provider, hangup.carrierCallId);
+    this.hungUpEarly.delete(key);
+    this.hungUpEarly.set(key, { tenantId: hangup.tenantId, credentialId: hangup.credentialId, at: now });
+  }
+
+  /** Whether `arrival`'s caller hung up while its answer was deciding (then forgotten): the same credential and tenant, in time. */
+  private tookEarlyHangup(arrival: InboundCallArrival): boolean {
+    const key = carrierKey(arrival.provider, arrival.carrierCallId);
+    const seen = this.hungUpEarly.get(key);
+    if (!seen || seen.tenantId !== arrival.tenantId || seen.credentialId !== arrival.credentialId) return false;
+    this.hungUpEarly.delete(key);
+    return Date.now() - seen.at < INBOUND_EARLY_HANGUP_MS;
+  }
+
   private noteGivenUp(key: string): void {
     if (this.givenUp.size >= GIVEN_UP_MAX) this.givenUp.delete(this.givenUp.values().next().value!);
     this.givenUp.add(key);
@@ -930,14 +993,21 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
 
 /** How often the periodic sweep runs (§10). */
 export const INBOUND_SWEEP_INTERVAL_MS = 5 * 60_000;
+/** The longest a call may be parked before an agent's bind: {@link parkedSecondsFor} at the route's longest maximum wait. */
+export const INBOUND_MAX_PARKED_SECONDS = parkedSecondsFor({ queue_max_wait_seconds: AGENCY_INBOUND_ROUTE_LIMITS.QUEUE_MAX_WAIT_SECONDS.max });
+
 /**
- * The periodic sweep ends a call that arrived longer ago than this and has not ended: past the
- * longest any call may last (`WEBRTC_MAX_DURATION_SECONDS`, every session's max-duration timer
- * ends it before), with a margin, so it never ends a call a live session in this process still
- * holds. The startup sweep instead ends every call that arrived before this process started: no
- * session of the process that held it survives a restart (one replica; IB8).
+ * The periodic sweep ends a call not ended whose latest start (`COALESCE(bridged_at,
+ * arrived_at)`, `sweepStale`) is older than this. A live session ends every call before it: an
+ * unbridged call within its budget from the answer (at most {@link INBOUND_MAX_PARKED_SECONDS}
+ * parked, then the account's max duration, at most `WEBRTC_MAX_DURATION_SECONDS`; a message or a
+ * voicemail's budget is shorter), a bridged one within the max duration the bind re-arms. So with
+ * the margin it never ends a call a live session in this process still holds (SWE-m1: on the
+ * arrival alone, a caller parked 15 minutes and then talking to the ceiling was swept mid-call).
+ * The startup sweep instead ends every call that arrived before this process started: no session
+ * of the process that held it survives a restart (one replica; IB8).
  */
-export const INBOUND_SWEEP_STALE_AFTER_MS = (WEBRTC_MAX_DURATION_SECONDS + 10 * 60) * 1000;
+export const INBOUND_SWEEP_STALE_AFTER_MS = (WEBRTC_MAX_DURATION_SECONDS + INBOUND_MAX_PARKED_SECONDS + 10 * 60) * 1000;
 
 /**
  * What {@link startInboundCalls} connects agents with (P2): the agency runtime's pieces, and the
@@ -971,7 +1041,7 @@ export const INBOUND_SHUTDOWN_DRAIN_MS = 10_000;
  * `service_shutdown`, as the bridge's graceful shutdown would, and waits for them to settle (a
  * caller nobody took: `failed` with its Missed row and callback, Q18; an answered one: owing its
  * outcome), at most {@link INBOUND_SHUTDOWN_DRAIN_MS}. Ended later, by the voice stop, their settles
- * raced the database pool's close and the next start's sweep wrote `abandoned_in_queue` instead.
+ * raced the database pool's close and the next start's sweep wrote them instead.
  */
 export async function startInboundCalls(deps: Omit<AgencyInboundCallRouterDeps, 'bridge' | 'connect'> & {
   bridge: AgencyInboundCallRouterDeps['bridge'] & InboundConnectorDeps['bridge'];

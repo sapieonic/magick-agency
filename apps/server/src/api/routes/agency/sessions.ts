@@ -30,6 +30,7 @@ import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { accountNameInTenant, mintStationTokenOr503, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
+import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
 import { runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
 import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
@@ -79,8 +80,8 @@ async function mayStartOrResume(tenantId: string, campaignId: string, agentUserI
  * `authMiddleware`), so every route here runs behind it.
  */
 
-/** The force-available refusal's sentence while the agent holds an inbound call. */
-const FORCE_INBOUND_MESSAGE = 'The agent has an inbound call open: its outcome must be saved before they can go available.';
+/** The force-available refusal's sentence while the agent is on an inbound call (offered or connected: an owed outcome is closed instead). */
+const FORCE_INBOUND_MESSAGE = 'The agent is on an inbound call: they can be made available once it has ended.';
 
 /** 409 `inbound_call_live` (docs/inbound.md §6): the session holds an inbound call. */
 function inboundCallLive(inboundCallId: string, message: string): AgencyInboundCallLiveRefusal {
@@ -546,29 +547,36 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     const forced = await runtime.wrapup.force(session.id);
     let state: AgencyAgentState;
     let endedSoftphone = false;
+    // The inbound call this force closed, for the public layer's audit row (`inbound-close-audit.ts`).
+    let inboundClosed: Record<string, InboundCloseAudit> = {};
     if (forced) {
       // The forced wrap-up already released the agent (a queued break applies there).
       state = (await runtime.agents.get(session.id))?.state ?? 'offline';
     } else {
       const owed = await owedSoftphoneCall(runtime.agents, session.id);
       if (owed) return manualCallLive(owed);
-      // An inbound call the agent holds (offered, connected, or owing its outcome) is not a
-      // wrap-up a supervisor may force: its outcome is saved on the call, on behalf if need be
-      // (docs/inbound.md §6). Read from the database first, as the soft phone's is.
-      const owedInbound = await owedInboundCallId(runtime.agents, session.id);
-      if (owedInbound) return reply.code(409).send(inboundCallLive(owedInbound, FORCE_INBOUND_MESSAGE));
+      // An inbound call whose outcome the agent owes is closed here as its lapse would close it
+      // (`no_disposition`; the public layer audits `agency_inbound_call.closed`, closed by a
+      // supervisor) and the agent is returned below like any wrap-up (docs/inbound.md §6). A call
+      // still offered or connected is not forced: the supervisor waits for it to end. Read from
+      // the database first, as the soft phone's is.
+      const closing = await runtime.inboundCalls.closeOwedForSupervisor(session.id);
+      if (closing.kind === 'live') return reply.code(409).send(inboundCallLive(closing.inboundCallId, FORCE_INBOUND_MESSAGE));
+      if (closing.kind === 'closed') {
+        inboundClosed = { [INBOUND_CLOSE_AUDIT_KEY]: { inbound_call_id: closing.call.id, campaign_id: closing.call.matched_campaign_id } };
+      }
       // Not in wrap-up — fall through to a plain return rather than 409ing. A
       // supervisor pressing this on an agent who just finished should not get an
       // error for winning a race by half a second.
       const released = await runtime.dialer.releaseAgent(session.id);
       if (released.result === 'inbound_call_owed') {
         const held = await owedInboundCallId(runtime.agents, session.id) ?? await runtime.agents.inboundCallOf(session.id);
-        if (held) return reply.code(409).send(inboundCallLive(held, FORCE_INBOUND_MESSAGE));
+        if (held) return reply.code(409).send({ ...inboundCallLive(held, FORCE_INBOUND_MESSAGE), ...inboundClosed });
         const err: AgencySoftphoneErrorResponse = {
           error: 'Service Unavailable', code: 'dial_failed',
           message: 'Could not change the agent\'s status just now; nothing changed. Try again.',
         };
-        return reply.code(503).send(err);
+        return reply.code(503).send({ ...err, ...inboundClosed });
       }
       if (released.result === 'manual_call_live' || released.result === 'softphone_session') {
         const call = await owedSoftphoneCall(runtime.agents, session.id);
@@ -586,6 +594,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     return reply.send({
       session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString(),
       ...exitAudit(endedSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'force_available', withdrawn: false }),
+      ...inboundClosed,
     });
   });
 

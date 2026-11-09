@@ -423,7 +423,8 @@ describe('inbound P2: restart, recording, concurrency', () => {
     });
     try {
       const swept = (await agencyInboundCallRepository.findByIdAnyTenant(queued.id))!;
-      expect(swept).toMatchObject({ state: 'ended', outcome: 'abandoned_in_queue', follow_up_status: 'open', settled_at: expect.any(Date) });
+      // We lost this caller (QA-F9): `failed`, not a caller who hung up; still followed up.
+      expect(swept).toMatchObject({ state: 'ended', outcome: 'failed', follow_up_status: 'open', follow_up_reason: 'failed', settled_at: expect.any(Date) });
       expect(swept.callback_due_at).not.toBeNull();
       expect((await pool().query('SELECT callback_source FROM agency_contacts WHERE id = $1', [contactId])).rows[0].callback_source).toBe('inbound');
       const answered = (await agencyInboundCallRepository.findByIdAnyTenant(owed.id))!;
@@ -441,11 +442,14 @@ describe('inbound P2: restart, recording, concurrency', () => {
       const refused = await callCore({ method: 'POST', path: `/agency/sessions/${agent.sessionId}/available`, body: { agent_user_id: agent.agentUserId }, tenantId: TENANT, accountId: ACCOUNT });
       expect(refused.status).toBe(409);
       expect(refused.body).toMatchObject({ code: 'inbound_call_live', inbound_call_id: owed.id });
-      // The outcome, then available.
+      // The outcome: the call settled and the claim cleared, but the agent stays on the break the
+      // restart left them on (SWE-M1: a settle never lifts a break); their own Go available does.
       const saved = await finish('POST', `${owed.id}/disposition`, agent.agentUserId, { code: 'voicemail' });
       expect(saved.status, JSON.stringify(saved.body)).toBe(200);
-      await waitFor('available after the outcome', async () => (await liveOf(agent.sessionId))?.state === 'available');
-      expect(await liveOf(agent.sessionId)).toMatchObject({ inboundCallId: null });
+      expect(await liveOf(agent.sessionId)).toMatchObject({ state: 'break', inboundCallId: null });
+      const available = await callCore({ method: 'POST', path: `/agency/sessions/${agent.sessionId}/available`, body: { agent_user_id: agent.agentUserId }, tenantId: TENANT, accountId: ACCOUNT });
+      expect(available.status, JSON.stringify(available.body)).toBe(200);
+      expect(await liveOf(agent.sessionId)).toMatchObject({ state: 'available', inboundCallId: null });
     } finally {
       await restarted.stop();
       runtime.attachInbound(connector);

@@ -51,6 +51,7 @@ import {
 } from '@magick-agency/contracts/agency';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
+import { INBOUND_DEFAULT_WRAPUP, type InboundWrapupRule } from '../../../agency/inbound/inbound-wrapup.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
 import { inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
 
@@ -709,40 +710,58 @@ export class AgencyInboundCallRepository {
   }
 
   /**
-   * The outcome-lapse sweep (§2 step 8, Q11; the soft phone's rule): close every bridged call
-   * whose outcome did not come within `lapseMs` of `ended_at`
-   * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}), or whose session has LEFT: `no_disposition`, the
-   * source its match implies, no `dispositioned_by_user_id` (nobody recorded it), settled. At most
-   * `limit`, oldest end first, over `idx_agency_inbound_calls_unsettled_lapse`.
+   * The outcome-lapse sweep (§2 step 8, §6): close every bridged call whose outcome did not come
+   * within its window of `ended_at`, or whose session has LEFT: `no_disposition`, the source its
+   * match implies, no `dispositioned_by_user_id` (nobody recorded it), settled. The window is the
+   * matched campaign's wrap-up auto-return (`inbound-wrapup.ts`: `wrapup_seconds` when
+   * `wrapup_auto_return` is on and it is above 0), else `defaultWrapup` (unmatched, or the
+   * campaign row gone), never past `lapseMs`, the backstop ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}).
+   * At most `limit`, oldest end first, over `idx_agency_inbound_calls_unsettled_lapse`.
    *
    * **Releases nothing.** It returns the rows it closed; the caller clears each session's Redis
    * `inbound` field (by this id) and returns the agent. The pick is a MATERIALIZED `FOR UPDATE
    * SKIP LOCKED` CTE, so two overlapping sweeps never close one call twice, and an agent saving
    * the outcome concurrently either wins (the UPDATE's `settled_at IS NULL` re-check) or waits.
    */
-  async lapseUnsettled(opts: { lapseMs?: number; limit?: number } = {}): Promise<AgencyInboundCallRecord[]> {
+  async lapseUnsettled(opts: { lapseMs?: number; defaultWrapup?: InboundWrapupRule; limit?: number } = {}): Promise<AgencyInboundCallRecord[]> {
+    const fallback = opts.defaultWrapup ?? INBOUND_DEFAULT_WRAPUP;
     const { rows } = await getPool().query<AgencyInboundCallRecord>(
       `WITH picked AS MATERIALIZED (
          SELECT c.id
            FROM agency_inbound_calls c
            LEFT JOIN agency_agent_sessions s ON s.id = c.session_id
+           LEFT JOIN agency_campaigns k ON k.id = c.matched_campaign_id AND k.tenant_id = c.tenant_id
           WHERE c.bridged_at IS NOT NULL AND c.settled_at IS NULL AND c.state = 'ended'
-            AND (c.ended_at < now() - make_interval(secs => $1::double precision / 1000) OR s.left_at IS NOT NULL)
+            AND (c.ended_at < now() - make_interval(secs => ${OUTCOME_WINDOW_SECONDS_SQL}) OR s.left_at IS NOT NULL)
           ORDER BY c.ended_at
           LIMIT $2::int
             FOR UPDATE OF c SKIP LOCKED
        )
        UPDATE agency_inbound_calls c
-          SET settled_at = now(),
-              disposition_code = '${AUTO_DISPOSITION_CODE}',
-              disposition_source = CASE WHEN c.matched_campaign_id IS NULL THEN 'route' ELSE 'campaign' END,
-              dispositioned_at = now()
+          SET ${LAPSE_SET_SQL}
          FROM picked
         WHERE c.id = picked.id AND c.settled_at IS NULL AND c.state = 'ended'
         RETURNING ${CALL_COLUMNS}`,
-      [opts.lapseMs ?? AGENCY_INBOUND_OUTCOME_LAPSE_MS, opts.limit ?? 500],
+      [opts.lapseMs ?? AGENCY_INBOUND_OUTCOME_LAPSE_MS, opts.limit ?? 500, fallback.wrapupSeconds, fallback.autoReturn],
     );
     return rows;
+  }
+
+  /**
+   * Close ONE call's owed outcome now, as the lapse does (`no_disposition`, nobody recorded it,
+   * settled): a supervisor's force-available on its agent (docs/inbound.md §6). Only a call that
+   * ended after it bridged and is still unsettled; null otherwise (the outcome was saved, or the
+   * sweep closed it, first: the row lock orders this against both).
+   */
+  async lapseOne(id: string): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await getPool().query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c
+          SET ${LAPSE_SET_SQL}
+        WHERE c.id = $1::uuid AND c.bridged_at IS NOT NULL AND c.settled_at IS NULL AND c.state = 'ended'
+        RETURNING ${CALL_COLUMNS}`,
+      [id],
+    );
+    return rows[0] ?? null;
   }
 
   /**
@@ -823,21 +842,24 @@ export class AgencyInboundCallRepository {
   }
 
   /**
-   * The startup and periodic sweep (§10): end every call still not ended that arrived before
-   * `olderThan`, at most `limit` of them, oldest first. A call bridged to an agent ends
+   * The startup and periodic sweep (§10): end every call still not ended whose latest start
+   * (`COALESCE(bridged_at, arrived_at)`: the bind re-arms the call's whole max duration) is before
+   * `olderThan`, at most `limit` of them, oldest arrival first. A call bridged to an agent ends
    * `answered` (it was answered; the process that held it is gone) with no follow-up, and stays
    * UNSETTLED: its agent still owes the outcome, writes it after reconnecting (the session is
    * rehydrated with the call re-claimed), or the lapse sweep closes it. Every other one ends
-   * `abandoned_in_queue` with an open Missed row (reason `abandoned_in_queue`) assigned to its
-   * sticky agent, else the account, and is settled (nobody spoke to the caller). Claimed with `MATERIALIZED … FOR UPDATE SKIP LOCKED`,
-   * so two sweeps, or a sweep and a hangup webhook, never end one call twice. Returns the rows it
-   * ended: the caller books each one's callback, emits metrics and audits.
+   * `failed` (QA-F9: we lost the caller, a crash or a call this process no longer held; nobody
+   * knows they hung up) with an open Missed row (reason `failed`) assigned to its sticky agent,
+   * else the account, and is settled (nobody spoke to the caller). Claimed with `MATERIALIZED …
+   * FOR UPDATE SKIP LOCKED`, so two sweeps, or a sweep and a hangup webhook, never end one call
+   * twice. Returns the rows it ended: the caller books each one's callback, emits metrics and audits.
    */
   async sweepStale(olderThan: Date, limit: number): Promise<AgencyInboundCallRecord[]> {
     const { rows } = await getPool().query<AgencyInboundCallRecord>(
       `WITH picked AS MATERIALIZED (
          SELECT id FROM agency_inbound_calls
           WHERE state <> 'ended' AND arrived_at < $1::timestamptz
+            AND COALESCE(bridged_at, arrived_at) < $1::timestamptz
           ORDER BY arrived_at
           LIMIT $2::int
           FOR UPDATE SKIP LOCKED
@@ -845,9 +867,9 @@ export class AgencyInboundCallRepository {
        UPDATE agency_inbound_calls c
           SET state = 'ended',
               ended_at = now(),
-              outcome = CASE WHEN c.bridged_at IS NOT NULL THEN 'answered' ELSE 'abandoned_in_queue' END,
+              outcome = CASE WHEN c.bridged_at IS NOT NULL THEN 'answered' ELSE 'failed' END,
               follow_up_status = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE 'open' END,
-              follow_up_reason = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE 'abandoned_in_queue' END,
+              follow_up_reason = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE 'failed' END,
               follow_up_assignee_user_id = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE c.sticky_user_id END,
               settled_at = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE now() END
          FROM picked
@@ -858,6 +880,23 @@ export class AgencyInboundCallRepository {
     return rows.sort((a, b) => a.arrived_at.getTime() - b.arrived_at.getTime());
   }
 }
+
+/** What closing an owed outcome writes (the lapse sweep, a supervisor's close): `no_disposition`, by nobody, settled. */
+const LAPSE_SET_SQL = `settled_at = now(),
+              disposition_code = '${AUTO_DISPOSITION_CODE}',
+              disposition_source = CASE WHEN c.matched_campaign_id IS NULL THEN 'route' ELSE 'campaign' END,
+              dispositioned_at = now()`;
+
+/**
+ * The lapse window in seconds (`inbound-wrapup.ts`'s `inboundOutcomeWindowMs`, in SQL): the
+ * matched campaign `k`'s auto-return window, else the default (`$3` seconds, `$4` auto-return),
+ * never past the backstop (`$1` ms). Auto-return off, or no window: the backstop.
+ */
+const OUTCOME_WINDOW_SECONDS_SQL = `CASE
+                 WHEN COALESCE(k.wrapup_auto_return, $4::boolean) AND COALESCE(k.wrapup_seconds, $3::int) > 0
+                   THEN LEAST(COALESCE(k.wrapup_seconds, $3::int)::double precision, $1::double precision / 1000)
+                 ELSE $1::double precision / 1000
+               END`;
 
 /** The one-unsettled-call-per-session index (`0027_inbound_connect.sql`). */
 const SESSION_UNSETTLED_INDEX = 'uq_agency_inbound_calls_session_unsettled';

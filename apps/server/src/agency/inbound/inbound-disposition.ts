@@ -25,10 +25,14 @@
  * is cleared (by this id) and the agent returned (`releaseAgent`: a queued break applies, or the
  * release hook offers them the next caller).
  *
- * ── The lapse (Q11) ──────────────────────────────────────────────────────────────
- * {@link InboundCallService.sweepLapsed}, every minute: a bridged call whose outcome did not come
- * within `AGENCY_INBOUND_OUTCOME_LAPSE_MS` of its end (or whose session left) is closed
- * `no_disposition` (`lapseUnsettled`), its field cleared and its agent returned.
+ * ── The lapse (§6) ───────────────────────────────────────────────────────────────
+ * {@link InboundCallService.sweepLapsed}, every few seconds: a bridged call whose outcome did not
+ * come within its window (`inbound-wrapup.ts`: the matched campaign's wrap-up auto-return, else
+ * the account default, never past the 30-minute backstop `AGENCY_INBOUND_OUTCOME_LAPSE_MS`), or
+ * whose session left, is closed `no_disposition` (`lapseUnsettled`), its field cleared and its
+ * agent returned, from the wrap-up it holds them in only ({@link returnsToPool}: an agent on a
+ * break stays on it, SWE-M1). A supervisor's force-available closes one the same way
+ * ({@link InboundCallService.closeOwedForSupervisor}) and returns the agent.
  */
 import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
@@ -49,7 +53,7 @@ import {
   type AgencyInboundCallRecord,
 } from '../../db/repositories/agency.repository.js';
 import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
-import type { AgentStateMachine } from '../agent-state-machine.js';
+import type { AgentLiveState, AgentStateMachine } from '../agent-state-machine.js';
 import type { StationRegistry } from '../station-registry.js';
 import { markDnc } from '../dnc-mark.js';
 import { manualDispositionDecision, prepareManualDisposition } from '../softphone/manual-disposition.js';
@@ -85,7 +89,7 @@ export interface InboundDncEntryWritten {
 
 export interface InboundCallServiceDeps {
   bridge: Pick<WebRtcBridgeManager, 'forceEndWithOutcome'>;
-  agents: Pick<AgentStateMachine, 'releaseInbound'>;
+  agents: Pick<AgentStateMachine, 'releaseInbound' | 'get'>;
   stations: Pick<StationRegistry, 'send' | 'isLocallyOwned'>;
   releaseAgent: (sessionId: string) => Promise<unknown>;
   /** The connector, when this process runs one (the hang-up waits for the call's end; the queue tiles). */
@@ -286,12 +290,23 @@ export class InboundCallService {
     };
   }
 
-  /** A settled call's session: the `inbound` field cleared (by this id), the agent returned when still here. */
+  /**
+   * A settled call's session: the `inbound` field cleared (by this id), and the agent returned
+   * (`releaseAgent`) only when the call is what holds them out of the pool — read live, before
+   * the field is cleared ({@link returnsToPool}). An agent who chose a break since (a restart
+   * landed them on `break` with the call re-claimed, and they pressed a break) keeps it, and one
+   * the station close wrote `offline` stays out: their own "Go available" brings them back.
+   */
   private async returnAgent(call: AgencyInboundCallRecord): Promise<void> {
     if (!call.session_id) return;
     const sessionId = call.session_id;
+    const live = await this.deps.agents.get(sessionId);
     await this.deps.agents.releaseInbound(sessionId, call.id);
     if (!this.deps.stations.isLocallyOwned(sessionId)) return;
+    if (!returnsToPool(live, call.id)) {
+      log.info({ sessionId, inboundCallId: call.id, state: live?.state ?? null }, 'Inbound call settled — the agent is not returned from where they are');
+      return;
+    }
     await Promise.resolve(this.deps.releaseAgent(sessionId)).catch((err: unknown) =>
       log.error({ err, sessionId, inboundCallId: call.id }, 'Could not return the agent after an inbound outcome'));
   }
@@ -403,7 +418,54 @@ export class InboundCallService {
       if (rows.length < batch) return total;
     }
   }
+
+  // ─── A supervisor's force-available (docs/inbound.md §6) ─────────────────
+
+  /**
+   * Before a supervisor's force-available returns `sessionId` to the pool: an inbound call whose
+   * outcome the agent owes is closed as the lapse closes it (`no_disposition`, nobody recorded it;
+   * the route audits it as closed by a supervisor), the session's `inbound` field cleared and its
+   * panel told. The caller then releases the agent as for any wrap-up. A call still offered or
+   * connected is `live`: nothing to close, and the agent is not forced off it. `none`: the session
+   * owes no inbound outcome (or it was saved first). Throws when the spine cannot be read.
+   */
+  async closeOwedForSupervisor(sessionId: string): Promise<
+    | { kind: 'none' }
+    | { kind: 'live'; inboundCallId: string }
+    | { kind: 'closed'; call: AgencyInboundCallRecord }
+  > {
+    const owed = await agencyInboundCallRepository.findUnsettledForSession(sessionId);
+    if (!owed) return { kind: 'none' };
+    if (owed.state !== 'ended' || owed.bridged_at === null) return { kind: 'live', inboundCallId: owed.id };
+    const closed = await agencyInboundCallRepository.lapseOne(owed.id);
+    if (!closed) {
+      // Saved (or swept) a moment ago: whatever settled it is now the session's to return from.
+      const again = await agencyInboundCallRepository.findUnsettledForSession(sessionId);
+      return again ? { kind: 'live', inboundCallId: again.id } : { kind: 'none' };
+    }
+    await this.deps.agents.releaseInbound(sessionId, closed.id);
+    await this.sendFrame(closed, await this.takerOf(closed)).catch((err: unknown) =>
+      log.warn({ err, inboundCallId: closed.id }, 'Could not tell the session its inbound call was closed'));
+    log.info({ sessionId, inboundCallId: closed.id }, 'Inbound outcome closed by a supervisor (force-available)');
+    return { kind: 'closed', call: closed };
+  }
 }
 
-/** How often the outcome-lapse sweep runs. */
-export const INBOUND_LAPSE_SWEEP_INTERVAL_MS = 60_000;
+/**
+ * Whether settling inbound call `callId` returns its agent to the pool (SWE-M1): only from a
+ * state this call holds them in — `wrapup` (its outcome owed), or `reserved` / `on_call` — with
+ * the session's `inbound` field naming this call. Never from `break` (chosen, or the restart's),
+ * `offline`, `available`, a state another call or a campaign wrap-up holds, or no lease at all:
+ * those agents stay where they are, and their own "Go available" brings them back.
+ */
+export function returnsToPool(live: Pick<AgentLiveState, 'state' | 'inboundCallId'> | null, callId: string): boolean {
+  if (!live || live.inboundCallId !== callId) return false;
+  return live.state === 'wrapup' || live.state === 'reserved' || live.state === 'on_call';
+}
+
+/**
+ * How often the outcome-lapse sweep runs: the auto-return windows are a campaign's
+ * `wrapup_seconds` (30 s by default), so an agent is returned within a few seconds of the
+ * countdown the panel shows. One indexed read of the unsettled bridged calls (a handful).
+ */
+export const INBOUND_LAPSE_SWEEP_INTERVAL_MS = 5_000;
