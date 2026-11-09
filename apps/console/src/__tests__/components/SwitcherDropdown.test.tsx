@@ -129,23 +129,29 @@ describe('SwitcherDropdown', () => {
     }
   });
 
-  it('opens from the left edge when it fits in the viewport', () => {
+  it('stays where it opened when it fits in the viewport', () => {
     stubPanelRect(900, 1180);
     renderDropdown();
-    expect(screen.getByRole('presentation', { hidden: true }).getAttribute('data-align')).toBe(
-      'start',
-    );
+    expect(screen.getByTestId('switcher-panel').style.marginLeft).toBe('');
   });
 
-  it('pins to the right edge when opening from the left would leave the viewport', () => {
+  it('pulls itself back on screen when opening from the left would run past the right edge', () => {
     // The account switcher is the last control in the top bar: a 280px panel
     // from its left edge runs past the screen, and focusing its search box then
     // scrolled the whole shell sideways.
     stubPanelRect(1150, 1430);
     renderDropdown();
-    expect(screen.getByRole('presentation', { hidden: true }).getAttribute('data-align')).toBe(
-      'end',
-    );
+    expect(screen.getByTestId('switcher-panel').style.marginLeft).toBe('-158px');
+  });
+
+  it('is placed before its search box takes focus', () => {
+    stubPanelRect(1150, 1430);
+    let marginAtFocus: string | undefined;
+    vi.spyOn(HTMLInputElement.prototype, 'focus').mockImplementation(function (this: HTMLInputElement) {
+      marginAtFocus = screen.getByTestId('switcher-panel').style.marginLeft;
+    });
+    renderDropdown();
+    expect(marginAtFocus).toBe('-158px');
   });
 
   it('focuses the search box without letting the browser scroll to it', () => {

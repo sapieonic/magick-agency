@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { trapTab } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import { usePermission } from '../../../hooks/usePermission';
+import { useKeepInViewport } from '../../../hooks/useKeepInViewport';
 import { CustomerSearchBox } from './CustomerSearchBox';
 import styles from './CustomerSearchPopover.module.css';
 
@@ -15,6 +16,10 @@ import styles from './CustomerSearchPopover.module.css';
  * the button); a search closes it as it opens the results, whose heading then
  * takes focus. While open, Tab stays inside the panel (`trapTab`).
  *
+ * The panel opens from the button's left edge and is kept on screen
+ * (`useKeepInViewport`, 16px gutters to match its CSS width cap): between the
+ * phone breakpoint and about 1000px it would otherwise run past the right edge.
+ *
  * The panel is `ph-no-capture`, like the box inside it: everything in it is a
  * customer's phone number (`CustomerSearchBox`).
  */
@@ -25,6 +30,7 @@ export function CustomerSearchPopover({ resultsPath = '/agency/customers' }: { r
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  useKeepInViewport(panelRef, open, 16);
 
   const close = useCallback((refocus: boolean) => {
     setOpen(false);
