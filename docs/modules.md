@@ -694,12 +694,22 @@ and answers a voicemail `Cache-Control: private, no-store`. A Missed row closing
 customer is reached is 0028's triggers (`packages/db/BASELINE.md`). The floor's agent row carries
 `inbound_outcome_owed` (`campaign-stats.ts`).
 
+Fix pass round 2 (docs/inbound.md §7, §11): `missed.ts` adds `POST /inbound/missed/:id/reopen`
+(`agency.inbound.read`, Mark handled's rules, audited `agency_inbound_call.reopened` with how and
+by whom the row had been handled) over `reopenMissed` (`inbound-call.repository.ts`, the row
+locked, idempotent); a Missed row carries `closed_cause` (0030, stamped by the router at arrival
+through `insertArrival`'s `closedCause`), and the summary counts closed calls by cause
+(`switched_off`, `no_route`; an inactive credential as not served) and `nobody_free` /
+`lines_busy` apart. 0030 moves the outbound reached triggers to the outcome.
+
 Files: `../proxy-agency-inbound.routes.ts`, `calls.ts`, `clips.ts`, `missed.ts`, `missed-work.ts`, `routes.ts`, `shared.ts`, `../agency/inbound.ts`, `../agency/inbound-answer.ts`, `../agency/inbound-calls.ts`, `../agency/inbound-clips.ts`, `../agency/inbound-missed-work.ts`, `../helpers/inbound-missed-query.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/api/routes/proxy-agency-inbound.test.ts` (and the reassign body, the summary's range, the rate) | 9 |
-| `apps/server/test/integration/api/inbound-missed-work.test.ts` (the count, reassign, a departed assignee, a call back that connects closing the row and its outcome settling the contact's callback, the summary's numbers and gates, the voicemail never cached; all with the flag off too) | 12 |
+| `apps/server/test/integration/api/inbound-missed-work.test.ts` (the count, reassign, a departed assignee, a call back closing the row on its person-reached outcome (not the bridge) and the outcome settling the contact's callback, a voicemail outcome or a lapse leaving it open, Reopen (an agent's own, a supervisor's any, idempotent, audited once, another account's, closed again by the next conversation), the summary's numbers by closed cause and gates, the voicemail never cached; all with the flag off too) | 17 |
+| `apps/server/test/integration/agency/inbound-missed-reached.test.ts` (0030's no-contact codes are the server's constants; `reopenMissed`; Reopen beside a Mark handled or a reached close at the same instant) | 7 |
+| `apps/server/test/integration/agency/inbound-closed-cause.test.ts` (the router stamps `closed_cause`: hours, the kill switch, an inactive credential, no route for a matched caller and the tenant default; none for an open route) | 6 |
 | `apps/server/test/integration/api/inbound-routes.test.ts` (and P2: voicemail taken with the route's warnings on every read and write; a Missed row's voicemail streamed whole and by range under the list's rules; the flag gates the routes, never the Missed list, its voicemails or Mark handled; the recordings listed with the routes playing each) | 17 |
 | `apps/server/test/integration/api/inbound-clips-routes.test.ts` (recordings: an upload decoded for real and stored under the account's key, cached, audited, playable at once; every refusal before storing; the name taken and its object deleted; no storage; the internal handler refusing another account's key; delete refused while a route or an announcement uses it; another account's; access and the flag; an upload naming no account refused before anything is stored; the preview of a recording and of each standard recording, never cached, another account's or a gone object not found, the list's access) | 16 |
 
@@ -1507,7 +1517,8 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/inbound-migration.test.ts` | 31 |
 | `packages/db/test/integration/db/inbound-live-indexes-migration.test.ts` | 6 |
-| `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the reached triggers and their races, the indexes and their plans, down and up) | 11 |
+| `packages/db/test/integration/db/inbound-missed-follow-up-migration.test.ts` (0028: `handled_reason`, the inbound reached trigger and its races, the summary's index and its plan, down and up) | 8 |
+| `packages/db/test/integration/db/inbound-reached-on-outcome-migration.test.ts` (0030: the outbound triggers on a person-reached outcome, never the bridge, a no-contact code or an unbridged call; a redial; the number by its digits; races; the digits index and its plan; `closed_cause` and its backfill; down restores 0028, and up) | 13 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | 8 |
 | `packages/db/test/integration/baseline.test.ts` | 56 |
@@ -1894,7 +1905,9 @@ queue, `hooks/useInboundQueue.ts`, on the campaigns home and Missed calls), `Voi
 
 The final fix pass (docs/inbound.md §7, §8.4, §11): `MissedCallsList.tsx` gains a supervisor's
 Reassign and "Former member" (copy in `utils/inbound/missedCopy.ts`, styles in
-`MissedCalls.module.css`) and the reached label; `hooks/useMissedCallsCount.ts` (the badge's count,
+`MissedCalls.module.css`) and the reached label (fix pass round 2: **Reopen** on a handled row,
+a closed row worded by its cause, `missedReasonLabel`, and one meaning of "Nobody free to answer",
+`NOBODY_FREE_MEANING`, shared with the summary); `hooks/useMissedCallsCount.ts` (the badge's count,
 one shared read per tab, polled while inbound is on, `refreshMissedCallsCount`) and
 `hooks/useMissedCallsAccess.ts` (whether the caller gets Missed calls: the permission, and the flag
 on or rows to read) drive the badges in `AgencySidebar` and `AgentNav` and keep `MissedCallsPage`
@@ -1908,8 +1921,8 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` (with the queue tiles and the voicemail player; the flag off with and without rows; reassign, a departed assignee, reached rows, the badge re-read) | 23 |
-| `apps/console/src/__tests__/pages/InboundSummaryPage.test.tsx` (the ranges, the tiles and agents, no calls, a dash for no rate, the gates) | 8 |
+| `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` (with the queue tiles and the voicemail player; the flag off with and without rows and what its notice says; reassign, a departed assignee, reached rows, Reopen, a closed row's cause, the guide's words, the badge re-read) | 29 |
+| `apps/console/src/__tests__/pages/InboundSummaryPage.test.tsx` (the ranges, the tiles and agents, nobody free and lines busy apart, switched off and no route apart, no calls, a dash for no rate, the gates) | 10 |
 | `apps/console/src/__tests__/hooks/useMissedCallsCount.test.tsx` (one shared read, the poll only with inbound on, the re-read, a failed read, another account, the badge text) | 6 |
 | `apps/console/src/__tests__/components/missedNavBadge.test.tsx` (the badge in the sidebar and the agent's nav, the entries with the flag off) | 6 |
 | `apps/console/src/__tests__/components/AgentFloorInboundWrapup.test.tsx` (the inbound wrap-up's label, Close and make available, its confirm and refusal; an agent on a break owing the outcome; the row's control) | 7 |

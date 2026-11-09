@@ -127,12 +127,14 @@ being down. To host one:
 
    ```xml
    <Response>
-     <Speak>Sorry, we cannot take your call right now. Please try again shortly.</Speak>
+     <Speak voice="WOMAN" language="en-GB">Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye.</Speak>
      <Hangup/>
    </Response>
    ```
 
-   (`<Play>` of a hosted MP3 works too.) It must not promise a callback: a call answered by the
+   The standard busy message's words in the voice of the server's own spoken messages
+   (`PLIVO_INBOUND_BUSY_XML`), not the closed one (false in opening hours). (`<Play>` of a hosted
+   MP3 works too, our `busy.wav` for one.) It must not promise a callback: a call answered by the
    fallback never reaches us, so it leaves no Missed row.
 2. Set `PLIVO_INBOUND_FALLBACK_ANSWER_URL` to its URL (absolute `https:`, no fragment; checked at
    startup) and restart the server.
@@ -631,18 +633,32 @@ Every call that reaches no agent gets:
 | On DNC | Missed row flagged DNC; never dialled automatically (B8 fails closed). The agent is shown a DNC badge on a connected call: a customer's own call is an enquiry |
 | Withheld / anonymous | Missed row with no number |
 
-**A Missed row closes on its own when the customer is reached** (built, `0028_inbound_missed_follow_up.sql`).
-Once the customer has been put through to an agent of the same account after the call (a later
-inbound call of theirs answered, or an outbound call to their number put through: a campaign
-attempt or a soft-phone call), every open Missed row of that account from that number that rang
-before the conversation began is `handled` with `handled_reason = 'reached'`, handled by the agent
-who took the conversation, so nobody calls the customer a second time for nothing. "Put through" is
-the product's conversation (`bridged_at` first set, the instant `CONVERSATION_ATTEMPT_SQL` counts).
-Three row triggers do it on the transaction that records the conversation, so the close commits
-with it; `follow_up_status = 'open'` in the UPDATE makes two conversations at once, or one beside
-a person's Mark handled, close a row once (the second waits on the row lock and finds it handled).
-A withheld caller's rows, the tenant default's (no account) and another account's are never
-closed. Mark handled records `handled_reason = 'marked'` (a row handled before 0028 has none and
+**A Missed row closes on its own when the customer is reached** (built, `0028_inbound_missed_follow_up.sql`,
+`0030_inbound_reached_on_outcome.sql`). Once an agent of the same account has spoken to the
+customer after the call, every open Missed row of that account from that number that rang before
+the conversation began is `handled` with `handled_reason = 'reached'`, handled by the agent who
+took the conversation, so nobody calls the customer a second time for nothing. "Spoken to" is:
+
+- **a later inbound call of theirs put through to an agent** (`bridged_at` first set): the customer
+  rang us, which an answering machine does not do;
+- **an outbound call to their number (a campaign attempt or a soft-phone call) whose outcome says a
+  person was reached**: the connect rate's human connect (`HUMAN_CONNECT_ATTEMPT_SQL`), a
+  conversation (`CONVERSATION_ATTEMPT_SQL` for an attempt, so a wrap-up redial that rang out still
+  counts; bridged for a soft-phone call) written up with any code but `voicemail` (a machine
+  answered), `no_disposition` (the outcome lapsed: nobody said who answered) and `redialed` (the
+  redial carries the outcome). Not the bridge (0028 closed the row there): with no answering-machine
+  detection the agent is put through to whatever answers, and only the outcome says it was the
+  customer's voicemail. While the call is live the row stays open, but nobody can ring the number
+  twice: the soft phone's pre-dial busy probe refuses a number with a live call in the account. An
+  outcome changed later to a person-reached code closes the rows; one changed to a no-contact code
+  reopens nothing (Reopen, below, does).
+
+The number is matched on its digits (`CONTACT_PHONE_DIGITS_SQL`), so a roster number stored as it
+was ingested matches the caller's E.164. Row triggers do it on the transaction that records the
+conversation or the outcome, so the close commits with it; `follow_up_status = 'open'` in the
+UPDATE makes two closes at once, or one beside a person's Mark handled, close a row once (the
+second waits on the row lock and finds it handled). A withheld caller's rows, the tenant default's
+(no account) and another account's are never closed. Mark handled records `handled_reason = 'marked'` (a row handled before 0028 has none and
 reads as marked). The matched contact is not touched: its booked inbound callback
 (`callback_source = 'inbound'`) is settled by the conversation that reaches the contact, with the
 outcome the agent chose. Call back from a Missed row opens the soft phone logging to the matched
@@ -652,6 +668,15 @@ call's `settleFromInbound` do the same). A call logged to another campaign, or u
 row but leaves the contact to its campaign. Clearing the callback on its own would leave the
 contact `pending` (the state it was reopened from is not recorded), so the campaign would dial it
 anyway.
+
+**Reopen** (built, this pass): a handled row goes back on the list (`open`, its reason, handler and
+time cleared, the assignee kept), for a row marked by mistake or closed as reached when the
+customer was not. Mark handled's rules: an agent reopens the rows assigned to them, a supervisor
+any of the account's; idempotent; audited `agency_inbound_call.reopened` with how and by whom the
+row had been handled; not behind the flag. A reopened row closes again on the customer's next
+conversation. A reopen at the same instant as a reached close leaves the row open in either order
+(the close matches the rows open when it started and passes over one still handled; a reopen
+after a close reopens it): the person's reopen stands.
 
 **Supervisors reassign** (built): a row's assignee is the sticky agent, else the account; a
 supervisor (`agency.supervise`) gives an open row to an active member who can work the account's
@@ -855,6 +880,7 @@ role, fill names and write the audit rows; the internal handlers
 | `GET /inbound/clips/standard/:recording/audio` | `agency.inbound.write` | the preview of one of our standard recordings (`AGENCY_INBOUND_STANDARD_RECORDINGS`), `audio/wav` from the image; an unknown name is `inbound_clip_not_found` |
 | `GET /inbound/missed` | `agency.inbound.read` | keyset page, newest first; `status` (default `open`), `assignee`, `reason`, `from`/`to` |
 | `POST /inbound/missed/:id/handled` | `agency.inbound.read` | idempotent: first handler and time kept, audited once; `handled_reason = 'marked'` |
+| `POST /inbound/missed/:id/reopen` | `agency.inbound.read` | a handled row back to open (reason, handler and time cleared; assignee kept); Mark handled's rules (an agent's own rows); idempotent; audited `agency_inbound_call.reopened` (`handled_reason`, `handled_by_user_id`: how it had been handled) when it changed; not behind the flag |
 | `GET /inbound/missed/count` | `agency.inbound.read` | the nav badge: the open rows of the caller's scope (an agent's own; with `agency.supervise`, the account's), counted to 100 (`open_capped` past it), and whether the scope has any row (`has_rows`); not behind the flag |
 | `POST /inbound/missed/:id/assign` | `agency.supervise` | `{ assignee_user_id }` (a member, or `null`: the account); `inbound_assignee_invalid` (400) for someone who cannot work the account's rows, `inbound_missed_call_handled` (409) for a handled row; audited `agency_inbound_call.reassigned` when it changed; not behind the flag |
 | `GET /inbound/summary` | `agency.supervise` | the inbound summary over `from`–`to` (§11); not behind the flag |
@@ -867,15 +893,19 @@ the account's (a PATCH checks only the references it sets). Problems answer
 an unlinked one, or one on another route answers its own 409 with `phone_number_id`
 (`inbound_number_in_use` names the holder's `route_id` only when it is this account's). A
 malformed id is the family's 404. Missed rows carry `assignee_departed` (the public layer's: the
-assignee is no longer an active member who can work the account's rows) and `handled_reason`
-(`marked`, `reached`; null while open). Audit: `agency_inbound_route.created` (`numbers_added`),
+assignee is no longer an active member who can work the account's rows), `handled_reason`
+(`marked`, `reached`; null while open) and, on a `closed` row, `closed_cause` (`hours`,
+`switched_off`, `no_route`, `credential_inactive`; 0030). Audit: `agency_inbound_route.created` (`numbers_added`),
 `.updated` (`fields`, `numbers_added`, `numbers_removed`; not written when nothing changed),
 `.deleted` (`numbers_removed`), `agency_inbound_call.handled` (`reason`; only when this request
-marked it), `agency_inbound_call.reassigned` (`from`, `to`; only when it changed).
+marked it), `agency_inbound_call.reassigned` (`from`, `to`; only when it changed),
+`agency_inbound_call.reopened` (`handled_reason`, `handled_by_user_id`; only when this request
+reopened it).
 
 **With the flag off** (the kill switch stops new calls reaching a queue, not the follow-up of the
-calls that came in): the badge's count, reassign and the summary are never behind the flag; the
-console keeps Missed calls (the nav entry and the page, under a notice that inbound is off) and the
+calls that came in): the badge's count, reassign, Reopen and the summary are never behind the flag;
+the console keeps Missed calls (the nav entry and the page, under a notice that inbound is switched
+off, that callers hear the closed message and are still listed there) and the
 Inbound summary while the caller's scope has rows to read, and hides them when it has none. What
 the list and Mark handled answer with the flag off is the server's read rule; actions that start
 calls follow the server's answer.
@@ -953,7 +983,13 @@ changed. **Missed calls** is in the agency sidebar (`/agency/inbound/missed`) an
 dedicated agent, in the agent nav (`/dialer/missed`): To follow up / Handled, filters, keyset
 paging, a DNC badge, and per row **Call back** and **Mark handled**; for a supervisor, **Reassign**
 (the account, or an active member of it) and "Former member" with the prompt to reassign; the
-Handled tab says "Customer reached by …" for a row that closed on its own. The nav entry (the
+Handled tab says "Customer reached by …" for a row that closed on its own, and offers **Reopen** on
+every handled row. A closed row's reason reads "Out of hours", or its cause when it was not the
+hours ("Inbound switched off", "Number not on a route", "Phone line not active"). "Nobody free to
+answer" means one thing on the list, its guide and the summary: the caller waited as long as the
+line allows, the queue was full, or nobody in the team could take calls (`overflow`); every line
+busy is its own reason. With the flag off and rows to read, the page says so: callers hear the
+closed message and are still listed here. The nav entry (the
 agency sidebar and the agent's nav) carries the open count as a badge ("99+" past the cap), read
 once for every reader of the tab, polled every minute while inbound is on and on the reader's
 return, and re-read after a Mark handled or a reassign. **Inbound summary** (`/agency/inbound/summary`,
@@ -1020,9 +1056,16 @@ holds are `packages/contracts/src/agency/inbound.ts`, pinned by
   call that is neither `answered` nor `rejected`. Indexes: the Missed list by account and status,
   and by assignee, newest first; open rows by age for the sweep.
 - **`handled_reason`** (0028): `marked` or `reached` on a handled Missed row (§7); the triggers
-  that close a row when the customer is reached; `idx_agency_inbound_calls_missed_open_from` (their
-  probe) and `idx_agency_inbound_calls_account_arrived` (the summary's range). Inventory:
-  `packages/db/BASELINE.md` "0028".
+  that close a row when the customer is reached (0030: the campaign attempt's and the soft-phone
+  call's on a person-reached outcome, the inbound call's at its bridge, the number by its digits);
+  `idx_agency_inbound_calls_missed_open_digits` (their probe, 0030; 0028's
+  `idx_agency_inbound_calls_missed_open_from` matched text) and
+  `idx_agency_inbound_calls_account_arrived` (the summary's range). Inventory:
+  `packages/db/BASELINE.md` "0028", "0030".
+- **`closed_cause`** (0030): why the answer treated the caller as closed, stamped by the router at
+  arrival: `hours`, `switched_off` (the kill switch), `no_route`, `credential_inactive`; NULL when
+  the route was open. Backfilled for the closed calls before it (`no_route` without a route, else
+  `hours`).
 - **`agency_calls.origin`** += `inbound` with `inbound_call_id`; the origin CHECK is rewritten; the
   manual-correlation CHECK (0005) needed no change, since its arms already keep an inbound leg's
   campaign, attempt and manual call NULL; `ck_agency_calls_inbound_correlation` is new. An inbound
@@ -1119,16 +1162,21 @@ or two dates, cut at the viewer's local midnights; at most 93 days). One account
 arrived in `[from, to)` and have ENDED (a live call counts once it ends), two statements over
 `idx_agency_inbound_calls_account_arrived` (0028):
 
-- **calls**; **after hours** (the closed message, or a voicemail taken out of hours: Missed reason
-  `closed`); **open-hours calls**: the rest less `rejected` (turned away at the answer), the
-  denominator of every rate;
+- **calls**; the calls answered with the closed message (or a voicemail taken out of hours: Missed
+  reason `closed`), by why (`closed_cause`, 0030): **after hours** (out of the route's hours or a
+  holiday), **switched off** (the kill switch), **no route** (the number reaches none), and an
+  inactive credential, which counts as not served; a closed call with no cause recorded is after
+  hours with a route, no route without one. **Open-hours calls**: the rest less `rejected` (turned
+  away at the answer), the denominator of every rate;
 - **answered** and the **answer rate** (answered ÷ open-hours calls); **abandoned**
   (`abandoned_in_queue`) and the **abandon rate** (÷ open-hours calls);
 - **time to answer**: arrival to being put through (`bridged_at - arrived_at`, the greeting
   included: what the caller lived through), the average and the 90th percentile over answered
   calls;
-- **voicemails**; **overflow** (`overflow`, `overflow_no_capacity`); **not served** (`failed`,
-  `rejected`);
+- **voicemails**; **nobody free to answer** (`overflow`: the maximum wait or queue length was
+  reached, or nobody in the pool could take calls; the Missed list's meaning) and **all lines busy**
+  (`overflow_no_capacity`), apart, with `overflow` their sum; **not served** (`failed`, `rejected`,
+  and a closed call whose credential was not active);
 - **sticky hit rate**: open-hours calls answered by their sticky agent ÷ open-hours calls that had
   one (§4.1);
 - the **Missed rows** the calls left and how many are handled;
@@ -1156,6 +1204,15 @@ the Application health check on a timer (§8.1), the Grafana inbound rules and d
 onboarding hole closed in super-admin (§8.1, §8.3), the flag as the kill switch with the Missed
 list readable (§8.1, §8.4), a credential disable that keeps its links (§8.2), inbound counted
 apart in usage with carrier and hold time (§9). No migration.
+
+**Fix pass round 2, Missed calls and the summary** (`0030_inbound_reached_on_outcome.sql`; §7,
+§8.4, §9, §11): an outbound call closes the customer's Missed rows on an outcome that says a
+person was reached, not at its bridge (an answering machine no longer reads "Customer reached"),
+the number matched by its digits; **Reopen** on a handled row; why a call was answered closed
+(`closed_cause`), so the summary counts the kill switch and a number with no route apart from out
+of hours and an inactive credential as not served; "Nobody free to answer" one meaning on the list,
+its guide and the summary, with all lines busy apart; the flag-off notice says callers hear the
+closed message and are still listed; the usage plan test plans over its own analysed rows.
 
 P1 can be built and tested end to end against the mock Plivo carrier before P0 runs; P0's results
 then correct the fixture. Contract changes run the mobile `agency_wire` `dart test` before commit

@@ -268,8 +268,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_agency_calls_insights_error_update` (0014) | AFTER UPDATE OF `error_code`, WHEN it changed | `agency_calls` | `agency_insights_mark_call_error()` |
 | `trg_agency_contacts_insights_zone` (0012) | AFTER UPDATE OF `timezone`, WHEN it changed | `agency_contacts` | `agency_insights_mark_contact_zone()` |
 | `trg_agency_campaigns_insights_zone` (0012) | AFTER UPDATE OF `default_timezone`, WHEN it changed | `agency_campaigns` | `agency_insights_mark_campaign_zone()` |
-| `trg_agency_attempts_inbound_reached` (0028) | AFTER UPDATE OF `bridged_at`, WHEN `OLD.bridged_at IS NULL AND NEW.bridged_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_inbound_reached()` |
-| `trg_agency_manual_calls_inbound_reached` (0028) | AFTER UPDATE OF `bridged_at`, WHEN it is first set | `agency_manual_calls` | `agency_manual_call_inbound_reached()` |
+| `trg_agency_attempts_inbound_reached` (0028, 0030) | AFTER UPDATE OF `disposition_code`, WHEN it changed to a code other than `voicemail`, `no_disposition`, `redialed` on a conversation (`bridged_at IS NOT NULL OR redial_number > 0`) | `agency_call_attempts` | `agency_attempt_inbound_reached()` |
+| `trg_agency_manual_calls_inbound_reached` (0028, 0030) | AFTER UPDATE OF `disposition_code`, WHEN it changed to such a code on a bridged call | `agency_manual_calls` | `agency_manual_call_inbound_reached()` |
 | `trg_agency_inbound_calls_inbound_reached` (0028) | AFTER UPDATE OF `bridged_at`, WHEN it is first set | `agency_inbound_calls` | `agency_inbound_call_inbound_reached()` |
 
 Functions:
@@ -287,11 +287,12 @@ Functions:
 - `agency_insights_mark_attempt_buckets()`, `agency_insights_mark_call_recording()`,
   `agency_insights_mark_contact_zone()`, `agency_insights_mark_campaign_zone()` (0012): append a
   dirty mark per insights bucket the write touched (see 0012 below).
-- `agency_inbound_close_reached_missed(tenant, account, phone, reached_at, user)` (0028): closes
-  the account's open Missed inbound rows from `phone` that arrived by `reached_at` (`handled`,
+- `agency_inbound_close_reached_missed(tenant, account, phone, reached_at, user)` (0028, 0030):
+  closes the account's open Missed inbound rows from `phone` (matched on its digits since 0030;
+  nothing for a number with no digits) that arrived by `reached_at` (`handled`,
   `handled_reason = 'reached'`, handled by `user`). Its three callers, `agency_attempt_inbound_reached()`,
   `agency_manual_call_inbound_reached()` and `agency_inbound_call_inbound_reached()`, pass the
-  conversation's account, number, start and agent (see 0028 below).
+  conversation's account, number, start and agent (see 0028 and 0030 below).
 
 `super_admins` and `account_settings` have `updated_at` columns but no trigger.
 
@@ -1207,6 +1208,39 @@ handled, with no reason). **Tests**: `test/integration/db/inbound-missed-follow-
 and a close beside a Mark handled, both indexes by definition and by the planner over a 40-account
 history, down then up), the trigger list in `baseline.test.ts`, the down → up suite, and the
 server's `test/integration/api/inbound-missed-work.test.ts`.
+
+### 0030 — `migrations/0030_inbound_reached_on_outcome.sql`
+
+A Missed inbound row closes as `reached` only when a person was reached, matched on the number's
+digits; and why a call was answered closed (`docs/inbound.md` §7, §11).
+
+- **The outbound reached triggers move to the outcome.** `trg_agency_attempts_inbound_reached` and
+  `trg_agency_manual_calls_inbound_reached` are dropped and re-created `AFTER UPDATE OF
+  disposition_code`: they fire when the outcome is written or changed to a code other than
+  `voicemail` (a machine answered), `no_disposition` (the outcome lapsed) and `redialed` (a wrap-up
+  redial carries the outcome), the connect rate's human connect, on a conversation (an attempt
+  bridged or a wrap-up redial; a bridged soft-phone call). The attempt's conversation began at
+  `COALESCE(bridged_at, dialed_at, created_at)`. The WHEN carries the whole rule, so every other
+  write to the hot tables queues nothing. The inbound call's trigger is unchanged (at its bridge).
+- **Digits.** `agency_inbound_close_reached_missed` compares `regexp_replace(…, '[^0-9]', '', 'g')`
+  of both sides; `idx_agency_inbound_calls_missed_open_from` is replaced by
+  **`idx_agency_inbound_calls_missed_open_digits`** `(tenant_id, account_id, <digits of from_e164>)
+  WHERE follow_up_status = 'open' AND from_e164 IS NOT NULL` (CONTACT_PHONE_DIGITS_SQL with the
+  column swapped, byte for byte).
+- **`agency_inbound_calls.closed_cause`** VARCHAR(24): `hours`, `switched_off`, `no_route`,
+  `credential_inactive` (the contract's `AGENCY_INBOUND_CLOSED_CAUSES`,
+  `ck_agency_inbound_calls_closed_cause`), stamped by the router at arrival; NULL when the route
+  was open. Backfill (the `updated_at` trigger disabled around it): a closed call (outcome `closed`,
+  or a voicemail whose Missed reason is `closed`) is `no_route` without a route, else `hours`.
+
+**Down** restores 0028 exactly (the bridge triggers and their function bodies, the text match, the
+text index) and drops the column. **Tests**:
+`test/integration/db/inbound-reached-on-outcome-migration.test.ts` (each trigger's rule and what it
+leaves alone, a redial, a changed and a replayed outcome, digits, two closes at once and a close
+beside a Mark handled, the index by definition and by the planner, the CHECK against the contract's
+list, the backfill, down then up), the down → up suite, and the server's
+`test/integration/agency/inbound-missed-reached.test.ts` (the no-contact codes are the server's
+constants) and `test/integration/api/inbound-missed-work.test.ts`.
 
 ## Tests
 

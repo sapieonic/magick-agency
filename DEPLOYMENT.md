@@ -668,13 +668,16 @@ first credential gets inbound enabled:
 
   ```xml
   <Response>
-    <Speak>Sorry, we cannot take your call right now. Please try again shortly.</Speak>
+    <Speak voice="WOMAN" language="en-GB">Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye.</Speak>
     <Hangup/>
   </Response>
   ```
 
-  It must not promise a callback: a call the fallback answers never reaches us, so it leaves no
-  Missed row. Check it from outside with `curl -si <url>` (200, the XML, that content type). The
+  These are our standard busy message's words in the voice the server's own spoken messages use
+  (`AGENCY_INBOUND_STANDARD_WORDS.busy`, `PLIVO_INBOUND_BUSY_XML`), so a caller during an outage
+  hears the same British voice as any other time. Not the closed message: "we're closed" is false
+  during opening hours. It must not promise a callback: a call the fallback answers never reaches
+  us, so it leaves no Missed row. Check it from outside with `curl -si <url>` (200, the XML, that content type). The
   URL must be an absolute `https:` URL with no fragment, or the server does not start. In
   production the server warns at boot while inbound is enabled without it. After setting or
   changing it, **Re-point** every credential with inbound enabled (the Application keeps the URL it

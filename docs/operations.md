@@ -558,9 +558,10 @@ credential with inbound enabled cannot be revoked (409 `inbound_enabled`): unlin
 
 **Switching inbound off for a tenant or an account** is the `agency_inbound_enabled` flag (Feature
 Flags). With it off, every call to its linked numbers is answered with the closed message by the
-carrier (no queue, no stream, no voicemail) and leaves a Missed row; the route editor and the queue
-tiles are hidden, while the Missed list, its voicemails and calls already taken stay readable and
-workable. Use it as the kill switch; unlink numbers only to hand them back to their own app.
+carrier (no queue, no stream, no voicemail) and leaves a Missed row ("Inbound switched off"); the
+route editor and the queue tiles are hidden, while the Missed list, its voicemails and calls
+already taken stay readable and workable, and the inbound summary counts those calls apart from
+out of hours. Use it as the kill switch; unlink numbers only to hand them back to their own app.
 
 ### Setting up inbound calls for a tenant
 
@@ -582,9 +583,12 @@ fallback XML hosted off the deployment and `PLIVO_INBOUND_FALLBACK_ANSWER_URL` s
    admin adds it to the route.
 4. **A test call.** An agent of the route's pool logged in on the console, available. Ring the
    number from a phone: the agent's station gets the inbound panel and the call connects. Then ring
-   with nobody available: the caller hears the hold audio, and after the route's maximum wait the
-   call-back message; the Missed calls list has the row. Ring out of hours (or with a holiday
-   today): the closed message.
+   with nobody able to take calls (every agent of the pool logged out or on a break): the caller
+   goes straight to the route's overflow message, with no "please hold" first: the call-back
+   message (the busy message for a withheld or DNC caller), or the voicemail prompt when the
+   route's overflow takes voicemail. The Missed calls list has the row ("Nobody free to answer").
+   Ring while every agent of the pool is on a call: the hold audio, and after the route's maximum
+   wait the same overflow message. Ring out of hours (or with a holiday today): the closed message.
 5. **Watch it.** The dashboard's *Inbound calls* row (outcomes, the answer webhook, callers waiting
    and offers, wait time, the share reaching nobody, connect availability and Application health)
    and the `inbound` alert group (runbooks below). The super-admin Usage page counts inbound calls,
