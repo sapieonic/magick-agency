@@ -253,7 +253,8 @@ the URL; `spoken` with an `InboundSpokenMessage`, `closed`, `callback` or `busy`
 voice area's, `PLIVO_INBOUND_SPOKEN_XML`, saying the words of the standard recordings the agency area
 plays on its stream, `AGENCY_INBOUND_STANDARD_WORDS` in the contract; `hangup`; `fallback`), and the route aborts
 `signal` when the answer's budget runs out and it has answered the fallback message, after which
-the router places nothing more and leaves no follow-up; `ended(hangup)` settles the call and
+the router places nothing more and leaves no follow-up; `ended(hangup)` settles the call (and records
+the carrier's `durationSeconds`, Plivo's `Duration`, on it when the hangup carries one) and
 returns its media leg, which the route then hands to the bridge as a carrier hangup
 (`handleCarrierStatus`). The
 implementation is `agency/inbound/inbound-call-router.ts`, registered by `bootstrap/agency.ts`
