@@ -257,9 +257,19 @@ describe('Plivo inbound webhooks', () => {
       expect(res.statusCode).toBe(200);
       expect(router.ended).toHaveBeenCalledWith({
         credentialId: CRED, tenantId: TENANT, provider: 'plivo', carrierCallId: 'cu-1', callStatus: 'completed', hangupSource: 'Caller',
+        durationSeconds: 7,
       });
       expect(bridge.handleCarrierStatus).toHaveBeenCalledWith('leg-1', expect.objectContaining({ eventType: 'hangup', callId: 'leg-1', providerCallId: 'cu-1' }), 'plivo');
       expect(router.ended.mock.invocationCallOrder[0]!).toBeLessThan(bridge.handleCarrierStatus.mock.invocationCallOrder[0]!);
+    });
+
+    it('the carrier`s Duration goes to the router as whole seconds (SWE-F8); none, or not plain digits, sends none', async () => {
+      await post(app, 'status', { CallUUID: 'cu-1', CallStatus: 'completed', HangupSource: 'Caller' });
+      expect(router.ended).toHaveBeenLastCalledWith(expect.not.objectContaining({ durationSeconds: expect.anything() }));
+      await post(app, 'status', { CallUUID: 'cu-1', CallStatus: 'completed', HangupSource: 'Caller', Duration: '7.5' });
+      expect(router.ended).toHaveBeenLastCalledWith(expect.not.objectContaining({ durationSeconds: expect.anything() }));
+      await post(app, 'status', { CallUUID: 'cu-1', CallStatus: 'completed', HangupSource: 'Caller', Duration: '0' });
+      expect(router.ended).toHaveBeenLastCalledWith(expect.objectContaining({ durationSeconds: 0 }));
     });
 
     it('signed over the stored HANGUP url; the answer url does not verify it', async () => {

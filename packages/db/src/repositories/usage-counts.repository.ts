@@ -37,9 +37,12 @@ import { getPool } from '../connection.js';
  *  - `inbound_answered_calls`: answered by our answer XML (`answered_at`): a message played or
  *    spoken, a queue, a voicemail, each one billed by the carrier;
  *  - `inbound_connected_calls`: an agent was bridged (`bridged_at`);
- *  - `inbound_seconds`: carrier time, the sum of (`ended_at` - `answered_at`) over the answered
- *    calls that have ended: what the carrier bills an inbound call for, messages and holding
- *    included;
+ *  - `inbound_seconds`: carrier time, over the answered calls that have ended: each call's
+ *    `carrier_seconds` (the carrier's own duration from its hangup callback, 0029) when it has
+ *    one, else (`ended_at` - `answered_at`): what the carrier bills an inbound call for, messages
+ *    and holding included. A call answered with a message the carrier speaks (`<Speak>`) ends on
+ *    our side at the answer while the carrier goes on speaking, so only its own duration counts
+ *    it (SWE-F8);
  *  - `inbound_hold_seconds`: queue time, the sum of (`bridged_at`, else `ended_at`, -
  *    `queued_at`) over the ended calls that queued: the part of the carrier time a caller spent
  *    waiting on our hold audio (billed as call and stream minutes like the rest);
@@ -176,7 +179,7 @@ export class UsageCountsRepository {
                 COUNT(*)                                          AS inbound_calls,
                 COUNT(*) FILTER (WHERE i.answered_at IS NOT NULL) AS inbound_answered_calls,
                 COUNT(*) FILTER (WHERE i.bridged_at  IS NOT NULL) AS inbound_connected_calls,
-                ROUND(COALESCE(SUM(EXTRACT(EPOCH FROM (i.ended_at - i.answered_at)))
+                ROUND(COALESCE(SUM(COALESCE(i.carrier_seconds::numeric, EXTRACT(EPOCH FROM (i.ended_at - i.answered_at))))
                   FILTER (WHERE i.answered_at IS NOT NULL AND i.ended_at IS NOT NULL), 0))::bigint AS inbound_seconds,
                 ROUND(COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(i.bridged_at, i.ended_at) - i.queued_at)))
                   FILTER (WHERE i.queued_at IS NOT NULL AND i.ended_at IS NOT NULL), 0))::bigint AS inbound_hold_seconds,

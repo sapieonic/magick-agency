@@ -38,7 +38,8 @@ export interface InboundCallArrival {
  * message the call is answered with (docs/inbound.md §3.4). The voice area owns the words:
  *  - `closed`: we cannot take the call now, try again later (no promise of a callback);
  *  - `callback`: everyone is busy, we will call you back;
- *  - `busy`: all our lines are busy, we will call you back.
+ *  - `busy`: all our lines are busy, try again shortly (also, in opening hours, instead of
+ *    `callback` to a caller who may not be promised a callback: withheld, or on DNC).
  */
 export type InboundSpokenMessage = 'closed' | 'callback' | 'busy';
 
@@ -78,6 +79,12 @@ export interface InboundCallHangup {
   callStatus: string;
   /** Who hung up, as the carrier names it (`Caller`, `API Request`, …), or ''. */
   hangupSource: string;
+  /**
+   * The carrier's duration of the call in whole seconds (Plivo's `Duration`), when it sent one:
+   * what it bills, kept on the call (`carrier_seconds`, SWE-F8) because a call answered with a
+   * spoken message ends on our side at the answer while the carrier goes on speaking.
+   */
+  durationSeconds?: number;
 }
 
 export interface InboundCallRouter {

@@ -1050,7 +1050,11 @@ export class AgencyContactRepository {
    * it stands now, on the locked row, so the arm and the write cannot disagree:
    *
    *  - `pending`: `callback` → `pending` due at `at`; `completed` → `completed`; `suppressed` →
-   *    `suppressed` with its reason; `none` (a retry or a plain code) → unchanged;
+   *    `suppressed` with its reason; `none` (a retry or a plain code, or the outcome lapsing) →
+   *    unchanged, except a contact its inbound callback reopened from `exhausted`
+   *    (`callback_reopened`, 0029), which goes back to `exhausted` (never claimed: the dialer
+   *    claims `pending` only): the customer was reached, and the reopen was only for that
+   *    callback (SWE-F2);
    *  - `exhausted`: the same, so only a callback reopens it (Q9, the customer asked to be called),
    *    and a success or a suppress closes it; `none` leaves it exhausted;
    *  - `in_flight` / `connected` (another call is live on it, or owes its outcome): only
@@ -1067,7 +1071,9 @@ export class AgencyContactRepository {
    *
    * Only for a call that BRIDGED (no conversation, nothing to settle). Run it on the transaction
    * that saves the outcome (`AgencyInboundCallRepository.saveDisposition`), with the DNC write for
-   * a suppress code (B8), and only when that save is not a replay.
+   * a suppress code (B8), and only when that save is not a replay; and, with `none` and the lapse's
+   * code, on the transaction that closes an owed outcome (the lapse sweep, a supervisor's close:
+   * `InboundCallService`), so a reach whose outcome never came settles the contact too.
    *
    * @returns where the contact landed and which arm ran (`settled`: the open arm; `suppressed`: a
    *   live contact suppressed; `unchanged`), or null when the call matched no contact, did not
@@ -1087,7 +1093,8 @@ export class AgencyContactRepository {
       id: string; state: AgencyContactState; next_attempt_at: Date | null; applied: 'settled' | 'suppressed' | 'unchanged';
     }>(
       `WITH cur AS (
-         SELECT c.id, c.state, c.suppressed_reason
+         SELECT c.id, c.state, c.suppressed_reason,
+                (c.callback_source IS NOT NULL AND c.callback_reopened) AS reopened
            FROM agency_inbound_calls i
            JOIN agency_contacts c
              ON c.id = i.matched_contact_id AND c.campaign_id = i.matched_campaign_id AND c.tenant_id = i.tenant_id
@@ -1103,7 +1110,8 @@ export class AgencyContactRepository {
                       WHEN 'callback' THEN 'pending'
                       WHEN 'completed' THEN 'completed'
                       WHEN 'suppressed' THEN 'suppressed'
-                      ELSE cur.state
+                      -- Nothing that moves it: a contact the callback reopened (0029) goes back.
+                      ELSE CASE WHEN cur.state = 'pending' AND cur.reopened THEN 'exhausted' ELSE cur.state END
                     END
                   WHEN cur.state IN ('in_flight', 'connected') AND $2::text = 'suppressed' THEN 'suppressed'
                   ELSE cur.state
@@ -1121,6 +1129,7 @@ export class AgencyContactRepository {
                                       ELSE c.last_disposition END,
               callback_source = NULL,
               callback_due_at = NULL,
+              callback_reopened = false,
               updated_at = now()
          FROM dec
         WHERE c.id = dec.id
@@ -1283,6 +1292,10 @@ export class AgencyContactRepository {
    *    row carrying it is never reopened by this, B8). The caller's number is checked against the
    *    DNC registry by the caller before, and again at dial time by the pre-dial gate.
    *
+   * Whether it reopened the contact is kept on the contact (`callback_reopened`, 0029: a reopen, or
+   * a contact already holding a reopening callback, is true; any other booking false), so the
+   * reach that settles the callback can put a reopened contact back ({@link settleFromInbound}).
+   *
    * Due time: a `pending` contact already due sooner keeps its sooner time (`LEAST`), so an
    * inbound call never delays a call the dialer owed; an exhausted one is due at `dueAt`. A
    * contact already holding an inbound callback keeps the earlier of the two due times.
@@ -1319,6 +1332,10 @@ export class AgencyContactRepository {
                                      ELSE $3::timestamptz END,
               callback_source = 'inbound',
               callback_due_at = LEAST(COALESCE(c.callback_due_at, $3::timestamptz), $3::timestamptz),
+              -- 0029: whether this callback reopened the contact (a second booking keeps the first's answer).
+              callback_reopened = CASE WHEN t.prior_state = 'exhausted' THEN true
+                                       WHEN c.callback_source IS NOT NULL THEN c.callback_reopened
+                                       ELSE false END,
               updated_at = now()
          FROM target t
         WHERE c.id = t.id

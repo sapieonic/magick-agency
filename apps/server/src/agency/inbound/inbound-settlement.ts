@@ -15,12 +15,15 @@ import type { DispositionDecision } from '../disposition-policy.js';
  * | `suppress` (DNC, written with it, B8)                   | `suppressed`        | suppressed | suppressed | suppressed          | nothing                |
  * | `terminal`, or a success code (`is_success`)            | `completed`         | completed | completed (Q9: a success closes it) | nothing | nothing           |
  * | a callback (`requires_datetime`, time given)            | `callback` at it    | pending at the time | pending at the time (reopened, IB4, Q9) | nothing | nothing |
- * | anything else (a retry code, a plain label)             | `none`              | unchanged | unchanged (exhausted) | nothing         | nothing                |
+ * | anything else (a retry code, a plain label), or the outcome lapsing | `none`  | unchanged (one its inbound callback reopened: back to exhausted) | unchanged (exhausted) | nothing | nothing |
  *
  * The callback time is the agent's, moved into the contact's calling window by the caller
  * (`manualDispositionDecision`, the soft phone's), so it is the decision's `nextAttemptAt`. A
  * pending inbound callback on the contact (`callback_source`) is cleared by every arm: the
- * customer got through (Q9). A DNC-suppressed contact is never moved.
+ * customer got through (Q9); one that reopened an exhausted contact (`callback_reopened`, 0029)
+ * leaves it exhausted again unless the outcome itself moves it (SWE-F2). A call whose outcome
+ * lapses (or a supervisor closes) settles as `none` ({@link INBOUND_LAPSE_SETTLEMENT}). A
+ * DNC-suppressed contact is never moved.
  */
 export function inboundContactSettlement(
   entry: Pick<AgencyDisposition, 'is_success'>,
@@ -34,3 +37,10 @@ export function inboundContactSettlement(
   if (decision.reason === 'callback_scheduled' && nextAttemptAt) return { kind: 'callback', at: nextAttemptAt };
   return { kind: 'none' };
 }
+
+/**
+ * What a reached call whose outcome never came (it lapsed, or a supervisor closed it) asks of its
+ * matched contact: nothing that moves it (`none`), so the booked inbound callback is cleared, the
+ * customer was spoken to, and a contact the callback reopened goes back to exhausted (SWE-F2).
+ */
+export const INBOUND_LAPSE_SETTLEMENT: AgencyInboundContactSettlement = Object.freeze({ kind: 'none' });

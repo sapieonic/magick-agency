@@ -148,6 +148,26 @@ describe('bookInboundCallback', () => {
     expect((await row(c)).callback_due_at!.getTime()).toBe(d10.getTime());
     expect((await row(c)).next_attempt_at.getTime()).toBe(d10.getTime());
   });
+
+  it('0029: the contact remembers whether its callback reopened it (a second booking keeps it); a booking after the callback was settled writes it afresh', async () => {
+    const reopenedOf = async (id: string) => (await pool().query<{ callback_reopened: boolean }>(
+      'SELECT callback_reopened FROM agency_contacts WHERE id = $1', [id])).rows[0]!.callback_reopened;
+    const k = await campaign();
+    const pending = await contact(k, { next_attempt_at: minutes(600) });
+    await book(pending, minutes(30));
+    expect(await reopenedOf(pending)).toBe(false);
+    const exhausted = await contact(k, { state: 'exhausted', attempt_count: 3, phone_e164: '+919800000002' });
+    await book(exhausted, minutes(30));
+    expect(await reopenedOf(exhausted)).toBe(true);
+    // A second missed call: the contact is `pending` now, but its callback is still the reopening one.
+    await book(exhausted, minutes(10));
+    expect(await reopenedOf(exhausted)).toBe(true);
+    // A placed dial settled the callback (the flag is left, meaningless without a source); the next booking rewrites it.
+    await contacts.chargeAttempt(exhausted, 'no_answer');
+    expect(await row(exhausted)).toMatchObject({ callback_source: null });
+    await book(exhausted, minutes(20));
+    expect(await reopenedOf(exhausted)).toBe(false);
+  });
 });
 
 describe('what the dialer makes of an inbound callback', () => {

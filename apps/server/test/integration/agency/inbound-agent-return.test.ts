@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, insertTenant } from '../setup/factories.js';
-import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js';
+import { insertAgencyCampaign, insertAgencyContact, insertAgentSession } from './agency-factories.js';
 import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test-redis.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
@@ -10,7 +10,7 @@ vi.mock('@magick-agency/db', async (orig) => ({
   getPool: () => getTestPool(),
 }));
 
-const { agencyInboundCallRepository: calls, agencyInboundRouteRepository: routes } = await import('../../../src/db/repositories/agency.repository.js');
+const { agencyInboundCallRepository: calls, agencyInboundRouteRepository: routes, agencyContactRepository: contacts } = await import('../../../src/db/repositories/agency.repository.js');
 const { AgentStateMachine } = await import('../../../src/agency/agent-state-machine.js');
 const { InboundConnector } = await import('../../../src/agency/inbound/inbound-connector.js');
 const { AgencyInboundCallRouter } = await import('../../../src/agency/inbound/inbound-call-router.js');
@@ -157,11 +157,11 @@ async function agent(state: 'available' | 'wrapup' | 'break' | 'offline' = 'avai
 }
 
 /** A call answered by `sessionId` that ended `endedAgoSeconds` ago and owes its outcome; matched to `matchedCampaignId` if given. */
-async function owed(sessionId: string, endedAgoSeconds: number, matchedCampaignId: string | null = null): Promise<CallRecord> {
+async function owed(sessionId: string, endedAgoSeconds: number, matchedCampaignId: string | null = null, matchedContactId: string = randomUUID()): Promise<CallRecord> {
   const { call } = await calls.insertArrival({
     tenantId: T, accountId: A, routeId: route.id, phoneNumberId: null, provider: 'plivo', telephonyCredentialId: credentialId,
     providerCallId: `CA-${randomUUID()}`, fromE164: '+447700900555', toE164: '+14155550100',
-    identification: { match: matchedCampaignId ? { contactId: randomUUID(), campaignId: matchedCampaignId } : null, callerDnc: false, sticky: null },
+    identification: { match: matchedCampaignId ? { contactId: matchedContactId, campaignId: matchedCampaignId } : null, callerDnc: false, sticky: null },
     answered: true, recordingRequested: false, analysisProfileId: null,
   });
   await calls.transition(call!.id, 'queued');
@@ -440,5 +440,91 @@ describe('a supervisor`s force-available on an agent who owes an inbound outcome
     expect(saved.ok).toBe(true);
     expect(await service.closeOwedForSupervisor(third)).toEqual({ kind: 'none' });
     expect((await row(call.id)).disposition_code).toBe('voicemail');
+  });
+});
+
+describe('SWE-F2: a reached call whose outcome never came settles the booked inbound callback (the customer was spoken to)', () => {
+  const inAnHour = () => new Date(Date.now() + 3_600_000);
+
+  async function contactRow(id: string) {
+    const { rows } = await pool().query<{
+      state: string; next_attempt_at: Date | null; callback_source: string | null; callback_due_at: Date | null;
+      callback_reopened: boolean; last_outcome: string | null; attempt_count: number;
+    }>('SELECT state, next_attempt_at, callback_source, callback_due_at, callback_reopened, last_outcome, attempt_count FROM agency_contacts WHERE id = $1', [id]);
+    return rows[0]!;
+  }
+
+  /** A roster contact in `state` holding the inbound callback a missed call booked (reopened when exhausted). */
+  async function withBookedCallback(state: 'pending' | 'exhausted'): Promise<string> {
+    const id = (await insertAgencyContact(campaignId, {
+      state, attempt_count: state === 'exhausted' ? 3 : 1, phone_e164: '+447700900555',
+      next_attempt_at: state === 'exhausted' ? new Date(Date.now() - 3_600_000) : new Date(Date.now() + 10 * 3_600_000),
+    })).id as string;
+    expect(await contacts.bookInboundCallback({ tenantId: T, contactId: id, dueAt: inAnHour() })).toMatchObject({ reopened: state === 'exhausted' });
+    return id;
+  }
+
+  /** The customer rang again, was put through, and nobody saved the outcome: owed, past the campaign's 30 s window. */
+  async function reachedAndLapsing(contactId: string): Promise<{ sessionId: string; call: CallRecord }> {
+    const s = await agent();
+    const call = await owed(s, 60, campaignId, contactId);
+    await agents.set(s, 'wrapup', { leaseMs: 60_000 });
+    await agents.rehydrateInbound(s, call.id);
+    return { sessionId: s, call };
+  }
+
+  it('the lapse: the callback cleared, the contact still pending at its own time, reached (last outcome connected), nothing charged', async () => {
+    const c = await withBookedCallback('pending');
+    expect(await contactRow(c)).toMatchObject({ state: 'pending', callback_source: 'inbound', callback_reopened: false });
+    const { call } = await reachedAndLapsing(c);
+    expect(await service.sweepLapsed()).toBe(1);
+    expect(await row(call.id)).toMatchObject({ disposition_code: 'no_disposition', settled_at: expect.any(Date) });
+    expect(await contactRow(c)).toMatchObject({
+      state: 'pending', callback_source: null, callback_due_at: null, callback_reopened: false, last_outcome: 'connected', attempt_count: 1,
+    });
+  });
+
+  it('a contact the callback reopened from exhausted goes back to exhausted on the lapse: never dialable again by it', async () => {
+    const c = await withBookedCallback('exhausted');
+    expect(await contactRow(c)).toMatchObject({ state: 'pending', callback_source: 'inbound', callback_reopened: true });
+    await reachedAndLapsing(c);
+    expect(await service.sweepLapsed()).toBe(1);
+    expect(await contactRow(c)).toMatchObject({
+      state: 'exhausted', callback_source: null, callback_due_at: null, callback_reopened: false, attempt_count: 3,
+    });
+  });
+
+  it('a supervisor`s close (force-available) settles it the same way, reopened included', async () => {
+    const c = await withBookedCallback('exhausted');
+    const { sessionId, call } = await reachedAndLapsing(c);
+    expect(await service.closeOwedForSupervisor(sessionId)).toMatchObject({ kind: 'closed', call: { id: call.id } });
+    expect(await contactRow(c)).toMatchObject({ state: 'exhausted', callback_source: null, callback_reopened: false });
+  });
+
+  it('a saved outcome that moves nothing (`none`) puts a reopened contact back too; a callback outcome keeps it pending at the agent`s time', async () => {
+    const back = await withBookedCallback('exhausted');
+    const s1 = await agent();
+    const plain = await owed(s1, 5, campaignId, back);
+    expect(await contacts.settleFromInbound({ inboundCallId: plain.id, settlement: { kind: 'none' }, lastDisposition: 'not_interested' }))
+      .toMatchObject({ state: 'exhausted', applied: 'settled' });
+    const asked = await withBookedCallback('exhausted');
+    const s2 = await agent();
+    const cb = await owed(s2, 5, campaignId, asked);
+    const at = new Date(Date.now() + 2 * 3_600_000);
+    expect(await contacts.settleFromInbound({ inboundCallId: cb.id, settlement: { kind: 'callback', at }, lastDisposition: 'callback' }))
+      .toMatchObject({ state: 'pending', applied: 'settled' });
+    expect(await contactRow(asked)).toMatchObject({ state: 'pending', callback_source: null, callback_reopened: false });
+    expect((await contactRow(asked)).next_attempt_at!.getTime()).toBe(at.getTime());
+  });
+
+  it('the contact`s settle and the close commit together: a settle that fails leaves the call owed for the next sweep', async () => {
+    const c = await withBookedCallback('exhausted');
+    const { call } = await reachedAndLapsing(c);
+    vi.spyOn(contacts, 'settleFromInbound').mockRejectedValueOnce(new Error('lock timeout'));
+    await expect(service.sweepLapsed()).rejects.toThrow('lock timeout');
+    expect((await row(call.id)).settled_at).toBeNull();
+    expect(await contactRow(c)).toMatchObject({ state: 'pending', callback_source: 'inbound' });
+    expect(await service.sweepLapsed()).toBe(1);
+    expect(await contactRow(c)).toMatchObject({ state: 'exhausted', callback_source: null });
   });
 });

@@ -32,9 +32,14 @@
  * whose session left, is closed `no_disposition` (`lapseUnsettled`), its field cleared and its
  * agent returned, from the wrap-up it holds them in only ({@link returnsToPool}: an agent on a
  * break stays on it, SWE-M1). A supervisor's force-available closes one the same way
- * ({@link InboundCallService.closeOwedForSupervisor}) and returns the agent.
+ * ({@link InboundCallService.closeOwedForSupervisor}) and returns the agent. Either close settles
+ * the matched contact in the same transaction, as an outcome that moves nothing would (SWE-F2): the
+ * customer was reached, so the inbound callback a missed call booked is cleared, and a contact that
+ * callback reopened from exhausted goes back to exhausted.
  */
+import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { createChildLogger } from '@magick-agency/observability';
 import { inboundScheduleState } from '@magick-agency/domain/inbound-schedule';
 import type { AgencyInboundQueueTile } from '@magick-agency/contracts/api/agency/inbound';
@@ -60,7 +65,7 @@ import { manualDispositionDecision, prepareManualDisposition } from '../softphon
 import type { SoftphoneActor } from '../softphone/types.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog } from './inbound-call-wire.js';
-import { inboundContactSettlement } from './inbound-settlement.js';
+import { INBOUND_LAPSE_SETTLEMENT, inboundContactSettlement } from './inbound-settlement.js';
 import type { InboundConnector } from './inbound-connector.js';
 
 const log = createChildLogger({ component: 'agency-inbound-calls' });
@@ -423,7 +428,11 @@ export class InboundCallService {
   async sweepLapsed(batch = 500): Promise<number> {
     let total = 0;
     for (;;) {
-      const rows = await agencyInboundCallRepository.lapseUnsettled({ limit: batch });
+      const rows = await withTransaction(async (client) => {
+        const closed = await agencyInboundCallRepository.lapseUnsettled({ limit: batch }, { client });
+        for (const row of closed) await settleLapsedContact(row, client);
+        return closed;
+      }, { pool: getPool() });
       for (const row of rows) {
         try {
           await this.returnAgent(row);
@@ -455,7 +464,11 @@ export class InboundCallService {
     const owed = await agencyInboundCallRepository.findUnsettledForSession(sessionId);
     if (!owed) return { kind: 'none' };
     if (owed.state !== 'ended' || owed.bridged_at === null) return { kind: 'live', inboundCallId: owed.id };
-    const closed = await agencyInboundCallRepository.lapseOne(owed.id);
+    const closed = await withTransaction(async (client) => {
+      const row = await agencyInboundCallRepository.lapseOne(owed.id, { client });
+      if (row) await settleLapsedContact(row, client);
+      return row;
+    }, { pool: getPool() });
     if (!closed) {
       // Saved (or swept) a moment ago: whatever settled it is now the session's to return from.
       const again = await agencyInboundCallRepository.findUnsettledForSession(sessionId);
@@ -467,6 +480,19 @@ export class InboundCallService {
     log.info({ sessionId, inboundCallId: closed.id }, 'Inbound outcome closed by a supervisor (force-available)');
     return { kind: 'closed', call: closed };
   }
+}
+
+/**
+ * The matched contact of a reached call whose outcome was just closed with none (the lapse, a
+ * supervisor's close), settled as an outcome that moves nothing would settle it
+ * (`INBOUND_LAPSE_SETTLEMENT`, SWE-F2): its booked inbound callback cleared (the customer was
+ * spoken to, so the campaign must not ring them back for it) and a contact that callback reopened
+ * put back to `exhausted`, never dialable again by it. On the transaction that closed the call, so
+ * the two commit together. The contact's last disposition is left as it was (nobody recorded one).
+ */
+async function settleLapsedContact(call: AgencyInboundCallRecord, client: Pick<PoolClient, 'query'>): Promise<void> {
+  if (!call.matched_contact_id) return;
+  await agencyContactRepository.settleFromInbound({ inboundCallId: call.id, settlement: INBOUND_LAPSE_SETTLEMENT, lastDisposition: null }, { client });
 }
 
 /** `p`, or give up waiting after `ms` (the hang-up answers the row as it stands then). Never rejects. */

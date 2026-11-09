@@ -224,6 +224,28 @@ describe('a message with no recording is spoken, never silence', () => {
     expect((await spine(a.carrierCallId))[0]).toEqual(row);
   });
 
+  it('SWE-F8: the hangup of a spoken answer records the carrier`s duration on the ended call; another credential`s hangup records nothing', async () => {
+    const n = await number(X, credX);
+    await route(X, XA, n.id);
+    const { router } = harness();
+    const a = arrival(X, credX, n.e164);
+    expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'callback' });
+    const carrierSecondsOf = async () => (await pool().query<{ carrier_seconds: number | null }>(
+      'SELECT carrier_seconds FROM agency_inbound_calls WHERE provider_call_id = $1', [a.carrierCallId])).rows[0]!.carrier_seconds;
+    expect(await carrierSecondsOf()).toBeNull();
+    const hangup = { tenantId: X, provider: 'plivo', carrierCallId: a.carrierCallId, callStatus: 'completed', hangupSource: 'Caller', durationSeconds: 9 };
+    // Y's credential naming X's call: ignored, nothing written.
+    await router.ended({ ...hangup, credentialId: credY, tenantId: Y });
+    expect(await carrierSecondsOf()).toBeNull();
+    await router.ended({ ...hangup, credentialId: credX });
+    expect(await carrierSecondsOf()).toBe(9);
+    // No duration in the callback: what was recorded stands.
+    const { durationSeconds: _none, ...withoutDuration } = hangup;
+    await router.ended({ ...withoutDuration, credentialId: credX });
+    expect(await carrierSecondsOf()).toBe(9);
+    expect((await spine(a.carrierCallId))[0]).toMatchObject({ state: 'ended', outcome: 'overflow' });
+  });
+
   it('a withheld caller in opening hours is never promised a callback, nor told we are closed: the busy words (PM-N1)', async () => {
     const n = await number(X, credX);
     await route(X, XA, n.id);

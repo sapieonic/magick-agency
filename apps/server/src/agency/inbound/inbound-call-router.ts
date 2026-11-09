@@ -91,8 +91,9 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  * promised a callback: in opening hours the busy message ("try again shortly") stands in for the
  * call-back one, on every path ({@link messageSlotFor}); they never hear "we're closed" while the
  * line is open (PM-N1). Their voicemail is prompted by our neutral prompt, which asks for their
- * number and promises nothing ({@link voicemailPrompt}). With the global or carrier scope full (found only once the stream is
- * promised) the caller hears "busy" (the route's recording or ours). The connector's preamble
+ * number and promises nothing ({@link voicemailPrompt}). With the global or carrier scope full
+ * (found only once the stream is promised) the caller hears "busy" (the route's recording or
+ * ours). The connector's preamble
  * plays the greeting or, unset, our "please hold", and before a recorded call the notice (IB7),
  * the route's or ours ({@link AgencyInboundCallRouter.clips}).
  *
@@ -602,6 +603,13 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     if (call.tenant_id !== hangup.tenantId || call.telephony_credential_id !== hangup.credentialId) {
       log.warn({ credentialId: hangup.credentialId }, 'Inbound hangup for a call this credential never answered — ignoring');
       return { legId: null };
+    }
+    // What the carrier bills (SWE-F8): kept on the call whatever its state; a spoken answer ended
+    // here at the answer while the carrier went on speaking. Best-effort: usage falls back to the
+    // call's own timestamps without it.
+    if (hangup.durationSeconds !== undefined) {
+      await agencyInboundCallRepository.recordCarrierSeconds(call.id, hangup.durationSeconds)
+        .catch((err: unknown) => log.warn({ err, inboundCallId: call.id }, 'Could not record the carrier\'s duration of an inbound call'));
     }
     const key = carrierKey(call.provider, call.provider_call_id);
     const live = this.live.get(call.id);

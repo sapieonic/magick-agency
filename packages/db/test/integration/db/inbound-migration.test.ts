@@ -285,6 +285,8 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
       'settled_at timestamp with time zone', 'voicemail_seconds integer', 'clash_attempt_id uuid',
       // 0028: how a Missed row was handled (inbound-missed-follow-up-migration.test.ts pins it).
       'handled_reason character varying',
+      // 0029: the carrier's duration (inbound-reach-settles-migration.test.ts pins it).
+      'carrier_seconds integer',
       // 0030: why a call was answered closed (inbound-reached-on-outcome-migration.test.ts pins it).
       'closed_cause character varying',
     ]);
@@ -591,7 +593,7 @@ describe('0024 — down', () => {
     } finally {
       await migrate('up');
     }
-    expect((await columns('agency_inbound_calls')).length).toBe(50); // 0024's 33, 0027's 15, 0028's 1 and 0030's 1
+    expect((await columns('agency_inbound_calls')).length).toBe(51); // 0024's 33, 0027's 15, 0028's 1, 0029's 1 and 0030's 1
     expect((await checkDef('ck_agency_calls_origin'))!.validated).toBe(true);
   });
 });

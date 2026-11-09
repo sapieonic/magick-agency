@@ -610,6 +610,20 @@ export class AgencyInboundCallRepository {
     return rows[0] ?? null;
   }
 
+  /**
+   * The carrier's duration of a call, from its hangup callback (`carrier_seconds`, 0029, SWE-F8):
+   * what it bills, read by the usage report. Written whatever the call's state (the hangup of a
+   * spoken answer lands after the call ended on our side); a retried callback's value stands.
+   * False: no such call. The caller has checked the call is the verified credential's.
+   */
+  async recordCarrierSeconds(id: string, seconds: number): Promise<boolean> {
+    const { rowCount } = await getPool().query(
+      'UPDATE agency_inbound_calls SET carrier_seconds = $2::int WHERE id = $1::uuid',
+      [id, Math.max(0, Math.trunc(seconds))],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   /** One call of the tenant, or null. */
   async findById(tenantId: string, id: string): Promise<AgencyInboundCallRecord | null> {
     const { rows } = await getPool().query<AgencyInboundCallRecord>(
@@ -743,14 +757,19 @@ export class AgencyInboundCallRepository {
    * campaign row gone), never past `lapseMs`, the backstop ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}).
    * At most `limit`, oldest end first, over `idx_agency_inbound_calls_unsettled_lapse`.
    *
-   * **Releases nothing.** It returns the rows it closed; the caller clears each session's Redis
-   * `inbound` field (by this id) and returns the agent. The pick is a MATERIALIZED `FOR UPDATE
-   * SKIP LOCKED` CTE, so two overlapping sweeps never close one call twice, and an agent saving
-   * the outcome concurrently either wins (the UPDATE's `settled_at IS NULL` re-check) or waits.
+   * **Releases and settles nothing.** It returns the rows it closed; the caller settles each one's
+   * matched contact on the same transaction (`deps.client`: `settleFromInbound`, SWE-F2), then
+   * clears each session's Redis `inbound` field (by this id) and returns the agent. The pick is a
+   * MATERIALIZED `FOR UPDATE SKIP LOCKED` CTE, so two overlapping sweeps never close one call
+   * twice, and an agent saving the outcome concurrently either wins (the UPDATE's
+   * `settled_at IS NULL` re-check) or waits.
    */
-  async lapseUnsettled(opts: { lapseMs?: number; defaultWrapup?: InboundWrapupRule; limit?: number } = {}): Promise<AgencyInboundCallRecord[]> {
+  async lapseUnsettled(
+    opts: { lapseMs?: number; defaultWrapup?: InboundWrapupRule; limit?: number } = {},
+    deps: { client?: Db } = {},
+  ): Promise<AgencyInboundCallRecord[]> {
     const fallback = opts.defaultWrapup ?? INBOUND_DEFAULT_WRAPUP;
-    const { rows } = await getPool().query<AgencyInboundCallRecord>(
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
       `WITH picked AS MATERIALIZED (
          SELECT c.id
            FROM agency_inbound_calls c
@@ -778,8 +797,8 @@ export class AgencyInboundCallRepository {
    * ended after it bridged and is still unsettled; null otherwise (the outcome was saved, or the
    * sweep closed it, first: the row lock orders this against both).
    */
-  async lapseOne(id: string): Promise<AgencyInboundCallRecord | null> {
-    const { rows } = await getPool().query<AgencyInboundCallRecord>(
+  async lapseOne(id: string, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
       `UPDATE agency_inbound_calls c
           SET ${LAPSE_SET_SQL}
         WHERE c.id = $1::uuid AND c.bridged_at IS NOT NULL AND c.settled_at IS NULL AND c.state = 'ended'

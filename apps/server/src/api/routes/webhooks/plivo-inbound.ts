@@ -249,6 +249,7 @@ export async function handlePlivoInboundCallback(
       carrierCallId: hangup.callUuid,
       callStatus: hangup.callStatus,
       hangupSource: hangup.hangupSource,
+      ...(hangup.durationSec !== undefined ? { durationSeconds: hangup.durationSec } : {}),
     });
     // The bridge settles its leg as the carrier ended it: no hangup is sent back, and a clip still
     // playing stops (its stream is gone). With no live session, the late path writes the terminal.

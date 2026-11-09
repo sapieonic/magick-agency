@@ -1209,6 +1209,29 @@ and a close beside a Mark handled, both indexes by definition and by the planner
 history, down then up), the trigger list in `baseline.test.ts`, the down → up suite, and the
 server's `test/integration/api/inbound-missed-work.test.ts`.
 
+### 0029 — `migrations/0029_inbound_reach_settles.sql`
+
+A reached inbound call settles the callback a missed call booked, and the spine keeps what the
+carrier bills (`docs/inbound.md` §6, §7, §9).
+
+- **`agency_contacts.callback_reopened`** BOOLEAN NOT NULL DEFAULT false (a constant default:
+  catalog-only, no rewrite): the contact's inbound callback (`callback_source`) reopened it from
+  `exhausted` (IB4). Written by `bookInboundCallback` (true when it reopens; a second booking keeps
+  it; any other booking false), cleared by `settleFromInbound`, whose `none` arm (a retry or plain
+  outcome, or the outcome lapsing) puts such a contact back to `exhausted`. Meaningful only while
+  `callback_source` is set (other writers that clear the callback leave it; the next booking
+  rewrites it). No index: read on a row already locked by primary key.
+- **`agency_inbound_calls.carrier_seconds`** INTEGER, NULL until known:
+  the carrier's duration of the call from its hangup callback (Plivo `Duration`).
+  `ck_agency_inbound_calls_carrier_seconds`: NULL or ≥ 0. The usage report's `inbound_seconds`
+  sums it when set, else `ended_at - answered_at` (a spoken answer ends on our side at the answer).
+
+**Down** drops both columns and the CHECK. **Tests**:
+`test/integration/db/inbound-reach-settles-migration.test.ts` (the columns, the CHECK, no rewrite
+of `agency_contacts`, down then up), `test/integration/repositories/usage-counts-inbound-carrier.test.ts`,
+the down → up suite, and the server's `inbound-agent-return.test.ts` (SWE-F2) and
+`inbound-follow-up.test.ts`.
+
 ### 0030 — `migrations/0030_inbound_reached_on_outcome.sql`
 
 A Missed inbound row closes as `reached` only when a person was reached, matched on the number's
