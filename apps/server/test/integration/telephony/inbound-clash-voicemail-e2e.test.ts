@@ -69,7 +69,7 @@ import {
   ACCOUNT, PLIVO_E2E_ENV, TENANT, callRow, closePlivoDb, initPlivoDb, startPlivoRig, waitFor, type PlivoRig,
 } from './plivo-rig.js';
 import {
-  CALLER, SPEECH, callerScript, callers, campaign, clip, contact, framesOf, inboundCalls, joinAgent, liveOf, ring,
+  CALLER, SPEECH, busyAgent, callerScript, callers, campaign, clip, contact, framesOf, inboundCalls, joinAgent, liveOf, ring,
   setRoute, spineWhen, startInboundWorld, stateFrames, type InboundWorld,
 } from './inbound-connect-rig.js';
 import type { PlivoCallStep } from '../../mocks/plivo/index.js';
@@ -264,6 +264,9 @@ describe('voicemail (§7, IB3, Q14)', () => {
 
   it('from the queue (over max_waiting): the overflow voicemail, a Missed row `overflow` with it', async () => {
     await setRoute(world, { max_waiting: 0, overflow_action: 'voicemail' });
+    // Someone who could take the caller once their call ends: the caller queues (with nobody at
+    // all, the router answers with the voicemail at once, before any queue: PM-M6 / SWE-N4).
+    await busyAgent(world, await campaign(world));
     let done = false;
     const call = ring(world, speaker(() => done));
     await spineWhen(call, 'queued', (r) => r.state === 'queued' || r.state === 'ended');
