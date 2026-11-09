@@ -97,9 +97,11 @@ package root.
   constants (`AGENCY_INBOUND_CONNECT_DELAY_MS`, `AGENCY_INBOUND_OUTCOME_LAPSE_MS`,
   `AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS`, `AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`).
   `AgencyInboundErrorCode` / `AGENCY_INBOUND_ERROR_CODES` from `../../errors`. Console-only there:
-  the route, number and clip DTOs, the Missed list (`voicemail_url?` is P2's), the supervisor's
-  `AgencyInboundQueueTile` / `AgencyInboundQueueResponse`, `AgencyInboundCallLiveRefusal` and the
-  request bodies (§5).
+  the route, number and clip DTOs (the recordings' upload and delete, their limits and refusal
+  reasons, the route warnings), the standard recordings' words (`AGENCY_INBOUND_STANDARD_WORDS`,
+  which the server's carrier messages also speak), the Missed list (`voicemail_url?` is P2's), the
+  supervisor's `AgencyInboundQueueTile` / `AgencyInboundQueueResponse`,
+  `AgencyInboundCallLiveRefusal` and the request bodies (§5).
 - `softphone.ts` (`docs/softphone.md`): every soft-phone shape the console reads unchanged — the
   manual call and its vocabularies, call fields, settings, bootstrap, session response, list query,
   disposition and DNC responses, the refusal bodies, `AgencyStationManualCallFrame` —

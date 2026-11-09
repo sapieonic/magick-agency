@@ -78,6 +78,8 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'DELETE /inbound/routes/:id': 'none',
   'GET /inbound/numbers': 'none',
   'GET /inbound/clips': 'none',
+  'POST /inbound/clips': 'none',
+  'DELETE /inbound/clips/:id': 'none',
   'GET /inbound/missed': 'none',
   'POST /inbound/missed/:id/handled': 'none',
   'GET /inbound/missed/:id/voicemail': 'none',

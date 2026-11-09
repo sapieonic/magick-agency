@@ -47,6 +47,9 @@ const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
   'agency_inbound_route.updated',
   'agency_inbound_route.deleted',
   'agency_inbound_call.handled',
+  // A recording uploaded or deleted for inbound routes: account-wide.
+  'agency_inbound_clip.uploaded',
+  'agency_inbound_clip.deleted',
 ]);
 
 const CAMPAIGN_SCOPED = {

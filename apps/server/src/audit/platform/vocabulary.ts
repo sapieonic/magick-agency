@@ -191,6 +191,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_clip.uploaded', label: 'Inbound recording uploaded', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_clip.deleted', label: 'Inbound recording deleted', group: 'Calls', product: 'agency' },
 
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
@@ -245,6 +247,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_report_subscription', label: 'Scheduled report' },
   { value: 'agency_inbound_route', label: 'Inbound route' },
   { value: 'agency_inbound_call', label: 'Inbound call' },
+  { value: 'agency_inbound_clip', label: 'Inbound recording' },
   { value: 'dnc_entry', label: 'Do-not-call entry' },
   // "Invitation", not "Membership": the rows filed under it are about the token
   // and its life (sent, accepted), and on every refusal path there is no

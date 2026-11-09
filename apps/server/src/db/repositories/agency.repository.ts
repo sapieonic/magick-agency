@@ -281,3 +281,6 @@ export {
   INBOUND_CONTACT_CANDIDATES_PER_ACCOUNT,
 } from './agency/inbound-answer.repository.js';
 export type { InboundCallSignalRow, InboundContactCandidateRow, InboundRouteSchedule } from './agency/inbound-answer.repository.js';
+// The account's recordings as the inbound route editor sees them (docs/inbound.md §8.4).
+export { AgencyInboundClipRepository, agencyInboundClipRepository } from './agency/inbound-clip.repository.js';
+export type { InboundClipUsage } from './agency/inbound-clip.repository.js';

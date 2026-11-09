@@ -296,6 +296,11 @@ describe('inbound codes', () => {
       'inbound_call_not_dispositionable',
       'inbound_disposition_invalid',
       'inbound_outcome_already_saved',
+      'inbound_clip_not_found',
+      'inbound_clip_in_use',
+      'inbound_clip_invalid',
+      'inbound_clip_name_taken',
+      'inbound_clip_storage_unavailable',
     ]);
     expectUnique(AGENCY_INBOUND_ERROR_CODES);
   });

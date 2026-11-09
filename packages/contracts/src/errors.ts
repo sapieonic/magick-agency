@@ -567,7 +567,17 @@ export type AgencyInboundErrorCode =
   /** 400. The outcome code is not in the call's catalog (`allowed_codes`), or its note or callback time is missing or invalid (`reason`). */
   | 'inbound_disposition_invalid'
   /** 409. Another outcome is already saved on the call, or it lapsed `no_disposition`. */
-  | 'inbound_outcome_already_saved';
+  | 'inbound_outcome_already_saved'
+  /** 404. No such recording (audio file) in this account. */
+  | 'inbound_clip_not_found'
+  /** 409. A live route of the account plays the recording; `routes` names them. Choose another recording there first. */
+  | 'inbound_clip_in_use'
+  /** 400 (413 when the file is over the size limit). The upload is not a usable recording; `upload_reason` says why. */
+  | 'inbound_clip_invalid'
+  /** 409. Another recording of the account already has that name. */
+  | 'inbound_clip_name_taken'
+  /** 503. This deployment has no audio storage, so recordings cannot be uploaded. */
+  | 'inbound_clip_storage_unavailable';
 
 /** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
 export const AGENCY_INBOUND_ERROR_CODES = [
@@ -584,6 +594,11 @@ export const AGENCY_INBOUND_ERROR_CODES = [
   'inbound_call_not_dispositionable',
   'inbound_disposition_invalid',
   'inbound_outcome_already_saved',
+  'inbound_clip_not_found',
+  'inbound_clip_in_use',
+  'inbound_clip_invalid',
+  'inbound_clip_name_taken',
+  'inbound_clip_storage_unavailable',
 ] as const satisfies readonly AgencyInboundErrorCode[];
 
 const _allInboundCodesListed: AllListed<

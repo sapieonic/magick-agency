@@ -1,4 +1,10 @@
 import type { InboundRefusal } from '../../api/inbound';
+import {
+  AGENCY_INBOUND_CLIP_UPLOAD_LIMITS,
+  AGENCY_INBOUND_STANDARD_WORDS,
+  type AgencyInboundClipInvalidReason,
+  type AgencyInboundStandardRecording,
+} from '../../types/inbound';
 import type {
   AgencyInboundErrorCode,
   AgencyInboundMissedCall,
@@ -27,6 +33,22 @@ export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode, string> = {
   inbound_call_not_dispositionable: 'This call can’t take an outcome: it hasn’t ended, or nobody spoke to the caller.',
   inbound_disposition_invalid: 'That outcome can’t be saved. Check the outcome, its note and its callback time.',
   inbound_outcome_already_saved: 'This call’s outcome is already saved.',
+  inbound_clip_not_found: 'This recording no longer exists. Someone may have deleted it.',
+  inbound_clip_in_use: 'This recording is in use. Choose another recording where it’s used, then delete it.',
+  inbound_clip_invalid: 'That file can’t be used as a recording.',
+  inbound_clip_name_taken: 'Another recording in this account already has that name. Choose another.',
+  inbound_clip_storage_unavailable: 'Recordings can’t be uploaded here yet: this service has no audio storage set up. Contact support.',
+};
+
+/** Why an upload was refused, in the editor's words. */
+export const RECORDING_UPLOAD_REFUSAL_COPY: Record<AgencyInboundClipInvalidReason, string> = {
+  no_file: 'Choose a file to upload.',
+  unsupported_type: 'Upload a WAV, MP3 or OGG file.',
+  too_large: `That file is too large. Recordings can be up to ${AGENCY_INBOUND_CLIP_UPLOAD_LIMITS.max_bytes / (1024 * 1024)} MB.`,
+  too_long: `That recording is too long. Recordings can be up to ${AGENCY_INBOUND_CLIP_UPLOAD_LIMITS.max_seconds / 60} minutes.`,
+  empty: 'That file has no audio in it, or it’s too short to be a recording.',
+  undecodable: 'That file couldn’t be read as audio. It may be damaged, or not the type its name says.',
+  name_invalid: `Give the recording a name of up to ${AGENCY_INBOUND_CLIP_UPLOAD_LIMITS.name_max} characters.`,
 };
 
 /** A refusal in the console's words, naming the number when there is one. */
@@ -40,7 +62,7 @@ export function inboundRefusalCopy(refusal: InboundRefusal, numberLabel?: (id: s
 export const MISSED_REASON_LABELS: Record<AgencyInboundMissedReason, string> = {
   closed: 'Out of hours',
   abandoned_in_queue: 'Hung up while waiting',
-  overflow: 'Waited too long',
+  overflow: 'Nobody free to answer',
   overflow_no_capacity: 'All lines busy',
   failed: 'Couldn’t be answered',
 };
@@ -51,41 +73,67 @@ export const STICKY_MODE_LABELS: Record<AgencyInboundStickyMode, { label: string
     hint: 'Offer the caller to the agent who last dealt with them for a short wait, then to the team.',
   },
   strict: {
-    label: 'Only their agent',
-    hint: 'Hold the caller for their agent until the longest wait; if nobody answers, the follow-up is theirs.',
+    label: 'Wait for their agent',
+    hint: 'While their agent is on a call or finishing one, the caller waits for them, up to the longest wait; if nobody answers, the follow-up is theirs. If their agent is offline, on a break or on the phone app, the team answers at once.',
   },
   off: { label: 'Off', hint: 'Every caller goes to the team, longest idle agent first.' },
 };
 
+/** A standard recording's words, quoted for a hint. */
+function quoted(recording: AgencyInboundStandardRecording): string {
+  return `“${AGENCY_INBOUND_STANDARD_WORDS[recording]}”`;
+}
+
 /**
- * Each clip slot's label, hint, and what the "no recording" choice means for callers: the three
- * messages a call is answered with are then spoken by the carrier in a standard voice (the server's
- * fixed words); the others are simply not played.
+ * Each clip slot's label, hint, and what the "no recording of your own" choice means for callers:
+ * our standard recording of the words quoted (`AGENCY_INBOUND_STANDARD_WORDS`, the server's own
+ * words), or for the hold the built-in hold tone. A greeting left out is replaced by our "please
+ * hold" only for callers who wait for an agent; before a closed, busy or call-back message it is
+ * skipped.
  */
 export const CLIP_SLOT_LABELS: Record<AgencyInboundClipSlot, { label: string; hint: string; none: string }> = {
   greeting: {
     label: 'Greeting',
-    hint: 'Played as soon as the call is answered, before a recorded message. Not played before a standard spoken message.',
-    none: 'No greeting',
+    hint: `Played as soon as the call is answered. Our standard recording, for callers who wait for an agent: ${quoted('please_hold')}`,
+    none: 'Our standard recording',
   },
-  recording_notice: { label: 'Recording notice', hint: 'Played before an agent joins, when calls are recorded.', none: 'No notice' },
-  hold: { label: 'Hold music', hint: 'Looped while the caller waits for an agent.', none: 'No hold music' },
+  recording_notice: {
+    label: 'Recording notice',
+    hint: `Played before an agent joins, when calls are recorded and callers are told. Our standard recording: ${quoted('recording_notice')}`,
+    none: 'Our standard recording',
+  },
+  hold: { label: 'Hold music', hint: 'Looped while the caller waits for an agent.', none: 'Built-in hold tone' },
   closed: {
     label: 'Closed',
-    hint: 'Played out of hours and on holidays. Standard: “Thank you for calling. We can’t take your call right now. Please try again later.”',
-    none: 'Standard spoken message',
+    hint: `Played out of hours and on holidays, and to callers we can’t call back. Our standard recording: ${quoted('closed')}`,
+    none: 'Our standard recording',
   },
   busy: {
     label: 'All lines busy',
-    hint: 'Played when the route already has as many calls as it takes. Standard: “… All our lines are busy at the moment. We’ll call you back as soon as we can.”',
-    none: 'Standard spoken message',
+    hint: `Played when the route already has as many calls as it takes. Our standard recording: ${quoted('busy')}`,
+    none: 'Our standard recording',
   },
   callback: {
     label: 'We’ll call you back',
-    hint: 'Played before the call ends with a callback follow-up. Standard: “… Everyone is busy at the moment. We’ll call you back as soon as we can.”',
-    none: 'Standard spoken message',
+    hint: `Played when nobody can answer, before the call ends with a callback follow-up. Our standard recording: ${quoted('callback')}`,
+    none: 'Our standard recording',
   },
 };
+
+/** A recording's length, as the list shows it: `0:04`, `1:30`. */
+export function recordingLength(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) return '';
+  const whole = Math.max(1, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+/** Which routes play a recording, in words; empty when none. */
+export function recordingUsedBy(routes: ReadonlyArray<{ name: string }>): string {
+  if (routes.length === 0) return '';
+  const names = routes.map((r) => `“${r.name}”`);
+  const list = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Used by ${list}`;
+}
 
 /** Where a Missed row stands with its assignee, in words. */
 export function assigneeLabel(call: Pick<AgencyInboundMissedCall, 'assignee_user_id' | 'assignee_name'>, userId: string | null): string {

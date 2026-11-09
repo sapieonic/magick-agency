@@ -35,6 +35,11 @@ describe('refusals', () => {
       inbound_call_not_dispositionable: 409,
       inbound_disposition_invalid: 400,
       inbound_outcome_already_saved: 409,
+      inbound_clip_not_found: 404,
+      inbound_clip_in_use: 409,
+      inbound_clip_invalid: 400,
+      inbound_clip_name_taken: 409,
+      inbound_clip_storage_unavailable: 503,
     });
     expect(inboundRefusalBody({ code: 'inbound_call_live', inbound_call_id: 'ib-1' })).toEqual({
       status: 409,
@@ -53,6 +58,24 @@ describe('refusals', () => {
     expect(inboundRefusalBody({ code: 'inbound_disabled' }).body).toEqual({
       error: 'Forbidden', code: 'inbound_disabled', message: 'Inbound calls are not turned on for this account.',
     });
+  });
+
+  it('an upload refusal says its own reason; one over the size limit is 413, as the multipart limit answers', () => {
+    expect(inboundRefusalBody({ code: 'inbound_clip_invalid', upload_reason: 'too_long', message: 'Too long.' })).toEqual({
+      status: 400,
+      body: { error: 'Bad Request', code: 'inbound_clip_invalid', message: 'Too long.', upload_reason: 'too_long' },
+    });
+    expect(inboundRefusalBody({ code: 'inbound_clip_invalid', upload_reason: 'too_large' }).status).toBe(413);
+    expect(inboundRefusalBody({ code: 'inbound_clip_invalid', upload_reason: 'too_large' }).body.error).toBe('Payload Too Large');
+    expect(inboundRefusalBody({ code: 'inbound_clip_in_use', routes: [{ route_id: 'r-1', name: 'Main' }] })).toEqual({
+      status: 409,
+      body: {
+        error: 'Conflict', code: 'inbound_clip_in_use',
+        message: 'This recording is in use, so it cannot be deleted. Choose another recording where it is used first.',
+        routes: [{ route_id: 'r-1', name: 'Main' }],
+      },
+    });
+    expect(inboundRefusalBody({ code: 'inbound_clip_storage_unavailable' })).toMatchObject({ status: 503, body: { error: 'Service Unavailable' } });
   });
 
   it('recognises only the audited routes’ envelope', () => {

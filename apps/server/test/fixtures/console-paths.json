@@ -2479,6 +2479,20 @@
       "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
     },
     {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/clips",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "inbound recording upload from the route editor, served by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/inbound/clips/:id",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "inbound recording delete from the route editor, served by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
       "method": "GET",
       "path": "/proxy/agency/inbound/missed",
       "source": "apps/console/src/api/inbound.ts",

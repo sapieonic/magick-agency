@@ -1,7 +1,8 @@
 /*
  * Inbound calls' internal handlers (docs/inbound.md §7, §8.1), on the internal handler instance
  * under `/api/v1/agency` (decision B16): the account's inbound routes (list, read, create,
- * change, delete), the route editor's choices (numbers, clips), and the Missed inbound list with
+ * change, delete), the route editor's choices (numbers, recordings; uploading and deleting a
+ * recording is `./inbound-clips.ts`), and the Missed inbound list with
  * Mark handled. Part of `agency.routes.ts`, inside its authenticated scope.
  *
  * The public routes (`../proxy-agency-inbound.routes.ts`) own RBAC, the `agency_inbound_enabled`
@@ -47,9 +48,11 @@ import { audioFileRepository } from '@magick-agency/db/repositories/audio-file.r
 import { callAnalysisProfileRepository } from '@magick-agency/db/repositories/call-analysis-profile.repository';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import { config } from '../../../config/index.js';
+import { isStorageConfigured } from '../../../storage/s3.js';
 import {
   agencyCampaignRepository,
   agencyInboundCallRepository,
+  agencyInboundClipRepository,
   agencyInboundRouteRepository,
   inboundRouteToWire,
   type AgencyInboundAttachRefusal,
@@ -111,14 +114,22 @@ function routeIdOr404(request: FastifyRequest<{ Params: { id: string } }>, reply
 }
 
 /**
+ * Whether this deployment puts inbound callers through to agents: one process (IB8), the router's
+ * own test (`mayConnect`: with media workers on, every open route's caller is told everyone is
+ * busy). The route editor's `connect_unavailable` warning.
+ */
+function connectsAgents(): boolean {
+  return config.processes.mediaWorkers === 0;
+}
+
+/**
  * A route as every route read and write answers it, with its warnings (`inboundRouteWarnings`):
- * what a caller would hear in silence, or a voicemail that cannot be taken. Advisory only. Agents
- * are connected (so a waiting caller's overflow message has no spoken stand-in) in one process
- * (IB8); with media workers on, P2 keeps P1's answer and the carrier speaks a missing message.
+ * no opening hours, a deployment that cannot put callers through, a call recorded unannounced.
+ * Advisory only.
  */
 function routeWithWarnings(route: Parameters<typeof inboundRouteToWire>[0]): AgencyInboundRoute {
   const wire = inboundRouteToWire(route);
-  return { ...wire, warnings: inboundRouteWarnings(wire, { connectsAgents: config.processes.mediaWorkers === 0 }) };
+  return { ...wire, warnings: inboundRouteWarnings(wire, { connectsAgents: connectsAgents() }) };
 }
 
 // ─── Validation past the shape ──────────────────────────────────────────────
@@ -312,11 +323,13 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     return reply.send(body);
   });
 
-  // ── GET /inbound/clips — the account's audio files, for the clip slots ────
+  // ── GET /inbound/clips — the account's recordings, and what this deployment can do with them ──
   sub.get('/inbound/clips', async (request, reply) => {
-    const { rows } = await audioFileRepository.listByTenant(getTenantId(request), getAccountId(request), AGENCY_INBOUND_CLIPS_MAX, 0);
+    const clips = await agencyInboundClipRepository.listForAccount(getTenantId(request), getAccountId(request), AGENCY_INBOUND_CLIPS_MAX);
     const body: AgencyInboundClipsResponse = {
-      clips: rows.map((f) => ({ id: f.id, name: f.name, duration_seconds: f.duration_seconds ?? null })),
+      clips,
+      upload_available: isStorageConfigured(),
+      connects_agents: connectsAgents(),
     };
     return reply.send(body);
   });

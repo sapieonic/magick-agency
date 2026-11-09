@@ -6,9 +6,9 @@ import { AGENCY_INBOUND_ROUTE_DEFAULTS, type AgencyInboundRoute } from '@magick-
 /**
  * The route editor in the build that records voicemail (P2): what happens to a call nobody
  * answers is offered from `AGENCY_INBOUND_AVAILABLE_ACTIONS` (callback and voicemail), and the
- * route's messages are checked as they are edited (`inboundRouteWarnings`): a message some
- * caller would hear in silence, or a voicemail that cannot be taken, is said in the "When nobody
- * answers" card, and never blocks the save.
+ * route is checked as it is edited (`inboundRouteWarnings`): no opening hours, a call recorded
+ * unannounced, a deployment that cannot put callers through. Each is said beside its field and
+ * never blocks the save. A missing recording is no warning: our standard recording plays.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -58,7 +58,7 @@ beforeEach(() => {
   mocks.listInboundNumbers.mockResolvedValue({
     numbers: [{ phone_number_id: 'n-1', phone_number: '+441632960001', linked: true, route_id: 'r-1', route_name: 'Main line', held_elsewhere: false }],
   });
-  mocks.listInboundClips.mockResolvedValue({ clips: [] });
+  mocks.listInboundClips.mockResolvedValue({ clips: [], upload_available: true, connects_agents: true });
   mocks.listAgencyCampaigns.mockResolvedValue([]);
   mocks.updateInboundRoute.mockImplementation(async (_id: string, patch: object) => ({ ok: true, value: { ...ROUTE, ...patch } }));
 });
@@ -90,7 +90,7 @@ describe('voicemail, once the server offers it', () => {
   });
 });
 
-describe('the route’s message warnings (a caller who would hear nothing)', () => {
+describe('the route’s warnings, beside the field they are about', () => {
   const renderEditor = async () => {
     render(
       <MemoryRouter initialEntries={['/app/inbound/r-1']}>
@@ -101,34 +101,37 @@ describe('the route’s message warnings (a caller who would hear nothing)', () 
     );
     await act(async () => {});
   };
-  const warnings = () => [...(screen.queryByTestId('inbound-route-warnings')?.querySelectorAll('li') ?? [])].map((li) => li.textContent);
 
-  it('says a waiting caller who reaches nobody is put down in silence while the call-back or closed message has no recording, and never blocks the save', async () => {
+  it('a route with hours and no recordings says nothing: every message has our standard recording', async () => {
     await renderEditor();
-    expect(warnings()).toEqual([
-      'Callers who wait and reach nobody are put down without hearing anything. Choose a recording for “We’ll call you back” so they know we’ll call them back.',
-      'Callers who withhold their number, wait and reach nobody are put down without hearing anything. Choose a recording for “Closed”.',
-    ]);
-    expect(screen.getAllByTestId('inbound-route-warning-overflow_message_silent')).toHaveLength(2);
-    // Advisory: the route still saves.
-    fireEvent.change(screen.getByTestId('inbound-route-name'), { target: { value: 'Main line 2' } });
+    expect(document.querySelector('[data-testid^="inbound-route-warning-"]')).toBeNull();
+  });
+
+  it('no opening hours: closed at all times, in the hours card, and the route still saves', async () => {
+    await renderEditor();
+    fireEvent.click(screen.getByRole('button', { name: /^Remove Mon/ }));
+    const hours = within(screen.getByTestId('inbound-route-hours'));
+    expect(hours.getByTestId('inbound-route-warning-no_opening_hours').textContent)
+      .toBe('Closed at all times: callers always hear the closed message. Add opening hours to take calls.');
     await act(async () => {
       fireEvent.click(screen.getByTestId('inbound-route-save'));
     });
-    expect(mocks.updateInboundRoute).toHaveBeenCalledWith('r-1', { name: 'Main line 2' }, 'tenant-1', 'account-1');
+    expect(mocks.updateInboundRoute).toHaveBeenCalledWith('r-1', { weekly_hours: [] }, 'tenant-1', 'account-1');
   });
 
-  it('follows the edit: recordings chosen clear them; a voicemail with no prompt says what callers will hear instead', async () => {
-    mocks.listInboundClips.mockResolvedValue({ clips: [{ id: 'clip-cb', name: 'Call back', duration_seconds: 4 }, { id: 'clip-cl', name: 'Closed', duration_seconds: 3 }] });
+  it('a call recorded with the notice off is said in the recording card', async () => {
     await renderEditor();
-    fireEvent.change(screen.getByLabelText('We’ll call you back'), { target: { value: 'clip-cb' } });
-    fireEvent.change(screen.getByLabelText('Closed'), { target: { value: 'clip-cl' } });
-    expect(screen.queryByTestId('inbound-route-warnings')).toBeNull();
+    fireEvent.click(screen.getByTestId('inbound-record'));
+    expect(screen.queryByTestId('inbound-route-warning-recording_without_notice')).toBeNull();
+    fireEvent.click(screen.getByTestId('inbound-recording-notice'));
+    const recording = within(screen.getByTestId('inbound-route-recording'));
+    expect(recording.getByTestId('inbound-route-warning-recording_without_notice').textContent).toMatch(/recorded without telling callers/);
+  });
 
-    // Out of hours a voicemail needs the closed recording as its prompt.
-    fireEvent.change(screen.getByLabelText('Closed'), { target: { value: '' } });
-    fireEvent.click(within(screen.getByTestId('inbound-after-hours-action')).getByRole('radio', { name: /take a voicemail/i }));
-    expect(warnings()).toContain('Out of hours, callers hear the standard spoken message and cannot leave a voicemail. Choose a recording for “Closed”.');
-    expect(screen.getByTestId('inbound-route-warning-voicemail_needs_prompt')).toBeTruthy();
+  it('a deployment that cannot put callers through says so for the whole route', async () => {
+    mocks.listInboundClips.mockResolvedValue({ clips: [], upload_available: true, connects_agents: false });
+    await renderEditor();
+    expect(screen.getByTestId('inbound-route-warning-connect_unavailable').textContent)
+      .toBe('Calls can’t be put through to agents on this deployment, so callers hear the busy message: everyone is busy and we’ll call them back.');
   });
 });

@@ -147,6 +147,10 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // A supervisor's force-available closed an outcome the agent owed (`no_disposition`, as the
   // lapse would): filed under the call, the supervisor the actor (`details.via`, the session).
   'agency_inbound_call.closed',
+  // A recording uploaded for inbound routes (`details.size_bytes`, `duration_seconds`) or deleted,
+  // filed under the recording (`audio_files.id`). Account-wide.
+  'agency_inbound_clip.uploaded',
+  'agency_inbound_clip.deleted',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -195,6 +199,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   // One inbound route (`agency_inbound_routes.id`) and one inbound call (`agency_inbound_calls.id`).
   'agency_inbound_route',
   'agency_inbound_call',
+  // One recording (`audio_files.id`) uploaded for inbound routes.
+  'agency_inbound_clip',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

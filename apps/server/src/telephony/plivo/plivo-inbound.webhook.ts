@@ -19,6 +19,7 @@
 // neither: an answer needs a `CallUUID` and a `To`, and refuses only a `Direction` that names
 // another direction.
 import { plivoNumberToE164 } from '@magick-agency/domain/plivo-number';
+import { AGENCY_INBOUND_STANDARD_WORDS } from '@magick-agency/contracts/api/agency/inbound';
 import type { CallEvent } from '../types.js';
 import { xmlEscape } from './plivo.adapter.js';
 import { PLIVO_TERMINAL_STATUSES } from './plivo.webhook.js';
@@ -138,14 +139,15 @@ export function plivoInboundHangupEvent(h: PlivoInboundHangup, legId: string): C
 }
 
 /**
- * Spoken by Plivo itself (`<Speak>`, its own text to speech), in British English. The product
- * has no recorded built-in clips (launch decision 4: uploaded audio only); these answers are
- * fixed text Plivo speaks where no recording of ours is played: the fallback (we are
- * unreachable), a call with no account to stream for (the tenant default, §8.3), and a route's
- * closed, "we'll call you back" or "all lines busy" message when the route has no recording for
- * it (§3.4: a slot with no clip is never silence).
+ * Spoken by Plivo itself (`<Speak>`, its own text to speech), in British English, where nothing
+ * of ours streams: the fallback (we are unreachable), a call with no account to stream for (the
+ * tenant default, §8.3), and a route's closed, "we'll call you back" or "all lines busy" message
+ * when the route has no recording for it and the call will not stream (§3.4). The closed,
+ * call-back and busy words are our standard recordings' (`AGENCY_INBOUND_STANDARD_WORDS`), so a
+ * caller hears the same sentence whether it is spoken here or played from our stream.
  */
-const SPEAK = (text: string): string => `<Speak voice="WOMAN" language="en-GB">${xmlEscape(text)}</Speak>`;
+// The contract's words use typographic apostrophes; the carrier's speech is given plain ones.
+const SPEAK = (text: string): string => `<Speak voice="WOMAN" language="en-GB">${xmlEscape(text.replace(/’/g, "'"))}</Speak>`;
 
 /**
  * The fallback answer URL's reply: Plivo runs it when our answer URL fails (a deploy, an outage),
@@ -159,19 +161,19 @@ export const PLIVO_INBOUND_FALLBACK_XML =
 /**
  * The closed message: a call that has nowhere to stream (the tenant default: no route and no
  * matched contact, so no account, §8.3), a route closed now with no closed recording, and any
- * caller who withheld their number where the route would promise a callback (nobody can ring a
- * withheld number back). Promises nothing. The Missed row is written.
+ * caller who withheld their number or is on DNC where the route would promise a callback (nobody
+ * can ring them back). Promises nothing. The Missed row is written.
  */
 export const PLIVO_INBOUND_CLOSED_XML =
-  `<Response>${SPEAK("Thank you for calling. We can't take your call right now. Please try again later.")}<Hangup/></Response>`;
+  `<Response>${SPEAK(AGENCY_INBOUND_STANDARD_WORDS.closed)}<Hangup/></Response>`;
 
 /** A route's "we'll call you back" message with no recording (the call reached nobody; its follow-up is written). */
 export const PLIVO_INBOUND_CALLBACK_XML =
-  `<Response>${SPEAK("Thank you for calling. Everyone is busy at the moment. We'll call you back as soon as we can.")}<Hangup/></Response>`;
+  `<Response>${SPEAK(AGENCY_INBOUND_STANDARD_WORDS.callback)}<Hangup/></Response>`;
 
 /** A route's "all lines busy" message with no recording (the route at its limit; its follow-up is written). */
 export const PLIVO_INBOUND_BUSY_XML =
-  `<Response>${SPEAK("Thank you for calling. All our lines are busy at the moment. We'll call you back as soon as we can.")}<Hangup/></Response>`;
+  `<Response>${SPEAK(AGENCY_INBOUND_STANDARD_WORDS.busy)}<Hangup/></Response>`;
 
 /** The XML for a spoken answer (`seams/inbound-call-router.ts`, `InboundSpokenMessage`). */
 export const PLIVO_INBOUND_SPOKEN_XML: Readonly<Record<'closed' | 'callback' | 'busy', string>> = Object.freeze({

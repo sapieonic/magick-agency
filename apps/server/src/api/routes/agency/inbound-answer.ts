@@ -6,6 +6,8 @@
  */
 import type { FastifyReply } from 'fastify';
 import type {
+  AgencyInboundClipInvalidReason,
+  AgencyInboundClipRouteRef,
   AgencyInboundErrorCode,
   AgencyInboundErrorResponse,
   AgencyInboundMissedCall,
@@ -33,6 +35,11 @@ export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, num
   inbound_call_not_dispositionable: 409,
   inbound_disposition_invalid: 400,
   inbound_outcome_already_saved: 409,
+  inbound_clip_not_found: 404,
+  inbound_clip_in_use: 409,
+  inbound_clip_invalid: 400,
+  inbound_clip_name_taken: 409,
+  inbound_clip_storage_unavailable: 503,
 };
 
 /** English fallback copy, British spelling. The console words each code itself. */
@@ -50,6 +57,11 @@ const INBOUND_REFUSAL_MESSAGES: Readonly<Record<AgencyInboundErrorCode, string>>
   inbound_call_not_dispositionable: 'This call cannot take an outcome: it has not ended, or it never reached an agent.',
   inbound_disposition_invalid: 'That outcome cannot be saved as submitted.',
   inbound_outcome_already_saved: 'This call’s outcome is already saved, or has lapsed.',
+  inbound_clip_not_found: 'Recording not found.',
+  inbound_clip_in_use: 'This recording is in use, so it cannot be deleted. Choose another recording where it is used first.',
+  inbound_clip_invalid: 'That file cannot be used as a recording.',
+  inbound_clip_name_taken: 'Another recording in this account already has that name.',
+  inbound_clip_storage_unavailable: 'Recordings cannot be uploaded on this deployment: it has no audio storage.',
 };
 
 const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
@@ -57,6 +69,8 @@ const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
   403: 'Forbidden',
   404: 'Not Found',
   409: 'Conflict',
+  413: 'Payload Too Large',
+  503: 'Service Unavailable',
 };
 
 /** A refusal: its code and the fields its body carries. */
@@ -65,9 +79,11 @@ export type InboundRefusal =
     code: Exclude<
       AgencyInboundErrorCode,
       'inbound_route_invalid' | 'inbound_number_not_found' | 'inbound_number_not_linked' | 'inbound_number_in_use'
-      | 'inbound_call_live' | 'inbound_disposition_invalid'
+      | 'inbound_call_live' | 'inbound_disposition_invalid' | 'inbound_clip_in_use' | 'inbound_clip_invalid'
     >;
   }
+  | { code: 'inbound_clip_in_use'; routes: AgencyInboundClipRouteRef[] }
+  | { code: 'inbound_clip_invalid'; upload_reason: AgencyInboundClipInvalidReason; message?: string }
   | { code: 'inbound_call_live'; inbound_call_id: string }
   | {
     code: 'inbound_disposition_invalid';
@@ -78,9 +94,15 @@ export type InboundRefusal =
   | { code: 'inbound_number_not_found' | 'inbound_number_not_linked'; phone_number_id: string }
   | { code: 'inbound_number_in_use'; phone_number_id: string; route_id?: string };
 
-/** `{ error, code, message, ...fields }` with the contract status. */
+/**
+ * `{ error, code, message, ...fields }` with the contract status. An upload refused for its size
+ * is 413, as the multipart limit answers it; a refusal that carries its own `message` (an upload's
+ * reason) says that instead of the code's.
+ */
 export function inboundRefusalBody(refusal: InboundRefusal): { status: number; body: AgencyInboundErrorResponse & Record<string, unknown> } {
-  const status = INBOUND_REFUSAL_STATUS[refusal.code];
+  const status = refusal.code === 'inbound_clip_invalid' && refusal.upload_reason === 'too_large'
+    ? 413
+    : INBOUND_REFUSAL_STATUS[refusal.code];
   return {
     status,
     // `error` and `message` first, the refusal's own fields after; none is named either.
@@ -232,4 +254,17 @@ export function inboundMissedToWire(row: AgencyInboundMissedRow, names: Readonly
     handled_by_name: row.handled_by_user_id ? (names.get(row.handled_by_user_id) ?? null) : null,
     handled_at: iso(row.handled_at),
   };
+}
+
+/** `POST /inbound/clips` (internal): the recording recorded. Ids and numbers only. */
+export interface InboundClipUploadedAudit {
+  clip_id: string;
+  size_bytes: number;
+  duration_seconds: number;
+}
+
+/** `DELETE /inbound/clips/:id` (internal): the recording deleted, and its object for the public layer to remove. */
+export interface InboundClipDeletedAudit {
+  clip_id: string;
+  s3_key: string;
 }

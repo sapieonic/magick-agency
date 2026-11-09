@@ -109,12 +109,16 @@ export const UNCONNECTED_ACTION_LABELS: Record<AgencyInboundUnconnectedAction, {
   },
 };
 
-/** A new route's draft: every IB2 / §5.1 default, no hours, the browser's zone when it is usable. */
+/**
+ * A new route's draft: every IB2 / §5.1 default, open Monday to Friday 09:00–17:30
+ * ({@link weekdayHours}, editable: a route saved with no hours would be closed at all times), in
+ * the browser's zone when it is usable (the account has no zone of its own).
+ */
 export function newRouteDraft(browserZone: string | undefined = safeBrowserZone()): InboundRouteDraft {
   return {
     name: '',
     timezone: browserZone && isUsableTimezone(browserZone) ? browserZone : 'UTC',
-    hours: [],
+    hours: weekdayHours(),
     holidays: [],
     clips: { ...D.clips },
     stickyMode: D.sticky_mode,
@@ -314,13 +318,17 @@ export function hoursRowLabel(row: { day: number; start: string; end: string }):
 
 /** The route list's line for a route's hours. */
 export function weeklyHoursSummary(route: Pick<AgencyInboundRouteConfig, 'weekly_hours'>): string {
-  if (route.weekly_hours.length === 0) return 'No opening hours: every call is treated as out of hours';
+  if (route.weekly_hours.length === 0) return 'No opening hours: closed at all times';
   return [...route.weekly_hours].sort((a, b) => a.day - b.day || a.start.localeCompare(b.start)).map(hoursRowLabel).join(', ');
 }
 
-/** Monday to Friday, 09:00–17:00: the editor's quick start. */
+/** The opening and closing time of {@link weekdayHours}. */
+export const WEEKDAY_OPENS = '09:00';
+export const WEEKDAY_CLOSES = '17:30';
+
+/** Monday to Friday, 09:00–17:30: a new route's hours, and the editor's quick start. */
 export function weekdayHours(): HoursRow[] {
-  return [1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:00' }));
+  return [1, 2, 3, 4, 5].map((day) => ({ day, start: WEEKDAY_OPENS, end: WEEKDAY_CLOSES }));
 }
 
 // ─── Numbers ────────────────────────────────────────────────────────────────

@@ -52,10 +52,12 @@ const ROUTE: AgencyInboundRoute = {
 };
 
 describe('a new route', () => {
-  it('starts on the design’s defaults, with no hours and the browser’s zone when usable', () => {
+  it('starts on the design’s defaults, open Monday to Friday 09:00–17:30 in the browser’s zone when usable', () => {
     const draft = newRouteDraft('Europe/Paris');
+    expect(draft.hours).toEqual([1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:30' })));
+    expect(validateRouteDraft({ ...draft, name: 'Main line' })).toEqual({});
     expect(draft).toMatchObject({
-      timezone: 'Europe/Paris', hours: [], stickyMode: 'loose', stickyWait: '30', stickyLookback: '30',
+      timezone: 'Europe/Paris', stickyMode: 'loose', stickyWait: '30', stickyLookback: '30',
       queueMaxWait: '120', maxWaiting: '10', maxConcurrent: '20', afterHoursAction: 'callback', overflowAction: 'callback',
       recordCalls: false, recordingNotice: true, catalog: [], numberIds: [],
     });
@@ -67,7 +69,7 @@ describe('a new route', () => {
     const draft = { ...newRouteDraft('UTC'), name: '  Sales  ', hours: weekdayHours(), numberIds: ['n-2'] };
     const body = createRequestFromDraft(draft);
     expect(body).toMatchObject({ name: 'Sales', timezone: 'UTC', phone_number_ids: ['n-2'], sticky_wait_seconds: 30 });
-    expect(body.weekly_hours).toEqual([1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:00' })));
+    expect(body.weekly_hours).toEqual([1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:30' })));
   });
 });
 

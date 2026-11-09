@@ -7,6 +7,7 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertTenant } from '../setup/fa
 import { writeTtsFile } from '../../../src/tts/tts-file-cache.js';
 import { parseInboundRouteCreate } from '../../../src/agency/inbound/route-config.js';
 import { AgencyInboundCallRouter } from '../../../src/agency/inbound/inbound-call-router.js';
+import { standardClipHash } from '../../../src/agency/inbound/inbound-standard-clips.js';
 import {
   agencyAttemptRepository,
   agencyInboundCallRepository,
@@ -29,7 +30,11 @@ import type { WebRtcInboundAcceptance } from '../../../src/core/webrtc-bridge-ma
  *  - an answer past its budget (the webhook's abort signal): nothing written before, `failed` with
  *    no follow-up after, whoever ends it;
  *  - a caller the bridge's shared scopes turn away is not admitted (`arrived`), so neither the
- *    route nor the account's live total holds it, and with no busy recording hears its plan's own.
+ *    route nor the account's live total holds it, and with no busy recording hears our standard one;
+ *  - a DNC caller is never promised a callback, spoken or played (the closed words);
+ *  - the queue's exits (`overflow`) and the connector's preamble (`clips`): a slot with no
+ *    recording plays our standard recording (please hold, the notice, call-back, closed, the
+ *    voicemail prompt), never silence.
  *
  * Mutation-checked: dropping the tenant/credential comparison from `insertArrival`'s conflict
  * branch makes the isolation tests hand X Y's row (and end it on the refusal path); removing the
@@ -257,7 +262,7 @@ describe('a message with no recording is spoken, never silence', () => {
 });
 
 describe('the bridge\'s shared scopes full (IB5)', () => {
-  it('the call is put back to `arrived` (not in the account\'s live total); with no busy recording its plan\'s own recording plays', async () => {
+  it('the call is put back to `arrived` (not in the account\'s live total); with no busy recording our standard one plays', async () => {
     const n = await number(X, credX);
     const callback = await clip(X, XA);
     await route(X, XA, n.id, { clips: { callback: callback.id } });
@@ -270,7 +275,7 @@ describe('the bridge\'s shared scopes full (IB5)', () => {
     expect((await spine(a.carrierCallId))[0]).toMatchObject({ state: 'arrived' });
     expect(await agencyAttemptRepository.countLiveForAccount(X, XA)).toBe(0);
     await vi.waitFor(() => expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalled());
-    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(expect.any(String), { clipHashes: [callback.hash], outcome: 'inbound_overflow_no_capacity' });
+    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(expect.any(String), { clipHashes: [await standardClipHash('busy')], outcome: 'inbound_overflow_no_capacity' });
     release();
     await router.drain();
     expect((await spine(a.carrierCallId))[0]).toMatchObject({ state: 'ended', outcome: 'overflow_no_capacity', follow_up_reason: 'overflow_no_capacity' });
@@ -370,5 +375,136 @@ describe('an answer past its budget: the caller heard the fallback (m6)', () => 
     })).call!;
     await router.ended({ credentialId: credX, tenantId: X, provider: 'plivo', carrierCallId: a.carrierCallId, callStatus: 'completed', hangupSource: 'Caller' });
     expect((await agencyInboundCallRepository.findByIdAnyTenant(row.id))).toMatchObject({ state: 'ended', outcome: 'abandoned_in_queue', follow_up_status: 'open' });
+  });
+});
+
+describe('what a caller hears with no recording of the route’s: our standard recordings, never silence', () => {
+  /** A router whose bridge records what it was asked to play, with the caller on DNC when `dnc`, and a bucket. */
+  function richHarness(o: { dnc?: boolean } = {}) {
+    const bridge = {
+      acceptInboundCall: vi.fn(async (): Promise<WebRtcInboundAcceptance> => ADMITTED),
+      playClipSequenceThenHangUp: vi.fn(async () => 'completed' as const),
+      stopInboundHold: vi.fn(),
+      recordInboundAudio: vi.fn(async () => ({ result: 'aborted' as const, pcm16: Buffer.alloc(1600), sampleRate: 8000, seconds: 0.1 })),
+      forceEndWithOutcome: vi.fn(async () => undefined),
+    };
+    const router = new AgencyInboundCallRouter({
+      bridge: bridge as never,
+      dnc: {
+        check: async () => (o.dnc ? 'suppressed' : 'clear'),
+        checkEntry: async () => ({ result: o.dnc ? 'suppressed' : 'clear' }),
+      } as never,
+      voicemailStorage: { configured: () => true, upload: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) },
+    });
+    return { bridge, router };
+  }
+
+  /** A written call on `n`'s route, as the connector would hand it to `overflow`. */
+  async function heldCall(n: { id: string; e164: string }, routeId: string, o: { fromE164?: string | null; dnc?: boolean } = {}) {
+    const call = (await agencyInboundCallRepository.insertArrival({
+      tenantId: X, accountId: XA, routeId, phoneNumberId: n.id, provider: 'plivo', telephonyCredentialId: credX,
+      providerCallId: `CA-${randomUUID()}`, fromE164: o.fromE164 === undefined ? '+447700900123' : o.fromE164, toE164: n.e164,
+      identification: { match: null, callerDnc: o.dnc ?? false, sticky: null }, answered: true, recordingRequested: false, analysisProfileId: null,
+    })).call!;
+    const routeRecord = (await agencyInboundRouteRepository.findById(X, XA, routeId))!;
+    return { call, route: routeRecord };
+  }
+
+  it('a DNC caller is never promised a callback: the closed words spoken, or the closed recording played', async () => {
+    const n = await number(X, credX);
+    const routeId = await route(X, XA, n.id);
+    const { bridge, router } = richHarness({ dnc: true });
+    const a = arrival(X, credX, n.e164);
+    expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'closed' });
+    expect((await spine(a.carrierCallId))[0]).toMatchObject({ caller_dnc: true, outcome: 'overflow', follow_up_reason: 'overflow' });
+
+    // A call-back recording is not for them: still the closed words, spoken.
+    const callback = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { callback: callback.id } }, null)).ok).toBe(true);
+    expect(await router.answer(arrival(X, credX, n.e164))).toEqual({ kind: 'spoken', message: 'closed' });
+    expect(bridge.acceptInboundCall).not.toHaveBeenCalled();
+    // With a closed recording too, the call streams and plays the closed one, never the call-back.
+    const closed = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { closed: closed.id } }, null)).ok).toBe(true);
+    expect(await router.answer(arrival(X, credX, n.e164))).toMatchObject({ kind: 'stream' });
+    await router.drain();
+    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(expect.any(String), { clipHashes: [closed.hash], outcome: 'inbound_overflow' });
+  });
+
+  it('the queue’s exit with no call-back recording plays ours, then puts the call down (no silent hang-up)', async () => {
+    const n = await number(X, credX);
+    const { call, route: r } = await heldCall(n, await route(X, XA, n.id));
+    const { bridge, router } = richHarness();
+    expect(await router.overflow(call, r)).toEqual({ outcome: 'overflow' });
+    expect(bridge.stopInboundHold).toHaveBeenCalledWith(call.id);
+    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [await standardClipHash('callback')], outcome: 'inbound_overflow' });
+  });
+
+  it('the queue’s exit for a withheld or DNC caller: the closed message, the route’s or ours', async () => {
+    const n = await number(X, credX);
+    const routeId = await route(X, XA, n.id);
+    const { bridge, router } = richHarness();
+    for (const o of [{ fromE164: null }, { dnc: true }]) {
+      bridge.playClipSequenceThenHangUp.mockClear();
+      const { call, route: r } = await heldCall(n, routeId, o);
+      await router.overflow(call, r);
+      expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [await standardClipHash('closed')], outcome: 'inbound_overflow' });
+    }
+    const closed = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { closed: closed.id } }, null)).ok).toBe(true);
+    const { call, route: r } = await heldCall(n, routeId, { dnc: true });
+    bridge.playClipSequenceThenHangUp.mockClear();
+    await router.overflow(call, r);
+    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [closed.hash], outcome: 'inbound_overflow' });
+  });
+
+  it('a voicemail from the queue with no recording for its message: our voicemail prompt, then the beep', async () => {
+    const n = await number(X, credX);
+    const { call, route: r } = await heldCall(n, await route(X, XA, n.id, { overflow_action: 'voicemail' }));
+    const { bridge, router } = richHarness();
+    // The caller said nothing: no voicemail kept, the case's own outcome.
+    expect(await router.overflow(call, r)).toEqual({ outcome: 'overflow' });
+    expect(bridge.recordInboundAudio).toHaveBeenCalledWith(call.id, expect.objectContaining({
+      promptClipHashes: [await standardClipHash('voicemail_prompt')], beep: true,
+    }));
+    expect(bridge.playClipSequenceThenHangUp).not.toHaveBeenCalled();
+  });
+
+  it('a voicemail from the queue for a DNC caller with no closed recording: no voicemail promising a call back; the closed message', async () => {
+    const n = await number(X, credX);
+    const { call, route: r } = await heldCall(n, await route(X, XA, n.id, { overflow_action: 'voicemail' }), { dnc: true });
+    const { bridge, router } = richHarness();
+    expect(await router.overflow(call, r)).toEqual({ outcome: 'overflow' });
+    expect(bridge.recordInboundAudio).not.toHaveBeenCalled();
+    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [await standardClipHash('closed')], outcome: 'inbound_overflow' });
+  });
+
+  it('after hours, a voicemail route with no closed recording takes the voicemail on our stream with our prompt; a withheld caller hears closed, spoken', async () => {
+    const n = await number(X, credX);
+    await route(X, XA, n.id, { weekly_hours: [], after_hours_action: 'voicemail' });
+    const { bridge, router } = richHarness();
+    const a = arrival(X, credX, n.e164);
+    expect(await router.answer(a)).toMatchObject({ kind: 'stream' });
+    await router.drain();
+    expect(bridge.recordInboundAudio).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      promptClipHashes: [await standardClipHash('voicemail_prompt')],
+    }));
+    expect((await spine(a.carrierCallId))[0]).toMatchObject({ state: 'ended', outcome: 'closed', follow_up_reason: 'closed' });
+    const w = arrival(X, credX, n.e164, { fromE164: null });
+    expect(await router.answer(w)).toEqual({ kind: 'spoken', message: 'closed' });
+  });
+
+  it('the connector’s preamble: our "please hold" for no greeting, our notice for no notice recording; the hold has none (the built-in tone)', async () => {
+    const n = await number(X, credX);
+    const routeId = await route(X, XA, n.id);
+    const r = (await agencyInboundRouteRepository.findById(X, XA, routeId))!;
+    const { router } = richHarness();
+    expect(await router.clips(r, ['greeting', 'recording_notice'])).toEqual([await standardClipHash('please_hold'), await standardClipHash('recording_notice')]);
+    expect(await router.clips(r, ['greeting'])).toEqual([await standardClipHash('please_hold')]);
+    expect(await router.clips(r, ['hold'])).toEqual([]);
+    const greeting = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { greeting: greeting.id } }, null)).ok).toBe(true);
+    const withGreeting = (await agencyInboundRouteRepository.findById(X, XA, routeId))!;
+    expect(await router.clips(withGreeting, ['greeting', 'recording_notice'])).toEqual([greeting.hash, await standardClipHash('recording_notice')]);
   });
 });

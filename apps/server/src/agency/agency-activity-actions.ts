@@ -86,6 +86,8 @@ type CampaignScopedAuditAction = Exclude<
   | 'agency_inbound_route.updated'
   | 'agency_inbound_route.deleted'
   | 'agency_inbound_call.handled'
+  | 'agency_inbound_clip.uploaded'
+  | 'agency_inbound_clip.deleted'
 >;
 
 /**

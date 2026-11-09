@@ -31,6 +31,7 @@ import {
   inboundRefusalCopy,
 } from '../../utils/inbound/inboundCopy';
 import {
+  configFromDraft,
   createRequestFromDraft,
   draftChanged,
   draftFromRoute,
@@ -43,6 +44,8 @@ import {
   routeErrorsFromDetails,
   validateRouteDraft,
   weekdayHours,
+  WEEKDAY_CLOSES,
+  WEEKDAY_OPENS,
   type InboundRouteDraft,
 } from '../../utils/inbound/routeForm';
 import {
@@ -54,10 +57,12 @@ import {
   type AgencyInboundClipOption,
   type AgencyInboundNumberOption,
   type AgencyInboundRoute,
+  type AgencyInboundRouteWarning,
   type AgencyInboundUnconnectedAction,
 } from '../../types/inbound';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from '../../components/agency/inbound/Inbound.module.css';
+import { InboundRecordingsPanel } from './InboundRecordingsPanel';
 
 const COMMON_TIMEZONES = [
   'Europe/London', 'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'America/New_York', 'America/Chicago',
@@ -76,6 +81,14 @@ const COMMON_TIMEZONES = [
  * only what changed. What happens to a call nobody answers is offered from the server's own list
  * (`AGENCY_INBOUND_AVAILABLE_ACTIONS`): while that is callback alone there is no choice to make
  * and the card says so; voicemail is offered the moment the list includes it.
+ *
+ * A new route starts open Monday to Friday, 09:00–17:30. What callers hear: each message is the
+ * account's recording chosen for it, else our standard recording (the hold, the built-in tone);
+ * recordings are uploaded and deleted here (`InboundRecordingsPanel`), and the selects follow the
+ * list. The route's warnings (`inboundRouteWarnings`, the server's own) are shown live beside
+ * the field they are about: no opening hours, a call recorded unannounced, and, for the whole
+ * route, a deployment that cannot put callers through (`connects_agents`, from the recordings'
+ * read).
  */
 export default function InboundRouteEditorPage() {
   const { routeId } = useParams<{ routeId: string }>();
@@ -92,6 +105,8 @@ export default function InboundRouteEditorPage() {
   const [draft, setDraft] = useState<InboundRouteDraft | null>(isNew ? newRouteDraft() : null);
   const [numbers, setNumbers] = useState<AgencyInboundNumberOption[]>([]);
   const [clips, setClips] = useState<AgencyInboundClipOption[]>([]);
+  const [uploadAvailable, setUploadAvailable] = useState(false);
+  const [connectsAgents, setConnectsAgents] = useState(true);
   const [campaigns, setCampaigns] = useState<AgencyCampaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -118,6 +133,8 @@ export default function InboundRouteEditorPage() {
       }
       setNumbers(numberList.numbers);
       setClips(clipList.clips);
+      setUploadAvailable(clipList.upload_available);
+      setConnectsAgents(clipList.connects_agents);
       setCampaigns(campaignList);
     } catch (err) {
       setLoadError(getErrorMessage(err, 'We couldn’t load this inbound route.'));
@@ -129,6 +146,19 @@ export default function InboundRouteEditorPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** The recordings again, after an upload or delete the list no longer matches. A failure keeps what is shown. */
+  const reloadClips = useCallback(async () => {
+    if (!tenantId || !accountId) return;
+    try {
+      const clipList = await listInboundClips(tenantId, accountId);
+      setClips(clipList.clips);
+      setUploadAvailable(clipList.upload_available);
+      setConnectsAgents(clipList.connects_agents);
+    } catch {
+      // The panel already said why; the list stays as it was.
+    }
+  }, [tenantId, accountId]);
 
   const clientErrors = useMemo(() => (draft ? validateRouteDraft(draft) : {}), [draft]);
   const errors = useConfigFieldErrors({ ...serverErrors, ...(touched ? clientErrors : {}) });
@@ -214,13 +244,10 @@ export default function InboundRouteEditorPage() {
     draft.afterHoursAction,
     draft.overflowAction,
   ]);
-  // Advisory, as the server's `warnings`: a message some caller would hear in silence, or a
-  // voicemail that cannot be taken. Agents are assumed connectable (the editor is reached only with
-  // inbound calls on for the account). Never blocks the save.
-  const messageWarnings = inboundRouteWarnings(
-    { clips: draft.clips, overflow_action: draft.overflowAction, after_hours_action: draft.afterHoursAction },
-    { connectsAgents: true },
-  );
+  // Advisory, as the server's `warnings`, computed live from the draft. Never blocks the save.
+  const routeWarnings = inboundRouteWarnings(configFromDraft(draft), { connectsAgents });
+  const warningsAt = (path: AgencyInboundRouteWarning['path']) => routeWarnings.filter((w) => w.path === path);
+  const chosenClips = new Set(Object.values(draft.clips).filter((id): id is string => id !== null));
 
   return (
     <div className={styles.page}>
@@ -247,6 +274,7 @@ export default function InboundRouteEditorPage() {
       />
       {saveError ? <ErrorAlert message={saveError} /> : null}
       {errors.render('form')}
+      <RouteWarnings warnings={warningsAt(null)} />
 
       <div className={styles.grid}>
         <div className={styles.stack}>
@@ -329,9 +357,10 @@ export default function InboundRouteEditorPage() {
             <h2 className={styles.cardTitle} id="ib-hours">Opening hours</h2>
             <p className={styles.cardLead}>
               In the route’s time zone. A closing time earlier than the opening time runs past midnight into the next day;
-              a closing time of 00:00 means midnight. With no hours, every call is treated as out of hours.
+              a closing time of 00:00 means midnight. With no hours, the route is closed at all times.
             </p>
             {errors.render('weekly_hours')}
+            <RouteWarnings warnings={warningsAt('weekly_hours')} />
             <ul className={styles.rows}>
               {draft.hours.map((row, index) => {
                 const at = `weekly_hours[${index}]`;
@@ -390,7 +419,7 @@ export default function InboundRouteEditorPage() {
               <button
                 type="button"
                 className={`btn-secondary ${styles.iconLabel}`}
-                onClick={() => update({ hours: [...draft.hours, { day: 1, start: '09:00', end: '17:00' }] })}
+                onClick={() => update({ hours: [...draft.hours, { day: 1, start: WEEKDAY_OPENS, end: WEEKDAY_CLOSES }] })}
                 disabled={draft.hours.length >= L.WEEKLY_HOURS_MAX}
                 data-testid="inbound-add-hours"
               >
@@ -398,7 +427,7 @@ export default function InboundRouteEditorPage() {
               </button>
               {draft.hours.length === 0 ? (
                 <button type="button" className="btn-secondary" onClick={() => update({ hours: weekdayHours() })} data-testid="inbound-weekday-hours">
-                  Monday to Friday, 09:00–17:00
+                  Monday to Friday, {WEEKDAY_OPENS}–{WEEKDAY_CLOSES}
                 </button>
               ) : null}
             </div>
@@ -454,9 +483,9 @@ export default function InboundRouteEditorPage() {
           <section className="card" aria-labelledby="ib-clips" data-testid="inbound-route-clips">
             <h2 className={styles.cardTitle} id="ib-clips">What callers hear</h2>
             <p className={styles.cardLead}>
-              Choose one of this account’s audio files for each message. Without a recording, the closed, all lines busy and
-              call-back messages are read out in a standard voice instead, and the greeting is skipped.
-              {clips.length === 0 ? ' This account has no audio files yet, so callers hear the standard spoken messages. Contact support to add your recordings.' : ''}
+              Choose one of this account’s recordings for each message, or leave it on our standard recording: a short
+              message in a British English voice, with the words shown under each choice. Callers who wait for an agent
+              hear our “please hold” when there is no greeting, then the hold sound. Upload your own recordings below.
             </p>
             <div className={styles.fields}>
               {AGENCY_INBOUND_CLIP_SLOTS.map((slot) => {
@@ -469,7 +498,6 @@ export default function InboundRouteEditorPage() {
                     <select
                       id={id}
                       value={current ?? ''}
-                      disabled={clips.length === 0 && current === null}
                       onChange={(e) => update({ clips: { ...draft.clips, [slot]: e.target.value || null } })}
                       aria-describedby={[`${id}-hint`, errors.describedBy(`clips.${slot}`)].filter(Boolean).join(' ')}
                     >
@@ -487,6 +515,16 @@ export default function InboundRouteEditorPage() {
                 );
               })}
             </div>
+            <InboundRecordingsPanel
+              clips={clips}
+              chosen={chosenClips}
+              uploadAvailable={uploadAvailable}
+              tenantId={tenantId ?? undefined}
+              accountId={accountId ?? undefined}
+              onUploaded={(clip) => setClips((current) => [clip, ...current.filter((c) => c.id !== clip.id)])}
+              onDeleted={(clipId) => setClips((current) => current.filter((c) => c.id !== clipId))}
+              onStale={() => void reloadClips()}
+            />
           </section>
         </div>
 
@@ -519,7 +557,7 @@ export default function InboundRouteEditorPage() {
             <div className={styles.fields}>
               <NumberField id="ib-sticky-wait" label="Wait for their agent (seconds)" value={draft.stickyWait} disabled={stickyOff}
                 hint={draft.stickyMode === 'strict'
-                  ? 'With “Only their agent”, the caller waits for them until the longest wait instead.'
+                  ? 'With “Wait for their agent”, the caller waits for them while they’re busy, up to the longest wait instead.'
                   : `${L.STICKY_WAIT_SECONDS.min}–${L.STICKY_WAIT_SECONDS.max}, then the team. No longer than the longest wait.`}
                 onChange={(v) => update({ stickyWait: v })} errors={errors} path="sticky_wait_seconds" />
               <NumberField id="ib-sticky-lookback" label="Look back (days)" value={draft.stickyLookback} disabled={stickyOff}
@@ -567,10 +605,12 @@ export default function InboundRouteEditorPage() {
           <section className="card" aria-labelledby="ib-unanswered" data-testid="inbound-route-unanswered">
             <h2 className={styles.cardTitle} id="ib-unanswered">When nobody answers</h2>
             <p className={styles.cardLead}>
-              Out of hours the caller hears your Closed message, when every line is busy your All lines busy message, and
-              otherwise your We’ll call you back message. The call then ends, or, if you choose a voicemail below, the caller
-              can leave a message of up to two minutes after a beep. Either way it appears under Missed calls, assigned to
-              their agent or the account. A customer on a campaign also gets a callback booked for when you next open.
+              Out of hours the caller hears the Closed message, when every line is busy the All lines busy message, and
+              otherwise the We’ll call you back message: your recording, or our standard one. A caller who withheld their
+              number or is on your do-not-call list is never promised a call back: they hear the Closed message instead.
+              The call then ends, or, if you choose a voicemail below, the caller can leave a message of up to two minutes
+              after a beep. Either way it appears under Missed calls, assigned to their agent or the account. A customer on
+              a campaign also gets a callback booked for when you next open.
             </p>
             {actionChoices.length > 1 ? (
               <>
@@ -596,15 +636,6 @@ export default function InboundRouteEditorPage() {
             )}
             {errors.render('after_hours_action')}
             {errors.render('overflow_action')}
-            {messageWarnings.length > 0 ? (
-              <ul className={styles.warnings} data-testid="inbound-route-warnings" aria-label="Before you save">
-                {messageWarnings.map((w) => (
-                  <li key={`${w.code}:${w.path}`} className={styles.warning} data-testid={`inbound-route-warning-${w.code}`}>
-                    {w.message}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
           </section>
 
           <section className="card" aria-labelledby="ib-recording" data-testid="inbound-route-recording">
@@ -624,6 +655,7 @@ export default function InboundRouteEditorPage() {
               />
               Tell callers the call is recorded before an agent joins
             </label>
+            <RouteWarnings warnings={warningsAt('recording_notice')} />
             {mayReadProfiles ? (
               <div className="form-group">
                 <label htmlFor="ib-profile">Summary profile</label>
@@ -703,6 +735,20 @@ function NumberField({
       <span className={styles.hint} id={`${id}-hint`}>{hint}</span>
       {errors.render(path)}
     </div>
+  );
+}
+
+/** A route's warnings about one field (or the whole route), as the server's `warnings` say them. */
+function RouteWarnings({ warnings }: { warnings: AgencyInboundRouteWarning[] }) {
+  if (warnings.length === 0) return null;
+  return (
+    <ul className={styles.warnings} aria-label="Before you save">
+      {warnings.map((w) => (
+        <li key={w.code} className={styles.warning} data-testid={`inbound-route-warning-${w.code}`}>
+          {w.message}
+        </li>
+      ))}
+    </ul>
   );
 }
 

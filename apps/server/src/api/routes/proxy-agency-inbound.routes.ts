@@ -5,6 +5,7 @@ import { rejectPathEscapingParams } from './helpers/path-params.js';
 import { registerInboundRouteRoutes } from './proxy-agency-inbound/routes.js';
 import { registerInboundMissedRoutes } from './proxy-agency-inbound/missed.js';
 import { registerInboundCallRoutes } from './proxy-agency-inbound/calls.js';
+import { registerInboundClipRoutes } from './proxy-agency-inbound/clips.js';
 
 /*
  * Inbound calls in the console (docs/inbound.md §7, §8.1; the wire is
@@ -13,6 +14,8 @@ import { registerInboundCallRoutes } from './proxy-agency-inbound/calls.js';
  *
  *  - `./proxy-agency-inbound/routes.ts`: the account's inbound routes (list, read, create, change,
  *    delete) and the route editor's choices (numbers, clips), `agency.inbound.write`;
+ *  - `./proxy-agency-inbound/clips.ts`: upload a recording for the routes, delete one no route
+ *    uses, `agency.inbound.write`;
  *  - `./proxy-agency-inbound/missed.ts`: the Missed inbound list and Mark handled,
  *    `agency.inbound.read` (an agent's own rows; the account's with `agency.supervise`);
  *  - `./proxy-agency-inbound/calls.ts` (P2): the answered call's finish (read, notes, hang up, the
@@ -39,4 +42,5 @@ export async function proxyAgencyInboundRoutes(app: FastifyInstance): Promise<vo
   await registerInboundRouteRoutes(app);
   await registerInboundMissedRoutes(app);
   await registerInboundCallRoutes(app);
+  await registerInboundClipRoutes(app);
 }

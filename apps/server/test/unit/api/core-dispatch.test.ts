@@ -169,6 +169,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-campaigns/spine.ts',
       'api/routes/proxy-agency-campaigns/stats.ts',
       'api/routes/proxy-agency-inbound/calls.ts',
+      'api/routes/proxy-agency-inbound/clips.ts',
       'api/routes/proxy-agency-inbound/missed.ts',
       'api/routes/proxy-agency-inbound/routes.ts',
       'api/routes/proxy-agency-inbound/shared.ts', // the `CoreCallResult` type only; calls nothing

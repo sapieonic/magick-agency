@@ -98,7 +98,11 @@ beforeEach(() => {
   mocks.listInboundRoutes.mockResolvedValue([ROUTE]);
   mocks.getInboundRoute.mockResolvedValue(ROUTE);
   mocks.listInboundNumbers.mockResolvedValue({ numbers: NUMBERS });
-  mocks.listInboundClips.mockResolvedValue({ clips: [{ id: 'clip-1', name: 'Welcome', duration_seconds: 4 }] });
+  mocks.listInboundClips.mockResolvedValue({
+    clips: [{ id: 'clip-1', name: 'Welcome', duration_seconds: 4, created_at: '2026-11-01T00:00:00Z', routes: [] }],
+    upload_available: true,
+    connects_agents: true,
+  });
   mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'camp-1', name: 'Renewals', status: 'running' }]);
 });
 
@@ -143,14 +147,22 @@ describe('the route editor', () => {
     expect(choice('n-4').disabled).toBe(true);
     expect(choice('n-1').disabled).toBe(true);
     expect(screen.getByText('Already answers “Main line”.')).toBeTruthy();
-    // A message with no recording is read out in a standard voice, never silence; a greeting is skipped.
+    // A message with no recording of the account's plays our standard recording, whose words are
+    // shown; the hold plays the built-in tone. Never silence, and no "contact support" dead end.
     const noneOf = (label: string) => (screen.getByLabelText(label) as HTMLSelectElement).options[0]!.textContent;
-    expect(noneOf('Closed')).toBe('Standard spoken message');
-    expect(noneOf('All lines busy')).toBe('Standard spoken message');
-    expect(noneOf('We’ll call you back')).toBe('Standard spoken message');
-    expect(noneOf('Greeting')).toBe('No greeting');
-    expect(screen.getByTestId('inbound-route-clips').textContent).toMatch(/read out in a standard voice/);
-    expect(screen.getByTestId('inbound-route-clips').textContent).not.toMatch(/plays nothing|hear nothing/);
+    expect(noneOf('Closed')).toBe('Our standard recording');
+    expect(noneOf('All lines busy')).toBe('Our standard recording');
+    expect(noneOf('We’ll call you back')).toBe('Our standard recording');
+    expect(noneOf('Greeting')).toBe('Our standard recording');
+    expect(noneOf('Recording notice')).toBe('Our standard recording');
+    expect(noneOf('Hold music')).toBe('Built-in hold tone');
+    const clipsCard = screen.getByTestId('inbound-route-clips').textContent!;
+    expect(clipsCard).toMatch(/Thank you for calling\. We’re closed at the moment/);
+    expect(clipsCard).toMatch(/This call may be recorded for quality and training purposes\./);
+    expect(clipsCard).not.toMatch(/plays nothing|hear nothing|standard voice|Standard spoken|Contact support to add|No hold music/);
+    // A new route opens Monday to Friday, 09:00–17:30: no "closed at all times" warning.
+    expect(document.querySelectorAll('[data-testid^="inbound-hours-"]')).toHaveLength(5);
+    expect(screen.queryByTestId('inbound-route-warning-no_opening_hours')).toBeNull();
     // Voicemail is offered (P2) for both cases.
     expect(screen.queryByTestId('inbound-voicemail-note')).toBeNull();
     expect(screen.getAllByRole('radio', { name: /take a voicemail/i })).toHaveLength(2);
@@ -158,7 +170,6 @@ describe('the route editor', () => {
     fireEvent.change(screen.getByTestId('inbound-route-name'), { target: { value: 'Sales' } });
     fireEvent.change(screen.getByTestId('inbound-route-timezone'), { target: { value: 'Europe/London' } });
     fireEvent.click(choice('n-2'));
-    fireEvent.click(screen.getByTestId('inbound-weekday-hours'));
     fireEvent.click(screen.getByTestId('inbound-add-hours'));
     fireEvent.change(screen.getByLabelText('Day', { selector: '#weekly_hours\\[5\\]-day' }), { target: { value: '6' } });
     fireEvent.change(screen.getByLabelText('Opens', { selector: '#weekly_hours\\[5\\]-start' }), { target: { value: '22:00' } });
@@ -179,6 +190,7 @@ describe('the route editor', () => {
       holidays: [{ from: '2026-12-25', to: '2026-12-25', label: null }],
       clips: { ...AGENCY_INBOUND_ROUTE_DEFAULTS.clips, greeting: 'clip-1' },
     });
+    expect(body.weekly_hours.slice(0, 5)).toEqual([1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:30' })));
     expect(body.weekly_hours.at(-1)).toEqual({ day: 6, start: '22:00', end: '02:00' });
     expect(screen.getByTestId('where').textContent).toBe('/app/inbound/r-new');
     expect(mocks.showToast).toHaveBeenCalledWith('“Sales” created.', 'success');

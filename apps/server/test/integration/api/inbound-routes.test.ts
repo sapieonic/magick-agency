@@ -278,25 +278,26 @@ describe('validation', () => {
     expect(paths).toEqual(expect.arrayContaining(['name', 'timezone', 'weekly_hours[0].day', '']));
   });
 
-  it('takes voicemail (P2), on create and on a PATCH, and says what a route without its recordings will do (advisory, never a refusal)', async () => {
+  it('takes voicemail (P2), on create and on a PATCH, and says what the route will do that its admin may not want (advisory, never a refusal)', async () => {
     const res = await call('POST', '/routes', sup(), { name: 'VM', timezone: 'UTC', overflow_action: 'voicemail' });
     expect(res.statusCode, res.body).toBe(201);
     const created = res.json().route;
     expect(created.overflow_action).toBe('voicemail');
-    // No recordings: a waiting caller hears only the beep before their voicemail (agents are
-    // connected in one process), and withheld callers too.
-    expect(created.warnings.map((w: { code: string; path: string }) => `${w.code}@${w.path}`))
-      .toEqual(['voicemail_beep_only@clips.callback', 'voicemail_beep_only@clips.closed']);
-    expect(created.warnings[0].message).toMatch(/Choose a recording for “We’ll call you back”/);
-    const patch = await call('PATCH', `/routes/${created.id}`, sup(), { after_hours_action: 'voicemail', overflow_action: 'callback', clips: { callback: clipA } });
+    // No hours (the API's default): closed at all times. No recordings is no warning: our
+    // standard recordings play.
+    const codes = (route: { warnings: Array<{ code: string; path: string | null }> }) => route.warnings.map((w) => `${w.code}@${w.path}`);
+    expect(codes(created)).toEqual(['no_opening_hours@weekly_hours']);
+    expect(created.warnings[0].message).toBe('Closed at all times: callers always hear the closed message. Add opening hours to take calls.');
+    const patch = await call('PATCH', `/routes/${created.id}`, sup(), {
+      after_hours_action: 'voicemail', weekly_hours: [{ day: 1, start: '09:00', end: '17:30' }], record_calls: true, recording_notice: false,
+    });
     expect(patch.statusCode, patch.body).toBe(200);
-    expect(patch.json().route.warnings.map((w: { code: string; path: string }) => `${w.code}@${w.path}`))
-      .toEqual(['overflow_message_silent@clips.closed', 'voicemail_needs_prompt@clips.closed']);
+    expect(codes(patch.json().route)).toEqual(['recording_without_notice@recording_notice']);
     // Every read carries them.
     const read = await call('GET', `/routes/${created.id}`, sup());
-    expect(read.json().route.warnings).toHaveLength(2);
+    expect(read.json().route.warnings).toHaveLength(1);
     const listed = (await call('GET', '/routes', sup())).json().routes.find((r: { id: string }) => r.id === created.id);
-    expect(listed.warnings).toHaveLength(2);
+    expect(listed.warnings).toHaveLength(1);
     await call('DELETE', `/routes/${created.id}`, sup());
   });
 
@@ -404,10 +405,19 @@ describe('numbers', () => {
     await call('DELETE', `/routes/${south.id}`, supB, undefined, { account: accountB });
   });
 
-  it('lists only the account’s own audio files as clips', async () => {
+  it('lists only the account’s own audio files as clips, with the routes playing each, and what the deployment can do', async () => {
     const res = await call('GET', '/clips', sup());
     expect(res.statusCode).toBe(200);
-    expect(res.json().clips).toEqual([{ id: clipA, name: 'Welcome', duration_seconds: 4.5 }]);
+    expect(res.json()).toEqual({
+      clips: [{ id: clipA, name: 'Welcome', duration_seconds: 4.5, created_at: expect.any(String), routes: [] }],
+      upload_available: true,
+      connects_agents: true,
+    });
+    const playing = await createRoute(sup(), { name: 'Plays it', clips: { greeting: clipA, closed: clipA } });
+    expect((await call('GET', '/clips', sup())).json().clips[0].routes).toEqual([{ route_id: playing.id, name: 'Plays it' }]);
+    await call('DELETE', `/routes/${playing.id}`, sup());
+    // A deleted route plays nothing.
+    expect((await call('GET', '/clips', sup())).json().clips[0].routes).toEqual([]);
   });
 });
 

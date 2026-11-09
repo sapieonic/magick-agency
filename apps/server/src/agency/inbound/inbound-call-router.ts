@@ -5,6 +5,7 @@ import type {
   AgencyInboundStickyReason,
 } from '@magick-agency/contracts/agency';
 import { AGENCY_INBOUND_ROUTE_DEFAULTS, AGENCY_INBOUND_ROUTE_LIMITS } from '@magick-agency/contracts/agency';
+import { AGENCY_INBOUND_SLOT_STANDARD } from '@magick-agency/contracts/api/agency/inbound';
 import { inboundScheduleState, nextInboundOpening } from '@magick-agency/domain/inbound-schedule';
 import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
@@ -34,7 +35,7 @@ import { DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
 import type { ClipSequenceResult, WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
 import type { DncRegistry } from '../dnc-registry.js';
 import { identifyInboundCaller } from './identify-caller.js';
-import { resolveInboundClips, routeClipId } from './inbound-clips.js';
+import { resolveInboundClips, routeClipId, type InboundClipPart } from './inbound-clips.js';
 import type { InboundCallEnd, InboundCallExits, InboundConnector } from './inbound-connector.js';
 import { discardVoicemail, takeVoicemail, voicemailAvailable, type InboundVoicemailDeps } from './inbound-voicemail.js';
 import type { AgencyDialer } from '../agency-dialer.js';
@@ -71,20 +72,24 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  *     (`overflow_no_capacity`).
  *     A call turned away is not admitted (`arrived`): neither the route's count nor the account's
  *     live total holds it (the bridge's refusal takes the admission back, `refuseAdmission`).
- *  6. The answer: our stream (principle 2) when the route has a recording for the plan's message.
- *     What the caller hears is played in the background ({@link AgencyInboundCallRouter.play}),
- *     after the carrier opens the stream. With no recording for it, the carrier speaks the
- *     message itself (`spoken`) and the call is ended at once, its follow-up written: nothing
- *     streams, so no line of ours is held.
+ *  6. The answer: our stream (principle 2) when the route has a recording for the plan's message,
+ *     a voicemail is taken, or the caller may queue. What the caller hears is played in the
+ *     background ({@link AgencyInboundCallRouter.play}), after the carrier opens the stream. A
+ *     caller who will only hear a message the route has no recording for is answered with the
+ *     carrier speaking it (`spoken`, the standard recording's words) and the call is ended at
+ *     once, its follow-up written: nothing streams, so no line of ours is held.
  *
- * ── What the caller hears (P1) ───────────────────────────────────────────────────
+ * ── What the caller hears (docs/inbound.md §3.4) ─────────────────────────────────
  * `greeting` (if set), then `closed` / `callback` / `busy` per the plan, then the call is put down.
- * A message with no recording is never silence: the call is answered with the carrier's spoken
- * message instead ({@link spokenMessageFor}; the greeting, a recording of ours, is then not
- * played). With the global or carrier scope full (found only once the stream is promised) and no
- * busy recording, the plan's own recording plays in its place. The recording notice (IB7) plays
- * only before a call that is recorded; P1 records no inbound call (nobody is connected, and a
- * recording starts at the bridge, §6), so it never plays in P1. A greeting with no clip is skipped.
+ * No caller is put down in silence: on our stream a message with no recording of the route's plays
+ * our standard recording (`inbound-standard-clips.ts`), and a call answered before anything
+ * streams hears the same words spoken by the carrier ({@link spokenMessageFor}; the greeting is
+ * then not played). A caller who withheld their number or whose number is on DNC is never
+ * promised a callback: the closed message stands in for the call-back one, on every path
+ * ({@link messageSlotFor}). With the global or carrier scope full (found only once the stream is
+ * promised) the caller hears "busy" (the route's recording or ours). The connector's preamble
+ * plays the greeting or, unset, our "please hold", and before a recorded call the notice (IB7),
+ * the route's or ours ({@link AgencyInboundCallRouter.clips}).
  *
  * ── An answer past its budget (the webhook's abort signal) ───────────────────────
  * The caller heard the fallback message ("try again shortly"), so the call is the fallback's: the
@@ -175,14 +180,38 @@ export function parkedSecondsFor(route: Pick<AgencyInboundRouteRecord, 'queue_ma
 /** The longest a call may be parked before an agent's bind: {@link parkedSecondsFor} at the route's longest maximum wait. */
 export const INBOUND_MAX_PARKED_SECONDS = parkedSecondsFor({ queue_max_wait_seconds: AGENCY_INBOUND_ROUTE_LIMITS.QUEUE_MAX_WAIT_SECONDS.max });
 
+/** Who is calling, as far as what they may be promised goes: their number (null: withheld) and whether it is on DNC. */
+export type InboundCallerPromise = Pick<AgencyInboundCallRecord, 'from_e164' | 'caller_dnc'>;
+
 /**
- * What the carrier speaks for a plan when the route has no recording for its message: the plan's
- * own words, except that a caller who withheld their number is never promised a callback nobody
- * can make (they hear the closed message's "please try again later").
+ * Whether a caller may be told "we'll call you back": not one who withheld their number (nobody
+ * can ring them) nor one on DNC (nobody may, B8; no callback is ever booked for them).
  */
-export function spokenMessageFor(planned: PlannedOutcome, fromE164: string | null): InboundSpokenMessage {
-  const spoken = PLAN_MESSAGE[planned].spoken;
-  return fromE164 === null && spoken !== 'closed' ? 'closed' : spoken;
+export function mayPromiseCallback(caller: InboundCallerPromise): boolean {
+  return caller.from_e164 !== null && !caller.caller_dnc;
+}
+
+/**
+ * The clip slot of the message a plan's caller hears: the plan's own, except that a caller who
+ * may not be promised a callback ({@link mayPromiseCallback}) hears the closed message instead of
+ * the call-back one, on every path (spoken, played, the queue's overflow, a voicemail's prompt).
+ */
+export function messageSlotFor(planned: PlannedOutcome, caller: InboundCallerPromise): 'closed' | 'callback' | 'busy' {
+  const slot = PLAN_MESSAGE[planned].slot as 'closed' | 'callback' | 'busy';
+  return slot === 'callback' && !mayPromiseCallback(caller) ? 'closed' : slot;
+}
+
+/**
+ * What the carrier speaks for a plan when nothing will stream and the route has no recording for
+ * its message: the standard recording's words for {@link messageSlotFor}'s slot.
+ */
+export function spokenMessageFor(planned: PlannedOutcome, caller: InboundCallerPromise): InboundSpokenMessage {
+  return messageSlotFor(planned, caller);
+}
+
+/** A message slot as a part that never plays silence: the route's recording, else our standard one. */
+function withStandard(slot: 'closed' | 'callback' | 'busy'): InboundClipPart {
+  return { slot, standard: slot };
 }
 
 /** How many answers given up on (their callers heard the fallback) this process remembers until their hangup. */
@@ -230,6 +259,25 @@ export function takesVoicemail(
 ): boolean {
   if (!route || !storageConfigured) return false;
   return (which === 'closed' ? route.after_hours_action : route.overflow_action) === 'voicemail';
+}
+
+/**
+ * What prompts a voicemail before its beep: the message's recording (the closed one after hours,
+ * the call-back one from the queue, the closed one for a caller who may not be promised a
+ * callback), else our standard voicemail prompt ("… and we'll call you back"). Null: no voicemail
+ * for this caller, because the route has no recording for the message and the standard prompt
+ * would promise a callback to a caller who may not be promised one ({@link mayPromiseCallback}).
+ */
+export function voicemailPrompt(
+  route: AgencyInboundRouteRecord | null,
+  messageSlot: 'closed' | 'callback' | 'busy',
+  caller: InboundCallerPromise,
+): InboundClipPart | null {
+  const promise = mayPromiseCallback(caller);
+  // A recording that is set but cannot be played falls back to the standard prompt only where it
+  // may promise a callback (else the beep alone).
+  if (routeClipId(route, messageSlot)) return { slot: messageSlot, standard: promise ? 'voicemail_prompt' : null };
+  return promise ? { slot: null, standard: 'voicemail_prompt' } : null;
 }
 
 /** How a call that was playing its messages ends, from how the sequence ended (see the header). */
@@ -434,21 +482,22 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       return { kind: 'hangup' };
     }
 
-    // No recording for the plan's message: the carrier speaks it, and the call ends here with its
-    // follow-up (no stream, no session, no slot). A caller who may queue is put through instead.
-    // A caller nobody will take leaves a voicemail when the route's action for their case says so
-    // (§7): after hours, or an open route's caller nobody can be put through to. Its prompt is the
-    // plan's message, so a route with no recording for it answers with the carrier's spoken
-    // message as P1 (no voicemail: a beep out of silence invites nothing).
+    // A caller who may queue is put through. A caller nobody will take leaves a voicemail when the
+    // route's action for their case says so (§7): after hours, or an open route's caller nobody can
+    // be put through to; its prompt is the message's recording, else our standard voicemail prompt
+    // (never to a caller who may not be promised a callback: {@link voicemailPrompt}). Any other
+    // caller only hears the message: with no recording of the route's for it, the carrier speaks
+    // it and the call ends here with its follow-up (no stream, no session, no slot).
     const queue = connectable && admitted;
     const unconnectedCase: InboundUnconnectedCase | null = planned === 'overflow' ? 'overflow' : planned === 'closed' && afterHours ? 'closed' : null;
-    const voicemail = !queue && unconnectedCase !== null
+    let messageSlot = messageSlotFor(planned, call);
+    const prompt = voicemailPrompt(route, messageSlot, call);
+    const voicemail = !queue && unconnectedCase !== null && prompt !== null
       && takesVoicemail(route, unconnectedCase, voicemailAvailable({ storage: this.deps.voicemailStorage }));
-    let messageSlot = PLAN_MESSAGE[planned].slot;
-    if (!queue && (switchedOff || !routeClipId(route, messageSlot))) {
+    if (!queue && !voicemail && (switchedOff || !routeClipId(route, messageSlot))) {
       await this.endLeg(legId, { status: 'completed', outcome: `inbound_${planned}` });
       await this.settle(call, planned);
-      return { kind: 'spoken', message: spokenMessageFor(planned, call.from_e164) };
+      return { kind: 'spoken', message: spokenMessageFor(planned, call) };
     }
 
     const accepted = await this.deps.bridge.acceptInboundCall({
@@ -478,10 +527,10 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     }
     if (accepted.capacity === 'no_capacity') {
       // The global or the carrier's scope is full and no slot was taken: the call is no admitted
-      // call of the route's or the account's (IB5). It hears "busy", or, with no busy recording,
-      // its plan's own recording (the stream is already promised; never silence).
+      // call of the route's or the account's (IB5). It hears "busy": the route's recording, else
+      // ours (the stream is already promised; never silence).
       if (created && admitted) await agencyInboundCallRepository.refuseAdmission(call.id);
-      if (routeClipId(route, 'busy')) messageSlot = 'busy';
+      messageSlot = 'busy';
       planned = 'overflow_no_capacity';
     }
 
@@ -499,13 +548,10 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         this.hold(call, route, stickyCandidates, recorded && route.recording_notice);
         // Held first, so a ringing dial to this caller can hand its agent this very call.
         this.supersedeRingingDial(call);
-      } else if (voicemail && accepted.capacity !== 'no_capacity' && unconnectedCase && route) {
-        this.voicemail(call, unconnectedCase, ['greeting', messageSlot], route);
+      } else if (voicemail && prompt && accepted.capacity !== 'no_capacity' && unconnectedCase && route) {
+        this.voicemail(call, unconnectedCase, ['greeting', prompt], route);
       } else {
-        // The global or carrier scope is full for a caller who would have queued and the route has
-        // no busy recording: the call-back message, as P1's overflow plan (the stream is promised).
-        if (queue && !routeClipId(route, messageSlot)) messageSlot = 'callback';
-        this.play(call, planned, ['greeting', messageSlot], route);
+        this.play(call, planned, ['greeting', withStandard(messageSlot)], route);
       }
     }
     return { kind: 'stream', callId: legId, streamUrl: accepted.streamUrl, maxDurationSeconds: accepted.maxDurationSeconds };
@@ -587,29 +633,29 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
 
   /**
    * A queued caller reached nobody: the hold stops and the route's overflow action runs. The
-   * message is the "we'll call you back" recording, or for a caller who withheld their number the
-   * closed one (no promise nobody can keep).
+   * message is "we'll call you back", or for a caller who may not be promised a callback (withheld,
+   * DNC: {@link messageSlotFor}) the closed one. Never silence: with no recording of the route's
+   * for it, our standard recording plays.
    *  - `callback` (IB3's default): the message plays and the call is put down
-   *    (`playClipSequenceThenHangUp`). With no recording for it the caller is put down with no
-   *    message: a stream cannot be moved to the carrier's spoken words (the route API and editor
-   *    warn of it, `inboundRouteWarnings`; the carrier transfer is P0's, docs/inbound.md §12).
-   *  - `voicemail` (§7): the message is the prompt, then the beep, then up to 120 s recorded
-   *    ({@link voicemailEnd}). With no recording for the message, the beep alone (the caller has
-   *    been holding for us, so it invites their message).
+   *    (`playClipSequenceThenHangUp`).
+   *  - `voicemail` (§7): the prompt ({@link voicemailPrompt}: the message's recording, else our
+   *    standard voicemail prompt), then the beep, then up to 120 s recorded ({@link voicemailEnd}).
+   *    A caller who may not be promised a callback, on a route with no closed recording, hears the
+   *    closed message instead and leaves none.
    * The outcome is `overflow` once decided, even if the caller hangs up during the message (the
    * reason stays, as P1's closed message keeps its reason), `voicemail` when one was left;
    * `failed` only when the stream was lost with no hangup from the caller.
    */
   async overflow(call: AgencyInboundCallRecord, route: AgencyInboundRouteRecord): Promise<InboundCallEnd> {
     this.deps.bridge.stopInboundHold(call.id);
-    const slot: AgencyInboundClipSlot = call.from_e164 === null ? 'closed' : 'callback';
-    if (takesVoicemail(route, 'overflow', voicemailAvailable({ storage: this.deps.voicemailStorage }))) {
-      return this.voicemailEnd(call, 'overflow', route, [slot]);
+    const slot = messageSlotFor('overflow', call);
+    const prompt = voicemailPrompt(route, slot, call);
+    if (prompt && takesVoicemail(route, 'overflow', voicemailAvailable({ storage: this.deps.voicemailStorage }))) {
+      return this.voicemailEnd(call, 'overflow', route, [prompt]);
     }
-    if (!routeClipId(route, slot)) log.warn({ inboundCallId: call.id, slot }, 'No recording for the overflow message — the caller is put down without one');
     let result: ClipSequenceResult = 'not_found';
     try {
-      const clipHashes = await resolveInboundClips(route, [slot], { tenantId: route.tenant_id, accountId: route.account_id });
+      const clipHashes = await resolveInboundClips(route, [withStandard(slot)], { tenantId: route.tenant_id, accountId: route.account_id });
       result = await this.deps.bridge.playClipSequenceThenHangUp(call.id, { clipHashes, outcome: 'inbound_overflow' });
     } catch (err) {
       log.error({ err, inboundCallId: call.id }, 'Inbound overflow message failed');
@@ -618,9 +664,19 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     return { outcome: this.live.get(call.id)?.callerHungUp ? 'overflow' : 'failed' };
   }
 
-  /** The route's clips for `slots`, as hashes (`inbound-clips.ts`: never throws). */
+  /**
+   * The connector's clips for `slots` (the preamble: greeting and recording notice; the hold), as
+   * hashes (`inbound-clips.ts`: never throws). Each slot the route leaves unset, or whose recording
+   * cannot be played, plays our standard recording for it (`AGENCY_INBOUND_SLOT_STANDARD`): "please
+   * hold" for the greeting, the recording notice (IB7: a recorded call is never recorded unannounced
+   * while the route's notice switch is on); the hold has none (the built-in hold tone plays).
+   */
   clips(route: AgencyInboundRouteRecord, slots: readonly AgencyInboundClipSlot[]): Promise<string[]> {
-    return resolveInboundClips(route, slots, { tenantId: route.tenant_id, accountId: route.account_id });
+    return resolveInboundClips(
+      route,
+      slots.map((slot) => ({ slot, standard: AGENCY_INBOUND_SLOT_STANDARD[slot] })),
+      { tenantId: route.tenant_id, accountId: route.account_id },
+    );
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
@@ -741,7 +797,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
   private voicemail(
     call: AgencyInboundCallRecord,
     which: InboundUnconnectedCase,
-    slots: readonly AgencyInboundClipSlot[],
+    slots: readonly InboundClipPart[],
     route: AgencyInboundRouteRecord,
   ): void {
     const live: LiveInboundCall = { planned: which, callerHungUp: false };
@@ -772,7 +828,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     call: AgencyInboundCallRecord,
     which: InboundUnconnectedCase,
     route: AgencyInboundRouteRecord,
-    slots: readonly AgencyInboundClipSlot[],
+    slots: readonly InboundClipPart[],
   ): Promise<InboundCallEnd> {
     const prompt = await resolveInboundClips(route, slots, { tenantId: route.tenant_id, accountId: route.account_id });
     const taken = await takeVoicemail(
@@ -794,7 +850,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
   private play(
     call: AgencyInboundCallRecord,
     planned: PlannedOutcome,
-    slots: readonly AgencyInboundClipSlot[],
+    slots: readonly InboundClipPart[],
     route: AgencyInboundRouteRecord | null,
   ): void {
     const live: LiveInboundCall = { planned, callerHungUp: false };
