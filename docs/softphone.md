@@ -305,6 +305,7 @@ Only when the call is tagged and the number matched a contact of that campaign.
 | `pending` | claimed → `in_flight` | the disposition decision applies as on the station: suppress → `suppressed` (+ DNC), terminal / success → `completed`, callback → `pending` at the callback time (inside the window), retry → `pending` after the delay (or `exhausted` past max attempts), none → back to `pending` unchanged. `attempt_count` + 1 when the call was placed. With **no outcome** (below) the tag's retry policy decides |
 | `in_flight` (live campaign attempt) | refused `contact_in_flight` | — |
 | any state, while the number is `in_flight` on another campaign of the account (MC4) | refused `contact_in_flight`, naming that campaign's contact | — |
+| any state (or no match, or untagged), while the number's customer is on an inbound call to the account (live, or bridged and owing its outcome; inbound.md §5.4) | refused `customer_on_inbound_call`, naming the inbound call | — |
 | `connected` (campaign call awaiting its own disposition) | linked only | only suppress applies |
 | `completed`, `exhausted`, `suppressed` | linked only | only suppress applies; a terminal contact is never reopened |
 
