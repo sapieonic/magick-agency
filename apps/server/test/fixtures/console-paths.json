@@ -2494,6 +2494,20 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/inbound/clips/:id/audio",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "an inbound recording's preview from the route editor, streamed by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/clips/standard/:recording/audio",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "a standard inbound recording's preview from the route editor, streamed from the image by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/inbound/missed",
       "source": "apps/console/src/api/inbound.ts",
       "status": "served",

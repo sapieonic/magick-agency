@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save } from 'lucide-react';
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -23,46 +23,36 @@ import { CapabilityUnavailable } from '../../components/common/CapabilityUnavail
 import { DispositionCatalogEditor } from '../campaigns/agency/DispositionCatalogEditor';
 import { useConfigFieldErrors } from '../campaigns/agency/configFieldErrors';
 import { DEFAULT_DISPOSITIONS } from '../../utils/agencyCampaignConfigForm';
-import { ISO_WEEKDAY_SHORT } from '../../utils/format/weekdays';
 import { formatDialNumber } from '../../utils/softphone/phoneInput';
-import {
-  CLIP_SLOT_LABELS,
-  STICKY_MODE_LABELS,
-  inboundRefusalCopy,
-} from '../../utils/inbound/inboundCopy';
+import { UNANSWERED_LEAD, inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
 import {
   configFromDraft,
   createRequestFromDraft,
   draftChanged,
   draftFromRoute,
-  isOvernight,
   newRouteDraft,
   numberAvailability,
   offeredUnconnectedActions,
-  UNCONNECTED_ACTION_LABELS,
   patchFromDraft,
   routeErrorsFromDetails,
   validateRouteDraft,
-  weekdayHours,
-  WEEKDAY_CLOSES,
-  WEEKDAY_OPENS,
   type InboundRouteDraft,
 } from '../../utils/inbound/routeForm';
 import {
   AGENCY_INBOUND_AVAILABLE_ACTIONS,
-  AGENCY_INBOUND_CLIP_SLOTS,
   AGENCY_INBOUND_ROUTE_LIMITS as L,
-  AGENCY_INBOUND_STICKY_MODES,
   inboundRouteWarnings,
   type AgencyInboundClipOption,
   type AgencyInboundNumberOption,
   type AgencyInboundRoute,
   type AgencyInboundRouteWarning,
-  type AgencyInboundUnconnectedAction,
 } from '../../types/inbound';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from '../../components/agency/inbound/Inbound.module.css';
-import { InboundRecordingsPanel } from './InboundRecordingsPanel';
+import { ActionChoice, NumberField, RouteWarnings } from './inbound-route/fields';
+import { HolidaysCard, OpeningHoursCard } from './inbound-route/RouteHoursCards';
+import { RouteClipsCard } from './inbound-route/RouteClipsCard';
+import { RouteRoutingCard } from './inbound-route/RouteRoutingCard';
 
 const COMMON_TIMEZONES = [
   'Europe/London', 'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'America/New_York', 'America/Chicago',
@@ -76,7 +66,9 @@ const COMMON_TIMEZONES = [
  * queue limits (§5.1), what happens when nobody answers (IB3), recording (IB7) and the outcomes
  * for callers matched to no campaign.
  *
- * Every rule is in `utils/inbound/routeForm.ts`; the server judges the whole route again and its
+ * The cards are in `./inbound-route/` (hours and holidays, what callers hear with its previews and
+ * the recordings, who answers); this page holds the draft, the loads and the save, and the
+ * smaller cards. Every rule is in `utils/inbound/routeForm.ts`; the server judges the whole route again and its
  * `inbound_route_invalid` details land on the same fields. A save of an existing route sends
  * only what changed. What happens to a call nobody answers is offered from the server's own list
  * (`AGENCY_INBOUND_AVAILABLE_ACTIONS`): while that is callback alone there is no choice to make
@@ -218,18 +210,8 @@ export default function InboundRouteEditorPage() {
     setSaveError(inboundRefusalCopy(refusal, numberLabel));
   };
 
-  const setHours = (index: number, patch: Partial<InboundRouteDraft['hours'][number]>) =>
-    update({ hours: draft.hours.map((h, i) => (i === index ? { ...h, ...patch } : h)) });
-  const setHoliday = (index: number, patch: Partial<InboundRouteDraft['holidays'][number]>) =>
-    update({ holidays: draft.holidays.map((h, i) => (i === index ? { ...h, ...patch } : h)) });
   const toggleNumber = (id: string) =>
     update({ numberIds: draft.numberIds.includes(id) ? draft.numberIds.filter((n) => n !== id) : [...draft.numberIds, id] });
-  const togglePool = (id: string) =>
-    update({
-      poolCampaignIds: draft.poolCampaignIds.includes(id)
-        ? draft.poolCampaignIds.filter((c) => c !== id)
-        : [...draft.poolCampaignIds, id],
-    });
   // A number on this route that the account can no longer choose stays listed, so it can be removed.
   const numberChoices = [
     ...numbers,
@@ -239,7 +221,6 @@ export default function InboundRouteEditorPage() {
   ];
   const usingBuiltIn = draft.catalog.length === 0;
   const profileKnown = draft.profileId === null || profiles.some((p) => p.id === draft.profileId);
-  const stickyOff = draft.stickyMode === 'off';
   const actionChoices = offeredUnconnectedActions(AGENCY_INBOUND_AVAILABLE_ACTIONS, [
     draft.afterHoursAction,
     draft.overflowAction,
@@ -247,7 +228,6 @@ export default function InboundRouteEditorPage() {
   // Advisory, as the server's `warnings`, computed live from the draft. Never blocks the save.
   const routeWarnings = inboundRouteWarnings(configFromDraft(draft), { connectsAgents });
   const warningsAt = (path: AgencyInboundRouteWarning['path']) => routeWarnings.filter((w) => w.path === path);
-  const chosenClips = new Set(Object.values(draft.clips).filter((id): id is string => id !== null));
 
   return (
     <div className={styles.page}>
@@ -353,239 +333,24 @@ export default function InboundRouteEditorPage() {
             {errors.render('phone_number_ids')}
           </section>
 
-          <section className="card" aria-labelledby="ib-hours" data-testid="inbound-route-hours">
-            <h2 className={styles.cardTitle} id="ib-hours">Opening hours</h2>
-            <p className={styles.cardLead}>
-              In the route’s time zone. A closing time earlier than the opening time runs past midnight into the next day;
-              a closing time of 00:00 means midnight. With no hours, the route is closed at all times.
-            </p>
-            {errors.render('weekly_hours')}
-            <RouteWarnings warnings={warningsAt('weekly_hours')} />
-            <ul className={styles.rows}>
-              {draft.hours.map((row, index) => {
-                const at = `weekly_hours[${index}]`;
-                return (
-                  <li key={index} className={styles.editRow} data-testid={`inbound-hours-${index}`}>
-                    <div className={styles.small}>
-                      <label htmlFor={`${at}-day`}>Day</label>
-                      <select id={`${at}-day`} value={row.day} onChange={(e) => setHours(index, { day: Number(e.target.value) })}>
-                        {ISO_WEEKDAY_SHORT.map((label, i) => (
-                          <option key={label} value={i + 1}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className={styles.small}>
-                      <label htmlFor={`${at}-start`}>Opens</label>
-                      <input
-                        id={`${at}-start`}
-                        type="time"
-                        value={row.start}
-                        onChange={(e) => setHours(index, { start: e.target.value })}
-                        aria-describedby={errors.describedBy(`${at}.start`)}
-                      />
-                      {errors.render(`${at}.start`)}
-                    </div>
-                    <div className={styles.small}>
-                      <label htmlFor={`${at}-end`}>Closes</label>
-                      <input
-                        id={`${at}-end`}
-                        type="time"
-                        value={row.end}
-                        onChange={(e) => setHours(index, { end: e.target.value })}
-                        aria-describedby={[errors.describedBy(`${at}.end`), isOvernight(row) ? `${at}-overnight` : undefined].filter(Boolean).join(' ') || undefined}
-                      />
-                      {errors.render(`${at}.end`)}
-                    </div>
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      onClick={() => update({ hours: draft.hours.filter((_, i) => i !== index) })}
-                      aria-label={`Remove ${ISO_WEEKDAY_SHORT[row.day - 1] ?? ''} ${row.start}–${row.end}`}
-                    >
-                      <Trash2 size={14} aria-hidden="true" />
-                    </button>
-                    {isOvernight(row) ? (
-                      <p className={styles.rowNote} id={`${at}-overnight`}>
-                        Overnight: closes at {row.end} on {ISO_WEEKDAY_SHORT[row.day % 7]}.
-                      </p>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-            <div className={styles.buttonRow}>
-              <button
-                type="button"
-                className={`btn-secondary ${styles.iconLabel}`}
-                onClick={() => update({ hours: [...draft.hours, { day: 1, start: WEEKDAY_OPENS, end: WEEKDAY_CLOSES }] })}
-                disabled={draft.hours.length >= L.WEEKLY_HOURS_MAX}
-                data-testid="inbound-add-hours"
-              >
-                <Plus size={14} aria-hidden="true" /> Add hours
-              </button>
-              {draft.hours.length === 0 ? (
-                <button type="button" className="btn-secondary" onClick={() => update({ hours: weekdayHours() })} data-testid="inbound-weekday-hours">
-                  Monday to Friday, {WEEKDAY_OPENS}–{WEEKDAY_CLOSES}
-                </button>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="card" aria-labelledby="ib-holidays" data-testid="inbound-route-holidays">
-            <h2 className={styles.cardTitle} id="ib-holidays">Holidays</h2>
-            <p className={styles.cardLead}>Closed all day on these dates (up to {L.HOLIDAY_SPAN_DAYS_MAX} days each), whatever the hours say.</p>
-            {errors.render('holidays')}
-            <ul className={styles.rows}>
-              {draft.holidays.map((row, index) => {
-                const at = `holidays[${index}]`;
-                return (
-                  <li key={index} className={styles.editRow}>
-                    <div className={styles.small}>
-                      <label htmlFor={`${at}-from`}>First day</label>
-                      <input id={`${at}-from`} type="date" value={row.from} onChange={(e) => setHoliday(index, { from: e.target.value, ...(row.to ? {} : { to: e.target.value }) })} aria-describedby={errors.describedBy(`${at}.from`)} />
-                      {errors.render(`${at}.from`)}
-                    </div>
-                    <div className={styles.small}>
-                      <label htmlFor={`${at}-to`}>Last day</label>
-                      <input id={`${at}-to`} type="date" value={row.to} onChange={(e) => setHoliday(index, { to: e.target.value })} aria-describedby={errors.describedBy(`${at}.to`)} />
-                      {errors.render(`${at}.to`)}
-                    </div>
-                    <div className={styles.small}>
-                      <label htmlFor={`${at}-label`}>Label (optional)</label>
-                      <input id={`${at}-label`} value={row.label} maxLength={L.HOLIDAY_LABEL_MAX} placeholder="Christmas Day" onChange={(e) => setHoliday(index, { label: e.target.value })} aria-describedby={errors.describedBy(`${at}.label`)} />
-                      {errors.render(`${at}.label`)}
-                    </div>
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      onClick={() => update({ holidays: draft.holidays.filter((_, i) => i !== index) })}
-                      aria-label={`Remove holiday ${row.label || row.from || index + 1}`}
-                    >
-                      <Trash2 size={14} aria-hidden="true" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <button
-              type="button"
-              className={`btn-secondary ${styles.iconLabel}`}
-              onClick={() => update({ holidays: [...draft.holidays, { from: '', to: '', label: '' }] })}
-              disabled={draft.holidays.length >= L.HOLIDAYS_MAX}
-              data-testid="inbound-add-holiday"
-            >
-              <Plus size={14} aria-hidden="true" /> Add holiday
-            </button>
-          </section>
-
-          <section className="card" aria-labelledby="ib-clips" data-testid="inbound-route-clips">
-            <h2 className={styles.cardTitle} id="ib-clips">What callers hear</h2>
-            <p className={styles.cardLead}>
-              Choose one of this account’s recordings for each message, or leave it on our standard recording: a short
-              message in a British English voice, with the words shown under each choice. Callers who wait for an agent
-              hear our “please hold” when there is no greeting, then the hold sound. Upload your own recordings below.
-            </p>
-            <div className={styles.fields}>
-              {AGENCY_INBOUND_CLIP_SLOTS.map((slot) => {
-                const id = `ib-clip-${slot}`;
-                const current = draft.clips[slot];
-                const known = current === null || clips.some((c) => c.id === current);
-                return (
-                  <div key={slot} className="form-group">
-                    <label htmlFor={id}>{CLIP_SLOT_LABELS[slot].label}</label>
-                    <select
-                      id={id}
-                      value={current ?? ''}
-                      onChange={(e) => update({ clips: { ...draft.clips, [slot]: e.target.value || null } })}
-                      aria-describedby={[`${id}-hint`, errors.describedBy(`clips.${slot}`)].filter(Boolean).join(' ')}
-                    >
-                      <option value="">{CLIP_SLOT_LABELS[slot].none}</option>
-                      {known ? null : <option value={current!}>Current recording</option>}
-                      {clips.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                    <span className={styles.hint} id={`${id}-hint`}>{CLIP_SLOT_LABELS[slot].hint}</span>
-                    {errors.render(`clips.${slot}`)}
-                  </div>
-                );
-              })}
-            </div>
-            <InboundRecordingsPanel
-              clips={clips}
-              chosen={chosenClips}
-              uploadAvailable={uploadAvailable}
-              tenantId={tenantId ?? undefined}
-              accountId={accountId ?? undefined}
-              onUploaded={(clip) => setClips((current) => [clip, ...current.filter((c) => c.id !== clip.id)])}
-              onDeleted={(clipId) => setClips((current) => current.filter((c) => c.id !== clipId))}
-              onStale={() => void reloadClips()}
-            />
-          </section>
+          <OpeningHoursCard draft={draft} update={update} errors={errors} warnings={warningsAt('weekly_hours')} />
+          <HolidaysCard draft={draft} update={update} errors={errors} />
+          <RouteClipsCard
+            draft={draft}
+            update={update}
+            errors={errors}
+            clips={clips}
+            uploadAvailable={uploadAvailable}
+            tenantId={tenantId ?? undefined}
+            accountId={accountId ?? undefined}
+            onUploaded={(clip) => setClips((current) => [clip, ...current.filter((c) => c.id !== clip.id)])}
+            onDeleted={(clipId) => setClips((current) => current.filter((c) => c.id !== clipId))}
+            onStale={() => void reloadClips()}
+          />
         </div>
 
         <div className={styles.stack}>
-          <section className="card" aria-labelledby="ib-routing" data-testid="inbound-route-routing">
-            <h2 className={styles.cardTitle} id="ib-routing">Who answers</h2>
-            <p className={styles.cardLead}>
-              A caller we recognise goes to the agent they last dealt with first: the contact’s owner, the agent who last called
-              them from this number, or the last agent who spoke to them.
-            </p>
-            <fieldset className={styles.radioGroup}>
-              <legend>Their agent first</legend>
-              {AGENCY_INBOUND_STICKY_MODES.map((mode) => (
-                <label key={mode} className={styles.choice}>
-                  <input
-                    type="radio"
-                    name="ib-sticky-mode"
-                    value={mode}
-                    checked={draft.stickyMode === mode}
-                    onChange={() => update({ stickyMode: mode })}
-                    data-testid={`inbound-sticky-${mode}`}
-                  />
-                  <span>
-                    {STICKY_MODE_LABELS[mode].label}
-                    <span className={styles.sub}>{STICKY_MODE_LABELS[mode].hint}</span>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-            <div className={styles.fields}>
-              <NumberField id="ib-sticky-wait" label="Wait for their agent (seconds)" value={draft.stickyWait} disabled={stickyOff}
-                hint={draft.stickyMode === 'strict'
-                  ? 'With “Wait for their agent”, the caller waits for them while they’re busy, up to the longest wait instead.'
-                  : `${L.STICKY_WAIT_SECONDS.min}–${L.STICKY_WAIT_SECONDS.max}, then the team. No longer than the longest wait.`}
-                onChange={(v) => update({ stickyWait: v })} errors={errors} path="sticky_wait_seconds" />
-              <NumberField id="ib-sticky-lookback" label="Look back (days)" value={draft.stickyLookback} disabled={stickyOff}
-                hint="How far back a past call makes an agent theirs."
-                onChange={(v) => update({ stickyLookback: v })} errors={errors} path="sticky_lookback_days" />
-            </div>
-            <h3 className={styles.cardTitle}>The team</h3>
-            <p className={styles.cardLead}>
-              {draft.poolCampaignIds.length === 0
-                ? 'Any agent live on a campaign in this account. Choose campaigns to narrow it to agents staffed on them.'
-                : 'Only agents staffed on the campaigns ticked here.'}
-            </p>
-            {campaigns.length > 0 ? (
-              <ul className={styles.choiceList} aria-label="Campaigns whose agents take these calls">
-                {campaigns.map((c) => {
-                  const id = `ib-pool-${c.id}`;
-                  return (
-                    <li key={c.id} className={styles.choice}>
-                      <input type="checkbox" id={id} checked={draft.poolCampaignIds.includes(c.id)} onChange={() => togglePool(c.id)} />
-                      <label htmlFor={id}>{c.name}</label>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-            {errors.render('pool_campaign_ids')}
-            {draft.poolCampaignIds.map((_, i) => errors.render(`pool_campaign_ids[${i}]`))}
-          </section>
+          <RouteRoutingCard draft={draft} update={update} errors={errors} campaigns={campaigns} />
 
           <section className="card" aria-labelledby="ib-queue" data-testid="inbound-route-queue">
             <h2 className={styles.cardTitle} id="ib-queue">Waiting and limits</h2>
@@ -604,14 +369,7 @@ export default function InboundRouteEditorPage() {
 
           <section className="card" aria-labelledby="ib-unanswered" data-testid="inbound-route-unanswered">
             <h2 className={styles.cardTitle} id="ib-unanswered">When nobody answers</h2>
-            <p className={styles.cardLead}>
-              Out of hours the caller hears the Closed message, when every line is busy the All lines busy message, and
-              otherwise the We’ll call you back message: your recording, or our standard one. A caller who withheld their
-              number or is on your do-not-call list is never promised a call back: they hear the Closed message instead.
-              The call then ends, or, if you choose a voicemail below, the caller can leave a message of up to two minutes
-              after a beep. Either way it appears under Missed calls, assigned to their agent or the account. A customer on
-              a campaign also gets a callback booked for when you next open.
-            </p>
+            <p className={styles.cardLead}>{UNANSWERED_LEAD}</p>
             {actionChoices.length > 1 ? (
               <>
                 <ActionChoice
@@ -708,85 +466,3 @@ export default function InboundRouteEditorPage() {
   );
 }
 
-function NumberField({
-  id, label, value, hint, onChange, errors, path, disabled = false,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  hint: string;
-  onChange: (value: string) => void;
-  errors: ReturnType<typeof useConfigFieldErrors>;
-  path: string;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="form-group">
-      <label htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        type="number"
-        inputMode="numeric"
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        aria-describedby={[`${id}-hint`, errors.describedBy(path)].filter(Boolean).join(' ')}
-      />
-      <span className={styles.hint} id={`${id}-hint`}>{hint}</span>
-      {errors.render(path)}
-    </div>
-  );
-}
-
-/** A route's warnings about one field (or the whole route), as the server's `warnings` say them. */
-function RouteWarnings({ warnings }: { warnings: AgencyInboundRouteWarning[] }) {
-  if (warnings.length === 0) return null;
-  return (
-    <ul className={styles.warnings} aria-label="Before you save">
-      {warnings.map((w) => (
-        <li key={w.code} className={styles.warning} data-testid={`inbound-route-warning-${w.code}`}>
-          {w.message}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** One of the two "when nobody answers" choices: the actions the server accepts, as radios. */
-function ActionChoice({
-  name,
-  legend,
-  actions,
-  value,
-  onChange,
-  testId,
-}: {
-  name: string;
-  legend: string;
-  actions: readonly AgencyInboundUnconnectedAction[];
-  value: AgencyInboundUnconnectedAction;
-  onChange: (next: AgencyInboundUnconnectedAction) => void;
-  testId: string;
-}) {
-  return (
-    <fieldset className={styles.radioGroup} data-testid={testId}>
-      <legend>{legend}</legend>
-      {actions.map((action) => (
-        <label key={action} className={styles.choice}>
-          <input
-            type="radio"
-            name={name}
-            value={action}
-            checked={value === action}
-            onChange={() => onChange(action)}
-            data-testid={`${testId}-${action}`}
-          />
-          <span>
-            {UNCONNECTED_ACTION_LABELS[action].label}
-            <span className={styles.sub}>{UNCONNECTED_ACTION_LABELS[action].hint}</span>
-          </span>
-        </label>
-      ))}
-    </fieldset>
-  );
-}

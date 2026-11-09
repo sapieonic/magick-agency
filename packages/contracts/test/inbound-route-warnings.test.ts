@@ -45,6 +45,14 @@ describe('inboundRouteWarnings', () => {
     expect(codes(route({ weekly_hours: [] }), false)).toEqual(['no_opening_hours@weekly_hours', 'connect_unavailable@-']);
   });
 
+  it('names the message callers actually hear: the call-back message, nobody put through (busy only for those never promised one)', () => {
+    const [w] = inboundRouteWarnings(route(), { connectsAgents: false });
+    expect(w!.message).toBe(
+      'Calls can’t be put through to agents on this deployment, so nobody is put through: in opening hours, callers hear '
+      + 'our “we’ll call you back” message (or, if they withheld their number or are on your do-not-call list, our “all lines busy” message).',
+    );
+  });
+
   it('recorded with the notice off warns; recorded with it on (the standard notice plays) does not', () => {
     expect(codes(route({ record_calls: true, recording_notice: false }))).toEqual(['recording_without_notice@recording_notice']);
     expect(codes(route({ record_calls: true, recording_notice: true }))).toEqual([]);

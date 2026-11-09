@@ -18,6 +18,10 @@
  *    `inbound_clip_storage_unavailable`); audited `agency_inbound_clip.uploaded`
  *  - `DELETE /inbound/clips/:id`              `agency.inbound.write` → 204; `inbound_clip_in_use` (naming the
  *    routes) while a live route plays it, `inbound_clip_not_found`; audited `agency_inbound_clip.deleted`
+ *  - `GET    /inbound/clips/:id/audio`        `agency.inbound.write` → the recording's bytes, as stored (its audio type),
+ *    for the editor's preview; the account's own (`inbound_clip_not_found` otherwise); `Cache-Control: private, no-store`
+ *  - `GET    /inbound/clips/standard/:recording/audio`  `agency.inbound.write` → one of our standard recordings
+ *    ({@link AGENCY_INBOUND_STANDARD_RECORDINGS}), `audio/wav`, for the preview; an unknown name is `inbound_clip_not_found`
  *  - `GET    /inbound/missed`                 `agency.inbound.read`, {@link AgencyInboundMissedListQuery} → {@link AgencyInboundMissedPage}
  *  - `POST   /inbound/missed/:id/handled`     `agency.inbound.read`, no body → {@link AgencyInboundMarkHandledResponse}
  *  - `GET    /inbound/missed/:id/voicemail`   `agency.inbound.read` → the row's voicemail, `audio/wav`, streamed (P2;
@@ -213,7 +217,8 @@ export const AGENCY_INBOUND_SLOT_STANDARD: Readonly<Record<AgencyInboundClipSlot
  * they say.
  *  - `no_opening_hours`: the route has no opening hours, so every caller hears the closed message;
  *  - `connect_unavailable`: this deployment cannot put inbound callers through to agents (media
- *    workers are on, IB8), so callers in opening hours are told everyone is busy;
+ *    workers are on, IB8), so nobody is put through: callers in opening hours hear the call-back
+ *    message (the busy message, for a caller who may not be promised a callback);
  *  - `recording_without_notice`: calls are recorded and callers are not told (IB7's notice is off).
  */
 export type AgencyInboundRouteWarningCode = 'no_opening_hours' | 'connect_unavailable' | 'recording_without_notice';
@@ -246,7 +251,7 @@ export function inboundRouteWarnings(
   if (!opts.connectsAgents) {
     out.push({
       code: 'connect_unavailable', path: null,
-      message: 'Calls can’t be put through to agents on this deployment, so callers hear the busy message: everyone is busy and we’ll call them back.',
+      message: 'Calls can’t be put through to agents on this deployment, so nobody is put through: in opening hours, callers hear our “we’ll call you back” message (or, if they withheld their number or are on your do-not-call list, our “all lines busy” message).',
     });
   }
   if (config.record_calls && !config.recording_notice) {

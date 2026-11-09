@@ -36,6 +36,20 @@ export function inboundActorOrRefuse(request: FastifyRequest, reply: FastifyRepl
   return { userId, supervise: role ? hasPermission(role, 'agency.supervise') : false };
 }
 
+/**
+ * The request's account (`X-Account-Id`), or the 400 `account_scope_required`. For a route whose
+ * work is one account's and that acts before its internal handler would refuse (an upload stored
+ * under the account's key, a stream read from the bucket): refused here, before anything is read
+ * or stored.
+ */
+export function inboundAccountOrRefuse(request: FastifyRequest, reply: FastifyReply): string | null {
+  if (request.accountId) return request.accountId;
+  void reply.code(400).send({
+    error: 'Bad Request', code: 'account_scope_required', message: 'This is one account’s work. Send X-Account-Id.',
+  });
+  return null;
+}
+
 /** The actor on an internal request's query. */
 export function actorQuery(actor: InboundRequestActor): Record<string, string> {
   return actor.supervise ? { actor_user_id: actor.userId, supervise: 'true' } : { actor_user_id: actor.userId };

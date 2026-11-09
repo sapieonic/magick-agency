@@ -11,6 +11,10 @@
  *    while a live route or an active announcement uses it (`deleteUnused`, under the file's row
  *    lock). The object's key goes back in the audit envelope for the public layer to remove once
  *    this has committed.
+ *  - `GET /inbound/clips/:id/audio`: where one of the account's recordings is stored, for the
+ *    public layer to stream it to the route editor's preview (the bytes never travel through
+ *    `callCore`). Tenant AND account scoped (`findByIdScoped`): another account's id is
+ *    `inbound_clip_not_found`, as an unknown one is.
  *
  * `GET /inbound/clips` stays in `./inbound.ts` with the other route editor choices.
  */
@@ -35,6 +39,13 @@ import {
   type InboundCoreAnswer,
   type InboundRefusal,
 } from './inbound-answer.js';
+
+/** Where a recording's bytes are, for the public layer's preview stream (`GET /inbound/clips/:id/audio`). */
+export interface InboundClipAudioLocation {
+  clip_id: string;
+  s3_key: string;
+  content_type: string;
+}
 
 /** The unique name of `audio_files` (tenant, account, name). */
 const AUDIO_FILE_NAME_UNIQUE = 'audio_files_tenant_account_name_key';
@@ -94,6 +105,16 @@ export async function registerInboundClipRoutes(sub: FastifyInstance): Promise<v
     if (!clip) return sendInboundRefusal(reply, { code: 'inbound_clip_not_found' });
     const audit: InboundClipUploadedAudit = { clip_id: id, size_bytes: b.size_bytes, duration_seconds: b.duration_seconds };
     return answer<AgencyInboundClipResponse, InboundClipUploadedAudit>(reply, 201, { clip }, audit);
+  });
+
+  // ── GET /inbound/clips/:id/audio — where a recording is stored, for its preview ──
+  sub.get<{ Params: { id: string } }>('/inbound/clips/:id/audio', async (request, reply) => {
+    const id = request.params.id;
+    if (!UUID_RE.test(id)) return sendInboundRefusal(reply, { code: 'inbound_clip_not_found' });
+    const file = await audioFileRepository.findByIdScoped(id.toLowerCase(), getTenantId(request), getAccountId(request));
+    if (!file) return sendInboundRefusal(reply, { code: 'inbound_clip_not_found' });
+    const where: InboundClipAudioLocation = { clip_id: file.id, s3_key: file.s3_key, content_type: file.content_type };
+    return reply.send(where);
   });
 
   // ── DELETE /inbound/clips/:id — refused while something uses it ───────────

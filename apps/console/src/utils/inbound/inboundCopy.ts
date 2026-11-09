@@ -1,6 +1,7 @@
 import type { InboundRefusal } from '../../api/inbound';
 import {
   AGENCY_INBOUND_CLIP_UPLOAD_LIMITS,
+  AGENCY_INBOUND_ROUTE_LIMITS,
   AGENCY_INBOUND_STANDARD_WORDS,
   type AgencyInboundClipInvalidReason,
   type AgencyInboundStandardRecording,
@@ -81,6 +82,16 @@ export const STICKY_MODE_LABELS: Record<AgencyInboundStickyMode, { label: string
   off: { label: 'Off', hint: 'Every caller goes to the team, longest idle agent first.' },
 };
 
+/**
+ * The seconds a caller is offered to their agent before the team ("Prefer their agent"): its own
+ * label, never the strict mode's name. With "Wait for their agent" the longest wait applies instead.
+ */
+export const STICKY_WAIT_FIELD = {
+  label: 'How long to wait for their agent (seconds)',
+  hint: `${AGENCY_INBOUND_ROUTE_LIMITS.STICKY_WAIT_SECONDS.min}–${AGENCY_INBOUND_ROUTE_LIMITS.STICKY_WAIT_SECONDS.max}, then the team. No longer than the longest wait.`,
+  strictHint: 'With “Wait for their agent”, the caller waits for them while they’re busy, up to the longest wait instead.',
+} as const;
+
 /** A standard recording's words, quoted for a hint. */
 function quoted(recording: AgencyInboundStandardRecording): string {
   return `“${AGENCY_INBOUND_STANDARD_WORDS[recording]}”`;
@@ -107,12 +118,12 @@ export const CLIP_SLOT_LABELS: Record<AgencyInboundClipSlot, { label: string; hi
   hold: { label: 'Hold music', hint: 'Looped while the caller waits for an agent.', none: 'Built-in hold tone' },
   closed: {
     label: 'Closed',
-    hint: `Played out of hours and on holidays, and to callers we can’t call back. Our standard recording: ${quoted('closed')}`,
+    hint: `Played out of hours and on holidays. Our standard recording: ${quoted('closed')}`,
     none: 'Our standard recording',
   },
   busy: {
     label: 'All lines busy',
-    hint: `Played when the route already has as many calls as it takes. Our standard recording: ${quoted('busy')}`,
+    hint: `Played when the route already has as many calls as it takes, and, in opening hours, to a caller nobody can answer whom we can’t call back (their number withheld or on your do-not-call list). Our standard recording: ${quoted('busy')}`,
     none: 'Our standard recording',
   },
   callback: {
@@ -121,6 +132,21 @@ export const CLIP_SLOT_LABELS: Record<AgencyInboundClipSlot, { label: string; hi
     none: 'Our standard recording',
   },
 };
+
+/**
+ * What a caller nobody answers hears, and what follows (the route editor's "When nobody answers").
+ * A caller who may not be promised a callback (number withheld, or on DNC) hears the All lines
+ * busy message in opening hours, never the call-back one, and never the Closed one while the line
+ * is open; their voicemail prompt asks for their number and promises nothing.
+ */
+export const UNANSWERED_LEAD =
+  'Out of hours the caller hears the Closed message, when every line is busy the All lines busy message, and '
+  + 'otherwise the We’ll call you back message: your recording, or our standard one. A caller who withheld their '
+  + 'number or is on your do-not-call list is never promised a call back: in opening hours they hear the All lines '
+  + 'busy message instead. The call then ends, or, if you choose a voicemail below, the caller can leave a message of '
+  + 'up to two minutes after a beep (one we can’t call back is asked for their name and number). Either way it '
+  + 'appears under Missed calls, assigned to their agent or the account. A customer on a campaign also gets a '
+  + 'callback booked for when you next open.';
 
 /** A recording's length, as the list shows it: `0:04`, `1:30`. */
 export function recordingLength(seconds: number | null): string {

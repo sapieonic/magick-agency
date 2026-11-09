@@ -131,7 +131,54 @@ describe('the route’s warnings, beside the field they are about', () => {
   it('a deployment that cannot put callers through says so for the whole route', async () => {
     mocks.listInboundClips.mockResolvedValue({ clips: [], upload_available: true, connects_agents: false });
     await renderEditor();
-    expect(screen.getByTestId('inbound-route-warning-connect_unavailable').textContent)
-      .toBe('Calls can’t be put through to agents on this deployment, so callers hear the busy message: everyone is busy and we’ll call them back.');
+    // It names the message callers actually hear (the call-back one), and that nobody is put through.
+    expect(screen.getByTestId('inbound-route-warning-connect_unavailable').textContent).toBe(
+      'Calls can’t be put through to agents on this deployment, so nobody is put through: in opening hours, callers hear '
+      + 'our “we’ll call you back” message (or, if they withheld their number or are on your do-not-call list, our “all lines busy” message).',
+    );
+  });
+});
+
+describe('the editor’s words (the copy sweep)', () => {
+  const renderEditor = async () => {
+    render(
+      <MemoryRouter initialEntries={['/app/inbound/r-1']}>
+        <Routes>
+          <Route path="/app/inbound/:routeId" element={<InboundRouteEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+  };
+
+  it('names the time zone the opening hours are in, and follows it as it is edited', async () => {
+    await renderEditor();
+    const hours = within(screen.getByTestId('inbound-route-hours'));
+    expect(hours.getByTestId('inbound-route-hours-zone').textContent).toBe('Times are in Europe/London, the route’s time zone.');
+    fireEvent.change(screen.getByTestId('inbound-route-timezone'), { target: { value: 'Asia/Kolkata' } });
+    expect(hours.getByTestId('inbound-route-hours-zone').textContent).toBe('Times are in Asia/Kolkata, the route’s time zone.');
+    fireEvent.change(screen.getByTestId('inbound-route-timezone'), { target: { value: '' } });
+    expect(hours.getByTestId('inbound-route-hours-zone').textContent).toBe('Times are in the route’s time zone, set above.');
+  });
+
+  it('the seconds a caller waits for their agent have their own label, not the strict mode’s name', async () => {
+    await renderEditor();
+    expect(screen.getByLabelText('How long to wait for their agent (seconds)')).toBeTruthy();
+    expect(screen.queryByLabelText('Wait for their agent (seconds)')).toBeNull();
+    // The strict mode keeps its name.
+    expect(within(screen.getByTestId('inbound-route-routing')).getByText('Wait for their agent')).toBeTruthy();
+  });
+
+  it('a caller we may not call back hears the All lines busy message in opening hours, never “we’re closed”', async () => {
+    await renderEditor();
+    const unanswered = screen.getByTestId('inbound-route-unanswered').textContent!;
+    expect(unanswered).toMatch(/never promised a call back: in opening hours they hear the All lines busy message instead/);
+    expect(unanswered).not.toMatch(/they hear the Closed message instead/);
+    const hint = (label: string) => {
+      const select = screen.getByLabelText(label);
+      return document.getElementById(select.getAttribute('aria-describedby')!.split(' ')[0]!)!.textContent!;
+    };
+    expect(hint('Closed')).not.toMatch(/call back|call them back/);
+    expect(hint('All lines busy')).toMatch(/to a caller nobody can answer whom we can’t call back/);
   });
 });

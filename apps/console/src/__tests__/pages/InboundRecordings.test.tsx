@@ -13,7 +13,8 @@ import {
  * beside the clip selects, the selects offer it at once, the account's recordings are listed
  * with the routes that play each, and only one nothing uses can be deleted (the server's
  * `inbound_clip_in_use` reloads the list). Without audio storage there is no upload, and the
- * editor says callers hear our standard recordings.
+ * editor says callers hear our standard recordings. Every message, and every recording, can be
+ * heard: Play fetches what the choice means (the recording chosen, else our standard one).
  */
 
 const mocks = vi.hoisted(() => ({
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   listAgencyCampaigns: vi.fn(),
   uploadInboundRecording: vi.fn(),
   deleteInboundRecording: vi.fn(),
+  fetchRecordingBlobUrl: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -46,6 +48,7 @@ vi.mock('../../api/inbound', async () => {
 vi.mock('../../api/inboundRecordings', () => ({
   uploadInboundRecording: mocks.uploadInboundRecording,
   deleteInboundRecording: mocks.deleteInboundRecording,
+  fetchRecordingBlobUrl: mocks.fetchRecordingBlobUrl,
 }));
 
 import InboundRouteEditorPage from '../../pages/settings/InboundRouteEditorPage';
@@ -194,5 +197,56 @@ describe('the recordings', () => {
     expect(screen.queryByTestId('inbound-recording-file')).toBeNull();
     expect(panel().getByTestId('inbound-recordings-unavailable').textContent).toMatch(/no audio storage set up\. Every message without one of\s+your recordings plays our standard recording/);
     expect(panel().getByText('No recordings yet. Every message plays our standard recording.')).toBeTruthy();
+  });
+});
+
+describe('hearing a recording', () => {
+  const play = async (testId: string) => {
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`${testId}-play`));
+    });
+  };
+
+  beforeEach(() => {
+    mocks.fetchRecordingBlobUrl.mockImplementation(async () => ({ status: 'ready', url: 'blob:preview' }));
+  });
+
+  it('each message plays what its choice means: the recording chosen, else our standard one; the hold tone has no file', async () => {
+    await renderEditor();
+    // The greeting is “Welcome” (clip-used); the closed message is ours.
+    expect(screen.getByRole('button', { name: 'Play the Greeting message (Welcome)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Play the Closed message (our standard recording)' })).toBeTruthy();
+    expect(screen.queryByTestId('inbound-clip-preview-hold-play')).toBeNull();
+
+    await play('inbound-clip-preview-closed');
+    expect(mocks.fetchRecordingBlobUrl).toHaveBeenCalledWith({ kind: 'standard', recording: 'closed' }, 'tenant-1', 'account-1');
+    const player = screen.getByTestId('inbound-clip-preview-closed-audio') as HTMLAudioElement;
+    expect(player.getAttribute('src')).toBe('blob:preview');
+    expect(player.getAttribute('aria-label')).toBe('the Closed message (our standard recording)');
+
+    await play('inbound-clip-preview-greeting');
+    expect(mocks.fetchRecordingBlobUrl).toHaveBeenLastCalledWith({ kind: 'uploaded', clipId: 'clip-used' }, 'tenant-1', 'account-1');
+  });
+
+  it('a new choice starts from Play again, and plays the new choice', async () => {
+    await renderEditor();
+    await play('inbound-clip-preview-closed');
+    expect(screen.getByTestId('inbound-clip-preview-closed-audio')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Closed'), { target: { value: 'clip-spare' } });
+    expect(screen.queryByTestId('inbound-clip-preview-closed-audio')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Play the Closed message (Old notice)' })).toBeTruthy();
+    await play('inbound-clip-preview-closed');
+    expect(mocks.fetchRecordingBlobUrl).toHaveBeenLastCalledWith({ kind: 'uploaded', clipId: 'clip-spare' }, 'tenant-1', 'account-1');
+  });
+
+  it('every recording in the list can be played, and one that is gone says so', async () => {
+    await renderEditor();
+    mocks.fetchRecordingBlobUrl.mockResolvedValueOnce({ status: 'unavailable', message: 'This recording no longer exists. Someone may have deleted it.' });
+    const spare = within(screen.getByTestId('inbound-recording-clip-spare'));
+    await act(async () => {
+      fireEvent.click(spare.getByRole('button', { name: 'Play Old notice' }));
+    });
+    expect(mocks.fetchRecordingBlobUrl).toHaveBeenCalledWith({ kind: 'uploaded', clipId: 'clip-spare' }, 'tenant-1', 'account-1');
+    expect(spare.getByRole('alert').textContent).toBe('This recording no longer exists. Someone may have deleted it.');
   });
 });

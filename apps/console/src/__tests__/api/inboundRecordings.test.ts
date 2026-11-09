@@ -13,7 +13,12 @@ vi.stubGlobal('fetch', mocks.fetch);
 vi.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: null, signOut: vi.fn() }) }));
 vi.mock('../../api/authHeaders', () => ({ buildAuthHeaders: async () => ({ 'X-Tenant-Id': 't-1', 'X-Account-Id': 'a-1' }) }));
 
-import { deleteInboundRecording, uploadInboundRecording } from '../../api/inboundRecordings';
+import {
+  deleteInboundRecording,
+  fetchRecordingBlobUrl,
+  recordingAudioUrl,
+  uploadInboundRecording,
+} from '../../api/inboundRecordings';
 
 function respond(status: number, body: unknown) {
   return {
@@ -93,5 +98,38 @@ describe('deleteInboundRecording', () => {
     }));
     const result = await deleteInboundRecording('clip-1', 't-1', 'a-1');
     expect(!result.ok && result.refusal).toMatchObject({ code: 'inbound_clip_in_use', status: 409, routes: [{ route_id: 'r-1', name: 'Main line' }] });
+  });
+});
+
+describe('fetchRecordingBlobUrl (the editor’s preview)', () => {
+  it('asks our own API for the account’s recording or our standard one, the id encoded, with the console’s headers', () => {
+    expect(recordingAudioUrl({ kind: 'uploaded', clipId: 'clip-1' })).toBe('/proxy/agency/inbound/clips/clip-1/audio');
+    expect(recordingAudioUrl({ kind: 'uploaded', clipId: '../x?y' })).toBe('/proxy/agency/inbound/clips/..%2Fx%3Fy/audio');
+    expect(recordingAudioUrl({ kind: 'standard', recording: 'closed' })).toBe('/proxy/agency/inbound/clips/standard/closed/audio');
+  });
+
+  it('plays from a blob URL, and says plainly when the recording is gone or could not load', async () => {
+    const original = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:rec-1');
+    mocks.fetch.mockResolvedValue({ ok: true, status: 200, blob: async () => new Blob(['x']) } as unknown as Response);
+    try {
+      expect(await fetchRecordingBlobUrl({ kind: 'standard', recording: 'busy' }, 't-1', 'a-1')).toEqual({ status: 'ready', url: 'blob:rec-1' });
+    } finally {
+      URL.createObjectURL = original;
+    }
+    const [url, init] = mocks.fetch.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe('/proxy/agency/inbound/clips/standard/busy/audio');
+    expect(init.headers).toEqual({ 'X-Tenant-Id': 't-1', 'X-Account-Id': 'a-1' });
+
+    mocks.fetch.mockResolvedValue({ ok: false, status: 404, url: '', headers: new Headers() } as unknown as Response);
+    expect(await fetchRecordingBlobUrl({ kind: 'uploaded', clipId: 'clip-1' }, 't-1', 'a-1')).toEqual({
+      status: 'unavailable', message: 'This recording no longer exists. Someone may have deleted it.',
+    });
+    mocks.fetch.mockResolvedValue({ ok: false, status: 503, url: '', headers: new Headers() } as unknown as Response);
+    expect(await fetchRecordingBlobUrl({ kind: 'uploaded', clipId: 'clip-1' }, 't-1', 'a-1')).toEqual({
+      status: 'unavailable', message: 'We couldn’t load the recording. Try again in a moment.',
+    });
+    mocks.fetch.mockRejectedValue(new Error('offline'));
+    expect((await fetchRecordingBlobUrl({ kind: 'uploaded', clipId: 'clip-1' }, 't-1')).status).toBe('unavailable');
   });
 });

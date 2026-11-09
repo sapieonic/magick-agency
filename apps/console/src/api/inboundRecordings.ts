@@ -4,6 +4,7 @@ import { buildAuthHeaders } from './authHeaders';
 import { captureApiError } from './error-analytics';
 import { parseInboundRefusal, type InboundRefusal } from './inbound';
 import type {
+  AgencyInboundStandardRecording,
   AgencyInboundClipInvalidReason,
   AgencyInboundClipOption,
   AgencyInboundClipResponse,
@@ -16,6 +17,8 @@ import type {
  *
  *   POST   /proxy/agency/inbound/clips       multipart (`name`, then `file`) → 201 { clip }
  *   DELETE /proxy/agency/inbound/clips/:id   → 204; 409 `inbound_clip_in_use` naming the routes
+ *   GET    /proxy/agency/inbound/clips/:id/audio                   → the recording's bytes (preview)
+ *   GET    /proxy/agency/inbound/clips/standard/:recording/audio   → one of our standard recordings (preview)
  *
  * The list is `listInboundClips` (`./inbound.ts`). Both resolve to a result, not a throw: a
  * refusal is something the admin acts on (another file, another name, a route to change first).
@@ -102,5 +105,47 @@ export async function deleteInboundRecording(
     return { ok: true, value: undefined };
   } catch (err) {
     return { ok: false, refusal: recordingRefusal(err) };
+  }
+}
+
+// ─── Preview ────────────────────────────────────────────────────────────────
+
+/** What a preview plays: one of the account's recordings, or one of our standard recordings. */
+export type RecordingSource = { kind: 'uploaded'; clipId: string } | { kind: 'standard'; recording: AgencyInboundStandardRecording };
+
+export type RecordingAudio = { status: 'ready'; url: string } | { status: 'unavailable'; message: string };
+
+export const RECORDING_GONE_COPY = 'This recording no longer exists. Someone may have deleted it.';
+export const RECORDING_FAILED_COPY = 'We couldn’t load the recording. Try again in a moment.';
+
+/** The preview's path: always our own API, the id or name encoded. */
+export function recordingAudioUrl(source: RecordingSource): string {
+  return source.kind === 'uploaded'
+    ? `${CLIPS}/${encodeURIComponent(source.clipId)}/audio`
+    : `${CLIPS}/standard/${encodeURIComponent(source.recording)}/audio`;
+}
+
+/**
+ * A recording as a blob URL for an `<audio>` element: the route needs the console's bearer token,
+ * which an `<audio src>` cannot send (the Missed list's voicemail is fetched the same way). The
+ * caller revokes the URL when it is done with it. Never throws.
+ */
+export async function fetchRecordingBlobUrl(
+  source: RecordingSource,
+  tenantId: string,
+  accountId?: string,
+): Promise<RecordingAudio> {
+  const url = recordingAudioUrl(source);
+  try {
+    const headers = await buildAuthHeaders(tenantId, accountId);
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      captureApiError(url, res);
+      return { status: 'unavailable', message: res.status === 404 ? RECORDING_GONE_COPY : RECORDING_FAILED_COPY };
+    }
+    const blob = await res.blob();
+    return { status: 'ready', url: URL.createObjectURL(blob) };
+  } catch {
+    return { status: 'unavailable', message: RECORDING_FAILED_COPY };
   }
 }

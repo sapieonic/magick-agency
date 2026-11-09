@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 /**
  * ─── Recordings for inbound routes through the real app and Postgres ──────────────────────
@@ -22,7 +23,10 @@ import path from 'node:path';
  *  4. no audio storage on the deployment: 503 `inbound_clip_storage_unavailable`, the list says so;
  *  5. delete: refused while a live route plays it (naming the routes), done once none does (the
  *     object removed, audited), another account's or a malformed id is not found;
- *  6. access: an agent cannot upload or delete; the flag off refuses.
+ *  6. access: an agent cannot upload or delete; the flag off refuses;
+ *  7. an upload naming no account (`X-Account-Id`) is refused 400 before anything is read or stored;
+ *  8. preview: the account's recording streamed from the bucket and our standard recordings from
+ *     the image, never cached, with the list's roles and flag, another account's not found.
  */
 
 const mocks = vi.hoisted(() => {
@@ -39,6 +43,11 @@ vi.mock('../../../src/storage/s3.js', async (orig) => {
     isStorageConfigured: () => bucket.configured,
     uploadFile: async (key: string, body: Buffer, contentType: string) => { bucket.files.set(key, { body, contentType }); },
     deleteFile: async (key: string) => { bucket.files.delete(key); },
+    getFileStream: async (key: string) => {
+      const f = bucket.files.get(key);
+      if (!f) throw Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
+      return { body: Readable.from([f.body]), contentLength: f.body.length, contentType: f.contentType };
+    },
     getFile: async (key: string) => {
       const f = bucket.files.get(key);
       if (!f) throw Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
@@ -56,6 +65,8 @@ import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
 import { resolveInboundClip } from '../../../src/agency/inbound/inbound-clips.js';
 import { hashAudioFileContent, ttsFileExists } from '../../../src/tts/tts-file-cache.js';
 import { callCore } from '../../../src/api/core-dispatch.js';
+import { AGENCY_INBOUND_STANDARD_RECORDINGS } from '@magick-agency/contracts/api/agency/inbound';
+import { INBOUND_STANDARD_CLIP_FILES, inboundStandardClipDir } from '../../../src/agency/inbound/inbound-standard-clip-files.js';
 
 const q = (sql: string, values: unknown[] = []) => getTestPool().query(sql, values);
 const WAV = fs.readFileSync(path.resolve(__dirname, '../../../assets/inbound/please-hold.wav'));
@@ -90,6 +101,12 @@ function upload(actor: Actor, fields: Record<string, string>, file?: { name: str
     headers: headersFor(actor, f, { 'content-type': body.contentType }),
     payload: body.payload,
   });
+}
+
+/** The actor's headers with no `X-Account-Id`. */
+function withoutAccount(actor: Actor, extra: Record<string, string> = {}): Record<string, string> {
+  const { 'x-account-id': _dropped, ...rest } = headersFor(actor, floor, extra);
+  return rest;
 }
 
 function call(method: 'GET' | 'POST' | 'DELETE', url: string, actor: Actor, body?: unknown, f: TenantFloor = floor) {
@@ -206,6 +223,98 @@ describe('upload', () => {
     expect(res.json()).toMatchObject({ code: 'inbound_clip_storage_unavailable' });
     expect(await rowsOfAccount(floor.tenant, floor.account)).toEqual([]);
     expect((await call('GET', '/clips', sup())).json().upload_available).toBe(false);
+  });
+});
+
+describe('an upload naming no account', () => {
+  it('is refused 400 before anything is read or stored (SWE-N5)', async () => {
+    const body = multipart({ name: 'Nowhere' }, { name: 'n.wav', type: 'audio/wav', body: WAV });
+    const res = await loaded.app.inject({
+      method: 'POST', url: '/proxy/agency/inbound/clips',
+      headers: withoutAccount(sup(), { 'content-type': body.contentType }), payload: body.payload,
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json()).toMatchObject({ code: 'account_scope_required' });
+    expect(bucket.files.size).toBe(0);
+    expect((await q('SELECT count(*)::int AS n FROM audio_files')).rows[0].n).toBe(0);
+    // Before the storage check, too: the refusal is the same with no storage on the deployment.
+    bucket.configured = false;
+    const again = await loaded.app.inject({
+      method: 'POST', url: '/proxy/agency/inbound/clips',
+      headers: withoutAccount(sup(), { 'content-type': body.contentType }), payload: body.payload,
+    });
+    expect(again.json()).toMatchObject({ code: 'account_scope_required' });
+  });
+});
+
+describe('preview', () => {
+  it('the account’s recording: its bytes from the bucket, its type, never cached, never sniffed', async () => {
+    const clip = (await upload(sup(), { name: 'Greeting' }, { name: 'g.wav', type: 'audio/wav', body: WAV })).json().clip;
+    const res = await call('GET', `/clips/${clip.id}/audio`, sup());
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.rawPayload.equals(WAV)).toBe(true);
+    expect(res.headers['content-type']).toBe('audio/wav');
+    expect(res.headers['content-length']).toBe(String(WAV.length));
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
+
+  it('another account’s recording, an unknown or malformed id, or an object gone from the bucket is not found', async () => {
+    const theirs = (await upload(other.supervisors[0]!, { name: 'Theirs' }, { name: 't.wav', type: 'audio/wav', body: WAV }, other)).json().clip;
+    const mine = (await upload(sup(), { name: 'Mine' }, { name: 'm.wav', type: 'audio/wav', body: WAV })).json().clip;
+    for (const id of [theirs.id, randomUUID(), 'not-a-uuid']) {
+      const res = await call('GET', `/clips/${id}/audio`, sup());
+      expect(res.statusCode, id).toBe(404);
+      expect(res.json(), id).toMatchObject({ code: 'inbound_clip_not_found' });
+    }
+    bucket.files.clear();
+    const gone = await call('GET', `/clips/${mine.id}/audio`, sup());
+    expect(gone.statusCode).toBe(404);
+    expect(gone.json()).toMatchObject({ code: 'inbound_clip_not_found' });
+  });
+
+  it('no audio storage on the deployment: 503', async () => {
+    const clip = (await upload(sup(), { name: 'Hold' }, { name: 'h.wav', type: 'audio/wav', body: WAV })).json().clip;
+    bucket.configured = false;
+    expect((await call('GET', `/clips/${clip.id}/audio`, sup())).statusCode).toBe(503);
+  });
+
+  it('our standard recordings, each from the image; an unknown name is not found', async () => {
+    for (const recording of AGENCY_INBOUND_STANDARD_RECORDINGS) {
+      const res = await call('GET', `/clips/standard/${recording}/audio`, sup());
+      expect(res.statusCode, recording).toBe(200);
+      const onDisk = fs.readFileSync(path.join(inboundStandardClipDir(), INBOUND_STANDARD_CLIP_FILES[recording]));
+      expect(res.rawPayload.equals(onDisk), recording).toBe(true);
+      expect(res.headers['content-type']).toBe('audio/wav');
+      expect(res.headers['cache-control']).toBe('private, no-store');
+    }
+    for (const name of ['nope', 'hold', 'please-hold.wav', '__proto__']) {
+      const res = await call('GET', `/clips/standard/${name}/audio`, sup());
+      expect(res.statusCode, name).toBe(404);
+      expect(res.json(), name).toMatchObject({ code: 'inbound_clip_not_found' });
+    }
+    // A path in the name never reaches the file system (refused by the router or the name check).
+    const traversal = await call('GET', '/clips/standard/..%2F..%2Fpackage.json/audio', sup());
+    expect(traversal.statusCode).toBeGreaterThanOrEqual(400);
+    expect(traversal.statusCode).toBeLessThan(500);
+  });
+
+  it('the list’s access: not an agent, not with the flag off, not without an account', async () => {
+    const clip = (await upload(sup(), { name: 'Mine' }, { name: 'm.wav', type: 'audio/wav', body: WAV })).json().clip;
+    for (const url of [`/clips/${clip.id}/audio`, '/clips/standard/closed/audio']) {
+      expect((await call('GET', url, agent())).statusCode, url).toBe(403);
+      const noAccount = await loaded.app.inject({ method: 'GET', url: `/proxy/agency/inbound${url}`, headers: withoutAccount(sup()) });
+      expect(noAccount.statusCode, url).toBe(400);
+      expect(noAccount.json(), url).toMatchObject({ code: 'account_scope_required' });
+    }
+    await setFlag(floor.tenant, false);
+    try {
+      for (const url of [`/clips/${clip.id}/audio`, '/clips/standard/closed/audio']) {
+        expect((await call('GET', url, sup())).json(), url).toMatchObject({ code: 'inbound_disabled' });
+      }
+    } finally {
+      await setFlag(floor.tenant, true);
+    }
   });
 });
 

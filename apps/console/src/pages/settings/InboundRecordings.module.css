@@ -142,3 +142,54 @@
   display: grid;
   gap: 8px;
 }
+
+/* A recording's preview: Play first, then the browser's own player in its place. */
+.previewRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.previewButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.previewButton:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.previewButton:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.previewButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.player {
+  display: block;
+  width: 100%;
+  max-width: 280px;
+  height: 36px;
+}
+
+.itemText .previewRow,
+.itemText .player {
+  margin-top: 4px;
+}

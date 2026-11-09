@@ -10,6 +10,7 @@ import {
 } from '../../utils/inbound/inboundCopy';
 import { AGENCY_INBOUND_CLIP_UPLOAD_LIMITS as LIMITS, type AgencyInboundClipOption } from '../../types/inbound';
 import styles from './InboundRecordings.module.css';
+import { RecordingPreview } from './inbound-route/RecordingPreview';
 
 /** What an upload or delete refusal says, in the editor's words. */
 export function recordingRefusalCopy(refusal: RecordingRefusal): string {
@@ -28,8 +29,8 @@ export function recordingRefusalCopy(refusal: RecordingRefusal): string {
 
 /**
  * The route editor's recordings (`docs/inbound.md` §8.4): upload a WAV, MP3 or OGG (checked by the
- * server before it is stored), and the account's recordings with the routes that play each and
- * a delete that is offered only for one no route plays. Without audio storage on the deployment
+ * server before it is stored), and the account's recordings, each with a Play, the routes that
+ * play it and a delete that is offered only for one no route plays. Without audio storage on the deployment
  * there is no upload, and the panel says callers hear our standard recordings.
  *
  * The page owns the list (the clip selects read it): an upload adds to it, a delete removes from
@@ -175,6 +176,13 @@ export function InboundRecordingsPanel({
                   <span className={styles.meta} id={metaId}>
                     {[length, used || (chosen.has(clip.id) ? 'Chosen on this route' : 'Not used by any route')].filter(Boolean).join(' · ')}
                   </span>
+                  <RecordingPreview
+                    source={{ kind: 'uploaded', clipId: clip.id }}
+                    label={clip.name}
+                    tenantId={tenantId}
+                    accountId={accountId}
+                    testId={`inbound-recording-preview-${clip.id}`}
+                  />
                 </span>
                 <button
                   type="button"
