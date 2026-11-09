@@ -6,15 +6,19 @@
  * Routes (under `/proxy/agency`, Firebase session, tenant and account headers; every one also
  * needs the `agency_inbound_enabled` flag, else `403 inbound_disabled`):
  *  - `GET    /inbound/routes`                 `agency.inbound.write` → {@link AgencyInboundRoutesResponse}
+ *  - `GET    /inbound/routes/:id`             `agency.inbound.write` → {@link AgencyInboundRouteResponse}
  *  - `POST   /inbound/routes`                 `agency.inbound.write`, {@link AgencyInboundRouteCreateRequest} → 201 {@link AgencyInboundRouteResponse}
  *  - `PATCH  /inbound/routes/:id`             `agency.inbound.write`, {@link AgencyInboundRouteUpdateRequest} → {@link AgencyInboundRouteResponse}
  *  - `DELETE /inbound/routes/:id`             `agency.inbound.write` → 204 (soft delete; its numbers are detached)
+ *  - `GET    /inbound/numbers`                `agency.inbound.write` → {@link AgencyInboundNumbersResponse} (the route editor's choices)
+ *  - `GET    /inbound/clips`                  `agency.inbound.write` → {@link AgencyInboundClipsResponse} (the account's audio files)
  *  - `GET    /inbound/missed`                 `agency.inbound.read`, {@link AgencyInboundMissedListQuery} → {@link AgencyInboundMissedPage}
  *  - `POST   /inbound/missed/:id/handled`     `agency.inbound.read`, no body → {@link AgencyInboundMarkHandledResponse}
  *
  * `agency.inbound.read` floors at `agent`: an agent sees and handles only the rows assigned to
  * them (the route forces `assignee=me`); with `agency.supervise` the caller sees the account's.
- * Refusals are `{ error: AgencyInboundErrorCode, message, details? }` (`../../errors.ts` §6).
+ * Refusals are {@link AgencyInboundErrorResponse} (`../../errors.ts` §6); a malformed query (a bad
+ * cursor, an unknown filter value) or a body that is not JSON is the agency surface's ordinary 400.
  */
 
 import type { AgencyKeysetPage } from '../../agency/spine';
@@ -23,7 +27,9 @@ import type {
   AgencyInboundFollowUpStatus,
   AgencyInboundMissedReason,
   AgencyInboundRouteConfig,
+  AgencyInboundUnconnectedAction,
 } from '../../agency/inbound';
+import type { AgencyInboundErrorCode } from '../../errors';
 
 export {
   AGENCY_INBOUND_CALL_OUTCOMES,
@@ -53,6 +59,32 @@ export type {
 } from '../../agency/inbound';
 export type { AgencyInboundErrorCode } from '../../errors';
 export { AGENCY_INBOUND_ERROR_CODES } from '../../errors';
+
+/** A refusal from an inbound route. */
+export interface AgencyInboundErrorResponse {
+  /** The HTTP reason (`Bad Request`, `Conflict`, …). */
+  error: string;
+  code: AgencyInboundErrorCode;
+  /** English fallback copy; the console words each code itself. */
+  message: string;
+  /**
+   * `inbound_route_invalid`: one entry per problem, `path` in the body's own terms
+   * (`weekly_hours[2].end`, `clips.greeting`, `after_hours_action`).
+   */
+  details?: Array<{ path: string; message: string }>;
+  /** `inbound_number_not_found` / `_not_linked` / `_in_use`: the number refused. */
+  phone_number_id?: string;
+  /** `inbound_number_in_use`: the route holding it, when it is one of this account's (else absent). */
+  route_id?: string;
+}
+
+/**
+ * The unconnected actions a route may be set to in this build. `voicemail` is in the vocabulary
+ * (and the column) but needs P2's recording from our stream: until then a create or PATCH that
+ * leaves either action on `voicemail` is refused `inbound_route_invalid` at `after_hours_action`
+ * / `overflow_action`, and the console offers only these.
+ */
+export const AGENCY_INBOUND_AVAILABLE_ACTIONS: readonly AgencyInboundUnconnectedAction[] = Object.freeze(['callback']);
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
@@ -108,6 +140,47 @@ export type AgencyInboundRouteUpdateRequest =
     phone_number_ids?: string[];
   };
 
+// ─── The route editor's choices ─────────────────────────────────────────────
+
+/**
+ * One of the tenant's active numbers this account may use (untagged, or tagged to it), as the
+ * route editor offers it. A number can be put on a route only when it is `linked` (a super-admin
+ * linked it to inbound, IB6), not `held_elsewhere`, and on no other route of this account
+ * (`route_id` null or the route being edited).
+ */
+export interface AgencyInboundNumberOption {
+  phone_number_id: string;
+  /** E.164. */
+  phone_number: string;
+  /** Linked to inbound calls by the service's operators. Unlinked: "contact support" (PL15). */
+  linked: boolean;
+  /** The live route of THIS account answering it, or null. */
+  route_id: string | null;
+  route_name: string | null;
+  /** It answers a live route of another account of the tenant (an untagged number is shared). */
+  held_elsewhere: boolean;
+}
+
+export interface AgencyInboundNumbersResponse {
+  /** By number. */
+  numbers: AgencyInboundNumberOption[];
+}
+
+/** One of the account's audio files, as a clip slot offers it. */
+export interface AgencyInboundClipOption {
+  id: string;
+  name: string;
+  duration_seconds: number | null;
+}
+
+export interface AgencyInboundClipsResponse {
+  /** Newest first; at most {@link AGENCY_INBOUND_CLIPS_MAX}. */
+  clips: AgencyInboundClipOption[];
+}
+
+/** How many audio files `GET /inbound/clips` lists. */
+export const AGENCY_INBOUND_CLIPS_MAX = 200;
+
 // ─── The Missed inbound list (§7) ───────────────────────────────────────────
 
 /** One call that reached nobody. */
@@ -144,12 +217,15 @@ export interface AgencyInboundMissedCall {
 
 /**
  * `GET /inbound/missed`. Newest first, keyset paged on (`arrived_at`, `id`). `status` defaults to
- * `open`. `assignee`: `me`, `unassigned`, or a user id (supervise only). `from` / `to` bound
- * `arrived_at` (inclusive, exclusive; ISO-8601). `limit` 1–100, default 50.
+ * `open`. `assignee`: `me`, `unassigned`, or a user id (supervise only; without
+ * `agency.supervise` the list is always the caller's own and the value is ignored). `reason`
+ * narrows to one reason. `from` / `to` bound `arrived_at` (inclusive, exclusive; ISO-8601).
+ * `limit` 1–100, default 50.
  */
 export interface AgencyInboundMissedListQuery {
   status?: AgencyInboundFollowUpStatus;
   assignee?: string;
+  reason?: AgencyInboundMissedReason;
   from?: string;
   to?: string;
   cursor?: string;

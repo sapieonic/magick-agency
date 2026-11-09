@@ -1,11 +1,12 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
-import { ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneOutgoing, Search } from 'lucide-react';
+import { ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneIncoming, PhoneOutgoing, Search } from 'lucide-react';
 import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { useReportsAccess } from '../../hooks/useReportsAccess';
 import styles from './AgentNav.module.css';
 
@@ -42,6 +43,7 @@ const ICONS: Record<AgentSurfaceId, typeof ListChecks> = {
   attempts: PhoneOutgoing,
   customers: Search,
   reports: FileText,
+  missed: PhoneIncoming,
 };
 
 /**
@@ -60,6 +62,13 @@ function useRoleOrNone(): ReturnType<typeof useTenant>['role'] {
 /** Whether this caller may search customer history (`agency.customer_history.read`, CH1). */
 export function useCustomerHistoryAvailable(): boolean {
   return hasPermission(useRoleOrNone(), 'agency.customer_history.read');
+}
+
+/** Whether this caller gets "Missed calls": `agency_inbound_enabled` on for the account, and `agency.inbound.read`. */
+export function useMissedCallsAvailable(): boolean {
+  const role = useRoleOrNone();
+  const flagOn = useFeatureFlagEnabled(INBOUND_FLAG);
+  return flagOn && hasPermission(role, 'agency.inbound.read');
 }
 
 /** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
@@ -99,7 +108,8 @@ export function AgentNav({
   const reports = reportsAccess.enabled && reportsAccess.canSelf;
   const hintId = useId();
   const hint = lockedReason ? null : leaveHint;
-  const surfaces = agentSurfacesFor({ softphone, customers, reports });
+  const missed = useMissedCallsAvailable();
+  const surfaces = agentSurfacesFor({ softphone, customers, reports, missed });
   return (
     <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
       {surfaces.map((surface) => {

@@ -125,8 +125,15 @@ export interface UseSoftphoneOptions {
   frameCall: AgencyManualCall | null;
   clock: ServerClock;
   audio: SoftphoneAudio;
-  /** Log calls to this campaign by default (the station's campaign, SP7). */
+  /** Log calls to this campaign by default (the station's campaign, SP7; a Missed call's campaign). */
   presetCampaignId?: string | null;
+  /**
+   * Fill the pad with this number once the soft phone is ready, as a redial does: the Call
+   * button takes focus and nothing is dialled until the agent presses it. A Missed inbound
+   * call's Call back (`utils/softphone/prefill.ts`). Ignored while a call is live or owes its
+   * outcome, and in finish mode.
+   */
+  presetNumber?: string | null;
   /** Which host this is, for copy and analytics. */
   surface: 'softphone_page' | 'station';
   /** The agent's cue volume (0–100), for the ringback. */
@@ -321,6 +328,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     clock,
     audio,
     presetCampaignId = null,
+    presetNumber = null,
     surface,
     cueVolume = 70,
     enabled = true,
@@ -418,7 +426,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const [lastCall, setLastCall] = useState<AgencyManualCall | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [focusCallToken, setFocusCallToken] = useState(0);
-  const entryRef = useRef<'typed' | 'pasted' | 'redial'>('typed');
+  const entryRef = useRef<'typed' | 'pasted' | 'redial' | 'inbound_callback'>('typed');
   const selectionMethodRef = useRef<'number_key' | 'click'>('click');
   const presetAppliedRef = useRef(false);
 
@@ -538,6 +546,20 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     // `newest` is read for the settled copy only; the effect is keyed on the call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.id, call === null]);
+
+  // A number handed in (a Missed call's Call back), filled like a redial once the bootstrap
+  // can say whether a call is still on this soft phone, and never dialled. A call that is live
+  // or owes its outcome keeps the screen: the number waits until it settles, and is filled then.
+  // Declared after the settle effect above, which empties the pad, so it fills the emptied pad.
+  const presetNumberAppliedRef = useRef(false);
+  useEffect(() => {
+    if (presetNumberAppliedRef.current || !bootstrap || !presetNumber || finishOnly) return;
+    if (call !== null) return;
+    presetNumberAppliedRef.current = true;
+    entryRef.current = 'inbound_callback';
+    setNumberState(sanitiseDialInput(presetNumber));
+    setFocusCallToken((n) => n + 1);
+  }, [bootstrap, presetNumber, call, finishOnly]);
 
   /**
    * The field set arriving after the call (a reload where the `manual_call` frame

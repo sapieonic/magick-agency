@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router-dom';
-import { Bell, Briefcase, ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
+import { Bell, Briefcase, ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneIncoming, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import { hasPermission, type Permission } from '../../utils/permissions';
 import { useTenant } from '../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { REPORTS_FLAG } from '../../utils/reports/reportsFlag';
 import styles from './AgencySidebar.module.css';
 
@@ -98,6 +99,21 @@ const NAV_ITEMS: NavItem[] = [
     flag: 'agency_softphone_enabled',
   },
   {
+    /*
+     * Missed inbound calls (`docs/inbound.md` §7). Floored at the workspace's own floor, as
+     * Reports is: `agency.inbound.read` floors at `agent`, but a dedicated agent gets no
+     * destinations in this shell (their entry is "Missed calls" in the agent nav,
+     * `/dialer/missed`). Here a supervisor reads the account's rows and anyone else their own
+     * (the server's rule). Behind `agency_inbound_enabled`, default off.
+     */
+    label: 'Missed calls',
+    to: '/agency/inbound/missed',
+    icon: PhoneIncoming,
+    end: false,
+    permission: 'agency.campaigns.read',
+    flag: INBOUND_FLAG,
+  },
+  {
     label: 'Do Not Call',
     to: '/agency/dnc',
     icon: PhoneOff,
@@ -138,6 +154,16 @@ const NAV_ITEMS: NavItem[] = [
     flag: 'agency_softphone_enabled',
   },
   {
+    /* Leaves the shell like the soft phone's settings: the routes are a platform-zone page, and
+       the people who edit them (`agency.inbound.write`, account admins) live here. */
+    label: 'Inbound settings',
+    to: '/app/inbound',
+    icon: Settings2,
+    end: false,
+    permission: 'agency.inbound.write',
+    flag: INBOUND_FLAG,
+  },
+  {
     /* Leaves the shell like the two above: tenant admins and owners work here too, and
        adding an account (decision AA1) is a platform-zone page. */
     label: 'Accounts',
@@ -163,7 +189,8 @@ export function AgencySidebar({ onClose }: Props) {
   const { role } = useTenant();
   const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const reports = useFeatureFlagEnabled(REPORTS_FLAG);
-  const flagOn: Record<string, boolean> = { [SOFTPHONE_FLAG]: softphone, [REPORTS_FLAG]: reports };
+  const inbound = useFeatureFlagEnabled(INBOUND_FLAG);
+  const flagOn: Record<string, boolean> = { [SOFTPHONE_FLAG]: softphone, [REPORTS_FLAG]: reports, [INBOUND_FLAG]: inbound };
   const items = NAV_ITEMS.filter(
     (item) => hasPermission(role, item.permission) && (!item.flag || flagOn[item.flag] === true),
   );

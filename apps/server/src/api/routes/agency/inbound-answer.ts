@@ -1,0 +1,160 @@
+/*
+ * What the inbound internal handlers (`./inbound.ts`) answer, shared with the public routes that
+ * read it (`../proxy-agency-inbound/`): the HTTP status and body of every
+ * `AgencyInboundErrorCode`, the success envelope of the audited routes, and the console shapes
+ * of a route and a Missed inbound row. Part of `agency.routes.ts`.
+ */
+import type { FastifyReply } from 'fastify';
+import type {
+  AgencyInboundErrorCode,
+  AgencyInboundErrorResponse,
+  AgencyInboundMissedCall,
+  AgencyInboundRoute,
+  AgencyInboundRouteConfig,
+} from '@magick-agency/contracts/api/agency/inbound';
+import type { AgencyInboundMissedRow } from '../../../db/repositories/agency.repository.js';
+
+/**
+ * The HTTP status of every inbound refusal, as `errors.ts` §6 states it beside each code. A
+ * `Record` over the union, so a code added to the contract without a status here is a compile
+ * error.
+ */
+export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, number>> = {
+  inbound_disabled: 403,
+  inbound_route_invalid: 400,
+  inbound_route_not_found: 404,
+  inbound_route_name_taken: 409,
+  inbound_number_not_found: 409,
+  inbound_number_not_linked: 409,
+  inbound_number_in_use: 409,
+  inbound_missed_call_not_found: 404,
+};
+
+/** English fallback copy, British spelling. The console words each code itself. */
+const INBOUND_REFUSAL_MESSAGES: Readonly<Record<AgencyInboundErrorCode, string>> = {
+  inbound_disabled: 'Inbound calls are not turned on for this account.',
+  inbound_route_invalid: 'Some of the inbound route’s settings are invalid.',
+  inbound_route_not_found: 'Inbound route not found.',
+  inbound_route_name_taken: 'Another inbound route in this account already has that name.',
+  inbound_number_not_found: 'That number is not one of the numbers this account can use.',
+  inbound_number_not_linked: 'That number is not linked to inbound calls. Contact support to have it linked.',
+  inbound_number_in_use: 'That number already answers another inbound route.',
+  inbound_missed_call_not_found: 'Missed call not found.',
+};
+
+const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
+  400: 'Bad Request',
+  403: 'Forbidden',
+  404: 'Not Found',
+  409: 'Conflict',
+};
+
+/** A refusal: its code and the fields its body carries. */
+export type InboundRefusal =
+  | { code: Exclude<AgencyInboundErrorCode, 'inbound_route_invalid' | 'inbound_number_not_found' | 'inbound_number_not_linked' | 'inbound_number_in_use'> }
+  | { code: 'inbound_route_invalid'; details: Array<{ path: string; message: string }> }
+  | { code: 'inbound_number_not_found' | 'inbound_number_not_linked'; phone_number_id: string }
+  | { code: 'inbound_number_in_use'; phone_number_id: string; route_id?: string };
+
+/** `{ error, code, message, ...fields }` with the contract status. */
+export function inboundRefusalBody(refusal: InboundRefusal): { status: number; body: AgencyInboundErrorResponse & Record<string, unknown> } {
+  const status = INBOUND_REFUSAL_STATUS[refusal.code];
+  return {
+    status,
+    // `error` and `message` first, the refusal's own fields after; none is named either.
+    body: { error: ERROR_BY_STATUS[status] ?? 'Request Failed', message: INBOUND_REFUSAL_MESSAGES[refusal.code], ...refusal },
+  };
+}
+
+export function sendInboundRefusal(reply: FastifyReply, refusal: InboundRefusal): FastifyReply {
+  const { status, body } = inboundRefusalBody(refusal);
+  return reply.code(status).send(body);
+}
+
+// ─── The success envelope of the audited routes ─────────────────────────────
+
+/**
+ * An audited inbound handler's success body on the internal instance: the wire answer the
+ * console gets, and the facts the public layer's `platform_audit_log` row needs. The public
+ * layer sends `answer` and never forwards `audit` (the soft phone's envelope, for its reason).
+ */
+export interface InboundCoreAnswer<TAnswer, TAudit> {
+  answer: TAnswer;
+  audit: TAudit;
+}
+
+/** `POST /inbound/routes`. */
+export interface InboundRouteCreatedAudit {
+  route_id: string;
+  numbers_added: string[];
+}
+
+/** `PATCH /inbound/routes/:id`: the fields whose value changed and the numbers moved. */
+export interface InboundRouteUpdatedAudit {
+  route_id: string;
+  fields: string[];
+  numbers_added: string[];
+  numbers_removed: string[];
+}
+
+/** `DELETE /inbound/routes/:id`: the numbers it held, now detached. */
+export interface InboundRouteDeletedAudit {
+  route_id: string;
+  numbers_removed: string[];
+}
+
+/** `POST /inbound/missed/:id/handled`: whether this request marked it (false: already handled). */
+export interface InboundCallHandledAudit {
+  call_id: string;
+  changed: boolean;
+  reason: string;
+}
+
+/** Is this an envelope? Checked by the public layer, which refuses (502) a body that is not. */
+export function isInboundCoreAnswer(body: unknown): body is InboundCoreAnswer<unknown, Record<string, unknown>> {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return false;
+  const record = body as Record<string, unknown>;
+  const audit = record['audit'];
+  return 'answer' in record && audit !== null && typeof audit === 'object' && !Array.isArray(audit);
+}
+
+// ─── Console shapes ─────────────────────────────────────────────────────────
+
+/** A wire route's configuration alone: what a PATCH is judged against. */
+export function inboundRouteConfigOf(route: AgencyInboundRoute): AgencyInboundRouteConfig {
+  const { id: _id, account_id: _account, numbers: _numbers, created_at: _created, updated_at: _updated, ...config } = route;
+  return config;
+}
+
+/**
+ * A Missed inbound row as the console reads it. `assignee_name` / `handled_by_name` are the
+ * public layer's enrichment (`names`); the internal handler answers them NULL.
+ */
+export function inboundMissedToWire(row: AgencyInboundMissedRow, names: ReadonlyMap<string, string | null> = new Map()): AgencyInboundMissedCall {
+  const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
+  return {
+    id: row.id,
+    account_id: row.account_id,
+    route_id: row.route_id,
+    route_name: row.route_name,
+    from_e164: row.from_e164,
+    to_e164: row.to_e164,
+    arrived_at: iso(row.arrived_at)!,
+    // A Missed row exists only on an ended call (`ck_agency_inbound_calls_follow_up`).
+    ended_at: iso(row.ended_at)!,
+    reason: row.follow_up_reason!,
+    outcome: row.outcome!,
+    caller_dnc: row.caller_dnc,
+    matched_contact_id: row.matched_contact_id,
+    matched_campaign_id: row.matched_campaign_id,
+    matched_campaign_name: row.matched_campaign_name,
+    callback_due_at: iso(row.callback_due_at),
+    has_voicemail: row.voicemail_key !== null,
+    assignee_user_id: row.follow_up_assignee_user_id,
+    assignee_name: row.follow_up_assignee_user_id ? (names.get(row.follow_up_assignee_user_id) ?? null) : null,
+    status: row.follow_up_status!,
+    handled_by_user_id: row.handled_by_user_id,
+    handled_by_name: row.handled_by_user_id ? (names.get(row.handled_by_user_id) ?? null) : null,
+    handled_at: iso(row.handled_at),
+  };
+}

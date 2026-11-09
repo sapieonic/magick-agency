@@ -126,6 +126,18 @@ export interface AgencyInboundNumberRoute {
   route_account_may_use: boolean;
 }
 
+/** One of the route editor's number choices ({@link AgencyInboundRouteRepository.listNumberOptions}). */
+export interface AgencyInboundNumberOptionRow {
+  phone_number_id: string;
+  phone_number: string;
+  linked: boolean;
+  /** The live route of the caller's account answering it, or null. */
+  route_id: string | null;
+  route_name: string | null;
+  /** A live route of another account holds it. */
+  held_elsewhere: boolean;
+}
+
 /** Column per clip slot. */
 const CLIP_COLUMNS: Record<AgencyInboundClipSlot, keyof AgencyInboundRouteRecord & string> = {
   greeting: 'greeting_audio_id',
@@ -340,11 +352,21 @@ export class AgencyInboundRouteRepository {
     }, { pool: getPool(), client: deps.client });
   }
 
-  /** One live route of the account with its live numbers, or null. */
-  async findById(tenantId: string, accountId: string, id: string): Promise<AgencyInboundRouteWithNumbers | null> {
-    const route = await this.findRecord(tenantId, accountId, id, getPool());
+  /**
+   * One live route of the account with its live numbers, or null. On the caller's transaction
+   * with `deps.client`; `deps.lock` reads the route row `FOR UPDATE`, so a read-validate-write
+   * (a PATCH judged as the route it makes) cannot interleave with another write to the route.
+   */
+  async findById(
+    tenantId: string,
+    accountId: string,
+    id: string,
+    deps: { client?: Db; lock?: boolean } = {},
+  ): Promise<AgencyInboundRouteWithNumbers | null> {
+    const db = deps.client ?? getPool();
+    const route = await this.findRecord(tenantId, accountId, id, db, deps.lock === true);
     if (!route) return null;
-    return { ...route, numbers: (await this.numbersOf([route.id], getPool())).get(route.id) ?? [] };
+    return { ...route, numbers: (await this.numbersOf([route.id], db)).get(route.id) ?? [] };
   }
 
   /** The account's live routes, oldest first, each with its live numbers. */
@@ -487,12 +509,45 @@ export class AgencyInboundRouteRepository {
     return { ...row, route: row.route ? reviveRoute(row.route) : null };
   }
 
+  /**
+   * The route editor's choices (`GET /inbound/numbers`): every active number of the tenant the
+   * account may use (the attach rule's `usable`: assigned to the tenant, untagged or tagged to
+   * the account), by number, with whether it is linked to inbound, the live route of THIS account
+   * answering it, and whether a live route of another account holds it. Only the account's own
+   * route is named: another account's route is a boolean, never its id or name.
+   */
+  async listNumberOptions(tenantId: string, accountId: string): Promise<AgencyInboundNumberOptionRow[]> {
+    const { rows } = await getPool().query<AgencyInboundNumberOptionRow>(
+      `SELECT pn.id AS phone_number_id, pn.phone_number,
+              pn.inbound_linked_at IS NOT NULL AS linked,
+              mine.id AS route_id, mine.name AS route_name,
+              (rn.id IS NOT NULL AND mine.id IS NULL) AS held_elsewhere
+         FROM tenant_phone_assignments tpa
+         JOIN phone_numbers pn ON pn.id = tpa.phone_number_id
+         LEFT JOIN agency_inbound_route_numbers rn ON rn.phone_number_id = pn.id AND rn.detached_at IS NULL
+         LEFT JOIN agency_inbound_routes mine
+                ON mine.id = rn.route_id AND mine.tenant_id = $1::uuid AND mine.account_id = $2::uuid
+               AND mine.deleted_at IS NULL
+        WHERE tpa.tenant_id = $1::uuid AND pn.status = 'active' AND ${accountMayUseSql('tpa', '$2::uuid')}
+        ORDER BY pn.phone_number`,
+      [tenantId, accountId],
+    );
+    return rows;
+  }
+
   // ── internals ──────────────────────────────────────────────────────────────
 
-  private async findRecord(tenantId: string, accountId: string, id: string, db: Db): Promise<AgencyInboundRouteRecord | null> {
+  private async findRecord(
+    tenantId: string,
+    accountId: string,
+    id: string,
+    db: Db,
+    lock = false,
+  ): Promise<AgencyInboundRouteRecord | null> {
     const { rows } = await db.query<AgencyInboundRouteRecord>(
       `SELECT ${ROUTE_COLUMNS} FROM agency_inbound_routes r
-        WHERE r.id = $1::uuid AND r.tenant_id = $2::uuid AND r.account_id = $3::uuid AND r.deleted_at IS NULL`,
+        WHERE r.id = $1::uuid AND r.tenant_id = $2::uuid AND r.account_id = $3::uuid AND r.deleted_at IS NULL
+        ${lock ? 'FOR UPDATE OF r' : ''}`,
       [id, tenantId, accountId],
     );
     return rows[0] ?? null;

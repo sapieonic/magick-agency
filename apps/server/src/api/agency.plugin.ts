@@ -20,6 +20,8 @@ import { proxyAgencyPerformanceRoutes } from './routes/proxy-agency-performance.
 import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
 import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
 import { proxyAgencyReportsRoutes } from './routes/proxy-agency-reports.routes.js';
+import { proxyAgencyInboundRoutes } from './routes/proxy-agency-inbound.routes.js';
+import { inboundRefusalBody } from './routes/agency/inbound-answer.js';
 import { reportRenderedWebhookRoutes } from './routes/webhooks/report-rendered.js';
 import { agencyConfigSchema } from '../config/blocks/agency.js';
 import type { AgencyCampaignRouteDeps } from './routes/agency-campaigns.routes.js';
@@ -174,6 +176,21 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
       { onlyUnder: `${P.proxyAgency}/sessions/` },
     ));
     await scope.register(proxyAgencySoftphoneRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── Inbound calls (`proxy-agency-inbound.routes.ts`, docs/inbound.md §7, §8.1) ──────
+  await app.register(async (scope) => {
+    // A malformed id is the not-found answer an unknown one gets (never a `22P02`): a route's
+    // `inbound_route_not_found`, a Missed row's `inbound_missed_call_not_found`.
+    scope.addHook('preHandler', rejectMalformedIdParams(
+      { id: inboundRefusalBody({ code: 'inbound_route_not_found' }) },
+      { onlyUnder: `${P.proxyAgency}/inbound/routes/` },
+    ));
+    scope.addHook('preHandler', rejectMalformedIdParams(
+      { id: inboundRefusalBody({ code: 'inbound_missed_call_not_found' }) },
+      { onlyUnder: `${P.proxyAgency}/inbound/missed/` },
+    ));
+    await scope.register(proxyAgencyInboundRoutes, { prefix: P.proxyAgency });
   });
 
   // ── Call-analysis profiles ─────────────────────────────────────────────────────────

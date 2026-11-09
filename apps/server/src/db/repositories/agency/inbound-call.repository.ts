@@ -142,6 +142,8 @@ export interface AgencyInboundMissedListInput {
   status: AgencyInboundFollowUpStatus;
   /** One assignee's rows, or the unassigned ones; absent: everyone's. */
   assignee?: { userId: string } | 'unassigned';
+  /** One reason's rows (`follow_up_reason`); absent: every reason. */
+  reason?: AgencyInboundMissedReason;
   /** Bounds on `arrived_at`: inclusive start, exclusive end. */
   from?: Date;
   to?: Date;
@@ -359,6 +361,7 @@ export class AgencyInboundCallRepository {
     ];
     if (input.assignee === 'unassigned') conditions.push('c.follow_up_assignee_user_id IS NULL');
     else if (input.assignee) conditions.push(`c.follow_up_assignee_user_id = ${bind.add(input.assignee.userId)}::uuid`);
+    if (input.reason) conditions.push(`c.follow_up_reason = ${bind.add(input.reason)}::varchar`);
     if (input.from) conditions.push(`c.arrived_at >= ${bind.add(input.from)}::timestamptz`);
     if (input.to) conditions.push(`c.arrived_at < ${bind.add(input.to)}::timestamptz`);
     if (input.after) conditions.push(keysetCondition(input.after, 'c', bind, 'arrived_at'));

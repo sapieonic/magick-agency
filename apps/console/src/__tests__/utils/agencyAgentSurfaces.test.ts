@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AGENT_SURFACES, agentSurfaceAt } from '../../utils/agencyAgentSurfaces';
+import { AGENT_SURFACES, MISSED_SURFACE, agentSurfaceAt, agentSurfacesFor } from '../../utils/agencyAgentSurfaces';
 import { STATION_HISTORY_LINKS } from '../../utils/agencyStationExit';
 
 /**
@@ -48,6 +48,16 @@ describe('AGENT_SURFACES', () => {
     for (const surface of AGENT_SURFACES) {
       expect(surface.label, surface.id).toMatch(/^My /);
     }
+  });
+});
+
+describe('Missed calls in the agent’s map', () => {
+  it('appears only when inbound is on for them, after the soft phone its Call back opens', () => {
+    expect(agentSurfacesFor({ softphone: false, missed: false })).toBe(AGENT_SURFACES);
+    expect(agentSurfacesFor({ softphone: false, missed: true }).map((s) => s.id)).toEqual(['campaigns', 'missed', 'performance', 'attempts']);
+    expect(agentSurfacesFor({ softphone: true, missed: true, customers: true }).map((s) => s.id))
+      .toEqual(['campaigns', 'phone', 'missed', 'performance', 'attempts', 'customers']);
+    expect(MISSED_SURFACE).toEqual({ id: 'missed', to: '/dialer/missed', label: 'Missed calls' });
   });
 });
 

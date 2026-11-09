@@ -97,6 +97,12 @@ const AgentReportsPage = lazy(() =>
 const AgentReportRunPage = lazy(() =>
   import('./pages/agency/ReportRunPage').then((m) => ({ default: m.AgentReportRunPage })),
 );
+const MissedCallsPage = lazy(() => import('./pages/agency/MissedCallsPage'));
+const AgentMissedCallsPage = lazy(() =>
+  import('./pages/agency/MissedCallsPage').then((m) => ({ default: m.AgentMissedCallsPage })),
+);
+const InboundRoutesPage = lazy(() => import('./pages/settings/InboundRoutesPage'));
+const InboundRouteEditorPage = lazy(() => import('./pages/settings/InboundRouteEditorPage'));
 
 export default function App() {
   return (
@@ -509,6 +515,27 @@ export default function App() {
                     </RequireAuth>
                   }
                 />
+                {/*
+                  `/dialer/missed` — a dedicated agent's Missed calls (`docs/inbound.md` §7):
+                  the inbound calls left to them, with Call back and Mark handled. The same
+                  page as `/agency/inbound/missed`, in the agent's own frame. Gated as its
+                  siblings; the page reads `agency_inbound_enabled` and
+                  `agency.inbound.read` itself and is unavailable without either.
+                */}
+                <Route
+                  path="/dialer/missed"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          <ProductSurface product="agency">
+                            <AgentMissedCallsPage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
+                />
                 {/* The Agency workspace — its own shell, same auth tree.
                     Gated once here rather than per-route: `AgencyLayout` renders
                     nothing but agency surfaces, so a per-child gate would repeat
@@ -674,6 +701,12 @@ export default function App() {
                     path="campaigns/:id/manual-calls"
                     element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
                   />
+                  {/* Missed inbound calls (`docs/inbound.md` §7): the account's for a supervisor,
+                      the caller's own otherwise (the server's rule). Behind `agency_inbound_enabled`. */}
+                  <Route
+                    path="inbound/missed"
+                    element={<RequireFlag flag="agency_inbound_enabled"><MissedCallsPage /></RequireFlag>}
+                  />
                 </Route>
 
                 {/*
@@ -708,6 +741,11 @@ export default function App() {
                   <Route path="call-summaries" element={<RequireCapability capability="agency.analytics"><RequireFlag flag="agency_call_analysis"><AnalysisProfilesPage /></RequireFlag></RequireCapability>} />
                   {/* Settings → Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
                   <Route path="softphone" element={<RequireCapability capability="agency"><RequireFlag flag="agency_softphone_enabled"><SoftphoneSettingsPage /></RequireFlag></RequireCapability>} />
+                  {/* Settings → Inbound calls (`docs/inbound.md` §8.1): the account's routes. Account
+                      admins (`agency.inbound.write`, which the pages check) behind `agency_inbound_enabled`. */}
+                  <Route path="inbound" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRoutesPage /></RequireFlag></RequireCapability>} />
+                  <Route path="inbound/new" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRouteEditorPage /></RequireFlag></RequireCapability>} />
+                  <Route path="inbound/:routeId" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRouteEditorPage /></RequireFlag></RequireCapability>} />
                 </Route>
 
                 <Route path="*" element={<Navigate to="/app" replace />} />

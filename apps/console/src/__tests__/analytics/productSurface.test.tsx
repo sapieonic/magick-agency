@@ -218,6 +218,8 @@ describe('who calls it', () => {
     // outside the agency shell for the same reason.
     'AgentReportsPage',
     'AgentReportRunPage',
+    // `/dialer/missed`, a dedicated agent's missed inbound calls, for the same reason.
+    'AgentMissedCallsPage',
     'AgencyJoinPage',
   ];
 

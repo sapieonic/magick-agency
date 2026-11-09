@@ -1,0 +1,357 @@
+/*
+ * Inbound calls' internal handlers (docs/inbound.md §7, §8.1), on the internal handler instance
+ * under `/api/v1/agency` (decision B16): the account's inbound routes (list, read, create,
+ * change, delete), the route editor's choices (numbers, clips), and the Missed inbound list with
+ * Mark handled. Part of `agency.routes.ts`, inside its authenticated scope.
+ *
+ * The public routes (`../proxy-agency-inbound.routes.ts`) own RBAC, the `agency_inbound_enabled`
+ * flag, the actor, name enrichment and the audit rows; these handlers own validation, the
+ * account-scoped reference checks, the repository writes and the refusal mapping
+ * (`./inbound-answer.ts`). Every read and write names the request's tenant and account.
+ *
+ * ── Validation, in order ───────────────────────────────────────────────────────
+ *  1. The body's shape and bounds (`agency/inbound/route-config.ts`; a PATCH is merged onto the
+ *     stored route and judged whole, read `FOR UPDATE` in the write's transaction, so two PATCHes
+ *     cannot each pass the cross-field rules and together break them).
+ *  2. This build's actions: `voicemail` needs P2 (recording from our stream), so a route left
+ *     on it is refused at `after_hours_action` / `overflow_action`
+ *     (`AGENCY_INBOUND_AVAILABLE_ACTIONS`).
+ *  3. References the table cannot check: each clip is one of the ACCOUNT's audio files (the
+ *     clips' FK names `audio_files` with no tenant: without this an id from another tenant
+ *     would play their recording to our caller, the campaign abandon clip's rule), the analysis
+ *     profile is an active profile of the account, and every pool campaign is the account's.
+ *     A PATCH checks only the references it sets.
+ *  4. Numbers (`phone_number_ids`, the route's whole set), by the repository's attach rule.
+ * All of 1–3 answer `inbound_route_invalid` with `{ path, message }` per problem; the writes of
+ * one request are one transaction, so a refused number leaves nothing written.
+ *
+ * The actor arrives on the query (`?actor_user_id=`, and `?supervise=true` on the Missed routes),
+ * never the body: the route body is strict and is the configuration alone.
+ */
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import {
+  AGENCY_INBOUND_AVAILABLE_ACTIONS,
+  AGENCY_INBOUND_CLIP_SLOTS,
+  AGENCY_INBOUND_CLIPS_MAX,
+  type AgencyInboundClipsResponse,
+  type AgencyInboundMissedPage,
+  type AgencyInboundNumbersResponse,
+  type AgencyInboundRouteConfig,
+  type AgencyInboundRouteResponse,
+  type AgencyInboundRoutesResponse,
+} from '@magick-agency/contracts/api/agency/inbound';
+import { getPool } from '@magick-agency/db';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
+import { audioFileRepository } from '@magick-agency/db/repositories/audio-file.repository';
+import { callAnalysisProfileRepository } from '@magick-agency/db/repositories/call-analysis-profile.repository';
+import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
+import {
+  agencyCampaignRepository,
+  agencyInboundCallRepository,
+  agencyInboundRouteRepository,
+  inboundRouteToWire,
+  type AgencyInboundAttachRefusal,
+} from '../../../db/repositories/agency.repository.js';
+import {
+  parseInboundRouteCreate,
+  parseInboundRouteUpdate,
+  type InboundRouteIssue,
+} from '../../../agency/inbound/route-config.js';
+import { UUID_RE } from '../../../utils/uuid.js';
+import { readKeysetCursor } from '../helpers/read-cursor.js';
+import { replyValidationFailed } from '../helpers/parse-or-400.js';
+import { INBOUND_MISSED_DEFAULT_LIMIT, inboundMissedQuerySchema } from '../helpers/inbound-missed-query.js';
+import {
+  inboundMissedToWire,
+  inboundRouteConfigOf,
+  sendInboundRefusal,
+  type InboundCallHandledAudit,
+  type InboundCoreAnswer,
+  type InboundRefusal,
+  type InboundRouteCreatedAudit,
+  type InboundRouteDeletedAudit,
+  type InboundRouteUpdatedAudit,
+} from './inbound-answer.js';
+
+interface InboundActor {
+  tenantId: string;
+  accountId: string;
+  userId: string;
+  /** The caller's role holds `agency.supervise` (derived by the public layer, never a body). */
+  supervise: boolean;
+}
+
+/** The query's actor, or the 400 `missing_actor` (unreachable behind the public layer). */
+function queryActor(request: FastifyRequest, reply: FastifyReply): InboundActor | null {
+  const query = (request.query ?? {}) as { actor_user_id?: unknown; supervise?: unknown };
+  const userId = typeof query.actor_user_id === 'string' ? query.actor_user_id : '';
+  if (!UUID_RE.test(userId)) {
+    void reply.code(400).send({
+      error: 'Bad Request', code: 'missing_actor', message: 'This action must be attributed to a user.',
+    });
+    return null;
+  }
+  return { tenantId: getTenantId(request), accountId: getAccountId(request), userId, supervise: query.supervise === 'true' };
+}
+
+function answer<TAnswer, TAudit>(reply: FastifyReply, status: number, body: TAnswer, audit: TAudit): FastifyReply {
+  const envelope: InboundCoreAnswer<TAnswer, TAudit> = { answer: body, audit };
+  return reply.code(status).send(envelope);
+}
+
+/** A route `:id`: a malformed one is the same 404 as an unknown one (never a `22P02`). */
+function routeIdOr404(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): string | null {
+  const id = request.params.id;
+  if (UUID_RE.test(id)) return id.toLowerCase();
+  sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
+  return null;
+}
+
+// ─── Validation past the shape ──────────────────────────────────────────────
+
+const ACTION_FIELDS = ['after_hours_action', 'overflow_action'] as const;
+
+/** Step 2 of the module note: `voicemail` is refused until P2 can record one. */
+export function unavailableActionIssues(config: Pick<AgencyInboundRouteConfig, 'after_hours_action' | 'overflow_action'>): InboundRouteIssue[] {
+  return ACTION_FIELDS
+    .filter((field) => !AGENCY_INBOUND_AVAILABLE_ACTIONS.includes(config[field]))
+    .map((field) => ({
+      path: field,
+      message: `${field} cannot be ${config[field]} yet: a call that reaches nobody gets a callback follow-up.`,
+    }));
+}
+
+/** Step 3 of the module note, for the references `fields` names (a create: all of them). */
+async function referenceIssues(
+  fields: { clips?: Partial<AgencyInboundRouteConfig['clips']>; analysis_profile_id?: string | null; pool_campaign_ids?: string[] },
+  tenantId: string,
+  accountId: string,
+): Promise<InboundRouteIssue[]> {
+  const issues: InboundRouteIssue[] = [];
+  for (const slot of AGENCY_INBOUND_CLIP_SLOTS) {
+    const id = fields.clips?.[slot];
+    if (!id) continue;
+    if (!await audioFileRepository.findByIdScoped(id, tenantId, accountId)) {
+      issues.push({ path: `clips.${slot}`, message: `clips.${slot} must be one of this account's audio files.` });
+    }
+  }
+  if (fields.analysis_profile_id) {
+    if (!await callAnalysisProfileRepository.findByIdScoped(fields.analysis_profile_id, tenantId, accountId)) {
+      issues.push({ path: 'analysis_profile_id', message: 'analysis_profile_id must be an active profile of this account.' });
+    }
+  }
+  const pool = fields.pool_campaign_ids ?? [];
+  if (pool.length > 0) {
+    const owned = new Set((await agencyCampaignRepository.findOwnedSummaries(pool, tenantId, accountId)).map((c) => c.id));
+    pool.forEach((id, i) => {
+      if (!owned.has(id)) issues.push({ path: `pool_campaign_ids[${i}]`, message: 'Each pool campaign must be one of this account\'s campaigns.' });
+    });
+  }
+  return issues;
+}
+
+/** A number the repository refused, as the contract's refusal. The holder is named only when it is this account's route. */
+async function numberRefusal(refusal: AgencyInboundAttachRefusal, tenantId: string, accountId: string): Promise<InboundRefusal> {
+  switch (refusal.reason) {
+    case 'route_not_found':
+      return { code: 'inbound_route_not_found' };
+    case 'number_not_found':
+      return { code: 'inbound_number_not_found', phone_number_id: refusal.phoneNumberId };
+    case 'number_not_linked':
+      return { code: 'inbound_number_not_linked', phone_number_id: refusal.phoneNumberId };
+    case 'number_in_use': {
+      const ours = refusal.routeId && await agencyInboundRouteRepository.findById(tenantId, accountId, refusal.routeId);
+      return { code: 'inbound_number_in_use', phone_number_id: refusal.phoneNumberId, ...(ours ? { route_id: refusal.routeId } : {}) };
+    }
+  }
+}
+
+type WriteOutcome<T> = { ok: true; value: T } | { ok: false; refusal: InboundRefusal };
+
+// ─── The routes ─────────────────────────────────────────────────────────────
+
+export async function registerInboundRoutes(sub: FastifyInstance): Promise<void> {
+  // ── GET /inbound/routes — the account's live routes, oldest first ─────────
+  sub.get('/inbound/routes', async (request, reply) => {
+    const routes = await agencyInboundRouteRepository.listForAccount(getTenantId(request), getAccountId(request));
+    const body: AgencyInboundRoutesResponse = { routes: routes.map(inboundRouteToWire) };
+    return reply.send(body);
+  });
+
+  // ── GET /inbound/routes/:id ───────────────────────────────────────────────
+  sub.get<{ Params: { id: string } }>('/inbound/routes/:id', async (request, reply) => {
+    const id = routeIdOr404(request, reply);
+    if (!id) return reply;
+    const route = await agencyInboundRouteRepository.findById(getTenantId(request), getAccountId(request), id);
+    if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
+    const body: AgencyInboundRouteResponse = { route: inboundRouteToWire(route) };
+    return reply.send(body);
+  });
+
+  // ── POST /inbound/routes — create, with its numbers, in one transaction ───
+  sub.post('/inbound/routes', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    const parsed = parseInboundRouteCreate(request.body);
+    if (!parsed.ok) return sendInboundRefusal(reply, { code: 'inbound_route_invalid', details: parsed.issues });
+    const issues = [
+      ...unavailableActionIssues(parsed.config),
+      ...await referenceIssues(parsed.config, actor.tenantId, actor.accountId),
+    ];
+    if (issues.length > 0) return sendInboundRefusal(reply, { code: 'inbound_route_invalid', details: issues });
+
+    const out = await withTransaction<WriteOutcome<{ routeId: string; added: string[] }>>(async (client, tx) => {
+      const created = await agencyInboundRouteRepository.create(
+        { tenantId: actor.tenantId, accountId: actor.accountId, createdBy: actor.userId, config: parsed.config },
+        { client },
+      );
+      if (!created.ok) {
+        await tx.rollback();
+        return { ok: false, refusal: { code: 'inbound_route_name_taken' } };
+      }
+      let added: string[] = [];
+      if (parsed.phoneNumberIds && parsed.phoneNumberIds.length > 0) {
+        const set = await agencyInboundRouteRepository.setNumbers({
+          tenantId: actor.tenantId, accountId: actor.accountId, routeId: created.route.id,
+          phoneNumberIds: parsed.phoneNumberIds, userId: actor.userId,
+        }, { client });
+        if (!set.ok) {
+          await tx.rollback();
+          return { ok: false, refusal: await numberRefusal(set, actor.tenantId, actor.accountId) };
+        }
+        added = set.added;
+      }
+      return { ok: true, value: { routeId: created.route.id, added } };
+    }, { pool: getPool() });
+    if (!out.ok) return sendInboundRefusal(reply, out.refusal);
+
+    const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, out.value.routeId);
+    if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
+    const audit: InboundRouteCreatedAudit = { route_id: route.id, numbers_added: out.value.added };
+    return answer<AgencyInboundRouteResponse, InboundRouteCreatedAudit>(reply, 201, { route: inboundRouteToWire(route) }, audit);
+  });
+
+  // ── PATCH /inbound/routes/:id — judged as the route it makes ──────────────
+  sub.patch<{ Params: { id: string } }>('/inbound/routes/:id', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    const id = routeIdOr404(request, reply);
+    if (!id) return reply;
+
+    const out = await withTransaction<WriteOutcome<InboundRouteUpdatedAudit>>(async (client, tx) => {
+      const refuse = async (refusal: InboundRefusal): Promise<WriteOutcome<InboundRouteUpdatedAudit>> => {
+        await tx.rollback();
+        return { ok: false, refusal };
+      };
+      const current = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, id, { client, lock: true });
+      if (!current) return refuse({ code: 'inbound_route_not_found' });
+      const parsed = parseInboundRouteUpdate(request.body, inboundRouteConfigOf(inboundRouteToWire(current)));
+      if (!parsed.ok) return refuse({ code: 'inbound_route_invalid', details: parsed.issues });
+      const issues = [
+        ...unavailableActionIssues(parsed.config),
+        ...await referenceIssues(parsed.patch, actor.tenantId, actor.accountId),
+      ];
+      if (issues.length > 0) return refuse({ code: 'inbound_route_invalid', details: issues });
+
+      let added: string[] = [];
+      let removed: string[] = [];
+      if (parsed.phoneNumberIds !== undefined) {
+        const set = await agencyInboundRouteRepository.setNumbers({
+          tenantId: actor.tenantId, accountId: actor.accountId, routeId: id,
+          phoneNumberIds: parsed.phoneNumberIds, userId: actor.userId,
+        }, { client });
+        if (!set.ok) return refuse(await numberRefusal(set, actor.tenantId, actor.accountId));
+        added = set.added;
+        removed = set.removed;
+      }
+      // Last of the writes: a rename onto a taken name is a 23505 that aborts the transaction
+      // (the repository answers it `name_taken`), after which only the rollback may run.
+      if (parsed.changed.length > 0) {
+        const updated = await agencyInboundRouteRepository.update(actor.tenantId, actor.accountId, id, parsed.patch, actor.userId, { client });
+        if (!updated.ok) return refuse({ code: updated.reason === 'name_taken' ? 'inbound_route_name_taken' : 'inbound_route_not_found' });
+      }
+      return { ok: true, value: { route_id: id, fields: parsed.changed, numbers_added: added, numbers_removed: removed } };
+    }, { pool: getPool() });
+    if (!out.ok) return sendInboundRefusal(reply, out.refusal);
+
+    const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, id);
+    if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
+    return answer<AgencyInboundRouteResponse, InboundRouteUpdatedAudit>(reply, 200, { route: inboundRouteToWire(route) }, out.value);
+  });
+
+  // ── DELETE /inbound/routes/:id — soft delete; its numbers are detached ────
+  sub.delete<{ Params: { id: string } }>('/inbound/routes/:id', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    const id = routeIdOr404(request, reply);
+    if (!id) return reply;
+    const deleted = await agencyInboundRouteRepository.softDelete(actor.tenantId, actor.accountId, id, actor.userId);
+    if (!deleted) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
+    const audit: InboundRouteDeletedAudit = { route_id: id, numbers_removed: deleted.detachedPhoneNumberIds };
+    return answer(reply, 200, null, audit);
+  });
+
+  // ── GET /inbound/numbers — the route editor's number choices ──────────────
+  sub.get('/inbound/numbers', async (request, reply) => {
+    const numbers = await agencyInboundRouteRepository.listNumberOptions(getTenantId(request), getAccountId(request));
+    const body: AgencyInboundNumbersResponse = { numbers };
+    return reply.send(body);
+  });
+
+  // ── GET /inbound/clips — the account's audio files, for the clip slots ────
+  sub.get('/inbound/clips', async (request, reply) => {
+    const { rows } = await audioFileRepository.listByTenant(getTenantId(request), getAccountId(request), AGENCY_INBOUND_CLIPS_MAX, 0);
+    const body: AgencyInboundClipsResponse = {
+      clips: rows.map((f) => ({ id: f.id, name: f.name, duration_seconds: f.duration_seconds ?? null })),
+    };
+    return reply.send(body);
+  });
+
+  // ── GET /inbound/missed — the Missed inbound list ─────────────────────────
+  sub.get('/inbound/missed', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    const parsed = inboundMissedQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) return replyValidationFailed(reply, parsed.error.flatten());
+    const after = readKeysetCursor(request, reply);
+    if (after === null) return reply;
+    const q = parsed.data;
+    // Without `agency.supervise` the list is the caller's own, whatever was asked (§8.1).
+    const assignee = !actor.supervise || q.assignee === 'me'
+      ? { userId: actor.userId }
+      : q.assignee === 'unassigned' ? 'unassigned' as const
+        : q.assignee ? { userId: q.assignee.toLowerCase() } : undefined;
+    const limit = q.limit ?? INBOUND_MISSED_DEFAULT_LIMIT;
+    const page = await agencyInboundCallRepository.listMissed({
+      tenantId: actor.tenantId,
+      accountId: actor.accountId,
+      status: q.status ?? 'open',
+      ...(assignee ? { assignee } : {}),
+      ...(q.reason ? { reason: q.reason } : {}),
+      ...(q.from ? { from: new Date(q.from) } : {}),
+      ...(q.to ? { to: new Date(q.to) } : {}),
+      ...(after ? { after } : {}),
+      limit,
+    });
+    const body: AgencyInboundMissedPage = { rows: page.rows.map((row) => inboundMissedToWire(row)), next_cursor: page.next_cursor, limit: page.limit };
+    return reply.send(body);
+  });
+
+  // ── POST /inbound/missed/:id/handled — idempotent ─────────────────────────
+  sub.post<{ Params: { id: string } }>('/inbound/missed/:id/handled', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    if (!UUID_RE.test(request.params.id)) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    const marked = await agencyInboundCallRepository.markHandled({
+      tenantId: actor.tenantId,
+      accountId: actor.accountId,
+      id: request.params.id,
+      userId: actor.userId,
+      // An agent marks only the rows assigned to them; another's answers as missing.
+      ...(actor.supervise ? {} : { onlyAssignee: actor.userId }),
+    });
+    if (!marked) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    const audit: InboundCallHandledAudit = { call_id: marked.call.id, changed: marked.changed, reason: marked.call.follow_up_reason! };
+    return answer(reply, 200, { call: inboundMissedToWire(marked.call) }, audit);
+  });
+}

@@ -247,6 +247,7 @@ export {
 export type {
   AgencyInboundAttachRefusal,
   AgencyInboundDetachReason,
+  AgencyInboundNumberOptionRow,
   AgencyInboundNumberRoute,
   AgencyInboundRouteNumberRow,
   AgencyInboundRoutePatch,

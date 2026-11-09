@@ -36,7 +36,7 @@
  * same agent. Reaching the chooser is what Leave is for.
  */
 
-export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts' | 'phone' | 'customers' | 'reports';
+export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts' | 'phone' | 'customers' | 'reports' | 'missed';
 
 export interface AgentSurface {
   id: AgentSurfaceId;
@@ -95,18 +95,30 @@ export const CUSTOMERS_SURFACE: AgentSurface = { id: 'customers', to: '/dialer/c
 export const REPORTS_SURFACE: AgentSurface = { id: 'reports', to: '/dialer/reports', label: 'My reports' };
 
 /**
+ * "Missed calls" (`docs/inbound.md` §7): the inbound calls that reached nobody and were left
+ * to the agent (their sticky customer rang), with Call back and Mark handled. Behind the
+ * `agency_inbound_enabled` flag and `agency.inbound.read` (floored at `agent`), so kept out of
+ * {@link AGENT_SURFACES}; after the soft phone, which its Call back opens, since it is work to
+ * do rather than a history.
+ */
+export const MISSED_SURFACE: AgentSurface = { id: 'missed', to: '/dialer/missed', label: 'Missed calls' };
+
+/**
  * The agent's screens for this account: the three, plus the soft phone when it is on
- * for them, plus their reports when reports are on, plus customer history when they
- * may search.
+ * for them, plus their missed inbound calls when inbound is on, plus their reports when
+ * reports are on, plus customer history when they may search.
  */
 export function agentSurfacesFor(options: {
   softphone: boolean;
   customers?: boolean;
   reports?: boolean;
+  missed?: boolean;
 }): readonly AgentSurface[] {
-  const base = options.softphone
-    ? [AGENT_SURFACES[0]!, SOFTPHONE_SURFACE, ...AGENT_SURFACES.slice(1)]
-    : AGENT_SURFACES;
+  const tools = [
+    ...(options.softphone ? [SOFTPHONE_SURFACE] : []),
+    ...(options.missed ? [MISSED_SURFACE] : []),
+  ];
+  const base = tools.length > 0 ? [AGENT_SURFACES[0]!, ...tools, ...AGENT_SURFACES.slice(1)] : AGENT_SURFACES;
   if (!options.customers && !options.reports) return base;
   return [...base, ...(options.reports ? [REPORTS_SURFACE] : []), ...(options.customers ? [CUSTOMERS_SURFACE] : [])];
 }

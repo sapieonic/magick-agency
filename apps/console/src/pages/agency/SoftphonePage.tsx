@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { useTenant } from '../../contexts/TenantContext';
@@ -19,6 +19,7 @@ import { useSoftphone } from '../../hooks/useSoftphone';
 import { hasPermission } from '../../utils/permissions';
 import { audioTarget } from '../../utils/softphone/audioTarget';
 import { refusalCopy } from '../../utils/softphone/refusalCopy';
+import { readSoftphonePrefill } from '../../utils/softphone/prefill';
 import { closeSoftphoneSession } from './softphone/closeSoftphoneSession';
 import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
 import { readCuePrefs } from '../../utils/agencyCuePrefs';
@@ -145,6 +146,9 @@ function SoftphoneConsole({
   user: ReturnType<typeof useAuth>['user'];
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  // A Missed inbound call's Call back (`utils/softphone/prefill.ts`): read once, at open.
+  const [prefill] = useState(() => readSoftphonePrefill(location.state));
   const audio = useAgencyAudio();
   const stationState = useAgencyStation(socket, {
     tenantId: tenantId ?? undefined,
@@ -233,6 +237,8 @@ function SoftphoneConsole({
     surface: 'softphone_page',
     cueVolume,
     startAllowed,
+    presetNumber: prefill?.number ?? null,
+    presetCampaignId: prefill?.campaignId ?? null,
   });
 
   const [closeOpen, setCloseOpen] = useState(false);
