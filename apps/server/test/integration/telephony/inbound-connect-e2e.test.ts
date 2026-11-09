@@ -42,7 +42,7 @@ import {
   ACCOUNT, CALLER_ID, PLIVO_E2E_ENV, TENANT, closePlivoDb, initPlivoDb, startPlivoRig, waitFor, type PlivoRig,
 } from './plivo-rig.js';
 import {
-  CALLER_E164, agentTalks, agentUser, callerScript, callers, campaign, contact, finish, framesOf, goAvailable, inboundCalls, joinAgent,
+  CALLER_E164, agentTalks, agentUser, busyAgent, callerScript, callers, campaign, contact, finish, framesOf, goAvailable, inboundCalls, joinAgent,
   liveOf, ring, setRoute, spineOf, spineWhen, startInboundWorld, stateFrames, type InboundWorld,
 } from './inbound-connect-rig.js';
 import type { PlivoCall } from '../../mocks/plivo/index.js';
@@ -296,6 +296,7 @@ describe('inbound P2: the queue (§5.1, §5.2)', () => {
 
   it('4b. max_waiting: a caller over it with nobody free overflows at once; 4c. the maximum wait overflows a waiting caller', async () => {
     await setRoute(world, { max_waiting: 1, queue_max_wait_seconds: 10, sticky_wait_seconds: 5 });
+    await busyAgent(world, await campaign(world)); // someone who could take a caller later: callers wait (PM-M6)
     const waiting = ring(world, callerScript(() => false), '447700900301');
     await spineWhen(waiting, 'first queued', (r) => r.state === 'queued');
     const over = ring(world, callerScript(() => false), '447700900302');
@@ -313,6 +314,7 @@ describe('inbound P2: the queue (§5.1, §5.2)', () => {
     const campaignId = await campaign(world);
     const a = await joinAgent(world, campaignId, { available: false });
     const b = await joinAgent(world, campaignId, { available: false });
+    await busyAgent(world, campaignId); // on a call throughout: the callers wait for someone (PM-M6)
     await dialable(campaignId, 5);
     const calls = [ring(world, callerScript(() => false), '447700900401'), ring(world, callerScript(() => false), '447700900402')];
     for (const c of calls) await spineWhen(c, 'queued', (r) => r.state === 'queued');
@@ -487,6 +489,8 @@ describe('inbound P2: restart, recording, concurrency', () => {
 
   it('11. concurrency: over the route`s max_concurrent the caller hears busy (overflow_no_capacity); a caller over the ACCOUNT`s limit is still put through (IB5)', async () => {
     await setRoute(world, { max_concurrent: 1, max_waiting: 1, record_calls: true });
+    const campaignId = await campaign(world);
+    await busyAgent(world, campaignId); // someone who could take a caller later: callers wait (PM-M6)
     const first = ring(world, callerScript(() => false), '447700901101');
     const queued = await spineWhen(first, 'first queued', (r) => r.state === 'queued');
     expect(queued.recording_requested).toBe(true);
@@ -509,7 +513,6 @@ describe('inbound P2: restart, recording, concurrency', () => {
     await spineWhen(third, 'third queued', (r) => r.state === 'queued');
     expect(await accept.mock.results.at(-1)!.value).toMatchObject({ accepted: true, capacity: 'account_full' });
     accept.mockRestore();
-    const campaignId = await campaign(world);
     const a = await joinAgent(world, campaignId);
     const b = await joinAgent(world, campaignId);
     const connected = await spineWhen(third, 'third connected', (r) => r.state === 'connected');
@@ -527,6 +530,7 @@ describe('inbound P2: restart, recording, concurrency', () => {
       connect: { runtime, enabled: async () => true, mediaWorkers: 0 },
     });
     try {
+      await busyAgent(world, await campaign(world)); // someone who could take a caller later: the caller waits (PM-M6)
       const call = ring(world, callerScript(() => false), '447700901201');
       const queued = await spineWhen(call, 'queued', (r) => r.state === 'queued');
       expect(restarted.router.liveCallIds()).toEqual([queued.id]);

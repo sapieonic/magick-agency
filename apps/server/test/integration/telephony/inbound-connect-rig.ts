@@ -171,6 +171,17 @@ export async function joinAgent(world: InboundWorld, campaignId: string, opts: {
   return agent;
 }
 
+/**
+ * An agent on a call as the connector sees them (`on_call` in Redis, on a real station): someone
+ * who could take a caller once that call ends, so callers wait for them instead of being
+ * overflowed at once for want of anyone who ever could (PM-M6). Never offered a caller here.
+ */
+export async function busyAgent(world: InboundWorld, campaignId: string): Promise<FleetAgent> {
+  const agent = await joinAgent(world, campaignId, { available: false });
+  await getAgencyRuntime()!.agents.set(agent.sessionId, 'on_call', { leaseMs: 120_000 });
+  return agent;
+}
+
 /** `available` as the agent's button writes it (the release path: a waiting caller first). */
 export async function goAvailable(agent: FleetAgent): Promise<void> {
   const runtime = getAgencyRuntime()!;
