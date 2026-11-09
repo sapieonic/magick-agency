@@ -1212,12 +1212,15 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 `test-env.ts` (the per-worktree test database and Redis db), the Vitest decorator transform, and the guard over the release-please setup (B24): `release-please-config.json` and `.release-please-manifest.json` at the root, `.github/workflows/release-please.yml` and `pr-title.yml`. See [`operations.md`](operations.md), "Releases and versioning".
 
+`ci-scope.mjs` picks what a pull request's CI runs from its diff, and its guard holds the rules to the files each package's suites read outside the package ([`operations.md`](operations.md), "What CI runs").
+
 `contracts-literals.mjs` regenerates `packages/contracts/fixtures/agent/literals.json`, the literal unions the agent app switches on (38 vocabularies), and with `--check` fails when it is stale ([`mobile.md`](mobile.md), "Wire types").
 
-Files: `contracts-literals.mjs`, `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
+Files: `ci-scope.mjs`, `ci-scope.test.mjs`, `contracts-literals.mjs`, `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
 
 | Test file | Cases |
 |---|---|
+| `tooling/ci-scope.test.mjs` (`pnpm test:tooling`, node:test) | 16 |
 | `tooling/release-please.test.mjs` (`pnpm test:release`, node:test) | 10 |
 
 ## `packages/contracts`

@@ -8,7 +8,7 @@ name: Mobile
 # docs/customer-history.md), or when it carries the `full-ci` label. The pull request trigger
 # has no path filter because a path filter cannot be lifted by a label; the scope job decides,
 # and the jobs it skips report as skipped under their own names. Pushes to main keep the
-# path filter.
+# path filter. Adding any label starts a new run (only `full-ci` widens it); see ci.yml.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
@@ -31,7 +31,7 @@ env:
 
 jobs:
   changes:
-    name: Scope
+    name: Mobile scope
     runs-on: ubuntu-latest
     outputs:
       mobile: ${{ steps.scope.outputs.mobile }}
@@ -60,12 +60,15 @@ jobs:
   analyze-test:
     name: Analyze, test, contract drift
     needs: changes
-    if: needs.changes.outputs.mobile == 'true'
+    # Runs (and fails) when the scope job failed: a skipped job would read as passing.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mobile == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/mobile
     steps:
+      - if: needs.changes.result != 'success'
+        run: echo "::error::The Mobile scope job did not succeed." && exit 1
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:

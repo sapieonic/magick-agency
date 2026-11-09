@@ -7,7 +7,12 @@ name: CI
 #
 # Job names never change with the scope, and the integration matrix is never skipped as a
 # whole: a skipped matrix job reports one check under its unexpanded name, which leaves a
-# required "Integration (db)" check waiting forever. Its steps are skipped instead.
+# required "Integration (db)" check waiting forever. Its steps are skipped instead. Every job
+# after the scope fails when the scope job failed: a skipped job counts as passing for a
+# required check, so a broken scope must not skip its way to green.
+#
+# Adding any label starts a new run (only `full-ci` widens it): skipping the run for other
+# labels would report the checks as skipped, which reads as passing over an earlier failure.
 
 on:
   pull_request:
@@ -25,7 +30,7 @@ concurrency:
 
 jobs:
   changes:
-    name: Scope
+    name: CI scope
     runs-on: ubuntu-latest
     outputs:
       full: ${{ steps.scope.outputs.full }}
@@ -63,10 +68,13 @@ jobs:
   lint-test:
     name: Lint, unit tests, build
     needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     env:
       FILTERS: ${{ needs.changes.outputs.filters }}
     steps:
+      - if: needs.changes.result != 'success'
+        run: echo "::error::The CI scope job did not succeed, so nothing here can be trusted to pass." && exit 1
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -105,6 +113,7 @@ jobs:
   integration:
     name: Integration (${{ matrix.section }})
     needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -123,10 +132,11 @@ jobs:
             dir: apps/server
             lane: wall-clock
     env:
-      IN_SCOPE: ${{ fromJSON(needs.changes.outputs.integration)[matrix.scope] }}
+      IN_SCOPE: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] }}
+    # An empty image starts no service container: a lane out of scope does not pay for them.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] && 'postgres:16-alpine' || '' }}
         env:
           POSTGRES_DB: magick_agency_test
           POSTGRES_USER: magick_agency
@@ -137,12 +147,14 @@ jobs:
           --health-cmd "pg_isready -U magick_agency -d magick_agency_test"
           --health-interval 2s --health-timeout 5s --health-retries 20
       redis:
-        image: redis:7-alpine
+        image: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] && 'redis:7-alpine' || '' }}
         ports: ['6383:6379']
         options: >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 5s --health-retries 10
     steps:
-      - if: env.IN_SCOPE != 'true'
+      - if: needs.changes.result != 'success'
+        run: echo "::error::The CI scope job did not succeed, so this lane cannot be skipped as out of scope." && exit 1
+      - if: needs.changes.result == 'success' && env.IN_SCOPE != 'true'
         run: echo "No backend change in scope; add the full-ci label to run this lane."
       - if: env.IN_SCOPE == 'true'
         uses: actions/checkout@v4

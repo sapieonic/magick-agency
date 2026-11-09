@@ -13,7 +13,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 
 import {
-  GLOBAL_FILES, READ_BY, SERVER_REPO_GUARDS, computeScope, readWorkspace, root,
+  GLOBAL_FILES, READ_BY, SERVER_REPO_GUARDS, computeScope, readWorkspace, root, ruleCovers,
 } from './ci-scope.mjs';
 
 const workspace = readWorkspace();
@@ -87,6 +87,14 @@ test('tooling the suites import counts as a change to those packages', () => {
   assert.deepEqual(scope('apps/server/test/fixtures/console-paths.json').packages, ['apps/console', 'apps/server']);
 });
 
+test("files that another package's suites read pull that package in", () => {
+  // saRoutes.test.ts holds SA_ROUTES to the server's super-admin routes.
+  assert.deepEqual(scope('apps/server/src/api/routes/super-admin/tenants.ts').packages, ['apps/server', 'apps/super-admin']);
+  // brandAssets.test.ts holds the super-admin artwork to the console's.
+  assert.deepEqual(scope('apps/console/brands/magick-agency/public/logo.svg').packages, ['apps/console', 'apps/super-admin']);
+  assert.deepEqual(scope('apps/server/src/agency/pacing.ts').packages, ['apps/server'], 'other server source does not');
+});
+
 test('docker/ runs the server packaging guards, not the server suite', () => {
   const s = scope('docker/nginx.conf');
   assert.deepEqual(s.packages, []);
@@ -94,6 +102,7 @@ test('docker/ runs the server packaging guards, not the server suite', () => {
 });
 
 test('a shared root file, or a full run, runs everything', () => {
+  for (const f of ['.github/workflows/ci.yml', 'tooling/ci-scope.mjs']) assert.ok(GLOBAL_FILES.has(f), `${f} is proved by a full run`);
   for (const f of GLOBAL_FILES) {
     const s = scope(f);
     assert.equal(s.full, true, f);
@@ -114,6 +123,9 @@ test('release-please and grafana checks run on their inputs only', () => {
   assert.equal(scope('apps/mobile/pubspec.yaml').release, true);
   assert.equal(scope('apps/console/src/x.ts').release, false);
   assert.equal(scope('grafana/terraform/alerting.tf').grafana, true);
+  // The stray-instrument scan reads every package's src, not only observability's.
+  assert.equal(scope('packages/db/src/pool.ts').grafana, true);
+  assert.equal(scope('packages/db/test/pool.test.ts').grafana, false);
   assert.equal(scope('apps/console/src/x.ts').grafana, false);
 });
 
@@ -129,33 +141,70 @@ test('every server repository guard exists', () => {
   for (const f of SERVER_REPO_GUARDS) assert.ok(existsSync(join(root, 'apps/server', f)), f);
 });
 
-/** Relative-path literals (`'../x'`) in a package's code, tests and config. */
-function* relativeLiterals(dir) {
+/** Every file of a package that can read another (code, tests, config), skipping build output. */
+function* sourceFiles(dir) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (['node_modules', 'dist', 'coverage', 'build'].includes(e.name) || e.name.startsWith('.')) continue;
     const p = join(dir, e.name);
-    if (e.isDirectory()) yield* relativeLiterals(p);
-    else if (/\.(m?[jt]sx?|mts|json)$/.test(e.name)) {
-      for (const m of readFileSync(p, 'utf8').matchAll(/['"`]((?:\.\.\/)+[^'"`$\s]*)/g)) yield { file: p, literal: m[1] };
-    }
+    if (e.isDirectory()) yield* sourceFiles(p);
+    else if (/\.(m?[jt]sx?|mts|json)$/.test(e.name)) yield p;
   }
+}
+
+/**
+ * The paths a file names relative to itself or to its package, each as the absolute paths it
+ * may mean:
+ * - a `'../x'` literal (an import, `new URL(...)`, a tsconfig `extends`), from the file's folder;
+ * - `join(base, '..', 'x', ...)` or `resolve(...)` with literal segments: from the file's folder
+ *   when `base` is `__dirname`, from the package when it is `process.cwd()` (suites run from
+ *   inside the package), and from either for any other name (a root the file computed).
+ */
+function* namedPaths(file, pkgDir) {
+  const text = readFileSync(file, 'utf8');
+  for (const m of text.matchAll(/['"`]((?:\.\.\/)+[^'"`$\s]*)/g)) {
+    yield { literal: m[1], candidates: [resolve(dirname(file), m[1])] };
+  }
+  for (const m of text.matchAll(/\b(?:join|resolve)\(\s*(process\.cwd\(\)|[A-Za-z_$][\w$]*)\s*((?:,\s*'[^'\n]*'\s*)+),?\s*\)/g)) {
+    const segments = [...m[2].matchAll(/'([^'\n]*)'/g)].map((s) => s[1]);
+    if (!segments.includes('..')) continue;
+    const bases = m[1] === '__dirname' ? [dirname(file)] : m[1] === 'process.cwd()' ? [pkgDir] : [dirname(file), pkgDir];
+    yield { literal: m[0], candidates: bases.map((b) => resolve(b, ...segments)) };
+  }
+}
+
+/** The file a named path means, reading a TypeScript `.js` import specifier as its source; or null. */
+function onDisk(abs) {
+  if (existsSync(abs)) return abs;
+  const swaps = { '.js': ['.ts', '.tsx'], '.mjs': ['.mts'], '.jsx': ['.tsx'] };
+  for (const [ext, to] of Object.entries(swaps)) {
+    if (!abs.endsWith(ext)) continue;
+    const found = to.map((t) => abs.slice(0, -ext.length) + t).find((f) => existsSync(f));
+    if (found) return found;
+  }
+  return null;
 }
 
 test('every file outside a package that the package reads is tied to it by the scope', () => {
   const problems = [];
   for (const pkg of workspace) {
+    const pkgDir = join(root, pkg.path);
     const deps = workspace.filter((p) => pkg.deps.includes(p.name)).map((p) => p.path);
-    for (const { file, literal } of relativeLiterals(join(root, pkg.path))) {
-      const abs = resolve(dirname(file), literal);
-      const target = relative(root, abs);
-      if (target === pkg.path || target.startsWith(`${pkg.path}/`)) continue; // inside the package
-      if (target.startsWith('..') || !existsSync(abs)) continue; // not a repository file (a fixture string)
-      if (deps.some((d) => target === d || target.startsWith(`${d}/`))) continue; // a dependency: its changes reach here
-      if (GLOBAL_FILES.has(target)) continue; // runs everything
-      if (READ_BY.some((r) => (target.startsWith(r.prefix) || r.prefix.startsWith(target)) && r.packages.includes(pkg.path))) continue;
-      const own = relative(join(root, pkg.path), file);
-      if (pkg.path === 'apps/server' && SERVER_REPO_GUARDS.includes(own)) continue; // runs on every pull request
-      problems.push(`${pkg.path}/${own} reads ${target || '(the repository root)'} via '${literal}'`);
+    for (const file of sourceFiles(pkgDir)) {
+      const own = relative(pkgDir, file);
+      for (const { literal, candidates } of namedPaths(file, pkgDir)) {
+        for (const named of candidates) {
+          const abs = onDisk(named);
+          if (!abs) continue; // not a file (a fixture string, or a candidate base that does not apply)
+          const target = relative(root, abs);
+          if (target === pkg.path || target.startsWith(`${pkg.path}/`)) continue; // inside the package
+          if (target.startsWith('..')) continue; // outside the repository
+          if (deps.some((d) => target === d || target.startsWith(`${d}/`))) continue; // a dependency: its changes reach here
+          if (GLOBAL_FILES.has(target)) continue; // runs everything
+          if (READ_BY.some((r) => ruleCovers(r, target) && r.packages.includes(pkg.path))) continue;
+          if (pkg.path === 'apps/server' && SERVER_REPO_GUARDS.includes(own)) continue; // runs on every pull request
+          problems.push(`${pkg.path}/${own} reads ${target || '(the repository root)'} via ${literal}`);
+        }
+      }
     }
   }
   assert.deepEqual(problems, [], `reads the CI scope does not know about (add a READ_BY rule or a server repository guard):\n  ${problems.join('\n  ')}`);

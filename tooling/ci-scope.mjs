@@ -25,8 +25,10 @@ export const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const FULL_LABEL = 'full-ci';
 
 /**
- * Files every package builds or installs from: a change to one runs everything.
- * (pnpm-workspace.yaml can add or drop a package; the lockfile moves every dependency.)
+ * Files every package builds or installs from, and CI's own definition: a change to one runs
+ * everything in CI. (pnpm-workspace.yaml can add or drop a package; the lockfile moves every
+ * dependency; a change to ci.yml or to the scope rules is proved by the full run, not by a
+ * scope it may itself have narrowed.)
  */
 export const GLOBAL_FILES = new Set([
   'package.json',
@@ -35,13 +37,15 @@ export const GLOBAL_FILES = new Set([
   'tsconfig.base.json',
   '.npmrc',
   '.nvmrc',
+  '.github/workflows/ci.yml',
+  'tooling/ci-scope.mjs',
 ]);
 
 /**
  * Files outside a package that a package's own suites read: changing one counts as changing
  * the package (so it reaches the integration lanes too, when the package is a backend one).
- * Found by resolving every `../` literal in each package to a path outside it
- * (tooling/ci-scope.test.mjs keeps the server's list honest).
+ * tooling/ci-scope.test.mjs finds these reads in every package and fails on one not listed
+ * here, in GLOBAL_FILES, in a dependency or in SERVER_REPO_GUARDS.
  */
 export const READ_BY = [
   { prefix: 'tooling/test-env.ts', packages: ['packages/db', 'apps/server'] },
@@ -49,7 +53,14 @@ export const READ_BY = [
   { prefix: 'tooling/contracts-literals.', packages: ['packages/contracts'] },
   // insightsDrilldowns.test.tsx holds the console to the server's drill-down fixture.
   { prefix: 'apps/server/test/fixtures/', packages: ['apps/console'] },
+  // saRoutes.test.ts holds SA_ROUTES to the server's super-admin route files, both ways.
+  { prefix: 'apps/server/src/api/routes/', packages: ['apps/super-admin'] },
+  // brandAssets.test.ts holds the super-admin logo and favicon to the console's, byte for byte.
+  { prefix: 'apps/console/brands/', packages: ['apps/super-admin'] },
 ];
+
+/** Whether a READ_BY rule covers a path (a directory read matches a rule for that directory). */
+export const ruleCovers = (rule, path) => path.startsWith(rule.prefix) || `${path}/` === rule.prefix;
 
 /**
  * Server unit tests that read files outside the server and its dependencies: the web UIs'
@@ -82,8 +93,15 @@ export const MOBILE_PREFIXES = [
   '.github/workflows/mobile.yml',
 ];
 
-/** `pnpm test:grafana` reads grafana/, the metric declarations and the server's OTel setup. */
-const GRAFANA_PREFIXES = ['grafana/', 'packages/observability/', 'apps/server/src/'];
+/**
+ * `pnpm test:grafana` reads grafana/, the metric declarations and the server's OTel setup, and
+ * scans `apps/server/src` and every `packages/<name>/src` for a stray instrument.
+ */
+const isGrafanaInput = (f) =>
+  f.startsWith('grafana/')
+  || f.startsWith('apps/server/src/')
+  || /^packages\/[^/]+\/src\//.test(f)
+  || f.startsWith('packages/observability/');
 
 /** `pnpm test:release` reads the release-please config, the manifest and every version. */
 const isReleaseInput = (f) =>
@@ -160,7 +178,7 @@ export function computeScope({ files, full = false, workspace }) {
   for (const f of files) {
     const owner = all.find((p) => f.startsWith(`${p}/`));
     if (owner && !isProse(f)) changed.add(owner);
-    for (const rule of READ_BY) if (f.startsWith(rule.prefix)) rule.packages.forEach((p) => changed.add(p));
+    for (const rule of READ_BY) if (ruleCovers(rule, f)) rule.packages.forEach((p) => changed.add(p));
   }
 
   // Every package that depends on one of them, transitively.
@@ -184,7 +202,7 @@ export function computeScope({ files, full = false, workspace }) {
     names: workspace.filter((p) => affected.has(p.path)).map((p) => p.name),
     integration: { db: affected.has(INTEGRATION.db), server: affected.has(INTEGRATION.server) },
     serverGuards: files.length > 0 && !affected.has(INTEGRATION.server),
-    grafana: files.some((f) => GRAFANA_PREFIXES.some((p) => f.startsWith(p))),
+    grafana: files.some(isGrafanaInput),
     release: files.some(isReleaseInput),
     mobile,
   };

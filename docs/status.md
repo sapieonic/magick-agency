@@ -1357,6 +1357,7 @@ inside each package (integration not re-run: neither change touches SQL):
 | `apps/super-admin` | 423 |
 | `grafana` (`pnpm test:grafana`) | 31 |
 | `tooling` (`pnpm test:release`) | 10 |
+| `tooling` (`pnpm test:tooling`) | 16 |
 
 `pnpm lint`: clean in 8 packages.
 
