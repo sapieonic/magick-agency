@@ -313,13 +313,15 @@ describe('a settle never moves an agent off a break, or out of offline, into the
   it('the give-back when the spine cannot be read: on break (fails closed), never available', async () => {
     const s = await agent();
     await owed(s, 60);
-    const read = vi.spyOn(calls, 'findUnsettledForSession').mockRejectedValueOnce(new Error('pool exhausted'));
-    await caller();
+    // Every read fails while this runs (a retry through the release hook would only meet it again).
+    const read = vi.spyOn(calls, 'findUnsettledForSession').mockRejectedValue(new Error('pool exhausted'));
+    const next = await caller();
     await until('the give-back', async () => (await agents.get(s))?.state === 'break');
     await connector.drain();
     expect(read).toHaveBeenCalled();
     expect(await agents.get(s)).toMatchObject({ state: 'break' });
     expect(stateFrames(s)).not.toContain('available');
+    expect((await row(next.id)).state).toBe('queued');
   });
 });
 
