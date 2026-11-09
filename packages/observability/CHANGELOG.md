@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.8.0...observability-v0.9.0) (2026-11-09)
+
+
+### Features
+
+* **server,console,report-renderer,contracts,db,web-ui,observability:** agent, campaign and account reports as PDF and Excel ([#60](https://github.com/sapieonic/magick-agency/issues/60)) ([9506c81](https://github.com/sapieonic/magick-agency/commit/9506c81f33fae5a8d0ce56fb885b63857fa462c3))
+
 ## [0.8.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.7.0...observability-v0.8.0) (2026-11-07)
 
 
