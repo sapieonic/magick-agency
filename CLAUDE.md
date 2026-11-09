@@ -107,8 +107,11 @@ docker build -f docker/web.Dockerfile -t magick-agency-web .     # nginx + both 
 The mobile app builds with Flutter, not pnpm: see `apps/mobile/CLAUDE.md`.
 
 CI: `.github/workflows/ci.yml` (lint, unit, grafana, release guard, build; integration as three
-parallel jobs: db, server, server wall-clock), `mobile.yml` (path-filtered on `apps/mobile`,
+parallel jobs: db, server, server wall-clock), `mobile.yml` (on `apps/mobile`,
 `packages/contracts`, the literal extractor and the number rule the Dart port mirrors), `pr-title.yml`, `release-please.yml`.
+On a pull request both run only what the diff reaches (`tooling/ci-scope.mjs`, `pnpm test:tooling`;
+`docs/operations.md` "What CI runs"); the `full-ci` label runs everything. A test that reads files
+outside its package needs a `READ_BY` rule or a server repository guard there, or `test:tooling` fails.
 
 The repo's `.mcp.json` adds the Grafana Cloud MCP server (stack `sapieonic`) for live metrics,
 logs and alerts.

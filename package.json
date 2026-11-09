@@ -12,6 +12,7 @@
     "test:integration": "pnpm -r --workspace-concurrency=1 run test:integration",
     "test:grafana": "node --test grafana/scripts/validate-alerts.test.mjs grafana/scripts/validate-dashboard.test.mjs",
     "test:release": "node --test tooling/release-please.test.mjs",
+    "test:tooling": "node --test tooling/ci-scope.test.mjs",
     "build": "pnpm -r run build",
     "infra:up": "docker compose -f docker/docker-compose.dev.yml up -d --wait",
     "infra:down": "docker compose -f docker/docker-compose.dev.yml down",
