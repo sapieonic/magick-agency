@@ -55,12 +55,12 @@ output "server_private_ip" {
 }
 
 output "server_security_group_id" {
-  description = "The VM's security group. Allow TCP 5432 from it on the database's security group."
+  description = "The VM's security group."
   value       = one(aws_security_group.server[*].id)
 }
 
 output "server_availability_zone" {
-  description = "The instance's AZ. Put the RDS instance in the same AZ (or Multi-AZ) to keep latency and cross-AZ traffic down."
+  description = "The instance's availability zone."
   value       = one(aws_instance.server[*].availability_zone)
 }
 
@@ -91,18 +91,54 @@ output "report_renderer_live_version" {
   value       = one(aws_lambda_alias.report_renderer_live[*].function_version)
 }
 
-# The reports lines for the server's env, ready to append like server_env. The fourth,
-# AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL), is set by hand. The secret is
-# single-quoted so dotenv and Docker Compose read `$`, `#` and `"` literally; a single quote has
-# no escape inside single quotes, so var.reports_callback_secret refuses one (variables.tf), and
-# refuses leading or trailing whitespace, which the server refuses too.
+# The reports lines for the server's env that are not secret, ready to append like server_env,
+# and a comment line saying where the secret comes from (dotenv and Compose skip `#` lines).
+# AGENCY_REPORTS_CALLBACK_BASE_URL (the server's public base URL) is set by hand.
 output "reports_server_env" {
-  description = "Reports settings for the server's .env, including the callback secret (empty when enable_reports is false)."
-  sensitive   = true
+  description = "Reports settings for the server's .env, without the callback secret: a comment line says how to read it from SSM (empty when enable_reports is false)."
   value = var.enable_reports ? join("\n", [
     "AGENCY_REPORTS_RENDERER=sqs",
     "AGENCY_REPORTS_SQS_QUEUE_URL=${aws_sqs_queue.report_jobs[0].url}",
-    "AGENCY_REPORTS_CALLBACK_SECRET='${var.reports_callback_secret == null ? "" : var.reports_callback_secret}'",
     "AGENCY_REPORTS_RENDER_TIMEOUT_MS=${var.reports_render_timeout_seconds * 1000}",
+    "# AGENCY_REPORTS_CALLBACK_SECRET is in SSM (${local.reports_ssm_names["AGENCY_REPORTS_CALLBACK_SECRET"]}): sh -c \"$(terraform output -raw reports_callback_secret_env_command)\" prints its line",
   ]) : ""
+}
+
+output "reports_callback_secret_parameter" {
+  description = "SSM parameter (SecureString) holding AGENCY_REPORTS_CALLBACK_SECRET, the current generation."
+  value       = lookup(local.reports_ssm_names, "AGENCY_REPORTS_CALLBACK_SECRET", null)
+}
+
+output "reports_callback_secret_previous_parameter" {
+  description = "SSM parameter holding the generation before, for AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS during a rotation (null before the first rotation)."
+  value       = lookup(local.reports_ssm_names, "AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS", null)
+}
+
+# Which secret the function signs with, without printing it: compare with the server's
+# `printf %s "$AGENCY_REPORTS_CALLBACK_SECRET" | sha256sum` when callbacks are refused.
+output "reports_callback_secret_signing_sha256" {
+  description = "SHA-256 (hex) of the callback secret the function signs with (null when enable_reports is false)."
+  value       = var.enable_reports ? nonsensitive(sha256(aws_lambda_function.report_renderer[0].environment[0].variables.AGENCY_REPORTS_CALLBACK_SECRET)) : null
+}
+
+# A shell command that reads the secret from SSM and prints its .env line, single-quoted (the
+# generated value is letters and digits, so nothing inside needs escaping). Run it where you apply
+# (it needs the AWS CLI and ssm:GetParameter), then put its line(s) in the server's env IN PLACE of
+# any existing ones: dotenv takes the last copy of a key.
+#   sh -c "$(terraform output -raw reports_callback_secret_env_command)"
+# While a rotation has the Lambda signing with the old generation it prints a second line,
+# AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS, so the server accepts both (aws/README.md, "Rotating
+# the callback secret"). A failed or empty read prints nothing and exits 1, never an empty line.
+output "reports_callback_secret_env_command" {
+  description = "Shell command that prints the server's AGENCY_REPORTS_CALLBACK_SECRET line (and, mid-rotation, AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS) from SSM (empty when enable_reports is false)."
+  value = join("\n", [
+    for key, name in local.reports_ssm_names :
+    "v=$(aws ssm get-parameter --region ${var.region}${var.aws_profile == null ? "" : " --profile ${var.aws_profile}"} --name ${name} --with-decryption --query Parameter.Value --output text) && [ -n \"$v\" ] && printf \"${key}='%s'\\n\" \"$v\" || { echo 'could not read ${name} from SSM' >&2; exit 1; }"
+    if key == "AGENCY_REPORTS_CALLBACK_SECRET" || var.reports_callback_secret_sign_with_previous
+  ])
+}
+
+locals {
+  # The server's env key → the SSM parameter holding it (empty when enable_reports is false).
+  reports_ssm_names = { for key, p in aws_ssm_parameter.reports_callback_secret : key => p.name }
 }

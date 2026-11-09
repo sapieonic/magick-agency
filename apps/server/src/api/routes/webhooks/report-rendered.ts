@@ -7,7 +7,9 @@
  *     exact bytes: `x-mgkvc-report-signature` = hex HMAC-SHA256 with
  *     `AGENCY_REPORTS_CALLBACK_SECRET` of `${x-mgkvc-report-timestamp}.${rawBody}`, the timestamp
  *     within ±300 s (`verifyReportCallback`, constant-time). Else 401 `bad_signature`. With no
- *     secret configured (the inline renderer posts nothing) every callback is refused.
+ *     secret configured (the inline renderer posts nothing) every callback is refused. During a
+ *     secret rotation `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS` verifies too, and each callback
+ *     it verifies is logged, so the operator sees when it is no longer needed.
  *  2. The body is a `ReportRenderCallback` (zod), else 400 `invalid`.
  *  3. `applyRenderOutcome` (`agency/reports/apply.ts`), the one path every render result takes:
  *     each file key must be the run's own output key (a callback cannot point a run at another
@@ -58,6 +60,8 @@ const callbackSchema = z.object({
 export interface ReportRenderedWebhookOptions {
   /** `AGENCY_REPORTS_CALLBACK_SECRET`; undefined refuses every callback. */
   callbackSecret: string | undefined;
+  /** `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS`: also accepted, during a rotation. */
+  previousCallbackSecret?: string | undefined;
   /** `AGENCY_REPORTS_RETENTION_DAYS`. */
   retentionDays: number;
   /** Tests: the apply path and the clock. */
@@ -83,6 +87,7 @@ export async function reportRenderedWebhookRoutes(app: FastifyInstance, opts: Re
     const rawBody = (request as RawRequest).rawBody ?? '';
     const check = verifyReportCallback({
       secret: opts.callbackSecret,
+      previousSecret: opts.previousCallbackSecret,
       timestamp: request.headers[REPORT_TIMESTAMP_HEADER],
       signature: request.headers[REPORT_SIGNATURE_HEADER],
       rawBody,
@@ -92,6 +97,9 @@ export async function reportRenderedWebhookRoutes(app: FastifyInstance, opts: Re
       agencyReportsCallbacksTotal.inc({ result: 'bad_signature' });
       log.warn({ reason: check.reason, ip: request.ip }, 'Report render callback refused: bad signature');
       return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid callback signature.' });
+    }
+    if (check.secret === 'previous') {
+      log.info({ ip: request.ip }, 'Report render callback signed with AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS (a rotation in progress)');
     }
 
     let json: unknown;

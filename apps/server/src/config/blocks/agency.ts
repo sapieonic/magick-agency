@@ -54,6 +54,12 @@ const customerHistorySchema = z.object({
  *    (`S3_AUDIO_BUCKET`) must be set ({@link agencyCrossBlockIssues}): boot fails otherwise,
  *    rather than queueing runs nothing can ever finish. The secret is never trimmed: leading or
  *    trailing whitespace fails boot.
+ *  - `callbackSecretPrevious` (`AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS`, optional): a second
+ *    secret the webhook also accepts, never signs with. It exists for a rotation (aws/README.md,
+ *    "Rotating the callback secret"): the server takes the new secret while still accepting the
+ *    old one, so callbacks from renders that started before the Lambda switched still verify.
+ *    Same rules as the secret (as written, no outer whitespace, at least 32 characters under
+ *    `sqs`). Remove it once the rotation is done.
  *  - `chromePath` (`AGENCY_REPORTS_CHROME_PATH`): Chromium for `inline` (else the renderer's own
  *    discovery).
  *  - `maxDetailRows` (`AGENCY_REPORTS_MAX_DETAIL_ROWS`, 100,000): a detail sheet's row cap (RP12).
@@ -83,6 +89,7 @@ const reportsSchema = z.object({
   sqsQueueUrl: optionalText,
   callbackBaseUrl: optionalText,
   callbackSecret: untrimmedOptionalText,
+  callbackSecretPrevious: untrimmedOptionalText,
   chromePath: optionalText,
   maxDetailRows: z.coerce.number().int().min(1).max(1_000_000).default(100_000),
   assemblerIntervalMs: z.coerce.number().int().min(250).max(600_000).default(2_000),
@@ -93,13 +100,16 @@ const reportsSchema = z.object({
   tenantPendingLimit: z.coerce.number().int().min(1).max(1000).default(5),
   userPerMinute: z.coerce.number().int().min(1).max(1000).default(3),
 }).superRefine((data, ctx) => {
-  if (data.callbackSecret !== undefined && data.callbackSecret !== data.callbackSecret.trim()) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['callbackSecret'],
-      message: 'AGENCY_REPORTS_CALLBACK_SECRET has leading or trailing whitespace: remove it here and in the renderer\'s copy '
-        + '(the callback is signed with the value exactly as written)',
-    });
+  for (const [key, env] of [['callbackSecret', 'AGENCY_REPORTS_CALLBACK_SECRET'], ['callbackSecretPrevious', 'AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS']] as const) {
+    const value = data[key];
+    if (value !== undefined && value !== value.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${env} has leading or trailing whitespace: remove it here and in the renderer's copy `
+          + '(the callback is signed with the value exactly as written)',
+      });
+    }
   }
   if (data.renderer !== 'sqs') return;
   if (data.sqsQueueUrl === undefined || !/^https:\/\/\S+$/.test(data.sqsQueueUrl)) {
@@ -123,6 +133,13 @@ const reportsSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['callbackSecret'],
       message: `AGENCY_REPORTS_RENDERER=sqs needs AGENCY_REPORTS_CALLBACK_SECRET of at least ${REPORTS_CALLBACK_SECRET_MIN_LENGTH} characters`,
+    });
+  }
+  if (data.callbackSecretPrevious !== undefined && data.callbackSecretPrevious.length < REPORTS_CALLBACK_SECRET_MIN_LENGTH) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['callbackSecretPrevious'],
+      message: `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS must be at least ${REPORTS_CALLBACK_SECRET_MIN_LENGTH} characters, like the secret`,
     });
   }
 }).transform((data) => ({
@@ -182,6 +199,7 @@ export function readAgencyEnv(env: Env): Record<string, unknown> {
         sqsQueueUrl: env['AGENCY_REPORTS_SQS_QUEUE_URL'],
         callbackBaseUrl: env['AGENCY_REPORTS_CALLBACK_BASE_URL'],
         callbackSecret: env['AGENCY_REPORTS_CALLBACK_SECRET'],
+        callbackSecretPrevious: env['AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS'],
         chromePath: env['AGENCY_REPORTS_CHROME_PATH'],
         maxDetailRows: env['AGENCY_REPORTS_MAX_DETAIL_ROWS'],
         assemblerIntervalMs: env['AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS'],

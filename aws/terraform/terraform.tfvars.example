@@ -29,12 +29,15 @@ environment = "dev-manas" # must equal the workspace name
 # enable_instance_connect = false    # true: SSH from the console's "EC2 Instance Connect" tab
 
 # Reports (reports.tf): off unless enable_reports = true. aws/README.md, "Reports".
-# enable_reports                     = false
-# report_renderer_zip                = "../../apps/report-renderer/dist/report-renderer-lambda.zip"
-# report_renderer_handler            = "index.handler"
-# report_renderer_chromium_layer_arn = null   # arn:aws:lambda:<region>:<account>:layer:<name>:<version>
-# reports_callback_secret            = null   # 32+ chars; the server's AGENCY_REPORTS_CALLBACK_SECRET
-# report_renderer_live_version       = null   # an older version number rolls `live` back
-# reports_render_timeout_seconds     = 900    # the server's AGENCY_REPORTS_RENDER_TIMEOUT_MS / 1000; >= 900
-# report_retention_days              = 90     # = the server's AGENCY_REPORTS_RETENTION_DAYS
-# report_renderer_log_retention_days = 30
+# enable_reports = true is all it needs: the plan builds the renderer's zip from this checkout,
+# fetches the Chromium layer (checksum pinned) and the apply generates the callback secret in SSM.
+# enable_reports                             = false
+# report_renderer_zip                        = null   # a prebuilt zip instead of building one
+# report_renderer_handler                    = "index.handler"
+# report_renderer_chromium_layer_arn         = null   # an existing layer instead of publishing one
+# reports_callback_secret_generation         = 1      # +1 rotates the secret (aws/README.md, "Rotating the callback secret")
+# reports_callback_secret_sign_with_previous = false  # mid-rotation only: the Lambda keeps the old secret
+# report_renderer_live_version               = null   # an older version number rolls `live` back
+# reports_render_timeout_seconds             = 900    # the server's AGENCY_REPORTS_RENDER_TIMEOUT_MS / 1000; >= 900
+# report_retention_days                      = 90     # = the server's AGENCY_REPORTS_RETENTION_DAYS
+# report_renderer_log_retention_days         = 30
