@@ -323,3 +323,60 @@ describe('PacedAudioStreamer', () => {
     expect(streamer.sentFrames).toBe(0);
   });
 });
+
+describe('PacedAudioStreamer — loop (the inbound hold)', () => {
+  it('replays the buffer pass after pass on the same schedule, until abort()', async () => {
+    const clock = fakeClock();
+    const streamer = new PacedAudioStreamer({ frameBytes: 160, frameMs: 20, nowMs: clock.nowMs, sleep: clock.sleep, loop: true });
+    const audio = Buffer.concat([Buffer.alloc(160, 1), Buffer.alloc(160, 2), Buffer.alloc(80, 3)]);
+    const sink = collectingSink({
+      send: (p: string) => {
+        sink.frames.push(p);
+        if (sink.frames.length === 8) streamer.abort();
+      },
+    });
+
+    expect(await streamer.stream(audio, sink)).toBe('aborted');
+    const sizes = sink.frames.map((f) => Buffer.from(f, 'base64'));
+    // 1, 2, 3(partial), then from the top again: the seam is the next frame slot.
+    expect(sizes.map((b) => b[0])).toEqual([1, 2, 3, 1, 2, 3, 1, 2]);
+    expect(sizes.map((b) => b.length)).toEqual([160, 160, 80, 160, 160, 80, 160, 160]);
+    // Every frame on its 20 ms slot, across the seams: no gap, no burst.
+    for (const s of clock.sleeps) expect(s).toBeCloseTo(20, 5);
+    expect(clock.sleeps).toHaveLength(8);
+  });
+
+  it('stops promptly when the sink closes', async () => {
+    const clock = fakeClock();
+    const streamer = new PacedAudioStreamer({ frameBytes: 160, frameMs: 20, nowMs: clock.nowMs, sleep: clock.sleep, loop: true });
+    let open = true;
+    const sink = collectingSink({ isOpen: () => open });
+    const done = streamer.stream(Buffer.alloc(160), sink);
+    // The fake sleep resolves at once: close after a few passes from inside send.
+    sink.send = (p: string) => { sink.frames.push(p); if (sink.frames.length === 5) open = false; };
+    expect(await done).toBe('aborted');
+    expect(sink.frames.length).toBe(5);
+  });
+
+  it('maxDurationMs bounds each pass, not the loop: a healthy loop runs past it, a stalled pass is cut', async () => {
+    const clock = fakeClock();
+    // A 3-frame (60 ms) buffer with a 100 ms per-pass budget: ten passes is 600 ms, well past 100.
+    const healthy = new PacedAudioStreamer({ frameBytes: 160, frameMs: 20, nowMs: clock.nowMs, sleep: clock.sleep, loop: true, maxDurationMs: 100 });
+    const sink = collectingSink({
+      send: (p: string) => { sink.frames.push(p); if (sink.frames.length === 30) healthy.abort(); },
+    });
+    expect(await healthy.stream(Buffer.alloc(480), sink)).toBe('aborted');
+    expect(sink.frames).toHaveLength(30);
+
+    // A sink whose buffer never drains: the pass deadline ends it.
+    const stalledClock = fakeClock();
+    const stalled = new PacedAudioStreamer({
+      frameBytes: 160, frameMs: 20, nowMs: stalledClock.nowMs, sleep: stalledClock.sleep, loop: true, maxDurationMs: 100,
+    });
+    const full = collectingSink({ bufferedAmount: () => 1_000_000 });
+    expect(await stalled.stream(Buffer.alloc(480), full)).toBe('aborted');
+    expect(full.frames).toHaveLength(0);
+    expect(stalledClock.nowMs()).toBeGreaterThanOrEqual(100);
+    expect(stalledClock.nowMs()).toBeLessThan(200);
+  });
+});

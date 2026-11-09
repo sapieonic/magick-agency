@@ -603,6 +603,36 @@
       "classification": null
     },
     {
+      "name": "recording-record-api",
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Record API callback parameters (snake_case, posted to callback_url); values illustrative",
+      "kind": "recording",
+      "params": {
+        "api_id": "5a9c1e2f-0000-4000-8000-0000000a0101",
+        "call_uuid": "7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f",
+        "record_url": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3",
+        "recording_id": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+        "recording_duration": "41",
+        "recording_duration_ms": "41210",
+        "recording_start_ms": "1794045705123",
+        "recording_end_ms": "1794045746333"
+      },
+      "normalized": {
+        "kind": "recording",
+        "callUuid": "7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f",
+        "requestUuid": "",
+        "callStatus": "",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "recordingUrl": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3",
+        "recordingId": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+        "recordingDurationSec": 41,
+        "wasAnswered": false
+      },
+      "event": null,
+      "classification": null
+    },
+    {
       "name": "undocumented-status",
       "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
       "kind": "status",
@@ -797,7 +827,7 @@
       "status": "unknown"
     }
   ],
-  "inboundNote": "inbound: the Application and number-app REST shapes the adapter sends and reads (plivo-inbound.wire.ts): each request is what the builder produces from `urls` and `token`, each `read` what the reader makes of the response. All of it is UNVERIFIED until the P0 live check (docs/inbound.md §12), which replaces the values with captured ones; `clearNumberApp` (app_id null) is the least certain.",
+  "inboundNote": "inbound: the Application and number-app REST shapes the adapter sends and reads (plivo-inbound.wire.ts): each request is what the builder produces from `urls` and `token`, each `read` what the reader makes of the response. All of it is UNVERIFIED until the P0 live check (docs/inbound.md §12), which replaces the values with captured ones; `clearNumberApp` (app_id null) is the least certain. `startRecording` is the Record API that records a connected inbound call from its bind (P2), and the `recording-record-api` entry its callback, read by the same reader as the `<Record>` element's.",
   "inbound": {
     "urls": {
       "answerUrl": "https://agency.example.com/api/v1/webhooks/plivo/inbound-answer/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
@@ -1043,6 +1073,34 @@
           "api_id": "5a9c1e2f-0000-4000-8000-0000000a0008",
           "message": "changed"
         }
+      }
+    },
+    "startRecording": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Record API (POST Call/{call_uuid}/Record/) parameter and field names; values illustrative",
+      "verified": false,
+      "method": "POST",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f/Record/",
+      "callUuid": "7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f",
+      "callbackUrl": "https://agency.example.com/api/v1/webhooks/plivo/webrtc-recording/0b6f2a3c-1d4e-4f5a-8b6c-7d8e9f0a1b2c?token=tok_Rec-456_xyz",
+      "timeLimitSeconds": 1800,
+      "request": {
+        "time_limit": 1800,
+        "file_format": "mp3",
+        "callback_url": "https://agency.example.com/api/v1/webhooks/plivo/webrtc-recording/0b6f2a3c-1d4e-4f5a-8b6c-7d8e9f0a1b2c?token=tok_Rec-456_xyz",
+        "callback_method": "POST"
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0100",
+          "message": "call recording started",
+          "recording_id": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+          "url": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3"
+        }
+      },
+      "read": {
+        "recordingId": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+        "url": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3"
       }
     }
   }

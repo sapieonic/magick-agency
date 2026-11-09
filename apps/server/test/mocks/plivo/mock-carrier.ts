@@ -26,6 +26,11 @@
  *    delete (204, and every number on it is left with no app); 404 for an unknown one
  *  - `GET | POST /v1/Account/{id}/Number/{digits}/` a number's `application` resource URI, and
  *    `app_id` set on it (202; an unknown app id is a 400); 404 for a number not on the account
+ *  - `POST /v1/Account/{id}/Call/{uuid}/Record/`  the Record API (P2, a connected inbound call
+ *    recorded from its bind; unverified until P0): 202 `{message, recording_id, url, api_id}` for
+ *    a live call it has named, 404 otherwise, 400 without a positive `time_limit` and an https
+ *    `callback_url`. The recording is kept on the call (`apiRecordings`) and its callback posted
+ *    when the call ends
  * A wrong auth id or token is 401. Every request is recorded (route, auth, body, the status
  * it was answered with, the fault applied).
  *
@@ -54,6 +59,7 @@ export type PlivoRoute =
   | 'account' | 'numbers' | 'create_call' | 'cancel_request' | 'hangup_call' | 'get_call'
   | 'list_applications' | 'create_application' | 'get_application' | 'update_application' | 'delete_application'
   | 'get_number' | 'update_number'
+  | 'record_call'
   | 'unknown';
 
 export type PlivoFault =
@@ -131,6 +137,8 @@ function routeOf(method: string, path: string, authId: string): { route: PlivoRo
   if (method === 'POST' && rest === 'Call/') return { route: 'create_call', id: null };
   let m = new RegExp(`^Request/(${ID})/$`).exec(rest);
   if (method === 'DELETE' && m) return { route: 'cancel_request', id: m[1]! };
+  m = new RegExp(`^Call/(${ID})/Record/$`).exec(rest);
+  if (method === 'POST' && m) return { route: 'record_call', id: m[1]! };
   m = new RegExp(`^Call/(${ID})/$`).exec(rest);
   if (method === 'DELETE' && m) return { route: 'hangup_call', id: m[1]! };
   if (method === 'GET' && m) return { route: 'get_call', id: m[1]! };
@@ -387,7 +395,34 @@ export class MockPlivoCarrier {
       case 'update_number':
         this.handleNumber(route, id!, body, send);
         return;
+      case 'record_call':
+        this.handleRecordCall(id!, body, send);
+        return;
     }
+  }
+
+  /** The Record API: start recording a live call; its callback is posted when the call ends. */
+  private handleRecordCall(callUuid: string, body: unknown, send: (s: number, p: unknown) => void): void {
+    const call = this.callOrder.find((c) => c.callUuid === callUuid && c.named);
+    if (!call || call.ended) {
+      send(404, { api_id: randomUUID(), error: 'call not found' });
+      return;
+    }
+    const b = (body ?? {}) as Record<string, unknown>;
+    const timeLimit = b['time_limit'];
+    const callbackUrl = b['callback_url'];
+    if (typeof timeLimit !== 'number' || timeLimit < 1 || typeof callbackUrl !== 'string' || !/^https:\/\//.test(callbackUrl)) {
+      send(400, { api_id: randomUUID(), error: 'a positive time_limit and an https callback_url are required' });
+      return;
+    }
+    const recordingId = randomUUID();
+    call.apiRecordings.push({ recordingId, callbackUrl, timeLimitSeconds: timeLimit, startedAt: Date.now(), posted: null });
+    send(202, {
+      api_id: randomUUID(),
+      message: 'call recording started',
+      recording_id: recordingId,
+      url: `https://media.plivo.com/v1/Account/${this.authId}/Recording/${recordingId}.mp3`,
+    });
   }
 
   // ── Inbound: Applications and numbers' apps ─────────────────────────────────

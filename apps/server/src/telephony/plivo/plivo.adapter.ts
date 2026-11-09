@@ -28,6 +28,7 @@ import type {
   OutboundCallRequest,
   ProviderCallStatus,
   ProviderCapabilities,
+  StartRecordingRequest,
   TelephonyProvider,
 } from '../types.js';
 import type { AppConfig } from '../../config/index.js';
@@ -60,12 +61,14 @@ import {
   PlivoApiError,
   plivoCreateApplicationBody,
   plivoNumberAppBody,
+  plivoStartRecordingBody,
   plivoStatusFailure,
   plivoUpdateApplicationBody,
   readPlivoApplication,
   readPlivoApplicationPage,
   readPlivoCreatedApplication,
   readPlivoNumberApp,
+  readPlivoRecordingStarted,
   type PlivoApplication,
 } from './plivo-inbound.wire.js';
 
@@ -269,7 +272,8 @@ export class PlivoAdapter implements TelephonyProvider {
    * (`cancelDialRequest`) and, once Plivo has named it, hung up by its call id.
    * The create-call places the call at once: nothing is queued. `ringTimeoutSeconds`: the
    * `ring_timeout` every dial carries (`PLIVO_RING_TIMEOUT_SECONDS`), so the bridge ends a
-   * call whose answer and terminal callbacks never arrived soon after it.
+   * call whose answer and terminal callbacks never arrived soon after it. `recordsOnDemand`: a
+   * live call is recorded from now on with the Record API ({@link startRecording}).
    */
   readonly capabilities: ProviderCapabilities;
 
@@ -287,7 +291,9 @@ export class PlivoAdapter implements TelephonyProvider {
     this.authId = opts.authId;
     this.authToken = opts.authToken;
     this.previousAuthTokens = opts.previousAuthTokens ?? [];
-    this.capabilities = { cancelRinging: true, queuesOutboundDials: false, ringTimeoutSeconds: opts.ringTimeoutSeconds };
+    this.capabilities = {
+      cancelRinging: true, queuesOutboundDials: false, ringTimeoutSeconds: opts.ringTimeoutSeconds, recordsOnDemand: true,
+    };
     this.settings = {
       webhookBaseUrl: opts.webhookBaseUrl,
       callsPerSecond: opts.callsPerSecond,
@@ -715,6 +721,31 @@ export class PlivoAdapter implements TelephonyProvider {
     if (status === 404) return 'not_found';
     if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
     return 'updated';
+  }
+
+  /**
+   * Record a live call from now on (`POST Call/{call_uuid}/Record/`, the Record API; shapes in
+   * `plivo-inbound.wire.ts`, unverified until P0): an mp3 of at most `timeLimitSeconds`, posted to
+   * `callbackUrl` when ready. The callback URL must be on our webhook origin over https, as the
+   * dial's are. Resolves Plivo's recording id (null when its answer names none); throws a
+   * `PlivoApiError` on a refusal or no answer, and on a malformed call id or callback URL.
+   */
+  async startRecording(carrierCallId: string, req: StartRecordingRequest): Promise<{ recordingId: string | null }> {
+    const op = 'Plivo record call';
+    if (!PLIVO_ID.test(carrierCallId ?? '')) throw new PlivoApiError('refused', op, null, 'malformed call id');
+    let callbackUrl: string;
+    try {
+      callbackUrl = this.checkCallbackUrl(req.callbackUrl, 'callback_url');
+    } catch (err) {
+      throw new PlivoApiError('refused', op, null, err instanceof Error ? err.message : 'callback_url refused');
+    }
+    const timeLimit = positiveInt(req.timeLimitSeconds);
+    if (!timeLimit) throw new PlivoApiError('refused', op, null, 'no time limit');
+    const { status, text } = await this.inboundRequest(
+      'POST', `Call/${encodeURIComponent(carrierCallId)}/Record/`, op, plivoStartRecordingBody(callbackUrl, timeLimit),
+    );
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    return { recordingId: readPlivoRecordingStarted(text)?.recordingId ?? null };
   }
 
   /** Plivo's signature covers the URL and a nonce, which this signature cannot carry. */

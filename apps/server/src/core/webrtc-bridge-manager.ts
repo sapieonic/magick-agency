@@ -1563,11 +1563,13 @@ export class WebRtcBridgeManager {
     if (!session || session.isTearingDown) return 'not_found';
     const playback = this.claimCarrierPlayback(session);
     const leg = this.makeClipSink(session);
+    // How a hold that is no longer playing ended. The leg is read first: teardown stops the
+    // playback too, and a caller who left is `aborted`, never `released`.
+    const ended = (): InboundHoldResult => (!leg.isOpen() ? 'aborted' : 'released');
     try {
       if (!await session.whenCarrierMediaReady() || session.isTearingDown) return 'no_media';
       for (const clipHash of opts.preambleClipHashes) {
-        if (playback.stopped) return 'released';
-        if (!leg.isOpen()) return 'aborted';
+        if (playback.stopped || !leg.isOpen()) return ended();
         const clip = this.convertClipForCarrier(session, clipHash);
         if (!clip) {
           log.warn({ callId: session.callId, clipHash }, 'Inbound preamble clip unavailable on this replica — skipping it');
@@ -1588,10 +1590,10 @@ export class WebRtcBridgeManager {
       // deadline (a carrier that stopped reading) is retried while the leg is up: the caller is
       // still held, and the call's budget bounds the retries.
       while (!playback.stopped && leg.isOpen()) await playback.play(hold, true);
-      return playback.stopped ? 'released' : 'aborted';
+      return ended();
     } catch (err) {
       log.error({ err, callId: session.callId }, 'Inbound hold failed — the caller hears nothing more from it');
-      return playback.stopped ? 'released' : 'aborted';
+      return ended();
     } finally {
       this.endCarrierPlayback(session, playback);
     }

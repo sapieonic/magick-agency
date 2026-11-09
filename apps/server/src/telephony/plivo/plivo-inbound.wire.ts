@@ -1,6 +1,7 @@
 /**
  * The Plivo REST shapes inbound needs (`docs/inbound.md` §8.1): an Application on the tenant's
- * account (create, read, update, delete, find by name) and a number's app (read, set). Request
+ * account (create, read, update, delete, find by name), a number's app (read, set), and the
+ * Record API that records a connected inbound call from its bind (at the end of the file). Request
  * bodies are built here and responses read here, as pure functions, so the fixture
  * (`plivo-carrier.fixture.json`, `inbound`) pins both sides; `PlivoAdapter` sends them.
  *
@@ -161,4 +162,34 @@ export function readPlivoNumberApp(text: string): { appId: string | null } | und
   if (typeof raw !== 'string') return undefined;
   const id = raw.split('/').filter(Boolean).at(-1) ?? '';
   return PLIVO_APP_ID.test(id) ? { appId: id } : undefined;
+}
+
+// ── Recording a live call: the Record API (docs/inbound.md §5, P2) ────────────────────────
+//
+// UNVERIFIED until the P0 live check, as everything above: Plivo's documented Record API is
+// `POST Call/{call_uuid}/Record/` with `time_limit`, `file_format`, `callback_url` and
+// `callback_method`, answered 202 with `recording_id` and `url`; the finished recording is then
+// posted to `callback_url` with snake_case params (`record_url`, `recording_id`,
+// `recording_duration`, `call_uuid`, …), unlike the `<Record>` element's callback (`RecordUrl`,
+// `RecordingID`, …). The recording callback reader accepts both (`normalizePlivoCallback`).
+
+/** `POST Call/{call_uuid}/Record/` body: an mp3 (as the answer XML's `<Record>`), posted to `callbackUrl`. */
+export function plivoStartRecordingBody(callbackUrl: string, timeLimitSeconds: number): Record<string, string | number> {
+  return {
+    time_limit: timeLimitSeconds,
+    file_format: 'mp3',
+    callback_url: callbackUrl,
+    callback_method: 'POST',
+  };
+}
+
+/**
+ * What `POST Call/{call_uuid}/Record/` answered (`{"message":"call recording started",
+ * "recording_id":"…","url":"…"}`): the recording's id and where it will be, each null when
+ * absent. Null when the body is not an object.
+ */
+export function readPlivoRecordingStarted(text: string): { recordingId: string | null; url: string | null } | null {
+  const o = parseObject(text);
+  if (!o) return null;
+  return { recordingId: str(o, 'recording_id') || null, url: str(o, 'url') || null };
 }

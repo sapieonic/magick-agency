@@ -13,6 +13,13 @@
  * and what was parsed out of it, the frames the bridge sent back, the close) on the call,
  * so a test asserts on recorded state. A step never throws out of the run: a failure is
  * recorded on `errors` and the script carries on. `done` always resolves.
+ *
+ * Inbound P2 additions: the carrier's background media (`mediaBackground`, as a real stream sends
+ * the caller's audio all the time) with `pauseMedia` / `resumeMedia` around a silence; the
+ * `playAudio` frames counted with their arrival time (`playAudioAt`), so a test can assert the
+ * caller heard hold audio and none after a given moment; and the recordings our Record API
+ * request started (`apiRecordings`, from `MockPlivoCarrier`'s `Record/` route), whose callbacks
+ * are posted when the call ends, in the Record API's own snake_case shape.
  */
 import http from 'node:http';
 import querystring from 'node:querystring';
@@ -71,6 +78,15 @@ export type PlivoCallStep =
   | { do: 'start'; encoding?: string; sampleRate?: number }
   /** Paced 20 ms μ-law frames, loud/quiet per bit; `frameMs` 0 blasts them. */
   | { do: 'media'; pattern: boolean[]; frameMs?: number }
+  /**
+   * Start sending the caller's audio in the background, as Plivo streams it for as long as the
+   * stream is open: `pattern` (loud/quiet per 20 ms frame) on a loop, until the socket closes. The
+   * script goes on at once. `pauseMedia` stops the frames (the stream stays open), `resumeMedia`
+   * starts them again.
+   */
+  | { do: 'mediaBackground'; pattern: boolean[] }
+  | { do: 'pauseMedia' }
+  | { do: 'resumeMedia' }
   | { do: 'stop' }
   | { do: 'close'; code?: number }
   | { do: 'wait'; ms: number }
@@ -189,6 +205,20 @@ export class PlivoCall {
   readonly received: Array<Record<string, unknown>> = [];
   /** Decoded μ-law payloads of the bridge's `playAudio` frames, in order. */
   readonly playAudio: Buffer[] = [];
+  /** When each `playAudio` frame arrived (`Date.now()`), index for index with {@link playAudio}. */
+  readonly playAudioAt: number[] = [];
+  /**
+   * The recordings our Record API request started on this call (`POST …/Call/{uuid}/Record/`), with
+   * what it asked for. Each one's callback is posted once the call ends ({@link postApiRecordings}).
+   */
+  readonly apiRecordings: Array<{
+    recordingId: string;
+    callbackUrl: string;
+    timeLimitSeconds: number;
+    startedAt: number;
+    /** The callback's result once posted. */
+    posted: CallbackResult | null;
+  }> = [];
   readonly mediaSentPattern: boolean[] = [];
   readonly callbacks: CallbackResult[] = [];
   readonly errors: string[] = [];
@@ -202,6 +232,8 @@ export class PlivoCall {
   private readonly rewrite: (url: string) => string;
   private readonly sockets: Set<WebSocket>;
   private closeRequested = false;
+  /** The background media: running, and paused. */
+  private backgroundMedia: { pattern: boolean[]; paused: boolean } | null = null;
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
@@ -224,6 +256,16 @@ export class PlivoCall {
     } catch {
       return '';
     }
+  }
+
+  /** How many `playAudio` frames the bridge has sent so far (hold audio, clips). */
+  get receivedFrameCount(): number {
+    return this.playAudio.length;
+  }
+
+  /** How many `playAudio` frames arrived after `at` (`Date.now()` time). */
+  framesReceivedAfter(at: number): number {
+    return this.playAudioAt.filter((t) => t > at).length;
   }
 
   /** The statuses of every callback to `to`, in order. */
@@ -283,6 +325,10 @@ export class PlivoCall {
       publicUrl.searchParams.set('token', tokenOverride);
       url = publicUrl.toString();
     }
+    return this.signAndPost(to, url, params, sign);
+  }
+
+  private signAndPost(to: CallbackTarget, url: string, params: Record<string, string>, sign: SignMode = 'valid'): Promise<CallbackResult> {
     const headers: Record<string, string> = {};
     if (sign !== 'none') {
       const nonce = plivoNonce();
@@ -295,11 +341,34 @@ export class PlivoCall {
     return this.post(to, url, params, headers);
   }
 
+  /**
+   * Post the callback of every Record API recording on this call not posted yet: Plivo posts each
+   * to its `callback_url` once the recording ends, which is when the call ends. The params are the
+   * Record API's (snake_case: `record_url`, `recording_id`, …; unverified until P0), signed as any
+   * callback is.
+   */
+  async postApiRecordings(): Promise<void> {
+    for (const rec of this.apiRecordings) {
+      if (rec.posted) continue;
+      const ms = Math.min(rec.timeLimitSeconds * 1000, Math.max(0, Date.now() - rec.startedAt));
+      rec.posted = await this.signAndPost('recording', rec.callbackUrl, {
+        api_id: randomUUID(),
+        call_uuid: this.callUuid,
+        record_url: `https://media.plivo.com/v1/Account/${this.authId}/Recording/${rec.recordingId}.mp3`,
+        recording_id: rec.recordingId,
+        recording_duration: String(Math.round(ms / 1000)),
+        recording_duration_ms: String(ms),
+        recording_start_ms: String(rec.startedAt),
+        recording_end_ms: String(rec.startedAt + ms),
+      });
+    }
+  }
+
   /** The last callback as it was sent, for a replay step. */
   private lastPosted: { to: CallbackTarget; url: string; params: Record<string, string>; headers: Record<string, string> } | null = null;
 
   private async post(to: CallbackTarget, url: string, params: Record<string, string>, headers: Record<string, string>): Promise<CallbackResult> {
-    const what = params['CallStatus'] ?? to;
+    const what = params['CallStatus'] ?? (params['record_url'] ? 'recording_api' : to);
     let result: CallbackResult;
     try {
       const res = await postForm(this.rewrite(url), params, headers);
@@ -315,7 +384,7 @@ export class PlivoCall {
   async postHangup(status: PlivoTerminalStatus, opts: { cause?: string; source?: string; sign?: SignMode } = {}): Promise<CallbackResult> {
     const t = this.recordEnd(status, opts);
     this.named = true;
-    return this.callback('hangup', {
+    const result = await this.callback('hangup', {
       ...this.baseParams(),
       CallStatus: status,
       Event: 'Hangup',
@@ -329,6 +398,9 @@ export class PlivoCall {
       AnswerTime: t.answered ? t.now : '',
       EndTime: t.now,
     }, opts.sign);
+    // The call is over: a recording our Record API request started is ready now.
+    await this.postApiRecordings();
+    return result;
   }
 
   /**
@@ -441,6 +513,19 @@ export class PlivoCall {
       case 'media':
         await this.streamMedia(step.pattern, step.frameMs ?? 20);
         return;
+      case 'mediaBackground':
+        if (this.backgroundMedia) throw new Error('background media is already running');
+        this.backgroundMedia = { pattern: step.pattern, paused: false };
+        void this.runBackgroundMedia(this.backgroundMedia);
+        return;
+      case 'pauseMedia':
+        if (!this.backgroundMedia) throw new Error('no background media to pause');
+        this.backgroundMedia.paused = true;
+        return;
+      case 'resumeMedia':
+        if (!this.backgroundMedia) throw new Error('no background media to resume');
+        this.backgroundMedia.paused = false;
+        return;
       case 'stop':
         this.sendJson({ event: 'stop', sequenceNumber: this.mediaSentPattern.length + 1, streamId: this.streamId });
         return;
@@ -499,6 +584,7 @@ export class PlivoCall {
       const media = frame['media'] as { payload?: unknown; contentType?: unknown } | undefined;
       if (frame['event'] === 'playAudio' && typeof media?.payload === 'string') {
         this.playAudio.push(Buffer.from(media.payload, 'base64'));
+        this.playAudioAt.push(Date.now());
       }
     });
     ws.on('close', (code) => {
@@ -519,6 +605,28 @@ export class PlivoCall {
       return;
     }
     this.ws.send(JSON.stringify(frame));
+  }
+
+  /** The background media's loop: 20 ms frames of `pattern`, round and round, skipped while paused. */
+  private async runBackgroundMedia(media: { pattern: boolean[]; paused: boolean }): Promise<void> {
+    if (media.pattern.length === 0) return;
+    const t0 = performance.now();
+    for (let k = 0; ; k++) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (!media.paused) {
+        const index = this.mediaSentPattern.length;
+        const loud = media.pattern[k % media.pattern.length]!;
+        this.ws.send(JSON.stringify({
+          event: 'media',
+          sequenceNumber: index + 1,
+          streamId: this.streamId,
+          media: { track: 'inbound', timestamp: String(index * 20), chunk: index + 1, payload: mulawFrame(index, loud).toString('base64') },
+        }));
+        this.mediaSentPattern.push(loud);
+      }
+      const wait = t0 + (k + 1) * 20 - performance.now();
+      if (wait > 0) await sleep(wait);
+    }
   }
 
   private async streamMedia(pattern: boolean[], frameMs: number): Promise<void> {

@@ -16,11 +16,13 @@ import { plivoInboundUrls, withInboundToken, type PlivoInboundUrls } from '../..
 import {
   plivoCreateApplicationBody,
   plivoNumberAppBody,
+  plivoStartRecordingBody,
   plivoUpdateApplicationBody,
   readPlivoApplication,
   readPlivoApplicationPage,
   readPlivoCreatedApplication,
   readPlivoNumberApp,
+  readPlivoRecordingStarted,
 } from '../../../../src/telephony/plivo/plivo-inbound.wire.js';
 import {
   classifyPlivoOutcome,
@@ -154,15 +156,21 @@ interface InboundOp {
   read?: unknown;
   appId?: string | null;
 }
+interface RecordOp extends InboundOp {
+  callUuid: string;
+  callbackUrl: string;
+  timeLimitSeconds: number;
+}
 const inbound = (JSON.parse(readFileSync(resolve(SRC_DIR, 'plivo-carrier.fixture.json'), 'utf8')) as {
   inbound: {
     urls: PlivoInboundUrls; token: string; appName: string;
     createApplication: InboundOp; getApplication: InboundOp; updateApplication: InboundOp; deleteApplication: InboundOp;
     listApplications: InboundOp; getNumber: InboundOp; getNumberWithoutApp: InboundOp; setNumberApp: InboundOp; clearNumberApp: InboundOp;
+    startRecording: RecordOp;
   };
 }).inbound;
 const OPS = ['createApplication', 'getApplication', 'updateApplication', 'deleteApplication', 'listApplications',
-  'getNumber', 'getNumberWithoutApp', 'setNumberApp', 'clearNumberApp'] as const;
+  'getNumber', 'getNumberWithoutApp', 'setNumberApp', 'clearNumberApp', 'startRecording'] as const;
 
 /** An adapter on the fixture's account whose one request is answered with `op`'s response, recording what it sent. */
 function fixtureAdapter(op: InboundOp) {
@@ -173,6 +181,7 @@ function fixtureAdapter(op: InboundOp) {
   };
   const adapter = new PlivoAdapter({
     ...DEFAULT_PLIVO_SETTINGS, authId: 'MAABCDEFGHIJKLMNOPQR', authToken: new Secret('fixtureAuthToken-0001'), fetchImpl,
+    webhookBaseUrl: 'https://agency.example.com/api/v1/webhooks/plivo',
   });
   return { adapter, sent };
 }
@@ -190,6 +199,8 @@ describe('Plivo carrier fixture: inbound Applications and number apps (unverifie
     expect(plivoUpdateApplicationBody(inbound.urls, inbound.token)).toStrictEqual(inbound.updateApplication.request);
     expect(plivoNumberAppBody(inbound.setNumberApp.appId!)).toStrictEqual(inbound.setNumberApp.request);
     expect(plivoNumberAppBody(null)).toStrictEqual(inbound.clearNumberApp.request);
+    const rec = inbound.startRecording;
+    expect(plivoStartRecordingBody(rec.callbackUrl, rec.timeLimitSeconds)).toStrictEqual(rec.request);
   });
 
   it('the readers read the recorded responses', () => {
@@ -199,6 +210,7 @@ describe('Plivo carrier fixture: inbound Applications and number apps (unverifie
     expect(readPlivoApplicationPage(text(inbound.listApplications))).toStrictEqual(inbound.listApplications.read);
     expect(readPlivoNumberApp(text(inbound.getNumber))).toStrictEqual(inbound.getNumber.read);
     expect(readPlivoNumberApp(text(inbound.getNumberWithoutApp))).toStrictEqual(inbound.getNumberWithoutApp.read);
+    expect(readPlivoRecordingStarted(text(inbound.startRecording))).toStrictEqual(inbound.startRecording.read);
   });
 
   it('the adapter sends each request to the recorded path and method, and answers what the reader read', async () => {
@@ -221,6 +233,22 @@ describe('Plivo carrier fixture: inbound Applications and number apps (unverifie
     expect(await run(inbound.getNumberWithoutApp, (a) => a.getNumberApp('+14155550102'))).toStrictEqual({ appId: null });
     expect(await run(inbound.setNumberApp, (a) => a.setNumberApp('+14155550101', inbound.setNumberApp.appId!))).toBe('updated');
     expect(await run(inbound.clearNumberApp, (a) => a.setNumberApp('+14155550102', null))).toBe('updated');
+    const rec = inbound.startRecording;
+    expect(await run(rec, (a) => a.startRecording(rec.callUuid, { callbackUrl: rec.callbackUrl, timeLimitSeconds: rec.timeLimitSeconds })))
+      .toStrictEqual({ recordingId: (rec.read as { recordingId: string }).recordingId });
+  });
+
+  it('the Record API`s callback is read like the `<Record>` element`s: the same recording fields from either shape', () => {
+    const xml = entries.find((e) => e.name === 'recording')!;
+    const api = entries.find((e) => e.name === 'recording-record-api')!;
+    const fields = (e: FixtureEntry) => {
+      const n = normalizePlivoCallback(e.kind, e.params);
+      return Object.keys(n).filter((k) => n[k as keyof typeof n] !== undefined).sort();
+    };
+    expect(fields(api)).toEqual(fields(xml));
+    // Only a recording callback reads the snake_case names: a status callback carrying them is not a recording.
+    expect(normalizePlivoCallback('status', api.params).recordingUrl).toBeUndefined();
+    expect(normalizePlivoCallback('status', api.params).callUuid).toBe('');
   });
 
   it('the stored URLs are the inbound URL builders` (the answer and hangup given with the token, the fallback without)', () => {

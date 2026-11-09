@@ -17,7 +17,7 @@ const URLS = {
   fallbackAnswerUrl: 'https://a.test/api/v1/webhooks/plivo/inbound-fallback', fallbackMethod: 'POST' as const,
 };
 
-function adapter(responses: Array<{ status: number; body?: unknown } | Error>) {
+function adapter(responses: Array<{ status: number; body?: unknown } | Error>, webhookBaseUrl = '') {
   const sent: string[] = [];
   const fetchImpl: PlivoFetch = async (url) => {
     sent.push(url);
@@ -28,7 +28,9 @@ function adapter(responses: Array<{ status: number; body?: unknown } | Error>) {
   };
   return {
     sent,
-    plivo: new PlivoAdapter({ ...DEFAULT_PLIVO_SETTINGS, authId: 'MAABCDEFGHIJKLMNOPQR', authToken: new Secret('fixtureAuthToken-0001'), fetchImpl }),
+    plivo: new PlivoAdapter({
+      ...DEFAULT_PLIVO_SETTINGS, authId: 'MAABCDEFGHIJKLMNOPQR', authToken: new Secret('fixtureAuthToken-0001'), fetchImpl, webhookBaseUrl,
+    }),
   };
 }
 
@@ -91,5 +93,36 @@ describe('PlivoAdapter inbound calls', () => {
       Array.from({ length: PLIVO_APPLICATIONS_MAX_PAGES }, (_, p) => `${p * 100}`));
     expect(sent).toHaveLength(PLIVO_APPLICATIONS_MAX_PAGES);
     expect(PLIVO_APPLICATIONS_MAX_PAGES).toBe(5);
+  });
+});
+
+describe('PlivoAdapter.startRecording (the Record API, at an inbound call`s bind)', () => {
+  const CALLBACK = 'https://a.test/api/v1/webhooks/plivo/webrtc-recording/c?token=t';
+  // The callback must be on the webhook origin, as a dial`s are.
+  const recorder = (responses: Array<{ status: number; body?: unknown } | Error>) => adapter(responses, 'https://a.test/api/v1/webhooks/plivo');
+
+  it.each([[401, 'auth_rejected'], [429, 'unreachable'], [500, 'unreachable'], [404, 'refused'], [400, 'refused']])(
+    'HTTP %i is %s', async (status, kind) => {
+      expect(await kindOf(recorder([{ status }]).plivo.startRecording('cu-1', { callbackUrl: CALLBACK, timeLimitSeconds: 60 }))).toBe(kind);
+    },
+  );
+
+  it('a network failure is unreachable; a 2xx without an id resolves with none', async () => {
+    expect(await kindOf(recorder([new TypeError('fetch failed')]).plivo.startRecording('cu-1', { callbackUrl: CALLBACK, timeLimitSeconds: 60 })))
+      .toBe('unreachable');
+    expect(await recorder([{ status: 202, body: { message: 'call recording started' } }]).plivo
+      .startRecording('cu-1', { callbackUrl: CALLBACK, timeLimitSeconds: 60 })).toEqual({ recordingId: null });
+  });
+
+  it('sends nothing for a malformed call id, a callback off the webhook origin or over http, or no time limit', async () => {
+    const { plivo, sent } = recorder([]);
+    for (const p of [
+      plivo.startRecording('../Request', { callbackUrl: CALLBACK, timeLimitSeconds: 60 }),
+      plivo.startRecording('', { callbackUrl: CALLBACK, timeLimitSeconds: 60 }),
+      plivo.startRecording('cu-1', { callbackUrl: 'https://evil.test/api/v1/webhooks/plivo/webrtc-recording/c', timeLimitSeconds: 60 }),
+      plivo.startRecording('cu-1', { callbackUrl: 'http://a.test/api/v1/webhooks/plivo/webrtc-recording/c', timeLimitSeconds: 60 }),
+      plivo.startRecording('cu-1', { callbackUrl: CALLBACK, timeLimitSeconds: 0 }),
+    ]) expect(await kindOf(p)).toBe('refused');
+    expect(sent).toEqual([]);
   });
 });
