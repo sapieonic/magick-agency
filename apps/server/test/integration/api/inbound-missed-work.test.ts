@@ -178,6 +178,8 @@ describe('GET /inbound/missed/count: the nav badge', () => {
     // Handled rows are not counted, but they are rows to read.
     await call('POST', `/missed/${mine}/handled`, agent(0));
     expect((await call('GET', '/missed/count', agent(0))).json()).toEqual({ open: 1, open_capped: false, has_rows: true });
+    // A person's Mark handled says so on the row (0028), beside a row closed because the customer was reached.
+    expect((await q('SELECT handled_reason FROM agency_inbound_calls WHERE id = $1', [mine])).rows[0]).toEqual({ handled_reason: 'marked' });
 
     await withFlagOff(async () => {
       const off = await call('GET', '/missed/count', agent(0));
