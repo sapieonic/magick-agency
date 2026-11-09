@@ -3,6 +3,8 @@
   top: calc(100% + 6px);
   left: 0;
   min-width: 280px;
+  /* Never wider than the screen, whichever edge it is pinned to. */
+  max-width: calc(100vw - 16px);
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
@@ -15,6 +17,14 @@
   /* Cap the panel so a long org/account list cannot overflow the viewport.
      The list below is what scrolls; this is only the outer size. */
   max-height: min(360px, calc(100vh - var(--topbar-height) - 16px));
+}
+
+/* Pinned to the trigger's right edge when opening from its left edge would run
+   past the viewport (SwitcherDropdown measures this before paint). */
+.dropdownEnd {
+  composes: dropdown;
+  left: auto;
+  right: 0;
 }
 
 @keyframes fadeIn {

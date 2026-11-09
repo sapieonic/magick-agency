@@ -32,7 +32,24 @@ function renderDropdown(
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
+
+/** Places every element's box at [left, right] so the dropdown can measure itself. */
+function stubPanelRect(left: number, right: number) {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    left,
+    right,
+    top: 56,
+    bottom: 300,
+    width: right - left,
+    height: 244,
+    x: left,
+    y: 56,
+    toJSON: () => ({}),
+  } as DOMRect);
+  vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1280);
+}
 
 describe('SwitcherDropdown', () => {
   it('lists every item until the user types', () => {
@@ -110,5 +127,31 @@ describe('SwitcherDropdown', () => {
     for (const option of screen.getAllByRole('option')) {
       expect(option.getAttribute('tabindex')).toBe('-1');
     }
+  });
+
+  it('opens from the left edge when it fits in the viewport', () => {
+    stubPanelRect(900, 1180);
+    renderDropdown();
+    expect(screen.getByRole('presentation', { hidden: true }).getAttribute('data-align')).toBe(
+      'start',
+    );
+  });
+
+  it('pins to the right edge when opening from the left would leave the viewport', () => {
+    // The account switcher is the last control in the top bar: a 280px panel
+    // from its left edge runs past the screen, and focusing its search box then
+    // scrolled the whole shell sideways.
+    stubPanelRect(1150, 1430);
+    renderDropdown();
+    expect(screen.getByRole('presentation', { hidden: true }).getAttribute('data-align')).toBe(
+      'end',
+    );
+  });
+
+  it('focuses the search box without letting the browser scroll to it', () => {
+    const focus = vi.spyOn(HTMLInputElement.prototype, 'focus');
+    renderDropdown();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Search tenants' }));
   });
 });
