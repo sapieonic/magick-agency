@@ -16,7 +16,12 @@ import {
   type AgencyInboundErrorCode,
   type AgencyInboundMarkHandledResponse,
   type AgencyInboundMissedCall,
+  type AgencyInboundMissedAssignRequest,
+  type AgencyInboundMissedAssignResponse,
+  type AgencyInboundMissedCountResponse,
   type AgencyInboundMissedListQuery,
+  type AgencyInboundSummary,
+  type AgencyInboundSummaryQuery,
   type AgencyInboundMissedPage,
   type AgencyInboundNumbersResponse,
   type AgencyInboundRoute,
@@ -38,6 +43,9 @@ import {
  *   GET    /proxy/agency/inbound/clips                 → the account's audio files
  *   GET    /proxy/agency/inbound/missed                → a page of Missed rows
  *   POST   /proxy/agency/inbound/missed/:id/handled    → the row, handled
+ *   POST   /proxy/agency/inbound/missed/:id/assign     → the row, reassigned (supervisors)
+ *   GET    /proxy/agency/inbound/missed/count          → the nav badge's count
+ *   GET    /proxy/agency/inbound/summary               → the inbound summary (supervisors)
  *   GET    <voicemail_url> (the Missed row's)          → the voicemail's audio
  *
  * And the agent's inbound call (P2, §6) and the supervisor's queue, under the same prefix:
@@ -53,7 +61,8 @@ import {
  *
  * Every route is account-scoped and behind `agency_inbound_enabled` (`403 inbound_disabled`),
  * except the five call routes, which finish a call the flag may have been turned off under (the
- * soft phone's rule).
+ * soft phone's rule), and the Missed list's count, reassign and the summary: the follow-up of
+ * calls that already came in, which turning inbound off does not stop.
  * Reads throw like the rest of the console's clients (their failure is a page state). The
  * writes resolve to an {@link InboundResult}: a refusal is something the admin acts on (a
  * field to fix, a number to drop), so it is a value the form switches on, not an exception.
@@ -73,6 +82,9 @@ export const INBOUND_PATHS = {
   callDisposition: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/disposition`,
   callDnc: (callId: string) => `${API_BASE}/proxy/agency/inbound/calls/${enc(callId)}/dnc`,
   queue: `${API_BASE}/proxy/agency/inbound/queue`,
+  missedCount: `${API_BASE}/proxy/agency/inbound/missed/count`,
+  missedAssign: (callId: string) => `${API_BASE}/proxy/agency/inbound/missed/${enc(callId)}/assign`,
+  summary: `${API_BASE}/proxy/agency/inbound/summary`,
 } as const;
 
 const INBOUND = INBOUND_PATHS.base;
@@ -232,16 +244,55 @@ export function markMissedInboundCallHandled(
   });
 }
 
+/**
+ * `POST /inbound/missed/:id/assign` (`agency.supervise`): give an open row to a member of the
+ * account, or to the account (`null`). Refusals: `inbound_assignee_invalid` (not an active member),
+ * `inbound_missed_call_handled`, `inbound_missed_call_not_found`.
+ */
+export function assignMissedInboundCall(
+  callId: string,
+  assigneeUserId: string | null,
+  tenantId?: string,
+  accountId?: string,
+): Promise<InboundResult<AgencyInboundMissedCall>> {
+  const request: AgencyInboundMissedAssignRequest = { assignee_user_id: assigneeUserId };
+  return result(async () => {
+    const body = await apiFetch<AgencyInboundMissedAssignResponse>(
+      INBOUND_PATHS.missedAssign(callId), { method: 'POST', body: JSON.stringify(request) }, tenantId, accountId,
+    );
+    return body.call;
+  });
+}
+
+/** `GET /inbound/missed/count`: the nav badge (the caller's scope). A read; throws. */
+export function getMissedInboundCount(tenantId?: string, accountId?: string): Promise<AgencyInboundMissedCountResponse> {
+  return apiFetch<AgencyInboundMissedCountResponse>(INBOUND_PATHS.missedCount, {}, tenantId, accountId);
+}
+
+// ─── The inbound summary (supervisors) ──────────────────────────────────────
+
+/** `GET /inbound/summary?from&to` (`agency.supervise`). A read; throws. */
+export function getInboundSummary(query: AgencyInboundSummaryQuery, tenantId?: string, accountId?: string): Promise<AgencyInboundSummary> {
+  const qs = new URLSearchParams({ from: query.from, to: query.to });
+  return apiFetch<AgencyInboundSummary>(`${INBOUND_PATHS.summary}?${qs.toString()}`, {}, tenantId, accountId);
+}
+
 // ─── The voicemail on a Missed row (P2) ─────────────────────────────────────
 
+/** The only shape a voicemail's path may have: the Missed row's own route, under the proxy or relative to it. */
+const VOICEMAIL_PATH_RE = /^\/(?:proxy\/agency\/)?inbound\/missed\/[A-Za-z0-9-]+\/voicemail$/;
+
 /**
- * Where a Missed row's `voicemail_url` is fetched from. The contract states it relative to the
- * proxy (`/inbound/missed/:id/voicemail`, under `/proxy/agency`); a path that already starts
- * `/proxy/`, or an absolute URL, is taken as it is.
+ * Where a Missed row's `voicemail_url` is fetched from, or null when it is not one we will send the
+ * console's token to. The contract states it relative to the proxy (`/inbound/missed/:id/voicemail`,
+ * under `/proxy/agency`); a path that already starts `/proxy/agency/` is taken as it is. Anything
+ * else (an absolute or protocol-relative URL, another path, a query, a `..`) is refused: the fetch
+ * carries the bearer token, which must only ever go to our own API (`API_BASE`), whatever a
+ * server mistake or contract drift puts in the field.
  */
-export function voicemailFetchUrl(voicemailUrl: string): string {
-  if (/^https?:\/\//i.test(voicemailUrl)) return voicemailUrl;
+export function voicemailFetchUrl(voicemailUrl: string): string | null {
   const path = voicemailUrl.startsWith('/') ? voicemailUrl : `/${voicemailUrl}`;
+  if (!VOICEMAIL_PATH_RE.test(path)) return null;
   return path.startsWith('/proxy/') ? `${API_BASE}${path}` : `${API_BASE}/proxy/agency${path}`;
 }
 
@@ -261,6 +312,8 @@ export async function fetchVoicemailBlobUrl(
   accountId?: string,
 ): Promise<VoicemailAudio> {
   const url = voicemailFetchUrl(voicemailUrl);
+  // Not our route: never sent anywhere with the token.
+  if (url === null) return { status: 'unavailable', message: VOICEMAIL_FAILED_COPY };
   try {
     const headers = await buildAuthHeaders(tenantId, accountId);
     const res = await fetch(url, { headers });

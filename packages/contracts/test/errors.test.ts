@@ -301,6 +301,8 @@ describe('inbound codes', () => {
       'inbound_clip_invalid',
       'inbound_clip_name_taken',
       'inbound_clip_storage_unavailable',
+      'inbound_missed_call_handled',
+      'inbound_assignee_invalid',
     ]);
     expectUnique(AGENCY_INBOUND_ERROR_CODES);
   });

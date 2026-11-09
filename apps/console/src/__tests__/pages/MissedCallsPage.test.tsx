@@ -7,8 +7,11 @@ import type { AgencyInboundMissedCall } from '@magick-agency/contracts/api/agenc
  * Missed calls (`docs/inbound.md` §7): a supervisor reads the account's rows with an assignee
  * filter, anyone else their own; Call back opens the soft phone with the number and campaign in
  * history state (never the URL) and is unavailable for a withheld number or with the soft phone
- * off; a DNC caller is badged; Mark handled takes the row off "To follow up"; the flag off or no
- * permission hides the page; a dedicated agent is sent to their own frame.
+ * off; a DNC caller is badged; Mark handled takes the row off "To follow up"; no permission hides
+ * the page, and so does the flag off with no rows, while the flag off WITH rows keeps the list
+ * readable under a notice (the kill switch); a dedicated agent is sent to their own frame. A
+ * supervisor reassigns a row; a departed assignee reads "Former member" with the prompt; a row
+ * closed because the customer was reached says so; every change re-reads the badge's count.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -19,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   listTenantMembers: vi.fn(),
   getInboundQueue: vi.fn(),
   fetchVoicemailBlobUrl: vi.fn(),
+  assignMissedInboundCall: vi.fn(),
+  getMissedInboundCount: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -40,11 +45,14 @@ vi.mock('../../api/inbound', async () => {
     markMissedInboundCallHandled: mocks.markMissedInboundCallHandled,
     getInboundQueue: mocks.getInboundQueue,
     fetchVoicemailBlobUrl: mocks.fetchVoicemailBlobUrl,
+    assignMissedInboundCall: mocks.assignMissedInboundCall,
+    getMissedInboundCount: mocks.getMissedInboundCount,
   };
 });
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
 
 import MissedCallsPage, { AgentMissedCallsPage } from '../../pages/agency/MissedCallsPage';
+import { resetMissedCallsCountForTests } from '../../hooks/useMissedCallsCount';
 
 function missed(o: Partial<AgencyInboundMissedCall> = {}): AgencyInboundMissedCall {
   return {
@@ -52,7 +60,8 @@ function missed(o: Partial<AgencyInboundMissedCall> = {}): AgencyInboundMissedCa
     to_e164: '+441632960001', arrived_at: '2026-11-08T09:30:00Z', ended_at: '2026-11-08T09:31:00Z', reason: 'closed',
     outcome: 'closed', caller_dnc: false, matched_contact_id: 'c-1', matched_campaign_id: 'camp-1',
     matched_campaign_name: 'Renewals', callback_due_at: null, has_voicemail: false, assignee_user_id: 'me-1',
-    assignee_name: 'Asha', status: 'open', handled_by_user_id: null, handled_by_name: null, handled_at: null, ...o,
+    assignee_name: 'Asha', assignee_departed: false, status: 'open', handled_reason: null, handled_by_user_id: null,
+    handled_by_name: null, handled_at: null, ...o,
   };
 }
 
@@ -84,9 +93,14 @@ async function renderAt(path: string, role: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.flags = { agency_inbound_enabled: true, agency_softphone_enabled: true };
+  resetMissedCallsCountForTests();
+  mocks.getMissedInboundCount.mockResolvedValue({ open: 1, open_capped: false, has_rows: true });
   mocks.listTenantMembers.mockResolvedValue([
-    { user: { id: 'me-1', display_name: 'Asha', email: 'a@x' } },
-    { user: { id: 'u-2', display_name: 'Ravi', email: 'r@x' } },
+    { membership: { account_id: 'account-1', status: 'active' }, user: { id: 'me-1', display_name: 'Asha', email: 'a@x' } },
+    { membership: { account_id: null, status: 'active' }, user: { id: 'u-2', display_name: 'Ravi', email: 'r@x' } },
+    // Another account's member and a revoked one: filterable by name, never offered for a reassign.
+    { membership: { account_id: 'account-2', status: 'active' }, user: { id: 'u-3', display_name: 'Zoe', email: 'z@x' } },
+    { membership: { account_id: 'account-1', status: 'revoked' }, user: { id: 'u-4', display_name: 'Omar', email: 'o@x' } },
   ]);
   mocks.listMissedInboundCalls.mockResolvedValue({ rows: [missed()], next_cursor: null, limit: 50 });
   mocks.getInboundQueue.mockResolvedValue({
@@ -106,7 +120,7 @@ describe('who sees what', () => {
     expect(within(screen.getByTestId('missed-row-m-2')).getByText('The account')).toBeTruthy();
     expect(within(screen.getByTestId('missed-row-m-3')).getByText('Ravi')).toBeTruthy();
     const assignee = screen.getByTestId('missed-filter-assignee') as HTMLSelectElement;
-    expect([...assignee.options].map((o) => o.textContent)).toEqual(['Anyone', 'Me', 'The account (no one in particular)', 'Ravi']);
+    expect([...assignee.options].map((o) => o.textContent)).toEqual(['Anyone', 'Me', 'The account (no one in particular)', 'Omar', 'Ravi', 'Zoe']);
     fireEvent.change(assignee, { target: { value: 'unassigned' } });
     fireEvent.change(screen.getByTestId('missed-filter-reason'), { target: { value: 'overflow' } });
     fireEvent.click(screen.getByTestId('missed-filter-apply'));
@@ -127,11 +141,138 @@ describe('who sees what', () => {
     expect(screen.getByTestId('where').textContent).toBe('/dialer/missed');
   });
 
-  it('is unavailable with the flag off, and to a role without agency.inbound.read', async () => {
+  it('is unavailable with the flag off and no rows to read, and to a role without agency.inbound.read', async () => {
     mocks.flags = { agency_inbound_enabled: false };
+    mocks.getMissedInboundCount.mockResolvedValue({ open: 0, open_capped: false, has_rows: false });
     await renderAt('/agency/inbound/missed', 'account_admin');
     expect(screen.getByTestId('capability-unavailable')).toBeTruthy();
     expect(mocks.listMissedInboundCalls).not.toHaveBeenCalled();
+  });
+
+  it('with the flag off and rows there, stays readable (the kill switch stops calls, not their follow-up)', async () => {
+    mocks.flags = { agency_inbound_enabled: false, agency_softphone_enabled: true };
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    expect(screen.getByTestId('missed-inbound-off').textContent).toMatch(/turned off for this account, so no new calls come in/);
+    expect(screen.getByTestId('missed-row-m-1')).toBeTruthy();
+    // The live queue reads the flag itself: nothing is waiting with inbound off.
+    expect(mocks.getInboundQueue).not.toHaveBeenCalled();
+    // Actions are offered; what they may do is the server's answer.
+    expect(screen.getByTestId('missed-mark-handled')).toBeTruthy();
+  });
+
+  it('an agent`s own frame is readable with the flag off too, when they have rows', async () => {
+    mocks.flags = { agency_inbound_enabled: false };
+    await renderAt('/dialer/missed', 'agent');
+    expect(screen.getByTestId('missed-inbound-off')).toBeTruthy();
+    expect(screen.getByTestId('agent-nav-missed').getAttribute('aria-current')).toBe('page');
+  });
+
+  it('with the flag on there is no notice', async () => {
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    expect(screen.queryByTestId('missed-inbound-off')).toBeNull();
+  });
+});
+
+describe('reassign, departed assignees and rows closed because the customer was reached', () => {
+  it('a supervisor reassigns an open row to a member of the account, and the badge re-reads', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [missed()], next_cursor: null, limit: 50 });
+    mocks.assignMissedInboundCall.mockResolvedValue({ ok: true, value: missed({ assignee_user_id: 'u-2', assignee_name: 'Ravi' }) });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    const reads = mocks.getMissedInboundCount.mock.calls.length;
+    const row = within(screen.getByTestId('missed-row-m-1'));
+    fireEvent.click(row.getByTestId('missed-reassign'));
+    const select = row.getByTestId('missed-reassign-select') as HTMLSelectElement;
+    // The account, then the active members of this account (tenant-level included), never others.
+    expect([...select.options].map((o) => o.textContent)).toEqual(['The account', 'Asha (you)', 'Ravi']);
+    // Nothing to save until the choice differs from where it is.
+    expect((row.getByTestId('missed-reassign-save') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(select, { target: { value: 'u-2' } });
+    await act(async () => {
+      fireEvent.click(row.getByTestId('missed-reassign-save'));
+    });
+    expect(mocks.assignMissedInboundCall).toHaveBeenCalledWith('m-1', 'u-2', 'tenant-1', 'account-1');
+    expect(within(screen.getByTestId('missed-row-m-1')).getByTestId('missed-assignee').textContent).toBe('Ravi');
+    expect(screen.getByRole('status').textContent).toBe('Assigned the call from +447700900123 to Ravi.');
+    expect(mocks.getMissedInboundCount.mock.calls.length).toBe(reads + 1);
+  });
+
+  it('to the account sends null; a row given away under an assignee filter leaves the view', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [missed()], next_cursor: null, limit: 50 });
+    mocks.assignMissedInboundCall.mockResolvedValue({ ok: true, value: missed({ assignee_user_id: null, assignee_name: null }) });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    fireEvent.change(screen.getByTestId('missed-filter-assignee'), { target: { value: 'me' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('missed-filter-apply'));
+    });
+    const row = within(screen.getByTestId('missed-row-m-1'));
+    fireEvent.click(row.getByTestId('missed-reassign'));
+    fireEvent.change(row.getByTestId('missed-reassign-select'), { target: { value: '' } });
+    await act(async () => {
+      fireEvent.click(row.getByTestId('missed-reassign-save'));
+    });
+    expect(mocks.assignMissedInboundCall).toHaveBeenCalledWith('m-1', null, 'tenant-1', 'account-1');
+    expect(screen.queryByTestId('missed-row-m-1')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('Assigned the call from +447700900123 to the account.');
+  });
+
+  it('a refused reassign stays on the row, in the supervisor`s words', async () => {
+    mocks.assignMissedInboundCall.mockResolvedValue({
+      ok: false,
+      refusal: { code: 'inbound_assignee_invalid', status: 400, message: 'x', details: [], phoneNumberId: null, routeId: null },
+    });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    const row = within(screen.getByTestId('missed-row-m-1'));
+    fireEvent.click(row.getByTestId('missed-reassign'));
+    fireEvent.change(row.getByTestId('missed-reassign-select'), { target: { value: 'u-2' } });
+    await act(async () => {
+      fireEvent.click(row.getByTestId('missed-reassign-save'));
+    });
+    expect(row.getByRole('alert').textContent).toBe('That person can’t take this account’s missed calls any more. Choose someone else.');
+    expect(row.getByTestId('missed-reassign-select')).toBeTruthy();
+  });
+
+  it('a departed assignee reads Former member, says who, and the reassign is the prompt', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({
+      rows: [missed({ assignee_user_id: 'u-4', assignee_name: 'Omar', assignee_departed: true })], next_cursor: null, limit: 50,
+    });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    const row = within(screen.getByTestId('missed-row-m-1'));
+    expect(row.getByTestId('missed-assignee').textContent).toBe('Former member');
+    expect(row.getByTestId('missed-departed').textContent).toBe('Omar no longer works in this account. Reassign it.');
+    const prompt = row.getByTestId('missed-reassign');
+    expect(prompt.className).toMatch(/btn-primary/);
+    fireEvent.click(prompt);
+    // The picker starts on the account, not on the person who left.
+    expect((row.getByTestId('missed-reassign-select') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('an agent has no reassign', async () => {
+    await renderAt('/dialer/missed', 'agent');
+    expect(screen.queryByTestId('missed-reassign')).toBeNull();
+  });
+
+  it('the Handled tab says when the customer was reached, and by whom', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({
+      rows: [
+        missed({ status: 'handled', handled_reason: 'reached', handled_by_user_id: 'u-2', handled_by_name: 'Ravi', handled_at: '2026-11-08T10:00:00Z' }),
+        missed({ id: 'm-2', status: 'handled', handled_reason: 'reached', handled_by_user_id: 'me-1', handled_by_name: 'Asha', handled_at: '2026-11-08T10:00:00Z' }),
+        missed({ id: 'm-3', status: 'handled', handled_reason: 'marked', handled_by_user_id: 'u-2', handled_by_name: 'Ravi', handled_at: '2026-11-08T10:00:00Z' }),
+      ],
+      next_cursor: null, limit: 50,
+    });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('missed-tab-handled'));
+    });
+    const reached = within(screen.getByTestId('missed-row-m-1')).getByTestId('missed-handled').textContent;
+    expect(reached).toContain('Customer reached by Ravi');
+    expect(reached).toContain('the customer was put through to an agent after this call');
+    expect(within(screen.getByTestId('missed-row-m-2')).getByTestId('missed-handled').textContent).toContain('Customer reached by you');
+    const marked = within(screen.getByTestId('missed-row-m-3')).getByTestId('missed-handled').textContent;
+    expect(marked).toContain('Ravi');
+    expect(marked).not.toContain('reached');
+    // No reassign on a handled row.
+    expect(screen.queryByTestId('missed-reassign')).toBeNull();
   });
 });
 
@@ -175,6 +316,8 @@ describe('Call back and Mark handled', () => {
     expect(mocks.markMissedInboundCallHandled).toHaveBeenCalledWith('m-1', 'tenant-1', 'account-1');
     expect(screen.queryByTestId('missed-row-m-1')).toBeNull();
     expect(screen.getByRole('status').textContent).toMatch(/as handled/);
+    // The badge re-reads after a change (one read at mount, one after the mark).
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(2);
     await act(async () => {
       fireEvent.click(within(screen.getByTestId('missed-row-m-2')).getByTestId('missed-mark-handled'));
     });

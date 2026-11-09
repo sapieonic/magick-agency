@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Bell, Briefcase, ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneIncoming, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
+import { Bell, Briefcase, ChartColumn, ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneIncoming, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
@@ -8,6 +8,8 @@ import { useTenant } from '../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { REPORTS_FLAG } from '../../utils/reports/reportsFlag';
+import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
+import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
 import styles from './AgencySidebar.module.css';
 
 interface Props {
@@ -22,6 +24,12 @@ interface NavItem {
   permission: Permission;
   /** A client-exposed flag that must also be on. */
   flag?: string;
+  /**
+   * Missed inbound calls' entries: shown while the caller can read the list (`useMissedCallsAccess`:
+   * inbound on, or rows still to read with it off) instead of by `flag` alone, and carrying the
+   * open count for the caller's scope as a badge.
+   */
+  missed?: 'list' | 'summary';
 }
 
 /**
@@ -104,14 +112,27 @@ const NAV_ITEMS: NavItem[] = [
      * Reports is: `agency.inbound.read` floors at `agent`, but a dedicated agent gets no
      * destinations in this shell (their entry is "Missed calls" in the agent nav,
      * `/dialer/missed`). Here a supervisor reads the account's rows and anyone else their own
-     * (the server's rule). Behind `agency_inbound_enabled`, default off.
+     * (the server's rule). Shown with `agency_inbound_enabled` on, and with it off while there are
+     * rows to read (the kill switch stops calls, not their follow-up); the badge is the open count.
      */
     label: 'Missed calls',
     to: '/agency/inbound/missed',
     icon: PhoneIncoming,
     end: false,
     permission: 'agency.campaigns.read',
-    flag: INBOUND_FLAG,
+    missed: 'list',
+  },
+  {
+    /*
+     * The inbound summary (`docs/inbound.md` §11): the account's inbound calls over a range, for
+     * supervisors (`agency.supervise`, the route's gate). Shown when the Missed list is.
+     */
+    label: 'Inbound summary',
+    to: '/agency/inbound/summary',
+    icon: ChartColumn,
+    end: false,
+    permission: 'agency.supervise',
+    missed: 'summary',
   },
   {
     label: 'Do Not Call',
@@ -191,8 +212,13 @@ export function AgencySidebar({ onClose }: Props) {
   const reports = useFeatureFlagEnabled(REPORTS_FLAG);
   const inbound = useFeatureFlagEnabled(INBOUND_FLAG);
   const flagOn: Record<string, boolean> = { [SOFTPHONE_FLAG]: softphone, [REPORTS_FLAG]: reports, [INBOUND_FLAG]: inbound };
+  const missedAccess = useMissedCallsAccess();
+  const missedBadge = missedBadgeText(missedAccess.count);
+  const missedBadgeSr = missedBadgeLabel(missedAccess.count);
   const items = NAV_ITEMS.filter(
-    (item) => hasPermission(role, item.permission) && (!item.flag || flagOn[item.flag] === true),
+    (item) => hasPermission(role, item.permission)
+      && (!item.flag || flagOn[item.flag] === true)
+      && (!item.missed || missedAccess.available),
   );
 
   return (
@@ -217,6 +243,12 @@ export function AgencySidebar({ onClose }: Props) {
           >
             <item.icon size={18} className={styles.navIcon} />
             {item.label}
+            {item.missed === 'list' && missedBadge ? (
+              <span className={styles.navBadge} data-testid="sidebar-missed-badge">
+                <span aria-hidden="true">{missedBadge}</span>
+                <span className={styles.srOnly}>{`, ${missedBadgeSr}`}</span>
+              </span>
+            ) : null}
           </NavLink>
         ))}
       </nav>

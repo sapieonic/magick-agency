@@ -577,7 +577,11 @@ export type AgencyInboundErrorCode =
   /** 409. Another recording of the account already has that name. */
   | 'inbound_clip_name_taken'
   /** 503. This deployment has no audio storage, so recordings cannot be uploaded. */
-  | 'inbound_clip_storage_unavailable';
+  | 'inbound_clip_storage_unavailable'
+  /** 409. `POST /inbound/missed/:id/assign`: the Missed row is already handled (marked, or closed because the customer was reached); a follow-up that is done is not handed on. */
+  | 'inbound_missed_call_handled'
+  /** 400. `POST /inbound/missed/:id/assign`: the person named is not an active member who can work this account's Missed calls. */
+  | 'inbound_assignee_invalid';
 
 /** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
 export const AGENCY_INBOUND_ERROR_CODES = [
@@ -599,6 +603,8 @@ export const AGENCY_INBOUND_ERROR_CODES = [
   'inbound_clip_invalid',
   'inbound_clip_name_taken',
   'inbound_clip_storage_unavailable',
+  'inbound_missed_call_handled',
+  'inbound_assignee_invalid',
 ] as const satisfies readonly AgencyInboundErrorCode[];
 
 const _allInboundCodesListed: AllListed<

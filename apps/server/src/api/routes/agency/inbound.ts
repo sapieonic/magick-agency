@@ -79,7 +79,7 @@ import {
   type InboundRouteUpdatedAudit,
 } from './inbound-answer.js';
 
-interface InboundActor {
+export interface InboundActor {
   tenantId: string;
   accountId: string;
   userId: string;
@@ -88,7 +88,7 @@ interface InboundActor {
 }
 
 /** The query's actor, or the 400 `missing_actor` (unreachable behind the public layer). */
-function queryActor(request: FastifyRequest, reply: FastifyReply): InboundActor | null {
+export function queryActor(request: FastifyRequest, reply: FastifyReply): InboundActor | null {
   const query = (request.query ?? {}) as { actor_user_id?: unknown; supervise?: unknown };
   const userId = typeof query.actor_user_id === 'string' ? query.actor_user_id : '';
   if (!UUID_RE.test(userId)) {

@@ -597,6 +597,30 @@ describe('the supervisor floor', () => {
     await repo.end(call.id, { outcome: 'answered', talkSeconds: 3, followUp: null, callbackDueAt: null, voicemailKey: null });
     expect((await floor())[busy.id as string]).toBe(false);
   });
+
+  it('marks an inbound wrap-up: an answered call that ended and owes its outcome, until it is settled', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const [busy, idle] = [await insertAgentSession(campaign.id, { state: 'reserved' }), await insertAgentSession(campaign.id)];
+    const { call } = await offered(busy.id as string);
+    const owed = async () => Object.fromEntries((await campaignStats(campaign.id as string)).agents.map((a) => [a.session_id, a.inbound_outcome_owed]));
+    // Offered, then connected: on a call, nothing owed yet.
+    expect(await owed()).toEqual({ [busy.id as string]: false, [idle.id as string]: false });
+    await repo.connect(call.id, { sessionId: busy.id as string, answeredByUserId: randomUUID() });
+    expect((await owed())[busy.id as string]).toBe(false);
+    await repo.end(call.id, { outcome: 'answered', talkSeconds: 3, followUp: null, callbackDueAt: null, voicemailKey: null });
+    expect((await owed())[busy.id as string]).toBe(true);
+    await pool().query('UPDATE agency_inbound_calls SET settled_at = now() WHERE id = $1', [call.id]);
+    expect((await owed())[busy.id as string]).toBe(false);
+  });
+
+  it('an offer that ended unanswered owes nothing', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const busy = await insertAgentSession(campaign.id, { state: 'reserved' });
+    const { call } = await offered(busy.id as string);
+    await repo.end(call.id, { outcome: 'abandoned_in_queue', talkSeconds: null, followUp: { reason: 'abandoned_in_queue', assigneeUserId: null }, callbackDueAt: null, voicemailKey: null });
+    const [agent] = (await campaignStats(campaign.id as string)).agents;
+    expect(agent).toMatchObject({ session_id: busy.id, on_inbound_call: false, inbound_outcome_owed: false });
+  });
 });
 
 describe('the campaign\'s inbound_sticky_enabled', () => {

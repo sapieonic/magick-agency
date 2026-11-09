@@ -672,4 +672,12 @@ describe('floorStateLabel — the state as a supervisor reads it', () => {
     // An inbound call that ended and owes its outcome is not flagged: it reads as wrap-up.
     expect(floorStateLabel({ state: 'wrapup', break_reason: null, on_inbound_call: false })).toBe(AGENCY_FLOOR_STATE_LABELS.wrapup);
   });
+
+  it('names a wrap-up that owes an inbound call`s outcome, and only a wrap-up', () => {
+    expect(floorStateLabel({ state: 'wrapup', break_reason: null, on_inbound_call: false, inbound_outcome_owed: true }))
+      .toBe('Wrapping up an inbound call');
+    // Rehydrated onto a break while owing it: the break is what a supervisor sees.
+    expect(floorStateLabel({ state: 'break', break_reason: 'Lunch', inbound_outcome_owed: true })).toBe('On break · Lunch');
+    expect(floorStateLabel({ state: 'wrapup', break_reason: null, inbound_outcome_owed: false })).toBe(AGENCY_FLOOR_STATE_LABELS.wrapup);
+  });
 });

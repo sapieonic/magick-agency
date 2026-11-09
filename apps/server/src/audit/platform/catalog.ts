@@ -131,13 +131,15 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // An account's inbound route created, changed (`details.fields`; `details.numbers_added` /
   // `numbers_removed` with the phone number ids) or deleted (its numbers detached), filed under
   // the route. A Missed inbound row marked handled, filed under the inbound call
-  // (`agency_inbound_calls.id`; `details.reason`). Ids and numbers only. Account-wide, never
+  // (`agency_inbound_calls.id`; `details.reason`), or reassigned by a supervisor (`details.from`,
+  // `details.to`: user ids, null for the account). Ids and numbers only. Account-wide, never
   // campaign-scoped. What the super-admin does (enable inbound, link numbers) is in
   // `super_admin_audit_log` (`INBOUND_SUPER_ADMIN_AUDIT_ACTIONS`).
   'agency_inbound_route.created',
   'agency_inbound_route.updated',
   'agency_inbound_route.deleted',
   'agency_inbound_call.handled',
+  'agency_inbound_call.reassigned',
   // An answered inbound call (P2, docs/inbound.md §6): hung up, its outcome saved, its caller marked
   // DNC, by the agent who took it or a supervisor (`details.on_behalf`), filed under the inbound
   // call; `campaign_id` the matched campaign, when the caller matched one. Ids and codes only.

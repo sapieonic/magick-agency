@@ -269,6 +269,7 @@ export type {
   AgencyInboundEndInput,
   AgencyInboundOfferRefusal,
   AgencyInboundIdentification,
+  AgencyInboundReassignResult,
   AgencyInboundMissedListInput,
   AgencyInboundMissedRow,
   AgencyInboundTransitionTarget,
@@ -284,3 +285,10 @@ export type { InboundCallSignalRow, InboundContactCandidateRow, InboundRouteSche
 // The account's recordings as the inbound route editor sees them (docs/inbound.md §8.4).
 export { AgencyInboundClipRepository, agencyInboundClipRepository } from './agency/inbound-clip.repository.js';
 export type { InboundClipUsage } from './agency/inbound-clip.repository.js';
+// The inbound summary's reads (docs/inbound.md §11).
+export {
+  AgencyInboundReportRepository,
+  agencyInboundReportRepository,
+  INBOUND_SUMMARY_AGENTS_MAX,
+} from './agency/inbound-report.repository.js';
+export type { InboundSummaryAgentRow, InboundSummaryTotalsRow } from './agency/inbound-report.repository.js';

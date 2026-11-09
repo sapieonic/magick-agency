@@ -40,6 +40,8 @@ export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, num
   inbound_clip_invalid: 400,
   inbound_clip_name_taken: 409,
   inbound_clip_storage_unavailable: 503,
+  inbound_missed_call_handled: 409,
+  inbound_assignee_invalid: 400,
 };
 
 /** English fallback copy, British spelling. The console words each code itself. */
@@ -62,6 +64,8 @@ const INBOUND_REFUSAL_MESSAGES: Readonly<Record<AgencyInboundErrorCode, string>>
   inbound_clip_invalid: 'That file cannot be used as a recording.',
   inbound_clip_name_taken: 'Another recording in this account already has that name.',
   inbound_clip_storage_unavailable: 'Recordings cannot be uploaded on this deployment: it has no audio storage.',
+  inbound_missed_call_handled: 'This missed call is already handled.',
+  inbound_assignee_invalid: 'That person cannot work this account’s missed calls.',
 };
 
 const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
@@ -147,6 +151,14 @@ export interface InboundRouteDeletedAudit {
   numbers_removed: string[];
 }
 
+/** `POST /inbound/missed/:id/assign`: whether this request moved it, and from whom to whom (null: the account). */
+export interface InboundCallReassignedAudit {
+  call_id: string;
+  changed: boolean;
+  from: string | null;
+  to: string | null;
+}
+
 /** `POST /inbound/missed/:id/handled`: whether this request marked it (false: already handled). */
 export interface InboundCallHandledAudit {
   call_id: string;
@@ -222,10 +234,16 @@ export function inboundRouteConfigOf(route: AgencyInboundRoute): AgencyInboundRo
 }
 
 /**
- * A Missed inbound row as the console reads it. `assignee_name` / `handled_by_name` are the
- * public layer's enrichment (`names`); the internal handler answers them NULL.
+ * A Missed inbound row as the console reads it. `assignee_name` / `handled_by_name` and
+ * `assignee_departed` are the public layer's enrichment (`names`, and the assignees who can no
+ * longer work the account's rows, `departed`); the internal handler answers them NULL and false.
+ * A row handled before 0028 has no `handled_reason`: a person marked it.
  */
-export function inboundMissedToWire(row: AgencyInboundMissedRow, names: ReadonlyMap<string, string | null> = new Map()): AgencyInboundMissedCall {
+export function inboundMissedToWire(
+  row: AgencyInboundMissedRow,
+  names: ReadonlyMap<string, string | null> = new Map(),
+  departed: ReadonlySet<string> = new Set(),
+): AgencyInboundMissedCall {
   const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
   return {
     id: row.id,
@@ -249,7 +267,9 @@ export function inboundMissedToWire(row: AgencyInboundMissedRow, names: Readonly
     ...(row.voicemail_key !== null ? { voicemail_url: voicemailPath(row.id) } : {}),
     assignee_user_id: row.follow_up_assignee_user_id,
     assignee_name: row.follow_up_assignee_user_id ? (names.get(row.follow_up_assignee_user_id) ?? null) : null,
+    assignee_departed: row.follow_up_assignee_user_id !== null && departed.has(row.follow_up_assignee_user_id),
     status: row.follow_up_status!,
+    handled_reason: row.follow_up_status === 'handled' ? (row.handled_reason ?? 'marked') : null,
     handled_by_user_id: row.handled_by_user_id,
     handled_by_name: row.handled_by_user_id ? (names.get(row.handled_by_user_id) ?? null) : null,
     handled_at: iso(row.handled_at),

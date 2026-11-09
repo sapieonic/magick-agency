@@ -2515,6 +2515,27 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/inbound/missed/count",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the Missed list's open count for the nav badge, served by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/missed/:id/assign",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "a supervisor's reassign of a Missed row, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/summary",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the inbound summary for supervisors, served by the public API layer at the console path (docs/inbound.md §11, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/inbound/calls/:id",
       "source": "apps/console/src/api/inbound.ts",
       "status": "served",

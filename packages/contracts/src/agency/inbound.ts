@@ -69,6 +69,15 @@ export const AGENCY_INBOUND_FOLLOW_UP_STATUSES = ['open', 'handled'] as const;
 export type AgencyInboundFollowUpStatus = (typeof AGENCY_INBOUND_FOLLOW_UP_STATUSES)[number];
 
 /**
+ * How a Missed inbound row was handled (`handled_reason`, 0028): `marked`, a person pressed Mark
+ * handled; `reached`, the customer was put through to an agent of the account afterwards (a later
+ * inbound call of theirs, or an outbound call to their number, campaign or soft phone), which
+ * closes the row on its own (docs/inbound.md §7).
+ */
+export const AGENCY_INBOUND_HANDLED_REASONS = ['marked', 'reached'] as const;
+export type AgencyInboundHandledReason = (typeof AGENCY_INBOUND_HANDLED_REASONS)[number];
+
+/**
  * Which signal named the sticky agent (`sticky_reason`, §4.1, IB2): the contact's `owner`; the
  * agent whose latest call to the number went out from the number rung (`last_from_number`); the
  * last agent who spoke to the customer (`last_connected`); the last agent who dialled them,

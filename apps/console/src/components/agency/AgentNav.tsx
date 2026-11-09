@@ -6,8 +6,9 @@ import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSu
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
-import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { useReportsAccess } from '../../hooks/useReportsAccess';
+import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
+import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import styles from './AgentNav.module.css';
 
 /**
@@ -64,11 +65,9 @@ export function useCustomerHistoryAvailable(): boolean {
   return hasPermission(useRoleOrNone(), 'agency.customer_history.read');
 }
 
-/** Whether this caller gets "Missed calls": `agency_inbound_enabled` on for the account, and `agency.inbound.read`. */
+/** Whether this caller gets "Missed calls" ({@link useMissedCallsAccess}). */
 export function useMissedCallsAvailable(): boolean {
-  const role = useRoleOrNone();
-  const flagOn = useFeatureFlagEnabled(INBOUND_FLAG);
-  return flagOn && hasPermission(role, 'agency.inbound.read');
+  return useMissedCallsAccess().available;
 }
 
 /** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
@@ -108,8 +107,19 @@ export function AgentNav({
   const reports = reportsAccess.enabled && reportsAccess.canSelf;
   const hintId = useId();
   const hint = lockedReason ? null : leaveHint;
-  const missed = useMissedCallsAvailable();
+  const missedAccess = useMissedCallsAccess();
+  const missed = missedAccess.available;
+  const missedBadge = missedBadgeText(missedAccess.count);
+  const missedBadgeSr = missedBadgeLabel(missedAccess.count);
   const surfaces = agentSurfacesFor({ softphone, customers, reports, missed });
+  // The open Missed calls beside their entry, wherever it renders (current, locked or a link).
+  const badgeFor = (id: AgentSurfaceId) =>
+    id === 'missed' && missedBadge ? (
+      <span className={styles.badge} data-testid="agent-nav-missed-badge">
+        <span aria-hidden="true">{missedBadge}</span>
+        <span className={styles.srOnly}>{`, ${missedBadgeSr}`}</span>
+      </span>
+    ) : null;
   return (
     <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
       {surfaces.map((surface) => {
@@ -127,6 +137,7 @@ export function AgentNav({
             >
               <Icon size={15} aria-hidden="true" />
               {surface.label}
+              {badgeFor(surface.id)}
             </span>
           );
         }
@@ -144,6 +155,7 @@ export function AgentNav({
             >
               <Icon size={15} aria-hidden="true" />
               {surface.label}
+              {badgeFor(surface.id)}
             </span>
           );
         }
@@ -160,6 +172,7 @@ export function AgentNav({
           >
             <Icon size={15} aria-hidden="true" />
             {surface.label}
+            {badgeFor(surface.id)}
           </Link>
         );
       })}

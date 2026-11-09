@@ -507,6 +507,7 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     redials: string;
     client_kind: AgencyClientKind;
     on_inbound_call: boolean;
+    inbound_outcome_owed: boolean;
   }>(
     // `calls_handled` counts by `reserved_agent_id`, which is a SESSION id,
     // so this is the attempts handled in THIS session — what
@@ -535,7 +536,14 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
                 SELECT 1 FROM agency_inbound_calls ib
                  WHERE ib.session_id = s.id AND ib.settled_at IS NULL
                    AND ib.state IN ('offered', 'connected')
-              ) AS on_inbound_call
+              ) AS on_inbound_call,
+              -- An inbound call the agent took that has ended and still owes its outcome (the
+              -- inbound wrap-up): the same index, the other arm of its predicate.
+              EXISTS (
+                SELECT 1 FROM agency_inbound_calls ib
+                 WHERE ib.session_id = s.id AND ib.settled_at IS NULL
+                   AND ib.state = 'ended' AND ib.bridged_at IS NOT NULL
+              ) AS inbound_outcome_owed
          FROM agency_agent_sessions s
          LEFT JOIN agency_call_attempts a
                 ON a.reserved_agent_id = s.id
@@ -559,6 +567,7 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     // The app the station last attached from (0006); the floor's phone marker.
     client_kind: r.client_kind === 'mobile' ? 'mobile' : 'web',
     on_inbound_call: r.on_inbound_call === true,
+    inbound_outcome_owed: r.inbound_outcome_owed === true,
   }));
 }
 

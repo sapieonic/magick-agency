@@ -9,7 +9,8 @@
  * behind `agency_inbound_enabled`: switching inbound off leaves its follow-ups to be worked.
  *
  * Enrichment here: `assignee_name` and `handled_by_name` (`users`, one query; a failed lookup
- * leaves them NULL, never a failed read). Mark handled is audited (`agency_inbound_call.handled`,
+ * leaves them NULL, never a failed read), and `assignee_departed` (the assignees who can no longer
+ * work the account's rows, one query; a failed lookup reads nobody as departed). Mark handled is audited (`agency_inbound_call.handled`,
  * with the reason) only when this request marked it: a repeat answers the row as it is.
  */
 import type { FastifyInstance } from 'fastify';
@@ -18,6 +19,7 @@ import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { resolvedUserAuditActor } from '../../../audit/platform/audit-actor.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
+import { agencyInboundAnswerRepository } from '../../../db/repositories/agency.repository.js';
 import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { inboundMissedQuerySchema, inboundMissedQueryString } from '../helpers/inbound-missed-query.js';
@@ -37,12 +39,33 @@ function isMissedRow(value: unknown): value is AgencyInboundMissedCall {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && typeof (value as { id?: unknown }).id === 'string';
 }
 
-/** The rows with their two names filled from one lookup. */
-async function withNames(rows: AgencyInboundMissedCall[], tenantId: string): Promise<AgencyInboundMissedCall[]> {
-  const names = await agentNamesOrNone(rows.flatMap((r) => [r.assignee_user_id, r.handled_by_user_id]), tenantId, 'inbound missed list');
+/**
+ * Of the rows' assignees, those who are no longer an active member able to work the account's
+ * rows (the answer webhook's assignee rule, `filterAccountMembers`). A failed lookup is logged and
+ * reads nobody as departed: the flag only adds a prompt, never hides a row.
+ */
+async function departedAssignees(rows: AgencyInboundMissedCall[], tenantId: string, accountId: string | undefined): Promise<Set<string>> {
+  const assignees = [...new Set(rows.flatMap((r) => (r.assignee_user_id ? [r.assignee_user_id] : [])))];
+  if (assignees.length === 0 || !accountId) return new Set();
+  try {
+    const members = await agencyInboundAnswerRepository.filterAccountMembers(tenantId, accountId, assignees);
+    return new Set(assignees.filter((id) => !members.has(id)));
+  } catch (err) {
+    log.warn({ err: err instanceof Error ? err.message : String(err) }, 'inbound missed list: membership lookup failed; no assignee flagged as departed');
+    return new Set();
+  }
+}
+
+/** The rows with their two names and `assignee_departed` filled (two lookups for the page). */
+export async function withNames(rows: AgencyInboundMissedCall[], tenantId: string, accountId: string | undefined): Promise<AgencyInboundMissedCall[]> {
+  const [names, departed] = await Promise.all([
+    agentNamesOrNone(rows.flatMap((r) => [r.assignee_user_id, r.handled_by_user_id]), tenantId, 'inbound missed list'),
+    departedAssignees(rows, tenantId, accountId),
+  ]);
   return rows.map((r) => ({
     ...r,
     assignee_name: r.assignee_user_id ? (names.get(r.assignee_user_id) ?? null) : null,
+    assignee_departed: r.assignee_user_id !== null && departed.has(r.assignee_user_id),
     handled_by_name: r.handled_by_user_id ? (names.get(r.handled_by_user_id) ?? null) : null,
   }));
 }
@@ -69,7 +92,7 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
     const body = result.body as { rows?: unknown } | null;
     if (result.status !== 200 || !body || !Array.isArray(body.rows)) return reply.code(result.status).send(result.body);
     const rows = body.rows.filter(isMissedRow);
-    return reply.send({ ...body, rows: await withNames(rows, request.tenantId!) });
+    return reply.send({ ...body, rows: await withNames(rows, request.tenantId!, request.accountId) });
   });
 
   /**
@@ -83,6 +106,10 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
    *
    * No automatic HEAD route: Fastify's runs this handler and drops the body, so a HEAD would open
    * a bucket stream for nothing. An `<audio>` element asks with GET.
+   *
+   * `Cache-Control: private, no-store`: a customer's voice is never kept by a browser or a proxy,
+   * so no copy outlives the retention purge (the console fetches it into a blob URL each time it
+   * is played).
    */
   app.get<{ Params: { id: string } }>('/inbound/missed/:id/voicemail', { preHandler: read, exposeHeadRoute: false }, async (request, reply) => {
     const actor = inboundActorOrRefuse(request, reply);
@@ -123,7 +150,7 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
     }
     reply.header('Content-Type', 'audio/wav');
     reply.header('Accept-Ranges', 'bytes');
-    reply.header('Cache-Control', 'private, max-age=3600');
+    reply.header('Cache-Control', 'private, no-store');
     if (object.contentLength !== undefined) reply.header('Content-Length', String(object.contentLength));
     if (object.contentRange) {
       reply.header('Content-Range', object.contentRange);
@@ -158,7 +185,7 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
     }
     const call = (unwrapped.answer as { call?: unknown } | null)?.call;
     if (!isMissedRow(call)) return reply.send(unwrapped.answer);
-    const [named] = await withNames([call], request.tenantId!);
+    const [named] = await withNames([call], request.tenantId!, request.accountId);
     return reply.send({ call: named });
   });
 }

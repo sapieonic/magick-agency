@@ -14,10 +14,13 @@ vi.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: null, signOut: 
 
 import {
   INBOUND_PATHS,
+  assignMissedInboundCall,
   dispositionInboundCall,
   fetchVoicemailBlobUrl,
   getInboundCall,
   getInboundQueue,
+  getInboundSummary,
+  getMissedInboundCount,
   hangupInboundCall,
   markInboundCallDnc,
   updateInboundCallNotes,
@@ -51,6 +54,31 @@ describe('the paths, in one place', () => {
     expect(INBOUND_PATHS.callDisposition('ib-1')).toBe('/proxy/agency/inbound/calls/ib-1/disposition');
     expect(INBOUND_PATHS.callDnc('ib-1')).toBe('/proxy/agency/inbound/calls/ib-1/dnc');
     expect(INBOUND_PATHS.queue).toBe('/proxy/agency/inbound/queue');
+    expect(INBOUND_PATHS.missedCount).toBe('/proxy/agency/inbound/missed/count');
+    expect(INBOUND_PATHS.missedAssign('m 1')).toBe('/proxy/agency/inbound/missed/m%201/assign');
+    expect(INBOUND_PATHS.summary).toBe('/proxy/agency/inbound/summary');
+  });
+});
+
+describe('working the Missed list and the summary', () => {
+  it('reassigns with the member, or null for the account, and reads the refusal', async () => {
+    mocks.fetch.mockResolvedValue(respond(200, { call: { id: 'm-1', assignee_user_id: 'u-2' } }));
+    const moved = await assignMissedInboundCall('m-1', 'u-2', 't-1', 'a-1');
+    expect(moved).toMatchObject({ ok: true, value: { id: 'm-1', assignee_user_id: 'u-2' } });
+    expect(lastRequest()).toMatchObject({ url: '/proxy/agency/inbound/missed/m-1/assign', method: 'POST', body: { assignee_user_id: 'u-2' } });
+    await assignMissedInboundCall('m-1', null, 't-1', 'a-1');
+    expect(lastRequest().body).toEqual({ assignee_user_id: null });
+    mocks.fetch.mockResolvedValue(respond(409, { code: 'inbound_missed_call_handled', message: 'Done.' }));
+    expect(await assignMissedInboundCall('m-1', 'u-2', 't-1', 'a-1')).toMatchObject({ ok: false, refusal: { code: 'inbound_missed_call_handled', status: 409 } });
+  });
+
+  it('reads the count and the summary', async () => {
+    mocks.fetch.mockResolvedValue(respond(200, { open: 3, open_capped: false, has_rows: true }));
+    expect(await getMissedInboundCount('t-1', 'a-1')).toEqual({ open: 3, open_capped: false, has_rows: true });
+    expect(lastRequest()).toMatchObject({ url: '/proxy/agency/inbound/missed/count', method: 'GET' });
+    mocks.fetch.mockResolvedValue(respond(200, { calls: 4 }));
+    expect(await getInboundSummary({ from: '2026-11-01T00:00:00.000Z', to: '2026-11-08T00:00:00.000Z' }, 't-1', 'a-1')).toEqual({ calls: 4 });
+    expect(lastRequest().url).toBe('/proxy/agency/inbound/summary?from=2026-11-01T00%3A00%3A00.000Z&to=2026-11-08T00%3A00%3A00.000Z');
   });
 });
 
@@ -130,11 +158,33 @@ describe('the queue', () => {
 });
 
 describe('the voicemail', () => {
-  it('is fetched under the proxy whatever form the row’s URL takes', () => {
+  it('is fetched under the proxy whatever form the row’s relative path takes', () => {
     expect(voicemailFetchUrl('/inbound/missed/m-1/voicemail')).toBe('/proxy/agency/inbound/missed/m-1/voicemail');
     expect(voicemailFetchUrl('inbound/missed/m-1/voicemail')).toBe('/proxy/agency/inbound/missed/m-1/voicemail');
     expect(voicemailFetchUrl('/proxy/agency/inbound/missed/m-1/voicemail')).toBe('/proxy/agency/inbound/missed/m-1/voicemail');
-    expect(voicemailFetchUrl('https://cdn.example.com/v.wav')).toBe('https://cdn.example.com/v.wav');
+  });
+
+  it('is never fetched from anywhere but our own voicemail route, so the token goes nowhere else', async () => {
+    const elsewhere = [
+      'https://cdn.example.com/v.wav',
+      'http://localhost/proxy/agency/inbound/missed/m-1/voicemail',
+      '//evil.example.com/inbound/missed/m-1/voicemail',
+      '/\\evil.example.com/inbound/missed/m-1/voicemail',
+      'javascript:alert(1)',
+      '/proxy/agency/inbound/missed/m-1/voicemail?next=https://evil.example.com',
+      '/inbound/missed/../../../auth/me',
+      '/proxy/agency/sessions/s-1/voicemail',
+      '/inbound/missed/m-1/voicemail#x',
+      '',
+    ];
+    for (const url of elsewhere) expect(voicemailFetchUrl(url), url).toBeNull();
+    for (const url of elsewhere) {
+      expect(await fetchVoicemailBlobUrl(url, 't-1', 'a-1'), url).toEqual({
+        status: 'unavailable',
+        message: 'We couldn’t load the voicemail. Try again in a moment.',
+      });
+    }
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   it('plays from a blob URL, and says so plainly when it is gone', async () => {

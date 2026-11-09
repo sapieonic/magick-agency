@@ -3,6 +3,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { forceAgentAvailable } from '../../api/agency';
 import { ApiError } from '../../api/client';
+import { errorCode } from '../../utils/agencyErrors';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import {
@@ -13,6 +14,9 @@ import {
   canForceAvailable,
   forceAvailableConfirmMessage,
   hasResolvedName,
+  INBOUND_FORCE_AVAILABLE,
+  inboundForceAvailableCopy,
+  isInboundWrapup,
   secondsInStateBucket,
   timeInStateMs,
   type AgencyFloorSort,
@@ -97,6 +101,8 @@ export function AgentFloorDrawer({
     `agency.supervise` the API gates the route on, or the button 403s on click.
   */
   const showForce = canSupervise && canForceAvailable(agent);
+  // An inbound wrap-up: the return closes the inbound call's owed outcome (the server's rule).
+  const inbound = isInboundWrapup(agent);
 
   const runForce = async () => {
     setBusy(true);
@@ -107,7 +113,7 @@ export function AgentFloorDrawer({
         tenantId ?? undefined,
         accountId ?? undefined,
       );
-      showToast(`${displayName} is back in the pool.`, 'success');
+      showToast(inbound ? inboundForceAvailableCopy('done', displayName) : `${displayName} is back in the pool.`, 'success');
       // Bucketed state, never the agent's id/name — see events.ts.
       trackAgencyFloorIntervention({
         campaign_id: campaignId,
@@ -129,6 +135,9 @@ export function AgentFloorDrawer({
         showErrorToast(
           new Error('You don’t have permission to end another agent’s wrap-up.'),
         );
+      } else if (err instanceof ApiError && err.statusCode === 409 && errorCode(err) === 'inbound_call_live') {
+        // The session still holds an inbound call the server would not close for us.
+        showErrorToast(new Error(inboundForceAvailableCopy('refused', displayName)));
       } else {
         showErrorToast(err, 'Could not return this agent to the pool.');
       }
@@ -202,7 +211,7 @@ export function AgentFloorDrawer({
               disabled={busy}
               data-testid="force-available-button"
             >
-              {busy ? 'Working…' : 'End wrap-up'}
+              {busy ? 'Working…' : inbound ? INBOUND_FORCE_AVAILABLE.trigger : 'End wrap-up'}
             </button>
           </div>
         ) : null}
@@ -211,9 +220,9 @@ export function AgentFloorDrawer({
       {confirming && (
         <ConfirmDialog
           open
-          title={FORCE_AVAILABLE_CONFIRM.title}
-          message={forceAvailableConfirmMessage(displayName)}
-          confirmLabel={FORCE_AVAILABLE_CONFIRM.confirmLabel}
+          title={inbound ? INBOUND_FORCE_AVAILABLE.title : FORCE_AVAILABLE_CONFIRM.title}
+          message={inbound ? inboundForceAvailableCopy('message', displayName) : forceAvailableConfirmMessage(displayName)}
+          confirmLabel={inbound ? INBOUND_FORCE_AVAILABLE.confirmLabel : FORCE_AVAILABLE_CONFIRM.confirmLabel}
           danger
           disabled={busy}
           onConfirm={() => {

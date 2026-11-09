@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGENCY_INBOUND_ERROR_CODES } from '@magick-agency/contracts/api/agency/inbound';
+import { AGENCY_INBOUND_ERROR_CODES, AGENCY_INBOUND_SUMMARY_MAX_DAYS } from '@magick-agency/contracts/api/agency/inbound';
 import {
   INBOUND_REFUSAL_STATUS,
   inboundMissedToWire,
@@ -7,6 +7,7 @@ import {
   isInboundCoreAnswer,
 } from '../../../../src/api/routes/agency/inbound-answer.js';
 import { unavailableActionIssues } from '../../../../src/api/routes/agency/inbound.js';
+import { inboundMissedAssignSchema, inboundSummaryQuerySchema, pct } from '../../../../src/api/routes/agency/inbound-missed-work.js';
 import { inboundMissedQuerySchema, inboundMissedQueryString } from '../../../../src/api/routes/helpers/inbound-missed-query.js';
 import type { AgencyInboundMissedRow } from '../../../../src/db/repositories/agency.repository.js';
 
@@ -40,6 +41,8 @@ describe('refusals', () => {
       inbound_clip_invalid: 400,
       inbound_clip_name_taken: 409,
       inbound_clip_storage_unavailable: 503,
+      inbound_missed_call_handled: 409,
+      inbound_assignee_invalid: 400,
     });
     expect(inboundRefusalBody({ code: 'inbound_call_live', inbound_call_id: 'ib-1' })).toEqual({
       status: 409,
@@ -103,7 +106,7 @@ describe('a Missed row on the wire', () => {
     voicemail_key: 'vm/1', callback_due_at: new Date('2026-11-09T09:00:00Z'), follow_up_status: 'handled',
     follow_up_reason: 'overflow', follow_up_assignee_user_id: 'u-1', handled_by_user_id: 'u-2',
     handled_at: new Date('2026-11-08T10:00:00Z'), created_at: new Date(), updated_at: new Date(),
-    route_name: 'Main line', matched_campaign_name: null,
+    route_name: 'Main line', matched_campaign_name: null, handled_reason: 'reached',
   } as AgencyInboundMissedRow;
 
   it('carries the follow-up, ISO times and the names it is given', () => {
@@ -112,10 +115,16 @@ describe('a Missed row on the wire', () => {
       arrived_at: '2026-11-08T09:00:00.000Z', ended_at: '2026-11-08T09:02:00.000Z', reason: 'overflow', outcome: 'overflow',
       caller_dnc: true, matched_contact_id: null, matched_campaign_id: null, matched_campaign_name: null,
       callback_due_at: '2026-11-09T09:00:00.000Z', has_voicemail: true, assignee_user_id: 'u-1', assignee_name: 'Asha',
-      status: 'handled', handled_by_user_id: 'u-2', handled_by_name: null, handled_at: '2026-11-08T10:00:00.000Z',
-      voicemail_url: '/inbound/missed/c-1/voicemail',
+      assignee_departed: false, status: 'handled', handled_reason: 'reached', handled_by_user_id: 'u-2', handled_by_name: null,
+      handled_at: '2026-11-08T10:00:00.000Z', voicemail_url: '/inbound/missed/c-1/voicemail',
     });
     expect(inboundMissedToWire(row).assignee_name).toBeNull();
+    // The public layer names the assignees who left; only a person can have left.
+    expect(inboundMissedToWire(row, new Map(), new Set(['u-1'])).assignee_departed).toBe(true);
+    expect(inboundMissedToWire({ ...row, follow_up_assignee_user_id: null }, new Map(), new Set(['u-1'])).assignee_departed).toBe(false);
+    // Handled before 0028 (no reason): a person marked it. Open: no reason.
+    expect(inboundMissedToWire({ ...row, handled_reason: null }).handled_reason).toBe('marked');
+    expect(inboundMissedToWire({ ...row, follow_up_status: 'open', handled_reason: null, handled_at: null, handled_by_user_id: null }).handled_reason).toBeNull();
     // No voicemail, no `voicemail_url` (the console offers no player).
     expect(inboundMissedToWire({ ...row, voicemail_key: null })).not.toHaveProperty('voicemail_url');
   });
@@ -135,5 +144,39 @@ describe('the Missed query', () => {
     }
     expect(inboundMissedQuerySchema.parse({ assignee: 'me' }).assignee).toBe('me');
     expect(inboundMissedQuerySchema.parse({ assignee: 'unassigned' }).assignee).toBe('unassigned');
+  });
+});
+
+describe('the Missed list`s reassign body and the summary`s query (`agency/inbound-missed-work.ts`)', () => {
+  it('takes a member`s id or null for the account, and nothing else', () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    expect(inboundMissedAssignSchema.parse({ assignee_user_id: id })).toEqual({ assignee_user_id: id });
+    expect(inboundMissedAssignSchema.parse({ assignee_user_id: null })).toEqual({ assignee_user_id: null });
+    for (const bad of [{}, { assignee_user_id: 'someone' }, { assignee_user_id: id, note: 'x' }, { assignee_user_id: 7 }]) {
+      expect(inboundMissedAssignSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('takes two instants in order, at most the contract`s span apart', () => {
+    const day = 86_400_000;
+    const at = (ms: number) => new Date(Date.parse('2026-11-01T00:00:00Z') + ms).toISOString();
+    expect(inboundSummaryQuerySchema.safeParse({ from: at(0), to: at(day) }).success).toBe(true);
+    expect(inboundSummaryQuerySchema.safeParse({ from: at(0), to: at(AGENCY_INBOUND_SUMMARY_MAX_DAYS * day) }).success).toBe(true);
+    for (const bad of [
+      { from: at(0), to: at(AGENCY_INBOUND_SUMMARY_MAX_DAYS * day + 1) },
+      { from: at(day), to: at(0) },
+      { from: at(0), to: at(0) },
+      { from: 'yesterday', to: at(0) },
+      { from: at(0) },
+    ]) {
+      expect(inboundSummaryQuerySchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('gives a rate to one decimal, and none with nothing to divide by', () => {
+    expect(pct(1, 3)).toBe(33.3);
+    expect(pct(2, 3)).toBe(66.7);
+    expect(pct(0, 4)).toBe(0);
+    expect(pct(0, 0)).toBeNull();
   });
 });

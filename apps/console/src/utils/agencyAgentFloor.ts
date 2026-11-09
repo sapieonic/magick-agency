@@ -302,6 +302,8 @@ export const AGENCY_FLOOR_STATE_LABELS: Record<AgencyAgentLiveState, string> = {
 
 /** The floor's label for an agent on an inbound call (P2). */
 export const INBOUND_CALL_FLOOR_LABEL = 'Inbound call';
+/** The floor's label for an agent who owes an ended inbound call's outcome (`inbound_outcome_owed`). */
+export const INBOUND_WRAPUP_FLOOR_LABEL = 'Wrapping up an inbound call';
 
 /**
  * Whether this agent's break is the soft phone (`break` with the reserved reason
@@ -324,12 +326,15 @@ export function isOnSoftphone(agent: Pick<AgencySupervisorAgent, 'state' | 'brea
  * An agent offered or connected to an inbound call (`on_inbound_call`, P2) reads "Inbound call"
  * whatever the state beneath it says (`reserved` while the call is offered, `on_call` once
  * connected): it is the one thing a supervisor needs to know about them. An inbound call that
- * ended and owes its outcome is not flagged (the server's rule), so it reads "Wrapping up".
+ * ended and owes its outcome (`inbound_outcome_owed`) reads "Wrapping up an inbound call" while the
+ * agent is in wrap-up: the supervisor's "Close and make available" acts on it.
  */
 export function floorStateLabel(
-  agent: Pick<AgencySupervisorAgent, 'state' | 'break_reason'> & Partial<Pick<AgencySupervisorAgent, 'on_inbound_call'>>,
+  agent: Pick<AgencySupervisorAgent, 'state' | 'break_reason'>
+    & Partial<Pick<AgencySupervisorAgent, 'on_inbound_call' | 'inbound_outcome_owed'>>,
 ): string {
   if (agent.on_inbound_call) return INBOUND_CALL_FLOOR_LABEL;
+  if (isInboundWrapup(agent)) return INBOUND_WRAPUP_FLOOR_LABEL;
   if (isOnSoftphone(agent)) return SOFTPHONE_BREAK_REASON_LABEL;
   const label = AGENCY_FLOOR_STATE_LABELS[agent.state];
   if (agent.state !== 'break' || !agent.break_reason) return label;
@@ -642,6 +647,37 @@ export function rankFloor(
  */
 export function canForceAvailable(agent: AgencySupervisorAgent): boolean {
   return agent.state === 'wrapup';
+}
+
+/**
+ * The agent is in an inbound wrap-up: in `wrapup`, owing the outcome of an inbound call that
+ * ended after they took it (`inbound_outcome_owed`, docs/inbound.md §6). Force-available then
+ * closes that call's outcome as lapsed ("closed by a supervisor") and returns them, so the drawer
+ * offers it as "Close and make available" with its own confirm.
+ */
+export function isInboundWrapup(
+  agent: Pick<AgencySupervisorAgent, 'state'> & Partial<Pick<AgencySupervisorAgent, 'inbound_outcome_owed'>>,
+): boolean {
+  return agent.state === 'wrapup' && agent.inbound_outcome_owed === true;
+}
+
+/** The inbound wrap-up's force-return copy: the trigger, the confirm and the outcomes. */
+export const INBOUND_FORCE_AVAILABLE = {
+  trigger: 'Close and make available',
+  title: 'Close this inbound call and make the agent available?',
+  message:
+    '{name} hasn’t saved the outcome of an inbound call yet. The call is closed with no outcome, recorded as closed by '
+    + 'a supervisor, and {name} goes straight back into the pool and can be sent a new call immediately. The outcome '
+    + 'can’t be filled in afterwards.',
+  /** Not the trigger's words, as the campaign confirm's (a restatement, never the same button twice). */
+  confirmLabel: 'Close the call and return them',
+  done: '{name} is available again. Their inbound call is closed.',
+  /** The server would not close the call (one that predates closing an inbound wrap-up answers `inbound_call_live`). */
+  refused: '{name} still owes this inbound call’s outcome and it couldn’t be closed. Ask them to save it, then try again.',
+} as const;
+
+export function inboundForceAvailableCopy(key: 'message' | 'done' | 'refused', displayName: string): string {
+  return INBOUND_FORCE_AVAILABLE[key].replaceAll('{name}', displayName);
 }
 
 /** Free-text reason cap, mirroring the API's `forceAvailableSchema`. */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Calendar, Check, ListChecks, Phone, PhoneIncoming } from 'lucide-react';
+import { AlertCircle, Calendar, Check, ListChecks, Phone, PhoneIncoming, UserRoundPen } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -8,7 +8,8 @@ import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { FiltersCard } from '../FiltersCard';
 import { VoicemailPlayer } from './VoicemailPlayer';
 import { useTenant } from '../../../contexts/TenantContext';
-import { listMissedInboundCalls, markMissedInboundCallHandled } from '../../../api/inbound';
+import { assignMissedInboundCall, listMissedInboundCalls, markMissedInboundCallHandled } from '../../../api/inbound';
+import { refreshMissedCallsCount } from '../../../hooks/useMissedCallsCount';
 import { listTenantMembers } from '../../../api/tenants';
 import { formatSpineTimestamp } from '../../../utils/agencySpineCopy';
 import { formatDialNumber } from '../../../utils/softphone/phoneInput';
@@ -16,14 +17,21 @@ import { softphonePrefillState } from '../../../utils/softphone/prefill';
 import {
   EMPTY_MISSED_FILTERS,
   MISSED_REASON_LABELS,
-  assigneeLabel,
   inboundRefusalCopy,
   missedQueryFromDraft,
   type MissedFiltersDraft,
 } from '../../../utils/inbound/inboundCopy';
+import {
+  MISSED_REACHED_NOTE,
+  departedAssigneeNote,
+  missedAssigneeLabel,
+  missedHandledLabel,
+  reassignRefusalCopy,
+} from '../../../utils/inbound/missedCopy';
 import { AGENCY_INBOUND_MISSED_REASONS, type AgencyInboundMissedCall } from '../../../types/inbound';
 import spine from '../SpineListLayout.module.css';
 import styles from './Inbound.module.css';
+import missedStyles from './MissedCalls.module.css';
 
 const PAGE_SIZE = 50;
 
@@ -42,7 +50,12 @@ export interface MissedCallsListProps {
  * paging. Each open row offers **Call back** — the soft phone with the caller's number on the pad
  * and the matched campaign as its "Log to" (nothing is dialled until the agent presses Call, and
  * a caller on a DNC list meets the soft phone's own DNC check and override note) — and **Mark
- * handled**, which the server makes idempotent.
+ * handled**, which the server makes idempotent. A row also closes on its own once the customer is
+ * put through to an agent of the account (`reached`, shown on the Handled tab).
+ *
+ * A supervisor **reassigns** an open row to a member of the account, or to the account; a row
+ * whose assignee has left reads "Former member" with the prompt to reassign it. Every change
+ * re-reads the nav badge's count.
  */
 export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsListProps) {
   const { tenantId, accountId } = useTenant();
@@ -58,22 +71,34 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
   const [marking, setMarking] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
   const [announcement, setAnnouncement] = useState('');
-  const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
+  const [members, setMembers] = useState<Array<{ id: string; name: string; assignable: boolean }>>([]);
+  /** The row whose reassign picker is open, and what is picked ('' : the account). */
+  const [reassigning, setReassigning] = useState<{ id: string; to: string } | null>(null);
+  const [assigning, setAssigning] = useState<string | null>(null);
   const seq = useRef(0);
 
   useEffect(() => {
     if (!supervise || !tenantId) return;
     listTenantMembers(tenantId)
-      .then((list) =>
-        setMembers(
-          (list ?? [])
-            .map((m) => ({ id: m.user.id, name: m.user.display_name ?? m.user.email }))
-            .sort((a, b) => a.name.localeCompare(b.name)),
-        ),
-      )
-      // The names are a courtesy: without them the filter offers "me" and "nobody".
+      .then((list) => {
+        // One entry per person: a member at tenant level and in this account is one choice.
+        const byId = new Map<string, { id: string; name: string; assignable: boolean }>();
+        for (const m of list ?? []) {
+          const assignable = m.membership.status === 'active'
+            && (m.membership.account_id === null || m.membership.account_id === accountId);
+          const prior = byId.get(m.user.id);
+          byId.set(m.user.id, {
+            id: m.user.id,
+            name: m.user.display_name ?? m.user.email,
+            assignable: assignable || (prior?.assignable ?? false),
+          });
+        }
+        setMembers([...byId.values()].sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      // The names are a courtesy: without them the filter offers "me" and "nobody", and a
+      // reassign offers the account only.
       .catch(() => setMembers([]));
-  }, [supervise, tenantId]);
+  }, [supervise, tenantId, accountId]);
 
   const load = useCallback(
     async (filters: MissedFiltersDraft) => {
@@ -139,6 +164,32 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
         : current.map((r) => (r.id === call.id ? result.value : r)),
     );
     setAnnouncement(`Marked the call from ${callerLabel(call)} as handled.`);
+    refreshMissedCallsCount();
+  };
+
+  const reassign = async (call: AgencyInboundMissedCall, to: string) => {
+    if (assigning) return;
+    setAssigning(call.id);
+    setRowError(null);
+    const result = await assignMissedInboundCall(call.id, to === '' ? null : to, tenantId ?? undefined, accountId ?? undefined);
+    setAssigning(null);
+    if (!result.ok) {
+      setRowError({ id: call.id, message: reassignRefusalCopy(result.refusal) });
+      return;
+    }
+    setReassigning(null);
+    // A filter on the assignee no longer matches a row given to someone else: it leaves the view.
+    const filter = applied.assignee;
+    const stillMatches = !filter
+      || (filter === 'unassigned' ? result.value.assignee_user_id === null
+        : filter === 'me' ? result.value.assignee_user_id === userId
+          : result.value.assignee_user_id === filter);
+    setRows((current) => (stillMatches
+      ? current.map((r) => (r.id === call.id ? result.value : r))
+      : current.filter((r) => r.id !== call.id)));
+    const assignee = missedAssigneeLabel(result.value, userId);
+    setAnnouncement(`Assigned the call from ${callerLabel(call)} to ${assignee === 'You' || assignee === 'The account' ? assignee.toLowerCase() : assignee}.`);
+    refreshMissedCallsCount();
   };
 
   const callBack = (call: AgencyInboundMissedCall) => {
@@ -345,12 +396,77 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
                         <span className={styles.sub}>Callback booked for {formatSpineTimestamp(call.callback_due_at)}</span>
                       ) : null}
                     </td>
-                    {supervise ? <td data-label="Assigned to">{assigneeLabel(call, userId)}</td> : null}
+                    {supervise ? (
+                      <td data-label="Assigned to">
+                        <span data-testid="missed-assignee">{missedAssigneeLabel(call, userId)}</span>
+                        {departedAssigneeNote(call) ? (
+                          <span className={styles.sub} data-testid="missed-departed">{departedAssigneeNote(call)}</span>
+                        ) : null}
+                        {call.status === 'open' ? (
+                          reassigning?.id === call.id ? (
+                            <div className={missedStyles.reassign}>
+                              <label className={styles.srOnly} htmlFor={`reassign-${call.id}`}>
+                                Assign the call from {callerLabel(call)} to
+                              </label>
+                              <select
+                                id={`reassign-${call.id}`}
+                                className={styles.select}
+                                value={reassigning.to}
+                                onChange={(e) => setReassigning({ id: call.id, to: e.target.value })}
+                                disabled={assigning !== null}
+                                data-testid="missed-reassign-select"
+                              >
+                                <option value="">The account</option>
+                                {members.filter((m) => m.assignable).map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.id === userId ? `${m.name} (you)` : m.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className={styles.rowActions}>
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  onClick={() => void reassign(call, reassigning.to)}
+                                  disabled={assigning !== null || reassigning.to === (call.assignee_user_id ?? '')}
+                                  data-testid="missed-reassign-save"
+                                >
+                                  {assigning === call.id ? 'Assigning…' : 'Assign'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  onClick={() => setReassigning(null)}
+                                  disabled={assigning !== null}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className={call.assignee_departed ? `btn-primary ${missedStyles.promptButton}` : missedStyles.linkButton}
+                              onClick={() => {
+                                setRowError(null);
+                                setReassigning({ id: call.id, to: call.assignee_departed ? '' : (call.assignee_user_id ?? '') });
+                              }}
+                              aria-label={`Reassign the call from ${callerLabel(call)}`}
+                              data-testid="missed-reassign"
+                            >
+                              <UserRoundPen size={13} aria-hidden="true" />
+                              Reassign
+                            </button>
+                          )
+                        ) : null}
+                      </td>
+                    ) : null}
                     <td data-label={open ? 'Follow up' : 'Handled'}>
                       {call.status === 'handled' ? (
-                        <span>
-                          {call.handled_by_user_id === userId ? 'You' : (call.handled_by_name ?? (call.handled_by_user_id ? 'Former member' : 'Closed automatically'))}
+                        <span data-testid="missed-handled">
+                          {missedHandledLabel(call, userId)}
                           <span className={styles.sub}>{formatSpineTimestamp(call.handled_at)}</span>
+                          {call.handled_reason === 'reached' ? <span className={styles.sub}>{MISSED_REACHED_NOTE}</span> : null}
                         </span>
                       ) : (
                         <div className={styles.rowActions}>

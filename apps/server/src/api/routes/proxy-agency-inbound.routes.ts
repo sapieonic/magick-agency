@@ -6,6 +6,7 @@ import { registerInboundRouteRoutes } from './proxy-agency-inbound/routes.js';
 import { registerInboundMissedRoutes } from './proxy-agency-inbound/missed.js';
 import { registerInboundCallRoutes } from './proxy-agency-inbound/calls.js';
 import { registerInboundClipRoutes } from './proxy-agency-inbound/clips.js';
+import { registerInboundMissedWorkRoutes } from './proxy-agency-inbound/missed-work.js';
 
 /*
  * Inbound calls in the console (docs/inbound.md §7, §8.1; the wire is
@@ -18,6 +19,8 @@ import { registerInboundClipRoutes } from './proxy-agency-inbound/clips.js';
  *    uses, `agency.inbound.write`;
  *  - `./proxy-agency-inbound/missed.ts`: the Missed inbound list and Mark handled,
  *    `agency.inbound.read` (an agent's own rows; the account's with `agency.supervise`);
+ *  - `./proxy-agency-inbound/missed-work.ts`: the Missed list's badge count and a supervisor's
+ *    reassign, and the inbound summary (`agency.supervise`); none behind the flag;
  *  - `./proxy-agency-inbound/calls.ts` (P2): the answered call's finish (read, notes, hang up, the
  *    outcome, Mark DNC), `agency.inbound.read`: the agent who took it, or `agency.supervise`.
  *
@@ -26,7 +29,8 @@ import { registerInboundClipRoutes } from './proxy-agency-inbound/clips.js';
  * the finish routes and the Missed list (its voicemails and Mark handled), which are never gated:
  * an agent the flag is switched off under can still finish a call they took, as on the soft
  * phone, and the follow-ups of calls taken before the switch stay readable and workable (the
- * kill switch, docs/inbound.md §8.1). Each runs
+ * kill switch, docs/inbound.md §8.1), with the Missed list's count, reassign and the inbound
+ * summary (`./proxy-agency-inbound/missed-work.ts`). Each runs
  * the internal handler (`agency/inbound.ts`) in-process through `callCore`, which validates,
  * checks the account's references and writes; this layer audits and fills names.
  *
@@ -41,6 +45,7 @@ export async function proxyAgencyInboundRoutes(app: FastifyInstance): Promise<vo
 
   await registerInboundRouteRoutes(app);
   await registerInboundMissedRoutes(app);
+  await registerInboundMissedWorkRoutes(app);
   await registerInboundCallRoutes(app);
   await registerInboundClipRoutes(app);
 }

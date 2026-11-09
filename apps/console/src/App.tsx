@@ -101,6 +101,7 @@ const MissedCallsPage = lazy(() => import('./pages/agency/MissedCallsPage'));
 const AgentMissedCallsPage = lazy(() =>
   import('./pages/agency/MissedCallsPage').then((m) => ({ default: m.AgentMissedCallsPage })),
 );
+const InboundSummaryPage = lazy(() => import('./pages/agency/InboundSummaryPage'));
 const InboundRoutesPage = lazy(() => import('./pages/settings/InboundRoutesPage'));
 const InboundRouteEditorPage = lazy(() => import('./pages/settings/InboundRouteEditorPage'));
 
@@ -702,11 +703,13 @@ export default function App() {
                     element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
                   />
                   {/* Missed inbound calls (`docs/inbound.md` §7): the account's for a supervisor,
-                      the caller's own otherwise (the server's rule). Behind `agency_inbound_enabled`. */}
-                  <Route
-                    path="inbound/missed"
-                    element={<RequireFlag flag="agency_inbound_enabled"><MissedCallsPage /></RequireFlag>}
-                  />
+                      the caller's own otherwise (the server's rule). Not behind `agency_inbound_enabled`
+                      here: with it off the page stays readable while there are rows (the kill switch
+                      stops calls, not their follow-up) and decides that itself. */}
+                  <Route path="inbound/missed" element={<MissedCallsPage />} />
+                  {/* The inbound summary (`docs/inbound.md` §11): supervisors; the page gates itself
+                      as the Missed list does. */}
+                  <Route path="inbound/summary" element={<InboundSummaryPage />} />
                 </Route>
 
                 {/*

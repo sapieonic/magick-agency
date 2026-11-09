@@ -41,6 +41,7 @@ import type {
   AgencyInboundCallOutcome,
   AgencyInboundCallState,
   AgencyInboundFollowUpStatus,
+  AgencyInboundHandledReason,
   AgencyInboundMissedReason,
   AgencyInboundStickyReason,
   AgencyKeysetPage,
@@ -49,6 +50,7 @@ import {
   AGENCY_INBOUND_OUTCOME_LAPSE_MS,
   type AgencyInboundDispositionSource,
 } from '@magick-agency/contracts/agency';
+import { AGENCY_INBOUND_MISSED_COUNT_CAP } from '@magick-agency/contracts/api/agency/inbound';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { INBOUND_DEFAULT_WRAPUP, type InboundWrapupRule } from '../../../agency/inbound/inbound-wrapup.js';
@@ -243,7 +245,21 @@ export interface AgencyInboundMissedListInput {
 export interface AgencyInboundMissedRow extends AgencyInboundCallRecord {
   route_name: string | null;
   matched_campaign_name: string | null;
+  /**
+   * How it was handled (0028): `marked` by a person, or `reached` (the customer was put through to
+   * an agent afterwards: `agency_inbound_close_reached_missed`). NULL while open, and on a row
+   * handled before 0028, which a person marked.
+   */
+  handled_reason: AgencyInboundHandledReason | null;
 }
+
+/** {@link AgencyInboundCallRepository.reassignMissed}'s answer. */
+export type AgencyInboundReassignResult =
+  /** The row is open and now assigned as asked (`changed: false`: it already was). */
+  | { outcome: 'assigned'; changed: boolean; previousAssigneeUserId: string | null; call: AgencyInboundMissedRow }
+  /** The row is handled: a follow-up that is done is not handed to anyone. */
+  | { outcome: 'handled'; call: AgencyInboundMissedRow };
+
 
 const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_number_id, c.provider, c.telephony_credential_id,
   c.provider_call_id, c.from_e164, c.to_e164, c.matched_contact_id, c.matched_campaign_id, c.caller_dnc,
@@ -259,7 +275,7 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
 const MISSED_FROM_SQL = `agency_inbound_calls c
         LEFT JOIN agency_inbound_routes r ON r.id = c.route_id
         LEFT JOIN agency_campaigns cam ON cam.id = c.matched_campaign_id`;
-const MISSED_SELECT_SQL = `${CALL_COLUMNS}, r.name AS route_name, cam.name AS matched_campaign_name`;
+const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, r.name AS route_name, cam.name AS matched_campaign_name`;
 
 export class AgencyInboundCallRepository {
   /**
@@ -804,7 +820,7 @@ export class AgencyInboundCallRepository {
   }
 
   /**
-   * Mark a Missed row handled, by `userId`, now. **Idempotent:** a row already handled is
+   * Mark a Missed row handled, by `userId`, now (`handled_reason = 'marked'`). **Idempotent:** a row already handled is
    * answered as it is (`changed: false`, its first handler and time kept), so a double click or a
    * retry never rewrites who handled it. `onlyAssignee`: an agent marks only the rows assigned to
    * them (the route sets it without `agency.supervise`); another's row answers as missing.
@@ -824,7 +840,7 @@ export class AgencyInboundCallRepository {
           FOR UPDATE
        ), handled AS (
          UPDATE agency_inbound_calls c
-            SET follow_up_status = 'handled', handled_by_user_id = $4::uuid, handled_at = now()
+            SET follow_up_status = 'handled', handled_reason = 'marked', handled_by_user_id = $4::uuid, handled_at = now()
            FROM target t
           WHERE c.id = t.id AND t.follow_up_status = 'open'
           RETURNING c.id
@@ -839,6 +855,77 @@ export class AgencyInboundCallRepository {
       [row.id],
     );
     return { changed: row.changed, call: read[0]! };
+  }
+
+  /**
+   * Give an OPEN Missed row of the account to `assigneeUserId`, or to the account (null): a
+   * supervisor's reassign (docs/inbound.md §7). The caller has checked that the assignee can work
+   * the account's rows (`filterAccountMembers`). One statement, the row locked: the previous
+   * assignee read and the write cannot be split by a concurrent reassign or Mark handled. A row
+   * already handled (by a person, or closed as reached) is answered `handled` and left as it is.
+   * Null: no such Missed row in the account.
+   */
+  async reassignMissed(
+    input: { tenantId: string; accountId: string; id: string; assigneeUserId: string | null },
+    deps: { client?: Db } = {},
+  ): Promise<AgencyInboundReassignResult | null> {
+    const db = deps.client ?? getPool();
+    const { rows } = await db.query<{ id: string; follow_up_status: AgencyInboundFollowUpStatus; previous: string | null; changed: boolean }>(
+      `WITH target AS (
+         SELECT c.id, c.follow_up_status, c.follow_up_assignee_user_id AS previous FROM agency_inbound_calls c
+          WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid AND c.account_id = $3::uuid
+            AND c.follow_up_status IS NOT NULL
+          FOR UPDATE
+       ), assigned AS (
+         UPDATE agency_inbound_calls c
+            SET follow_up_assignee_user_id = $4::uuid
+           FROM target t
+          WHERE c.id = t.id AND t.follow_up_status = 'open'
+            AND c.follow_up_assignee_user_id IS DISTINCT FROM $4::uuid
+          RETURNING c.id
+       )
+       SELECT t.id, t.follow_up_status, t.previous, EXISTS (SELECT 1 FROM assigned) AS changed FROM target t`,
+      [input.id, input.tenantId, input.accountId, input.assigneeUserId],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const { rows: read } = await db.query<AgencyInboundMissedRow>(
+      `SELECT ${MISSED_SELECT_SQL} FROM ${MISSED_FROM_SQL} WHERE c.id = $1::uuid`,
+      [row.id],
+    );
+    const call = read[0]!;
+    return row.follow_up_status === 'open'
+      ? { outcome: 'assigned', changed: row.changed, previousAssigneeUserId: row.previous, call }
+      : { outcome: 'handled', call };
+  }
+
+  /**
+   * The open Missed rows of the account (`assigneeUserId`: only theirs, an agent's scope), for the
+   * nav badge: counted up to {@link AGENCY_INBOUND_MISSED_COUNT_CAP} (`capped`: there are more),
+   * over `idx_agency_inbound_calls_missed` / `_missed_assignee`; and whether the scope has any
+   * Missed row at all, open or handled (`hasRows`: the console keeps the list reachable with the
+   * flag off while there is something to read).
+   */
+  async countMissed(input: { tenantId: string; accountId: string; assigneeUserId?: string }): Promise<{ open: number; capped: boolean; hasRows: boolean }> {
+    const assignee = input.assigneeUserId ? 'AND c.follow_up_assignee_user_id = $3::uuid' : '';
+    const { rows } = await getPool().query<{ open: number; has_rows: boolean }>(
+      `SELECT (SELECT COUNT(*)::int FROM (
+                 SELECT 1 FROM agency_inbound_calls c
+                  WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid AND c.follow_up_status = 'open' ${assignee}
+                  LIMIT ${AGENCY_INBOUND_MISSED_COUNT_CAP + 1}
+               ) open_rows) AS open,
+              EXISTS (
+                SELECT 1 FROM agency_inbound_calls c
+                 WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid AND c.follow_up_status IS NOT NULL ${assignee}
+              ) AS has_rows`,
+      input.assigneeUserId ? [input.tenantId, input.accountId, input.assigneeUserId] : [input.tenantId, input.accountId],
+    );
+    const open = rows[0]?.open ?? 0;
+    return {
+      open: Math.min(open, AGENCY_INBOUND_MISSED_COUNT_CAP),
+      capped: open > AGENCY_INBOUND_MISSED_COUNT_CAP,
+      hasRows: rows[0]?.has_rows ?? false,
+    };
   }
 
   /**

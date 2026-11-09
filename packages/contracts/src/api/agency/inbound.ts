@@ -22,7 +22,13 @@
  *  - `POST   /inbound/missed/:id/handled`     `agency.inbound.read`, no body → {@link AgencyInboundMarkHandledResponse}
  *  - `GET    /inbound/missed/:id/voicemail`   `agency.inbound.read` → the row's voicemail, `audio/wav`, streamed (P2;
  *    a `Range` request is answered 206; the Missed list's assignee rule; `inbound_missed_call_not_found` when the
- *    row has none, or it has aged out)
+ *    row has none, or it has aged out; `Cache-Control: private, no-store`, so no copy outlives the retention purge)
+ *  - `GET    /inbound/missed/count`           `agency.inbound.read` → {@link AgencyInboundMissedCountResponse} (the nav badge;
+ *    not behind the flag: Missed rows stay readable with inbound turned off)
+ *  - `POST   /inbound/missed/:id/assign`      `agency.supervise`, {@link AgencyInboundMissedAssignRequest} →
+ *    {@link AgencyInboundMissedAssignResponse} (not behind the flag; audited `agency_inbound_call.reassigned`)
+ *  - `GET    /inbound/summary`                `agency.supervise`, {@link AgencyInboundSummaryQuery} → {@link AgencyInboundSummary}
+ *    (not behind the flag: a report of calls that happened)
  *
  * Every route read and write carries the route's `warnings` (P2, {@link inboundRouteWarnings}).
  *
@@ -38,6 +44,7 @@ import type {
   AgencyInboundCallOutcome,
   AgencyInboundClipSlot,
   AgencyInboundFollowUpStatus,
+  AgencyInboundHandledReason,
   AgencyInboundMissedReason,
   AgencyInboundRouteConfig,
   AgencyInboundUnconnectedAction,
@@ -55,6 +62,7 @@ export {
   AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS,
   AGENCY_INBOUND_CLIP_SLOTS,
   AGENCY_INBOUND_FOLLOW_UP_STATUSES,
+  AGENCY_INBOUND_HANDLED_REASONS,
   AGENCY_INBOUND_MISSED_REASONS,
   AGENCY_INBOUND_ROUTE_DEFAULTS,
   AGENCY_INBOUND_ROUTE_LIMITS,
@@ -78,6 +86,7 @@ export type {
   AgencyInboundClips,
   AgencyInboundClipSlot,
   AgencyInboundFollowUpStatus,
+  AgencyInboundHandledReason,
   AgencyInboundHoliday,
   AgencyInboundHoursInterval,
   AgencyInboundMissedReason,
@@ -488,7 +497,18 @@ export interface AgencyInboundMissedCall {
   /** NULL: the account (anyone with the list). */
   assignee_user_id: string | null;
   assignee_name: string | null;
+  /**
+   * The assignee is no longer an active member who can work the account's rows (removed,
+   * deactivated): the console shows "Former member" and offers a supervisor Reassign. False when
+   * the row is the account's. Filled by the public layer.
+   */
+  assignee_departed: boolean;
   status: AgencyInboundFollowUpStatus;
+  /**
+   * How it was handled: `marked` by a person, or `reached` (the customer was put through to an
+   * agent of the account afterwards; `handled_by_user_id` is that agent). NULL while open.
+   */
+  handled_reason: AgencyInboundHandledReason | null;
   handled_by_user_id: string | null;
   handled_by_name: string | null;
   handled_at: string | null;
@@ -519,4 +539,99 @@ export type AgencyInboundMissedPage = AgencyKeysetPage<AgencyInboundMissedCall>;
  */
 export interface AgencyInboundMarkHandledResponse {
   call: AgencyInboundMissedCall;
+}
+
+/**
+ * `POST /inbound/missed/:id/assign` (`agency.supervise`): give an OPEN Missed row to a member of
+ * the account, or to the account (`null`). The member must be active and able to work the
+ * account's rows (`inbound_assignee_invalid`); a handled row is refused
+ * (`inbound_missed_call_handled`). Assigning a row to whom it is already assigned answers it as
+ * it is. Audited `agency_inbound_call.reassigned` (`from`, `to`) when it changed.
+ */
+export interface AgencyInboundMissedAssignRequest {
+  assignee_user_id: string | null;
+}
+
+export interface AgencyInboundMissedAssignResponse {
+  call: AgencyInboundMissedCall;
+}
+
+/** The open Missed rows `GET /inbound/missed/count` counts before it stops. */
+export const AGENCY_INBOUND_MISSED_COUNT_CAP = 100;
+
+/**
+ * `GET /inbound/missed/count` (`agency.inbound.read`): the nav badge. The caller's scope is the
+ * list's: an agent's own rows; with `agency.supervise`, the account's.
+ */
+export interface AgencyInboundMissedCountResponse {
+  /** Open rows, at most {@link AGENCY_INBOUND_MISSED_COUNT_CAP}. */
+  open: number;
+  /** There are more open rows than {@link AGENCY_INBOUND_MISSED_COUNT_CAP}. */
+  open_capped: boolean;
+  /** The scope holds any Missed row, open or handled: the list has something to show. */
+  has_rows: boolean;
+}
+
+/** The longest range `GET /inbound/summary` reads, in days. */
+export const AGENCY_INBOUND_SUMMARY_MAX_DAYS = 93;
+
+/**
+ * `GET /inbound/summary`: `from` (inclusive) and `to` (exclusive), ISO-8601 instants, `from <
+ * to`, at most {@link AGENCY_INBOUND_SUMMARY_MAX_DAYS} days apart. The console sends the
+ * viewer's local day boundaries.
+ */
+export interface AgencyInboundSummaryQuery {
+  from: string;
+  to: string;
+}
+
+/** One agent's inbound work in the range. */
+export interface AgencyInboundSummaryAgent {
+  user_id: string;
+  /** Filled by the public layer; null when the name could not be looked up. */
+  name: string | null;
+  /** Calls they answered. */
+  answered: number;
+  talk_seconds: number;
+}
+
+/**
+ * The account's inbound calls that arrived in the range and have ended (docs/inbound.md §11).
+ * Rates are percentages to one decimal, null when their denominator is 0.
+ */
+export interface AgencyInboundSummary {
+  from: string;
+  to: string;
+  /** Every ended call. */
+  calls: number;
+  /** Rang while the line was open (not after hours, not refused at the answer): the rates' denominator. */
+  open_hours_calls: number;
+  /** Rang while the route was closed (the closed message, or a voicemail taken out of hours). */
+  after_hours: number;
+  answered: number;
+  /** answered ÷ open_hours_calls. */
+  answer_rate_pct: number | null;
+  /** Hung up before anyone answered (`abandoned_in_queue`). */
+  abandoned: number;
+  /** abandoned ÷ open_hours_calls. */
+  abandon_rate_pct: number | null;
+  /** From arrival to being put through, over answered calls, in seconds (one decimal). */
+  avg_answer_seconds: number | null;
+  p90_answer_seconds: number | null;
+  voicemails: number;
+  /** Nobody took them in time, or the line was over its limits (`overflow`, `overflow_no_capacity`). */
+  overflow: number;
+  /** Our side could not serve the call (`failed`), or it was turned away at the answer (`rejected`). */
+  not_served: number;
+  /** Open-hours calls that had a sticky agent (§4.1). */
+  sticky_calls: number;
+  /** Of those, answered by that agent. */
+  sticky_answered: number;
+  /** sticky_answered ÷ sticky_calls. */
+  sticky_hit_rate_pct: number | null;
+  /** Missed rows these calls left, and how many are handled. */
+  missed: number;
+  missed_handled: number;
+  /** Busiest first, at most 200. */
+  agents: AgencyInboundSummaryAgent[];
 }
