@@ -438,18 +438,22 @@ P1's answering half (docs/inbound.md §3, §7, §10, §12). `inbound-call-router
 
 P2's connecting half (docs/inbound.md §2, §5, §6 "The server"). The router plans `queue` (flag on for the call's account, one process, the call admitted) and takes the stream connectable (`parkedSecondsFor`), then hands the call to `inbound-connector.ts`: `InboundConnector` (`runtime.inbound`), which plays the preamble and the hold (`playInboundHold`'s `onPreambleDone` queues the caller), queues (`inbound-queue.ts`: per-route FIFO, a requeued caller at the head, `max_waiting`, the maximum and the sticky waits, `inbound_waiting`'s summary, the tile snapshot), searches (`eligibility.ts`: pure, §4.3, the sticky phase, longest idle, the release hook's choice), reserves by CAS, offers (`inbound_call` after `agent_state: reserved`, no await between), binds at `connects_at`, connects, ends (an answered call owes its outcome), cancels an offer whose station was lost (head of the queue), takes an agent at their release (`takeOnRelease`, `AgencyDialer.registerInboundTake`), and leaves a caller nobody took to the router's exits (`settleCall`, `overflow`). `inbound-call-wire.ts`: `AgencyInboundCall` (the panel context read once, the row built with no await) and the catalog choice (Q10). `inbound-disposition.ts`: `InboundCallService` (`runtime.inboundCalls`): the finish routes' runtime (read, notes, hang up, the outcome with the soft phone's validation and decision, DNC, Mark DNC), the supervisor's queue tiles and the outcome-lapse sweep. `inbound-settlement.ts`: the outcome → the matched contact's settlement (SP6, never charged). The pacing consumer is `pacing/inbound-hold-back.ts`.
 
-Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inbound-call-wire.ts`, `inbound-clips.ts`, `inbound-connector.ts`, `inbound-disposition.ts`, `inbound-queue.ts`, `inbound-settlement.ts`, `route-config.ts`
+P2's last pieces (docs/inbound.md §5.4, §7). The in-flight clash: the router's `supersedeRingingDial` (a `queue` caller only) asks the dialer for a paced dial still ringing the caller's number on the account (`AgencyDialer.findRingingAttemptTo`: placed, unanswered, not a redial; `cancelsRinging` from the campaign's carrier, Q7), promises the call to its session (`InboundConnector.expectHandover`: no other agent is offered it; 15 s backstop) and supersedes the dial (`supersedeForInbound`: marked and `forceEndWithOutcome(…, 'canceled')` with no await between). The dialer's `ended` arm settles it as the clash (`agencyAttemptRepository.endSupersededByInbound`: `canceled`, the system code `inbound_call`, the contact back uncharged in one transaction; released `inbound_call`) and releases the agent through the hook, which offers the call at once or, during the caller's preamble, HOLDS the agent for it (reserved with the `inbound` field, the lease renewed) and offers it when it queues; a dial the carrier answered first is kept (`keepSupersededDial`) and the hand-over dropped. A caller past their maximum wait is marked `leaving` synchronously and never reserved for, so no account lock waits behind an exit (review M4). Voicemail: `inbound-voicemail.ts` (`takeVoicemail`: the bridge's `recordInboundAudio` after the prompt and the beep, 120 s; kept when `callerSpoke`; a 16 kHz WAV via `tts-file-cache.ts`'s `createWavBuffer` into the bucket at `voicemailKey`); the router takes it after hours or for an open route's caller nobody takes (`takesVoicemail`), from the queue through `overflow` (which answers an `InboundCallEnd` carrying the recording, threaded to the spine's `end`), the Missed reason the case's (`missedReasonFor`). Playback: `GET /proxy/agency/inbound/missed/:id/voicemail` (`api/routes/proxy-agency-inbound/missed.ts`, streamed with the `Range` passed to `storage/s3.ts`'s `getFileStream`); retention: `maintenance/retention-purge.ts`'s voicemail step. Route warnings: `inboundRouteWarnings` (contracts) on every route read and write (`api/routes/agency/inbound.ts`) and in the console's editor.
+
+Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inbound-call-wire.ts`, `inbound-clips.ts`, `inbound-connector.ts`, `inbound-disposition.ts`, `inbound-queue.ts`, `inbound-settlement.ts`, `inbound-voicemail.ts`, `route-config.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/agency/inbound/route-config.test.ts` | 11 |
 | `apps/server/test/unit/agency/inbound/identify-caller.test.ts` | 10 |
-| `apps/server/test/unit/agency/inbound/inbound-outcome.test.ts` | 4 |
+| `apps/server/test/unit/agency/inbound/inbound-outcome.test.ts` (and voicemail: the reason of the case, `takesVoicemail`, the wait metric) | 7 |
+| `apps/server/test/unit/agency/inbound/inbound-voicemail.test.ts` (`callerSpoke`, the WAV and its key, the maximum ending the call, none when the caller left before speaking, lost media, a failed store) | 5 |
+| `apps/server/test/unit/agency/agency-dialer-inbound-clash.test.ts` (the clash, the dialer's half: the ringing dial found by digits and carrier, never an answered one or a redial; the clash's settle and release through the hook; a queued break; the bridged-first race kept as a call; no call to cancel; one supersede) | 7 |
 | `apps/server/test/integration/agency/inbound-route-repository.test.ts` | 18 |
 | `apps/server/test/integration/agency/inbound-call-repository.test.ts` | 20 |
 | `apps/server/test/integration/agency/inbound-follow-up.test.ts` (the callback against the real claims, CA5, the clears, the live count of admitted calls, the identification reads) | 17 |
 | `apps/server/test/integration/agency/inbound-call-router.test.ts` (the router with a fake bridge: a `CallUUID` another tenant or credential holds refused on both paths, unrecorded messages spoken, the bridge's refusal un-admitting, an answer past its budget) | 15 |
-| `apps/server/test/integration/agency/inbound-connect-repository.test.ts` (P2's agent side: offer / requeue / connect guarded on the session and racing, settlement at the end, the outcome and its replay, the lapse and the startup sweep, the busy probe's inbound arm and its plan, `settleFromInbound` per state, `unclaimUncharged`, the floor's marker, the campaign's `inbound_sticky_enabled`) | 34 |
+| `apps/server/test/integration/agency/inbound-connect-repository.test.ts` (P2's agent side: offer / requeue / connect guarded on the session and racing, settlement at the end, the outcome and its replay, the lapse and the startup sweep, the busy probe's inbound arm and its plan, `settleFromInbound` per state, `unclaimUncharged`, `endSupersededByInbound`, the floor's marker, the campaign's `inbound_sticky_enabled`) | 35 |
 | `apps/server/test/integration/agency/inbound-agent-claim.test.ts` (real Lua: `reserveForInbound` from each state and every refusal, `available` refused `-3`, no attempt reserved onto a held session, `releaseInbound` by its own id, the rehydrate, an inbound offer racing a pacing reservation, 64 calls racing for one agent) | 10 |
 | `apps/server/test/unit/agency/pacing-inbound-waiting-event.test.ts` (the `inbound_waiting` bus event: round trip, bounds, clamps, malformed input) | 20 |
 | `apps/server/test/integration/telephony/plivo-inbound-e2e.test.ts` (mock Plivo rings a linked number: open, closed, unknown, withheld, DNC, terminal, exhausted, disabled credential, unlinked, tenant default, a message with no recording spoken by the carrier, bad signature, replay, over `max_concurrent`, caller hangs up mid-message, restart sweep) | 18 |
@@ -457,8 +461,9 @@ Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inboun
 | `apps/server/test/unit/agency/inbound-queue.test.ts` (FIFO and the head, `max_waiting`, the maximum and sticky waits, the `inbound_waiting` summary, the snapshot) | 6 |
 | `apps/server/test/unit/agency/inbound-hold-back.test.ts` (pacing's hold-back helper) | 7 |
 | `apps/server/test/unit/agency/inbound-settlement.test.ts` (the settlement table, the catalog choice, how an unconnected call ends, the panel row) | 13 |
-| `apps/server/test/integration/agency/inbound-connector-races.test.ts` (real Redis and Postgres, the bridge and stations faked: two callers for one agent, pacing and inbound for one agent, two connectors, the caller hanging up on offer and against the bind, the station lost before the bind, the lease lost, the search never taking a wrap-up (a stale view too), the release hook and the queued break, the lapse, a graceful shutdown (Q18)) | 12 |
+| `apps/server/test/integration/agency/inbound-connector-races.test.ts` (real Redis and Postgres, the bridge and stations faked: two callers for one agent, pacing and inbound for one agent, two connectors, the caller hanging up on offer and against the bind, the station lost before the bind, the lease lost, the search never taking a wrap-up (a stale view too), the release hook and the queued break, the lapse, a graceful shutdown (Q18); the clash's hand-over: held through the preamble, kept from the team while queued, let go on a hangup or a dropped station, dropped, one per call; a caller past their maximum wait never reserved for (M4)) | 19 |
 | `apps/server/test/integration/telephony/inbound-connect-e2e.test.ts` (end to end on mock Plivo and the station fleet: auto-connect with the panel before media; loose sticky taken from wrap-up, the sticky wait lapsing, strict; the queue's order, limits and pacing yielding; the caller hanging up on offer; the station dropped during the offer and after the bind; restart; recording; concurrency) | 13 |
+| `apps/server/test/integration/telephony/inbound-clash-voicemail-e2e.test.ts` (end to end on mock Plivo, the bucket in memory: the clash (the ringing dial cancelled by its request id, `canceled` / `inbound_call`, the contact uncharged, the same agent held through the greeting and put through, never `available`, no redial while they talk); the bridged-first race; voicemail after hours (the WAV, the Missed row `closed`, played back through the route whole and by range), from the queue (`overflow`), and none when the caller leaves at the beep) | 5 |
 | `apps/server/test/integration/agency/chaos/inbound-floor.test.ts` (callers and agents at random under `LOAD_SEED` / `LOAD_SCALE`: the five invariants) | 1 |
 | `apps/server/test/integration/api/inbound-calls-routes.test.ts` (the finish routes and the queue tiles through the public layer: who may act, the outcome's refusals and replay, DNC scopes, not flag-gated, the audit rows) | 6 |
 | `apps/server/test/integration/telephony/plivo-inbound-connect-bridge.test.ts` (P2's bridge half on mock Plivo: a connectable call held, the agent's real station socket bound with no hold frame after it, audio both ways, the Record API at the bind and its callback on the leg, talk time from the bind; a caller who hangs up on hold; a voicemail recorded with nobody bound and ended by the wall clock over a silence) | 3 |
@@ -663,7 +668,7 @@ Files: `../proxy-agency-inbound.routes.ts`, `calls.ts`, `missed.ts`, `routes.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/api/routes/proxy-agency-inbound.test.ts` | 5 |
-| `apps/server/test/integration/api/inbound-routes.test.ts` | 13 |
+| `apps/server/test/integration/api/inbound-routes.test.ts` (and P2: voicemail taken with the route's warnings on every read and write; a Missed row's voicemail streamed whole and by range under the list's rules, the flag) | 17 |
 
 ### `apps/server/src/api/validators/`
 
@@ -973,8 +978,8 @@ Files: `retention-purge.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/maintenance/agency-retention-purge.test.ts` | ~6 |
-| `apps/server/test/unit/maintenance/retention-purge.test.ts` | 16 |
+| `apps/server/test/integration/maintenance/agency-retention-purge.test.ts` (and the inbound voicemail step: an aged voicemail's object deleted and forgotten, a recent one kept, the dry run) | 7 |
+| `apps/server/test/unit/maintenance/retention-purge.test.ts` (and the voicemail step: delete then forget, a failed delete leaves the row naming its object, the dry run) | 19 |
 
 ### `apps/server/src/notifications/`
 
@@ -1309,6 +1314,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/flags.test.ts` | 11 |
 | `packages/contracts/test/rbac.test.ts` | 71 |
 | `packages/contracts/test/reports.test.ts` (report vocabularies, constants, the RP2 window rule, `reportFileName`, the subpath export, and type-level pins that each dataset block is the screen's wire type) | 13 |
+| `packages/contracts/test/inbound-route-warnings.test.ts` (`inboundRouteWarnings`: the silent overflow, the beep-only and impossible voicemails, connected or not; the actions offered) | 6 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
 `packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
@@ -1822,7 +1828,8 @@ in history state, `utils/softphone/prefill.ts`, read by `SoftphonePage` and `use
 `pages/agency/MissedCallsPage.tsx` (`/agency/inbound/missed`; `AgentMissedCallsPage` at
 `/dialer/missed` in `AgentSurfaceShell`, "Missed calls" in `AgentNav`), `pages/settings/InboundRoutesPage.tsx`
 (`/app/inbound`, the routes with delete) and `pages/settings/InboundRouteEditorPage.tsx`
-(`/app/inbound/new`, `/app/inbound/:routeId`). The form's rules are `utils/inbound/routeForm.ts`
+(`/app/inbound/new`, `/app/inbound/:routeId`; the route's message warnings, live from the contract's
+`inboundRouteWarnings`, in "When nobody answers", advisory). The form's rules are `utils/inbound/routeForm.ts`
 (defaults, the midnight mapping, overnight stretches, client checks keyed by body path, the PATCH of
 what changed, why a number cannot be chosen); copy and the Missed query in `utils/inbound/inboundCopy.ts`;
 the client is `api/inbound.ts` (writes resolve to a refusal value, reads throw; every path in
@@ -1845,7 +1852,7 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 |---|---|
 | `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` (with the queue tiles and the voicemail player) | 14 |
 | `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
-| `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (the actions offered once the server's list includes voicemail) | 1 |
+| `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (both actions offered, the voicemail saved; the route's message warnings as edited, advisory) | 3 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.inbound.test.tsx` (the panel on the offer, the frozen geometry across offered / connected / owing, hang-up, outcome, notes, DNC, the early hang-up notice, restore after `ready`, the waiting pill) | 12 |
 | `apps/console/src/__tests__/hooks/useInboundCall.test.ts` | 19 |
 | `apps/console/src/__tests__/components/InboundQueueTiles.test.tsx` | 6 |
