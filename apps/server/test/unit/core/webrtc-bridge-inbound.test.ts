@@ -109,7 +109,7 @@ const INBOUND = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
 const PARAMS: WebRtcInboundCallParams = {
   callId: LEG, correlationId: INBOUND, tenantId: 'tenant-a', accountId: 'a1', provider: 'plivo',
   telephonyCredentialId: 'cred-1', callerId: '+14155550101', destinationPhone: '+919812345678',
-  carrierCallId: 'cu-1', takeSlots: true,
+  carrierCallId: 'cu-1', takeSlots: true, connectable: false, browserCloseGraceMs: 0, parkedSeconds: 0, record: false,
 };
 
 /** The carrier opens our stream and negotiates μ-law, as Plivo does after running our answer XML. */

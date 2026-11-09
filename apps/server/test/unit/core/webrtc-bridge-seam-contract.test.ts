@@ -23,6 +23,10 @@ import {
   type WebRtcInboundCallParams,
   type WebRtcInboundAcceptance,
   type ClipSequenceResult,
+  type InboundHoldOptions,
+  type InboundHoldResult,
+  type InboundRecordOptions,
+  type InboundAudioRecording,
 } from '../../../src/core/webrtc-bridge-manager.js';
 import {
   browserLegMediaFormatOf,
@@ -47,6 +51,10 @@ interface BridgeSeam {
   acceptInboundCall(params: CoreInboundCallParams): Promise<CoreInboundAcceptance>;
   playClipSequenceThenHangUp(correlationId: string,
     opts: { clipHashes: readonly string[]; outcome: string }): Promise<CoreClipSequenceResult>;
+  /** Connecting inbound callers (docs/inbound.md §5, P2): the hold, its stop, and a voicemail's recording. */
+  playInboundHold(correlationId: string, opts: CoreInboundHoldOptions): Promise<CoreInboundHoldResult>;
+  stopInboundHold(correlationId: string): void;
+  recordInboundAudio(correlationId: string, opts: CoreInboundRecordOptions): Promise<CoreInboundAudioRecording>;
 }
 
 /** The bridge's exported types (`sipConnectionId` is excluded: docs/seams.md allows it, SIP is out). */
@@ -97,6 +105,26 @@ interface CoreInboundCallParams {
   destinationPhone: string;
   carrierCallId: string;
   takeSlots: boolean;
+  connectable: boolean;
+  browserCloseGraceMs: number;
+  parkedSeconds: number;
+  record: boolean;
+}
+interface CoreInboundHoldOptions {
+  preambleClipHashes: readonly string[];
+  holdClipHash: string | null;
+}
+type CoreInboundHoldResult = 'released' | 'aborted' | 'no_media' | 'not_found';
+interface CoreInboundRecordOptions {
+  maxSeconds: number;
+  promptClipHashes?: readonly string[];
+  beep?: boolean;
+}
+interface CoreInboundAudioRecording {
+  result: 'completed' | 'caller_left' | 'no_media' | 'not_found';
+  pcm16: Buffer;
+  sampleRate: number;
+  seconds: number;
 }
 type CoreInboundAcceptance =
   | { accepted: true; streamUrl: string; maxDurationSeconds: number; capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' }
@@ -127,6 +155,9 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcBridgeManager['gracefulShutdown']>().toEqualTypeOf<BridgeSeam['gracefulShutdown']>();
     expectTypeOf<WebRtcBridgeManager['acceptInboundCall']>().toEqualTypeOf<BridgeSeam['acceptInboundCall']>();
     expectTypeOf<WebRtcBridgeManager['playClipSequenceThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipSequenceThenHangUp']>();
+    expectTypeOf<WebRtcBridgeManager['playInboundHold']>().toEqualTypeOf<BridgeSeam['playInboundHold']>();
+    expectTypeOf<WebRtcBridgeManager['stopInboundHold']>().toEqualTypeOf<BridgeSeam['stopInboundHold']>();
+    expectTypeOf<WebRtcBridgeManager['recordInboundAudio']>().toEqualTypeOf<BridgeSeam['recordInboundAudio']>();
     // And the class as a whole satisfies the interface.
     expectTypeOf<WebRtcBridgeManager>().toMatchTypeOf<BridgeSeam>();
     expect(true).toBe(true);
@@ -143,6 +174,10 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcInboundCallParams>().toEqualTypeOf<CoreInboundCallParams>();
     expectTypeOf<WebRtcInboundAcceptance>().toEqualTypeOf<CoreInboundAcceptance>();
     expectTypeOf<ClipSequenceResult>().toEqualTypeOf<CoreClipSequenceResult>();
+    expectTypeOf<InboundHoldOptions>().toEqualTypeOf<CoreInboundHoldOptions>();
+    expectTypeOf<InboundHoldResult>().toEqualTypeOf<CoreInboundHoldResult>();
+    expectTypeOf<InboundRecordOptions>().toEqualTypeOf<CoreInboundRecordOptions>();
+    expectTypeOf<InboundAudioRecording>().toEqualTypeOf<CoreInboundAudioRecording>();
     expect(true).toBe(true);
   });
 

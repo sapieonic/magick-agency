@@ -324,6 +324,11 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
       destinationPhone: arrival.fromE164 ?? '',
       carrierCallId: arrival.carrierCallId,
       takeSlots: admitted,
+      // P1 callers only hear messages: nobody is put through, so nothing is parked or recorded.
+      connectable: false,
+      browserCloseGraceMs: 0,
+      parkedSeconds: 0,
+      record: false,
     });
     if (!accepted.accepted) {
       if (accepted.reason === 'ended') return { kind: 'hangup' };
