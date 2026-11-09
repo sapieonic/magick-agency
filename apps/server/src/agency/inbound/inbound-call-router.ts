@@ -24,15 +24,17 @@ import {
   getInboundCallRouter,
   setInboundCallRouter,
   type InboundAnswerDecision,
+  type InboundAnswerOptions,
   type InboundCallArrival,
   type InboundCallHangup,
   type InboundCallRouter,
+  type InboundSpokenMessage,
 } from '../../seams/inbound-call-router.js';
 import { WEBRTC_MAX_DURATION_SECONDS } from '../../config/call-duration-limits.js';
 import type { ClipSequenceResult, WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
 import type { DncRegistry } from '../dnc-registry.js';
 import { identifyInboundCaller } from './identify-caller.js';
-import { resolveInboundClips } from './inbound-clips.js';
+import { resolveInboundClips, routeClipId } from './inbound-clips.js';
 
 const log = createChildLogger({ component: 'agency-inbound-router' });
 
@@ -63,14 +65,32 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  *     admitted (`greeting`). The bridge then takes the shared slots: over the account's own limit
  *     it is held anyway (IB5); with the global or carrier scope full it hears "all lines are busy"
  *     (`overflow_no_capacity`).
- *  6. The answer: our stream (principle 2). What the caller hears is played in the background
- *     ({@link AgencyInboundCallRouter.play}), after the carrier opens the stream.
+ *     A call turned away is not admitted (`arrived`): neither the route's count nor the account's
+ *     live total holds it (the bridge's refusal takes the admission back, `refuseAdmission`).
+ *  6. The answer: our stream (principle 2) when the route has a recording for the plan's message.
+ *     What the caller hears is played in the background ({@link AgencyInboundCallRouter.play}),
+ *     after the carrier opens the stream. With no recording for it, the carrier speaks the
+ *     message itself (`spoken`) and the call is ended at once, its follow-up written: nothing
+ *     streams, so no line of ours is held.
  *
  * ── What the caller hears (P1) ───────────────────────────────────────────────────
  * `greeting` (if set), then `closed` / `callback` / `busy` per the plan, then the call is put down.
- * The recording notice (IB7) plays only before a call that is recorded; P1 records no inbound call
- * (nobody is connected, and a recording starts at the bridge, §6), so it never plays in P1. A slot
- * with no clip plays nothing (`inbound-clips.ts`: there is no built-in audio).
+ * A message with no recording is never silence: the call is answered with the carrier's spoken
+ * message instead ({@link spokenMessageFor}; the greeting, a recording of ours, is then not
+ * played). With the global or carrier scope full (found only once the stream is promised) and no
+ * busy recording, the plan's own recording plays in its place. The recording notice (IB7) plays
+ * only before a call that is recorded; P1 records no inbound call (nobody is connected, and a
+ * recording starts at the bridge, §6), so it never plays in P1. A greeting with no clip is skipped.
+ *
+ * ── An answer past its budget (the webhook's abort signal) ───────────────────────
+ * The caller heard the fallback message ("try again shortly"), so the call is the fallback's: the
+ * answer places nothing more (no stream taken, no message), and the row, if one was written, ends
+ * `failed` with no Missed row and no callback, whoever ends it (this answer, the hangup webhook,
+ * the play loop).
+ *
+ * ── Tenant isolation ─────────────────────────────────────────────────────────────
+ * A carrier call id already held by another tenant's or credential's row is refused with a hangup
+ * and nothing written (`insertArrival`'s `foreign`), as the hangup webhook ignores one.
  *
  * ── The outcome ──────────────────────────────────────────────────────────────────
  * The plan's outcome once every message played. A caller who hangs up before the end: on the
@@ -90,14 +110,29 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  * no route books one due now), in the transaction that ends the spine.
  */
 
-/** What P1 tells an admitted caller, by plan: the clip slots in order. */
-const PLAN_SLOTS: Record<PlannedOutcome, readonly AgencyInboundClipSlot[]> = {
-  closed: ['greeting', 'closed'],
-  overflow: ['greeting', 'callback'],
-  overflow_no_capacity: ['greeting', 'busy'],
+/** The message a plan's caller is answered with: its clip slot on the route, and the carrier's spoken stand-in for it. */
+const PLAN_MESSAGE: Record<PlannedOutcome, { slot: AgencyInboundClipSlot; spoken: InboundSpokenMessage }> = {
+  closed: { slot: 'closed', spoken: 'closed' },
+  overflow: { slot: 'callback', spoken: 'callback' },
+  overflow_no_capacity: { slot: 'busy', spoken: 'busy' },
 };
 
 type PlannedOutcome = Extract<AgencyInboundCallOutcome, 'closed' | 'overflow' | 'overflow_no_capacity'>;
+
+/**
+ * What the carrier speaks for a plan when the route has no recording for its message: the plan's
+ * own words, except that a caller who withheld their number is never promised a callback nobody
+ * can make (they hear the closed message's "please try again later").
+ */
+export function spokenMessageFor(planned: PlannedOutcome, fromE164: string | null): InboundSpokenMessage {
+  const spoken = PLAN_MESSAGE[planned].spoken;
+  return fromE164 === null && spoken !== 'closed' ? 'closed' : spoken;
+}
+
+/** How many answers given up on (their callers heard the fallback) this process remembers until their hangup. */
+const GIVEN_UP_MAX = 10_000;
+
+const carrierKey = (provider: string, carrierCallId: string): string => `${provider}:${carrierCallId}`;
 
 /** The Missed row's reason for an outcome that reached nobody; null for `answered` / `rejected`. */
 export function missedReasonFor(outcome: AgencyInboundCallOutcome): AgencyInboundMissedReason | null {
@@ -142,6 +177,8 @@ export interface AgencyInboundCallRouterDeps {
 
 export class AgencyInboundCallRouter implements InboundCallRouter {
   private readonly live = new Map<string, LiveInboundCall>();
+  /** Answers given up on (`provider:carrierCallId`): their callers heard the fallback, so they end with no follow-up. */
+  private readonly givenUp = new Set<string>();
   private readonly running = new Set<Promise<void>>();
   private readonly now: () => Date;
 
@@ -159,7 +196,19 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
     while (this.running.size > 0) await Promise.allSettled([...this.running]);
   }
 
-  async answer(arrival: InboundCallArrival): Promise<InboundAnswerDecision> {
+  async answer(arrival: InboundCallArrival, opts: InboundAnswerOptions = {}): Promise<InboundAnswerDecision> {
+    const { signal } = opts;
+    const giveUp = () => this.noteGivenUp(carrierKey(arrival.provider, arrival.carrierCallId));
+    if (signal?.aborted) giveUp();
+    signal?.addEventListener('abort', giveUp, { once: true });
+    try {
+      return await this.decide(arrival, signal);
+    } finally {
+      signal?.removeEventListener('abort', giveUp);
+    }
+  }
+
+  private async decide(arrival: InboundCallArrival, signal: AbortSignal | undefined): Promise<InboundAnswerDecision> {
     const found = await agencyInboundRouteRepository.findRouteForNumber(arrival.credentialId, arrival.toE164);
     const linked = found !== null && found.tenant_id === arrival.tenantId && found.number_status === 'active'
       && found.inbound_linked_at !== null && found.assignment_id !== null;
@@ -195,6 +244,10 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
       sticky,
     };
 
+    // Past the budget before anything is written: the fallback answered the caller, and the call
+    // leaves nothing behind (as a call the fallback URL answers while we are down).
+    if (signal?.aborted) return { kind: 'fallback' };
+
     if (accountId === null) {
       // The tenant default (§8.3): no account, so no leg and nothing to stream; the carrier speaks
       // the closed message. The Missed row is the tenant default's.
@@ -204,14 +257,15 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
         fromE164: arrival.fromE164, toE164: arrival.toE164, identification, answered: true,
         recordingRequested: false, analysisProfileId: null,
       });
+      if (!call) return this.refuseForeign(arrival);
       if (call.state !== 'ended') await this.settle(call, 'closed');
-      return { kind: 'closed' };
+      return { kind: 'spoken', message: 'closed' };
     }
 
     let planned: PlannedOutcome = arrival.credentialStatus !== 'active' || !route
       || inboundScheduleState(route, at) !== 'open' ? 'closed' : 'overflow';
 
-    const { created, call, admitted } = await withTransaction(async (client) => {
+    const arrived = await withTransaction(async (client) => {
       let underCap = true;
       if (route) {
         await agencyInboundAnswerRepository.lockRouteAdmission(route.id, client);
@@ -224,12 +278,15 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
         // P1 records no inbound call: nobody is connected (a recording starts at the bridge, §6).
         recordingRequested: false, analysisProfileId: route?.analysis_profile_id ?? null,
       }, { client });
+      if (!inserted.call) return null;
       if (inserted.created && underCap) {
         const moved = await agencyInboundCallRepository.transition(inserted.call.id, 'greeting', {}, { client });
-        return { ...inserted, call: moved ?? inserted.call, admitted: true };
+        return { created: true, call: moved ?? inserted.call, admitted: true };
       }
-      return { ...inserted, admitted: inserted.created ? false : inserted.call.state !== 'arrived' };
+      return { created: inserted.created, call: inserted.call, admitted: inserted.created ? false : inserted.call.state !== 'arrived' };
     }, { pool: getPool() });
+    if (!arrived) return this.refuseForeign(arrival);
+    const { created, call, admitted } = arrived;
 
     if (!created && call.state === 'ended') return { kind: 'hangup' };
     const legId = call.webrtc_call_id;
@@ -239,6 +296,22 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
       return { kind: 'fallback' };
     }
     if (!admitted) planned = 'overflow_no_capacity';
+
+    if (signal?.aborted) {
+      // Written, then given up on: the caller heard the fallback. No stream is taken.
+      await this.endLeg(legId, { status: 'failed', outcome: 'inbound_answer_timed_out', error_code: 'INBOUND_ANSWER_TIMED_OUT' });
+      await this.settle(call, 'failed');
+      return { kind: 'fallback' };
+    }
+
+    // No recording for the plan's message: the carrier speaks it, and the call ends here with its
+    // follow-up (no stream, no session, no slot).
+    let messageSlot = PLAN_MESSAGE[planned].slot;
+    if (!routeClipId(route, messageSlot)) {
+      await this.endLeg(legId, { status: 'completed', outcome: `inbound_${planned}` });
+      await this.settle(call, planned);
+      return { kind: 'spoken', message: spokenMessageFor(planned, call.from_e164) };
+    }
 
     const accepted = await this.deps.bridge.acceptInboundCall({
       callId: legId,
@@ -254,16 +327,21 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
     });
     if (!accepted.accepted) {
       if (accepted.reason === 'ended') return { kind: 'hangup' };
-      await agencyCallRepository.update(legId, {
-        status: 'failed', outcome: 'inbound_stream_unavailable', error_code: 'INBOUND_STREAM_UNAVAILABLE', ended_at: new Date(),
-      }).catch((err: unknown) => log.error({ err, legId }, 'Could not end the media leg of an inbound call with no stream'));
+      await this.endLeg(legId, { status: 'failed', outcome: 'inbound_stream_unavailable', error_code: 'INBOUND_STREAM_UNAVAILABLE' });
       await this.settle(call, 'failed');
       return { kind: 'fallback' };
     }
-    if (accepted.capacity === 'no_capacity') planned = 'overflow_no_capacity';
+    if (accepted.capacity === 'no_capacity') {
+      // The global or the carrier's scope is full and no slot was taken: the call is no admitted
+      // call of the route's or the account's (IB5). It hears "busy", or, with no busy recording,
+      // its plan's own recording (the stream is already promised; never silence).
+      if (created && admitted) await agencyInboundCallRepository.refuseAdmission(call.id);
+      if (routeClipId(route, 'busy')) messageSlot = 'busy';
+      planned = 'overflow_no_capacity';
+    }
 
     // A retried answer for a call already playing: the same stream, and no second sequence.
-    if (!this.live.has(call.id)) this.play(call, planned, route);
+    if (!this.live.has(call.id)) this.play(call, planned, ['greeting', messageSlot], route);
     return { kind: 'stream', callId: legId, streamUrl: accepted.streamUrl, maxDurationSeconds: accepted.maxDurationSeconds };
   }
 
@@ -273,12 +351,16 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
       log.warn({ credentialId: hangup.credentialId }, 'Inbound hangup for a call this credential never answered — ignoring');
       return { legId: null };
     }
+    const key = carrierKey(call.provider, call.provider_call_id);
     const live = this.live.get(call.id);
     if (live) {
       // The play loop owns the call: it ends it when the stream goes (which the bridge is told next).
       live.callerHungUp = true;
-    } else if (call.state !== 'ended') {
-      await this.settle(call, 'abandoned_in_queue');
+    } else {
+      // Not being played to: a caller who hung up before we put them anywhere, or one the fallback
+      // answered (`settle` leaves that one no follow-up, and its outcome is `failed`).
+      if (call.state !== 'ended') await this.settle(call, this.givenUp.has(key) ? 'failed' : 'abandoned_in_queue');
+      this.givenUp.delete(key);
     }
     return { legId: call.webrtc_call_id };
   }
@@ -314,27 +396,36 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
 
   // ── internals ──────────────────────────────────────────────────────────────
 
-  /** Play the plan's messages, then settle the call from how the sequence ended. In the background. */
-  private play(call: AgencyInboundCallRecord, planned: PlannedOutcome, route: AgencyInboundRouteRecord | null): void {
+  /** Play `slots` (the greeting and the plan's message), then settle the call from how the sequence ended. In the background. */
+  private play(
+    call: AgencyInboundCallRecord,
+    planned: PlannedOutcome,
+    slots: readonly AgencyInboundClipSlot[],
+    route: AgencyInboundRouteRecord | null,
+  ): void {
     const live: LiveInboundCall = { planned, callerHungUp: false };
     this.live.set(call.id, live);
     const run = (async () => {
       let result: ClipSequenceResult = 'not_found';
       try {
         const clipHashes = route
-          ? await resolveInboundClips(route, PLAN_SLOTS[planned], { tenantId: route.tenant_id, accountId: route.account_id })
+          ? await resolveInboundClips(route, slots, { tenantId: route.tenant_id, accountId: route.account_id })
           : [];
         result = await this.deps.bridge.playClipSequenceThenHangUp(call.id, { clipHashes, outcome: `inbound_${planned}` });
       } catch (err) {
         log.error({ err, inboundCallId: call.id }, 'Inbound messages failed');
       }
+      const key = carrierKey(call.provider, call.provider_call_id);
       try {
-        await this.settle(call, outcomeAfterPlayback(planned, result, live.callerHungUp));
+        // An answer given up on after its stream was promised: the caller heard the fallback.
+        await this.settle(call, this.givenUp.has(key) ? 'failed' : outcomeAfterPlayback(planned, result, live.callerHungUp));
       } catch (err) {
         // The sweep ends it if this could not (the spine is durable).
         log.error({ err, inboundCallId: call.id }, 'Could not settle an inbound call — the sweep will');
       } finally {
         this.live.delete(call.id);
+        // The hangup came while this call was played to, so `ended` left the mark to this loop.
+        if (live.callerHungUp) this.givenUp.delete(key);
       }
     })();
     this.running.add(run);
@@ -347,7 +438,8 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
    * it books nothing twice.
    */
   private async settle(call: AgencyInboundCallRecord, outcome: AgencyInboundCallOutcome): Promise<void> {
-    const reason = missedReasonFor(outcome);
+    // A caller the fallback answered was told to try again: no Missed row and no callback (§3.3).
+    const reason = this.givenUp.has(carrierKey(call.provider, call.provider_call_id)) ? null : missedReasonFor(outcome);
     const followUp = reason ? { reason, assigneeUserId: call.sticky_user_id } : null;
     const owed = followUp ? await this.callbackOwed(call) : null;
     const ended = await withTransaction(async (client, tx) => {
@@ -424,11 +516,37 @@ export class AgencyInboundCallRouter implements InboundCallRouter {
         identification: { match: null, callerDnc: false, sticky: null }, answered: false,
         recordingRequested: false, analysisProfileId: null,
       }, { client });
+      if (!call) {
+        this.refuseForeign(arrival);
+        return;
+      }
       const res = await agencyInboundCallRepository.end(call.id, {
         outcome: 'rejected', talkSeconds: null, followUp: null, callbackDueAt: null, voicemailKey: null,
       }, { client });
       if (res.ended) trackInboundCallEnded('rejected');
     }, { pool: getPool() });
+  }
+
+  /**
+   * A carrier call id whose row belongs to another tenant or credential (`insertArrival`'s
+   * `foreign`): nothing was written and nothing of that row is read or changed. Hung up; the log
+   * names this credential and tenant only.
+   */
+  private refuseForeign(arrival: InboundCallArrival): InboundAnswerDecision {
+    log.warn({ credentialId: arrival.credentialId, tenantId: arrival.tenantId },
+      'Inbound answer naming a carrier call id another tenant or credential holds — refusing it, nothing written');
+    return { kind: 'hangup' };
+  }
+
+  /** End an inbound media leg that never streamed (a spoken answer, a fault, an answer given up on). */
+  private async endLeg(legId: string, end: { status: 'completed' | 'failed'; outcome: string; error_code?: string }): Promise<void> {
+    await agencyCallRepository.update(legId, { ...end, ended_at: new Date() })
+      .catch((err: unknown) => log.error({ err, legId }, 'Could not end the media leg of an inbound call that never streamed'));
+  }
+
+  private noteGivenUp(key: string): void {
+    if (this.givenUp.size >= GIVEN_UP_MAX) this.givenUp.delete(this.givenUp.values().next().value!);
+    this.givenUp.add(key);
   }
 }
 

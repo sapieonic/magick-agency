@@ -28,8 +28,8 @@
 //
 // What a verified call means is the agency area's (`seams/inbound-call-router.ts`): this file
 // renders its decision. The answer is bounded ({@link INBOUND_ANSWER_BUDGET_MS}): past it the
-// caller hears the fallback message, and whatever the router took in is ended by the bridge's
-// media deadline (no stream ever connects).
+// caller hears the fallback message and the router is told (its abort signal), so it places
+// nothing more and leaves no follow-up for a caller who was asked to try again.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { trackInboundAnswer } from '@magick-agency/observability/metrics/agency';
@@ -42,8 +42,8 @@ import { hashInboundToken } from '../../../telephony/plivo/inbound-token.js';
 import { PLIVO_INBOUND_ROUTES, inboundSignedUrl } from '../../../telephony/plivo/inbound-urls.js';
 import { PLIVO_SIGNATURE_V3_NONCE_HEADER, headerValue } from '../../../telephony/plivo/plivo-signature.js';
 import {
-  PLIVO_INBOUND_CLOSED_XML,
   PLIVO_INBOUND_FALLBACK_XML,
+  PLIVO_INBOUND_SPOKEN_XML,
   plivoInboundHangupEvent,
   readPlivoInboundArrival,
   readPlivoInboundHangup,
@@ -128,8 +128,13 @@ async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackIn
     log.warn({ kind, credentialId }, 'Inbound Plivo callback with a signature that does not verify over the stored URL — refusing');
     return null;
   }
-  // A verified signature has a nonce (`verifyPlivoV3Signature` refuses one without).
-  const nonce = headerValue(input.headers, PLIVO_SIGNATURE_V3_NONCE_HEADER) ?? '';
+  // A verified signature has a nonce (`verifyPlivoV3Signature` refuses one without); refused here
+  // too, so no two requests could ever share an empty nonce's key.
+  const nonce = headerValue(input.headers, PLIVO_SIGNATURE_V3_NONCE_HEADER);
+  if (!nonce) {
+    log.warn({ kind, credentialId }, 'Inbound Plivo callback with no signed nonce — refusing');
+    return null;
+  }
   if (!await bridge.claimInboundCallbackNonce(credentialId, nonce)) {
     log.warn({ kind, credentialId }, 'Inbound Plivo callback whose signed nonce this credential has already seen (a replay) — refusing');
     return null;
@@ -143,8 +148,8 @@ function render(adapter: TelephonyProvider | null, decision: InboundAnswerDecisi
     case 'stream':
       if (!adapter) return FALLBACK;
       return xml(adapter.generateAnswerResponse(decision.callId, decision.streamUrl, { maxDurationSeconds: decision.maxDurationSeconds }));
-    case 'closed':
-      return xml(PLIVO_INBOUND_CLOSED_XML);
+    case 'spoken':
+      return xml(PLIVO_INBOUND_SPOKEN_XML[decision.message]);
     case 'hangup':
       return HANGUP;
     case 'fallback':
@@ -191,6 +196,7 @@ export async function handlePlivoInboundCallback(
         trackInboundAnswer('refused', (performance.now() - startedAt) / 1000);
         return HANGUP;
       }
+      const budget = new AbortController();
       const work = getInboundCallRouter().answer({
         credentialId,
         tenantId: credential.tenant_id,
@@ -199,10 +205,12 @@ export async function handlePlivoInboundCallback(
         carrierCallId: read.arrival.callUuid,
         fromE164: read.arrival.fromE164,
         toE164: read.arrival.toE164,
-      });
+      }, { signal: budget.signal });
       const decision = await within<InboundAnswerDecision | typeof TIMED_OUT>(work, opts.budgetMs ?? INBOUND_ANSWER_BUDGET_MS, TIMED_OUT);
       if (decision === TIMED_OUT) {
-        // The router carries on; anything it took in ends at the bridge's media deadline.
+        // The caller is the fallback's now: the router stops placing the call where it got to
+        // and leaves no follow-up (they were told to try again, not that we would call).
+        budget.abort();
         work.catch((err: unknown) => log.error({ err, credentialId }, 'Inbound answer failed after its budget'));
         log.error({ credentialId, budgetMs: opts.budgetMs ?? INBOUND_ANSWER_BUDGET_MS }, 'Inbound answer over its budget — answering with the fallback message');
         trackInboundAnswer('timed_out', (performance.now() - startedAt) / 1000);

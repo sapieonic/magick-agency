@@ -14,11 +14,13 @@ const log = createChildLogger({ component: 'agency-inbound-clips' });
  * the bridge plays (`playClipSequenceThenHangUp`), exactly as the abandon clip does
  * (`abandon-clip.ts`).
  *
- * **A slot with no clip plays nothing.** There is no built-in audio in this product: launch
- * decision 4 (the abandon clip) is "uploaded audio file only, no TTS", and the abandon clip's
- * own default when none is configured is no clip at all (a hangup). The schema's "NULL is the
- * built-in clip" (`0024`) has no recording behind it yet; until one is produced, an unset slot is
- * skipped, and the console is to say so on the route (docs/inbound.md §12).
+ * **A slot with no clip is never silence.** There is no recorded built-in audio in this product
+ * (launch decision 4: uploaded audio files only). The router decides before it streams: a call
+ * whose message slot (closed, "we'll call you back", busy) has no clip is answered with the
+ * carrier's spoken message instead (`<Speak>`, `plivo-inbound.webhook.ts`) and never streams; a
+ * greeting or recording notice with no clip is simply not played (docs/inbound.md §3.4). What is
+ * left to this file is a clip that is set but cannot be played (missing, another account's,
+ * undecodable): skipped, logged.
  *
  * **The lookup is tenant AND account scoped**, as the abandon clip's (`findByIdScoped`): the
  * route's clip columns are FKs to `audio_files` with no tenant check in SQL (the API checks it at
@@ -26,7 +28,7 @@ const log = createChildLogger({ component: 'agency-inbound-clips' });
  * reference can be caught.
  *
  * **Every failure is "nothing to play" for that slot, logged, never a throw**: a caller on an
- * open line hears the rest of the sequence and is put down, never left in silence.
+ * open line hears the rest of the sequence and is put down.
  */
 
 /** The slot's audio file id on a route. */

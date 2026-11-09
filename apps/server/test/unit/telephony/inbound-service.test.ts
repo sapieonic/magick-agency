@@ -101,6 +101,7 @@ beforeEach(() => {
       }),
     } as never,
     routes: { detachNumberEverywhere: vi.fn().mockResolvedValue(null) } as never,
+    calls: { anyLiveArrivedBefore: vi.fn().mockResolvedValue(false) },
     carrierFor: () => carrier as unknown as InboundCarrierApi,
     settings: () => settings,
     audit,

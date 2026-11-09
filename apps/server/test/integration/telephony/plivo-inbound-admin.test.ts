@@ -190,6 +190,35 @@ describe('inbound on a Plivo credential, operator side (integration, mock Plivo)
       expect(rows[1]!.details).toMatchObject({ app_id: second.app_id, replaced_app_id: first.app_id, moved_numbers: [CALLER_ID] });
     });
 
+    it('a second Re-point is refused while a call answered before the first is still live (its hangup carries the token it would drop); a call answered since does not block it', async () => {
+      await enable();
+      const liveCall = async (arrivedAt: string) => (await getTestPool().query<{ id: string }>(
+        `INSERT INTO agency_inbound_calls (tenant_id, provider, telephony_credential_id, provider_call_id, to_e164, state, arrived_at)
+         VALUES ($1, 'plivo', $2, $3, $4, 'greeting', ${arrivedAt}) RETURNING id`,
+        [TENANT, rig.credentialId, `CA-${Math.random().toString(36).slice(2)}`, CALLER_ID])).rows[0]!.id;
+      const before = await liveCall(`now() - interval '1 minute'`);
+      const original = splitInboundToken(ourApp()!.answer_url)!.token!;
+      expect((await post(`/telephony-credentials/${rig.credentialId}/inbound/repoint`)).statusCode).toBe(200);
+      const afterFirst = splitInboundToken(ourApp()!.answer_url)!.token!;
+      await liveCall(`now() + interval '1 minute'`);
+
+      const refused = await post(`/telephony-credentials/${rig.credentialId}/inbound/repoint`);
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().error).toBe('inbound_previous_token_in_use');
+      // Nothing changed: the carrier keeps the first Re-point's token, and both tokens still match.
+      expect(splitInboundToken(ourApp()!.answer_url)!.token).toBe(afterFirst);
+      expect(await telephonyCredentialRepository.inboundTokenMatches(rig.credentialId, hashInboundToken(original))).toBe(true);
+      expect(await telephonyCredentialRepository.inboundTokenMatches(rig.credentialId, hashInboundToken(afterFirst))).toBe(true);
+
+      // The call from before the first Re-point ends: the original token is needed no more.
+      await getTestPool().query(`UPDATE agency_inbound_calls SET state = 'ended', outcome = 'failed', ended_at = now() WHERE id = $1`, [before]);
+      expect((await post(`/telephony-credentials/${rig.credentialId}/inbound/repoint`)).statusCode).toBe(200);
+      expect(await telephonyCredentialRepository.inboundTokenMatches(rig.credentialId, hashInboundToken(original))).toBe(false);
+      // The call answered since keeps its token through its grace.
+      expect(await telephonyCredentialRepository.inboundTokenMatches(rig.credentialId, hashInboundToken(afterFirst))).toBe(true);
+      await getTestPool().query(`UPDATE agency_inbound_calls SET state = 'ended', outcome = 'failed', ended_at = now() WHERE state <> 'ended'`);
+    });
+
     it('Disable is refused while a number is linked, then deletes the Application and forgets it; revoke is refused until then', async () => {
       await enable();
       await link();

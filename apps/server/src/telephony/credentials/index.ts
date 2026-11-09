@@ -8,7 +8,7 @@ import { getPool } from '@magick-agency/db';
 import { CredentialSealer, EnvKeyringWrapper } from './credential-sealer.js';
 import { TelephonyCredentialService } from './credential-service.js';
 import { TelephonyInboundService } from './inbound-service.js';
-import { agencyInboundRouteRepository } from '../../db/repositories/agency.repository.js';
+import { agencyInboundCallRepository, agencyInboundRouteRepository } from '../../db/repositories/agency.repository.js';
 import { createPlivoAdapter } from '../plivo/plivo.adapter.js';
 import { recordSuperAdminAudit } from '../../audit/super-admin-audit.js';
 
@@ -57,6 +57,7 @@ export function getTelephonyInboundService(): TelephonyInboundService {
       repo: telephonyCredentialRepository,
       numbers: phoneNumberRepository,
       routes: agencyInboundRouteRepository,
+      calls: agencyInboundCallRepository,
       carrierFor: (credential) => createPlivoAdapter(credential, config),
       settings: () => ({
         webhookBaseUrl: config.telephony.plivo.webhookBaseUrl,

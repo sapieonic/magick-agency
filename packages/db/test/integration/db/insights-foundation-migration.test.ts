@@ -154,7 +154,7 @@ describe('0011 — insights foundation', () => {
   });
 
   it('the insights indexes exist with their definitions and comments', async () => {
-    // 0027 rebuilt it with `callback_source` (the inbound callback isCallbackSql reads); its own test
+    // 0026 rebuilt it with `callback_source` (the inbound callback isCallbackSql reads); its own test
     // pins that its down restores this file's definition.
     expect(await indexDef('idx_agency_contacts_insights')).toBe(
       'CREATE INDEX idx_agency_contacts_insights ON public.agency_contacts USING btree (campaign_id, state) '

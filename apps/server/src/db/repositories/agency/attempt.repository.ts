@@ -559,11 +559,16 @@ export class AgencyAttemptRepository {
    * An awaiting-outcome manual call (ended, unsettled) holds no slot and is not
    * counted.
    *
-   * The third arm is the account's live inbound calls (`agency_inbound_calls`, every state
-   * but `ended`: waiting, playing a message or connected), decision IB5: a customer ringing in
-   * holds a line exactly like a call we placed, so outbound pacing shrinks to make room
-   * (docs/inbound.md §5.3). Served by `idx_agency_inbound_calls_account_live` (0027), whose
-   * predicate is this literal. A tenant-default call (no account) is no account's.
+   * The third arm is the account's live ADMITTED inbound calls (`agency_inbound_calls` past
+   * `arrived` and not `ended`: greeted, playing its message, waiting or connected), decision IB5:
+   * a customer ringing in holds a line exactly like a call we placed, so outbound pacing shrinks
+   * to make room (docs/inbound.md §5.3). A caller who was turned away (the route at its
+   * `max_concurrent`, or the global or carrier scope full: `arrived`, never admitted or the
+   * admission taken back, `refuseAdmission`) is neither waiting nor connected and holds no slot,
+   * so it does not count while it hears "all lines are busy". Served by
+   * `idx_agency_inbound_calls_account_live` (0026), whose predicate is this literal
+   * (`state <> 'ended' AND state <> 'arrived'`, the route's admission count's too). A
+   * tenant-default call (no account) is no account's.
    */
   async countLiveForAccount(tenantId: string, accountId: string): Promise<number> {
     const { rows } = await getPool().query<{ n: string }>(
@@ -575,7 +580,7 @@ export class AgencyAttemptRepository {
            WHERE m.account_id = $2::uuid AND m.tenant_id = $1::uuid AND m.state <> 'ended')
          +
          (SELECT COUNT(*) FROM agency_inbound_calls i
-           WHERE i.account_id = $2::uuid AND i.tenant_id = $1::uuid AND i.state <> 'ended')
+           WHERE i.account_id = $2::uuid AND i.tenant_id = $1::uuid AND i.state <> 'ended' AND i.state <> 'arrived')
        )::text AS n`,
       [tenantId, accountId],
     );

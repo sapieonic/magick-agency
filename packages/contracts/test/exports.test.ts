@@ -157,6 +157,7 @@ describe('package surface', () => {
       'inbound_enabled',
       'inbound_not_enabled',
       'inbound_numbers_linked',
+      'inbound_previous_token_in_use',
       'inbound_unconfigured',
       'phone_number_not_found',
       'phone_number_not_linkable',

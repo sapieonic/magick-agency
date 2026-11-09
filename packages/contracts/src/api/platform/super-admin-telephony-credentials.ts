@@ -207,6 +207,10 @@ export interface TelephonyCredentialSyncNumbersResponse {
  * - `inbound_not_enabled` (409): the action needs inbound enabled on the credential.
  * - `inbound_numbers_linked` (409): Disable inbound is refused while any of the
  *   credential's numbers is linked; unlink them first.
+ * - `inbound_previous_token_in_use` (409): Re-point is refused while a call answered before
+ *   the last Re-point is still live on the credential: its hangup still needs the token that
+ *   Re-point replaced, which a second Re-point would drop. Try again once it has ended (at most
+ *   the longest call, about four hours, after that Re-point).
  * - `inbound_unconfigured` (503): the server has no public base for Plivo's callbacks
  *   (`PLIVO_WEBHOOK_BASE_URL`), so it cannot give the carrier inbound URLs.
  * - `phone_number_not_found` (404): no such phone number.
@@ -238,6 +242,7 @@ export type TelephonyCredentialErrorCode =
   | 'inbound_enabled'
   | 'inbound_not_enabled'
   | 'inbound_numbers_linked'
+  | 'inbound_previous_token_in_use'
   | 'inbound_unconfigured'
   | 'phone_number_not_found'
   | 'phone_number_not_linkable'
@@ -265,6 +270,7 @@ export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
   'inbound_enabled',
   'inbound_not_enabled',
   'inbound_numbers_linked',
+  'inbound_previous_token_in_use',
   'inbound_unconfigured',
   'phone_number_not_found',
   'phone_number_not_linkable',

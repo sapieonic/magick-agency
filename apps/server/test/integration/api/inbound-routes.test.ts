@@ -128,13 +128,13 @@ async function missed(o: {
   at: Date; from?: string | null; dnc?: boolean;
 }): Promise<string> {
   const tenant = o.tenant ?? floor.tenant;
-  const { call: row } = await agencyInboundCallRepository.insertArrival({
+  const row = (await agencyInboundCallRepository.insertArrival({
     tenantId: tenant, accountId: o.account ?? floor.account, routeId: null, phoneNumberId: null,
     provider: 'plivo', telephonyCredentialId: credentials.get(tenant)!, providerCallId: `CA-${randomUUID()}`,
     fromE164: o.from === undefined ? '+447700900123' : o.from, toE164: '+14155550100',
     identification: { match: null, callerDnc: o.dnc ?? false, sticky: null },
     answered: true, recordingRequested: false, analysisProfileId: null,
-  });
+  })).call!;
   await q('UPDATE agency_inbound_calls SET arrived_at = $2 WHERE id = $1', [row.id, o.at]);
   const reason = o.reason ?? 'closed';
   await agencyInboundCallRepository.end(row.id, {

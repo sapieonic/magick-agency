@@ -676,7 +676,7 @@ export class PlivoAdapter implements TelephonyProvider {
   /**
    * The ids of the account's Applications named exactly `appName`, page by page (the next
    * page's URL built from the offset, never taken from the response). Bounded: past
-   * `PLIVO_APPLICATIONS_MAX_PAGES` pages the rest is not read.
+   * `PLIVO_APPLICATIONS_MAX_PAGES` pages the rest is not read (logged).
    */
   async findInboundApplications(appName: string): Promise<string[]> {
     const op = 'Plivo list applications';
@@ -689,8 +689,9 @@ export class PlivoAdapter implements TelephonyProvider {
       const read = readPlivoApplicationPage(text);
       if (!read) throw new PlivoApiError('refused', op, status, 'Plivo sent an unreadable application list');
       for (const app of read.apps) if (app.appName === appName) found.push(app.appId);
-      if (!read.more) break;
+      if (!read.more) return found;
     }
+    log.warn({ operation: op, pages: PLIVO_APPLICATIONS_MAX_PAGES }, 'Plivo application list longer than the pages read — an Application by this name past them is not found');
     return found;
   }
 

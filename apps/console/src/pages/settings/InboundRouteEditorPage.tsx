@@ -437,9 +437,9 @@ export default function InboundRouteEditorPage() {
           <section className="card" aria-labelledby="ib-clips" data-testid="inbound-route-clips">
             <h2 className={styles.cardTitle} id="ib-clips">What callers hear</h2>
             <p className={styles.cardLead}>
-              Choose one of this account’s audio files for each message. A message with no recording plays nothing: there
-              are no standard recordings yet.
-              {clips.length === 0 ? ' This account has no audio files yet, so callers hear nothing before the call ends. Contact support to add your recordings.' : ''}
+              Choose one of this account’s audio files for each message. Without a recording, the closed, all lines busy and
+              call-back messages are read out in a standard voice instead, and the greeting is skipped.
+              {clips.length === 0 ? ' This account has no audio files yet, so callers hear the standard spoken messages. Contact support to add your recordings.' : ''}
             </p>
             <div className={styles.fields}>
               {AGENCY_INBOUND_CLIP_SLOTS.map((slot) => {
@@ -456,7 +456,7 @@ export default function InboundRouteEditorPage() {
                       onChange={(e) => update({ clips: { ...draft.clips, [slot]: e.target.value || null } })}
                       aria-describedby={[`${id}-hint`, errors.describedBy(`clips.${slot}`)].filter(Boolean).join(' ')}
                     >
-                      <option value="">No recording</option>
+                      <option value="">{CLIP_SLOT_LABELS[slot].none}</option>
                       {known ? null : <option value={current!}>Current recording</option>}
                       {clips.map((c) => (
                         <option key={c.id} value={c.id}>

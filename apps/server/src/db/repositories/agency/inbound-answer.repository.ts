@@ -112,8 +112,9 @@ export class AgencyInboundAnswerRepository {
   /**
    * The route's live ADMITTED calls: not ended, and moved on from `arrived` (an admitted call
    * goes to `greeting` in the transaction that admits it; one turned away for the route's cap stays
-   * `arrived` until it ends, so a burst of callers hearing "all lines are busy" never holds the
-   * route full). Read once per arriving call over `idx_agency_inbound_calls_open` (0024): bounded by
+   * `arrived` until it ends, and one the bridge's shared scopes turn away is put back there
+   * (`refuseAdmission`), so a burst of callers hearing "all lines are busy" never holds the route
+   * full). The same predicate as the account's live total (`countLiveForAccount`'s inbound arm). Read once per arriving call over `idx_agency_inbound_calls_open` (0024): bounded by
    * the live inbound calls, whatever the route's history.
    */
   async countLiveAdmittedOnRoute(routeId: string, db: Db = getPool()): Promise<number> {

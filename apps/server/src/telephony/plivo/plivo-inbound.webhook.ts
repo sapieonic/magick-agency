@@ -139,9 +139,11 @@ export function plivoInboundHangupEvent(h: PlivoInboundHangup, legId: string): C
 
 /**
  * Spoken by Plivo itself (`<Speak>`, its own text to speech), in British English. The product
- * has no recorded built-in clips (launch decision 4: uploaded audio only); these two answers are
- * fixed text Plivo speaks where no stream of ours can play anything: the fallback (we are
- * unreachable) and a call with no account to stream for (the tenant default, §8.3).
+ * has no recorded built-in clips (launch decision 4: uploaded audio only); these answers are
+ * fixed text Plivo speaks where no recording of ours is played: the fallback (we are
+ * unreachable), a call with no account to stream for (the tenant default, §8.3), and a route's
+ * closed, "we'll call you back" or "all lines busy" message when the route has no recording for
+ * it (§3.4: a slot with no clip is never silence).
  */
 const SPEAK = (text: string): string => `<Speak voice="WOMAN" language="en-GB">${xmlEscape(text)}</Speak>`;
 
@@ -155,8 +157,25 @@ export const PLIVO_INBOUND_FALLBACK_XML =
   `<Response>${SPEAK("Sorry, we can't take your call right now. Please try again shortly.")}<Hangup/></Response>`;
 
 /**
- * A call that has nowhere to stream (the tenant default: no route and no matched contact, so no
- * account, §8.3): the closed message, then the call is put down. Its Missed row is written.
+ * The closed message: a call that has nowhere to stream (the tenant default: no route and no
+ * matched contact, so no account, §8.3), a route closed now with no closed recording, and any
+ * caller who withheld their number where the route would promise a callback (nobody can ring a
+ * withheld number back). Promises nothing. The Missed row is written.
  */
 export const PLIVO_INBOUND_CLOSED_XML =
   `<Response>${SPEAK("Thank you for calling. We can't take your call right now. Please try again later.")}<Hangup/></Response>`;
+
+/** A route's "we'll call you back" message with no recording (the call reached nobody; its follow-up is written). */
+export const PLIVO_INBOUND_CALLBACK_XML =
+  `<Response>${SPEAK("Thank you for calling. Everyone is busy at the moment. We'll call you back as soon as we can.")}<Hangup/></Response>`;
+
+/** A route's "all lines busy" message with no recording (the route at its limit; its follow-up is written). */
+export const PLIVO_INBOUND_BUSY_XML =
+  `<Response>${SPEAK("Thank you for calling. All our lines are busy at the moment. We'll call you back as soon as we can.")}<Hangup/></Response>`;
+
+/** The XML for a spoken answer (`seams/inbound-call-router.ts`, `InboundSpokenMessage`). */
+export const PLIVO_INBOUND_SPOKEN_XML: Readonly<Record<'closed' | 'callback' | 'busy', string>> = Object.freeze({
+  closed: PLIVO_INBOUND_CLOSED_XML,
+  callback: PLIVO_INBOUND_CALLBACK_XML,
+  busy: PLIVO_INBOUND_BUSY_XML,
+});

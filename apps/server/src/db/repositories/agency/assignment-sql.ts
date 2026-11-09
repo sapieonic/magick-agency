@@ -91,7 +91,7 @@ export function callbackCodes(catalog: readonly AgencyDisposition[] | null | und
  * inbound callback as a callback, with no change of its own. The disposition half stays NULL when
  * `last_disposition` is NULL, so the whole is NULL exactly when it was before and no inbound
  * callback is booked; readers that COALESCE it keep working. `callback_source` is an INCLUDE
- * column of `idx_agency_contacts_insights` (0027), so the insights reads stay index-only.
+ * column of `idx_agency_contacts_insights` (0026), so the insights reads stay index-only.
  */
 export function isCallbackSql(alias: string, callbackCodesParam: string): string {
   return `(${alias}.callback_source IS NOT NULL OR (${alias}.last_disposition = ANY(${callbackCodesParam}::text[]) AND ${alias}.last_outcome IS NOT DISTINCT FROM 'connected'))`;

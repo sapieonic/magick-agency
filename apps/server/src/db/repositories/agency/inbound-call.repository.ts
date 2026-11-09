@@ -5,8 +5,10 @@
  *
  * ── The lifecycle ──────────────────────────────────────────────────────────────
  * `arrived → greeting → queued ⇄ offered → connected → ended` ({@link INBOUND_CALL_TRANSITIONS}).
- * `offered → queued` is the one move back: a station lost before audio binds puts the caller
- * at the head of the queue again (§5.1). Every transition is one guarded UPDATE whose `WHERE`
+ * `offered → queued` is a move back: a station lost before audio binds puts the caller at the
+ * head of the queue again (§5.1). `greeting → arrived` is the other ({@link
+ * AgencyInboundCallRepository.refuseAdmission}): an admission taken back, so `arrived` reads
+ * "not admitted" and a refused call ends straight from it. Every transition is one guarded UPDATE whose `WHERE`
  * names the states it may leave, so two writers racing on one call cannot both move it, and
  * **an `ended` row never moves again**: {@link AgencyInboundCallRepository.transition} cannot
  * leave `ended` and {@link AgencyInboundCallRepository.end} and the sweep only end a row that is
@@ -40,7 +42,10 @@ type Db = Pick<PoolClient, 'query'>;
 /**
  * The moves {@link AgencyInboundCallRepository.transition} makes, by target state: the states
  * each may be reached from. `ended` is not here: it is {@link AgencyInboundCallRepository.end}'s.
- * A state absent from every list (`arrived`) is never re-entered.
+ * `arrived` means "not admitted": never yet, or refused. It is re-entered only by
+ * {@link AgencyInboundCallRepository.refuseAdmission} (`greeting → arrived`, a call the bridge's
+ * shared scopes turned away), and a refused call ends straight from `arrived` (the route's cap
+ * and that refusal both): `arrived` is not "about to be admitted".
  */
 export const INBOUND_CALL_TRANSITIONS = Object.freeze({
   greeting: ['arrived'],
@@ -183,11 +188,18 @@ export class AgencyInboundCallRepository {
    * **Idempotent on the carrier's call id.** A retried answer webhook (`uq_agency_inbound_calls_
    * provider_call`, `ON CONFLICT DO NOTHING`) writes nothing and answers the row it wrote the
    * first time, with `created: false`, so the caller answers the retry the same way.
+   *
+   * **Only the caller's own row.** The carrier's call id is unique per provider, not per
+   * credential, and the conflicting row is answered only when it is this tenant's AND arrived on
+   * this credential: one belonging to another tenant or credential is `foreign` (nothing written,
+   * nothing of the other row returned). A real `CallUUID` names one call on one carrier account,
+   * so a foreign conflict is a forged or replayed id on a credential that verified it, and the
+   * caller refuses it: no call on tenant X's credential ever reads or ends tenant Y's row.
    */
   async insertArrival(
     input: AgencyInboundArrivalInput,
     deps: { client?: PoolClient } = {},
-  ): Promise<{ created: boolean; call: AgencyInboundCallRecord }> {
+  ): Promise<{ created: boolean; call: AgencyInboundCallRecord } | { created: false; call: null; foreign: true }> {
     return withTransaction(async (client) => {
       const id = input.identification;
       const { rows } = await client.query<AgencyInboundCallRecord>(
@@ -209,7 +221,10 @@ export class AgencyInboundCallRepository {
       const inserted = rows[0];
       if (!inserted) {
         const existing = await this.findByProviderCallId(input.provider, input.providerCallId, client);
-        return { created: false, call: existing! };
+        if (!existing || existing.tenant_id !== input.tenantId || existing.telephony_credential_id !== input.telephonyCredentialId) {
+          return { created: false, call: null, foreign: true } as const;
+        }
+        return { created: false, call: existing };
       }
       if (input.accountId === null) return { created: true, call: inserted };
       const leg = await client.query<{ id: string }>(
@@ -290,6 +305,24 @@ export class AgencyInboundCallRepository {
   }
 
   /**
+   * Take back an admission (`greeting → arrived`): a call its route admitted that the bridge's
+   * shared scopes then turned away (the global or carrier scope full, IB5's `no_capacity`) holds
+   * no line of ours, so it leaves the route's admitted count and the account's live total, which
+   * both read `arrived` as "not admitted". The one move back to `arrived`, and only from
+   * `greeting` (the state admission leaves it in), so it never undoes a call further on. Null when
+   * the call is missing or not in `greeting`.
+   */
+  async refuseAdmission(id: string, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c SET state = 'arrived'
+        WHERE c.id = $1::uuid AND c.state = 'greeting'
+        RETURNING ${CALL_COLUMNS}`,
+      [id],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
    * End the call: `ended`, its outcome and `ended_at`, talk time, the voicemail, and for a call
    * that reached nobody its Missed row (`open`) and the callback it booked. Only a call that has
    * not ended: **a terminal row never moves**, so a hangup webhook racing the sweep, or a retried
@@ -319,6 +352,22 @@ export class AgencyInboundCallRepository {
     );
     if (rows[0]) return { ended: true, call: rows[0] };
     return { ended: false, call: await this.findByIdAnyTenant(id, db) };
+  }
+
+  /**
+   * Whether a call on `credentialId` that arrived before `before` has not ended (a Re-point's
+   * check that the token it would drop is no longer needed). Over `idx_agency_inbound_calls_open`
+   * (0024: `arrived_at`, live rows only).
+   */
+  async anyLiveArrivedBefore(credentialId: string, before: Date, db: Db = getPool()): Promise<boolean> {
+    const { rows } = await db.query<{ live: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM agency_inbound_calls c
+          WHERE c.state <> 'ended' AND c.arrived_at < $2::timestamptz AND c.telephony_credential_id = $1::uuid
+       ) AS live`,
+      [credentialId, before],
+    );
+    return rows[0]?.live === true;
   }
 
   /** The call with the carrier's call id (the status webhook's `CallUUID`), or null. */

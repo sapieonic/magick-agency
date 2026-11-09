@@ -143,6 +143,14 @@ describe('the route editor', () => {
     expect(choice('n-4').disabled).toBe(true);
     expect(choice('n-1').disabled).toBe(true);
     expect(screen.getByText('Already answers “Main line”.')).toBeTruthy();
+    // A message with no recording is read out in a standard voice, never silence; a greeting is skipped.
+    const noneOf = (label: string) => (screen.getByLabelText(label) as HTMLSelectElement).options[0]!.textContent;
+    expect(noneOf('Closed')).toBe('Standard spoken message');
+    expect(noneOf('All lines busy')).toBe('Standard spoken message');
+    expect(noneOf('We’ll call you back')).toBe('Standard spoken message');
+    expect(noneOf('Greeting')).toBe('No greeting');
+    expect(screen.getByTestId('inbound-route-clips').textContent).toMatch(/read out in a standard voice/);
+    expect(screen.getByTestId('inbound-route-clips').textContent).not.toMatch(/plays nothing|hear nothing/);
     // Voicemail is not offered.
     expect(screen.getByTestId('inbound-voicemail-note').textContent).toMatch(/Voicemail isn’t available yet/);
     expect(screen.queryByRole('radio', { name: /voicemail/i })).toBeNull();

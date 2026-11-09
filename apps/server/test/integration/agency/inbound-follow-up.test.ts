@@ -228,7 +228,7 @@ describe('what the dialer makes of an inbound callback', () => {
 });
 
 describe('pacing\'s live count (IB5)', () => {
-  it('counts the account\'s live inbound calls, not ended ones nor another account\'s', async () => {
+  it('counts the account\'s live admitted inbound calls: not one turned away (`arrived`), nor ended ones, nor another account\'s', async () => {
     await pool().query(`INSERT INTO telephony_providers (name, display_name) VALUES ('plivo', 'Plivo') ON CONFLICT DO NOTHING`);
     const cred = (await pool().query<{ id: string }>(
       `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref) VALUES ($1, 'plivo', 'Main', 'MA000000000000000001') RETURNING id`, [T])).rows[0]!.id;
@@ -238,14 +238,22 @@ describe('pacing\'s live count (IB5)', () => {
       identification: { match: null, callerDnc: false, sticky: null }, answered: true, recordingRequested: false, analysisProfileId: null,
     });
     expect(await attempts.countLiveForAccount(T, A)).toBe(0);
-    const live = await arrive(A);
-    await arrive(OTHER_ACCOUNT);
-    const done = await arrive(A);
-    await spine.end(done.call.id, { outcome: 'closed', talkSeconds: null, followUp: { reason: 'closed', assigneeUserId: null }, callbackDueAt: null, voicemailKey: null });
-    expect(await attempts.countLiveForAccount(T, A)).toBe(1);
-    await spine.transition(live.call.id, 'greeting');
+    const live = (await arrive(A)).call!;
+    const other = (await arrive(OTHER_ACCOUNT)).call!;
+    await spine.transition(other.id, 'greeting');
+    const done = (await arrive(A)).call!;
+    await spine.transition(done.id, 'greeting');
+    await spine.end(done.id, { outcome: 'closed', talkSeconds: null, followUp: { reason: 'closed', assigneeUserId: null }, callbackDueAt: null, voicemailKey: null });
+    // Arrived and not admitted (it would hear "busy"): no part of the account's total.
+    expect(await attempts.countLiveForAccount(T, A)).toBe(0);
+    await spine.transition(live.id, 'greeting');
     expect(await answers.countLiveAdmittedOnRoute(randomUUID())).toBe(0);
     expect(await attempts.countLiveForAccount(T, A)).toBe(1);
+    // The bridge's shared scopes turned it away after all: the admission is taken back.
+    expect(await spine.refuseAdmission(live.id)).toMatchObject({ state: 'arrived' });
+    expect(await attempts.countLiveForAccount(T, A)).toBe(0);
+    // Only from `greeting`: an ended or further-on call never goes back.
+    expect(await spine.refuseAdmission(done.id)).toBeNull();
   });
 });
 

@@ -55,7 +55,7 @@ function arrival(o: Partial<ArrivalInput> = {}): ArrivalInput {
 }
 
 async function arrived(o: Partial<ArrivalInput> = {}) {
-  return (await repo.insertArrival(arrival(o))).call;
+  return (await repo.insertArrival(arrival(o))).call!;
 }
 
 /** An ended call that reached nobody (an open Missed row), arrived at `at`. */
@@ -99,10 +99,12 @@ describe('insertArrival', () => {
     const sticky = randomUUID();
     const contact = randomUUID();
     const campaign = randomUUID();
-    const { created, call } = await repo.insertArrival(arrival({
+    const inserted = await repo.insertArrival(arrival({
       providerCallId: 'CA-1', recordingRequested: true, analysisProfileId: null,
       identification: { match: { contactId: contact, campaignId: campaign }, callerDnc: true, sticky: { userId: sticky, reason: 'owner' } },
     }));
+    const { created } = inserted;
+    const call = inserted.call!;
     expect(created).toBe(true);
     expect(call).toMatchObject({
       tenant_id: T, account_id: A, provider: 'plivo', provider_call_id: 'CA-1', telephony_credential_id: credentialId,
@@ -152,10 +154,10 @@ describe('insertArrival', () => {
     expect(again).toEqual({ created: false, call: first.call });
     const racing = await Promise.all([1, 2, 3].map(() => repo.insertArrival(arrival({ providerCallId: 'CA-race' }))));
     expect(racing.filter((r) => r.created)).toHaveLength(1);
-    expect(new Set(racing.map((r) => r.call.id)).size).toBe(1);
+    expect(new Set(racing.map((r) => r.call!.id)).size).toBe(1);
     const { rows } = await pool().query(`SELECT count(*)::int AS n FROM agency_calls WHERE provider_call_id = 'CA-race'`);
     expect(rows[0].n).toBe(1);
-    expect((await repo.findByProviderCallId('plivo', 'CA-race'))!.id).toBe(racing[0]!.call.id);
+    expect((await repo.findByProviderCallId('plivo', 'CA-race'))!.id).toBe(racing[0]!.call!.id);
     expect(await repo.findByProviderCallId('voicelink', 'CA-race')).toBeNull();
   });
 

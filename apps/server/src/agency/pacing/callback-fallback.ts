@@ -93,6 +93,8 @@ export async function sweepCallbackFallback(campaign: AgencyCampaignRecord): Pro
   if (!callbackFallbackApplies(campaign)) return 0;
   // No early return for a catalog with no callback codes: an inbound callback
   // (`callback_source`, docs/inbound.md §7) is a callback on any campaign, and falls back too.
+  // Such a pick reads only the campaign's inbound callbacks (`idx_agency_contacts_inbound_callback`):
+  // a probe of an empty index on a tenant with no inbound.
   const codes = callbackCodes(campaign.disposition_catalog);
   return returnBatchToPool(
     campaign,

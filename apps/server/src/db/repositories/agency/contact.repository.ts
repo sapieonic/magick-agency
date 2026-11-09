@@ -611,6 +611,14 @@ export class AgencyContactRepository {
    * Never a live contact: only `pending` rows are picked, under `FOR UPDATE SKIP LOCKED` in a
    * MATERIALIZED pick (a row a tick is claiming is skipped, not waited on), and the UPDATE
    * re-checks `pending` on the locked row. Returns the moves (at most `limit`).
+   *
+   * **A catalog with no callback code** books no disposition callback, so the only callback such
+   * a campaign can hold is an inbound one (`isCallbackSql`'s `callback_source IS NOT NULL` arm):
+   * the pick then says so (`c.callback_source IS NOT NULL`, which the bucket already implies, so
+   * the same rows move) and is served by `idx_agency_contacts_inbound_callback` (0026), which
+   * holds only contacts with an inbound callback booked. The sweep runs on every running
+   * owner-mode campaign every 30 s; without this it walked each such campaign's pending roster to
+   * find nothing on every tenant with no inbound.
    */
   async fallBackOverdueCallbacks(input: {
     campaignId: string;
@@ -627,7 +635,8 @@ export class AgencyContactRepository {
           WHERE c.campaign_id = $1::uuid
             AND c.state = 'pending'
             AND c.assigned_user_id IS NOT NULL
-            AND c.next_attempt_at <= now() - make_interval(mins => $2::int)
+            AND c.next_attempt_at <= now() - make_interval(mins => $2::int)${input.callbackCodes.length === 0 ? `
+            AND c.callback_source IS NOT NULL` : ''}
             AND ${contactBucketSql('c', '$3')} = 'callback'
             AND NOT EXISTS (
               SELECT 1 FROM agency_agent_sessions s

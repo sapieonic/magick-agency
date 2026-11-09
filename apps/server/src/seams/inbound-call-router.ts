@@ -33,18 +33,40 @@ export interface InboundCallArrival {
 }
 
 /**
+ * A fixed message the carrier speaks itself (`<Speak>`), then puts the call down: where nothing
+ * of ours can play (no account to stream for), or where the route has no recording for the
+ * message the call is answered with (docs/inbound.md §3.4). The voice area owns the words:
+ *  - `closed`: we cannot take the call now, try again later (no promise of a callback);
+ *  - `callback`: everyone is busy, we will call you back;
+ *  - `busy`: all our lines are busy, we will call you back.
+ */
+export type InboundSpokenMessage = 'closed' | 'callback' | 'busy';
+
+/**
  * How to answer an arriving call:
  *  - `stream`: our answer XML streams the call to `streamUrl` (the bridge holds the caller);
- *  - `closed`: the fixed closed message, spoken by the carrier, then put down (a call with no
- *    account to stream for: the tenant default, §8.3). Its Missed row is written;
- *  - `hangup`: refused (a number not linked, not the tenant's, retired);
+ *  - `spoken`: a fixed message spoken by the carrier, then put down; the agency side has already
+ *    ended the call and written its Missed row and callback;
+ *  - `hangup`: refused (a number not linked, not the tenant's, retired, a call id that is not
+ *    this credential's);
  *  - `fallback`: we could not place the call (a fault): the fixed fallback message.
  */
 export type InboundAnswerDecision =
   | { kind: 'stream'; callId: string; streamUrl: string; maxDurationSeconds: number }
-  | { kind: 'closed' }
+  | { kind: 'spoken'; message: InboundSpokenMessage }
   | { kind: 'hangup' }
   | { kind: 'fallback' };
+
+/** How the voice area bounds an answer. */
+export interface InboundAnswerOptions {
+  /**
+   * Aborted when the carrier has been answered without this decision (the answer's budget ran
+   * out: the caller hears the fixed fallback message, "try again shortly"). From then on the
+   * call is the fallback's: the agency side places nothing more (no stream, no message) and
+   * leaves no follow-up, since the caller was told to ring again, not that we would call.
+   */
+  signal?: AbortSignal;
+}
 
 /** A verified hangup of an inbound call (the Application's hangup URL). */
 export interface InboundCallHangup {
@@ -59,8 +81,8 @@ export interface InboundCallHangup {
 }
 
 export interface InboundCallRouter {
-  /** Decide and prepare an arriving call. Bounded by the caller (the carrier's answer-URL timeout). */
-  answer(arrival: InboundCallArrival): Promise<InboundAnswerDecision>;
+  /** Decide and prepare an arriving call. Bounded by the caller (the carrier's answer-URL timeout; `opts.signal`). */
+  answer(arrival: InboundCallArrival, opts?: InboundAnswerOptions): Promise<InboundAnswerDecision>;
   /**
    * The carrier says the call ended: settle what the agency owns of it. Returns the media leg
    * (`agency_calls.id`) the bridge must be told about, or null (no such call, or no leg).

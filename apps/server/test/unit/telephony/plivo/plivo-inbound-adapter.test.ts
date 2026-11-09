@@ -10,7 +10,7 @@ vi.mock('@magick-agency/observability', () => ({
 
 import { DEFAULT_PLIVO_SETTINGS, PlivoAdapter, type PlivoFetch } from '../../../../src/telephony/plivo/plivo.adapter.js';
 import { Secret } from '../../../../src/telephony/credentials/secret.js';
-import { PlivoApiError } from '../../../../src/telephony/plivo/plivo-inbound.wire.js';
+import { PLIVO_APPLICATIONS_MAX_PAGES, PlivoApiError } from '../../../../src/telephony/plivo/plivo-inbound.wire.js';
 
 const URLS = {
   answerUrl: 'https://a.test/api/v1/webhooks/plivo/inbound-answer/c', hangupUrl: 'https://a.test/api/v1/webhooks/plivo/inbound-status/c',
@@ -79,5 +79,17 @@ describe('PlivoAdapter inbound calls', () => {
       'https://api.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/?app_name=inbound-x&limit=20&offset=0',
       'https://api.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/?app_name=inbound-x&limit=20&offset=20',
     ]);
+  });
+
+  it('reads at most PLIVO_APPLICATIONS_MAX_PAGES pages of a list that never ends (a host ignoring the name filter)', async () => {
+    const page = (p: number) => ({
+      status: 200,
+      body: { meta: { next: 'more' }, objects: Array.from({ length: 20 }, (_, i) => ({ app_id: `${p * 100 + i}`, app_name: i === 0 ? 'inbound-x' : 'other' })) },
+    });
+    const { plivo, sent } = adapter(Array.from({ length: PLIVO_APPLICATIONS_MAX_PAGES + 3 }, (_, p) => page(p)));
+    expect(await plivo.findInboundApplications('inbound-x')).toEqual(
+      Array.from({ length: PLIVO_APPLICATIONS_MAX_PAGES }, (_, p) => `${p * 100}`));
+    expect(sent).toHaveLength(PLIVO_APPLICATIONS_MAX_PAGES);
+    expect(PLIVO_APPLICATIONS_MAX_PAGES).toBe(5);
   });
 });

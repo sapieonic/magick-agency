@@ -15,11 +15,15 @@
 //    at once, and is put back on its previous app at the carrier while the credential still
 //    works. Revoke is refused while inbound is enabled (`TelephonyCredentialService.revoke`).
 //
-// Partial failures. Each operator write that calls the carrier runs inside ONE database
-// transaction that holds the credential row (`lockInbound`, or `FOR SHARE` for a link): the
-// carrier call is made, then the row that records it is written, and the commit is the last
-// step. A carrier refusal rolls the write back, so the database never claims what the carrier
-// does not have. What is left is a commit failing after the carrier accepted, and each has its
+// Partial failures. Each operator write that calls the carrier runs its carrier WRITE inside ONE
+// database transaction that holds the credential row (`lockInbound`, or `FOR SHARE` for a link)
+// together with the row that records it, and the commit is the last step: a carrier refusal rolls
+// the write back, so the database never claims what the carrier does not have. (Enable, Link,
+// Unlink and Re-point make the carrier call first and write after; Disable writes first and
+// deletes the Application after, in the same transaction, so the outcome is the same.) The
+// carrier's read-only answers that a write starts from (Enable's find-by-name, Link's current
+// app) are read before the lock, so the row and a pool connection are held only across the
+// carrier writes. What is left is a commit failing after the carrier accepted, and each has its
 // way back:
 //  - Enable: the Application exists but is not stored. Its name is fixed per credential
 //    (`inbound-<credential id>`), so the next Enable finds it by name and adopts it (new URLs
@@ -58,7 +62,7 @@ import type {
   TelephonyCredentialInboundUrl,
 } from '@magick-agency/contracts/api/platform/super-admin-inbound';
 import type { TelephonyCredentialErrorCode } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
-import type { AgencyInboundRouteRepository } from '../../db/repositories/agency.repository.js';
+import type { AgencyInboundCallRepository, AgencyInboundRouteRepository } from '../../db/repositories/agency.repository.js';
 import type { SuperAdminAuditEntry } from '../../audit/super-admin-audit.js';
 import {
   CredentialUnavailableError,
@@ -114,6 +118,8 @@ export interface TelephonyInboundServiceDeps {
   repo: Pick<TelephonyCredentialRepository, 'findById' | 'findInbound' | 'lockInbound' | 'enableInbound' | 'repointInbound' | 'disableInbound' | 'inboundTokenMatches'>;
   numbers: Pick<PhoneNumberRepository, 'findInboundLink' | 'listInboundForCredential' | 'linkInbound' | 'clearInboundLink'>;
   routes: Pick<AgencyInboundRouteRepository, 'detachNumberEverywhere'>;
+  /** The inbound spine: whether a call answered under the token a Re-point would drop is still live. */
+  calls: Pick<AgencyInboundCallRepository, 'anyLiveArrivedBefore'>;
   /** The carrier client on a resolved credential (`createPlivoAdapter`). */
   carrierFor(credential: ResolvedCredential): InboundCarrierApi;
   /** `PLIVO_WEBHOOK_BASE_URL` and `PLIVO_INBOUND_FALLBACK_ANSWER_URL`, read per call. */
@@ -275,12 +281,16 @@ export class TelephonyInboundService {
     if (!urls) return this.unconfigured();
     const result = await answer(async () => {
       const carrier = await this.carrier(credentialId, 'dial');
+      // Read-only, so before the row is locked: an Application of ours an earlier Enable left
+      // unstored. Stale by the time of the lock only if another Enable ran meanwhile, and that one
+      // stored its Application, which the lock's `app_id` check then refuses on.
+      const named = await carrier.findInboundApplications(inboundApplicationName(credentialId));
       return withTransaction(async (client) => {
         const locked = await this.lockOrRefuse(credentialId, client);
         if (locked.status !== 'active') throw new Refusal(fail('credential_not_active', 'The credential stopped being active; nothing was changed'));
         if (locked.app_id) throw new Refusal(fail('inbound_enabled', 'Inbound is already enabled on this credential'));
         const { token, tokenHash } = mintInboundToken();
-        const placed = await this.placeApplication(carrier, credentialId, urls, token, null);
+        const placed = await this.placeApplication(carrier, credentialId, urls, token, named);
         try {
           const stored = await this.deps.repo.enableInbound(credentialId, { ...this.storedForm(urls), appId: placed.appId, tokenHash }, actor.adminId, { client });
           // We hold the row and checked it: a miss here is a bug, not a race.
@@ -351,6 +361,14 @@ export class TelephonyInboundService {
    * stays accepted for `INBOUND_TOKEN_REPOINT_GRACE_SECONDS` (calls answered before it post
    * their hangup with it). An Application gone from the account is made again (or adopted by
    * name) and every linked number still on the account moved onto it.
+   *
+   * **Two Re-points inside one call's life.** The credential keeps one previous token, so a
+   * second Re-point drops the first one's. That is refused (`inbound_previous_token_in_use`)
+   * while a call answered BEFORE the last Re-point is still live on the credential (its hangup
+   * carries the token that would be dropped); otherwise the previous token is no longer needed
+   * and is replaced. The last Re-point's time is the previous token's expiry less the grace. A
+   * call lasts at most `WEBRTC_MAX_DURATION_SECONDS` and the sweep ends any older, so the refusal
+   * lasts at most about four hours after a Re-point, and only while such a call is live.
    */
   async repoint(credentialId: string, actor: InboundActor): Promise<ServiceResult<TelephonyCredentialInboundResponse>> {
     const pre = await this.precheck(credentialId);
@@ -363,6 +381,7 @@ export class TelephonyInboundService {
       return withTransaction(async (client) => {
         const locked = await this.lockOrRefuse(credentialId, client);
         if (!locked.app_id) throw new Refusal(fail('inbound_not_enabled', 'Inbound is not enabled on this credential'));
+        await this.refuseWhilePreviousTokenInUse(locked, client);
         const { token, tokenHash } = mintInboundToken();
         const updated = await carrier.updateInboundApplication(locked.app_id, urls, token);
         let appId = locked.app_id;
@@ -370,7 +389,10 @@ export class TelephonyInboundService {
         let missing: string[] = [];
         let created = false;
         if (updated === 'not_found') {
-          const placed = await this.placeApplication(carrier, credentialId, urls, token, locked.app_id);
+          // The rare path (the Application was deleted at Plivo): its find-by-name runs under the
+          // lock, bounded by PLIVO_APPLICATIONS_MAX_PAGES.
+          const named = (await carrier.findInboundApplications(inboundApplicationName(credentialId))).filter((id) => id !== locked.app_id);
+          const placed = await this.placeApplication(carrier, credentialId, urls, token, named);
           appId = placed.appId;
           created = placed.created;
           try {
@@ -414,9 +436,11 @@ export class TelephonyInboundService {
     const appId = rec.credential_app_id!;
     const result = await answer(async () => {
       const carrier = await this.carrier(credentialId, 'dial');
+      // Read-only, so before the credential row is held: the app the number is on now (kept as
+      // its previous app). Only the write it is recorded with runs under the lock.
+      const current = await carrier.getNumberApp(rec.phone_number);
+      if (!current) throw new Refusal(this.numberMissing());
       return withTransaction(async (client) => {
-        const current = await carrier.getNumberApp(rec.phone_number);
-        if (!current) throw new Refusal(this.numberMissing());
         if (current.appId === appId) {
           // On the Application already (a link whose commit failed, or set in Plivo's console):
           // the app it was on before is not known any more.
@@ -507,7 +531,7 @@ export class TelephonyInboundService {
         }
       }
     } catch (err) {
-      log.error({ err, credentialId, cause }, 'Inbound cascade could not list the credential`s numbers');
+      log.error({ err, credentialId, cause }, 'Inbound cascade could not list the credential’s numbers');
     }
     if (released > 0) log.info({ credentialId, cause, released }, 'Inbound cascade released numbers');
     return released;
@@ -564,15 +588,14 @@ export class TelephonyInboundService {
   }
 
   /**
-   * The Application to use: one of ours found by name (an earlier Enable or Re-point whose write
-   * never committed), given `urls` and `token`, else a new one. `exclude` is an id known to be
-   * gone. Our extra ones by the same name, if a past failure left several, are deleted.
+   * The Application to use: one of ours found by name (`found`, the caller's find-by-name: an
+   * earlier Enable or Re-point whose write never committed), given `urls` and `token`, else a new
+   * one. Our extra ones by the same name, if a past failure left several, are deleted.
    */
   private async placeApplication(
-    carrier: InboundCarrierApi, credentialId: string, urls: PlivoInboundUrls, token: string, exclude: string | null,
+    carrier: InboundCarrierApi, credentialId: string, urls: PlivoInboundUrls, token: string, found: readonly string[],
   ): Promise<{ appId: string; created: boolean }> {
     const name = inboundApplicationName(credentialId);
-    const found = (await carrier.findInboundApplications(name)).filter((id) => id !== exclude);
     for (const appId of found) {
       if (await carrier.updateInboundApplication(appId, urls, token) === 'not_found') continue;
       for (const extra of found.filter((id) => id !== appId)) await this.deleteQuietly(carrier, extra, credentialId);
@@ -599,6 +622,17 @@ export class TelephonyInboundService {
       await carrier.deleteInboundApplication(appId);
     } catch (err) {
       log.error({ err, credentialId, appId }, 'Could not delete an inbound Application nothing stores; the next Enable or Re-point finds it by name');
+    }
+  }
+
+  /** See {@link repoint}: refuse while a call answered under the previous token is still live. */
+  private async refuseWhilePreviousTokenInUse(locked: TelephonyCredentialInboundRecord, client: PoolClient): Promise<void> {
+    const expires = locked.previous_token_expires_at;
+    if (!expires || expires.getTime() <= Date.now()) return;
+    const lastRepointAt = new Date(expires.getTime() - INBOUND_TOKEN_REPOINT_GRACE_SECONDS * 1000);
+    if (await this.deps.calls.anyLiveArrivedBefore(locked.credential_id, lastRepointAt, client)) {
+      throw new Refusal(fail('inbound_previous_token_in_use',
+        'A call answered before the last Re-point is still live on this credential, and its hangup still needs the token that Re-point replaced. Nothing was changed. Try again once it has ended.'));
     }
   }
 

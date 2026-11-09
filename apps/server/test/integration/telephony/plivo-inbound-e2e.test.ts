@@ -34,7 +34,7 @@ import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js'
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { usageCountsRepository } from '@magick-agency/db/repositories/usage-counts.repository';
 import { PLIVO_HANGUP_XML } from '../../../src/telephony/plivo/plivo.adapter.js';
-import { PLIVO_INBOUND_CLOSED_XML } from '../../../src/telephony/plivo/plivo-inbound.webhook.js';
+import { PLIVO_INBOUND_CALLBACK_XML, PLIVO_INBOUND_CLOSED_XML } from '../../../src/telephony/plivo/plivo-inbound.webhook.js';
 import { mintInboundToken } from '../../../src/telephony/plivo/inbound-token.js';
 import {
   plivoInboundAnswerUrl, plivoInboundFallbackUrl, plivoInboundStatusUrl, withInboundToken,
@@ -363,6 +363,20 @@ describe('an inbound call on a linked Plivo number, P1 (nobody is connected)', (
     });
   });
 
+  it('a route with no "we will call you back" recording: the carrier speaks it, nothing streams; overflow, Missed row and callback as ever', async () => {
+    const { contactId } = await campaignWithCaller({ assigned_user_id: AGENT, assigned_at: new Date() });
+    await setRoute({ clips: { callback: null } });
+    const call = ring(rig!, { steps: [{ do: 'answer' }] });
+    await call.done;
+    expect(call.answerXml).toBe(PLIVO_INBOUND_CALLBACK_XML);
+    expect(call.answerXml).not.toContain('<Stream');
+    expect(call.hungUpByApi).toBe(false);
+    const row = await ended(call);
+    expect(row).toMatchObject({ outcome: 'overflow', follow_up_status: 'open', follow_up_reason: 'overflow', follow_up_assignee_user_id: AGENT });
+    expect(await legOf(row)).toMatchObject({ status: 'completed', outcome: 'inbound_overflow', origin: 'inbound' });
+    expect(await contactRow(contactId)).toMatchObject({ state: 'pending', callback_source: 'inbound' });
+  });
+
   it('a bad signature (another account`s token) is hung up and writes nothing', async () => {
     const call = ring(rig!, { steps: [{ do: 'answer', sign: { token: 'not-this-accounts-token' } }] });
     await call.done;
@@ -439,12 +453,12 @@ describe('an inbound call on a linked Plivo number, P1 (nobody is connected)', (
 
   it('restart: the startup sweep ends a call a restart left open as abandoned_in_queue, with its follow-up and callback', async () => {
     const { campaignId, contactId } = await campaignWithCaller({ state: 'exhausted', attempt_count: 3 });
-    const { call } = await agencyInboundCallRepository.insertArrival({
+    const call = (await agencyInboundCallRepository.insertArrival({
       tenantId: TENANT, accountId: ACCOUNT, routeId, phoneNumberId, provider: 'plivo', telephonyCredentialId: rig!.credentialId,
       providerCallId: `CA-${randomUUID()}`, fromE164: CALLER_E164, toE164: CALLER_ID,
       identification: { match: { contactId, campaignId }, callerDnc: false, sticky: { userId: AGENT, reason: 'owner' } },
       answered: true, recordingRequested: false, analysisProfileId: null,
-    });
+    })).call!;
     await agencyInboundCallRepository.transition(call.id, 'greeting');
     const running = getInboundCallRouter();
     const restarted = await startInboundCalls({ bridge: rig!.bridge, dnc: new DncRegistry() });

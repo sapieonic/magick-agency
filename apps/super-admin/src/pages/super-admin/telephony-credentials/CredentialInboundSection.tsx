@@ -70,6 +70,7 @@ const URL_NAME: Record<TelephonyCredentialInboundUrl, string> = {
 const REFUSAL: Record<string, string> = {
   inbound_unconfigured: 'This server has no public callback address for the carrier (docs/operations.md). Set it, then try again.',
   inbound_numbers_linked: 'Numbers are still linked to inbound on this credential. Unlink them on the Phone Numbers page first.',
+  inbound_previous_token_in_use: 'A call answered before the last re-point is still in progress, and its hangup still needs the address that re-point replaced. Try again once it has ended (within about four hours of that re-point).',
   credential_not_active: 'Only an active credential can enable inbound. Enable or verify it first.',
   carrier_rejected: 'The carrier refused the stored credentials. Nothing was changed. Verify or rotate the secret, then try again.',
   carrier_unreachable: 'The carrier could not be reached. Nothing was changed. Try again shortly.',

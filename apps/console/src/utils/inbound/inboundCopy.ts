@@ -52,13 +52,34 @@ export const STICKY_MODE_LABELS: Record<AgencyInboundStickyMode, { label: string
   off: { label: 'Off', hint: 'Every caller goes to the team, longest idle agent first.' },
 };
 
-export const CLIP_SLOT_LABELS: Record<AgencyInboundClipSlot, { label: string; hint: string }> = {
-  greeting: { label: 'Greeting', hint: 'Played as soon as the call is answered.' },
-  recording_notice: { label: 'Recording notice', hint: 'Played before an agent joins, when calls are recorded.' },
-  hold: { label: 'Hold music', hint: 'Looped while the caller waits for an agent.' },
-  closed: { label: 'Closed', hint: 'Played out of hours and on holidays.' },
-  busy: { label: 'All lines busy', hint: 'Played when the route already has as many calls as it takes.' },
-  callback: { label: 'We’ll call you back', hint: 'Played before the call ends with a callback follow-up.' },
+/**
+ * Each clip slot's label, hint, and what the "no recording" choice means for callers: the three
+ * messages a call is answered with are then spoken by the carrier in a standard voice (the server's
+ * fixed words); the others are simply not played.
+ */
+export const CLIP_SLOT_LABELS: Record<AgencyInboundClipSlot, { label: string; hint: string; none: string }> = {
+  greeting: {
+    label: 'Greeting',
+    hint: 'Played as soon as the call is answered, before a recorded message. Not played before a standard spoken message.',
+    none: 'No greeting',
+  },
+  recording_notice: { label: 'Recording notice', hint: 'Played before an agent joins, when calls are recorded.', none: 'No notice' },
+  hold: { label: 'Hold music', hint: 'Looped while the caller waits for an agent.', none: 'No hold music' },
+  closed: {
+    label: 'Closed',
+    hint: 'Played out of hours and on holidays. Standard: “Thank you for calling. We can’t take your call right now. Please try again later.”',
+    none: 'Standard spoken message',
+  },
+  busy: {
+    label: 'All lines busy',
+    hint: 'Played when the route already has as many calls as it takes. Standard: “… All our lines are busy at the moment. We’ll call you back as soon as we can.”',
+    none: 'Standard spoken message',
+  },
+  callback: {
+    label: 'We’ll call you back',
+    hint: 'Played before the call ends with a callback follow-up. Standard: “… Everyone is busy at the moment. We’ll call you back as soon as we can.”',
+    none: 'Standard spoken message',
+  },
 };
 
 /** Where a Missed row stands with its assignee, in words. */

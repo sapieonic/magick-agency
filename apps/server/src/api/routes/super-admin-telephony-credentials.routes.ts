@@ -54,6 +54,7 @@ const STATUS: Record<TelephonyCredentialErrorCode, number> = {
   inbound_enabled: 409,
   inbound_not_enabled: 409,
   inbound_numbers_linked: 409,
+  inbound_previous_token_in_use: 409,
   // The server has no public callback base: an operator fixes the deployment, not the request.
   inbound_unconfigured: 503,
   phone_number_not_found: 404,

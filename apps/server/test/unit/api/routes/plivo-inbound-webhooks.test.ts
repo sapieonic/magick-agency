@@ -31,7 +31,9 @@ import { DEFAULT_PLIVO_SETTINGS, PlivoAdapter, PLIVO_HANGUP_XML } from '../../..
 import { computePlivoV3Signature } from '../../../../src/telephony/plivo/plivo-signature.js';
 import { Secret } from '../../../../src/telephony/credentials/secret.js';
 import { hashInboundToken } from '../../../../src/telephony/plivo/inbound-token.js';
-import { PLIVO_INBOUND_CLOSED_XML, PLIVO_INBOUND_FALLBACK_XML } from '../../../../src/telephony/plivo/plivo-inbound.webhook.js';
+import {
+  PLIVO_INBOUND_BUSY_XML, PLIVO_INBOUND_CALLBACK_XML, PLIVO_INBOUND_CLOSED_XML, PLIVO_INBOUND_FALLBACK_XML,
+} from '../../../../src/telephony/plivo/plivo-inbound.webhook.js';
 import { resetInboundCallRouter, setInboundCallRouter, type InboundCallRouter } from '../../../../src/seams/inbound-call-router.js';
 
 const AUTH = 'tenant-auth-token-current';
@@ -130,7 +132,7 @@ describe('Plivo inbound webhooks', () => {
       expect(router.answer).toHaveBeenCalledWith({
         credentialId: CRED, tenantId: TENANT, provider: 'plivo', credentialStatus: 'active',
         carrierCallId: 'cu-1', fromE164: '+919812345678', toE164: '+14155550101',
-      });
+      }, { signal: expect.any(AbortSignal) });
       expect(bridge.inboundCallbackAdapter).toHaveBeenCalledWith(CRED, TENANT, 'plivo');
     });
 
@@ -171,12 +173,16 @@ describe('Plivo inbound webhooks', () => {
 
     it('a withheld caller is routed with no number', async () => {
       await post(app, 'answer', { ...ARRIVAL, From: 'anonymous' });
-      expect(router.answer).toHaveBeenCalledWith(expect.objectContaining({ fromE164: null }));
+      expect(router.answer).toHaveBeenCalledWith(expect.objectContaining({ fromE164: null }), expect.anything());
     });
 
-    it('renders each decision: closed (spoken), hangup, fallback', async () => {
-      router.answer.mockResolvedValueOnce({ kind: 'closed' });
+    it('renders each decision: the three spoken messages, hangup, fallback', async () => {
+      router.answer.mockResolvedValueOnce({ kind: 'spoken', message: 'closed' });
       expect((await post(app, 'answer', ARRIVAL)).body).toBe(PLIVO_INBOUND_CLOSED_XML);
+      router.answer.mockResolvedValueOnce({ kind: 'spoken', message: 'callback' });
+      expect((await post(app, 'answer', ARRIVAL)).body).toBe(PLIVO_INBOUND_CALLBACK_XML);
+      router.answer.mockResolvedValueOnce({ kind: 'spoken', message: 'busy' });
+      expect((await post(app, 'answer', ARRIVAL)).body).toBe(PLIVO_INBOUND_BUSY_XML);
       router.answer.mockResolvedValueOnce({ kind: 'hangup' });
       expect((await post(app, 'answer', ARRIVAL)).body).toBe(PLIVO_HANGUP_XML);
       router.answer.mockResolvedValueOnce({ kind: 'fallback' });
@@ -188,7 +194,7 @@ describe('Plivo inbound webhooks', () => {
         credential_id: CRED, tenant_id: TENANT, provider: 'plivo', status: 'disabled', answer_url: STORED_ANSWER, hangup_url: STORED_HANGUP,
       });
       await post(app, 'answer', ARRIVAL);
-      expect(router.answer).toHaveBeenCalledWith(expect.objectContaining({ credentialStatus: 'disabled' }));
+      expect(router.answer).toHaveBeenCalledWith(expect.objectContaining({ credentialStatus: 'disabled' }), expect.anything());
     });
 
     it('a router fault is the fallback message, and the nonce is given back for the carrier\'s retry', async () => {
@@ -199,16 +205,33 @@ describe('Plivo inbound webhooks', () => {
       expect((await post(app, 'answer', ARRIVAL, { nonce: 'retry-me' })).body).toContain('<Stream');
     });
 
-    it('past its budget the caller hears the fallback message', async () => {
+    it('past its budget the caller hears the fallback message, and the router is told (its signal aborts)', async () => {
       const slow = Fastify();
       const { registerPlivoInboundWebhookRoutes } = await import('../../../../src/api/routes/webhooks/plivo-inbound.js');
       await slow.register(async (scope) => {
         scope.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_r, body, done) => done(null, querystring.parse(body as string)));
         registerPlivoInboundWebhookRoutes(scope, { webrtcBridge: bridge as never, budgetMs: 20 });
       }, { prefix: '/api/v1/webhooks' });
-      router.answer.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve({ kind: 'hangup' }), 200)));
+      let signal: AbortSignal | undefined;
+      router.answer.mockImplementationOnce((_arrival, opts) => {
+        signal = opts?.signal;
+        expect(signal?.aborted).toBe(false);
+        return new Promise((resolve) => setTimeout(() => resolve({ kind: 'hangup' }), 200));
+      });
       expect((await post(slow, 'answer', ARRIVAL)).body).toBe(PLIVO_INBOUND_FALLBACK_XML);
+      expect(signal?.aborted).toBe(true);
       await slow.close();
+    });
+
+    it('an answer inside its budget never aborts the router\'s signal', async () => {
+      let signal: AbortSignal | undefined;
+      router.answer.mockImplementationOnce(async (_arrival, opts) => {
+        signal = opts?.signal;
+        return { kind: 'hangup' };
+      });
+      await post(app, 'answer', ARRIVAL);
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(false);
     });
 
     it('with no router registered (agency not started), the fallback message', async () => {

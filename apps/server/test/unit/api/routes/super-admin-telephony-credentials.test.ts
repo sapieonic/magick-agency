@@ -149,7 +149,8 @@ describe('super-admin telephony credential routes', () => {
     tenant_not_found: 404, not_found: 404, duplicate_account: 409, duplicate_label: 409, carrier_rejected: 422,
     carrier_unreachable: 502, version_conflict: 409, invalid_transition: 409, in_use: 409,
     credential_not_active: 409, too_many_numbers: 422,
-    inbound_enabled: 409, inbound_not_enabled: 409, inbound_numbers_linked: 409, inbound_unconfigured: 503,
+    inbound_enabled: 409, inbound_not_enabled: 409, inbound_numbers_linked: 409, inbound_previous_token_in_use: 409,
+    inbound_unconfigured: 503,
     phone_number_not_found: 404, phone_number_not_linkable: 409, phone_number_not_linked: 409,
     carrier_number_missing: 409, carrier_refused: 422,
   };

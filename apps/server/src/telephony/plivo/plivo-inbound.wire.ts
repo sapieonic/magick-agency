@@ -20,8 +20,14 @@ export const PLIVO_APP_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
 
 /** Page size for the Application list (Plivo's maximum is 20). */
 export const PLIVO_APPLICATIONS_PAGE_SIZE = 20;
-/** Pages one find-by-name reads at most (1,000 Applications). */
-export const PLIVO_APPLICATIONS_MAX_PAGES = 50;
+/**
+ * Pages one find-by-name reads at most (100 Applications). The list is filtered by name at Plivo
+ * (one page in the normal case); the bound only matters on a host that ignores the filter, and
+ * keeps a super-admin request (and Re-point's recreate path, under the credential's lock) to a
+ * few requests rather than fifty. Past it an orphan is not found: the next Enable makes a second
+ * Application by the same name, which a later find deletes (`placeApplication`); logged.
+ */
+export const PLIVO_APPLICATIONS_MAX_PAGES = 5;
 
 /** How a Plivo REST call failed, as the inbound service reads it. */
 export type PlivoApiFailureKind =

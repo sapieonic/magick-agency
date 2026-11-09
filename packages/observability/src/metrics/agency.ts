@@ -883,14 +883,14 @@ export const agencyReportsSubscriptionRunsTotal = counter<'result'>(meter, 'agen
 // ─── Inbound calls (docs/inbound.md; apps/server/src/agency/inbound/) ──────────────────────
 
 /** What the inbound answer webhook answered: the router's decision, or why it never decided. */
-export type InboundAnswerResult = 'stream' | 'closed' | 'hangup' | 'fallback' | 'refused' | 'timed_out';
+export type InboundAnswerResult = 'stream' | 'spoken' | 'hangup' | 'fallback' | 'refused' | 'timed_out';
 
 export const agencyInboundCallsTotal = counter<'outcome'>(meter, 'agency_inbound_calls_total', {
   description: 'Inbound calls ended, by outcome: answered, abandoned_in_queue, overflow, overflow_no_capacity, closed, voicemail, rejected or failed',
 });
 
 export const agencyInboundAnswerSeconds = histogram<'result'>(meter, 'agency_inbound_answer_seconds', {
-  description: 'Seconds the inbound answer webhook took to answer the carrier, by result: stream, closed, hangup, fallback, refused or timed_out',
+  description: 'Seconds the inbound answer webhook took to answer the carrier, by result: stream, spoken (a message the carrier speaks), hangup, fallback, refused or timed_out',
   unit: 's',
   buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
 });
