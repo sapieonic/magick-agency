@@ -146,7 +146,8 @@ id. `WebRtcInboundCallParams`, `WebRtcInboundAcceptance` and `ClipSequenceResult
 
 P2 puts inbound callers through to agents. `WebRtcInboundCallParams` names `connectable`,
 `browserCloseGraceMs`, `parkedSeconds` and `record` (P1's messages-only calls pass `false`, 0, 0,
-`false`). A **connectable** call is parked: its browser leg is borrowed and unbound, so
+`false`; a voicemail that is not connectable passes its budget floor as `parkedSeconds`, and the
+call's budget is the longer of it and the account's max duration). A **connectable** call is parked: its browser leg is borrowed and unbound, so
 `bindBorrowedBrowserLeg` (keyed on the inbound call's id) can put the agent's station socket on it
 and a dropped socket after that is held `browserCloseGraceMs` for `reattachBorrowedBrowserLeg`. Its
 budget is `parkedSeconds` (at least the media deadline) plus the account's max duration: the

@@ -333,6 +333,20 @@ or four times its compute time.
 Success and override-granting codes are the campaign's CURRENT catalog (`successCodes`,
 `overrideCodes` in `insights/shared.ts`), so a catalog edit re-labels history.
 
+**System dispositions.** Two codes record an event, never the customer's outcome, and no catalog
+may list them: `redialed` (a wrap-up redial moved the write-up to the redial) and `inbound_call`
+(a ringing dial cancelled because its customer rang in, docs/inbound.md §5.4). An `inbound_call`
+attempt was placed and rang, so it is counted wherever a placed dial is, as every other dial we
+stopped before an answer is: `dials` and `/stats` `attempts`, the outcome split under `canceled`,
+the caller-ID and local-hour facets, the connect rate's placed first dials, on the reserved agent's
+row (the dial was theirs; nobody wrote it up). It is never an answer (so never in the abandonment
+ceiling's denominator or numerator), a conversation, a human connect, a success or an outcome row
+(those read conversations only). The override facet's granting code skips both system codes: the
+override a later dial spent was granted by the contact's last real write-up, not by the dial its
+customer superseded or the call redialled. Excluding it from the connect rate's denominator instead
+would need a stored measure the rollup does not have (its first dials are `dials -
+redials_placed`), and it is one dial per clash, which is rare.
+
 **Activity reconciliation identifiers:** `outcomes_vs_dials`, `agents_dials_vs_dials`,
 `agents_connected_vs_connected`, `outcome_codes_vs_conversations`,
 `agents_overrides_vs_overrides_used`, `no_outcome_vs_unclassified_codes`.

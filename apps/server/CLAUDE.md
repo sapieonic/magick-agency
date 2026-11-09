@@ -78,7 +78,7 @@ Run from this directory (dotenv resolves from cwd):
 pnpm vitest run test/unit/agency/pacing-engine.test.ts
 pnpm vitest run -c vitest.config.integration.ts test/integration/agency/<file>.test.ts
 pnpm vitest run -t "<test name>"
-INTEGRATION_LANE=rest pnpm test:integration        # skip the ~4.5 min wall-clock files
+INTEGRATION_LANE=rest pnpm test:integration        # skip the ~5 min wall-clock files
 ```
 
 - Unit config excludes `test/integration/**`; integration runs file-serially (one database) with

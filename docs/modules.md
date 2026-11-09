@@ -66,7 +66,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-agent-identity.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-agent-queue.test.ts` | 9 |
 | `apps/server/test/integration/agency/agency-agent-redial-cas.test.ts` | 8 |
-| `apps/server/test/integration/agency/agency-agent-state-cycle.test.ts` | ~1 |
+| `apps/server/test/integration/agency/agency-agent-state-cycle.test.ts` (and a `wrapup` lease nothing in the process holds rehydrated as `break`) | 2 |
 | `apps/server/test/integration/agency/agency-agent-state-get-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-analysis-profile-reference-check.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agency-callback-fallback.test.ts` | 10 |
@@ -146,7 +146,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/dnc-registry.test.ts` | ~17 |
 | `apps/server/test/integration/agency/insights-range-reads.test.ts` | 6 |
 | `apps/server/test/integration/agency/insights-rollup-job.test.ts` | 7 |
-| `apps/server/test/integration/agency/insights-rollup-oracle.test.ts` | 7 |
+| `apps/server/test/integration/agency/insights-rollup-oracle.test.ts` (and an `inbound_call` attempt: a placed `canceled` dial, never an outcome or an override's grant) | 8 |
 | `apps/server/test/integration/agency/my-contact-call-e2e.test.ts` | 3 |
 | `apps/server/test/integration/agency/my-contact-call-refused-insert.test.ts` | 1 |
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
@@ -181,7 +181,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 65 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 46 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 47 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -291,6 +291,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/spine-drilldown-routes.test.ts` | 25 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
+| `apps/server/test/unit/agency/station-heartbeat-lease.test.ts` (what the heartbeat renews: `available`, `break`, a vouched `wrapup`) | 5 |
 | `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 20 |
 | `apps/server/test/unit/agency/station-socket-media.test.ts` | 6 |
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 10 |
@@ -461,9 +462,10 @@ Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inboun
 | `apps/server/test/unit/agency/inbound-queue.test.ts` (FIFO and the head, `max_waiting`, the maximum and sticky waits, the `inbound_waiting` summary, the snapshot) | 6 |
 | `apps/server/test/unit/agency/inbound-hold-back.test.ts` (pacing's hold-back helper) | 7 |
 | `apps/server/test/unit/agency/inbound-settlement.test.ts` (the settlement table, the catalog choice, how an unconnected call ends, the panel row) | 13 |
-| `apps/server/test/integration/agency/inbound-connector-races.test.ts` (real Redis and Postgres, the bridge and stations faked: two callers for one agent, pacing and inbound for one agent, two connectors, the caller hanging up on offer and against the bind, the station lost before the bind, the lease lost, the search never taking a wrap-up (a stale view too), the release hook and the queued break, the lapse, a graceful shutdown (Q18); the clash's hand-over: held through the preamble, kept from the team while queued, let go on a hangup or a dropped station, dropped, one per call; a caller past their maximum wait never reserved for (M4)) | 19 |
-| `apps/server/test/integration/telephony/inbound-connect-e2e.test.ts` (end to end on mock Plivo and the station fleet: auto-connect with the panel before media; loose sticky taken from wrap-up, the sticky wait lapsing, strict; the queue's order, limits and pacing yielding; the caller hanging up on offer; the station dropped during the offer and after the bind; restart; recording; concurrency) | 13 |
-| `apps/server/test/integration/telephony/inbound-clash-voicemail-e2e.test.ts` (end to end on mock Plivo, the bucket in memory: the clash (the ringing dial cancelled by its request id, `canceled` / `inbound_call`, the contact uncharged, the same agent held through the greeting and put through, never `available`, no redial while they talk); the bridged-first race; voicemail after hours (the WAV, the Missed row `closed`, played back through the route whole and by range), from the queue (`overflow`), and none when the caller leaves at the beep) | 5 |
+| `apps/server/test/integration/agency/inbound-connector-races.test.ts` (real Redis and Postgres, the bridge and stations faked: two callers for one agent, pacing and inbound for one agent, two connectors, the caller hanging up on offer and against the bind, the station lost before the bind, the lease lost, the search never taking a wrap-up (a stale view too), the release hook and the queued break, the lapse, a graceful shutdown (Q18); the clash's hand-over: held through the preamble, kept from the team while queued, let go on a hangup or a dropped station, dropped, one per call; a caller past their maximum wait never reserved for (M4); no hand-over to a phone, a closed station or the soft phone; `inbound_waiting` holding no team agent for a strict caller, and the team taking them once their agent is away; a failed `connected` write still ending `answered`) | 22 |
+| `apps/server/test/integration/telephony/inbound-connect-e2e.test.ts` (end to end on mock Plivo and the station fleet: auto-connect with the panel before media; loose sticky taken from wrap-up, the sticky wait lapsing, strict; the queue's order, limits and pacing yielding; the caller hanging up on offer; the station dropped during the offer and after the bind; restart; recording; concurrency, a turned-away caller never recorded; the inbound stop settling its calls before it returns) | 14 |
+| `apps/server/test/integration/telephony/inbound-wrapup-lease.test.ts` (wall-clock lane: a campaign wrap-up past the old 15 s lease and an inbound one past a cut lease both still `wrapup` at their end and taken for the waiting caller with no `available` instant; `/break` during an inbound wrap-up queued and applied by the save; an unvouched `wrapup` lease lapsing) | 4 |
+| `apps/server/test/integration/telephony/inbound-clash-voicemail-e2e.test.ts` (end to end on mock Plivo, the bucket in memory: the clash (the ringing dial cancelled by its request id, `canceled` / `inbound_call`, the contact uncharged, the same agent held through the greeting and put through, never `available`, no redial while they talk); the bridged-first race; voicemail after hours (the WAV, the Missed row `closed`, played back through the route whole and by range), from the queue (`overflow`), and none when the caller leaves at the beep; the voicemail budget, and a voicemail whose row cannot be written discarded) | 6 |
 | `apps/server/test/integration/agency/chaos/inbound-floor.test.ts` (callers and agents at random under `LOAD_SEED` / `LOAD_SCALE`: the five invariants) | 1 |
 | `apps/server/test/integration/api/inbound-calls-routes.test.ts` (the finish routes and the queue tiles through the public layer: who may act, the outcome's refusals and replay, DNC scopes, not flag-gated, the audit rows) | 6 |
 | `apps/server/test/integration/telephony/plivo-inbound-connect-bridge.test.ts` (P2's bridge half on mock Plivo: a connectable call held, the agent's real station socket bound with no hold frame after it, audio both ways, the Record API at the bind and its callback on the leg, talk time from the bind; a caller who hangs up on hold; a voicemail recorded with nobody bound and ended by the wall clock over a silence) | 3 |
@@ -891,7 +893,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline; `playClipSequenceThenHangUp`) | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind, the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token, `onPreambleDone`) | 26 |
+| `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind, the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token, `onPreambleDone`; a non-connectable call's `parkedSeconds` as a budget floor) | 27 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
 | `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | 63 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
@@ -979,7 +981,7 @@ Files: `retention-purge.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/maintenance/agency-retention-purge.test.ts` (and the inbound voicemail step: an aged voicemail's object deleted and forgotten, a recent one kept, the dry run) | 7 |
-| `apps/server/test/unit/maintenance/retention-purge.test.ts` (and the voicemail step: delete then forget, a failed delete leaves the row naming its object, the dry run) | 19 |
+| `apps/server/test/unit/maintenance/retention-purge.test.ts` (and the voicemail step, last: delete then forget, a failed delete counted and the rest gone on with, no bucket skipped, the keyset past a batch, the dry run) | 21 |
 
 ### `apps/server/src/notifications/`
 
@@ -1854,7 +1856,7 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 | `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (both actions offered, the voicemail saved; the route's message warnings as edited, advisory) | 3 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.inbound.test.tsx` (the panel on the offer, the frozen geometry across offered / connected / owing, hang-up, outcome, notes, DNC, the early hang-up notice, restore after `ready`, the waiting pill) | 12 |
-| `apps/console/src/__tests__/hooks/useInboundCall.test.ts` | 19 |
+| `apps/console/src/__tests__/hooks/useInboundCall.test.ts` | 21 |
 | `apps/console/src/__tests__/components/InboundQueueTiles.test.tsx` | 6 |
 | `apps/console/src/__tests__/api/inboundCalls.test.ts` (the call routes, the queue and the voicemail URL) | 11 |
 | `apps/console/src/__tests__/utils/inboundCall.test.ts` | 16 |
