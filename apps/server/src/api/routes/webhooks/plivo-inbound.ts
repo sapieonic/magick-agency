@@ -19,7 +19,10 @@
 //     rebuilt from env or from the path the request arrived on:
 //     the URL lives in the tenant's Plivo account and is the signature's subject (PL9's rule);
 //  3. the signed nonce, once per credential (`claimInboundCallbackNonce`): a captured callback
-//     replayed is refused. A callback that fails to process gives its nonce back.
+//     replayed is refused. A callback that fails to process gives its nonce back. When Redis
+//     cannot answer, the check fails CLOSED (QA-F11): a 503 on either URL, so Plivo answers the
+//     caller from the Application's fallback answer URL (and retries a hangup), and a replay
+//     cannot slip through an outage.
 // A refusal on the answer URL is a hangup (`<Hangup/>`); on the status URL a 403.
 //
 // The fallback answer URL takes no token and reads nothing: it is what Plivo plays while we are
@@ -99,8 +102,8 @@ interface Verified {
   nonce: string;
 }
 
-/** Checks 1–3 of the header. Null: refused (logged, with ids only). */
-async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackInput): Promise<Verified | null> {
+/** Checks 1–3 of the header. Null: refused (logged, with ids only); `unavailable`: the replay guard could not be asked. */
+async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackInput): Promise<Verified | null | 'unavailable'> {
   const { kind, credentialId } = input;
   if (!UUID.test(credentialId)) {
     log.warn({ kind }, 'Inbound Plivo callback for a malformed credential id — refusing');
@@ -135,7 +138,12 @@ async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackIn
     log.warn({ kind, credentialId }, 'Inbound Plivo callback with no signed nonce — refusing');
     return null;
   }
-  if (!await bridge.claimInboundCallbackNonce(credentialId, nonce)) {
+  const claimed = await bridge.claimInboundCallbackNonce(credentialId, nonce);
+  if (claimed === 'unavailable') {
+    log.error({ kind, credentialId }, 'Inbound Plivo callback whose replay guard cannot be checked (Redis) — 503, the carrier falls back');
+    return 'unavailable';
+  }
+  if (claimed === 'replay') {
     log.warn({ kind, credentialId }, 'Inbound Plivo callback whose signed nonce this credential has already seen (a replay) — refusing');
     return null;
   }
@@ -183,7 +191,13 @@ export async function handlePlivoInboundCallback(
   const { kind, credentialId } = input;
   let verified: Verified | null = null;
   try {
-    verified = await verify(bridge, input);
+    const checked = await verify(bridge, input);
+    if (checked === 'unavailable') {
+      // Not ours to answer now: Plivo's fallback answer URL speaks to the caller (QA-F11).
+      if (kind === 'answer') trackInboundAnswer('fallback', (performance.now() - startedAt) / 1000);
+      return UNAVAILABLE;
+    }
+    verified = checked;
     if (!verified) {
       if (kind === 'answer') trackInboundAnswer('refused', (performance.now() - startedAt) / 1000);
       return refuse(kind);

@@ -1863,8 +1863,11 @@ export class WebRtcBridgeManager {
     }
   }
 
-  /** Record a verified inbound callback's nonce for its credential: false for a replay (`BridgeWsTokens.claimCredentialCallbackNonce`). */
-  claimInboundCallbackNonce(credentialId: string, nonce: string): Promise<boolean> {
+  /**
+   * Record a verified inbound callback's nonce for its credential: `replay` for one already seen,
+   * `unavailable` when Redis cannot answer (fails closed: `BridgeWsTokens.claimCredentialCallbackNonce`).
+   */
+  claimInboundCallbackNonce(credentialId: string, nonce: string): Promise<'claimed' | 'replay' | 'unavailable'> {
     return this.tokens.claimCredentialCallbackNonce(credentialId, nonce);
   }
 

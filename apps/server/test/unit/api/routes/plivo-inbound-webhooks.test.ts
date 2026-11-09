@@ -55,11 +55,11 @@ function makeBridge() {
   const seen = new Set<string>();
   return {
     inboundCallbackAdapter: vi.fn().mockResolvedValue(adapter),
-    claimInboundCallbackNonce: vi.fn(async (credentialId: string, nonce: string) => {
+    claimInboundCallbackNonce: vi.fn(async (credentialId: string, nonce: string): Promise<'claimed' | 'replay' | 'unavailable'> => {
       const key = `${credentialId}:${nonce}`;
-      if (seen.has(key)) return false;
+      if (seen.has(key)) return 'replay';
       seen.add(key);
-      return true;
+      return 'claimed';
     }),
     releaseInboundCallbackNonce: vi.fn(async (credentialId: string, nonce: string) => { seen.delete(`${credentialId}:${nonce}`); }),
     handleCarrierStatus: vi.fn().mockResolvedValue(undefined),
@@ -163,6 +163,17 @@ describe('Plivo inbound webhooks', () => {
       expect((await post(app, 'answer', ARRIVAL, { nonce: 'replayed' })).body).toContain('<Stream');
       expect((await post(app, 'answer', ARRIVAL, { nonce: 'replayed' })).body).toBe(PLIVO_HANGUP_XML);
       expect(router.answer).toHaveBeenCalledTimes(1);
+    });
+
+    it('the replay guard cannot be asked (Redis down): 503, so Plivo answers from the fallback URL; nothing routed (QA-F11)', async () => {
+      bridge.claimInboundCallbackNonce.mockResolvedValueOnce('unavailable');
+      const res = await post(app, 'answer', ARRIVAL, { nonce: 'redis-down' });
+      expect(res.statusCode).toBe(503);
+      expect(res.body).not.toContain('<Stream');
+      expect(router.answer).not.toHaveBeenCalled();
+      // Nothing was claimed, so nothing is given back; the carrier's retry is checked afresh.
+      expect(bridge.releaseInboundCallbackNonce).not.toHaveBeenCalled();
+      expect((await post(app, 'answer', ARRIVAL, { nonce: 'redis-down' })).body).toContain('<Stream');
     });
 
     it('an answer that is not an arriving call (an outbound one, no To) is hung up', async () => {
@@ -271,6 +282,13 @@ describe('Plivo inbound webhooks', () => {
       router.ended.mockRejectedValueOnce(new Error('db down'));
       expect((await post(app, 'status', HANGUP, { nonce: 'h-2' })).statusCode).toBe(503);
       expect(bridge.releaseInboundCallbackNonce).toHaveBeenCalledWith(CRED, 'h-2');
+    });
+
+    it('the replay guard cannot be asked (Redis down): 503 (the carrier retries), the router never told (QA-F11)', async () => {
+      bridge.claimInboundCallbackNonce.mockResolvedValueOnce('unavailable');
+      expect((await post(app, 'status', HANGUP, { nonce: 'h-3' })).statusCode).toBe(503);
+      expect(router.ended).not.toHaveBeenCalled();
+      expect(bridge.handleCarrierStatus).not.toHaveBeenCalled();
     });
   });
 
