@@ -55,6 +55,7 @@ import {
 import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
 import { resolveInboundClip } from '../../../src/agency/inbound/inbound-clips.js';
 import { hashAudioFileContent, ttsFileExists } from '../../../src/tts/tts-file-cache.js';
+import { callCore } from '../../../src/api/core-dispatch.js';
 
 const q = (sql: string, values: unknown[] = []) => getTestPool().query(sql, values);
 const WAV = fs.readFileSync(path.resolve(__dirname, '../../../assets/inbound/please-hold.wav'));
@@ -205,6 +206,33 @@ describe('upload', () => {
     expect(res.json()).toMatchObject({ code: 'inbound_clip_storage_unavailable' });
     expect(await rowsOfAccount(floor.tenant, floor.account)).toEqual([]);
     expect((await call('GET', '/clips', sup())).json().upload_available).toBe(false);
+  });
+});
+
+describe('the internal handler records only a key of the request’s own tenant and account', () => {
+  it('another account’s key, or one of another shape, is refused and nothing is written', async () => {
+    const body = (key: string) => ({
+      name: 'Forged', slug: 'forged', original_filename: 'f.wav', content_type: 'audio/wav', size_bytes: 10,
+      s3_key: key, duration_seconds: 2, pcm_audio_hash: 'a'.repeat(40), pcm_sample_rate: 8000,
+    });
+    const record = (key: string) => callCore({
+      method: 'POST', path: '/agency/inbound/clips', query: { actor_user_id: sup().id }, body: body(key),
+      tenantId: floor.tenant, accountId: floor.account,
+    });
+    for (const key of [
+      `inbound-audio/${other.tenant}/${other.account}/${randomUUID()}.wav`,
+      `inbound-audio/${floor.tenant}/${other.account}/${randomUUID()}.wav`,
+      `inbound-voicemail/${floor.tenant}/${floor.account}/${randomUUID()}.wav`,
+      `inbound-audio/${floor.tenant}/${floor.account}/../x.wav`,
+    ]) {
+      const res = await record(key);
+      expect(res.status, key).toBe(400);
+      expect(res.body, key).toMatchObject({ code: 'invalid_recording' });
+    }
+    expect(await rowsOfAccount(floor.tenant, floor.account)).toEqual([]);
+    // Its own key is recorded.
+    const ok = await record(`inbound-audio/${floor.tenant}/${floor.account}/${randomUUID()}.wav`);
+    expect(ok.status).toBe(201);
   });
 });
 
