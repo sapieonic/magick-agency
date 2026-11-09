@@ -448,6 +448,7 @@ Files: `identify-caller.ts`, `inbound-call-router.ts`, `inbound-clips.ts`, `rout
 | `apps/server/test/integration/agency/inbound-follow-up.test.ts` (the callback against the real claims, CA5, the clears, the live count of admitted calls, the identification reads) | 17 |
 | `apps/server/test/integration/agency/inbound-call-router.test.ts` (the router with a fake bridge: a `CallUUID` another tenant or credential holds refused on both paths, unrecorded messages spoken, the bridge's refusal un-admitting, an answer past its budget) | 15 |
 | `apps/server/test/integration/telephony/plivo-inbound-e2e.test.ts` (mock Plivo rings a linked number: open, closed, unknown, withheld, DNC, terminal, exhausted, disabled credential, unlinked, tenant default, a message with no recording spoken by the carrier, bad signature, replay, over `max_concurrent`, caller hangs up mid-message, restart sweep) | 18 |
+| `apps/server/test/integration/telephony/plivo-inbound-connect-bridge.test.ts` (P2's bridge half on mock Plivo: a connectable call held, the agent's real station socket bound with no hold frame after it, audio both ways, the Record API at the bind and its callback on the leg, talk time from the bind; a caller who hangs up on hold; a voicemail recorded with nobody bound and ended by the wall clock over a silence) | 3 |
 
 ### `apps/server/src/ai/`
 
@@ -600,7 +601,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/phone-numbers-byoc-merge.test.ts` | 6 |
 | `apps/server/test/unit/api/routes/client-config.routes.test.ts` | 28 |
-| `apps/server/test/unit/api/routes/plivo-webhooks.test.ts` | ~17 |
+| `apps/server/test/unit/api/routes/plivo-webhooks.test.ts` | 32 |
 | `apps/server/test/unit/api/routes/plivo-inbound-webhooks.test.ts` (the inbound answer, hangup and fallback routes: verified over the stored URL, token, nonce, each decision rendered, the budget and its abort signal) | 17 |
 | `apps/server/test/unit/api/routes/proxy-agency-carriers.test.ts` | ~3 |
 | `apps/server/test/unit/api/routes/proxy-feature-flags.routes.test.ts` | 4 |
@@ -850,7 +851,8 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 22 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
 | `apps/server/test/unit/core/pace-schedule.test.ts` | 15 |
-| `apps/server/test/unit/core/paced-audio-streamer.test.ts` | 15 |
+| `apps/server/test/unit/core/paced-audio-streamer.test.ts` (with the inbound hold's `loop`) | 18 |
+| `apps/server/test/unit/core/hold-tone.test.ts` | 3 |
 | `apps/server/test/unit/core/provider-concurrency-guard.test.ts` | 19 |
 | `apps/server/test/unit/core/recording-byte-budget.test.ts` | 10 |
 | `apps/server/test/unit/core/telephony-concurrency-group.test.ts` | 1 |
@@ -869,21 +871,22 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
 | `apps/server/test/unit/core/webrtc-bridge-inbound.test.ts` (`acceptInboundCall`, its capacity answers and media deadline; `playClipSequenceThenHangUp`) | 12 |
+| `apps/server/test/unit/core/webrtc-bridge-inbound-connect.test.ts` (P2: the parked budget and backstop, the hold loop and its synchronous stop at the bind, the built-in tone, max duration and talk time from the bind, the bounded carrier tap, the recording at `bridged` with its webhook token) | 24 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
 | `apps/server/test/unit/core/webrtc-bridge-plivo.test.ts` | 63 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-manual-correlation.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 4 |
-| `apps/server/test/unit/core/webrtc-bridge-session.test.ts` | 31 |
+| `apps/server/test/unit/core/webrtc-bridge-session.test.ts` | 34 |
 | `apps/server/test/unit/core/webrtc-scenarios.test.ts` | 13 |
 
 ### `apps/server/src/core/bridge/`
 
-Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping), `browser-leg-media.ts` (the browser leg's media format: the per-socket `pcm16`/`alaw8` tag the station handler sets and every attach reads, the `alaw8` message-size check and the 20 ms framer for carrier → browser A-law; part of the §3.1 seam), `carrier-urls.ts` (the carrier's media and status URLs for a call, with a media worker's `&w=<slot>` routing hint, D3). None imports metrics. Tested through the bridge suites above, and `carrier-urls.ts` by `apps/server/test/unit/core/carrier-urls.test.ts` (3).
+Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping), `browser-leg-media.ts` (the browser leg's media format: the per-socket `pcm16`/`alaw8` tag the station handler sets and every attach reads, the `alaw8` message-size check and the 20 ms framer for carrier → browser A-law; part of the §3.1 seam), `carrier-urls.ts` (the carrier's media and status URLs for a call, with a media worker's `&w=<slot>` routing hint, D3), `hold-tone.ts` (the tones the bridge generates itself: the built-in hold tone an inbound caller hears with no hold clip, Q24, and the recording beep, Q14). None imports metrics. Tested through the bridge suites above, and `carrier-urls.ts` by `apps/server/test/unit/core/carrier-urls.test.ts` (3).
 
 `carrier-urls.ts` builds a dial's tokenised answer, status and recording callback URLs under the carrier's own webhook namespace and the stream URL, which goes in the dial (VoiceLink) or is kept for the answer XML (Plivo); `dial-refusals.ts` names the refusals with nothing placed at the carrier (`telephony_credential_unavailable`, `carrier_rate_limited`, `carrier_auth_rejected`), each torn down with no `ended`.
 
-Files: `admission.ts`, `bridge-types.ts`, `browser-leg-media.ts`, `carrier-urls.ts`, `dial-refusals.ts`, `ws-tokens.ts`
+Files: `admission.ts`, `bridge-types.ts`, `browser-leg-media.ts`, `carrier-urls.ts`, `dial-refusals.ts`, `hold-tone.ts`, `ws-tokens.ts`
 
 ### `apps/server/src/db/`
 
@@ -1056,7 +1059,7 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | `apps/server/test/unit/telephony/byoc-registry.test.ts` | 27 |
 | `apps/server/test/unit/telephony/carrier-errors.test.ts` | ~4 |
 | `apps/server/test/unit/telephony/carrier-modules.test.ts` | ~25 |
-| `apps/server/test/unit/telephony/provider-capabilities.test.ts` | ~7 |
+| `apps/server/test/unit/telephony/provider-capabilities.test.ts` | 12 |
 | `apps/server/test/unit/telephony/recording-access.test.ts` | ~15 |
 | `apps/server/test/unit/telephony/voicelink/redact-url-tail.test.ts` | 7 |
 | `apps/server/test/unit/telephony/voicelink/voicelink-carrier.fixture.test.ts` | 178 |
@@ -1067,9 +1070,9 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | `apps/server/test/unit/telephony/plivo/inbound-token.test.ts` | 2 |
 | `apps/server/test/unit/telephony/plivo/inbound-urls.test.ts` | 4 |
 | `apps/server/test/unit/telephony/plivo/plivo-inbound.webhook.test.ts` | 15 |
-| `apps/server/test/unit/telephony/plivo/plivo-carrier.fixture.test.ts` | 60 |
+| `apps/server/test/unit/telephony/plivo/plivo-carrier.fixture.test.ts` | 64 |
 | `apps/server/test/unit/telephony/plivo/plivo-config.test.ts` | 20 |
-| `apps/server/test/unit/telephony/plivo/plivo-inbound-adapter.test.ts` | 12 |
+| `apps/server/test/unit/telephony/plivo/plivo-inbound-adapter.test.ts` (with `startRecording`, the Record API) | 18 |
 | `apps/server/test/integration/telephony/plivo-inbound-admin.test.ts` | 22 |
 | `apps/server/test/unit/telephony/plivo/plivo-dial-rate.test.ts` | ~15 |
 | `apps/server/test/unit/telephony/plivo/plivo-signature.test.ts` | ~5 |
@@ -1184,7 +1187,7 @@ a WebSocket *client*, which a stub server cannot be.
 | Mock | What it is |
 |---|---|
 | `mocks/voicelink/` | Scriptable VoiceLink carrier: login, `add_lead` and CDR REST with injectable faults (latency, status, hang, malformed JSON, TCP reset, held responses); per-call scripts that open the media WS to the server, send `start` (A-law 8 kHz), stream seeded audio, post webhooks (duplicated, shuffled, out of order) and end by any close code or a TCP destroy |
-| `mocks/plivo/` | Scriptable Plivo carrier: Plivo's REST paths with Basic auth (account check, paged numbers, create-call `request_uuid`, cancel by request id, hangup by call id) and per-route faults (any status, a hang to the client's timeout, an unreadable 2xx, a reset, latency); a placed call runs a script of V3-signed callbacks (ring, answer, hangup, recording), fetches and parses our answer XML, opens its `<Stream>` with Plivo's `start`, paced μ-law `media` and `stop`, and records `playAudio`. A REST cancel or hangup posts the matching hangup callback. Reached only through `setPlivoTransportForTests` (`https://api.plivo.com` URLs sent to its loopback port) |
+| `mocks/plivo/` | Scriptable Plivo carrier: Plivo's REST paths with Basic auth (account check, paged numbers, create-call `request_uuid`, cancel by request id, hangup by call id) and per-route faults (any status, a hang to the client's timeout, an unreadable 2xx, a reset, latency); a placed call runs a script of V3-signed callbacks (ring, answer, hangup, recording), fetches and parses our answer XML, opens its `<Stream>` with Plivo's `start`, paced μ-law `media` and `stop`, and records `playAudio` (with each frame's arrival time). A REST cancel or hangup posts the matching hangup callback. Inbound P2: the Record API (`POST …/Call/{uuid}/Record/`, its snake_case callback posted when the call ends) and the caller's background media with pause and resume steps. Reached only through `setPlivoTransportForTests` (`https://api.plivo.com` URLs sent to its loopback port) |
 | `mocks/station-fleet.ts` | N agent consoles over real `ws` with real station tokens: heartbeat, ready / break / disposition, reconnect, network drop, silence, slow reader, rapid connect-disconnect, seeded hostile frames; frames recorded with timestamps; `client=` web, mobile or a mix |
 
 | Test file | Cases | Guards |

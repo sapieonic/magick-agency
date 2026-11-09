@@ -80,6 +80,10 @@ class WebRtcBridgeManager {
   acceptInboundCall(params: WebRtcInboundCallParams): Promise<WebRtcInboundAcceptance>;
   playClipSequenceThenHangUp(correlationId: string,
     opts: { clipHashes: readonly string[]; outcome: string }): Promise<ClipSequenceResult>;
+  // Connecting inbound callers (docs/inbound.md §5), P2:
+  playInboundHold(correlationId: string, opts: InboundHoldOptions): Promise<InboundHoldResult>;
+  stopInboundHold(correlationId: string): void;
+  recordInboundAudio(correlationId: string, opts: InboundRecordOptions): Promise<InboundAudioRecording>;
 }
 export class WebRtcCallError extends Error {}
 export interface WebRtcOutboundParams {}
@@ -139,6 +143,39 @@ under the outcome (`completed`); a caller who leaves mid-clip stops it with no h
 (`aborted`); `no_media`, `not_found` otherwise. The session's `correlationId` is the inbound call's
 id. `WebRtcInboundCallParams`, `WebRtcInboundAcceptance` and `ClipSequenceResult` are in
 `bridge-types.ts`, pinned by the same contract test.
+
+P2 puts inbound callers through to agents. `WebRtcInboundCallParams` names `connectable`,
+`browserCloseGraceMs`, `parkedSeconds` and `record` (P1's messages-only calls pass `false`, 0, 0,
+`false`). A **connectable** call is parked: its browser leg is borrowed and unbound, so
+`bindBorrowedBrowserLeg` (keyed on the inbound call's id) can put the agent's station socket on it
+and a dropped socket after that is held `browserCloseGraceMs` for `reattachBorrowedBrowserLeg`. Its
+budget is `parkedSeconds` (at least the media deadline) plus the account's max duration: the
+answer's `maxDurationSeconds` (so the answer XML's stream timeout) and the slot and token lifetimes
+are that sum, and the bridge's own timer ends a call still unbound after `parkedSeconds`
+(`max_duration_reached`, a backstop behind the caller's queue). The bind is where the agent takes
+over, synchronously and before the relay attaches: whatever the bridge plays to the caller stops (no
+frame of it follows the bind), the max duration is re-armed in full and talk time counts from the
+bind (0 for a call no agent took). With `record` (under the account's `allow_recording`), the call
+is recorded from the `bridged` moment through the carrier's record-on-demand API
+(`ProviderCapabilities.recordsOnDemand`, Plivo's Record API), with a `webhook` token minted then for
+the recording callback (`…/webrtc-recording/:callId`, whose reader takes the `<Record>` element's
+params and the Record API's alike); the hold is never recorded.
+
+- `playInboundHold` waits for the carrier's media, plays `preambleClipHashes` once, then loops the
+  hold clip (none, or one not on this replica: the built-in generated hold tone,
+  `core/bridge/hold-tone.ts`) until it is stopped. It never hangs up. `released`: stopped with the
+  caller still on (the bind, `stopInboundHold`, a recording, a later hold); `aborted`: the caller
+  left; `no_media`, `not_found`.
+- `stopInboundHold` stops what the bridge plays to the caller, synchronously: an overflow message or
+  a voicemail prompt can follow at once.
+- `recordInboundAudio` stops the hold, plays `promptClipHashes` once and, with `beep`, a 400 ms
+  beep, then records the caller through a carrier tap installed only for the recording and fed
+  before the relay's no-browser-leg drop, bounded to `maxSeconds` of audio and of wall clock. It
+  never hangs up. It answers PCM16 at 16 kHz: `completed` (the maximum), `caller_left` (what was
+  captured until the caller hung up), `no_media`, `not_found`.
+
+`InboundHoldOptions`, `InboundHoldResult`, `InboundRecordOptions` and `InboundAudioRecording` are in
+`bridge-types.ts`, pinned by the contract test.
 
 ### 3.2 Voice engine → analysis
 
