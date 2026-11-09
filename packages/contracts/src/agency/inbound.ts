@@ -39,7 +39,8 @@ export type AgencyInboundCallState = (typeof AGENCY_INBOUND_CALL_STATES)[number]
  *  - `answered`: an agent was bridged (`bridged_at`, `answered_by_user_id`);
  *  - `abandoned_in_queue`: the caller hung up while waiting, or the call was left non-terminal
  *    by a restart and swept (§10);
- *  - `overflow`: waited the route's `queue_max_wait_seconds`, or over its `max_waiting`;
+ *  - `overflow`: waited the route's `queue_max_wait_seconds`, or over its `max_waiting`, or nobody
+ *    in the route's pool could take them (P2: overflowed at once rather than held to the wait);
  *  - `overflow_no_capacity`: over the route's `max_concurrent`, or the global / provider
  *    concurrency scope full (§5.3);
  *  - `closed`: outside the route's hours or on a holiday, or no route (the tenant default);

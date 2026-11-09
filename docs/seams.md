@@ -70,6 +70,7 @@ class WebRtcBridgeManager {
   createBridgedCall(params: WebRtcBridgedCallParams): Promise<WebRtcCallRecord>;
   createUnboundBridgedCall(params: Omit<WebRtcBridgedCallParams, 'browserSocket'>): Promise<WebRtcCallRecord>;
   bindBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
+  isCallEnding(correlationId: string): boolean;
   reattachBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
   forceEndWithOutcome(correlationId: string, outcome: string): Promise<boolean>;
   playClipToCarrierThenHangUp(correlationId: string,
@@ -171,6 +172,10 @@ params and the Record API's alike); the hold is never recorded.
   so no agent is bound during the greeting or the recording notice (docs/inbound.md §2, Q5).
 - `stopInboundHold` stops what the bridge plays to the caller, synchronously: an overflow message or
   a voicemail prompt can follow at once.
+- `isCallEnding` answers whether the call keyed on the correlation id is over or tearing down (no
+  session by that id, or one tearing down): what the inbound connector asks after a refused
+  `bindBorrowedBrowserLeg`, so an ending call is left to its `ended` while one refused for any
+  other reason has its offer cancelled.
 - `recordInboundAudio` stops the hold, plays `promptClipHashes` once and, with `beep`, a 400 ms
   beep, then records the caller through a carrier tap installed only for the recording and fed
   before the relay's no-browser-leg drop, bounded to `maxSeconds` of audio and of wall clock. It

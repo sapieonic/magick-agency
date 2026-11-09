@@ -323,6 +323,19 @@ pacing uses. Limits per route: `queue_max_wait_s` (120), `max_waiting` (10), `ma
 (waiting + connected). Over a limit → overflow message → follow-up. A station lost before audio
 binds puts the caller back at the head of the queue.
 
+**As built (P2 review fixes).** A caller nobody could ever take is not held to the maximum wait.
+"Could take" is a console station on this process, on a campaign in the pool (the route's pool
+applies only to a caller of the route's own account, Q21), whose agent is an active user with an
+active membership that sees the call's account, in `available`, `reserved`, `on_call` or `wrapup`
+(another call held counts: it ends). An agent on a break, offline, on the phone app, outside the
+pool, on the soft phone, removed from the account or who turned this caller down does not count.
+With nobody who could, the caller is overflowed at once (the route's overflow action, written
+`overflow` on the spine as any overflow is: the vocabulary has no closer word, and a migration was
+not wanted for it), counted apart as `agency_inbound_overflows_total{reason="no_agents"}`. Asked at
+every search: when the caller queues, and while they wait whenever presence changes as the
+connector hears it (a station closing: at once; a break, which no event reports: the next 2 s
+republish).
+
 ### 5.2 Inbound priority over pacing
 
 A waiting caller publishes `inbound_waiting { accountId, n, preferredSessionIds }` on the pacing
@@ -389,7 +402,9 @@ the caller queues for the team and the manual dial meets a busy line. So is a pa
 station could never take the hand-over: a phone (`client_kind = 'mobile'`, Q20), a station not
 OPEN, a session with no campaign. `expectHandover` applies the release hook's own test and refuses,
 so nothing is cancelled and the caller queues normally. A cancel that fails outright (the bridge
-throws) drops the hand-over at once rather than at the backstop.
+throws) drops the hand-over at once rather than at the backstop. The hand-over's promises, timers
+and steps are `inbound-handover.ts` (`InboundHandovers`), behind a small host interface onto the
+connector's calls, chains, reservations and offers.
 
 ### 5.5 Metrics apart
 
@@ -414,6 +429,19 @@ modelled on the soft phone (`softphone.md` §4):
 
 Supervisor floor: a queue tile per route (waiting, longest wait, eligible agents) and live inbound
 calls marked.
+
+**Who the tile counts (P2 review fixes).** `eligible_agents` uses the search's own rules. With
+callers waiting on the route, it counts the agents free now (`available`, holding nothing) who may
+take at least one of them, each caller judged by ITS account. The cross-account case (Q21): a
+caller whose matched contact is in another account than the route's waits on this route's tile, but
+only the matched account's agents may take them and the route's pool does not apply to them; such
+a route reads 0 agents free while its own agents sit idle, and the tile's line says callers are
+waiting with nobody free to take them, which is what the connector will do. With nobody waiting it
+counts the agents who could take the route's next caller (one of the route's account).
+`no_agents_available` is true when nobody in the route's pool could take its next caller now or
+once their current work ends (§5.1's "could take"): on an open route the console says "Open, but no
+one can take calls: callers go straight to Missed calls instead of waiting." It says nothing of the
+route's hours, and is false on a deployment with no connector (nothing is put through there at all).
 
 **The console (built, WP-D).** The campaign station takes the `inbound_call` frame (the whole
 `AgencyInboundCall`, kept newest by `utils/inbound/inboundCall.ts`'s `newerInboundCall`: a later
@@ -462,7 +490,10 @@ compare-and-swap (`reserveForInbound` from `available`), the spine offered (guar
 session), and with no await between: `agent_state: reserved` then the `inbound_call` frame
 (`connects_at` = the offer + 1.5 s, Q4). At `connects_at` the station socket must be open (else the
 offer is cancelled: back to the head of the queue, the next agent searched) and the bridge binds
-it; on `bridged` the spine is `connected`, the agent `on_call`, the lease renewed (a `connected`
+it (a bind the bridge refuses: when the call is ending, `isCallEnding`, its end settles the offer;
+for any other reason, a leg already bound or the socket closing between the two checks, the offer
+is cancelled the same way, the caller never offered to that session again, and an agent whose
+station is still OPEN returned to the pool); on `bridged` the spine is `connected`, the agent `on_call`, the lease renewed (a `connected`
 write that fails, a database blip, leaves the call connected in memory and is retried at its end,
 before `answered`: a pair who talked is never recorded as a caller who hung up on offer). When the call ends
 the spine is `answered` with the outcome owed and the agent `wrapup` with the `inbound` field kept;
@@ -492,6 +523,14 @@ catalog of Q10, the soft phone's validation and decision, DNC for a suppress cod
 settled forward only by `inbound-settlement.ts`, never charged, then the agent returned) and Mark
 DNC (the matched campaign's scope, else the account's), by the agent who took the call or a
 supervisor on behalf; audited `agency_inbound_call.dispositioned` / `.hung_up` / `.dnc_marked`.
+Hang up asks the connector, not the row, whether the call is live here (a row the stale sweep
+ended while its call goes on still gets the call ended) and answers once the connector has written
+the end (its per-call completion promise, `whenLeft`, bounded at 5 s). A hang-up of a call on
+offer whose audio has not bound is the agent declining it: the offer is cancelled as a lost
+station's (back at the head of the queue, `queued_at` kept), the caller is never offered to that
+session again, the agent goes back to the pool, and nothing is recorded as abandoned (no Missed
+row, no callback); with nobody else who could take them the caller is overflowed (§5.1). The
+console offers Hang up only once connected, so this is the API's (and a supervisor's on behalf).
 **The wrap-up** (`inbound-wrapup.ts`; replaces Q11's "no auto-return"): the outbound wrap-up's
 auto-return rule (`wrapup-manager.ts`) for the call's matched campaign: with `wrapup_auto_return` on
 and a `wrapup_seconds` window the outcome lapses that long after the call ended; with auto-return
@@ -526,8 +565,16 @@ caller nobody took `failed` with its follow-up and callback (Q18), an answered c
 outcome. A crash leaves them to the next start's sweep (`failed`: we dropped them, not a caller who
 hung up; still followed up), and an answered call owing its outcome stays owed.
 `GET /inbound/queue` (`agency.supervise`, the flag) answers a tile per route from the connector's
-queue. Metrics: `agency_inbound_queue_waiting{route_id}`, `agency_inbound_wait_seconds{result}`,
-`agency_inbound_offers_total{result}`. A caller who reaches nobody leaves through the router's
+queue (who it counts: above). Membership is read at every search with the agents' Redis states
+(an active user, an active membership in the tenant or the call's account), so an agent removed
+from the account or deactivated while a caller waits, station still open, is never offered them.
+The two console-only frames (`AGENCY_STATION_CONSOLE_ONLY_EVENTS`: `inbound_call`,
+`customer_waiting`) are never sent to a mobile station: `StationRegistry.send` drops them,
+whoever asks; the eligibility rules that keep a phone out of the pool stay, as they decide who is
+offered a call. Metrics: `agency_inbound_queue_waiting{route_id}` (a route nobody waits on reports
+0 once and its series then goes), `agency_inbound_wait_seconds{result}`,
+`agency_inbound_offers_total{result}` (`declined`: the agent hung up the offer; `bind_refused`),
+`agency_inbound_overflows_total{reason}` (`max_wait`, `over_cap`, `no_agents`). A caller who reaches nobody leaves through the router's
 `overflow`, which carries out the route's overflow action and answers how the call ends (an
 `InboundCallEnd`: the outcome and, for a voicemail, its recording, threaded to the spine's `end`):
 the call-back message (closed for a withheld number), then the call is put down; with no
