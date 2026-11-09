@@ -36,6 +36,9 @@ import { usageCountsRepository } from '@magick-agency/db/repositories/usage-coun
 import { PLIVO_HANGUP_XML } from '../../../src/telephony/plivo/plivo.adapter.js';
 import { PLIVO_INBOUND_CLOSED_XML } from '../../../src/telephony/plivo/plivo-inbound.webhook.js';
 import { mintInboundToken } from '../../../src/telephony/plivo/inbound-token.js';
+import {
+  plivoInboundAnswerUrl, plivoInboundFallbackUrl, plivoInboundStatusUrl, withInboundToken,
+} from '../../../src/telephony/plivo/inbound-urls.js';
 import { writeTtsFile } from '../../../src/tts/tts-file-cache.js';
 import { parseInboundRouteCreate } from '../../../src/agency/inbound/route-config.js';
 import { startInboundCalls } from '../../../src/agency/inbound/inbound-call-router.js';
@@ -114,9 +117,9 @@ async function linkInbound(r: PlivoRig): Promise<void> {
   token = minted.token;
   const enabled = await telephonyCredentialRepository.enableInbound(r.credentialId, {
     appId: 'app-inbound-e2e',
-    answerUrl: `${BASE}/inbound-answer/${r.credentialId}`,
-    hangupUrl: `${BASE}/inbound-status/${r.credentialId}`,
-    fallbackAnswerUrl: `${BASE}/inbound-fallback`,
+    answerUrl: plivoInboundAnswerUrl(BASE, r.credentialId),
+    hangupUrl: plivoInboundStatusUrl(BASE, r.credentialId),
+    fallbackAnswerUrl: plivoInboundFallbackUrl(BASE),
     tokenHash: minted.tokenHash,
   }, ADMIN);
   if (!enabled) throw new Error('enableInbound refused');
@@ -152,8 +155,8 @@ function ring(r: PlivoRig, o: { from?: string; steps?: PlivoCallStep[]; sign?: P
   return r.carrier.ringInbound({
     from: o.from ?? CALLER,
     to: PLIVO_NUMBER,
-    answerUrl: `${BASE}/inbound-answer/${r.credentialId}?token=${token}`,
-    hangupUrl: `${BASE}/inbound-status/${r.credentialId}?token=${token}`,
+    answerUrl: withInboundToken(plivoInboundAnswerUrl(BASE, r.credentialId), token),
+    hangupUrl: withInboundToken(plivoInboundStatusUrl(BASE, r.credentialId), token),
     script: {
       name: 'inbound',
       steps: o.steps ?? [

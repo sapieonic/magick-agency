@@ -15,7 +15,8 @@
 //  2. Plivo's V3 signature against the credential's own auth token(s) (`call_control`: a disabled
 //     or invalid credential still verifies, §10), computed over the URL STORED on the credential
 //     (`inbound_answer_url` / `inbound_hangup_url`, the exact string the Application was given)
-//     plus the request's query. Never rebuilt from env or from the path the request arrived on:
+//     plus the request's query (`inboundSignedUrl`, `inbound-urls.ts`, which builds those URLs). Never
+//     rebuilt from env or from the path the request arrived on:
 //     the URL lives in the tenant's Plivo account and is the signature's subject (PL9's rule);
 //  3. the signed nonce, once per credential (`claimInboundCallbackNonce`): a captured callback
 //     replayed is refused. A callback that fails to process gives its nonce back.
@@ -38,6 +39,7 @@ import type { WebRtcBridgeManager } from '../../../core/webrtc-bridge-manager.js
 import type { TelephonyProvider } from '../../../telephony/types.js';
 import { PLIVO_HANGUP_XML } from '../../../telephony/plivo/plivo.adapter.js';
 import { hashInboundToken } from '../../../telephony/plivo/inbound-token.js';
+import { PLIVO_INBOUND_ROUTES, inboundSignedUrl } from '../../../telephony/plivo/inbound-urls.js';
 import { PLIVO_SIGNATURE_V3_NONCE_HEADER, headerValue } from '../../../telephony/plivo/plivo-signature.js';
 import {
   PLIVO_INBOUND_CLOSED_XML,
@@ -53,13 +55,6 @@ const log = createChildLogger({ component: 'plivo-inbound-webhooks' });
 
 const PROVIDER = 'plivo';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** The routes under the Plivo namespace (`/api/v1/webhooks/plivo`). */
-export const PLIVO_INBOUND_ROUTES = {
-  answer: 'inbound-answer',
-  status: 'inbound-status',
-  fallback: 'inbound-fallback',
-} as const;
 
 /**
  * How long the answer webhook may take before the caller is answered with the fallback message
@@ -92,8 +87,8 @@ export interface PlivoInboundCallbackInput {
   kind: Kind;
   credentialId: string;
   token: string | undefined;
-  /** The request's raw query, `?…` or ''. Appended to the stored URL to form the signature's subject. */
-  query: string;
+  /** The path and query the request arrived on: its query, appended to the stored URL, is the signature's subject (`inboundSignedUrl`). */
+  requestUrl: string;
   params: Record<string, string>;
   headers: Record<string, string | undefined>;
 }
@@ -127,7 +122,7 @@ async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackIn
   }
   const adapter: TelephonyProvider | null = await bridge.inboundCallbackAdapter(credentialId, credential.tenant_id, PROVIDER);
   const signed = adapter?.verifyCarrierRequest?.({
-    method: 'POST', url: `${storedUrl}${input.query}`, params: input.params, headers: input.headers,
+    method: 'POST', url: inboundSignedUrl(storedUrl, input.requestUrl), params: input.params, headers: input.headers,
   }) === true;
   if (!signed) {
     log.warn({ kind, credentialId }, 'Inbound Plivo callback with a signature that does not verify over the stored URL — refusing');
@@ -260,12 +255,11 @@ export function registerPlivoInboundWebhookRoutes(
       const send = (a: Answer) => reply.code(a.statusCode).type(a.contentType).send(a.body);
       const bridge = opts.webrtcBridge;
       if (!bridge) return send(kind === 'answer' ? FALLBACK : UNAVAILABLE);
-      const q = request.url.indexOf('?');
       return send(await handlePlivoInboundCallback(bridge, {
         kind,
         credentialId: request.params.credentialId,
         token: request.query?.token,
-        query: q >= 0 ? request.url.slice(q) : '',
+        requestUrl: request.url,
         params: formParams(request.body),
         headers: signatureHeaders(request.headers),
       }, opts.budgetMs !== undefined ? { budgetMs: opts.budgetMs } : {}));

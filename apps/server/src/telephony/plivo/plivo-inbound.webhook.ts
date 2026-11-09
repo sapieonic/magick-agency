@@ -145,9 +145,14 @@ export function plivoInboundHangupEvent(h: PlivoInboundHangup, legId: string): C
  */
 const SPEAK = (text: string): string => `<Speak voice="WOMAN" language="en-GB">${xmlEscape(text)}</Speak>`;
 
-/** The fallback answer URL's reply: Plivo runs it when our answer URL fails (a deploy, an outage). Static: no database, no state. */
+/**
+ * The fallback answer URL's reply: Plivo runs it when our answer URL fails (a deploy, an outage),
+ * and our answer route speaks it when it cannot place a call. Static: no database, no state. It
+ * promises no callback: a call answered by the fallback may never have reached us, so it may
+ * leave no Missed row (docs/inbound.md §3.3, the operator-hosted file says the same).
+ */
 export const PLIVO_INBOUND_FALLBACK_XML =
-  `<Response>${SPEAK("Sorry, we can't take your call right now. We'll call you back as soon as we can.")}<Hangup/></Response>`;
+  `<Response>${SPEAK("Sorry, we can't take your call right now. Please try again shortly.")}<Hangup/></Response>`;
 
 /**
  * A call that has nowhere to stream (the tenant default: no route and no matched contact, so no

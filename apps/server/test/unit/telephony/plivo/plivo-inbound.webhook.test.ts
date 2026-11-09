@@ -65,9 +65,9 @@ describe('plivoInboundHangupEvent', () => {
 });
 
 describe('the fixed XML', () => {
-  it('the fallback speaks the callback promise in British English and hangs up', () => {
+  it('the fallback apologises in British English, promises no callback (it may leave no Missed row) and hangs up', () => {
     expect(PLIVO_INBOUND_FALLBACK_XML).toBe(
-      '<Response><Speak voice="WOMAN" language="en-GB">Sorry, we can&apos;t take your call right now. We&apos;ll call you back as soon as we can.</Speak><Hangup/></Response>');
+      '<Response><Speak voice="WOMAN" language="en-GB">Sorry, we can&apos;t take your call right now. Please try again shortly.</Speak><Hangup/></Response>');
   });
 
   it('the closed message hangs up and never streams', () => {
