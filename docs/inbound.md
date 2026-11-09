@@ -7,14 +7,20 @@ follows later behind the same router. Designed and reviewed 2026-11-09; Manas lo
 same day. **P1 is built** (§12): the foundation (§9), the operator side (§8.1, §8.2), the
 webhooks, what callers hear and the follow-ups (§3.4), and the account's console (§8.4), with the
 review's fixes. **P2 is built** (§12): callers put through to agents on the console (§6), the
-in-flight clash (§5.4) and voicemail (§7). §12 is the build plan and its status.
+in-flight clash (§5.4) and voicemail (§7). An independent engineering, product and QA review of
+both was fixed in two rounds (the fix pass, §12). §12 is the build plan and its status; P0 (the
+live Plivo checks), P3 and P4 are open.
 
 It replaces launch decision 3 ("inbound calls play a message and hang up") for Plivo numbers that a
 super-admin links to inbound. Unlinked numbers, and every VoiceLink number, keep today's behaviour.
 
 ## 1. Decisions
 
-Status words as in [`decisions.md`](decisions.md).
+Status words as in [`decisions.md`](decisions.md). The design's decisions are below. The build's
+rulings (the P2 plan's, IQ1–IQ24) and the fix pass's decisions (IQ25–IQ45) are recorded in
+[`decisions.md`](decisions.md) §4, "Inbound P2 build rulings" and "Inbound fix pass", with the
+earlier ruling each one amends; this document and the code cite them as `IQ<n>`, and the review
+findings a fix closes (`SWE-…`, `PM-…`, `QA-…`) are named in those rows.
 
 | ID | Decision | Status |
 |---|---|---|
@@ -103,7 +109,7 @@ bridge, not from answer.
 
 With `MEDIA_WORKERS > 0` a call lives on its agent's worker (`slotFor(sessionId)`, `scaling.md`
 §1.4), and an inbound call has no agent at answer time. IB8: P2 supports the single-process layout
-only; with workers on, P2 keeps P1's answer (nobody is connected, logged once, Q13). Placing an
+only; with workers on, P2 keeps P1's answer (nobody is connected, logged once, IQ13). Placing an
 inbound call on an agent's worker, and the cross-worker handover (a Plivo transfer to a new
 `<Stream>` URL on the agent's worker), are P3, after the P0 check.
 
@@ -114,7 +120,7 @@ enabled (`operations.md`, "Deployment invariants"; `DEPLOYMENT.md` 8.6). At boot
 enabled with workers on, logs a warning; the super-admin credential section says "Calls can't be
 put through to agents: media workers are on" (`connects_agents` on the credential's inbound state);
 `agy-inbound-connect-unavailable` pages while the gauge reads 0 and a credential has inbound
-enabled; and the route editor warns (S2's route warning).
+enabled; and the route editor warns (§8.4, "Route warnings"; IQ38).
 
 ### 3.3 The fallback answer XML
 
@@ -241,7 +247,7 @@ plays with `playClipSequenceThenHangUp` (docs/seams.md §3.1).
   carrier scope full (known only once the stream is promised) the caller hears "busy", the route's
   recording or ours. Before a closed, busy or call-back message an unset greeting is skipped; a
   caller who will wait for an agent hears the greeting or, unset, our "please hold", then the hold
-  sound (the route's hold recording, else the built-in hold tone, Q24). The recording notice (IB7)
+  sound (the route's hold recording, else the built-in hold tone, IQ24). The recording notice (IB7)
   plays before a recorded call whenever the route's notice switch is on: the route's recording,
   else ours; with the switch off nothing is said (the editor and API warn,
   `recording_without_notice`). A recording that is set but cannot be played (missing, another
@@ -321,7 +327,7 @@ that account may use the number rung. A campaign may opt out (`inbound_sticky_en
 
 `off`; `loose` (default: offer the agent for `sticky_wait_s`, then the team, still preferring the
 agent if they free first); `strict` (only that agent until max wait; then a follow-up assigned to
-them, never another agent). As built (Q6), `strict` holds the caller only while their agent is
+them, never another agent). As built (IQ6), `strict` holds the caller only while their agent is
 working (on a call or finishing one): an agent who is offline, on a break, on the phone app or on
 another account sends the caller to the team at once. The editor calls it "Wait for their agent"
 and says so.
@@ -356,7 +362,7 @@ binds puts the caller back at the head of the queue.
 
 **As built (P2 review fixes).** A caller nobody could ever take is not held to the maximum wait.
 "Could take" is a console station on this process, on a campaign in the pool (the route's pool
-applies only to a caller of the route's own account, Q21), whose agent is an active user with an
+applies only to a caller of the route's own account, IQ21), whose agent is an active user with an
 active membership that sees the call's account, in `available`, `reserved`, `on_call` or `wrapup`
 (another call held counts: it ends). An agent on a break, offline, on the phone app, outside the
 pool, on the soft phone, removed from the account or who turned this caller down does not count.
@@ -400,10 +406,10 @@ phase lapses: a `strict` caller whose sticky agent is not away (as the connector
 them) is that agent's alone, and a caller promised by a hand-over (§5.4) is its superseded dial's
 agent's, so neither holds a team agent back (the sticky agent is held back as a preferred session).
 A `loose` caller in its sticky phase is counted on purpose: the team takes them when the phase
-lapses, and the agent held back is the one free to (Q2's over-hold, bounded by `n`). The connector
+lapses, and the agent held back is the one free to (IQ2's over-hold, bounded by `n`). The connector
 republishes every 2 s while anyone waits and searches the account again each time: the backstop for
 a change no event reports (a busy sticky agent going on a queued break or losing their station makes
-their caller the team's at once, Q6).
+their caller the team's at once, IQ6).
 
 ### 5.3 Concurrency (IB5)
 
@@ -425,11 +431,11 @@ once the connector holds the call, the router asks the dialer for a paced dial o
 account still ringing the caller's number (`findRingingAttemptTo`: digits compared as the busy
 probe compares them; placed, never answered or bridged, not abandoned, not a wrap-up redial, whose
 agent owes the conversation's outcome first). On a carrier that cannot cancel ringing (VoiceLink)
-nothing is cancelled and the caller queues normally (Q7). Otherwise, with no await between: the
+nothing is cancelled and the caller queues normally (IQ7). Otherwise, with no await between: the
 connector promises the call to the dial's session (`expectHandover`; no other agent is offered it),
 and the dialer marks the dial and cancels it (`supersedeForInbound` → `forceEndWithOutcome(…,
 'canceled')`, whose first step marks the bridge session ending, so no answer is taken after it).
-The dialer's `ended` arm settles it as the clash in one transaction (Q8): the attempt `canceled`
+The dialer's `ended` arm settles it as the clash in one transaction (IQ8): the attempt `canceled`
 with the reserved system code `inbound_call` (written up by nobody: `dispositioned_by_user_id`
 NULL; the dial itself is the reserved agent's, so the rollups count it on their row as a placed
 `canceled` dial and never as an outcome: docs/insights.md "System dispositions"), its contact back to `pending`
@@ -440,7 +446,7 @@ released through the inbound release hook, which takes them for the call: offere
 call is queued; when it is still in its greeting or recording notice (the usual case: the cancel
 lands within a few hundred ms), the agent is HELD for it there and then (CAS from `reserved`, the
 `inbound` field set, the lease renewed, `agent_state: reserved`; never `available`, so pacing
-cannot take them) and offered it the moment the preamble ends (Q5: nobody is bound during the
+cannot take them) and offered it the moment the preamble ends (IQ5: nobody is bound during the
 greeting). The panel and the chime come with that offer; between the two the agent sees the
 `released` copy ("The customer rang us"). A call that ends, a station that drops or a lease lost
 while the agent is held lets the agent go. `clash_attempt_id` is stamped once the dial was
@@ -450,7 +456,7 @@ reaches the hook (a queued break wins; the station gone), with a 15 s backstop. 
 manual dial to the same number is left alone (decided): a soft-phone session cannot take an
 inbound reservation (§4.3, P3), so cancelling the agent's own dial would leave both with nothing;
 the caller queues for the team and the manual dial meets a busy line. So is a paced dial whose
-station could never take the hand-over: a phone (`client_kind = 'mobile'`, Q20), a station not
+station could never take the hand-over: a phone (`client_kind = 'mobile'`, IQ20), a station not
 OPEN, a session with no campaign. `expectHandover` applies the release hook's own test and refuses,
 so nothing is cancelled and the caller queues normally. A cancel that fails outright (the bridge
 throws) drops the hand-over at once rather than at the backstop. The hand-over's promises, timers
@@ -483,7 +489,7 @@ calls marked.
 
 **Who the tile counts (P2 review fixes).** `eligible_agents` uses the search's own rules. With
 callers waiting on the route, it counts the agents free now (`available`, holding nothing) who may
-take at least one of them, each caller judged by ITS account. The cross-account case (Q21): a
+take at least one of them, each caller judged by ITS account. The cross-account case (IQ21): a
 caller whose matched contact is in another account than the route's waits on this route's tile, but
 only the matched account's agents may take them and the route's pool does not apply to them; such
 a route reads 0 agents free while its own agents sit idle, and the tile's line says callers are
@@ -523,12 +529,12 @@ Missed calls page; the floor reads "Inbound call" for `on_inbound_call`. Every c
 
 **The server (built, WP-C1; §2's state machine).** The router (`inbound-call-router.ts`) plans
 `queue` for an open route's admitted caller (a slot, or over the account's own limit: IB5) when the
-call's account has `agency_inbound_enabled` on and the server runs one process (IB8, Q12, Q13);
+call's account has `agency_inbound_enabled` on and the server runs one process (IB8, IQ12, IQ13);
 the stream is taken connectable (parked for `parkedSecondsFor(route)`: the maximum wait, a minute of
 preamble and the exit's 150 s; the 8 s station grace; recorded from the bind when the route records
 and the account allows it) and handed to the connector (`inbound-connector.ts`, `runtime.inbound`).
 The connector plays the greeting and, for a recorded call, the notice (IB7) through
-`playInboundHold`, and queues the caller only when the preamble has played (`onPreambleDone`, Q5):
+`playInboundHold`, and queues the caller only when the preamble has played (`onPreambleDone`, IQ5):
 the spine `queued`, the per-route FIFO (`inbound-queue.ts`; a requeued caller at the head; over
 `max_waiting` only an agent free now keeps them; the maximum wait and the loose sticky wait as
 timers), "Your customer is waiting" to a busy sticky agent, `inbound_waiting` for pacing (§5.2),
@@ -536,10 +542,10 @@ and the search (`eligibility.ts`, §4.3: the call's account's console campaign s
 process, open, in the route's pool when the account is the route's, `available` and holding
 nothing; a caller whose sticky agent is free matched to them first; then FIFO, the sticky agent
 alone in the sticky phase (loose: the wait; strict: the maximum wait; an agent away: the team at
-once, Q6), else longest idle by Redis `since`, `planTick`'s order). The agent is reserved by
+once, IQ6), else longest idle by Redis `since`, `planTick`'s order). The agent is reserved by
 compare-and-swap (`reserveForInbound` from `available`), the spine offered (guarded on the
 session), and with no await between: `agent_state: reserved` then the `inbound_call` frame
-(`connects_at` = the offer + 1.5 s, Q4). At `connects_at` the station socket must be open (else the
+(`connects_at` = the offer + 1.5 s, IQ4). At `connects_at` the station socket must be open (else the
 offer is cancelled: back to the head of the queue, the next agent searched) and the bridge binds
 it (a bind the bridge refuses: when the call is ending, `isCallEnding`, its end settles the offer;
 for any other reason, a leg already bound or the socket closing between the two checks, the offer
@@ -570,7 +576,7 @@ call and the waiting notices after `ready`; `/leave` refuses while a call is off
 a restart lands an agent owing an outcome on `break` with the call re-claimed (`rehydrateAgent`).
 The finish routes (`proxy-agency-inbound/calls.ts` → `agency/inbound-calls.ts` →
 `inbound-disposition.ts`, not behind the flag): the call, its notes, hang up, the outcome (the
-catalog of Q10, the soft phone's validation and decision, DNC for a suppress code, the contact
+catalog of IQ10, the soft phone's validation and decision, DNC for a suppress code, the contact
 settled forward only by `inbound-settlement.ts`, never charged, then the agent returned) and Mark
 DNC (the matched campaign's scope, else the account's), by the agent who took the call or a
 supervisor on behalf; audited `agency_inbound_call.dispositioned` / `.hung_up` / `.dnc_marked`.
@@ -582,7 +588,7 @@ station's (back at the head of the queue, `queued_at` kept), the caller is never
 session again, the agent goes back to the pool, and nothing is recorded as abandoned (no Missed
 row, no callback); with nobody else who could take them the caller is overflowed (§5.1). The
 console offers Hang up only once connected, so this is the API's (and a supervisor's on behalf).
-**The wrap-up** (`inbound-wrapup.ts`; replaces Q11's "no auto-return"): the outbound wrap-up's
+**The wrap-up** (`inbound-wrapup.ts`; replaces IQ11's "no auto-return"): the outbound wrap-up's
 auto-return rule (`wrapup-manager.ts`) for the call's matched campaign: with `wrapup_auto_return` on
 and a `wrapup_seconds` window the outcome lapses that long after the call ended; with auto-return
 off, or `wrapup_seconds = 0` ("no timer"), the agent keeps the call until they save it. A caller
@@ -612,13 +618,13 @@ would (`closeOwedForSupervisor`: `no_disposition`, the contact settled, the clai
 agent as from any wrap-up; the public layer audits `agency_inbound_call.closed` ("Inbound call
 closed by a supervisor", the supervisor the actor, `details.via: force_available`). A call still
 offered or connected is not forced: `409 inbound_call_live` ("The agent is on an inbound call: they
-can be made available once it has ended."). By design (Q9, Q19) the busy probe's inbound arm holds
+can be made available once it has ended."). By design (IQ9, IQ19) the busy probe's inbound arm holds
 the number while its outcome is owed, so an agent who leaves without saving keeps the customer
 undialable for the whole account until the call's window lapses (the campaign's wrap-up window,
 at most 30 minutes); an agent who saves frees it with the save. At a graceful shutdown the
 inbound stop (`startInboundCalls`), first in the agency stop and before the runtime stops, takes no
 more work, ends every call it holds `service_shutdown` and waits up to 10 s for their settles: a
-caller nobody took `failed` with its follow-up and callback (Q18), an answered call owing its
+caller nobody took `failed` with its follow-up and callback (IQ18), an answered call owing its
 outcome. A crash leaves them to the next start's sweep (`failed`: we dropped them, not a caller who
 hung up; still followed up), and an answered call owing its outcome stays owed.
 `GET /inbound/queue` (`agency.supervise`, the flag) answers a tile per route from the connector's
@@ -703,7 +709,7 @@ row but leaves the contact to its campaign. Clearing the callback on its own wou
 contact `pending` (the state it was reopened from is not recorded), so the campaign would dial it
 anyway.
 
-**Reopen** (built, this pass): a handled row goes back on the list (`open`, its reason, handler and
+**Reopen** (built, fix pass round 2, IQ41): a handled row goes back on the list (`open`, its reason, handler and
 time cleared, the assignee kept), for a row marked by mistake or closed as reached when the
 customer was not. Mark handled's rules: an agent reopens the rows assigned to them, a supervisor
 any of the account's; idempotent; audited `agency_inbound_call.reopened` with how and by whom the
@@ -781,7 +787,7 @@ Analysis of voicemails is P3.
 | Tenant's Plivo credential | super-admin | **Enable inbound**: create one Plivo Application on the tenant's account (answer, hangup and fallback answer URLs); store `inbound_app_id`, the URLs, the token's hash. Health check and Re-point on the credential page; **Disable** deletes it, refused while numbers are linked |
 | Each number | super-admin (IB6) | **Link to inbound** per number, never on sync. Store the number's previous Plivo app (`inbound_previous_app_id`) so Unlink restores it |
 | Tenant / account | super-admin | Flag `agency_inbound_enabled` (default off), the kill switch: off, every call on the account's linked numbers is answered with the closed message by the carrier (no queue, no stream, no voicemail, whatever the route's actions; closed too with the route at its `max_concurrent`, never "all lines busy") with its `closed` Missed row, and the route editor and queue tiles are hidden; the Missed list, its voicemails and Mark handled, and the finish routes of calls already taken stay available |
-| Account | account admin (`agency.inbound.write`) | Inbound routes: name, numbers, hours/timezone/holidays, clips (greeting, hold, closed, busy, recording notice), sticky mode/wait/lookback, agent pool, queue limits, after-hours and overflow actions, recording and summary profile, outcome catalog for unmatched callers |
+| Account | account admin (`agency.inbound.write`) | Inbound routes: name, numbers, hours/timezone/holidays, clips (greeting, hold, closed, busy, call-back, recording notice; uploaded from the editor, IQ28), sticky mode/wait/lookback, agent pool, queue limits, after-hours and overflow actions, recording and summary profile, outcome catalog for unmatched callers |
 | Campaign | supervisor | Optional `inbound_sticky_enabled` (default on) |
 | Agent | — | No setting. Sees their own Missed rows (`agency.inbound.read`, floored at `agent`) |
 
@@ -1244,18 +1250,33 @@ history.
 |---|---|---|
 | P0 | Live Plivo checks, alongside the planned real Plivo call (step 5): create an Application and link/unlink a number; answer-URL params, timeout and inbound `CallStatus`; hangup URL params; fallback answer URL; moving a live streamed call to new XML (voicemail, worker handover); DTMF over the stream. Results into `plivo-carrier.fixture.json` | not started (needs a Plivo account) |
 | P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | **done** (the review's fixes below): foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). **Super-admin slice done** (`feat(server,super-admin,contracts,db): inbound Plivo Application, number links and the lifecycle cascade`, §8.1, §8.2, §3.3): Enable / Disable / Health / Re-point, Link / Unlink, the cascade at every write that exists, revoke refused, the routes, the credential page's Inbound section and the numbers page's Link / Unlink and badge, the fixture's Application and number shapes (unverified until P0), the mock carrier's; `agency_inbound_enabled` is toggled on the generic flag screens. Rollout: link a pilot tenant's numbers first. **Webhook slice done** (§3.4): the answer, hangup and fallback webhooks, the inbound seam, the bridge's `acceptInboundCall` / `playClipSequenceThenHangUp`, caller identification, admission (IB5, `0026_inbound_live_indexes.sql`), the Missed row and the inbound callback (IB4) on the dialer's claims, the sweep, metrics. Open: Plivo's answer-URL params and timeout (P0). Recorded built-in clips: done in the final review's fix pass (P2 row). **Console slice done** (`feat(server,console,contracts): inbound routes and the Missed calls list in the console`, §8.4): the routes API with the editor's number and clip choices, the Missed list and Mark handled, Settings → Inbound calls, Missed calls for supervisors and agents with Call back into the soft phone; voicemail refused until P2; the campaign's `inbound_sticky_enabled` toggle and tenant-default Missed rows left open (§8.4). **Review fixes** (`fix(server,db,console,contracts,super-admin): inbound P1 review fixes`): a `CallUUID` held by another tenant or credential is refused (§3.4); the migration renumbered `0026` (no gap; the fixes needed no new migration, so the next one is `0027`); IB5's arm counts admitted calls only; CA5's code-less sweep reads an index of inbound callbacks; read-only carrier calls out of the operator transactions and the Application list bounded (§8.1); an answer past its budget leaves no follow-up; a second Re-point refused while the first's token is still needed (§8.1); an unrecorded message spoken by the carrier, never silence (§3.4) |
-| P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | **done**. **Foundation done** (`feat(db,contracts,server,console,mobile): inbound P2 foundation`, §9.1): `0027_inbound_connect.sql`; the contracts (`AgencyInboundCall`, the `inbound_call` and `customer_waiting` frames for console stations only, release reason `inbound_call`, the inbound call codes, `customer_on_inbound_call`, the queue tile, `voicemail_url`, `on_inbound_call`, the constants, the reserved code `inbound_call`); the `inbound_waiting` bus event with no consumer; the agent hash's `inbound` field (`reserveForInbound`, `releaseInbound`, `rehydrateInbound`, `available` refused `-3` and answered `409 inbound_call_live`, no attempt reserved onto it); the spine's agent-side writes; the busy probe's inbound arm (pacing, the agent's own dial and retry, the soft phone's pre-dial); `settleFromInbound` and `unclaimUncharged`; the campaign's `inbound_sticky_enabled` on create, PATCH and retry. Nothing connects yet: the connector, queue, hold loop, voicemail and the console panel follow. `AGENCY_INBOUND_AVAILABLE_ACTIONS` stays `callback` until the voicemail flow lands. **Bridge and voice done** (WP-B, docs/seams.md §3.1): a connectable call is parked (borrowed-unbound; its budget, answer XML stream timeout and slot TTL are parked + max duration; a parked backstop), `playInboundHold` (the preamble once, then the hold clip or the built-in generated hold tone on a loop, Q24; never hangs up), `stopInboundHold`, `recordInboundAudio` (prompt, beep, a bounded carrier tap with nobody bound), the bind stopping the hold synchronously, re-arming the max duration and counting talk time from it, and the recording from `bridged` through Plivo's Record API (its request and callback shapes unverified until P0). **Connector done** (WP-C1, §6 "The server"): the `queue` plan gated on the flag and one process, the preamble then the queue, sticky loose/strict, the team queue and its limits, the offer and the bind, the release hook taking an agent from wrap-up, `inbound_waiting` consumed by pacing, the station's drop and reconnect, the restart, the outcome routes and their audit, the lapse sweep, the queue tiles route, the metrics; `onPreambleDone` added to the hold seam and `cleared` to `customer_waiting`. **In-flight clash and voicemail done** (WP-C2, `feat(server,contracts,console): inbound P2 in-flight clash and voicemail`; §5.4, §7, §8.4): a queued caller's ringing dial cancelled on Plivo and its agent handed the call (held through the caller's preamble, never `available`; the dial `canceled` / `inbound_call`, its contact uncharged, released `inbound_call`; the bridged-first race kept as a call; VoiceLink and the soft phone's own dial left alone); a caller past the maximum wait marked leaving at once so no lock waits behind an exit; voicemail after hours and from the queue (recorded from our stream, kept when the caller spoke, a WAV in the bucket on the call-data retention, the Missed row with `voicemail_url`, streamed by `GET /inbound/missed/:id/voicemail` with ranges); `AGENCY_INBOUND_AVAILABLE_ACTIONS` widened; route warnings for a silent overflow or a voicemail with no prompt (API and editor, advisory). No migration. Tests (on the code commit): `pnpm lint` clean; unit: server 477 files, 9458 passed (1 expected fail, 42 skipped), console 316 files, 6014, contracts 13 files, 367; server integration `INTEGRATION_LANE=rest` 239 files, 2513 passed (9 expected fail, 2 skipped), `wall-clock` 3 files, 15; new suites `inbound-clash-voicemail-e2e` 5, `agency-dialer-inbound-clash` 7, `inbound-voicemail` 5, `inbound-route-warnings` 6, the connector races +7 (19), the routes +4 (17). **Review fix pass done** (`fix(server,console): inbound P2 review fixes`; §4.3, §5.2, §5.4, §6, §7, §8.4): the station heartbeat renews a `wrapup` lease this process vouches for (45 s, as `available`'s), so the release hook takes an agent from a wrap-up of any length with no `available` instant and a `/break` asked for during it is queued, while an unvouched `wrapup` key lapses and rehydrates as `break`; `releaseAgent` announces `available` only after its mirror and frame; `inbound_waiting` holds no team agent for a strict caller whose sticky agent is not away or for a hand-over, and the connector searches again on each republish; no hand-over (so no cancelled dial) to a phone, a station not OPEN or the soft phone; a failed `connected` write ends `answered`, not `abandoned_in_queue`; the inbound stop ends and settles its calls before the runtime stops; a turned-away caller asks for no recording; a voicemail's budget covers its recording whatever the account's ceiling, a voicemail whose row cannot be written is discarded, the purge's voicemail step runs last and survives a failed delete or a missing bucket, and playback has no automatic HEAD; the Insights override lookup skips `inbound_call` (docs/insights.md "System dispositions"); the console says a call on offer went back to the queue when a reconnect finds it gone. By design and documented: the outcome window's busy number (§6). No migration. Tests (on the code commit): `pnpm lint` clean; unit: server 478 files, 9467 passed (1 expected fail, 42 skipped), console 316 files, 6016; server integration `INTEGRATION_LANE=rest` 239 files, 2520 passed (9 expected fail, 2 skipped; one unhandled timer error from `report-assembler-deadline.test.ts`, a flake in a file this pass does not touch), `wall-clock` 4 files, 19; `packages/db` integration 68 files, 696; new suites `inbound-wrapup-lease` 4 (wall-clock), `station-heartbeat-lease` 5; the connector races +3 (22), `inbound-connect-e2e` +1 (14), `inbound-clash-voicemail-e2e` +1 (6), the insights oracle +1 (8), the state cycle +1 (2). **Console done** (WP-D, §6): the station's `inbound_call` and `customer_waiting` handling and restore after `ready`, the inbound chime, `InboundCallView` in the station's geometry with the outcome, notes, callback, hang-up, mute, DNC and the lapse countdown, the waiting pill, the supervisor's queue tiles and the floor's "Inbound call", the campaign's "Put callers through to their agent", voicemail playback on the Missed list and the route editor's actions from `AGENCY_INBOUND_AVAILABLE_ACTIONS`; built against the call routes' paths in `api/inbound.ts` (`INBOUND_PATHS`) and mock answers; since the connector landed, those paths are in the route table's console-paths fixture (`agency-route-table.test.ts`: served, at the console's path and method). Not run here: the console in a browser against a running server. **Verification pass done** (`test(db): …`, `test(server): …`; no product change): the full run's three reds were test-order assumptions, each reproduced and made deterministic. The 0003 and 0004 partial-index plan tests plan over a roster and attempts of their own (`insertPlanRoster`): over what earlier files left (`agency_contacts` analyzed empty, the partial indexes bloated by dead rows, `idx_agency_contacts_insights` rebuilt small by a down → up across `0026`) the planner priced indexes by pages and took the insights index; over a campaign-shaped roster it takes the partial indexes with or without `0026`, so no index changed. `inbound-connect-e2e` 2b read B's offer and A's cleared "customer waiting" frame at the instant the spine row read `offered`, which the connector commits before it sends them; it now waits for both and pins A's notices as exactly [waiting, cleared]. Counts in `status.md` "Test counts". **Final review fix pass, what callers hear (S2)** (§3.4, §6, §7, §8.4): our standard recordings (six WAVs, British English, `assets/inbound/`, the words one set with the carrier's `<Speak>`) play wherever a slot is unset on our stream: the queue's exit (no caller put down in silence; the silent path, its log line and warning removed), the voicemail prompt (a route with no recordings takes voicemail), the recording notice (IB7 kept whenever the notice switch is on), the "please hold" for no greeting; DNC callers hear the closed words, never a callback promise; recordings uploaded from the route editor (checked and decoded before storage, S3 + `audio_files`, tenant and account scoped, audited) and deleted when nothing uses them; the editor's copy says what callers hear, a new route opens Monday to Friday 09:00–17:30, warnings for no hours, recording unannounced and a deployment that cannot connect; "Wait for their agent" says what strict does. No migration. **Final review fix pass, Missed calls and supervisor tools** (`0028_inbound_missed_follow_up.sql`; §7, §8.4, §11): a Missed row closes on its own when the customer is put through (`reached`); supervisors reassign, a departed assignee reads "Former member"; the nav badge; Missed calls and the summary readable with the flag off while there are rows; the floor's "Close and make available" for an inbound wrap-up; the inbound summary; the voicemail fetched only from its own route and never cached. **Round 2, the server runtime (R1)** (`0029_inbound_reach_settles.sql`; §3.4, §5.1, §6, §7, §8.1, §9.2): a caller nobody could take is answered with the overflow action before the greeting (no "please hold"); a station closed within the 15 s rejoin grace still counts as one who could take a caller; withheld and DNC callers hear the busy words in opening hours, never "we're closed", and leave voicemail with a seventh, neutral standard recording; a decline or refused bind past the maximum wait returns its agent before the exit; the kill switch wins over `max_concurrent` and takes no voicemail; an unmatched call's wrap-up is 120 s; a lapsed or supervisor-closed outcome settles the booked inbound callback (a contact it reopened goes back to exhausted); the carrier's duration from the hangup callback counts in `inbound_seconds` |
+| P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | **done**, with the fix pass (both rounds; below the table). The build's rulings are IQ1–IQ24 (`decisions.md`). **Foundation done** (`feat(db,contracts,server,console,mobile): inbound P2 foundation`, §9.1): `0027_inbound_connect.sql`; the contracts (`AgencyInboundCall`, the `inbound_call` and `customer_waiting` frames for console stations only, release reason `inbound_call`, the inbound call codes, `customer_on_inbound_call`, the queue tile, `voicemail_url`, `on_inbound_call`, the constants, the reserved code `inbound_call`); the `inbound_waiting` bus event with no consumer; the agent hash's `inbound` field (`reserveForInbound`, `releaseInbound`, `rehydrateInbound`, `available` refused `-3` and answered `409 inbound_call_live`, no attempt reserved onto it); the spine's agent-side writes; the busy probe's inbound arm (pacing, the agent's own dial and retry, the soft phone's pre-dial); `settleFromInbound` and `unclaimUncharged`; the campaign's `inbound_sticky_enabled` on create, PATCH and retry. Nothing connects yet: the connector, queue, hold loop, voicemail and the console panel follow. `AGENCY_INBOUND_AVAILABLE_ACTIONS` stays `callback` until the voicemail flow lands. **Bridge and voice done** (WP-B, docs/seams.md §3.1): a connectable call is parked (borrowed-unbound; its budget, answer XML stream timeout and slot TTL are parked + max duration; a parked backstop), `playInboundHold` (the preamble once, then the hold clip or the built-in generated hold tone on a loop, IQ24; never hangs up), `stopInboundHold`, `recordInboundAudio` (prompt, beep, a bounded carrier tap with nobody bound), the bind stopping the hold synchronously, re-arming the max duration and counting talk time from it, and the recording from `bridged` through Plivo's Record API (its request and callback shapes unverified until P0). **Connector done** (WP-C1, §6 "The server"): the `queue` plan gated on the flag and one process, the preamble then the queue, sticky loose/strict, the team queue and its limits, the offer and the bind, the release hook taking an agent from wrap-up, `inbound_waiting` consumed by pacing, the station's drop and reconnect, the restart, the outcome routes and their audit, the lapse sweep, the queue tiles route, the metrics; `onPreambleDone` added to the hold seam and `cleared` to `customer_waiting`. **In-flight clash and voicemail done** (WP-C2, `feat(server,contracts,console): inbound P2 in-flight clash and voicemail`; §5.4, §7, §8.4): a queued caller's ringing dial cancelled on Plivo and its agent handed the call (held through the caller's preamble, never `available`; the dial `canceled` / `inbound_call`, its contact uncharged, released `inbound_call`; the bridged-first race kept as a call; VoiceLink and the soft phone's own dial left alone); a caller past the maximum wait marked leaving at once so no lock waits behind an exit; voicemail after hours and from the queue (recorded from our stream, kept when the caller spoke, a WAV in the bucket on the call-data retention, the Missed row with `voicemail_url`, streamed by `GET /inbound/missed/:id/voicemail` with ranges); `AGENCY_INBOUND_AVAILABLE_ACTIONS` widened; route warnings for a silent overflow or a voicemail with no prompt (API and editor, advisory). No migration. Tests (on the code commit): `pnpm lint` clean; unit: server 477 files, 9458 passed (1 expected fail, 42 skipped), console 316 files, 6014, contracts 13 files, 367; server integration `INTEGRATION_LANE=rest` 239 files, 2513 passed (9 expected fail, 2 skipped), `wall-clock` 3 files, 15; new suites `inbound-clash-voicemail-e2e` 5, `agency-dialer-inbound-clash` 7, `inbound-voicemail` 5, `inbound-route-warnings` 6, the connector races +7 (19), the routes +4 (17). **Review fix pass done** (`fix(server,console): inbound P2 review fixes`; §4.3, §5.2, §5.4, §6, §7, §8.4): the station heartbeat renews a `wrapup` lease this process vouches for (45 s, as `available`'s), so the release hook takes an agent from a wrap-up of any length with no `available` instant and a `/break` asked for during it is queued, while an unvouched `wrapup` key lapses and rehydrates as `break`; `releaseAgent` announces `available` only after its mirror and frame; `inbound_waiting` holds no team agent for a strict caller whose sticky agent is not away or for a hand-over, and the connector searches again on each republish; no hand-over (so no cancelled dial) to a phone, a station not OPEN or the soft phone; a failed `connected` write ends `answered`, not `abandoned_in_queue`; the inbound stop ends and settles its calls before the runtime stops; a turned-away caller asks for no recording; a voicemail's budget covers its recording whatever the account's ceiling, a voicemail whose row cannot be written is discarded, the purge's voicemail step runs last and survives a failed delete or a missing bucket, and playback has no automatic HEAD; the Insights override lookup skips `inbound_call` (docs/insights.md "System dispositions"); the console says a call on offer went back to the queue when a reconnect finds it gone. By design and documented: the outcome window's busy number (§6). No migration. Tests (on the code commit): `pnpm lint` clean; unit: server 478 files, 9467 passed (1 expected fail, 42 skipped), console 316 files, 6016; server integration `INTEGRATION_LANE=rest` 239 files, 2520 passed (9 expected fail, 2 skipped; one unhandled timer error from `report-assembler-deadline.test.ts`, a flake in a file this pass does not touch), `wall-clock` 4 files, 19; `packages/db` integration 68 files, 696; new suites `inbound-wrapup-lease` 4 (wall-clock), `station-heartbeat-lease` 5; the connector races +3 (22), `inbound-connect-e2e` +1 (14), `inbound-clash-voicemail-e2e` +1 (6), the insights oracle +1 (8), the state cycle +1 (2). **Console done** (WP-D, §6): the station's `inbound_call` and `customer_waiting` handling and restore after `ready`, the inbound chime, `InboundCallView` in the station's geometry with the outcome, notes, callback, hang-up, mute, DNC and the lapse countdown, the waiting pill, the supervisor's queue tiles and the floor's "Inbound call", the campaign's "Put callers through to their agent", voicemail playback on the Missed list and the route editor's actions from `AGENCY_INBOUND_AVAILABLE_ACTIONS`; built against the call routes' paths in `api/inbound.ts` (`INBOUND_PATHS`) and mock answers; since the connector landed, those paths are in the route table's console-paths fixture (`agency-route-table.test.ts`: served, at the console's path and method). Not run here: the console in a browser against a running server. **Verification pass done** (`test(db): …`, `test(server): …`; no product change): the full run's three reds were test-order assumptions, each reproduced and made deterministic. The 0003 and 0004 partial-index plan tests plan over a roster and attempts of their own (`insertPlanRoster`): over what earlier files left (`agency_contacts` analyzed empty, the partial indexes bloated by dead rows, `idx_agency_contacts_insights` rebuilt small by a down → up across `0026`) the planner priced indexes by pages and took the insights index; over a campaign-shaped roster it takes the partial indexes with or without `0026`, so no index changed. `inbound-connect-e2e` 2b read B's offer and A's cleared "customer waiting" frame at the instant the spine row read `offered`, which the connector commits before it sends them; it now waits for both and pins A's notices as exactly [waiting, cleared]. Counts in `status.md` "Test counts". **Final review fix pass, what callers hear** (IQ25–IQ28, IQ44; §3.4, §6, §7, §8.4): our standard recordings (six WAVs, British English, `assets/inbound/`, the words one set with the carrier's `<Speak>`) play wherever a slot is unset on our stream: the queue's exit (no caller put down in silence; the silent path, its log line and warning removed), the voicemail prompt (a route with no recordings takes voicemail), the recording notice (IB7 kept whenever the notice switch is on), the "please hold" for no greeting; DNC callers hear the closed words, never a callback promise (round 2: the busy words in opening hours, IQ27); recordings uploaded from the route editor (checked and decoded before storage, S3 + `audio_files`, tenant and account scoped, audited) and deleted when nothing uses them; the editor's copy says what callers hear, a new route opens Monday to Friday 09:00–17:30, warnings for no hours, recording unannounced and a deployment that cannot connect; "Wait for their agent" says what strict does. No migration. **Final review fix pass, Missed calls and supervisor tools** (IQ33, IQ41, IQ42; `0028_inbound_missed_follow_up.sql`; §7, §8.4, §11): a Missed row closes on its own when the customer is put through (`reached`); supervisors reassign, a departed assignee reads "Former member"; the nav badge; Missed calls and the summary readable with the flag off while there are rows; the floor's "Close and make available" for an inbound wrap-up; the inbound summary; the voicemail fetched only from its own route and never cached. **Fix pass round 2, the server runtime** (IQ27, IQ29, IQ30, IQ32, IQ36, IQ40; `0029_inbound_reach_settles.sql`; §3.4, §5.1, §6, §7, §8.1, §9.2): a caller nobody could take is answered with the overflow action before the greeting (no "please hold"); a station closed within the 15 s rejoin grace still counts as one who could take a caller; withheld and DNC callers hear the busy words in opening hours, never "we're closed", and leave voicemail with a seventh, neutral standard recording; a decline or refused bind past the maximum wait returns its agent before the exit; the kill switch wins over `max_concurrent` and takes no voicemail; an unmatched call's wrap-up is 120 s; a lapsed or supervisor-closed outcome settles the booked inbound callback (a contact it reopened goes back to exhausted); the carrier's duration from the hangup callback counts in `inbound_seconds` |
 | P3 | Mobile app frames (Dart wire), pickups from break and soft phone, media-worker handover, reports/Insights, "press 1 for a callback" if DTMF works | not started |
 | P4 | VoiceLink behind a carrier-module `inbound` capability | not started |
 
-**Operations review fixes** (`fix(server,super-admin,db,contracts,observability,grafana): inbound operations, monitoring, kill switch and usage`):
+**The fix pass is done** (two rounds, 2026-11-09, on top of P1 and P2): every finding of the
+independent engineering, product and QA reviews of P1 and P2, then of a review of the first round,
+that Manas approved fixing is fixed, and its decisions are recorded as IQ25–IQ45 in
+`decisions.md`, each with the ruling it amends (IQ32 replaces IQ11's "no auto-return"; IQ29 amends
+IQ5; IQ35 amends IQ18; IQ36 amends IQ12; IQ38 amends IQ13; IQ25 and IQ27 amend IQ14; IQ43 amends
+IQ20; IQ37 replaces the credential-disable cascade). The pieces: round 1's queue and offers
+(callers nobody can take overflowed at once, membership read at the offer, a declined offer
+requeued, console-only frames dropped at the send, `isCallEnding`; IQ29, IQ30, IQ43) and its
+settlement and agent return (no agent lifted off a break, the wrap-up's auto-return, the
+supervisor's close, the fail-closed nonce, the sweeps and early hangups; IQ31–IQ35), in §3.4 and
+§6; the P2 row's "Final review fix pass" and "Fix pass round 2" entries; and the two paragraphs
+below. The mobile `agency_wire` `dart test` has run on the merged branch (510 passed, Dart
+3.13.7). Still open: P0; listening to the standard recordings and signing off their licence; the
+voicemail and spine retention for a UK pilot; the follow-ups `status.md` lists under "Not built".
+
+**Operations review fixes** (IQ37–IQ40, IQ45; `fix(server,super-admin,db,contracts,observability,grafana): inbound operations, monitoring, kill switch and usage`):
 media workers on made loud (§3.2), the fallback URL on the checklist with a boot warning (§3.3),
 the Application health check on a timer (§8.1), the Grafana inbound rules and dashboard row, the
 onboarding hole closed in super-admin (§8.1, §8.3), the flag as the kill switch with the Missed
 list readable (§8.1, §8.4), a credential disable that keeps its links (§8.2), inbound counted
 apart in usage with carrier and hold time (§9). No migration.
 
-**Fix pass round 2, Missed calls and the summary** (`0030_inbound_reached_on_outcome.sql`; §7,
+**Fix pass round 2, Missed calls and the summary** (IQ36, IQ41, IQ42; `0030_inbound_reached_on_outcome.sql`; §7,
 §8.4, §9, §11): an outbound call closes the customer's Missed rows on an outcome that says a
 person was reached, not at its bridge (an answering machine no longer reads "Customer reached"),
 the number matched by its digits; **Reopen** on a handled row; why a call was answered closed

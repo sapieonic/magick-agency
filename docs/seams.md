@@ -169,7 +169,7 @@ params and the Record API's alike); the hold is never recorded.
   caller still on (the bind, `stopInboundHold`, a recording, a later hold); `aborted`: the caller
   left; `no_media`, `not_found`. `onPreambleDone` (optional) is called once, synchronously, when
   the preamble has played and the loop starts: the inbound connector queues the caller from it,
-  so no agent is bound during the greeting or the recording notice (docs/inbound.md §2, Q5).
+  so no agent is bound during the greeting or the recording notice (docs/inbound.md §2, IQ5).
 - `stopInboundHold` stops what the bridge plays to the caller, synchronously: an overflow message or
   a voicemail prompt can follow at once.
 - `isCallEnding` answers whether the call keyed on the correlation id is over or tearing down (no
