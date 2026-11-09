@@ -20,8 +20,10 @@ import { registerInboundCallRoutes } from './proxy-agency-inbound/calls.js';
  *
  * Guards, in this order, on every route: session and tenant context (the hooks below); the
  * route's permission; `agency_inbound_enabled` (`403 inbound_disabled`, `./shared.ts`), except on
- * the finish routes, which are never gated (an agent the flag is switched off under can still
- * finish a call they took, as on the soft phone). Each runs
+ * the finish routes and the Missed list (its voicemails and Mark handled), which are never gated:
+ * an agent the flag is switched off under can still finish a call they took, as on the soft
+ * phone, and the follow-ups of calls taken before the switch stay readable and workable (the
+ * kill switch, docs/inbound.md §8.1). Each runs
  * the internal handler (`agency/inbound.ts`) in-process through `callCore`, which validates,
  * checks the account's references and writes; this layer audits and fills names.
  *

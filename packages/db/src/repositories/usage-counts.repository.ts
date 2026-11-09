@@ -8,7 +8,8 @@ import { getPool } from '../connection.js';
  * Read-only and charges nothing. It counts facts agency already records:
  *
  *  - `dials` — `agency_call_attempts` with `dialed_at` in the window, plus
- *    soft-phone dials (`agency_manual_calls`) the same way;
+ *    soft-phone dials (`agency_manual_calls`) the same way (placed calls only:
+ *    inbound calls have their own columns, below);
  *  - `answered_calls` — those with `answered_at IS NOT NULL`;
  *  - `connected_calls` — those with `bridged_at IS NOT NULL`;
  *  - `talk_seconds` — Σ `talk_seconds` over those dials;
@@ -26,17 +27,31 @@ import { getPool } from '../connection.js';
  * soft phone's volume is a small fraction of pacing's, and a usage report is not on
  * a hot path; add one when a plan on real volume says so.
  *
- * ── Inbound calls are the third arm (docs/inbound.md §9) ────────────────────
- * A customer's call to an inbound route (`agency_inbound_calls`, 0024) is an agency call too:
- * it is UNION ALLed in with the same four columns, its `arrived_at` standing for `dialed_at`
- * (the instant the call began, under the same window rule). So `dials` counts every agency call
- * that began in the window, placed or received; `answered_calls` the ones answered (an inbound
- * call by our answer, `answered_at`; never one refused with a hangup); `connected_calls` the ones
- * an agent was bridged to. The spine is disjoint from the other two by construction (an inbound
- * call writes no attempt and no manual call). A call that reached no account (the tenant
- * default, §8.3: `account_id` NULL) has no row to land in and is left out; it never has a media
- * leg, so it carries no talk time or analysis to lose. No `arrived_at` index, for the soft
- * phone's reason.
+ * ── Inbound calls are counted apart (docs/inbound.md §9) ─────────────────────
+ * A customer's call to an inbound route (`agency_inbound_calls`, 0024) is an agency call too,
+ * but it is not a dial and the carrier bills it differently: its own columns, never folded into
+ * the five above (which count placed calls only, campaign and soft phone):
+ *  - `inbound_calls`: every call that arrived in the window (`arrived_at`, the same half-open
+ *    rule), refused ones included (a refused call is answered with a hangup and never billed:
+ *    `inbound_answered_calls` leaves it out);
+ *  - `inbound_answered_calls`: answered by our answer XML (`answered_at`): a message played or
+ *    spoken, a queue, a voicemail, each one billed by the carrier;
+ *  - `inbound_connected_calls`: an agent was bridged (`bridged_at`);
+ *  - `inbound_seconds`: carrier time, the sum of (`ended_at` - `answered_at`) over the answered
+ *    calls that have ended: what the carrier bills an inbound call for, messages and holding
+ *    included;
+ *  - `inbound_hold_seconds`: queue time, the sum of (`bridged_at`, else `ended_at`, -
+ *    `queued_at`) over the ended calls that queued: the part of the carrier time a caller spent
+ *    waiting on our hold audio (billed as call and stream minutes like the rest);
+ *  - `inbound_talk_seconds`: the sum of `talk_seconds` (from the bridge);
+ *  - `inbound_analysis_audio_seconds`: the analysis seconds of the jobs on those calls' legs.
+ * The two durations are exact sums of timestamp differences, rounded once to whole seconds per
+ * row (no per-call rounding rule: that is a pricing decision, as for the dials). A call not yet
+ * ended counts as a call and adds no seconds until it ends. A call that reached no account (the
+ * tenant default, §8.3: `account_id` NULL, the closed message spoken by the carrier) has no row
+ * to land in and is left out; it never has a media leg, so it carries no talk or analysis time.
+ * The spine is disjoint from the other two by construction (an inbound call writes no attempt and
+ * no manual call). No `arrived_at` index, for the soft phone's reason.
  *
  * ── One window rule for every column ───────────────────────────────────────
  * Half-open `[from, to)` on the ATTEMPT's `dialed_at`. Analysis seconds are
@@ -82,6 +97,13 @@ export interface UsageCountsRow {
   connected_calls: number;
   talk_seconds: number;
   analysis_audio_seconds: number;
+  inbound_calls: number;
+  inbound_answered_calls: number;
+  inbound_connected_calls: number;
+  inbound_seconds: number;
+  inbound_hold_seconds: number;
+  inbound_talk_seconds: number;
+  inbound_analysis_audio_seconds: number;
 }
 
 interface RawUsageCountsRow {
@@ -94,6 +116,13 @@ interface RawUsageCountsRow {
   connected_calls: string;
   talk_seconds: string;
   analysis_audio_seconds: string;
+  inbound_calls: string;
+  inbound_answered_calls: string;
+  inbound_connected_calls: string;
+  inbound_seconds: string;
+  inbound_hold_seconds: string;
+  inbound_talk_seconds: string;
+  inbound_analysis_audio_seconds: string;
 }
 
 /**
@@ -110,7 +139,7 @@ function exactCount(raw: string): number {
 }
 
 export class UsageCountsRepository {
-  /** One row per (tenant, account) with any dial in the window. */
+  /** One row per (tenant, account) with any dial or inbound call in the window. */
   async countByAccount(filter: UsageCountsFilter): Promise<UsageCountsRow[]> {
     const pool = getPool();
     const result = await pool.query<RawUsageCountsRow>(
@@ -129,16 +158,7 @@ export class UsageCountsRepository {
             AND m.dialed_at <  $2::timestamptz
             AND ($3::uuid IS NULL OR m.tenant_id  = $3::uuid)
             AND ($4::uuid IS NULL OR m.account_id = $4::uuid)
-         UNION ALL
-         -- Inbound calls, under the same window rule (arrival) and filters; only with an account.
-         SELECT i.tenant_id, i.account_id, i.answered_at, i.bridged_at, i.talk_seconds, i.webrtc_call_id
-           FROM agency_inbound_calls i
-          WHERE i.arrived_at >= $1::timestamptz
-            AND i.arrived_at <  $2::timestamptz
-            AND i.account_id IS NOT NULL
-            AND ($3::uuid IS NULL OR i.tenant_id  = $3::uuid)
-            AND ($4::uuid IS NULL OR i.account_id = $4::uuid)
-       ), per_account AS (
+       ), dials_per_account AS (
          SELECT d.tenant_id,
                 d.account_id,
                 COUNT(*)                                          AS dials,
@@ -149,6 +169,44 @@ export class UsageCountsRepository {
            FROM dials d
            LEFT JOIN dialer_analysis_jobs j ON j.call_id = d.webrtc_call_id
           GROUP BY d.tenant_id, d.account_id
+       ), inbound_per_account AS (
+         -- Inbound calls, apart: windowed on arrival under the same filters; only with an account.
+         SELECT i.tenant_id,
+                i.account_id,
+                COUNT(*)                                          AS inbound_calls,
+                COUNT(*) FILTER (WHERE i.answered_at IS NOT NULL) AS inbound_answered_calls,
+                COUNT(*) FILTER (WHERE i.bridged_at  IS NOT NULL) AS inbound_connected_calls,
+                ROUND(COALESCE(SUM(EXTRACT(EPOCH FROM (i.ended_at - i.answered_at)))
+                  FILTER (WHERE i.answered_at IS NOT NULL AND i.ended_at IS NOT NULL), 0))::bigint AS inbound_seconds,
+                ROUND(COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(i.bridged_at, i.ended_at) - i.queued_at)))
+                  FILTER (WHERE i.queued_at IS NOT NULL AND i.ended_at IS NOT NULL), 0))::bigint AS inbound_hold_seconds,
+                COALESCE(SUM(i.talk_seconds), 0)                  AS inbound_talk_seconds,
+                COALESCE(SUM(j.analysis_audio_seconds), 0)        AS inbound_analysis_audio_seconds
+           FROM agency_inbound_calls i
+           LEFT JOIN dialer_analysis_jobs j ON j.call_id = i.webrtc_call_id
+          WHERE i.arrived_at >= $1::timestamptz
+            AND i.arrived_at <  $2::timestamptz
+            AND i.account_id IS NOT NULL
+            AND ($3::uuid IS NULL OR i.tenant_id  = $3::uuid)
+            AND ($4::uuid IS NULL OR i.account_id = $4::uuid)
+          GROUP BY i.tenant_id, i.account_id
+       ), per_account AS (
+         SELECT COALESCE(d.tenant_id, n.tenant_id)            AS tenant_id,
+                COALESCE(d.account_id, n.account_id)          AS account_id,
+                COALESCE(d.dials, 0)                          AS dials,
+                COALESCE(d.answered_calls, 0)                 AS answered_calls,
+                COALESCE(d.connected_calls, 0)                AS connected_calls,
+                COALESCE(d.talk_seconds, 0)                   AS talk_seconds,
+                COALESCE(d.analysis_audio_seconds, 0)         AS analysis_audio_seconds,
+                COALESCE(n.inbound_calls, 0)                  AS inbound_calls,
+                COALESCE(n.inbound_answered_calls, 0)         AS inbound_answered_calls,
+                COALESCE(n.inbound_connected_calls, 0)        AS inbound_connected_calls,
+                COALESCE(n.inbound_seconds, 0)                AS inbound_seconds,
+                COALESCE(n.inbound_hold_seconds, 0)           AS inbound_hold_seconds,
+                COALESCE(n.inbound_talk_seconds, 0)           AS inbound_talk_seconds,
+                COALESCE(n.inbound_analysis_audio_seconds, 0) AS inbound_analysis_audio_seconds
+           FROM dials_per_account d
+           FULL JOIN inbound_per_account n ON n.tenant_id = d.tenant_id AND n.account_id = d.account_id
        )
        SELECT p.tenant_id,
               COALESCE(t.name, p.tenant_id::text)   AS tenant_name,
@@ -158,7 +216,14 @@ export class UsageCountsRepository {
               p.answered_calls::text,
               p.connected_calls::text,
               p.talk_seconds::text,
-              p.analysis_audio_seconds::text
+              p.analysis_audio_seconds::text,
+              p.inbound_calls::text,
+              p.inbound_answered_calls::text,
+              p.inbound_connected_calls::text,
+              p.inbound_seconds::text,
+              p.inbound_hold_seconds::text,
+              p.inbound_talk_seconds::text,
+              p.inbound_analysis_audio_seconds::text
          FROM per_account p
          LEFT JOIN tenants  t  ON t.id  = p.tenant_id
          LEFT JOIN accounts ac ON ac.id = p.account_id
@@ -175,6 +240,13 @@ export class UsageCountsRepository {
       connected_calls: exactCount(row.connected_calls),
       talk_seconds: exactCount(row.talk_seconds),
       analysis_audio_seconds: exactCount(row.analysis_audio_seconds),
+      inbound_calls: exactCount(row.inbound_calls),
+      inbound_answered_calls: exactCount(row.inbound_answered_calls),
+      inbound_connected_calls: exactCount(row.inbound_connected_calls),
+      inbound_seconds: exactCount(row.inbound_seconds),
+      inbound_hold_seconds: exactCount(row.inbound_hold_seconds),
+      inbound_talk_seconds: exactCount(row.inbound_talk_seconds),
+      inbound_analysis_audio_seconds: exactCount(row.inbound_analysis_audio_seconds),
     }));
   }
 }

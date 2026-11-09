@@ -65,6 +65,9 @@ const CALLER_E164 = `+${CALLER}`;
 const AGENT = '8b1d0c8e-3d0e-4c7a-8b44-1f6b0a0000a1';
 
 let rig: PlivoRig | null = null;
+/** The P1 router these tests answer with, and the bootstrap's, put back after each. */
+let p1: Awaited<ReturnType<typeof startInboundCalls>> | null = null;
+let bootRouter: ReturnType<typeof getInboundCallRouter> | null = null;
 let token = '';
 let phoneNumberId = '';
 let routeId = '';
@@ -206,9 +209,19 @@ beforeEach(async () => {
   await pool().query(`INSERT INTO users (id, firebase_uid, email) VALUES ($1, 'fb-inbound-agent', 'inbound-agent@example.test') ON CONFLICT (id) DO NOTHING`, [AGENT]);
   await pool().query(`INSERT INTO memberships (user_id, tenant_id, account_id, role) VALUES ($1, $2, $3, 'agent') ON CONFLICT DO NOTHING`, [AGENT, TENANT, ACCOUNT]);
   await linkInbound(rig);
+  // P1's answer: the router without the P2 gate (no `connect`), so nobody is put through and the
+  // account's `agency_inbound_enabled` is not read, as on a deployment whose agents cannot be
+  // connected. The bootstrap's router reads the flag, which is off here: it would answer every
+  // caller with the closed message (the kill switch, `inbound-kill-switch.test.ts`).
+  bootRouter = getInboundCallRouter();
+  p1 = await startInboundCalls({ bridge: rig.bridge, dnc: new DncRegistry() });
 });
 afterEach(async () => {
   await rig?.carrier.settled();
+  await p1?.stop();
+  p1 = null;
+  if (bootRouter) setInboundCallRouter(bootRouter);
+  bootRouter = null;
   await rig?.stop();
   rig = null;
 });
@@ -255,11 +268,12 @@ describe('an inbound call on a linked Plivo number, P1 (nobody is connected)', (
     await agencyContactRepository.chargeAttempt(contactId, 'no_answer');
     expect(await contactRow(contactId)).toMatchObject({ callback_source: null, callback_due_at: null });
 
-    // Usage: the call counts as a dial of the account.
+    // Usage: the call counts as an inbound call of the account, answered, with its carrier time; never as a dial.
     const usage = await usageCountsRepository.countByAccount({
       from: new Date(Date.now() - 3_600_000), to: new Date(Date.now() + 60_000), tenantId: TENANT, accountId: ACCOUNT,
     });
-    expect(usage.map((u) => [u.dials, u.answered_calls])).toEqual([[1, 1]]);
+    expect(usage.map((u) => [u.dials, u.answered_calls, u.inbound_calls, u.inbound_answered_calls, u.inbound_connected_calls])).toEqual([[0, 0, 1, 1, 0]]);
+    expect(usage[0]!.inbound_seconds).toBe(Math.round((row.ended_at!.getTime() - row.answered_at!.getTime()) / 1000));
   });
 
   it('closed: greeting + closed message; Missed row `closed`, callback due at the route`s next opening (not claimable before)', async () => {

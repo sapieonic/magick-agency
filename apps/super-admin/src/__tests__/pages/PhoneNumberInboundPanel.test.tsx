@@ -16,6 +16,7 @@ const BASE: PhoneNumberInboundResponse = {
   link: { linked: false, linked_at: null, previous_app_id: null, route: null },
   credential: { id: 'cred-1', label: 'Acme main', status: 'active', inbound_enabled: true },
   link_blocker: null,
+  unrouted_missed: { open: 0, latest_at: null, latest_from: null },
 };
 const LINKED: PhoneNumberInboundResponse = {
   ...BASE,
@@ -39,6 +40,8 @@ describe('PhoneNumberInboundPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Link to inbound/ }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/remembered, so Unlink can put it back/)).toBeTruthy();
+    // M7: until a route takes the number, its callers hear the closed message; the operator is told before linking.
+    expect(within(dialog).getByText(/Until an account admin adds it to an inbound route, callers hear the closed message/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Link' }));
     await waitFor(() => expect(mocks.linkPhoneNumberInbound).toHaveBeenCalledWith('pn-1'));
     expect(await screen.findByText('Linked')).toBeTruthy();
@@ -84,5 +87,28 @@ describe('PhoneNumberInboundPanel', () => {
     expect((await screen.findByTestId('number-inbound-error')).textContent).toMatch(/no longer has this number.*Sync the credential’s numbers/);
     expect(onChanged).not.toHaveBeenCalled();
     expect(screen.getByText('Not linked')).toBeTruthy();
+  });
+
+  it('a linked number no route answers says its callers hear the closed message', async () => {
+    mocks.getPhoneNumberInbound.mockResolvedValue({ ...LINKED, link: { ...LINKED.link, route: null } });
+    panel();
+    expect((await screen.findByTestId('number-inbound-no-route')).textContent).toMatch(/callers hear the closed message/);
+  });
+
+  it('shows the number`s Missed calls that reached no account: how many, and the latest', async () => {
+    mocks.getPhoneNumberInbound.mockResolvedValue({ ...LINKED, unrouted_missed: { open: 3, latest_at: '2026-11-08T10:00:00Z', latest_from: null } });
+    panel();
+    const line = await screen.findByTestId('number-inbound-unrouted');
+    expect(line.textContent).toMatch(/3 missed calls reached no account/);
+    expect(line.textContent).toMatch(/from a withheld number/);
+    cleanup();
+    mocks.getPhoneNumberInbound.mockResolvedValue({ ...LINKED, unrouted_missed: { open: 1, latest_at: '2026-11-08T10:00:00Z', latest_from: '+447700900123' } });
+    panel();
+    expect((await screen.findByTestId('number-inbound-unrouted')).textContent).toMatch(/1 missed call reached no account.*from \+447700900123/);
+    cleanup();
+    mocks.getPhoneNumberInbound.mockResolvedValue(LINKED);
+    panel();
+    expect(await screen.findByText('Linked')).toBeTruthy();
+    expect(screen.queryByTestId('number-inbound-unrouted')).toBeNull();
   });
 });

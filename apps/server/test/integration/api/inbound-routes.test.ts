@@ -435,11 +435,13 @@ describe('access', () => {
 
     await setFlag(floor.tenant, false, floor.account);
     try {
-      for (const [actor, method, url] of [[sup(), 'GET', '/routes'], [sup(), 'GET', '/missed'], [agent(0), 'GET', '/missed']] as const) {
+      for (const [actor, method, url] of [[sup(), 'GET', '/routes'], [sup(), 'GET', `/routes/${route.id}`], [sup(), 'GET', '/numbers']] as const) {
         const res = await call(method, url, actor);
         expect(res.statusCode).toBe(403);
         expect(res.json()).toMatchObject({ code: 'inbound_disabled' });
       }
+      // The kill switch (§8.1): the Missed list stays readable with inbound off, for agents and supervisors.
+      for (const actor of [sup(), agent(0)]) expect((await call('GET', '/missed', actor)).statusCode).toBe(200);
       // The flag is per account: account B's still answers.
       expect((await call('GET', '/routes', supB, undefined, { account: accountB })).statusCode).toBe(200);
     } finally {
@@ -595,12 +597,14 @@ describe('a Missed row`s voicemail (P2, §7): GET /proxy/agency/inbound/missed/:
     expect((await call('GET', `/missed/${ids['inB']}/voicemail`, supB, undefined, { account: accountB })).statusCode).toBe(200);
   });
 
-  it('the permission and the flag guard it like the list', async () => {
+  it('the flag does not guard it (the kill switch leaves the Missed list and its voicemails readable), nor Mark handled', async () => {
     await setFlag(floor.tenant, false, floor.account);
     try {
       const res = await call('GET', `/missed/${ids['mine']}/voicemail`, agent(0));
-      expect(res.statusCode).toBe(403);
-      expect(res.json()).toMatchObject({ code: 'inbound_disabled' });
+      expect(res.statusCode).toBe(200);
+      const handled = await call('POST', `/missed/${ids['mine']}/handled`, agent(0));
+      expect(handled.statusCode, handled.body).toBe(200);
+      expect(handled.json().call).toMatchObject({ id: ids['mine'], status: 'handled' });
     } finally {
       await q(`DELETE FROM feature_flag_overrides WHERE flag_key = 'agency_inbound_enabled' AND account_id = $1`, [floor.account]);
       await getFeatureFlagService().invalidate({ tenantId: floor.tenant });

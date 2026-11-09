@@ -165,6 +165,12 @@ export function CredentialInboundSection({ credential }: { credential: Telephony
               This server has no public callback address for the carrier (docs/operations.md), so inbound cannot be enabled or re-pointed.
             </div>
           )}
+          {inbound.enabled && state.connects_agents === false && (
+            <div className={styles.error} role="alert" data-testid="inbound-no-connect">
+              Calls can’t be put through to agents: media workers are on (MEDIA_WORKERS above 0) on this deployment.
+              Calls are still answered, but every caller hears the call-back message. Run with MEDIA_WORKERS=0 while inbound is on.
+            </div>
+          )}
           <dl className={styles.detailGrid}>
             <div className={styles.detailItem}>
               <dt>Status</dt>
@@ -193,11 +199,17 @@ export function CredentialInboundSection({ credential }: { credential: Telephony
                   {n.status !== 'active' && <span className={styles.muted}>{n.status}</span>}
                   {!n.assigned && <span className={styles.muted}>not assigned to the tenant</span>}
                   {n.link.route && <span className={styles.muted}><Route size={12} /> {n.link.route.name}</span>}
+                  {n.link.linked && !n.link.route && <span className={styles.muted}>no route: callers hear the closed message</span>}
                 </li>
               ))}
             </ul>
           )}
-          {inbound.enabled && <p className={styles.help}>Link or unlink each number on the Phone Numbers page.</p>}
+          {inbound.enabled && (
+            <p className={styles.help}>
+              Link or unlink each number on the Phone Numbers page. A linked number no route answers gives its callers the closed message.
+              The Application is checked every 15 minutes as well; Check health checks it now.
+            </p>
+          )}
 
           {!revoked && (
             <div className={styles.detailActions}>

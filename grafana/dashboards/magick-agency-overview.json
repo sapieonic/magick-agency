@@ -1683,6 +1683,414 @@
         "x": 0,
         "y": 90
       },
+      "id": 129,
+      "title": "Inbound calls",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Inbound calls ended per minute, by outcome: answered (an agent took it), overflow (nobody free before the route's maximum wait), overflow_no_capacity (over the route's max_concurrent, or no stream capacity), abandoned_in_queue (the caller hung up waiting), closed (out of hours, no route, a credential not active, or inbound switched off for the account), voicemail, rejected (a number not linked) and failed (answered, never got its media). `agy-inbound-calls-failed` warns on failed; `agy-inbound-unanswered-share` on the open-hours share that reached nobody.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 91
+      },
+      "id": 130,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Inbound \u2014 Calls Ended by Outcome",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(agency_inbound_calls_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "What the answer webhook answered the carrier, per minute: stream (our stream: the queue or a recorded message), spoken (a message the carrier speaks), hangup (refused before deciding: a number not linked), refused (a signature, token or nonce that did not verify), fallback (the answer failed) and timed_out (past its 4s budget); and the p95 answer time (right axis). Fallback and timed_out are callers told to try again (`agy-inbound-answer-fallback`); refused bursts are `agy-inbound-answer-refused`; a p95 above 2s is `agy-inbound-answer-slow`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95 answer"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 91
+      },
+      "id": 131,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Inbound \u2014 Answer Webhook by Result, and p95",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(agency_inbound_answer_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(agency_inbound_answer_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p95 answer",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Callers waiting for an agent now, summed over routes (on offer excluded), and offers of a caller to an agent per minute by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free). Waiting with no offers for 15 minutes is `agy-inbound-callers-unserved`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 99
+      },
+      "id": 132,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Inbound \u2014 Callers Waiting and Offers by Result",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(agency_inbound_queue_waiting{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "waiting",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (rate(agency_inbound_offers_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "offers {{result}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Seconds a caller waited in the queue (from first queueing), by how the wait ended: connected, abandoned, overflow or failed. A connected p95 near the route's maximum wait (120s by default) means callers only just reach someone; overflow sits at the maximum wait by definition.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 99
+      },
+      "id": 133,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Inbound \u2014 Wait Time (p50 / p95) by How It Ended",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, result) (rate(agency_inbound_wait_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50 {{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, result) (rate(agency_inbound_wait_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p95 {{result}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Of the calls that came in while their route was open (answered, overflow, overflow_no_capacity, abandoned_in_queue, voicemail), the share over the last hour that reached nobody (overflow, overflow_no_capacity, abandoned_in_queue). `agy-inbound-unanswered-share` warns above 0.5 with at least 10 such calls in the hour.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 107
+      },
+      "id": 134,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Inbound \u2014 Open-Hours Calls That Reached Nobody (1h share)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(agency_inbound_calls_total{outcome=~\"overflow|overflow_no_capacity|abandoned_in_queue\", deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[1h])) / sum(rate(agency_inbound_calls_total{outcome=~\"answered|overflow|overflow_no_capacity|abandoned_in_queue|voicemail\", deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[1h]))",
+          "interval": "1m",
+          "legendFormat": "reached nobody",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Whether this deployment puts inbound callers through to agents (1; 0 with MEDIA_WORKERS above 0, set at boot: `agy-inbound-connect-unavailable` while any credential has inbound enabled), and the credentials with inbound enabled by the last scheduled check of their Plivo Application (every 15 minutes): ok, url_mismatch or app_missing (its callers are refused: `agy-inbound-application-broken`), unreachable or failed (not checkable: `agy-inbound-application-unchecked`).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 107
+      },
+      "id": 135,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Inbound \u2014 Connect Available and Application Health",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max(agency_inbound_connect_available{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "connect available",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (health) (agency_inbound_applications{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "applications {{health}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 115
+      },
       "id": 2,
       "title": "Voice, capacity and storage",
       "type": "row",
@@ -1718,7 +2126,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 91
+        "y": 116
       },
       "id": 10,
       "options": {
@@ -1807,7 +2215,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 91
+        "y": 116
       },
       "id": 73,
       "options": {
@@ -1896,7 +2304,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 91
+        "y": 116
       },
       "id": 67,
       "options": {
@@ -1955,7 +2363,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 99
+        "y": 124
       },
       "id": 102,
       "options": {
@@ -2043,7 +2451,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 99
+        "y": 124
       },
       "id": 76,
       "options": {
@@ -2140,7 +2548,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 107
+        "y": 132
       },
       "id": 122,
       "options": {
@@ -2227,7 +2635,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 107
+        "y": 132
       },
       "id": 123,
       "options": {
@@ -2261,7 +2669,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 115
+        "y": 140
       },
       "id": 3,
       "title": "Identity and mail",
@@ -2298,7 +2706,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 116
+        "y": 141
       },
       "id": 103,
       "options": {
@@ -2356,7 +2764,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 116
+        "y": 141
       },
       "id": 104,
       "options": {
@@ -2396,7 +2804,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 124
+        "y": 149
       },
       "id": 4,
       "title": "Analysis",
@@ -2464,7 +2872,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 125
+        "y": 150
       },
       "id": 68,
       "options": {
@@ -2528,7 +2936,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 125
+        "y": 150
       },
       "id": 69,
       "options": {
@@ -2604,7 +3012,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 133
+        "y": 158
       },
       "options": {
         "legend": {
@@ -2686,7 +3094,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 133
+        "y": 158
       },
       "options": {
         "legend": {
@@ -2733,7 +3141,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 141
+        "y": 166
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -2770,7 +3178,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 142
+        "y": 167
       },
       "id": 106,
       "options": {
@@ -2834,7 +3242,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 142
+        "y": 167
       },
       "id": 107,
       "options": {
@@ -2892,7 +3300,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 142
+        "y": 167
       },
       "id": 108,
       "options": {
@@ -2952,7 +3360,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 150
+        "y": 175
       },
       "id": 87,
       "options": {
@@ -3009,7 +3417,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 150
+        "y": 175
       },
       "id": 74,
       "options": {
@@ -3067,7 +3475,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 158
+        "y": 183
       },
       "id": 50,
       "options": {
@@ -3105,7 +3513,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 166
+        "y": 191
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -3142,7 +3550,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 167
+        "y": 192
       },
       "id": 112,
       "options": {
@@ -3200,7 +3608,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 167
+        "y": 192
       },
       "id": 113,
       "options": {
@@ -3258,7 +3666,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 175
+        "y": 200
       },
       "id": 114,
       "options": {
@@ -3316,7 +3724,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 175
+        "y": 200
       },
       "id": 115,
       "options": {

@@ -355,7 +355,21 @@ export default function SAPhoneNumbersPage() {
                       <Phone size={14} className={styles.phoneIcon} />
                       <span className={styles.mono}>{pn.phone_number}</span>
                       {pn.inbound_linked_at && (
-                        <span className={styles.inboundBadge} title="Linked to inbound calls">Inbound</span>
+                        pn.inbound_route_name === null
+                          ? (
+                            <span
+                              className={styles.inboundBadgeWarn}
+                              title="Linked to inbound calls, but no account route answers it: callers hear the closed message"
+                              data-testid="inbound-no-route"
+                            >
+                              Inbound · no route
+                            </span>
+                          )
+                          : (
+                            <span className={styles.inboundBadge} title={pn.inbound_route_name ? `Linked to inbound calls, answered by ${pn.inbound_route_name}` : 'Linked to inbound calls'}>
+                              Inbound
+                            </span>
+                          )
                       )}
                     </div>
                   </td>

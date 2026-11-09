@@ -11,6 +11,7 @@ import type {
   CampaignHoldingInactiveNumbers,
   ClearedInboundLink,
   PhoneNumberInboundLinkRecord,
+  UnroutedMissedSummary,
 } from '../models/phone-number.model.js';
 
 /**
@@ -56,8 +57,14 @@ export class PhoneNumberRepository {
 
     const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
+    // `inbound_route_name`: the account route answering a linked number now (its one live
+    // `agency_inbound_route_numbers` row, `uq_agency_inbound_route_numbers_active`), so the list
+    // can say which linked numbers no route answers yet (their callers hear the closed message).
     const result = await pool.query<PhoneNumberRecord>(
-      `SELECT pn.*, tp.name AS provider_name, tp.display_name AS provider_display_name
+      `SELECT pn.*, tp.name AS provider_name, tp.display_name AS provider_display_name,
+              (SELECT r.name FROM agency_inbound_route_numbers rn
+                 JOIN agency_inbound_routes r ON r.id = rn.route_id
+                WHERE rn.phone_number_id = pn.id AND rn.detached_at IS NULL) AS inbound_route_name
        FROM phone_numbers pn
        JOIN telephony_providers tp ON tp.id = pn.provider_id
        ${whereClause}
@@ -434,6 +441,27 @@ export class PhoneNumberRepository {
       [credentialId],
     );
     return result.rows;
+  }
+
+  /**
+   * The tenant-default Missed rows of a number (docs/inbound.md §8.3, §8.4): calls to it that
+   * reached no account (no route answers it and the caller matched no contact), still `open`.
+   * No console screen lists them (the Missed list is an account's), so the super-admin's number
+   * page shows how many there are and the latest. `tenantId` is the number's credential's tenant.
+   * Served by `idx_agency_inbound_calls_missed` (`tenant_id, account_id IS NULL,
+   * follow_up_status`), the number filtered inside one tenant's unaccounted rows.
+   */
+  async findUnroutedMissed(tenantId: string, phoneNumberId: string): Promise<UnroutedMissedSummary> {
+    const result = await getPool().query<UnroutedMissedSummary>(
+      `SELECT count(*)::int AS open_count,
+              (array_agg(c.arrived_at ORDER BY c.arrived_at DESC, c.id DESC))[1] AS latest_arrived_at,
+              (array_agg(c.from_e164  ORDER BY c.arrived_at DESC, c.id DESC))[1] AS latest_from_e164
+         FROM agency_inbound_calls c
+        WHERE c.tenant_id = $1::uuid AND c.account_id IS NULL
+          AND c.follow_up_status = 'open' AND c.phone_number_id = $2::uuid`,
+      [tenantId, phoneNumberId],
+    );
+    return result.rows[0] ?? { open_count: 0, latest_arrived_at: null, latest_from_e164: null };
   }
 
   /**

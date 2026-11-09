@@ -5,7 +5,8 @@
  * to them; a caller whose role holds `agency.supervise` reads and marks the account's, assigned
  * or not. The internal handler applies that from the role-derived `supervise` (`shared.ts`).
  * Rows assigned to "the account" (no person) are therefore a supervisor's to work: the design
- * gives an agent "their own Missed rows" only. Part of `proxy-agency-inbound.routes.ts`.
+ * gives an agent "their own Missed rows" only. Part of `proxy-agency-inbound.routes.ts`. Never
+ * behind `agency_inbound_enabled`: switching inbound off leaves its follow-ups to be worked.
  *
  * Enrichment here: `assignee_name` and `handled_by_name` (`users`, one query; a failed lookup
  * leaves them NULL, never a failed read). Mark handled is audited (`agency_inbound_call.handled`,
@@ -27,7 +28,6 @@ import {
   actorQuery,
   inboundActorOrRefuse,
   inboundAuditTenancy,
-  requireInboundEnabled,
   unwrapInboundAnswer,
 } from './shared.js';
 
@@ -48,7 +48,10 @@ async function withNames(rows: AgencyInboundMissedCall[], tenantId: string): Pro
 }
 
 export async function registerInboundMissedRoutes(app: FastifyInstance): Promise<void> {
-  const read = [requirePermission('agency.inbound.read'), requireInboundEnabled];
+  // Not behind `agency_inbound_enabled` (the kill switch, docs/inbound.md §8.1): the Missed list,
+  // its voicemails and Mark handled stay readable and workable with inbound switched off, as the
+  // finish routes do; calling a customer back goes through the soft phone, which has its own gate.
+  const read = [requirePermission('agency.inbound.read')];
 
   /** GET /proxy/agency/inbound/missed — a page of Missed rows, newest first. */
   app.get('/inbound/missed', { preHandler: read }, async (request, reply) => {

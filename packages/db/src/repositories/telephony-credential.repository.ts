@@ -415,6 +415,22 @@ export class TelephonyCredentialRepository {
   }
 
   /**
+   * Every credential with inbound enabled that is not revoked (a revoked one cannot be: the
+   * revoke is refused while inbound is enabled), oldest Application first: what the scheduled
+   * Application health check walks (`telephony/credentials/inbound-monitor.ts`). A sequential
+   * scan of a table with one row per tenant carrier account.
+   */
+  async listInboundEnabled(): Promise<Array<{ credential_id: string; tenant_id: string; status: TelephonyCredentialStatus }>> {
+    const result = await getPool().query<{ credential_id: string; tenant_id: string; status: TelephonyCredentialStatus }>(
+      `SELECT c.id AS credential_id, c.tenant_id, c.status
+         FROM telephony_credentials c
+        WHERE c.inbound_app_id IS NOT NULL AND c.status <> 'revoked'
+        ORDER BY c.inbound_enabled_at, c.id`,
+    );
+    return result.rows;
+  }
+
+  /**
    * The credential's inbound state, its row locked `FOR UPDATE` on `client` (which must be in a
    * transaction): an inbound change that calls the carrier holds it until its own write commits,
    * so an enable, a Re-point, a disable and a revoke of one credential run one after another,

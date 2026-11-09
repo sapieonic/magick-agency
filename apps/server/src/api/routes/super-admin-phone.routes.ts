@@ -59,7 +59,7 @@ export async function superAdminPhoneRoutes(
 ): Promise<void> {
   const inbound = opts.inbound ?? getTelephonyInboundService;
   /** The §8.2 cascade for one number after a write to it; never throws. */
-  const cascade = (request: FastifyRequest, phoneNumberId: string, cause: Exclude<InboundReleaseCause, 'unlinked' | 'credential_disabled' | 'retired_by_sync'>) =>
+  const cascade = (request: FastifyRequest, phoneNumberId: string, cause: Exclude<InboundReleaseCause, 'unlinked' | 'retired_by_sync'>) =>
     inbound().reconcileNumber(phoneNumberId, cause, { adminId: request.superAdmin!.id, adminEmail: request.superAdmin!.email });
   app.addHook('preHandler', superAdminMiddleware);
 

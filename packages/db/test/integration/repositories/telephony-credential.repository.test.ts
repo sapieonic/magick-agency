@@ -437,6 +437,22 @@ describe('telephony credentials (integration)', () => {
       expect(await repo.findInbound(randomUUID())).toBeNull();
     });
 
+    it('listInboundEnabled: every credential with inbound enabled and not revoked, a disabled one included, oldest first', async () => {
+      expect(await repo.listInboundEnabled()).toEqual([]);
+      const first = await create();
+      const second = await create({ tenant: tenantB });
+      const off = await create();
+      await repo.enableInbound(first.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      await repo.enableInbound(second.id, { appId: 'app-2', tokenHash: H2, ...urls('b') }, admin);
+      // A disabled credential still answers its linked numbers (closed message): its Application is still checked.
+      await repo.setStatus(second.id, 'disabled', ['active'], { updatedBy: admin });
+      expect(await repo.listInboundEnabled()).toEqual([
+        { credential_id: first.id, tenant_id: tenantA, status: 'active' },
+        { credential_id: second.id, tenant_id: tenantB, status: 'disabled' },
+      ]);
+      expect((await repo.listInboundEnabled()).map((r) => r.credential_id)).not.toContain(off.id);
+    });
+
     it('the token matches by its hash only while inbound is enabled', async () => {
       const c = await create();
       expect(await repo.inboundTokenMatches(c.id, H1)).toBe(false);

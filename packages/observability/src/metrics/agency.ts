@@ -939,3 +939,33 @@ export function trackInboundWait(result: InboundWaitResult, seconds: number): vo
 export function trackInboundOffer(result: InboundOfferResult): void {
   agencyInboundOffersTotal.inc({ result });
 }
+
+// ─── Inbound operations (docs/inbound.md §3.2, §8.1; `telephony/credentials/inbound-monitor.ts`) ─
+
+/**
+ * What the scheduled health check found for one inbound-enabled credential's carrier Application:
+ * the health check's own answers (`ok`, `url_mismatch`, `app_missing`, `unreachable`), or
+ * `failed` when it could not run (the carrier refused the credential, its secret cannot be opened).
+ */
+export type InboundApplicationHealth = 'ok' | 'url_mismatch' | 'app_missing' | 'unreachable' | 'failed';
+
+/** Every {@link InboundApplicationHealth}, so each pass sets every series (zeros included). */
+export const INBOUND_APPLICATION_HEALTHS: readonly InboundApplicationHealth[] = ['ok', 'url_mismatch', 'app_missing', 'unreachable', 'failed'];
+
+export const agencyInboundConnectAvailable = gauge(meter, 'agency_inbound_connect_available', {
+  description: '1 when this deployment puts inbound callers through to agents (MEDIA_WORKERS=0), 0 when it cannot (media workers on: every open route answers with the call-back message, IB8); set at boot',
+});
+
+export const agencyInboundApplications = gauge<'health'>(meter, 'agency_inbound_applications', {
+  description: 'Credentials with inbound enabled, by the last scheduled health check of their carrier Application: ok, url_mismatch, app_missing, unreachable or failed (the check could not run)',
+});
+
+/** Whether inbound callers can be put through to agents on this deployment (set once, at boot). */
+export function trackInboundConnectAvailable(available: boolean): void {
+  agencyInboundConnectAvailable.set(available ? 1 : 0);
+}
+
+/** One scheduled health pass: how many inbound-enabled credentials ended in each result. */
+export function trackInboundApplicationHealth(counts: Readonly<Record<InboundApplicationHealth, number>>): void {
+  for (const health of INBOUND_APPLICATION_HEALTHS) agencyInboundApplications.set({ health }, counts[health]);
+}

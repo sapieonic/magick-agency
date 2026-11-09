@@ -275,6 +275,23 @@
   margin: 0 0 6px;
 }
 
+/* A linked number no route answers, and Missed rows no account sees. */
+.inboundWarning {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.inboundBadgeWarn {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .inboundError {
   color: var(--danger);
   font-size: 12px;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Building2, CornerDownRight, PhoneCall, PhoneIncoming, PhoneForwarded, Timer, AudioLines } from 'lucide-react';
+import { Building2, CornerDownRight, PhoneCall, PhoneIncoming, PhoneForwarded, Timer, AudioLines, Hourglass } from 'lucide-react';
 import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import {
   useSuperAdminUsageCounts,
@@ -26,7 +26,9 @@ import styles from './SAUsagePage.module.css';
 
 /**
  * Usage counts. Read-only: dials, answered, connected calls, talk time and analysis
- * audio time per tenant and account over one window on the dial time. v1 has no
+ * audio time per tenant and account over one window on the dial time; and inbound calls
+ * apart (they are not dials, and the carrier bills a received call by its minutes, holding
+ * included), on their arrival time, with their carrier time and hold time. v1 has no
  * metering, so nothing here is billed and no rounding rule is applied: the
  * server sends exact seconds and this page only reformats them.
  */
@@ -84,6 +86,8 @@ export default function SAUsagePage() {
   const tenantId = searchParams.get('tenant') ?? '';
   const accountId = tenantId ? searchParams.get('account') ?? '' : '';
   const showAccounts = searchParams.get('accounts') === '1';
+  // Which calls the table shows: placed calls (the default) or inbound calls, counted apart.
+  const view: 'dials' | 'inbound' = searchParams.get('view') === 'inbound' ? 'inbound' : 'dials';
 
   const today = toYmd(new Date());
   const fromDay = searchParams.get('from') ?? '';
@@ -122,27 +126,40 @@ export default function SAUsagePage() {
 
   const rows = useMemo(() => (data ? flatten(data, showAccounts) : []), [data, showAccounts]);
 
+  const nameColumn: Column<UsageRow> = {
+    key: 'name',
+    label: 'Tenant / account',
+    render: (r) => r.kind === 'tenant' ? (
+      <div className={styles.nameCell}>
+        <Building2 size={16} className={styles.nameIcon} />
+        <span className={styles.nameTitle}>{r.name}</span>
+      </div>
+    ) : (
+      <div className={`${styles.nameCell} ${styles.accountRow}`}>
+        <CornerDownRight size={14} className={styles.nameIcon} />
+        <span>{r.name}</span>
+      </div>
+    ),
+  };
   const columns: Column<UsageRow>[] = [
-    {
-      key: 'name',
-      label: 'Tenant / account',
-      render: (r) => r.kind === 'tenant' ? (
-        <div className={styles.nameCell}>
-          <Building2 size={16} className={styles.nameIcon} />
-          <span className={styles.nameTitle}>{r.name}</span>
-        </div>
-      ) : (
-        <div className={`${styles.nameCell} ${styles.accountRow}`}>
-          <CornerDownRight size={14} className={styles.nameIcon} />
-          <span>{r.name}</span>
-        </div>
-      ),
-    },
+    nameColumn,
     { key: 'dials', label: 'Dials', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(r.counts.dials)}</span> },
     { key: 'answered', label: 'Answered', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(r.counts.answered_calls)}</span> },
     { key: 'connected', label: 'Connected', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(r.counts.connected_calls)}</span> },
     { key: 'talk', label: 'Talk time', align: 'right', render: (r) => seconds(r.counts.talk_seconds) },
     { key: 'analysis', label: 'Analysis audio', align: 'right', render: (r) => seconds(r.counts.analysis_audio_seconds) },
+  ];
+  // Older servers send no inbound counts: read them as 0.
+  const n = (v: number | undefined) => v ?? 0;
+  const inboundColumns: Column<UsageRow>[] = [
+    nameColumn,
+    { key: 'in-calls', label: 'Calls', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_calls))}</span> },
+    { key: 'in-answered', label: 'Answered', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_answered_calls))}</span> },
+    { key: 'in-connected', label: 'Connected', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_connected_calls))}</span> },
+    { key: 'in-carrier', label: 'Carrier time', align: 'right', render: (r) => seconds(n(r.counts.inbound_seconds)) },
+    { key: 'in-hold', label: 'Hold time', align: 'right', render: (r) => seconds(n(r.counts.inbound_hold_seconds)) },
+    { key: 'in-talk', label: 'Talk time', align: 'right', render: (r) => seconds(n(r.counts.inbound_talk_seconds)) },
+    { key: 'in-analysis', label: 'Analysis audio', align: 'right', render: (r) => seconds(n(r.counts.inbound_analysis_audio_seconds)) },
   ];
 
   const totals = data?.totals;
@@ -151,7 +168,7 @@ export default function SAUsagePage() {
     <div>
       <PageHeader
         title="Usage"
-        subtitle="Dials, answered and connected calls, talk time and analysis audio per tenant and account."
+        subtitle="Dials, answered and connected calls, talk time and analysis audio per tenant and account; inbound calls apart."
       />
 
       <div className={styles.filterBar}>
@@ -246,9 +263,13 @@ export default function SAUsagePage() {
       </div>
 
       <p className={styles.hint}>
-        Counts only — nothing is charged and no rounding is applied; talk and analysis time are exact
-        seconds shown as h:mm:ss. Every figure is counted on the dial time of the attempt, so a window
-        covers the same set of dials in every column. The end date is inclusive; the window is capped
+        Counts only — nothing is charged and no rounding is applied; times are exact seconds shown as
+        h:mm:ss. Every dial figure is counted on the dial time of the attempt, so a window covers the
+        same set of dials in every column. Inbound calls are not dials: they are counted apart, on the
+        time each call arrived. Their carrier time runs from our answer to the end of the call (what the
+        carrier bills, messages and holding included), and hold time is the part a caller spent waiting
+        for an agent. Calls to a number no account route answers, from callers who match no contact,
+        belong to no account and are not counted here. The end date is inclusive; the window is capped
         at {USAGE_COUNTS_MAX_WINDOW_DAYS} days.
       </p>
 
@@ -264,17 +285,41 @@ export default function SAUsagePage() {
           <StatCard title="Analysis audio" value={formatSeconds(totals.analysis_audio_seconds)} subtitle={`${formatNumber(totals.analysis_audio_seconds)} s`} icon={<AudioLines size={18} />} />
         </div>
       )}
+      {totals && (
+        <div className={styles.statsGrid} data-testid="usage-inbound-totals">
+          <StatCard title="Inbound calls" value={formatNumber(n(totals.inbound_calls))} subtitle={`${formatNumber(n(totals.inbound_answered_calls))} answered`} icon={<PhoneIncoming size={18} />} />
+          <StatCard title="Inbound connected" value={formatNumber(n(totals.inbound_connected_calls))} icon={<PhoneForwarded size={18} />} color="var(--success)" />
+          <StatCard title="Inbound carrier time" value={formatSeconds(n(totals.inbound_seconds))} subtitle={`${formatNumber(n(totals.inbound_seconds))} s`} icon={<Timer size={18} />} color="var(--accent)" />
+          <StatCard title="Inbound hold time" value={formatSeconds(n(totals.inbound_hold_seconds))} subtitle={`${formatNumber(n(totals.inbound_hold_seconds))} s`} icon={<Hourglass size={18} />} />
+        </div>
+      )}
 
       {!loading && !error && !windowError && data && data.tenants.length === 0 ? (
-        <EmptyState title="No activity in this window" description="No dials were placed in the selected period for these filters." />
+        <EmptyState title="No activity in this window" description="No dials were placed and no inbound calls arrived in the selected period for these filters." />
       ) : (
         !windowError && !error && (
-          <DataTable<UsageRow>
-            columns={columns}
-            data={rows}
-            loading={loading}
-            keyExtractor={(r) => r.key}
-          />
+          <>
+            <div className={styles.segmented} role="group" aria-label="Calls shown in the table">
+              {(['dials', 'inbound'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  className={`${styles.pill} ${view === v ? styles.pillActive : ''}`}
+                  aria-pressed={view === v}
+                  onClick={() => replaceParams({ view: v === 'inbound' ? 'inbound' : undefined })}
+                >
+                  {v === 'inbound' ? 'Inbound calls' : 'Dials'}
+                </button>
+              ))}
+            </div>
+            <div className={styles.tableGap} />
+            <DataTable<UsageRow>
+              columns={view === 'inbound' ? inboundColumns : columns}
+              data={rows}
+              loading={loading}
+              keyExtractor={(r) => r.key}
+            />
+          </>
         )
       )}
     </div>

@@ -25,10 +25,11 @@ import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.j
  *  - A 400's `details` carry field paths and messages only, never submitted values.
  *  - Every write is audited with ids, provider, label and version, never the secret.
  *  - Inbound on a credential and its numbers (docs/inbound.md §8): the routes in
- *    `./super-admin-telephony-credentials/inbound.ts`, on the inbound service. Two of the
- *    credential's own writes run the §8.2 cascade after they land: a disable unlinks every
- *    linked number (`credential_disabled`), a number sync unlinks the numbers it retired
- *    (`retired_by_sync`). A revoke is refused while inbound is enabled (`inbound_enabled`).
+ *    `./super-admin-telephony-credentials/inbound.ts`, on the inbound service. A number sync
+ *    runs the §8.2 cascade after it lands, unlinking the numbers it retired (`retired_by_sync`).
+ *    A disable keeps every link and route: the credential's calls are answered with the closed
+ *    message while it is disabled, and an enable answers them as before (docs/inbound.md §10). A
+ *    revoke is refused while inbound is enabled (`inbound_enabled`).
  */
 
 const log = createChildLogger({ component: 'super-admin-telephony-credentials' });
@@ -212,18 +213,11 @@ export async function superAdminTelephonyCredentialRoutes(
   app.post('/telephony-credentials/:id/verify', transition('verify_telephony_credential', (s, id, admin) => s.verify(id, admin)));
   /**
    * POST /super-admin/telephony-credentials/:id/disable — no new dials; live calls still hang up.
-   * Its linked numbers are unlinked (docs/inbound.md §8.2), each put back on its previous app
-   * at the carrier; the Application stays until inbound is disabled.
+   * Inbound is left as it is: the numbers stay linked and on their routes, and their callers hear
+   * the closed message (with a Missed row) until the credential is enabled again, which answers
+   * them as before (docs/inbound.md §8.2, §10). Unlink a number to send it back to its own app.
    */
-  app.post('/telephony-credentials/:id/disable', async (request, reply) => {
-    const p = idParams.safeParse(request.params);
-    if (!p.success) return reply.code(404).send({ error: 'not_found', message: 'Credential not found' });
-    const r = await service().disable(p.data.id, request.superAdmin!.id);
-    if (!r.ok) return sendFailure(reply, r);
-    audit(request, 'disable_telephony_credential', r.value);
-    await inbound().reconcileCredential(r.value.id, 'credential_disabled', actor(request));
-    return reply.send({ credential: r.value });
-  });
+  app.post('/telephony-credentials/:id/disable', transition('disable_telephony_credential', (s, id, admin) => s.disable(id, admin)));
   /** POST /super-admin/telephony-credentials/:id/enable */
   app.post('/telephony-credentials/:id/enable', transition('enable_telephony_credential', (s, id, admin) => s.enable(id, admin)));
 

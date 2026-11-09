@@ -201,10 +201,11 @@ describe('super-admin telephony credential routes', () => {
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: `${action}_telephony_credential` }));
   });
 
-  it('a disable runs the inbound cascade for the credential (docs/inbound.md §8.2); a refused one does not', async () => {
-    await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/disable` });
-    expect(inb.reconcileCredential).toHaveBeenCalledWith(ID, 'credential_disabled', { adminId: 'super-1', adminEmail: 'admin@example.com' });
-    inb.reconcileCredential!.mockClear();
+  it('a disable runs no inbound cascade: the credential keeps its links and routes (docs/inbound.md §8.2); nor does a refused one', async () => {
+    const res = await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/disable` });
+    expect(res.statusCode).toBe(200);
+    expect(svc.disable).toHaveBeenCalledWith(ID, 'super-1');
+    expect(inb.reconcileCredential).not.toHaveBeenCalled();
     svc.disable!.mockResolvedValueOnce({ ok: false, code: 'invalid_transition', message: 'm' });
     expect((await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/disable` })).statusCode).toBe(409);
     expect(inb.reconcileCredential).not.toHaveBeenCalled();

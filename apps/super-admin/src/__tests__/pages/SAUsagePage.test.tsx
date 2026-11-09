@@ -109,6 +109,33 @@ describe('SAUsagePage', () => {
     expect(screen.getByText(/dial time/i)).toBeTruthy();
   });
 
+  it('counts inbound calls apart: their own totals, and their own table behind the Inbound calls switch', async () => {
+    const inbound = {
+      inbound_calls: 12, inbound_answered_calls: 11, inbound_connected_calls: 7, inbound_seconds: 7322,
+      inbound_hold_seconds: 125, inbound_talk_seconds: 3000, inbound_analysis_audio_seconds: 0,
+    };
+    mocks.getUsageCounts.mockResolvedValue({
+      ...RESPONSE,
+      totals: { ...RESPONSE.totals, ...inbound },
+      tenants: [{ tenant_id: 't-1', tenant_name: 'Acme', counts: { ...counts(10), ...inbound }, accounts: [] }],
+    });
+    renderPage();
+    const totals = await screen.findByTestId('usage-inbound-totals');
+    expect(within(totals).getByText('Inbound calls')).toBeTruthy();
+    expect(within(totals).getByText('11 answered')).toBeTruthy();
+    expect(within(totals).getByText('2:02:02')).toBeTruthy(); // carrier time, 7322 s
+    expect(within(totals).getByText('0:02:05')).toBeTruthy(); // hold, 125 s
+    // The dials are what they are: the table shows them by default.
+    expect(screen.getByRole('columnheader', { name: 'Dials' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Carrier time' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Inbound calls' }));
+    expect(await screen.findByRole('columnheader', { name: 'Carrier time' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Hold time' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Dials' })).toBeNull();
+    expect(screen.getByTitle('7,322 s')).toBeTruthy();
+    expect(screen.getByText(/Inbound calls are not dials/)).toBeTruthy();
+  });
+
   it('shows an empty state when no tenant has activity', async () => {
     mocks.getUsageCounts.mockResolvedValue({ ...RESPONSE, totals: counts(0), tenants: [] });
     renderPage();

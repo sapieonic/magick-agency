@@ -268,6 +268,12 @@ export interface PhoneNumber {
   inbound_linked_at?: string | null;
   /** The carrier app the number pointed at before it was linked, restored by Unlink. */
   inbound_previous_app_id?: string | null;
+  /**
+   * The list only (`GET /super-admin/phone-numbers`): the account inbound route answering the
+   * number now; null when none does (a linked number with none answers callers with the closed
+   * message). Optional: older servers do not send it.
+   */
+  inbound_route_name?: string | null;
   created_at: string;
   updated_at: string;
   assignment_count?: number;

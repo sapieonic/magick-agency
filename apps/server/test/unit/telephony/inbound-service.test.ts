@@ -44,18 +44,22 @@ function numberRecord(over: Partial<PhoneNumberInboundLinkRecord> = {}): PhoneNu
   };
 }
 
-let settings: { webhookBaseUrl: string; inboundFallbackAnswerUrl: string };
+let settings: { webhookBaseUrl: string; inboundFallbackAnswerUrl: string; mediaWorkers: number };
 let stored: TelephonyCredentialInboundRecord;
 let numbers: PhoneNumberInboundLinkRecord[];
 let tokens: Set<string>;
 let carrier: { [K in keyof InboundCarrierApi]: ReturnType<typeof vi.fn> };
 let audit: ReturnType<typeof vi.fn<(entry: { action: string; resource_id?: string; details?: Record<string, unknown> }) => void>>;
 let svc: TelephonyInboundService;
+let unrouted: { open_count: number; latest_arrived_at: Date | null; latest_from_e164: string | null };
+let unroutedAsked: Array<[string, string]>;
 
 beforeEach(() => {
-  settings = { webhookBaseUrl: BASE, inboundFallbackAnswerUrl: '' };
+  settings = { webhookBaseUrl: BASE, inboundFallbackAnswerUrl: '', mediaWorkers: 0 };
+  unrouted = { open_count: 0, latest_arrived_at: null, latest_from_e164: null };
   stored = inboundRecord();
   numbers = [];
+  unroutedAsked = [];
   tokens = new Set();
   audit = vi.fn();
   carrier = {
@@ -84,6 +88,7 @@ beforeEach(() => {
     } as never,
     numbers: {
       findInboundLink: vi.fn(async (id: string) => numbers.find((n) => n.phone_number_id === id) ?? null),
+      findUnroutedMissed: vi.fn(async (tenantId: string, id: string) => { unroutedAsked.push([tenantId, id]); return unrouted; }),
       listInboundForCredential: vi.fn(async () => numbers),
       linkInbound: vi.fn(async (input: { phoneNumberId: string; previousAppId: string | null }) => {
         const n = numbers.find((x) => x.phone_number_id === input.phoneNumberId)!;
@@ -233,7 +238,7 @@ describe('TelephonyInboundService', () => {
     ]);
   });
 
-  it('the cascade for a credential: after a sync, the retired (as retired_by_sync) and the unassigned (as unassigned); on disable, every link', async () => {
+  it('the cascade for a credential: after a sync, the retired (as retired_by_sync) and the unassigned (as unassigned); the kept stay', async () => {
     const fresh = () => [
       numberRecord({ phone_number_id: 'kept', inbound_linked_at: new Date() }),
       numberRecord({ phone_number_id: 'gone', inbound_linked_at: new Date(), status: 'retired' }),
@@ -242,10 +247,7 @@ describe('TelephonyInboundService', () => {
     numbers = fresh();
     expect(await svc.reconcileCredential(CRED, 'retired_by_sync', ACTOR)).toBe(2);
     expect(audit.mock.calls.map(([e]) => [e.resource_id, e.details!.cause])).toEqual([['gone', 'retired_by_sync'], ['unassigned', 'unassigned']]);
-    audit.mockClear();
-    numbers = fresh();
-    expect(await svc.reconcileCredential(CRED, 'credential_disabled', ACTOR)).toBe(3);
-    expect(audit.mock.calls.map(([e]) => e.details!.cause)).toEqual(['credential_disabled', 'credential_disabled', 'credential_disabled']);
+    expect(numbers.find((n) => n.phone_number_id === 'kept')!.inbound_linked_at).not.toBeNull();
   });
 
   it('the cascade never throws: a failing read or write is logged and counted as not released', async () => {
@@ -255,7 +257,7 @@ describe('TelephonyInboundService', () => {
       numbers: { findInboundLink: vi.fn().mockRejectedValue(new Error('db down')), listInboundForCredential: vi.fn().mockRejectedValue(new Error('db down')) } as never,
     });
     await expect(failing.reconcileNumber('pn-1', 'unassigned', ACTOR)).resolves.toBe(false);
-    await expect(failing.reconcileCredential(CRED, 'credential_disabled', ACTOR)).resolves.toBe(0);
+    await expect(failing.reconcileCredential(CRED, 'retired_by_sync', ACTOR)).resolves.toBe(0);
   });
 
   it('the token given to the carrier is the one whose hash is stored, and never audited', async () => {
@@ -264,5 +266,26 @@ describe('TelephonyInboundService', () => {
     expect(tokens.has(hashInboundToken(token))).toBe(true);
     expect(JSON.stringify(audit.mock.calls)).not.toContain(token);
     expect(splitInboundToken(`${BASE}/inbound-answer/${CRED}?token=${token}`)).toEqual({ stored: `${BASE}/inbound-answer/${CRED}`, token });
+  });
+
+  it('the credential state says whether this deployment connects agents: not with media workers on (IB8)', async () => {
+    const on = await svc.state(CRED);
+    expect(on.ok && on.value.connects_agents).toBe(true);
+    settings.mediaWorkers = 2;
+    const off = await svc.state(CRED);
+    expect(off.ok && off.value.connects_agents).toBe(false);
+  });
+
+  it('a synced number carries its open tenant-default Missed rows (its credential`s tenant); one on the service`s account none', async () => {
+    numbers = [numberRecord({ inbound_linked_at: new Date(), phone_number_id: 'pn-1' })];
+    unrouted = { open_count: 2, latest_arrived_at: new Date('2026-11-08T10:00:00Z'), latest_from_e164: '+447700900123' };
+    const r = await svc.numberState('pn-1');
+    expect(r.ok && r.value.unrouted_missed).toEqual({ open: 2, latest_at: '2026-11-08T10:00:00.000Z', latest_from: '+447700900123' });
+    expect(unroutedAsked).toEqual([[TENANT, 'pn-1']]);
+
+    numbers = [numberRecord({ phone_number_id: 'own', telephony_credential_id: null, credential_tenant_id: null, credential_app_id: null, credential_label: null, credential_status: null, assigned: false })];
+    const own = await svc.numberState('own');
+    expect(own.ok && own.value.unrouted_missed).toBeNull();
+    expect(unroutedAsked).toHaveLength(1);
   });
 });

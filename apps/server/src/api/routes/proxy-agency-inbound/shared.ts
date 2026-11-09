@@ -44,9 +44,10 @@ export function actorQuery(actor: InboundRequestActor): Record<string, string> {
 /**
  * `agency_inbound_enabled` for the request's tenant and account, else 403 `inbound_disabled`.
  * A route preHandler AFTER its `requirePermission`, so a caller without the permission is told
- * that, and the RBAC refusal stays the one the agent-reach sweep reads. Every inbound route
- * takes it: the console surfaces are the flag's whole reach (linked numbers are answered
- * regardless, docs/inbound.md §8.1). A flag read that throws is a 500: fail closed.
+ * that, and the RBAC refusal stays the one the agent-reach sweep reads. The route editor and the
+ * queue tiles take it; the finish routes and the Missed list do not (work already taken stays
+ * workable with inbound switched off). With the flag off, linked numbers' callers hear the
+ * closed message (docs/inbound.md §8.1). A flag read that throws is a 500: fail closed.
  */
 export async function requireInboundEnabled(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const enabled = await getFeatureFlagService().isEnabled(FLAGS.agency_inbound_enabled, {

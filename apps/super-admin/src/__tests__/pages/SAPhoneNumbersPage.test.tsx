@@ -450,4 +450,18 @@ describe('SAPhoneNumbersPage — inbound calls (docs/inbound.md §8.1)', () => {
     await waitFor(() => expect(screen.queryByTestId('number-inbound')).toBeNull());
     expect(mocks.getPhoneNumberInbound).toHaveBeenCalledTimes(1);
   });
+
+  it('flags a linked number no account route answers (its callers hear the closed message); a routed one is a plain badge', async () => {
+    mocks.listPhoneNumbers.mockResolvedValue([
+      { ...synced, inbound_route_name: null },
+      { ...synced, id: 'pn-routed', phone_number: '+14155550102', inbound_route_name: 'Main line' },
+      first,
+    ]);
+    render(<SAPhoneNumbersPage />);
+    const unrouted = (await screen.findByText('+14155550101')).closest('tr')!;
+    expect(within(unrouted).getByTestId('inbound-no-route').textContent).toBe('Inbound · no route');
+    const routed = screen.getByText('+14155550102').closest('tr')!;
+    expect(within(routed).getByText('Inbound').getAttribute('title')).toBe('Linked to inbound calls, answered by Main line');
+    expect(within(routed).queryByTestId('inbound-no-route')).toBeNull();
+  });
 });

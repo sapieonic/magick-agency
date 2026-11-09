@@ -14,7 +14,9 @@ import styles from '../SAPhoneNumbersPage.module.css';
  * A synced number's inbound link (docs/inbound.md §8.1, IB6): Link puts it on its credential's
  * carrier Application (the app it was on is kept), Unlink puts it back. Only super-admins do this,
  * one number at a time, never on sync. An account's inbound route can answer a number only
- * while it is linked.
+ * while it is linked; until one does, its callers hear the closed message, and the Missed rows of
+ * callers who match no contact belong to no account, so no console screen shows them: this panel
+ * counts them (docs/inbound.md §8.3, §8.4).
  */
 
 const BLOCKER: Record<PhoneNumberInboundBlocker, string> = {
@@ -101,10 +103,23 @@ export function PhoneNumberInboundPanel({ phoneNumberId, provider, onChanged }: 
             <p className={styles.inboundLine}>
               {state.link.route
                 ? <span>Answered by the route <strong>{state.link.route.name}</strong>.</span>
-                : <span className={styles.noAssignments}>No account route answers it yet: an account admin adds it to one.</span>}
+                : <span className={styles.inboundWarning} data-testid="number-inbound-no-route">No account route answers it yet, so callers hear the closed message. An account admin adds it to a route under Settings, Inbound calls.</span>}
               <span className={styles.noAssignments}>
                 {state.link.previous_app_id ? `Unlink puts it back on ${carrier} app ${state.link.previous_app_id}.` : `Unlink leaves it on no ${carrier} app.`}
               </span>
+            </p>
+          )}
+          {state.unrouted_missed && state.unrouted_missed.open > 0 && (
+            <p className={styles.inboundLine} data-testid="number-inbound-unrouted">
+              <span className={styles.inboundWarning}>
+                {state.unrouted_missed.open === 1 ? '1 missed call' : `${state.unrouted_missed.open} missed calls`} reached no account
+                (no route answered and the caller matched no contact), so no one in the console sees {state.unrouted_missed.open === 1 ? 'it' : 'them'}.
+              </span>
+              {state.unrouted_missed.latest_at && (
+                <span className={styles.noAssignments}>
+                  Latest {new Date(state.unrouted_missed.latest_at).toLocaleString('en-IN')}, from {state.unrouted_missed.latest_from ?? 'a withheld number'}.
+                </span>
+              )}
             </p>
           )}
           {!state.link.linked && state.link_blocker && <p className={styles.noAssignments}>{BLOCKER[state.link_blocker]}</p>}
@@ -129,6 +144,7 @@ export function PhoneNumberInboundPanel({ phoneNumberId, provider, onChanged }: 
         message={confirm === 'unlink'
           ? `${state?.phone_number ?? 'The number'} goes back to the ${carrier} app it was on, and its account route stops answering it.`
           : `Calls to ${state?.phone_number ?? 'the number'} will be answered by this service, on ${state?.credential?.label ?? 'its credential'}’s inbound Application. `
+            + 'Until an account admin adds it to an inbound route, callers hear the closed message. '
             + 'The app it is on now is remembered, so Unlink can put it back.'}
         confirmLabel={confirm === 'unlink' ? 'Unlink' : 'Link'}
         danger={confirm === 'unlink'}

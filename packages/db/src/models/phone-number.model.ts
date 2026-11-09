@@ -32,6 +32,8 @@ export interface PhoneNumberRecord {
   // Joined fields (optional, from provider join)
   provider_name?: string;
   provider_display_name?: string;
+  /** `findAll` only: the account route answering the number now; NULL when none does. */
+  inbound_route_name?: string | null;
 }
 
 export interface CreatePhoneNumberInput {
@@ -132,6 +134,14 @@ export interface PhoneNumberInboundLinkRecord {
   route_id: string | null;
   route_name: string | null;
   route_account_id: string | null;
+}
+
+/** A number's tenant-default Missed rows still open (`findUnroutedMissed`). */
+export interface UnroutedMissedSummary {
+  open_count: number;
+  latest_arrived_at: Date | null;
+  /** NULL: the latest caller withheld their number (or there is none). */
+  latest_from_e164: string | null;
 }
 
 /** What `clearInboundLink` cleared: the link as it was. */

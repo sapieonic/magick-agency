@@ -201,4 +201,55 @@ describe('phoneNumberRepository inbound links (integration)', () => {
     await phoneNumberRepository.clearInboundLink(n.id);
     expect((await telephonyCredentialRepository.disableInbound(cred, admin)).ok).toBe(true);
   });
+  it('findAll names the live route answering each number (inbound_route_name), and none for an unrouted one', async () => {
+    const cred = await credential();
+    const routed = await number(cred);
+    const unrouted = await number(cred);
+    for (const n of [routed, unrouted]) {
+      await inTx((c) => phoneNumberRepository.linkInbound({ phoneNumberId: n.id, credentialId: cred, appId: 'app-1', previousAppId: null }, c));
+    }
+    const route = (await getTestPool().query<{ id: string }>(
+      `INSERT INTO agency_inbound_routes (tenant_id, account_id, name, timezone) VALUES ($1, $2, 'Main line', 'UTC') RETURNING id`,
+      [tenant, randomUUID()],
+    )).rows[0]!.id;
+    await getTestPool().query(`INSERT INTO agency_inbound_route_numbers (route_id, phone_number_id) VALUES ($1, $2)`, [route, routed.id]);
+    const byId = new Map((await phoneNumberRepository.findAll()).map((r) => [r.id, r]));
+    expect(byId.get(routed.id)).toMatchObject({ inbound_route_name: 'Main line' });
+    expect(byId.get(unrouted.id)).toMatchObject({ inbound_route_name: null });
+    // Detached: no longer answered by it.
+    await getTestPool().query(`UPDATE agency_inbound_route_numbers SET detached_at = now(), detached_reason = 'detached' WHERE route_id = $1`, [route]);
+    expect((await phoneNumberRepository.findAll()).find((r) => r.id === routed.id)).toMatchObject({ inbound_route_name: null });
+  });
+
+  it('findUnroutedMissed counts a number`s open tenant-default Missed rows and names the latest; nothing else counts', async () => {
+    const cred = await credential();
+    const n = await number(cred);
+    const other = await number(cred);
+    const account = randomUUID();
+    let seq = 0;
+    const missed = async (o: { number?: string; tenantId?: string; accountId?: string | null; from?: string | null; at: string; status?: 'open' | 'handled' }) => {
+      const id = randomUUID();
+      const handled = o.status === 'handled';
+      await getTestPool().query(
+        `INSERT INTO agency_inbound_calls
+           (id, tenant_id, account_id, phone_number_id, provider_call_id, to_e164, from_e164, state, outcome,
+            arrived_at, answered_at, ended_at, settled_at, follow_up_status, follow_up_reason, handled_at)
+         VALUES ($1, $2, $3, $4, $5, '+14155550100', $6, 'ended', 'closed', $7, $7, $7, $7, $8, 'closed', $9)`,
+        [id, o.tenantId ?? tenant, o.accountId ?? null, o.number ?? n.id, `CA-${++seq}-${id}`,
+          o.from === undefined ? '+447700900001' : o.from, new Date(o.at), handled ? 'handled' : 'open', handled ? new Date(o.at) : null],
+      );
+    };
+    expect(await phoneNumberRepository.findUnroutedMissed(tenant, n.id)).toEqual({ open_count: 0, latest_arrived_at: null, latest_from_e164: null });
+
+    await missed({ at: '2026-11-01T09:00:00Z', from: '+447700900001' });
+    await missed({ at: '2026-11-03T09:00:00Z', from: null });                 // the latest: a withheld caller
+    await missed({ at: '2026-11-02T09:00:00Z', from: '+447700900002' });
+    await missed({ at: '2026-11-04T09:00:00Z', status: 'handled' });          // handled: not open
+    await missed({ at: '2026-11-05T09:00:00Z', accountId: account });         // an account's row: its Missed list shows it
+    await missed({ at: '2026-11-05T09:00:00Z', number: other.id });           // another number
+    await missed({ at: '2026-11-05T09:00:00Z', tenantId: otherTenant });      // another tenant's row naming the number
+
+    const got = await phoneNumberRepository.findUnroutedMissed(tenant, n.id);
+    expect(got).toEqual({ open_count: 3, latest_arrived_at: new Date('2026-11-03T09:00:00Z'), latest_from_e164: null });
+  });
 });

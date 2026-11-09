@@ -62,6 +62,7 @@ export function getTelephonyInboundService(): TelephonyInboundService {
       settings: () => ({
         webhookBaseUrl: config.telephony.plivo.webhookBaseUrl,
         inboundFallbackAnswerUrl: config.telephony.plivo.inboundFallbackAnswerUrl,
+        mediaWorkers: config.processes.mediaWorkers,
       }),
       audit: (entry) => { void recordSuperAdminAudit(entry); },
       pool: getPool(),

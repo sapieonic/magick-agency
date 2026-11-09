@@ -120,6 +120,12 @@ export interface TelephonyCredentialInboundResponse {
    * False: Enable and Re-point are refused (`inbound_unconfigured`).
    */
   webhook_base_configured: boolean;
+  /**
+   * Whether this deployment puts inbound callers through to agents. False with media workers on
+   * (`MEDIA_WORKERS > 0`, IB8): calls are still answered, but every open route's caller hears the
+   * call-back message and nobody is connected (docs/inbound.md §3.2).
+   */
+  connects_agents: boolean;
   /** The credential's numbers that are not deleted, by number. */
   numbers: TelephonyCredentialInboundNumber[];
 }
@@ -138,4 +144,19 @@ export interface PhoneNumberInboundResponse {
   credential: { id: string; label: string; status: string; inbound_enabled: boolean } | null;
   /** Why Link is refused now; null when it would be accepted (or the number is linked already). */
   link_blocker: PhoneNumberInboundBlocker | null;
+  /**
+   * The number's open Missed rows that reached no account (docs/inbound.md §8.3: no route answers
+   * the number and the caller matched no contact). No console screen lists them, so the operator
+   * sees them here. Null for a number on the service's own account (never answered here).
+   */
+  unrouted_missed: PhoneNumberUnroutedMissed | null;
+}
+
+/** A number's tenant-default Missed rows still open: how many, and the latest. */
+export interface PhoneNumberUnroutedMissed {
+  open: number;
+  /** ISO time of the latest; null when there is none. */
+  latest_at: string | null;
+  /** The latest caller's number (+E.164); null when withheld, or when there is none. */
+  latest_from: string | null;
 }

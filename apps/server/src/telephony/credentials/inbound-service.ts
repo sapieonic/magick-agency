@@ -11,9 +11,11 @@
 //  - Link / Unlink a number: its app on Plivo set to the Application (the app it was on kept,
 //    and restored by Unlink). Never on sync.
 //  - The §8.2 cascade (`release*`): a number that may no longer be answered (unassigned from the
-//    tenant, retired by a sync or by hand, its credential disabled) loses its route and its link
-//    at once, and is put back on its previous app at the carrier while the credential still
-//    works. Revoke is refused while inbound is enabled (`TelephonyCredentialService.revoke`).
+//    tenant, retired by a sync or by hand) loses its route and its link at once, and is put back
+//    on its previous app at the carrier while the credential still works. Revoke is refused while
+//    inbound is enabled (`TelephonyCredentialService.revoke`). Disabling the credential keeps
+//    every link and route: its calls are answered with the closed message while it is disabled
+//    (docs/inbound.md §10), and enabling it again answers them as before.
 //
 // Partial failures. Each operator write that calls the carrier runs its carrier WRITE inside ONE
 // database transaction that holds the credential row (`lockInbound`, or `FOR SHARE` for a link)
@@ -95,9 +97,10 @@ export interface InboundActor {
  * Why a number's link is being released (`details.cause` on `phone_number.inbound_unlinked`):
  * `unlinked` by hand; the §8.2 cascade's `unassigned` (from its credential's tenant),
  * `retired_by_sync` (no longer on the carrier account), `retired` or `deleted` (by a
- * super-admin), `credential_disabled`.
+ * super-admin). (Audit rows written before disabling a credential stopped releasing its links
+ * may carry `credential_disabled`.)
  */
-export type InboundReleaseCause = 'unlinked' | 'unassigned' | 'retired_by_sync' | 'retired' | 'deleted' | 'credential_disabled';
+export type InboundReleaseCause = 'unlinked' | 'unassigned' | 'retired_by_sync' | 'retired' | 'deleted';
 
 /**
  * What became of the number at the carrier when its link was released: put back on its previous
@@ -116,14 +119,17 @@ export interface TelephonyInboundServiceDeps {
   /** Opens the credential's secret (`resolve`): the carrier is asked with the tenant's own account. */
   credentials: Pick<TelephonyCredentialService, 'resolve'>;
   repo: Pick<TelephonyCredentialRepository, 'findById' | 'findInbound' | 'lockInbound' | 'enableInbound' | 'repointInbound' | 'disableInbound' | 'inboundTokenMatches'>;
-  numbers: Pick<PhoneNumberRepository, 'findInboundLink' | 'listInboundForCredential' | 'linkInbound' | 'clearInboundLink'>;
+  numbers: Pick<PhoneNumberRepository, 'findInboundLink' | 'listInboundForCredential' | 'linkInbound' | 'clearInboundLink' | 'findUnroutedMissed'>;
   routes: Pick<AgencyInboundRouteRepository, 'detachNumberEverywhere'>;
   /** The inbound spine: whether a call answered under the token a Re-point would drop is still live. */
   calls: Pick<AgencyInboundCallRepository, 'anyLiveArrivedBefore'>;
   /** The carrier client on a resolved credential (`createPlivoAdapter`). */
   carrierFor(credential: ResolvedCredential): InboundCarrierApi;
-  /** `PLIVO_WEBHOOK_BASE_URL` and `PLIVO_INBOUND_FALLBACK_ANSWER_URL`, read per call. */
-  settings(): { webhookBaseUrl: string; inboundFallbackAnswerUrl: string };
+  /**
+   * `PLIVO_WEBHOOK_BASE_URL` and `PLIVO_INBOUND_FALLBACK_ANSWER_URL`, read per call; and
+   * `MEDIA_WORKERS` (IB8: with workers on, nobody is put through to an agent).
+   */
+  settings(): { webhookBaseUrl: string; inboundFallbackAnswerUrl: string; mediaWorkers: number };
   /** `recordSuperAdminAudit`. */
   audit(entry: SuperAdminAuditEntry): void;
   pool: TransactionPool;
@@ -195,9 +201,9 @@ const BLOCKER_MESSAGE: Record<PhoneNumberInboundBlocker, string> = {
 
 /**
  * Whether a linked number may stay linked: still on the account (`active`) and assigned to the
- * credential's tenant. The credential's status is the `credential_disabled` cascade's, not this
- * rule's: a credential the carrier refused (`invalid`) keeps its links, and its calls are still
- * answered with the closed message while the signature verifies (§10).
+ * credential's tenant. The credential's status is not this rule's: a disabled credential, or one
+ * the carrier refused (`invalid`), keeps its links, and its calls are answered with the closed
+ * message while the signature verifies (§10); enabled again, it answers them as before.
  */
 const mayStayLinked = (rec: PhoneNumberInboundLinkRecord): boolean => rec.status === 'active' && rec.assigned;
 
@@ -236,7 +242,7 @@ export class TelephonyInboundService {
   async numberState(phoneNumberId: string): Promise<ServiceResult<PhoneNumberInboundResponse>> {
     const rec = await this.deps.numbers.findInboundLink(phoneNumberId);
     if (!rec) return fail('phone_number_not_found', 'Phone number not found');
-    return { ok: true, value: this.numberStateOf(rec) };
+    return { ok: true, value: await this.numberStateOf(rec) };
   }
 
   /**
@@ -429,7 +435,7 @@ export class TelephonyInboundService {
     const rec = await this.deps.numbers.findInboundLink(phoneNumberId);
     if (!rec) return fail('phone_number_not_found', 'Phone number not found');
     // Already linked: the carrier was set before the link committed. Nothing to do.
-    if (rec.inbound_linked_at) return { ok: true, value: this.numberStateOf(rec) };
+    if (rec.inbound_linked_at) return { ok: true, value: await this.numberStateOf(rec) };
     const blocker = inboundLinkBlocker(rec);
     if (blocker) return fail('phone_number_not_linkable', BLOCKER_MESSAGE[blocker]);
     const credentialId = rec.telephony_credential_id!;
@@ -498,7 +504,7 @@ export class TelephonyInboundService {
    * Never throws: the change that called it has happened; a failure is logged, and the next
    * reconcile of the credential (every sync) releases it.
    */
-  async reconcileNumber(phoneNumberId: string, cause: Exclude<InboundReleaseCause, 'unlinked' | 'credential_disabled'>, actor: InboundActor): Promise<boolean> {
+  async reconcileNumber(phoneNumberId: string, cause: Exclude<InboundReleaseCause, 'unlinked'>, actor: InboundActor): Promise<boolean> {
     try {
       const rec = await this.deps.numbers.findInboundLink(phoneNumberId);
       if (!rec?.inbound_linked_at || mayStayLinked(rec)) return false;
@@ -510,21 +516,21 @@ export class TelephonyInboundService {
   }
 
   /**
-   * After a change to a credential: release its linked numbers that may no longer be linked
+   * After a number sync of a credential: release its linked numbers that may no longer be linked
    * (`retired_by_sync`: a sync retired them; one still active but unassigned is released as
-   * `unassigned`), or every linked number
-   * (`credential_disabled`). Returns how many were released. Never throws (as above).
+   * `unassigned`). Returns how many were released. Never throws (as above). Disabling the
+   * credential releases nothing (the header).
    */
-  async reconcileCredential(credentialId: string, cause: 'retired_by_sync' | 'credential_disabled', actor: InboundActor): Promise<number> {
+  async reconcileCredential(credentialId: string, cause: 'retired_by_sync', actor: InboundActor): Promise<number> {
     let released = 0;
     try {
       const rows = await this.deps.numbers.listInboundForCredential(credentialId);
       for (const rec of rows) {
         if (!rec.inbound_linked_at) continue;
-        if (cause !== 'credential_disabled' && mayStayLinked(rec)) continue;
+        if (mayStayLinked(rec)) continue;
         try {
           // After a sync, a number still active was released for not being assigned any more.
-          const why: InboundReleaseCause = cause === 'retired_by_sync' && rec.status === 'active' ? 'unassigned' : cause;
+          const why: InboundReleaseCause = rec.status === 'active' ? 'unassigned' : cause;
           if (await this.release(rec, why, actor)) released++;
         } catch (err) {
           log.error({ err, phoneNumberId: rec.phone_number_id, credentialId, cause }, 'Inbound cascade failed for a number; the next sync of its credential retries it');
@@ -693,13 +699,18 @@ export class TelephonyInboundService {
     return {
       inbound: inboundOf(inbound),
       webhook_base_configured: this.deps.settings().webhookBaseUrl !== '',
+      connects_agents: this.deps.settings().mediaWorkers === 0,
       numbers: rows.map((r) => ({
         phone_number_id: r.phone_number_id, phone_number: r.phone_number, status: r.status, assigned: r.assigned, link: linkOf(r),
       })),
     };
   }
 
-  private numberStateOf(rec: PhoneNumberInboundLinkRecord): PhoneNumberInboundResponse {
+  private async numberStateOf(rec: PhoneNumberInboundLinkRecord): Promise<PhoneNumberInboundResponse> {
+    // A synced number's calls that reached no account (§8.3): no console screen lists them.
+    const unrouted = rec.credential_tenant_id
+      ? await this.deps.numbers.findUnroutedMissed(rec.credential_tenant_id, rec.phone_number_id)
+      : null;
     return {
       phone_number_id: rec.phone_number_id,
       phone_number: rec.phone_number,
@@ -708,6 +719,9 @@ export class TelephonyInboundService {
         ? { id: rec.telephony_credential_id, label: rec.credential_label!, status: rec.credential_status!, inbound_enabled: rec.credential_app_id !== null }
         : null,
       link_blocker: rec.inbound_linked_at ? null : inboundLinkBlocker(rec),
+      unrouted_missed: unrouted
+        ? { open: unrouted.open_count, latest_at: iso(unrouted.latest_arrived_at), latest_from: unrouted.latest_from_e164 }
+        : null,
     };
   }
 

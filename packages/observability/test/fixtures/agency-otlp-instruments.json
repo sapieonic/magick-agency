@@ -177,12 +177,26 @@
     ]
   },
   {
+    "name": "agency_inbound_applications",
+    "kind": "ObservableGauge",
+    "description": "Credentials with inbound enabled, by the last scheduled health check of their carrier Application: ok, url_mismatch, app_missing, unreachable or failed (the check could not run)",
+    "attributes": [
+      "health"
+    ]
+  },
+  {
     "name": "agency_inbound_calls_total",
     "kind": "Counter",
     "description": "Inbound calls ended, by outcome: answered, abandoned_in_queue, overflow, overflow_no_capacity, closed, voicemail, rejected or failed",
     "attributes": [
       "outcome"
     ]
+  },
+  {
+    "name": "agency_inbound_connect_available",
+    "kind": "ObservableGauge",
+    "description": "1 when this deployment puts inbound callers through to agents (MEDIA_WORKERS=0), 0 when it cannot (media workers on: every open route answers with the call-back message, IB8); set at boot",
+    "attributes": []
   },
   {
     "name": "agency_inbound_offers_total",

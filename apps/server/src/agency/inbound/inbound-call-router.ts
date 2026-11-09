@@ -360,11 +360,14 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       return { kind: 'spoken', message: 'closed' };
     }
 
-    let planned: PlannedOutcome = arrival.credentialStatus !== 'active' || !route
+    // The kill switch (§8.1): with the account's `agency_inbound_enabled` off, a caller is told
+    // the route is closed, by the carrier (no queue, no stream, no voicemail), and left a Missed row.
+    const switchedOff = route !== null && await this.switchedOff(arrival.tenantId, accountId);
+    let planned: PlannedOutcome = arrival.credentialStatus !== 'active' || !route || switchedOff
       || inboundScheduleState(route, at) !== 'open' ? 'closed' : 'overflow';
-    // Out of the route's hours (not a credential that is not active, nor no route): the route's
-    // after-hours action applies (a voicemail, §7).
-    const afterHours = planned === 'closed' && arrival.credentialStatus === 'active' && route !== null;
+    // Out of the route's hours (not a credential that is not active, nor no route, nor switched
+    // off): the route's after-hours action applies (a voicemail, §7).
+    const afterHours = planned === 'closed' && arrival.credentialStatus === 'active' && route !== null && !switchedOff;
     // P2: an open route's caller may be put through to an agent (the header). Decided before the
     // insert, so the leg asks for the recording the route wants (IB7's notice depends on it).
     const connectable = planned === 'overflow' && route !== null && await this.mayConnect(arrival.tenantId, accountId);
@@ -422,7 +425,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     const voicemail = !queue && unconnectedCase !== null
       && takesVoicemail(route, unconnectedCase, voicemailAvailable({ storage: this.deps.voicemailStorage }));
     let messageSlot = PLAN_MESSAGE[planned].slot;
-    if (!queue && !routeClipId(route, messageSlot)) {
+    if (!queue && (switchedOff || !routeClipId(route, messageSlot))) {
       await this.endLeg(legId, { status: 'completed', outcome: `inbound_${planned}` });
       await this.settle(call, planned);
       return { kind: 'spoken', message: spokenMessageFor(planned, call.from_e164) };
@@ -597,6 +600,22 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       return await connect.enabled(tenantId, accountId);
     } catch (err) {
       log.warn({ err, tenantId, accountId }, 'Could not read agency_inbound_enabled — answering the call as P1');
+      return false;
+    }
+  }
+
+  /**
+   * The kill switch (§8.1): whether the account's `agency_inbound_enabled` is off. Only with the
+   * P2 gate wired (`connect`, as `startInboundCalls` always does); a read that fails is not off
+   * (the call is answered as P1, with no agent connected: `mayConnect` reads the flag too).
+   */
+  private async switchedOff(tenantId: string, accountId: string): Promise<boolean> {
+    const connect = this.deps.connect;
+    if (!connect) return false;
+    try {
+      return !(await connect.enabled(tenantId, accountId));
+    } catch (err) {
+      log.warn({ err, tenantId, accountId }, 'Could not read agency_inbound_enabled — answering the call as if inbound were on');
       return false;
     }
   }

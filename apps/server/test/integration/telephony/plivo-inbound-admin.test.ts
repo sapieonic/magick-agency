@@ -5,9 +5,10 @@
  * host reaching the mock carrier through `setPlivoTransportForTests`, real Postgres.
  *
  * Covers: Enable / Health / Re-point / Disable of the Application; Link / Unlink of a number
- * (its previous app kept and restored); the §8.2 cascade from unassign, a sync that retires the
- * number, and a credential disable; revoke refused while inbound is enabled; and the partial
- * failures (the carrier accepts and our write fails, and the other way round).
+ * (its previous app kept and restored); the §8.2 cascade from unassign and a sync that retires the
+ * number; a credential disable that keeps every link and route, and an enable that answers them
+ * again; revoke refused while inbound is enabled; and the partial failures (the carrier accepts
+ * and our write fails, and the other way round).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -442,22 +443,55 @@ describe('inbound on a Plivo credential, operator side (integration, mock Plivo)
       expect((await auditRows('phone_number.inbound_unlinked'))[0]!.details).toMatchObject({ cause: 'retired', carrier: 'skipped_not_active' });
     });
 
-    it('disabling the credential unlinks every number and restores it at Plivo; the Application stays', async () => {
+    it('disabling the credential keeps the link, the route and the number on our Application; enabling it again answers as before', async () => {
+      const routeId = await routeWithNumber();
+      const linkedAt = (await numberRow()).inbound_linked_at;
+      const updates = rig.carrier.requestsTo('update_number').length;
       const res = await post(`/telephony-credentials/${rig.credentialId}/disable`);
       expect(res.statusCode).toBe(200);
-      expect((await numberRow()).inbound_linked_at).toBeNull();
-      expect(rig.carrier.numberApp(PLIVO_NUMBER)).toBe(THEIR_APP);
-      expect(ourApp()).toBeDefined();
-      expect((await auditRows('phone_number.inbound_unlinked'))[0]!.details).toMatchObject({ cause: 'credential_disabled', carrier: 'restored' });
+      expect(res.json().credential.status).toBe('disabled');
+      expect(await numberRow()).toMatchObject({ inbound_linked_at: linkedAt, inbound_previous_app_id: THEIR_APP });
+      expect(await liveRoute()).toBe(routeId);
+      expect(rig.carrier.numberApp(PLIVO_NUMBER)).toBe(ourApp()!.app_id);
+      expect(rig.carrier.requestsTo('update_number')).toHaveLength(updates); // nothing asked of the carrier
+      expect(await auditRows('phone_number.inbound_unlinked')).toEqual([]);
+      // While disabled the numbers stay listed as linked (its calls hear the closed message, §10).
+      const state = await get(`/telephony-credentials/${rig.credentialId}/inbound`);
+      expect(state.json().inbound.linked_numbers).toBe(1);
+      expect(state.json().numbers[0].link).toMatchObject({ linked: true, route: { id: routeId } });
+
+      const on = await post(`/telephony-credentials/${rig.credentialId}/enable`);
+      expect(on.statusCode).toBe(200);
+      expect(on.json().credential.status).toBe('active');
+      expect(await numberRow()).toMatchObject({ inbound_linked_at: linkedAt, inbound_previous_app_id: THEIR_APP });
+      expect(await liveRoute()).toBe(routeId);
+      expect(rig.carrier.numberApp(PLIVO_NUMBER)).toBe(ourApp()!.app_id);
     });
 
     it('the cascade clears our side even when Plivo cannot restore the number, and audits the app to put back by hand', async () => {
       rig.carrier.injectFault('update_number', { kind: 'status', status: 503 });
-      const res = await post(`/telephony-credentials/${rig.credentialId}/disable`);
+      const res = await rig.app.inject({ method: 'DELETE', url: `/super-admin/phone-numbers/${numberId}/assign/${TENANT}`, headers: auth });
       expect(res.statusCode).toBe(200);
       expect((await numberRow()).inbound_linked_at).toBeNull();
       expect(rig.carrier.numberApp(PLIVO_NUMBER)).toBe(ourApp()!.app_id);
-      expect((await auditRows('phone_number.inbound_unlinked'))[0]!.details).toMatchObject({ carrier: 'failed', previous_app_id: THEIR_APP });
+      expect((await auditRows('phone_number.inbound_unlinked'))[0]!.details).toMatchObject({ cause: 'unassigned', carrier: 'failed', previous_app_id: THEIR_APP });
+    });
+
+    it('the number`s Inbound panel counts its Missed calls that reached no account, and the credential says whether agents can be connected', async () => {
+      const at = new Date('2026-11-08T10:00:00Z');
+      for (const [i, from] of [['1', '+447700900001'], ['2', null]] as const) {
+        await getTestPool().query(
+          `INSERT INTO agency_inbound_calls
+             (tenant_id, account_id, phone_number_id, telephony_credential_id, provider_call_id, to_e164, from_e164, state, outcome,
+              arrived_at, answered_at, ended_at, settled_at, follow_up_status, follow_up_reason)
+           VALUES ($1, NULL, $2, $3, $4, $5, $6, 'ended', 'closed', $7, $7, $7, $7, 'open', 'closed')`,
+          [TENANT, numberId, rig.credentialId, `CA-unrouted-${i}`, CALLER_ID, from, new Date(at.getTime() + Number(i) * 60_000)]);
+      }
+      const res = await get(`/phone-numbers/${numberId}/inbound`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().unrouted_missed).toEqual({ open: 2, latest_at: '2026-11-08T10:02:00.000Z', latest_from: null });
+      expect((await get(`/telephony-credentials/${rig.credentialId}/inbound`)).json().connects_agents).toBe(true);
+      await getTestPool().query(`DELETE FROM agency_inbound_calls WHERE provider_call_id LIKE 'CA-unrouted-%'`);
     });
   });
 });

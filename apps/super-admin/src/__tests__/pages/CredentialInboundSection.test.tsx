@@ -24,6 +24,7 @@ const CRED: TelephonyCredential = {
 const OFF: TelephonyCredentialInboundResponse = {
   inbound: { enabled: false, app_id: null, enabled_at: null, linked_numbers: 0, previous_token_expires_at: null },
   webhook_base_configured: true,
+  connects_agents: true,
   numbers: [{
     phone_number_id: 'pn-1', phone_number: '+14155550101', status: 'active', assigned: true,
     link: { linked: false, linked_at: null, previous_app_id: null, route: null },
@@ -32,6 +33,7 @@ const OFF: TelephonyCredentialInboundResponse = {
 const ON = (linked = 0): TelephonyCredentialInboundResponse => ({
   inbound: { enabled: true, app_id: '20372631212782780', enabled_at: '2026-11-09T10:00:00Z', linked_numbers: linked, previous_token_expires_at: null },
   webhook_base_configured: true,
+  connects_agents: true,
   numbers: [{
     phone_number_id: 'pn-1', phone_number: '+14155550101', status: 'active', assigned: true,
     link: linked
@@ -134,5 +136,29 @@ describe('CredentialInboundSection', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Enable inbound/ }));
     await confirmDialog('Enable inbound');
     expect((await screen.findByTestId('inbound-error')).textContent).toMatch(text);
+  });
+
+  it('says plainly when this deployment cannot put callers through to agents (media workers on), only with inbound enabled', async () => {
+    mocks.getCredentialInbound.mockResolvedValue({ ...ON(1), connects_agents: false });
+    render(<CredentialInboundSection credential={CRED} />);
+    expect((await screen.findByTestId('inbound-no-connect')).textContent).toMatch(/Calls can’t be put through to agents: media workers are on/);
+    cleanup();
+    mocks.getCredentialInbound.mockResolvedValue(ON(1));
+    render(<CredentialInboundSection credential={CRED} />);
+    expect(await screen.findByText('Enabled')).toBeTruthy();
+    expect(screen.queryByTestId('inbound-no-connect')).toBeNull();
+    cleanup();
+    mocks.getCredentialInbound.mockResolvedValue({ ...OFF, connects_agents: false });
+    render(<CredentialInboundSection credential={CRED} />);
+    expect(await screen.findByText('Not enabled')).toBeTruthy();
+    expect(screen.queryByTestId('inbound-no-connect')).toBeNull();
+  });
+
+  it('marks a linked number no route answers', async () => {
+    const on = ON(1);
+    on.numbers[0]!.link = { ...on.numbers[0]!.link, route: null };
+    mocks.getCredentialInbound.mockResolvedValue(on);
+    render(<CredentialInboundSection credential={CRED} />);
+    expect(await screen.findByText('no route: callers hear the closed message')).toBeTruthy();
   });
 });

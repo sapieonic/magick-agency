@@ -559,8 +559,8 @@ export default function SATelephonyCredentialsPage() {
             ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed two hours after its last call ends, once the carrier’s late callbacks are in. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first, and inbound calls disabled.`
             : `“${confirm?.cred.label ?? ''}” stops placing new calls. Calls already in progress finish normally. `
               + 'Running campaigns on it pause automatically, and stay paused after you enable it again '
-              + 'until a supervisor resumes each one. Numbers linked to inbound calls are unlinked and put back on the app '
-              + 'they were on at the carrier.'
+              + 'until a supervisor resumes each one. Numbers linked to inbound calls stay linked and on their routes: '
+              + 'their callers hear the closed message until you enable the credential again.'
         }
         confirmLabel={confirm?.action === 'revoke' ? 'Revoke' : 'Disable'}
         danger
