@@ -2,8 +2,9 @@
  * `AgencyInboundReportRepository`: the inbound summary's reads (docs/inbound.md §11, "The inbound
  * summary"): one account's inbound calls over a date range, as totals and per agent, from the
  * spine (`agency_inbound_calls`). Two statements, each over
- * `idx_agency_inbound_calls_account_arrived (tenant_id, account_id, arrived_at)` (0028): the
- * range is a bounded scan of the account's calls, never the tenant's.
+ * `idx_agency_inbound_calls_account_arrived (tenant_id, account_id, arrived_at) WHERE state =
+ * 'ended'` (0028; `RANGE_SQL` repeats the predicate literally, so the planner proves the index
+ * applies): the range is a bounded scan of the account's ended calls, never the tenant's.
  *
  * ── What is counted ────────────────────────────────────────────────────────────
  * Calls that have ENDED and arrived in `[from, to)`; a call still live is counted once it ends.

@@ -305,8 +305,13 @@ describe('0027 — the backfill, the Down and up again', () => {
       await truncateAll();
       await insertTenant({ id: TENANT });
       await call(row);
-      await expect(migrate('down', 1)).rejects.toThrow(/0027_inbound_connect down/);
-      expect(await indexDef('uq_agency_inbound_calls_session_unsettled')).toBeDefined();
+      // Down through 0027 (the migrations after it go first, and come back after).
+      try {
+        await expect(downToBefore()).rejects.toThrow(/0027_inbound_connect down/);
+        expect(await indexDef('uq_agency_inbound_calls_session_unsettled')).toBeDefined();
+      } finally {
+        await migrate('up');
+      }
     }
   });
 

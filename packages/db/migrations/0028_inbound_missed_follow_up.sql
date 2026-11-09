@@ -55,8 +55,12 @@
 --  - idx_agency_inbound_calls_missed_open_from (tenant_id, account_id, from_e164) WHERE
 --    follow_up_status = 'open' AND from_e164 IS NOT NULL: the triggers' probe. Partial, so it is
 --    the size of the open follow-ups.
---  - idx_agency_inbound_calls_account_arrived (tenant_id, account_id, arrived_at): the inbound
---    summary (`GET /inbound/summary`) reads one account's calls over a date range.
+--  - idx_agency_inbound_calls_account_arrived (tenant_id, account_id, arrived_at) WHERE state =
+--    'ended': the inbound summary (`GET /inbound/summary`) reads one account's ENDED calls over a
+--    date range, and repeats the predicate literally. Partial on purpose: an unqualified (tenant,
+--    account, arrived_at) index offers the Missed list (open rows, newest first) a backward scan
+--    the planner can prefer to idx_agency_inbound_calls_missed on thin statistics, filtering every
+--    call of the account.
 --
 -- ── Locking ───────────────────────────────────────────────────────────────────
 -- agency_inbound_calls is small (one row per inbound call); its column is catalog-only (no
@@ -92,10 +96,11 @@ COMMENT ON INDEX idx_agency_inbound_calls_missed_open_from IS
   'The open Missed rows from one number in one account: the reached triggers'' probe (0028).';
 
 CREATE INDEX idx_agency_inbound_calls_account_arrived
-  ON agency_inbound_calls (tenant_id, account_id, arrived_at);
+  ON agency_inbound_calls (tenant_id, account_id, arrived_at)
+  WHERE state = 'ended';
 
 COMMENT ON INDEX idx_agency_inbound_calls_account_arrived IS
-  'One account''s inbound calls by arrival: the inbound summary''s date range (0028).';
+  'One account''s ended inbound calls by arrival: the inbound summary''s date range (0028).';
 
 CREATE FUNCTION agency_inbound_close_reached_missed(
   p_tenant UUID, p_account UUID, p_phone TEXT, p_reached_at TIMESTAMPTZ, p_user UUID

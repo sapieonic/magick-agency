@@ -283,6 +283,8 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
       'disposition_source character varying', 'notes text', 'callback_at timestamp with time zone',
       'dispositioned_by_user_id uuid', 'dispositioned_at timestamp with time zone', 'dispositioned_on_behalf boolean not null',
       'settled_at timestamp with time zone', 'voicemail_seconds integer', 'clash_attempt_id uuid',
+      // 0028: how a Missed row was handled (inbound-missed-follow-up-migration.test.ts pins it).
+      'handled_reason character varying',
     ]);
     expect(await call()).toMatchObject({ state: 'arrived', provider: 'plivo', caller_dnc: false, outcome: null, follow_up_status: null });
   });
@@ -587,7 +589,7 @@ describe('0024 — down', () => {
     } finally {
       await migrate('up');
     }
-    expect((await columns('agency_inbound_calls')).length).toBe(48); // 0024's 33, and 0027's 15
+    expect((await columns('agency_inbound_calls')).length).toBe(49); // 0024's 33, 0027's 15 and 0028's 1
     expect((await checkDef('ck_agency_calls_origin'))!.validated).toBe(true);
   });
 });

@@ -237,7 +237,7 @@ describe('0028 — the indexes', () => {
     expect(await indexDef('idx_agency_inbound_calls_missed_open_from')).toMatch(
       /ON public\.agency_inbound_calls USING btree \(tenant_id, account_id, from_e164\) WHERE \(\(\(follow_up_status\)::text = 'open'::text\) AND \(from_e164 IS NOT NULL\)\)/);
     expect(await indexDef('idx_agency_inbound_calls_account_arrived')).toMatch(
-      /ON public\.agency_inbound_calls USING btree \(tenant_id, account_id, arrived_at\)$/);
+      /ON public\.agency_inbound_calls USING btree \(tenant_id, account_id, arrived_at\) WHERE \(\(state\)::text = 'ended'::text\)$/);
   });
 
   it('the triggers` probe uses the open-Missed index', async () => {
