@@ -1072,7 +1072,7 @@ Files: `carrier-dial-readiness.ts`, `carrier-errors.ts`, `carrier-module.ts`, `c
 | `apps/server/test/unit/telephony/plivo/plivo-inbound.webhook.test.ts` | 15 |
 | `apps/server/test/unit/telephony/plivo/plivo-carrier.fixture.test.ts` | 64 |
 | `apps/server/test/unit/telephony/plivo/plivo-config.test.ts` | 20 |
-| `apps/server/test/unit/telephony/plivo/plivo-inbound-adapter.test.ts` (with `startRecording`, the Record API) | 18 |
+| `apps/server/test/unit/telephony/plivo/plivo-inbound-adapter.test.ts` (with `startRecording`, the Record API) | 19 |
 | `apps/server/test/integration/telephony/plivo-inbound-admin.test.ts` | 22 |
 | `apps/server/test/unit/telephony/plivo/plivo-dial-rate.test.ts` | ~15 |
 | `apps/server/test/unit/telephony/plivo/plivo-signature.test.ts` | ~5 |
