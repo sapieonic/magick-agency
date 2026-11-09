@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/sapieonic/magick-agency/compare/console-v0.18.0...console-v0.18.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **console:** keep the page still when the account switcher opens ([#64](https://github.com/sapieonic/magick-agency/issues/64)) ([c03e87b](https://github.com/sapieonic/magick-agency/commit/c03e87bf82c22e85acdfe50f34e716feed04f2d0))
+
 ## [0.18.0](https://github.com/sapieonic/magick-agency/compare/console-v0.17.0...console-v0.18.0) (2026-11-09)
 
 

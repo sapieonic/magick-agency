@@ -1,6 +1,6 @@
 {
   "apps/server": "0.18.0",
-  "apps/console": "0.18.0",
+  "apps/console": "0.18.1",
   "apps/super-admin": "0.4.2",
   "apps/report-renderer": "0.3.0",
   "packages/contracts": "0.16.0",
