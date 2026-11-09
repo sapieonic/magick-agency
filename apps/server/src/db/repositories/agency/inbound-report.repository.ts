@@ -9,12 +9,19 @@
  * ── What is counted ────────────────────────────────────────────────────────────
  * Calls that have ENDED and arrived in `[from, to)`; a call still live is counted once it ends.
  * The tenant default's calls (no account) are nobody's account and are not here.
- *  - **After hours**: the route was closed (`closed`, or a voicemail taken out of hours: its
- *    Missed reason is `closed`). Nobody could have answered them, so they are outside the rates.
+ *  - **Answered closed**: the closed message (`closed`, or a voicemail taken out of hours: its
+ *    Missed reason is `closed`), counted by why (`closed_cause`, 0030): **after hours** (`hours`:
+ *    out of the route's hours, or a holiday), **switched off** (the kill switch), **no route** (the
+ *    number reaches none), and an **inactive credential**, which the handler counts as not served
+ *    with `failed` and `rejected`. A closed call with no cause recorded is after hours with a
+ *    route, no route without one (0030 backfills the calls before it). Nobody could have answered
+ *    any of them, so they are outside the rates.
  *  - **Refused**: `rejected` (turned away at the answer). Outside the rates too.
  *  - **Open-hours calls**: everything else. The denominator of the answer rate, the abandon rate
  *    and the sticky hit rate: every caller who rang while the line was open, whether they waited,
  *    were turned away as busy, or hung up.
+ *  - **Nobody free to answer** (`overflow`) and **every line busy** (`overflow_no_capacity`),
+ *    apart, in the Missed list's words.
  *  - **Time to answer**: from arrival to being put through (`bridged_at - arrived_at`), what the
  *    caller lived through, greeting included; the average and the 90th percentile over answered
  *    calls.
@@ -25,11 +32,16 @@
  * Every id is bound as a parameter and cast once; callers validate ids at the edge (`22P02`).
  */
 import { getPool } from '@magick-agency/db';
+import type { AgencyInboundClosedCause } from '@magick-agency/contracts/agency';
 
-/** Out of hours: the route was closed for this caller (the call's outcome, or its voicemail's reason). */
-const AFTER_HOURS_SQL = `(c.outcome = 'closed' OR (c.outcome = 'voicemail' AND c.follow_up_reason = 'closed'))`;
+/** Answered with the closed message, whatever the cause (the call's outcome, or its voicemail's reason). */
+const CLOSED_SQL = `(c.outcome = 'closed' OR (c.outcome = 'voicemail' AND c.follow_up_reason = 'closed'))`;
+/** Why a closed call was closed (0030); one with no cause recorded is out of hours with a route, no route without one. */
+const CLOSED_CAUSE_SQL = `COALESCE(c.closed_cause, CASE WHEN c.route_id IS NULL THEN 'no_route' ELSE 'hours' END)`;
+/** Closed for `cause`. */
+const closedFor = (cause: AgencyInboundClosedCause) => `(${CLOSED_SQL} AND ${CLOSED_CAUSE_SQL} = '${cause}')`;
 /** A caller who rang while the line was open and was not refused at the answer. */
-const OPEN_HOURS_SQL = `(NOT ${AFTER_HOURS_SQL} AND c.outcome <> 'rejected')`;
+const OPEN_HOURS_SQL = `(NOT ${CLOSED_SQL} AND c.outcome <> 'rejected')`;
 /** The range, over `idx_agency_inbound_calls_account_arrived`. */
 const RANGE_SQL = `c.tenant_id = $1::uuid AND c.account_id = $2::uuid
           AND c.arrived_at >= $3::timestamptz AND c.arrived_at < $4::timestamptz AND c.state = 'ended'`;
@@ -38,9 +50,13 @@ export interface InboundSummaryTotalsRow {
   calls: number;
   open_hours: number;
   after_hours: number;
+  switched_off: number;
+  no_route: number;
+  credential_inactive: number;
   answered: number;
   abandoned: number;
-  overflow: number;
+  nobody_free: number;
+  lines_busy: number;
   voicemails: number;
   refused: number;
   failed: number;
@@ -67,10 +83,14 @@ export class AgencyInboundReportRepository {
     const { rows } = await getPool().query<InboundSummaryTotalsRow>(
       `SELECT COUNT(*)::int AS calls,
               COUNT(*) FILTER (WHERE ${OPEN_HOURS_SQL})::int AS open_hours,
-              COUNT(*) FILTER (WHERE ${AFTER_HOURS_SQL})::int AS after_hours,
+              COUNT(*) FILTER (WHERE ${closedFor('hours')})::int AS after_hours,
+              COUNT(*) FILTER (WHERE ${closedFor('switched_off')})::int AS switched_off,
+              COUNT(*) FILTER (WHERE ${closedFor('no_route')})::int AS no_route,
+              COUNT(*) FILTER (WHERE ${closedFor('credential_inactive')})::int AS credential_inactive,
               COUNT(*) FILTER (WHERE c.outcome = 'answered')::int AS answered,
               COUNT(*) FILTER (WHERE c.outcome = 'abandoned_in_queue')::int AS abandoned,
-              COUNT(*) FILTER (WHERE c.outcome IN ('overflow', 'overflow_no_capacity'))::int AS overflow,
+              COUNT(*) FILTER (WHERE c.outcome = 'overflow')::int AS nobody_free,
+              COUNT(*) FILTER (WHERE c.outcome = 'overflow_no_capacity')::int AS lines_busy,
               COUNT(*) FILTER (WHERE c.outcome = 'voicemail')::int AS voicemails,
               COUNT(*) FILTER (WHERE c.outcome = 'rejected')::int AS refused,
               COUNT(*) FILTER (WHERE c.outcome = 'failed')::int AS failed,

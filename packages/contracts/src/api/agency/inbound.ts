@@ -24,6 +24,8 @@
  *    ({@link AGENCY_INBOUND_STANDARD_RECORDINGS}), `audio/wav`, for the preview; an unknown name is `inbound_clip_not_found`
  *  - `GET    /inbound/missed`                 `agency.inbound.read`, {@link AgencyInboundMissedListQuery} → {@link AgencyInboundMissedPage}
  *  - `POST   /inbound/missed/:id/handled`     `agency.inbound.read`, no body → {@link AgencyInboundMarkHandledResponse}
+ *  - `POST   /inbound/missed/:id/reopen`      `agency.inbound.read`, no body → {@link AgencyInboundReopenResponse}
+ *    (a handled row back on the list; the Mark handled rules; audited `agency_inbound_call.reopened`)
  *  - `GET    /inbound/missed/:id/voicemail`   `agency.inbound.read` → the row's voicemail, `audio/wav`, streamed (P2;
  *    a `Range` request is answered 206; the Missed list's assignee rule; `inbound_missed_call_not_found` when the
  *    row has none, or it has aged out; `Cache-Control: private, no-store`, so no copy outlives the retention purge)
@@ -47,6 +49,7 @@ import type * as Core from '../../agency/inbound';
 import type {
   AgencyInboundCallOutcome,
   AgencyInboundClipSlot,
+  AgencyInboundClosedCause,
   AgencyInboundFollowUpStatus,
   AgencyInboundHandledReason,
   AgencyInboundMissedReason,
@@ -65,6 +68,7 @@ export {
   AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
   AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS,
   AGENCY_INBOUND_CLIP_SLOTS,
+  AGENCY_INBOUND_CLOSED_CAUSES,
   AGENCY_INBOUND_FOLLOW_UP_STATUSES,
   AGENCY_INBOUND_HANDLED_REASONS,
   AGENCY_INBOUND_MISSED_REASONS,
@@ -89,6 +93,7 @@ export type {
   AgencyInboundCallState,
   AgencyInboundClips,
   AgencyInboundClipSlot,
+  AgencyInboundClosedCause,
   AgencyInboundFollowUpStatus,
   AgencyInboundHandledReason,
   AgencyInboundHoliday,
@@ -485,6 +490,12 @@ export interface AgencyInboundMissedCall {
   arrived_at: string;
   ended_at: string;
   reason: AgencyInboundMissedReason;
+  /**
+   * With `reason` `closed`: why the caller was answered as closed (0030): out of `hours`, inbound
+   * `switched_off` for the account, `no_route` for the number, or the carrier credential
+   * `credential_inactive`. NULL on another reason's row, or a closed row from before it was recorded.
+   */
+  closed_cause: AgencyInboundClosedCause | null;
   outcome: AgencyInboundCallOutcome;
   /** The caller's number is on a DNC list: never dialled automatically; the agent decides. */
   caller_dnc: boolean;
@@ -543,6 +554,18 @@ export type AgencyInboundMissedPage = AgencyKeysetPage<AgencyInboundMissedCall>;
  * as it is, with its first handler and time.
  */
 export interface AgencyInboundMarkHandledResponse {
+  call: AgencyInboundMissedCall;
+}
+
+/**
+ * `POST /inbound/missed/:id/reopen`, no body: put a HANDLED row back on the list (`open`, its
+ * `handled_reason`, handler and time cleared), for a row marked by mistake or closed as reached
+ * when the customer was not. Mark handled's rules: an agent reopens only the rows assigned to
+ * them, a supervisor any of the account's; the assignee is kept. Idempotent: an open row is
+ * answered as it is. Audited `agency_inbound_call.reopened` (how and by whom it had been handled)
+ * when it changed. Not behind the flag.
+ */
+export interface AgencyInboundReopenResponse {
   call: AgencyInboundMissedCall;
 }
 
@@ -609,10 +632,20 @@ export interface AgencyInboundSummary {
   to: string;
   /** Every ended call. */
   calls: number;
-  /** Rang while the line was open (not after hours, not refused at the answer): the rates' denominator. */
+  /**
+   * Rang while the line was open: not answered with the closed message (after hours, switched off,
+   * no route, an inactive credential), not refused at the answer. The rates' denominator.
+   */
   open_hours_calls: number;
-  /** Rang while the route was closed (the closed message, or a voicemail taken out of hours). */
+  /**
+   * Rang while the route was closed for its hours or a holiday (the closed message, or a voicemail
+   * taken out of hours). Not the calls below, which were also answered with the closed message.
+   */
   after_hours: number;
+  /** Answered with the closed message because inbound was switched off for the account (the kill switch). */
+  switched_off: number;
+  /** Rang a number of the account that reaches no route: answered with the closed message. */
+  no_route: number;
   answered: number;
   /** answered ÷ open_hours_calls. */
   answer_rate_pct: number | null;
@@ -624,9 +657,19 @@ export interface AgencyInboundSummary {
   avg_answer_seconds: number | null;
   p90_answer_seconds: number | null;
   voicemails: number;
-  /** Nobody took them in time, or the line was over its limits (`overflow`, `overflow_no_capacity`). */
+  /** `nobody_free` + `lines_busy`. */
   overflow: number;
-  /** Our side could not serve the call (`failed`), or it was turned away at the answer (`rejected`). */
+  /**
+   * Nobody free to answer (`overflow`): the route's maximum wait or queue length was reached, or
+   * nobody in its pool could take calls. The Missed list's "Nobody free to answer".
+   */
+  nobody_free: number;
+  /** Every line busy (`overflow_no_capacity`): over the route's or the account's call limits. The Missed list's "All lines busy". */
+  lines_busy: number;
+  /**
+   * Our side could not serve the call (`failed`), it was turned away at the answer (`rejected`),
+   * or the carrier credential it arrived on was not active (answered with the closed message).
+   */
   not_served: number;
   /** Open-hours calls that had a sticky agent (§4.1). */
   sticky_calls: number;

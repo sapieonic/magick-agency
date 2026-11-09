@@ -2521,6 +2521,13 @@
       "reason": "inbound Missed list, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
     },
     {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/missed/:id/reopen",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "a handled Missed row put back on the list, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
       "method": "GET",
       "path": "/proxy/agency/inbound/missed/:id/voicemail",
       "source": "apps/console/src/api/inbound.ts",

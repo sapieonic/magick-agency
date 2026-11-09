@@ -19,13 +19,17 @@ import { randomUUID } from 'node:crypto';
  *     account's row, a malformed id; the new assignee sees it, the old one no longer does; served
  *     with the flag off;
  *  3. a departed assignee reads `assignee_departed` ("Former member");
- *  4. a call back from the row that connects closes it (`reached`, by that agent), and the
- *     contact's booked inbound callback is settled by the call's outcome, so the campaign does not
- *     call again;
- *  5. the summary: the numbers from seeded calls (rates, time to answer, sticky hit rate, per agent
- *     with names), the account's own calls only, ended calls only, supervisors only, the range
- *     validated, served with the flag off;
- *  6. a voicemail is answered `Cache-Control: private, no-store`.
+ *  4. a call back from the row closes it (`reached`, by that agent) when the call's outcome says
+ *     the customer was spoken to (0030), not at the bridge, and never on a voicemail outcome or a
+ *     lapse; the contact's booked inbound callback is settled by the call's outcome, so the
+ *     campaign does not call again;
+ *  5. Reopen: a handled row back on the list, Mark handled's rules (an agent's own; a supervisor's
+ *     the account's), idempotent, audited once with how and by whom it had been handled, served
+ *     with the flag off; a reopened row closes again on the next conversation;
+ *  6. the summary: the numbers from seeded calls (rates, time to answer, sticky hit rate, per agent
+ *     with names; closed calls by cause, nobody free and all lines busy apart), the account's own
+ *     calls only, ended calls only, supervisors only, the range validated, served with the flag off;
+ *  7. a voicemail is answered `Cache-Control: private, no-store`.
  */
 
 const mocks = vi.hoisted(() => {
@@ -286,7 +290,7 @@ describe('a departed assignee', () => {
 });
 
 describe('a call back from a Missed row that connects', () => {
-  it('closes the row as reached by that agent, and the call`s outcome settles the contact`s inbound callback', async () => {
+  it('closes the row as reached by that agent on the call`s outcome, not the bridge, and the outcome settles the contact`s inbound callback', async () => {
     const phone = '+447700900777';
     const campaign = floor.campaigns[0]!;
     const contact = (await q(
@@ -315,6 +319,15 @@ describe('a call back from a Missed row that connects', () => {
     // Ringing: not reached yet.
     expect(idsOf(await call('GET', '/missed', agent(0)))).toContain(id);
     await agencyManualCallRepository.advanceState(manual.id, 'bridged');
+    // Put through, but nobody has said who answered: still to follow up (a machine answers too).
+    expect(idsOf(await call('GET', '/missed', agent(0)))).toContain(id);
+    await agencyManualCallRepository.end(manual.id, { outcome: 'connected', endReason: 'remote_hangup', talkSeconds: 40 });
+    expect(idsOf(await call('GET', '/missed', agent(0)))).toContain(id);
+    // The agent's outcome says they spoke to the customer: the row closes in the outcome's write.
+    const saved = await agencyManualCallRepository.recordDisposition({
+      id: manual.id, code: 'interested', source: 'campaign', notes: null, callbackAt: null, actorUserId: agent(0).id, onBehalf: false,
+    });
+    expect(saved.ok).toBe(true);
 
     expect(idsOf(await call('GET', '/missed', agent(0)))).not.toContain(id);
     expect(idsOf(await call('GET', '/missed', agent(0)))).toContain(other);
@@ -322,7 +335,7 @@ describe('a call back from a Missed row that connects', () => {
     expect(handled.find((r) => r['id'] === id)).toMatchObject({
       status: 'handled', handled_reason: 'reached', handled_by_user_id: agent(0).id, handled_by_name: 'agent 0.0',
     });
-    // The callback is still booked while the call is live, but the contact is claimed: pacing cannot dial it.
+    // The callback is still booked until the contact is settled, but the contact is claimed: pacing cannot dial it.
     expect((await q('SELECT state, callback_source FROM agency_contacts WHERE id = $1', [contact])).rows[0])
       .toEqual({ state: 'in_flight', callback_source: 'inbound' });
 
@@ -333,6 +346,119 @@ describe('a call back from a Missed row that connects', () => {
     });
     expect((await q('SELECT state, callback_source, callback_due_at FROM agency_contacts WHERE id = $1', [contact])).rows[0])
       .toEqual({ state: 'completed', callback_source: null, callback_due_at: null });
+  });
+
+  it('a call back answered by voicemail, or whose outcome lapses, leaves the row to follow up', async () => {
+    const phone = '+447700900779';
+    const id = await missed({ from: phone, assignee: agent(1).id });
+    const session = (await q(
+      `INSERT INTO agency_agent_sessions (kind, campaign_id, tenant_id, account_id, agent_user_id, state, break_reason)
+       VALUES ('softphone', NULL, $1, $2, $3, 'break', 'soft_phone') RETURNING id`, [floor.tenant, floor.account, agent(1).id])).rows[0]!.id as string;
+    /** An untagged soft-phone call to the number, put through and ended. */
+    const putThrough = async (): Promise<string> => {
+      const created = await agencyManualCallRepository.create({
+        tenantId: floor.tenant, accountId: floor.account, sessionId: session, agentUserId: agent(1).id, campaignId: null,
+        contact: null, destinationE164: phone, callerId: '+14155550100', fields: {}, recordingRequested: false,
+        analysisProfileId: null, dncOverride: null, hoursOverrideNote: null,
+      });
+      expect(created.ok).toBe(true);
+      const manual = (created as { ok: true; call: { id: string } }).call.id;
+      await agencyManualCallRepository.advanceState(manual, 'dialing');
+      await agencyManualCallRepository.advanceState(manual, 'bridged');
+      await agencyManualCallRepository.end(manual, { outcome: 'connected', endReason: 'remote_hangup', talkSeconds: 20 });
+      return manual;
+    };
+
+    const machine = await putThrough();
+    expect((await agencyManualCallRepository.recordDisposition({
+      id: machine, code: 'voicemail', source: 'softphone', notes: null, callbackAt: null, actorUserId: agent(1).id, onBehalf: false,
+    })).ok).toBe(true);
+    expect(idsOf(await call('GET', '/missed', agent(1)))).toContain(id);
+
+    const lapsed = await putThrough();
+    await q(`UPDATE agency_manual_calls SET ended_at = now() - interval '2 hours' WHERE id = $1`, [lapsed]);
+    expect((await agencyManualCallRepository.lapseUnsettled({ lapseMs: 60_000 })).map((c) => c.id)).toContain(lapsed);
+    expect((await q('SELECT disposition_code FROM agency_manual_calls WHERE id = $1', [lapsed])).rows[0]).toEqual({ disposition_code: 'no_disposition' });
+    expect(idsOf(await call('GET', '/missed', agent(1)))).toContain(id);
+  });
+});
+
+describe('POST /inbound/missed/:id/reopen', () => {
+  async function handledRow(assignee: string | null): Promise<string> {
+    const id = await missed({ assignee });
+    expect((await call('POST', `/missed/${id}/handled`, sup())).statusCode).toBe(200);
+    return id;
+  }
+
+  it('an agent reopens their own handled row: back on their list, audited once with how and by whom it had been handled', async () => {
+    const id = await handledRow(agent(0).id);
+    const res = await call('POST', `/missed/${id}/reopen`, agent(0));
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().call).toMatchObject({
+      id, status: 'open', handled_reason: null, handled_by_user_id: null, handled_by_name: null, handled_at: null,
+      assignee_user_id: agent(0).id, assignee_name: 'agent 0.0',
+    });
+    expect(idsOf(await call('GET', '/missed', agent(0)))).toContain(id);
+    // Again: answered as it is, not audited twice.
+    const again = await call('POST', `/missed/${id}/reopen`, agent(0));
+    expect(again.statusCode).toBe(200);
+    expect(again.json().call).toMatchObject({ id, status: 'open' });
+    const rows = await audits('agency_inbound_call.reopened', id);
+    expect(rows).toEqual([expect.objectContaining({
+      user_id: agent(0).id, account_id: floor.account, details: { handled_reason: 'marked', handled_by_user_id: sup().id },
+    })]);
+  });
+
+  it('an agent cannot reopen another`s row or the account`s; a supervisor reopens any of the account`s, a row closed as reached too', async () => {
+    const theirs = await handledRow(agent(1).id);
+    const accounts = await handledRow(null);
+    for (const id of [theirs, accounts]) {
+      const res = await call('POST', `/missed/${id}/reopen`, agent(0));
+      expect(res.statusCode, id).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+      expect((await agencyInboundCallRepository.findMissed(floor.tenant, floor.account, id))!.follow_up_status).toBe('handled');
+    }
+    const reached = await missed({ assignee: agent(1).id });
+    await q(`UPDATE agency_inbound_calls SET follow_up_status = 'handled', handled_reason = 'reached', handled_by_user_id = $2, handled_at = now() WHERE id = $1`,
+      [reached, agent(2).id]);
+    for (const id of [theirs, accounts, reached]) {
+      const res = await call('POST', `/missed/${id}/reopen`, sup());
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().call).toMatchObject({ status: 'open', handled_reason: null });
+    }
+    expect((await audits('agency_inbound_call.reopened', reached))[0]!.details).toEqual({ handled_reason: 'reached', handled_by_user_id: agent(2).id });
+  });
+
+  it('refuses another account`s row and a malformed id, and is served with the flag off', async () => {
+    const inB = await missed({ account: accountB });
+    await q(`UPDATE agency_inbound_calls SET follow_up_status = 'handled', handled_reason = 'marked', handled_at = now() WHERE id = $1`, [inB]);
+    expect((await call('POST', `/missed/${inB}/reopen`, sup())).json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+    expect((await agencyInboundCallRepository.findMissed(floor.tenant, accountB, inB))!.follow_up_status).toBe('handled');
+    expect((await call('POST', '/missed/not-a-uuid/reopen', sup())).json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+    const id = await handledRow(null);
+    await withFlagOff(async () => {
+      const res = await call('POST', `/missed/${id}/reopen`, sup());
+      expect(res.statusCode, res.body).toBe(200);
+    });
+  });
+
+  it('a reopened row closes again on the customer`s next conversation', async () => {
+    const phone = '+447700900780';
+    const id = await missed({ from: phone, assignee: agent(0).id });
+    await q(`UPDATE agency_inbound_calls SET follow_up_status = 'handled', handled_reason = 'reached', handled_at = now() WHERE id = $1`, [id]);
+    expect((await call('POST', `/missed/${id}/reopen`, agent(0))).statusCode).toBe(200);
+    // The customer rings again and is put through: the reopened row closes as any open row would.
+    const later = (await agencyInboundCallRepository.insertArrival({
+      tenantId: floor.tenant, accountId: floor.account, routeId: null, phoneNumberId: null, provider: 'plivo',
+      telephonyCredentialId: credentials.get(floor.tenant)!, providerCallId: `CA-${randomUUID()}`, fromE164: phone, toE164: '+14155550100',
+      identification: { match: null, callerDnc: false, sticky: null }, answered: true, recordingRequested: false, analysisProfileId: null,
+    })).call!;
+    await q(`UPDATE agency_inbound_calls SET state = 'offered', session_id = $2, offered_at = now(), offer_count = 1 WHERE id = $1`, [later.id, randomUUID()]);
+    await q(`UPDATE agency_inbound_calls SET state = 'connected', bridged_at = now(), answered_by_user_id = $2 WHERE id = $1`, [later.id, agent(2).id]);
+    expect((await agencyInboundCallRepository.findMissed(floor.tenant, floor.account, id))).toMatchObject({
+      follow_up_status: 'handled', handled_reason: 'reached', handled_by_user_id: agent(2).id,
+    });
+    await q('UPDATE agency_inbound_calls SET state = \'ended\', outcome = \'answered\', ended_at = now(), settled_at = now(), session_id = NULL WHERE id = $1', [later.id]);
   });
 });
 
@@ -370,9 +496,21 @@ describe('GET /inbound/summary', () => {
     await ended(day(3), { outcome: 'overflow', follow_up_status: 'open', follow_up_reason: 'overflow' });
     await ended(day(3), { outcome: 'overflow_no_capacity', follow_up_status: 'open', follow_up_reason: 'overflow_no_capacity' });
     await ended(day(3), { outcome: 'voicemail', voicemail_key: 'vm/q', follow_up_status: 'open', follow_up_reason: 'overflow' });
-    // After hours: closed (with a sticky agent: outside the sticky rate), and a voicemail out of hours.
-    await ended(day(4), { outcome: 'closed', follow_up_status: 'open', follow_up_reason: 'closed', sticky_user_id: a1, sticky_reason: 'owner' });
-    await ended(day(4), { outcome: 'voicemail', voicemail_key: 'vm/c', follow_up_status: 'open', follow_up_reason: 'closed' });
+    // After hours: closed (with a sticky agent: outside the sticky rate), a voicemail out of hours,
+    // and a closed call with no cause recorded on a route (read as out of hours).
+    const routeId = (await q(
+      `INSERT INTO agency_inbound_routes (tenant_id, account_id, name, timezone) VALUES ($1, $2, $3, 'UTC') RETURNING id`,
+      [floor.tenant, floor.account, `Summary ${randomUUID().slice(0, 6)}`])).rows[0]!.id as string;
+    await ended(day(4), { outcome: 'closed', follow_up_status: 'open', follow_up_reason: 'closed', sticky_user_id: a1, sticky_reason: 'owner', closed_cause: 'hours' });
+    await ended(day(4), { outcome: 'voicemail', voicemail_key: 'vm/c', follow_up_status: 'open', follow_up_reason: 'closed', closed_cause: 'hours' });
+    await ended(day(4), { outcome: 'closed', follow_up_status: 'handled', follow_up_reason: 'closed', handled_at: day(5), handled_reason: 'marked', route_id: routeId });
+    // Closed for another cause: the kill switch (two), a number with no route (one; and one with
+    // no cause recorded and no route), an inactive credential (not served). None is out of hours.
+    await ended(day(5), { outcome: 'closed', follow_up_status: 'open', follow_up_reason: 'closed', closed_cause: 'switched_off', route_id: routeId });
+    await ended(day(5), { outcome: 'closed', follow_up_status: 'open', follow_up_reason: 'closed', closed_cause: 'switched_off', route_id: routeId });
+    await ended(day(5), { outcome: 'closed', follow_up_status: 'open', follow_up_reason: 'closed', closed_cause: 'no_route' });
+    await ended(day(5), { outcome: 'closed', follow_up_status: 'open', follow_up_reason: 'closed' });
+    await ended(day(5), { outcome: 'closed', follow_up_status: 'open', follow_up_reason: 'closed', closed_cause: 'credential_inactive', route_id: routeId });
     // Not served: failed and refused.
     await ended(day(4), { outcome: 'failed', follow_up_status: 'open', follow_up_reason: 'failed' });
     await ended(day(4), { outcome: 'rejected' });
@@ -390,9 +528,11 @@ describe('GET /inbound/summary', () => {
     expect(res.json()).toEqual({
       from: day(0).toISOString(),
       to: day(7).toISOString(),
-      calls: 14,
+      calls: 20,
       open_hours_calls: 11,
-      after_hours: 2,
+      after_hours: 3,
+      switched_off: 2,
+      no_route: 2,
       answered: 5,
       answer_rate_pct: 45.5,
       abandoned: 2,
@@ -402,12 +542,14 @@ describe('GET /inbound/summary', () => {
       p90_answer_seconds: 76,
       voicemails: 2,
       overflow: 2,
-      not_served: 2,
+      nobody_free: 1,
+      lines_busy: 1,
+      not_served: 3,
       sticky_calls: 4,
       sticky_answered: 2,
       sticky_hit_rate_pct: 50,
-      missed: 8,
-      missed_handled: 1,
+      missed: 14,
+      missed_handled: 2,
       agents: [
         { user_id: agent(0).id, name: 'agent 0.0', answered: 3, talk_seconds: 180 },
         { user_id: agent(1).id, name: 'agent 0.1', answered: 2, talk_seconds: 120 },
@@ -431,7 +573,7 @@ describe('GET /inbound/summary', () => {
     await withFlagOff(async () => {
       const res = await call('GET', range(day(0), day(7)), sup());
       expect(res.statusCode, res.body).toBe(200);
-      expect(res.json().calls).toBe(14);
+      expect(res.json().calls).toBe(20);
     });
   });
 });

@@ -3,7 +3,7 @@
  * under `/api/v1/agency` (decision B16): the account's inbound routes (list, read, create,
  * change, delete), the route editor's choices (numbers, recordings; uploading and deleting a
  * recording is `./inbound-clips.ts`), and the Missed inbound list with
- * Mark handled. Part of `agency.routes.ts`, inside its authenticated scope.
+ * Mark handled and Reopen. Part of `agency.routes.ts`, inside its authenticated scope.
  *
  * The public routes (`../proxy-agency-inbound.routes.ts`) own RBAC, the `agency_inbound_enabled`
  * flag, the actor, name enrichment and the audit rows; these handlers own validation, the
@@ -71,6 +71,7 @@ import {
   inboundRouteConfigOf,
   sendInboundRefusal,
   type InboundCallHandledAudit,
+  type InboundCallReopenedAudit,
   type InboundVoicemailLocation,
   type InboundCoreAnswer,
   type InboundRefusal,
@@ -397,5 +398,29 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     if (!marked) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
     const audit: InboundCallHandledAudit = { call_id: marked.call.id, changed: marked.changed, reason: marked.call.follow_up_reason! };
     return answer(reply, 200, { call: inboundMissedToWire(marked.call) }, audit);
+  });
+
+  // ── POST /inbound/missed/:id/reopen — idempotent ──────────────────────────
+  // Mark handled's rules: the account's row, and without `agency.supervise` only one assigned to
+  // the caller (another's answers as missing).
+  sub.post<{ Params: { id: string } }>('/inbound/missed/:id/reopen', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    if (!UUID_RE.test(request.params.id)) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    const reopened = await agencyInboundCallRepository.reopenMissed({
+      tenantId: actor.tenantId,
+      accountId: actor.accountId,
+      id: request.params.id,
+      ...(actor.supervise ? {} : { onlyAssignee: actor.userId }),
+    });
+    if (!reopened) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    const audit: InboundCallReopenedAudit = {
+      call_id: reopened.call.id,
+      changed: reopened.changed,
+      // A row handled before 0028 has no reason: a person marked it.
+      handled_reason: reopened.previous ? (reopened.previous.reason ?? 'marked') : null,
+      handled_by_user_id: reopened.previous?.handledByUserId ?? null,
+    };
+    return answer(reply, 200, { call: inboundMissedToWire(reopened.call) }, audit);
   });
 }

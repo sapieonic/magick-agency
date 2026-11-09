@@ -1,9 +1,11 @@
 // Real Postgres: migrations/0028_inbound_missed_follow_up.sql (docs/inbound.md §7, §11). globalSetup
 // has applied every migration. Pins `handled_reason` and its CHECK against the contract's list; the
-// three triggers that close a Missed row when the customer is put through to an agent (a campaign
-// attempt, a soft-phone call, a later inbound call), what they leave alone, and that two closes at
-// once, or a close beside a person's Mark handled, close a row once; the two indexes by definition
-// and by the planner using them; the Down and up again.
+// inbound trigger that closes a Missed row when the customer's later call is put through to an
+// agent, what it leaves alone, and that two closes at once, or a close beside a person's Mark
+// handled, close a row once; the summary's index by definition and by the planner; the Down and up
+// again. 0030 moved the campaign-attempt and soft-phone triggers from the bridge to the outcome and
+// the match to the number's digits, with its own index: inbound-reached-on-outcome-migration.test.ts
+// pins those (0028's own versions are what 0030's Down restores, pinned there).
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import type { PoolClient } from 'pg';
@@ -13,10 +15,7 @@ import { AGENCY_INBOUND_HANDLED_REASONS } from '@magick-agency/contracts/agency'
 import { MIGRATIONS_DIR } from '../../../src/migrations-dir.js';
 import { TEST_DB_URL } from '../../helpers/test-db.js';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import {
-  ACCOUNT, TENANT, insertAccount, insertAttempt, insertCampaign, insertContact, insertManualCall, insertRow, insertSession,
-  insertSoftphoneSession, insertTenant,
-} from '../fixtures.js';
+import { ACCOUNT, TENANT, insertAccount, insertRow, insertTenant } from '../fixtures.js';
 
 const pool = () => getTestPool();
 const CALLER = '+447700900123';
@@ -57,16 +56,17 @@ async function followUp(id: string) {
   return rows[0] as { follow_up_status: string; handled_reason: string | null; handled_by_user_id: string | null; handled_at: Date | null };
 }
 
-/** A campaign attempt to `phone`, reserved to a session of `agent`. */
-async function attemptTo(phone: string, agent: string, account = ACCOUNT) {
-  const campaign = await insertCampaign({ account_id: account });
-  const contact = await insertContact(campaign.id, { phone_e164: phone, account_id: account });
-  const session = await insertSession(campaign.id, { agent_user_id: agent, account_id: account });
-  return insertAttempt(campaign.id, contact.id, { reserved_agent_id: session.id, account_id: account, state: 'answered' });
+/** An inbound call from `phone` offered to `agent`'s session, not yet put through. */
+async function offeredFrom(phone: string, account: string | null = ACCOUNT) {
+  return insertRow('agency_inbound_calls', {
+    tenant_id: TENANT, account_id: account, provider_call_id: `CA-${randomUUID()}`, to_e164: '+14155550100', from_e164: phone,
+    state: 'offered', session_id: randomUUID(), offered_at: new Date(), offer_count: 1,
+  });
 }
 
-const bridge = (table: string, id: string, at: Date = new Date(), db: Pick<PoolClient, 'query'> = pool()) =>
-  db.query(`UPDATE ${table} SET bridged_at = $2 WHERE id = $1`, [id, at]);
+/** Put an offered inbound call through to `agent`: the trigger's write. */
+const bridge = (id: string, agent: string, at: Date = new Date(), db: Pick<PoolClient, 'query'> = pool()) =>
+  db.query(`UPDATE agency_inbound_calls SET state = 'connected', bridged_at = $2, answered_by_user_id = $3 WHERE id = $1`, [id, at, agent]);
 
 describe('0028 — handled_reason', () => {
   it('is NULL on an open row, one of the contract`s reasons on a handled one, and nothing else', async () => {
@@ -87,24 +87,24 @@ describe('0028 — handled_reason', () => {
   });
 });
 
-describe('0028 — a Missed row closes when the customer is put through', () => {
-  it('a campaign attempt closes the account`s open rows from its contact`s number that rang before it, as its agent', async () => {
+describe('0028 — a Missed row closes when the customer`s later call is put through', () => {
+  it('closes the account`s open rows from the caller that rang before it, as the agent who answered, never itself', async () => {
     const agent = randomUUID();
     const otherAccount = (await insertAccount(TENANT)).id;
-    const before = await missed();
-    const alsoBefore = await missed({ outcome: 'overflow', follow_up_reason: 'overflow' });
+    const earlier = await missed();
+    const alsoEarlier = await missed({ outcome: 'overflow', follow_up_reason: 'overflow' });
     const otherNumber = await missed({ from_e164: '+447700900999' });
     const withheld = await missed({ from_e164: null });
     const inOtherAccount = await missed({ account_id: otherAccount });
     const tenantDefault = await missed({ account_id: null });
     const alreadyHandled = await missed({ follow_up_status: 'handled', handled_at: new Date('2026-11-01T10:00:00Z'), handled_reason: 'marked', handled_by_user_id: randomUUID() });
-    const attempt = await attemptTo(CALLER, agent);
+    const live = await offeredFrom(CALLER);
     const bridgedAt = new Date();
     const after = await missed({ arrived_at: new Date(bridgedAt.getTime() + 60_000) });
 
-    await bridge('agency_call_attempts', attempt.id, bridgedAt);
+    await bridge(live.id, agent, bridgedAt);
 
-    for (const id of [before.id, alsoBefore.id]) {
+    for (const id of [earlier.id, alsoEarlier.id]) {
       expect(await followUp(id)).toMatchObject({ follow_up_status: 'handled', handled_reason: 'reached', handled_by_user_id: agent });
       expect((await followUp(id)).handled_at).not.toBeNull();
     }
@@ -115,59 +115,34 @@ describe('0028 — a Missed row closes when the customer is put through', () => 
     expect(await followUp(alreadyHandled.id)).toMatchObject({
       follow_up_status: 'handled', handled_reason: 'marked', handled_at: new Date('2026-11-01T10:00:00Z'),
     });
-  });
-
-  it('fires only as bridged_at is first set: other writes to the attempt close nothing', async () => {
-    const attempt = await attemptTo(CALLER, randomUUID());
-    const row = await missed();
-    await pool().query(`UPDATE agency_call_attempts SET state = 'ringing', dialed_at = now() WHERE id = $1`, [attempt.id]);
-    expect((await followUp(row.id)).follow_up_status).toBe('open');
-    await bridge('agency_call_attempts', attempt.id);
-    const late = await missed({ arrived_at: new Date(Date.now() - 1_000) });
-    // bridged_at written again (the setState COALESCE): not a new conversation.
-    await pool().query('UPDATE agency_call_attempts SET bridged_at = bridged_at, talk_seconds = 5 WHERE id = $1', [attempt.id]);
-    expect((await followUp(late.id)).follow_up_status).toBe('open');
-  });
-
-  it('a soft-phone call closes the rows from the number it dialled, as the agent who placed it', async () => {
-    const agent = randomUUID();
-    const session = await insertSoftphoneSession();
-    const call = await insertManualCall(session.id, { destination_e164: CALLER, agent_user_id: agent });
-    const row = await missed();
-    const otherNumber = await missed({ from_e164: '+447700900999' });
-    await bridge('agency_manual_calls', call.id);
-    expect(await followUp(row.id)).toMatchObject({ follow_up_status: 'handled', handled_reason: 'reached', handled_by_user_id: agent });
-    expect((await followUp(otherNumber.id)).follow_up_status).toBe('open');
-  });
-
-  it('a later inbound call put through closes the caller`s earlier rows, never itself', async () => {
-    const agent = randomUUID();
-    const earlier = await missed();
-    const live = await insertRow('agency_inbound_calls', {
-      tenant_id: TENANT, account_id: ACCOUNT, provider_call_id: `CA-${randomUUID()}`, to_e164: '+14155550100', from_e164: CALLER,
-      state: 'offered', session_id: randomUUID(), offered_at: new Date(), offer_count: 1,
-    });
-    await pool().query(
-      `UPDATE agency_inbound_calls SET state = 'connected', bridged_at = now(), answered_by_user_id = $2 WHERE id = $1`, [live.id, agent]);
-    expect(await followUp(earlier.id)).toMatchObject({ follow_up_status: 'handled', handled_reason: 'reached', handled_by_user_id: agent });
     const { rows } = await pool().query('SELECT state, follow_up_status FROM agency_inbound_calls WHERE id = $1', [live.id]);
     expect(rows[0]).toEqual({ state: 'connected', follow_up_status: null });
+  });
+
+  it('fires only as bridged_at is first set: other writes to the call close nothing', async () => {
+    const live = await offeredFrom(CALLER);
+    const agent = randomUUID();
+    await bridge(live.id, agent);
+    const late = await missed({ arrived_at: new Date(Date.now() - 1_000) });
+    // bridged_at written again, and another write: not a new conversation.
+    await pool().query('UPDATE agency_inbound_calls SET bridged_at = bridged_at, talk_seconds = 5 WHERE id = $1', [live.id]);
+    expect((await followUp(late.id)).follow_up_status).toBe('open');
   });
 
   it('two conversations at once close a row once: the second waits for the first and finds it handled', async () => {
     const first = randomUUID();
     const second = randomUUID();
     const row = await missed();
-    const attempt = await attemptTo(CALLER, first);
-    const softphone = await insertManualCall((await insertSoftphoneSession()).id, { destination_e164: CALLER, agent_user_id: second });
+    const one = await offeredFrom(CALLER);
+    const two = await offeredFrom(CALLER);
     const a: PoolClient = await pool().connect();
     const b: PoolClient = await pool().connect();
     try {
       await a.query('BEGIN');
       await b.query('BEGIN');
-      await bridge('agency_call_attempts', attempt.id, new Date(), a);
+      await bridge(one.id, first, new Date(), a);
       // B's close blocks on the row A's trigger locked.
-      const waiting = bridge('agency_manual_calls', softphone.id, new Date(), b);
+      const waiting = bridge(two.id, second, new Date(), b);
       await new Promise((r) => setTimeout(r, 200));
       await a.query('COMMIT');
       await waiting;
@@ -182,14 +157,14 @@ describe('0028 — a Missed row closes when the customer is put through', () => 
   it('a person`s Mark handled at the same instant wins or loses whole: never both', async () => {
     const person = randomUUID();
     const row = await missed();
-    const attempt = await attemptTo(CALLER, randomUUID());
+    const live = await offeredFrom(CALLER);
     const a: PoolClient = await pool().connect();
     try {
       await a.query('BEGIN');
       await a.query(
         `UPDATE agency_inbound_calls SET follow_up_status = 'handled', handled_reason = 'marked', handled_by_user_id = $2, handled_at = now()
           WHERE id = $1 AND follow_up_status = 'open'`, [row.id, person]);
-      const waiting = bridge('agency_call_attempts', attempt.id);
+      const waiting = bridge(live.id, randomUUID());
       await new Promise((r) => setTimeout(r, 200));
       await a.query('COMMIT');
       await waiting;
@@ -232,22 +207,10 @@ async function planOverHistory(sql: string, params: (account: string) => unknown
   }
 }
 
-describe('0028 — the indexes', () => {
-  it('are defined as the migration says', async () => {
-    expect(await indexDef('idx_agency_inbound_calls_missed_open_from')).toMatch(
-      /ON public\.agency_inbound_calls USING btree \(tenant_id, account_id, from_e164\) WHERE \(\(\(follow_up_status\)::text = 'open'::text\) AND \(from_e164 IS NOT NULL\)\)/);
+describe('0028 — the summary`s index', () => {
+  it('is defined as the migration says', async () => {
     expect(await indexDef('idx_agency_inbound_calls_account_arrived')).toMatch(
       /ON public\.agency_inbound_calls USING btree \(tenant_id, account_id, arrived_at\) WHERE \(\(state\)::text = 'ended'::text\)$/);
-  });
-
-  it('the triggers` probe uses the open-Missed index', async () => {
-    const plan = await planOverHistory(
-      `SELECT id FROM agency_inbound_calls m
-        WHERE m.tenant_id = $1::uuid AND m.account_id = $2::uuid AND m.from_e164 = $3::text
-          AND m.follow_up_status = 'open' AND m.arrived_at <= now()`,
-      (account) => [TENANT, account, '+447700900050'],
-    );
-    expect(plan).toMatch(/idx_agency_inbound_calls_missed_open_from/);
   });
 
   it('the summary`s range read uses the account-arrival index', async () => {
@@ -267,7 +230,9 @@ describe('0028 — the Down and up again', () => {
 
   it('drops the triggers, the function, the indexes and the column; up re-applies them, and a reached row stays handled', async () => {
     const row = await missed();
-    await bridge('agency_call_attempts', (await attemptTo(CALLER, randomUUID())).id);
+    await bridge((await offeredFrom(CALLER)).id, randomUUID());
+    expect((await followUp(row.id)).handled_reason).toBe('reached');
+    // The later migrations (0030 and on) go down first, then 0028.
     await downToBefore();
     try {
       expect(await indexDef('idx_agency_inbound_calls_missed_open_from')).toBeUndefined();
@@ -283,14 +248,14 @@ describe('0028 — the Down and up again', () => {
       expect(rows[0]).toEqual({ follow_up_status: 'handled' });
       // With 0028 down, a conversation closes nothing.
       const open = await missed();
-      await bridge('agency_call_attempts', (await attemptTo(CALLER, randomUUID())).id);
+      await bridge((await offeredFrom(CALLER)).id, randomUUID());
       expect((await pool().query('SELECT follow_up_status FROM agency_inbound_calls WHERE id = $1', [open.id])).rows[0]).toEqual({ follow_up_status: 'open' });
     } finally {
       await migrate('up');
     }
-    expect(await indexDef('idx_agency_inbound_calls_missed_open_from')).toBeDefined();
+    expect(await indexDef('idx_agency_inbound_calls_account_arrived')).toBeDefined();
     const again = await missed();
-    await bridge('agency_call_attempts', (await attemptTo(CALLER, randomUUID())).id);
+    await bridge((await offeredFrom(CALLER)).id, randomUUID());
     expect((await followUp(again.id)).handled_reason).toBe('reached');
   });
 });

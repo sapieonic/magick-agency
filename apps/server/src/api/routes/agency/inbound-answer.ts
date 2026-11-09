@@ -167,6 +167,17 @@ export interface InboundCallHandledAudit {
 }
 
 /**
+ * `POST /inbound/missed/:id/reopen`: whether this request reopened it (false: it was open), and
+ * how and by whom it had been handled (`reason` `marked` for a row handled before 0028).
+ */
+export interface InboundCallReopenedAudit {
+  call_id: string;
+  changed: boolean;
+  handled_reason: string | null;
+  handled_by_user_id: string | null;
+}
+
+/**
  * `GET /inbound/missed/:id/voicemail` (internal): where the row's voicemail is stored, for the
  * public route to stream (never served to a client: the key is a bucket path).
  */
@@ -256,6 +267,8 @@ export function inboundMissedToWire(
     // A Missed row exists only on an ended call (`ck_agency_inbound_calls_follow_up`).
     ended_at: iso(row.ended_at)!,
     reason: row.follow_up_reason!,
+    // Why a `closed` row was closed (0030); none on another reason's row.
+    closed_cause: row.follow_up_reason === 'closed' ? (row.closed_cause ?? null) : null,
     outcome: row.outcome!,
     caller_dnc: row.caller_dnc,
     matched_contact_id: row.matched_contact_id,

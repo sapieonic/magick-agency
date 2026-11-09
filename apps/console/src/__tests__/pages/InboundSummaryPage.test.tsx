@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { AgencyInboundSummary } from '@magick-agency/contracts/api/agency/inbound';
 
@@ -7,7 +7,9 @@ import type { AgencyInboundSummary } from '@magick-agency/contracts/api/agency/i
  * The inbound summary (`docs/inbound.md` §11): supervisors only; the range presets and a custom
  * pair of dates, cut at local midnights (TZ is pinned to UTC for the run); the tiles and the
  * per-agent table as the server's numbers say; nothing yet is "no calls"; a bad custom range is
- * refused before any read. And the range helper on its own.
+ * refused before any read. "Nobody free to answer" and "All lines busy" are their own tiles, in
+ * the Missed list's meaning; calls answered closed while inbound was off or to a number not on a
+ * route are counted apart from out of hours. And the range helper on its own.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -32,6 +34,7 @@ const NOW = new Date('2026-11-09T15:30:00Z');
 function summary(o: Partial<AgencyInboundSummary> = {}): AgencyInboundSummary {
   return {
     from: '2026-11-03T00:00:00.000Z', to: '2026-11-10T00:00:00.000Z', calls: 14, open_hours_calls: 11, after_hours: 2,
+    switched_off: 0, no_route: 0, nobody_free: 1, lines_busy: 1,
     answered: 5, answer_rate_pct: 45.5, abandoned: 2, abandon_rate_pct: 18.2, avg_answer_seconds: 40, p90_answer_seconds: 76,
     voicemails: 2, overflow: 2, not_served: 0, sticky_calls: 4, sticky_answered: 2, sticky_hit_rate_pct: 50, missed: 8,
     missed_handled: 1,
@@ -123,6 +126,28 @@ describe('the page', () => {
     await renderPage();
     expect(screen.getByText('No inbound calls on these days')).toBeTruthy();
     expect(screen.queryByTestId('inbound-summary')).toBeNull();
+  });
+
+  it('counts nobody free to answer and all lines busy apart, in the Missed list`s meaning, never "waited too long"', async () => {
+    mocks.getInboundSummary.mockResolvedValue(summary({ overflow: 5, nobody_free: 3, lines_busy: 2 }));
+    await renderPage();
+    expect(screen.getByTestId('summary-nobody-free').textContent).toBe(
+      '3the caller waited as long as the line allows, the queue was full, or nobody in the team could take calls');
+    expect(screen.getByTestId('summary-lines-busy').textContent).toBe('2more calls at once than the line takes');
+    expect(screen.getByTestId('inbound-summary').textContent).not.toMatch(/too long/);
+  });
+
+  it('counts calls while inbound was off and to a number not on a route apart from out of hours, only when there were any', async () => {
+    await renderPage();
+    expect(screen.queryByTestId('summary-switched-off')).toBeNull();
+    expect(screen.queryByTestId('summary-no-route')).toBeNull();
+    cleanup();
+    mocks.getInboundSummary.mockResolvedValue(summary({ calls: 17, after_hours: 2, switched_off: 2, no_route: 1 }));
+    await renderPage();
+    expect(screen.getByTestId('summary-calls').textContent).toBe(
+      '1711 while open · 2 out of hours · 2 while inbound was off · 1 to a number not on a route');
+    expect(screen.getByTestId('summary-switched-off').textContent).toBe('2inbound was switched off, so they heard the closed message');
+    expect(screen.getByTestId('summary-no-route').textContent).toBe('1rang a number no inbound route answers, so they heard the closed message');
   });
 
   it('a dash, not 0%, when a rate has nothing to divide by', async () => {

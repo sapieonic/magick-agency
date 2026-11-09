@@ -1,5 +1,6 @@
 import type {
   AgencyInboundCallOutcome,
+  AgencyInboundClosedCause,
   AgencyInboundClipSlot,
   AgencyInboundMissedReason,
   AgencyInboundStickyReason,
@@ -412,7 +413,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         tenantId: arrival.tenantId, accountId: null, routeId: null, phoneNumberId, provider: arrival.provider,
         telephonyCredentialId: arrival.credentialId, providerCallId: arrival.carrierCallId,
         fromE164: arrival.fromE164, toE164: arrival.toE164, identification, answered: true,
-        recordingRequested: false, analysisProfileId: null,
+        recordingRequested: false, analysisProfileId: null, closedCause: 'no_route',
       });
       if (!call) return this.refuseForeign(arrival);
       if (call.state !== 'ended') await this.settle(call, 'closed');
@@ -427,6 +428,12 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     // Out of the route's hours (not a credential that is not active, nor no route, nor switched
     // off): the route's after-hours action applies (a voicemail, §7).
     const afterHours = planned === 'closed' && arrival.credentialStatus === 'active' && route !== null && !switchedOff;
+    // Why, on the row (`closed_cause`, 0030): the inbound summary counts each apart (§11).
+    const closedCause: AgencyInboundClosedCause | null = planned !== 'closed' ? null
+      : arrival.credentialStatus !== 'active' ? 'credential_inactive'
+        : !route ? 'no_route'
+          : switchedOff ? 'switched_off'
+            : 'hours';
     // P2: an open route's caller may be put through to an agent (the header). Decided before the
     // insert, so the leg asks for the recording the route wants (IB7's notice depends on it).
     const connectable = planned === 'overflow' && route !== null && await this.mayConnect(arrival.tenantId, accountId);
@@ -446,6 +453,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         // one over the route's `max_concurrent`, which hears "busy" (and one the bridge's shared
         // scopes turn away has the flag taken back with its admission, `refuseAdmission`).
         recordingRequested: recorded && underCap, analysisProfileId: route?.analysis_profile_id ?? null,
+        closedCause,
       }, { client });
       if (!inserted.call) return null;
       if (inserted.created && underCap) {

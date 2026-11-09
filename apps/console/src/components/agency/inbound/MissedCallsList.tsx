@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Calendar, Check, ListChecks, Phone, PhoneIncoming, UserRoundPen } from 'lucide-react';
+import { AlertCircle, Calendar, Check, ListChecks, Phone, PhoneIncoming, RotateCcw, UserRoundPen } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -8,7 +8,12 @@ import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { FiltersCard } from '../FiltersCard';
 import { VoicemailPlayer } from './VoicemailPlayer';
 import { useTenant } from '../../../contexts/TenantContext';
-import { assignMissedInboundCall, listMissedInboundCalls, markMissedInboundCallHandled } from '../../../api/inbound';
+import {
+  assignMissedInboundCall,
+  listMissedInboundCalls,
+  markMissedInboundCallHandled,
+  reopenMissedInboundCall,
+} from '../../../api/inbound';
 import { refreshMissedCallsCount } from '../../../hooks/useMissedCallsCount';
 import { listTenantMembers } from '../../../api/tenants';
 import { formatSpineTimestamp } from '../../../utils/agencySpineCopy';
@@ -26,7 +31,9 @@ import {
   departedAssigneeNote,
   missedAssigneeLabel,
   missedHandledLabel,
+  missedReasonLabel,
   reassignRefusalCopy,
+  reopenRefusalCopy,
 } from '../../../utils/inbound/missedCopy';
 import { AGENCY_INBOUND_MISSED_REASONS, type AgencyInboundMissedCall } from '../../../types/inbound';
 import spine from '../SpineListLayout.module.css';
@@ -51,7 +58,9 @@ export interface MissedCallsListProps {
  * and the matched campaign as its "Log to" (nothing is dialled until the agent presses Call, and
  * a caller on a DNC list meets the soft phone's own DNC check and override note) — and **Mark
  * handled**, which the server makes idempotent. A row also closes on its own once the customer is
- * put through to an agent of the account (`reached`, shown on the Handled tab).
+ * reached by an agent of the account (`reached`, shown on the Handled tab). A handled row offers
+ * **Reopen**, which puts it back on the list (a row marked by mistake, or closed as reached when
+ * the customer was not).
  *
  * A supervisor **reassigns** an open row to a member of the account, or to the account; a row
  * whose assignee has left reads "Former member" with the prompt to reassign it. Every change
@@ -69,6 +78,7 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
   const [error, setError] = useState<string | null>(null);
   const [moreError, setMoreError] = useState<string | null>(null);
   const [marking, setMarking] = useState<string | null>(null);
+  const [reopening, setReopening] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [members, setMembers] = useState<Array<{ id: string; name: string; assignable: boolean }>>([]);
@@ -164,6 +174,26 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
         : current.map((r) => (r.id === call.id ? result.value : r)),
     );
     setAnnouncement(`Marked the call from ${callerLabel(call)} as handled.`);
+    refreshMissedCallsCount();
+  };
+
+  const reopen = async (call: AgencyInboundMissedCall) => {
+    if (reopening) return;
+    setReopening(call.id);
+    setRowError(null);
+    const result = await reopenMissedInboundCall(call.id, tenantId ?? undefined, accountId ?? undefined);
+    setReopening(null);
+    if (!result.ok) {
+      setRowError({ id: call.id, message: reopenRefusalCopy(result.refusal) });
+      return;
+    }
+    // Off the Handled list, back onto the Open one.
+    setRows((current) =>
+      applied.status === 'handled'
+        ? current.filter((r) => r.id !== call.id)
+        : current.map((r) => (r.id === call.id ? result.value : r)),
+    );
+    setAnnouncement(`Reopened the call from ${callerLabel(call)}. It is back on the list to follow up.`);
     refreshMissedCallsCount();
   };
 
@@ -383,7 +413,7 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
                       </span>
                     </td>
                     <td data-label="Why it was missed">
-                      <span className={styles.reason}>{MISSED_REASON_LABELS[call.reason]}</span>
+                      <span className={styles.reason} data-testid="missed-reason">{missedReasonLabel(call)}</span>
                       {call.has_voicemail ? <span className={styles.sub}>Left a voicemail</span> : null}
                       {/* P2: playable once the server serves it (`voicemail_url`). */}
                       {call.has_voicemail && call.voicemail_url ? (
@@ -463,11 +493,29 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
                     ) : null}
                     <td data-label={open ? 'Follow up' : 'Handled'}>
                       {call.status === 'handled' ? (
-                        <span data-testid="missed-handled">
-                          {missedHandledLabel(call, userId)}
-                          <span className={styles.sub}>{formatSpineTimestamp(call.handled_at)}</span>
-                          {call.handled_reason === 'reached' ? <span className={styles.sub}>{MISSED_REACHED_NOTE}</span> : null}
-                        </span>
+                        <div>
+                          <span data-testid="missed-handled">
+                            {missedHandledLabel(call, userId)}
+                            <span className={styles.sub}>{formatSpineTimestamp(call.handled_at)}</span>
+                            {call.handled_reason === 'reached' ? <span className={styles.sub}>{MISSED_REACHED_NOTE}</span> : null}
+                          </span>
+                          <button
+                            type="button"
+                            className={missedStyles.linkButton}
+                            onClick={() => void reopen(call)}
+                            disabled={reopening !== null}
+                            aria-label={`Reopen the call from ${callerLabel(call)}`}
+                            data-testid="missed-reopen"
+                          >
+                            <RotateCcw size={13} aria-hidden="true" />
+                            {reopening === call.id ? 'Reopening…' : 'Reopen'}
+                          </button>
+                          {rowError?.id === call.id ? (
+                            <p className="error-text" role="alert">
+                              {rowError.message}
+                            </p>
+                          ) : null}
+                        </div>
                       ) : (
                         <div className={styles.rowActions}>
                           {canCallBack ? (

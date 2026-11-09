@@ -140,6 +140,9 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_inbound_route.deleted',
   'agency_inbound_call.handled',
   'agency_inbound_call.reassigned',
+  // A handled Missed inbound row put back on the list (`details.handled_reason`,
+  // `details.handled_by_user_id`: how and by whom it had been handled).
+  'agency_inbound_call.reopened',
   // An answered inbound call (P2, docs/inbound.md §6): hung up, its outcome saved, its caller marked
   // DNC, by the agent who took it or a supervisor (`details.on_behalf`), filed under the inbound
   // call; `campaign_id` the matched campaign, when the caller matched one. Ids and codes only.

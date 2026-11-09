@@ -15,6 +15,7 @@ import {
   type AgencyInboundClipsResponse,
   type AgencyInboundErrorCode,
   type AgencyInboundMarkHandledResponse,
+  type AgencyInboundReopenResponse,
   type AgencyInboundMissedCall,
   type AgencyInboundMissedAssignRequest,
   type AgencyInboundMissedAssignResponse,
@@ -43,6 +44,7 @@ import {
  *   GET    /proxy/agency/inbound/clips                 → the account's audio files
  *   GET    /proxy/agency/inbound/missed                → a page of Missed rows
  *   POST   /proxy/agency/inbound/missed/:id/handled    → the row, handled
+ *   POST   /proxy/agency/inbound/missed/:id/reopen     → the row, open again
  *   POST   /proxy/agency/inbound/missed/:id/assign     → the row, reassigned (supervisors)
  *   GET    /proxy/agency/inbound/missed/count          → the nav badge's count
  *   GET    /proxy/agency/inbound/summary               → the inbound summary (supervisors)
@@ -61,7 +63,7 @@ import {
  *
  * Every route is account-scoped and behind `agency_inbound_enabled` (`403 inbound_disabled`),
  * except the five call routes, which finish a call the flag may have been turned off under (the
- * soft phone's rule), and the Missed list's count, reassign and the summary: the follow-up of
+ * soft phone's rule), and the Missed list's count, reassign, reopen and the summary: the follow-up of
  * calls that already came in, which turning inbound off does not stop.
  * Reads throw like the rest of the console's clients (their failure is a page state). The
  * writes resolve to an {@link InboundResult}: a refusal is something the admin acts on (a
@@ -84,6 +86,7 @@ export const INBOUND_PATHS = {
   queue: `${API_BASE}/proxy/agency/inbound/queue`,
   missedCount: `${API_BASE}/proxy/agency/inbound/missed/count`,
   missedAssign: (callId: string) => `${API_BASE}/proxy/agency/inbound/missed/${enc(callId)}/assign`,
+  missedReopen: (callId: string) => `${API_BASE}/proxy/agency/inbound/missed/${enc(callId)}/reopen`,
   summary: `${API_BASE}/proxy/agency/inbound/summary`,
 } as const;
 
@@ -240,6 +243,22 @@ export function markMissedInboundCallHandled(
     const body = await apiFetch<AgencyInboundMarkHandledResponse>(
       `${INBOUND}/missed/${enc(callId)}/handled`, { method: 'POST' }, tenantId, accountId,
     );
+    return body.call;
+  });
+}
+
+/**
+ * `POST /inbound/missed/:id/reopen`: put a handled row back on the list (Mark handled's rules: an
+ * agent's own rows, a supervisor's the account's). Idempotent: an open row comes back as it is.
+ * Refusal: `inbound_missed_call_not_found`.
+ */
+export function reopenMissedInboundCall(
+  callId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<InboundResult<AgencyInboundMissedCall>> {
+  return result(async () => {
+    const body = await apiFetch<AgencyInboundReopenResponse>(INBOUND_PATHS.missedReopen(callId), { method: 'POST' }, tenantId, accountId);
     return body.call;
   });
 }

@@ -83,6 +83,7 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'GET /inbound/clips/:id/audio': 'none',
   'GET /inbound/missed': 'none',
   'POST /inbound/missed/:id/handled': 'none',
+  'POST /inbound/missed/:id/reopen': 'none',
   'GET /inbound/missed/:id/voicemail': 'none',
   // Working the Missed list and the inbound summary (`agency/inbound-missed-work.ts`), Postgres only.
   'GET /inbound/missed/count': 'none',

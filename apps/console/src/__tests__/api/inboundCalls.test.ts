@@ -56,6 +56,7 @@ describe('the paths, in one place', () => {
     expect(INBOUND_PATHS.queue).toBe('/proxy/agency/inbound/queue');
     expect(INBOUND_PATHS.missedCount).toBe('/proxy/agency/inbound/missed/count');
     expect(INBOUND_PATHS.missedAssign('m 1')).toBe('/proxy/agency/inbound/missed/m%201/assign');
+    expect(INBOUND_PATHS.missedReopen('m 1')).toBe('/proxy/agency/inbound/missed/m%201/reopen');
     expect(INBOUND_PATHS.summary).toBe('/proxy/agency/inbound/summary');
   });
 });

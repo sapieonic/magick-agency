@@ -78,6 +78,16 @@ export const AGENCY_INBOUND_HANDLED_REASONS = ['marked', 'reached'] as const;
 export type AgencyInboundHandledReason = (typeof AGENCY_INBOUND_HANDLED_REASONS)[number];
 
 /**
+ * Why the answer treated a caller as closed (`agency_inbound_calls.closed_cause`, 0030), stamped
+ * at arrival; NULL when the route was open. `hours`: outside the route's opening hours or on a
+ * holiday; `switched_off`: the account's inbound flag is off (the kill switch, §8.1); `no_route`:
+ * the number reaches no route; `credential_inactive`: the carrier credential the call arrived on
+ * is not active (§10). The inbound summary counts them apart (§11).
+ */
+export const AGENCY_INBOUND_CLOSED_CAUSES = ['hours', 'switched_off', 'no_route', 'credential_inactive'] as const;
+export type AgencyInboundClosedCause = (typeof AGENCY_INBOUND_CLOSED_CAUSES)[number];
+
+/**
  * Which signal named the sticky agent (`sticky_reason`, §4.1, IB2): the contact's `owner`; the
  * agent whose latest call to the number went out from the number rung (`last_from_number`); the
  * last agent who spoke to the customer (`last_connected`); the last agent who dialled them,

@@ -20,6 +20,7 @@ import {
   type InboundSummaryPreset,
 } from '../../utils/inbound/inboundSummary';
 import type { AgencyInboundSummary } from '../../types/inbound';
+import { NOBODY_FREE_MEANING } from '../../utils/inbound/missedCopy';
 import spine from '../../components/agency/SpineListLayout.module.css';
 import styles from '../../components/agency/inbound/Inbound.module.css';
 import summary from '../../components/agency/inbound/MissedCalls.module.css';
@@ -27,6 +28,14 @@ import summary from '../../components/agency/inbound/MissedCalls.module.css';
 /** A rate, or a dash when there was nothing to divide by. */
 function rate(value: number | null): string {
   return value === null ? '—' : pct(value);
+}
+
+/** The Calls tile's breakdown: while open, out of hours, and the other closed causes when there were any. */
+function callsNote(data: AgencyInboundSummary): string {
+  const parts = [`${formatCount(data.open_hours_calls)} while open`, `${formatCount(data.after_hours)} out of hours`];
+  if (data.switched_off > 0) parts.push(`${formatCount(data.switched_off)} while inbound was off`);
+  if (data.no_route > 0) parts.push(`${formatCount(data.no_route)} to a number not on a route`);
+  return parts.join(' · ');
 }
 
 /** A time to answer, or a dash with no answered call. */
@@ -39,8 +48,10 @@ function seconds(value: number | null): string {
  * supervisors and admins (`agency.supervise`, the route's gate). Today, the last 7 or 30 days, or
  * two dates of the viewer's choosing, cut at the viewer's local midnights. Tiles for the calls and
  * what became of them (answer and abandon rates over the calls that rang while the line was open,
- * time to answer, voicemails, overflow, after hours, the sticky hit rate, the Missed calls they
- * left and how many are handled), then each agent's answered calls and talk time.
+ * time to answer, voicemails, nobody free to answer and all lines busy (the Missed list's words),
+ * out of hours with the calls closed for another reason apart (inbound switched off, a number not
+ * on a route), the sticky hit rate, the Missed calls they left and how many are handled), then
+ * each agent's answered calls and talk time.
  *
  * Shown, like the Missed list, while inbound is on or there is inbound history to read: turning
  * inbound off does not hide what already happened.
@@ -187,7 +198,7 @@ export default function InboundSummaryPage() {
                 <dt>Calls</dt>
                 <dd data-testid="summary-calls">
                   {formatCount(data.calls)}
-                  <span className={summary.tileNote}>{formatCount(data.open_hours_calls)} while open · {formatCount(data.after_hours)} out of hours</span>
+                  <span className={summary.tileNote}>{callsNote(data)}</span>
                 </dd>
               </div>
               <div className={summary.tile}>
@@ -224,9 +235,16 @@ export default function InboundSummaryPage() {
               </div>
               <div className={summary.tile}>
                 <dt>Nobody free to answer</dt>
-                <dd>
-                  {formatCount(data.overflow)}
-                  <span className={summary.tileNote}>waited too long, or every line was busy</span>
+                <dd data-testid="summary-nobody-free">
+                  {formatCount(data.nobody_free)}
+                  <span className={summary.tileNote}>{NOBODY_FREE_MEANING}</span>
+                </dd>
+              </div>
+              <div className={summary.tile}>
+                <dt>All lines busy</dt>
+                <dd data-testid="summary-lines-busy">
+                  {formatCount(data.lines_busy)}
+                  <span className={summary.tileNote}>more calls at once than the line takes</span>
                 </dd>
               </div>
               <div className={summary.tile}>
@@ -235,12 +253,30 @@ export default function InboundSummaryPage() {
                   {formatCount(data.missed_handled)} of {formatCount(data.missed)}
                 </dd>
               </div>
+              {data.switched_off > 0 ? (
+                <div className={summary.tile}>
+                  <dt>While inbound was off</dt>
+                  <dd data-testid="summary-switched-off">
+                    {formatCount(data.switched_off)}
+                    <span className={summary.tileNote}>inbound was switched off, so they heard the closed message</span>
+                  </dd>
+                </div>
+              ) : null}
+              {data.no_route > 0 ? (
+                <div className={summary.tile}>
+                  <dt>Number not on a route</dt>
+                  <dd data-testid="summary-no-route">
+                    {formatCount(data.no_route)}
+                    <span className={summary.tileNote}>rang a number no inbound route answers, so they heard the closed message</span>
+                  </dd>
+                </div>
+              ) : null}
               {data.not_served > 0 ? (
                 <div className={summary.tile}>
                   <dt>Couldn’t be put through</dt>
                   <dd>
                     {formatCount(data.not_served)}
-                    <span className={summary.tileNote}>a fault on our side, or turned away</span>
+                    <span className={summary.tileNote}>a fault on our side, the phone line not active, or turned away</span>
                   </dd>
                 </div>
               ) : null}
@@ -277,8 +313,9 @@ export default function InboundSummaryPage() {
               </div>
             )}
             <p className={summary.footnote}>
-              Calls still in progress are counted once they end. Out of hours: the line was closed, including voicemails left
-              then.
+              Calls still in progress are counted once they end. Out of hours: outside the opening hours or on a holiday,
+              including voicemails left then. Calls answered with the closed message for another reason (inbound switched off,
+              a number not on a route) are counted on their own, and none of them are in the rates.
             </p>
           </div>
         )

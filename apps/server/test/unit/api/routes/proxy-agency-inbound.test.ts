@@ -106,13 +106,13 @@ describe('a Missed row on the wire', () => {
     voicemail_key: 'vm/1', callback_due_at: new Date('2026-11-09T09:00:00Z'), follow_up_status: 'handled',
     follow_up_reason: 'overflow', follow_up_assignee_user_id: 'u-1', handled_by_user_id: 'u-2',
     handled_at: new Date('2026-11-08T10:00:00Z'), created_at: new Date(), updated_at: new Date(),
-    route_name: 'Main line', matched_campaign_name: null, handled_reason: 'reached',
+    route_name: 'Main line', matched_campaign_name: null, handled_reason: 'reached', closed_cause: null,
   } as AgencyInboundMissedRow;
 
   it('carries the follow-up, ISO times and the names it is given', () => {
     expect(inboundMissedToWire(row, new Map([['u-1', 'Asha'], ['u-2', null]]))).toEqual({
       id: 'c-1', account_id: 'a', route_id: 'r', route_name: 'Main line', from_e164: null, to_e164: '+441632960001',
-      arrived_at: '2026-11-08T09:00:00.000Z', ended_at: '2026-11-08T09:02:00.000Z', reason: 'overflow', outcome: 'overflow',
+      arrived_at: '2026-11-08T09:00:00.000Z', ended_at: '2026-11-08T09:02:00.000Z', reason: 'overflow', closed_cause: null, outcome: 'overflow',
       caller_dnc: true, matched_contact_id: null, matched_campaign_id: null, matched_campaign_name: null,
       callback_due_at: '2026-11-09T09:00:00.000Z', has_voicemail: true, assignee_user_id: 'u-1', assignee_name: 'Asha',
       assignee_departed: false, status: 'handled', handled_reason: 'reached', handled_by_user_id: 'u-2', handled_by_name: null,
@@ -125,6 +125,10 @@ describe('a Missed row on the wire', () => {
     // Handled before 0028 (no reason): a person marked it. Open: no reason.
     expect(inboundMissedToWire({ ...row, handled_reason: null }).handled_reason).toBe('marked');
     expect(inboundMissedToWire({ ...row, follow_up_status: 'open', handled_reason: null, handled_at: null, handled_by_user_id: null }).handled_reason).toBeNull();
+    // Why a closed row was closed (0030); none on another reason's row, whatever the column holds.
+    expect(inboundMissedToWire({ ...row, follow_up_reason: 'closed', closed_cause: 'switched_off' }).closed_cause).toBe('switched_off');
+    expect(inboundMissedToWire({ ...row, follow_up_reason: 'closed', closed_cause: null }).closed_cause).toBeNull();
+    expect(inboundMissedToWire({ ...row, closed_cause: 'hours' }).closed_cause).toBeNull();
     // No voicemail, no `voicemail_url` (the console offers no player).
     expect(inboundMissedToWire({ ...row, voicemail_key: null })).not.toHaveProperty('voicemail_url');
   });

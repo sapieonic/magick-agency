@@ -162,6 +162,7 @@ const EXPECTED_AGENT_REACHABLE = [
   // `agency.inbound.write` (account admin) and refuse an agent.
   'GET /proxy/agency/inbound/missed',
   'POST /proxy/agency/inbound/missed/:id/handled',
+  'POST /proxy/agency/inbound/missed/:id/reopen',
   'GET /proxy/agency/inbound/missed/:id/voicemail',
   // The nav badge's count of the same rows (an agent's own; the account's with supervise). The
   // reassign and the inbound summary are `agency.supervise` and refuse an agent.

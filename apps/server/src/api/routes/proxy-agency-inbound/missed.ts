@@ -11,7 +11,9 @@
  * Enrichment here: `assignee_name` and `handled_by_name` (`users`, one query; a failed lookup
  * leaves them NULL, never a failed read), and `assignee_departed` (the assignees who can no longer
  * work the account's rows, one query; a failed lookup reads nobody as departed). Mark handled is audited (`agency_inbound_call.handled`,
- * with the reason) only when this request marked it: a repeat answers the row as it is.
+ * with the reason) only when this request marked it: a repeat answers the row as it is. Reopen
+ * (a handled row back on the list, Mark handled's rules) is audited `agency_inbound_call.reopened`,
+ * with how and by whom the row had been handled, only when this request reopened it.
  */
 import type { FastifyInstance } from 'fastify';
 import type { AgencyInboundMissedCall } from '@magick-agency/contracts/api/agency/inbound';
@@ -24,7 +26,12 @@ import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { inboundMissedQuerySchema, inboundMissedQueryString } from '../helpers/inbound-missed-query.js';
 import { createChildLogger } from '@magick-agency/observability';
-import { inboundRefusalBody, type InboundCallHandledAudit, type InboundVoicemailLocation } from '../agency/inbound-answer.js';
+import {
+  inboundRefusalBody,
+  type InboundCallHandledAudit,
+  type InboundCallReopenedAudit,
+  type InboundVoicemailLocation,
+} from '../agency/inbound-answer.js';
 import { getFileStream, isStorageConfigured } from '../../../storage/s3.js';
 import {
   actorQuery,
@@ -181,6 +188,36 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
         resource_type: 'agency_inbound_call',
         resource_id: unwrapped.audit.call_id,
         details: { reason: unwrapped.audit.reason },
+      });
+    }
+    const call = (unwrapped.answer as { call?: unknown } | null)?.call;
+    if (!isMissedRow(call)) return reply.send(unwrapped.answer);
+    const [named] = await withNames([call], request.tenantId!, request.accountId);
+    return reply.send({ call: named });
+  });
+
+  /** POST /proxy/agency/inbound/missed/:id/reopen — `{ call }`; idempotent. */
+  app.post<{ Params: { id: string } }>('/inbound/missed/:id/reopen', { preHandler: read }, async (request, reply) => {
+    const actor = inboundActorOrRefuse(request, reply);
+    if (!actor) return reply;
+    const result = await callCore({
+      method: 'POST',
+      path: `/agency/inbound/missed/${request.params.id}/reopen`,
+      query: actorQuery(actor),
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    });
+    if (result.status >= 400) return reply.code(result.status).send(result.body);
+    const unwrapped = unwrapInboundAnswer<InboundCallReopenedAudit>(reply, result, 'POST /inbound/missed/:id/reopen');
+    if (!unwrapped) return reply;
+    if (unwrapped.audit.changed) {
+      platformAuditLogger.log({
+        ...inboundAuditTenancy(request),
+        ...resolvedUserAuditActor(request, actor.userId),
+        action: 'agency_inbound_call.reopened',
+        resource_type: 'agency_inbound_call',
+        resource_id: unwrapped.audit.call_id,
+        details: { handled_reason: unwrapped.audit.handled_reason, handled_by_user_id: unwrapped.audit.handled_by_user_id },
       });
     }
     const call = (unwrapped.answer as { call?: unknown } | null)?.call;

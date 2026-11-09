@@ -101,8 +101,9 @@ package root.
   reasons, the route warnings), the standard recordings' words (`AGENCY_INBOUND_STANDARD_WORDS`,
   which the server's carrier messages also speak), the Missed list (`voicemail_url?` is P2's;
   `assignee_departed` and `handled_reason`, whose vocabulary `AGENCY_INBOUND_HANDLED_REASONS` is the
-  dialer contract's), its count, reassign and the inbound summary (`AgencyInboundMissedCountResponse`,
-  `AgencyInboundMissedAssign*`, `AgencyInboundSummary*`, `AGENCY_INBOUND_MISSED_COUNT_CAP`,
+  dialer contract's), its count, reassign, reopen and the inbound summary (`AgencyInboundMissedCountResponse`,
+  `AgencyInboundMissedAssign*`, `AgencyInboundReopenResponse`, `AgencyInboundSummary*`, whose
+  closed-call lines read the dialer contract's `AGENCY_INBOUND_CLOSED_CAUSES`, `AGENCY_INBOUND_MISSED_COUNT_CAP`,
   `AGENCY_INBOUND_SUMMARY_MAX_DAYS`), the supervisor's `AgencyInboundQueueTile` /
   `AgencyInboundQueueResponse`, `AgencyInboundCallLiveRefusal` and the request bodies (§5).
 - `softphone.ts` (`docs/softphone.md`): every soft-phone shape the console reads unchanged — the

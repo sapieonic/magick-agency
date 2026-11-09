@@ -40,6 +40,7 @@ import { withTransaction } from '@magick-agency/db/utils/transaction';
 import type {
   AgencyInboundCallOutcome,
   AgencyInboundCallState,
+  AgencyInboundClosedCause,
   AgencyInboundFollowUpStatus,
   AgencyInboundHandledReason,
   AgencyInboundMissedReason,
@@ -191,6 +192,12 @@ export interface AgencyInboundArrivalInput {
   /** Fixed at intake on the leg, as on every leg (the route's `record_calls` and profile). */
   recordingRequested: boolean;
   analysisProfileId: string | null;
+  /**
+   * Why the answer treats the caller as closed (`closed_cause`, 0030): the inbound summary counts
+   * the causes apart. Absent or null: the route is open for them. Optional only so the many test
+   * callers that write an open call need not name it; the router always says.
+   */
+  closedCause?: AgencyInboundClosedCause | null;
 }
 
 /** How a call ends ({@link AgencyInboundCallRepository.end}). */
@@ -251,6 +258,8 @@ export interface AgencyInboundMissedRow extends AgencyInboundCallRecord {
    * handled before 0028, which a person marked.
    */
   handled_reason: AgencyInboundHandledReason | null;
+  /** Why the answer treated the caller as closed (0030); NULL when the route was open for them. */
+  closed_cause: AgencyInboundClosedCause | null;
 }
 
 /** {@link AgencyInboundCallRepository.reassignMissed}'s answer. */
@@ -275,7 +284,7 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
 const MISSED_FROM_SQL = `agency_inbound_calls c
         LEFT JOIN agency_inbound_routes r ON r.id = c.route_id
         LEFT JOIN agency_campaigns cam ON cam.id = c.matched_campaign_id`;
-const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, r.name AS route_name, cam.name AS matched_campaign_name`;
+const MISSED_SELECT_SQL = `${CALL_COLUMNS}, c.handled_reason, c.closed_cause, r.name AS route_name, cam.name AS matched_campaign_name`;
 
 export class AgencyInboundCallRepository {
   /**
@@ -308,17 +317,17 @@ export class AgencyInboundCallRepository {
         `INSERT INTO agency_inbound_calls AS c
            (tenant_id, account_id, route_id, phone_number_id, provider, telephony_credential_id, provider_call_id,
             from_e164, to_e164, matched_contact_id, matched_campaign_id, caller_dnc, sticky_user_id, sticky_reason,
-            answered_at, recording_requested)
+            answered_at, recording_requested, closed_cause)
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::varchar, $6::uuid, $7::varchar,
                  $8::varchar, $9::varchar, $10::uuid, $11::uuid, $12::boolean, $13::uuid, $14::varchar,
-                 CASE WHEN $15::boolean THEN now() END, $16::boolean)
+                 CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar)
          ON CONFLICT (provider, provider_call_id) DO NOTHING
          RETURNING ${CALL_COLUMNS}`,
         [
           input.tenantId, input.accountId, input.routeId, input.phoneNumberId, input.provider, input.telephonyCredentialId,
           input.providerCallId, input.fromE164, input.toE164, id.match?.contactId ?? null, id.match?.campaignId ?? null,
           id.callerDnc, id.sticky?.userId ?? null, id.sticky?.reason ?? null, input.answered,
-          input.recordingRequested,
+          input.recordingRequested, input.closedCause ?? null,
         ],
       );
       const inserted = rows[0];
@@ -855,6 +864,61 @@ export class AgencyInboundCallRepository {
       [row.id],
     );
     return { changed: row.changed, call: read[0]! };
+  }
+
+  /**
+   * Put a HANDLED Missed row back on the list (docs/inbound.md §7): `open`, its `handled_reason`,
+   * handler and time cleared, the assignee kept. For a row marked by mistake, or closed as reached
+   * when the customer was not. Mark handled's rules: `onlyAssignee` (an agent's own rows; another's
+   * answers as missing). **Idempotent:** an open row is answered as it is (`changed: false`). One
+   * statement, the row locked: a concurrent Mark handled or reassign waits for it and re-reads the
+   * row. A reached close at the same instant leaves it open in either order (0030's close matches
+   * the rows that were open when it started, so it passes over one still handled; a reopen after
+   * a close reopens it): the person's reopen stands, and the customer's next conversation closes
+   * it. `previous`: how it had been handled, for the audit row. Null: no such Missed row in the
+   * account (or not the caller's).
+   */
+  async reopenMissed(
+    input: { tenantId: string; accountId: string | null; id: string; onlyAssignee?: string },
+    deps: { client?: Db } = {},
+  ): Promise<{
+    changed: boolean;
+    previous: { reason: AgencyInboundHandledReason | null; handledByUserId: string | null; handledAt: Date | null } | null;
+    call: AgencyInboundMissedRow;
+  } | null> {
+    const db = deps.client ?? getPool();
+    const { rows } = await db.query<{
+      id: string; changed: boolean; reason: AgencyInboundHandledReason | null; handled_by: string | null; handled_at: Date | null;
+    }>(
+      `WITH target AS (
+         SELECT c.id, c.follow_up_status, c.handled_reason, c.handled_by_user_id, c.handled_at FROM agency_inbound_calls c
+          WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid AND c.account_id IS NOT DISTINCT FROM $3::uuid
+            AND c.follow_up_status IS NOT NULL
+            AND ($4::uuid IS NULL OR c.follow_up_assignee_user_id = $4::uuid)
+          FOR UPDATE
+       ), reopened AS (
+         UPDATE agency_inbound_calls c
+            SET follow_up_status = 'open', handled_reason = NULL, handled_by_user_id = NULL, handled_at = NULL
+           FROM target t
+          WHERE c.id = t.id AND t.follow_up_status = 'handled'
+          RETURNING c.id
+       )
+       SELECT t.id, EXISTS (SELECT 1 FROM reopened) AS changed,
+              t.handled_reason AS reason, t.handled_by_user_id AS handled_by, t.handled_at
+         FROM target t`,
+      [input.id, input.tenantId, input.accountId, input.onlyAssignee ?? null],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const { rows: read } = await db.query<AgencyInboundMissedRow>(
+      `SELECT ${MISSED_SELECT_SQL} FROM ${MISSED_FROM_SQL} WHERE c.id = $1::uuid`,
+      [row.id],
+    );
+    return {
+      changed: row.changed,
+      previous: row.changed ? { reason: row.reason, handledByUserId: row.handled_by, handledAt: row.handled_at } : null,
+      call: read[0]!,
+    };
   }
 
   /**

@@ -1,12 +1,35 @@
-import type { AgencyInboundMissedCall } from '../../types/inbound';
+import type { AgencyInboundClosedCause, AgencyInboundMissedCall } from '../../types/inbound';
 import type { InboundRefusal } from '../../api/inbound';
-import { INBOUND_REFUSAL_COPY } from './inboundCopy';
+import { INBOUND_REFUSAL_COPY, MISSED_REASON_LABELS } from './inboundCopy';
 
 /**
  * The Missed list's words for who a row is with and how it was handled, beyond the route editor's
- * copy (`inboundCopy.ts`): a departed assignee, a row closed because the customer was reached, and
- * a reassign's refusals. British English.
+ * copy (`inboundCopy.ts`): why a closed call was closed, a departed assignee, a row closed because
+ * the customer was reached, reopening one, and a reassign's refusals. British English.
  */
+
+/**
+ * "Nobody free to answer", in one meaning wherever it is shown (the Missed list's reason, its page
+ * guide, the inbound summary): the `overflow` outcome.
+ */
+export const NOBODY_FREE_MEANING =
+  'the caller waited as long as the line allows, the queue was full, or nobody in the team could take calls';
+
+/**
+ * Why a `closed` row was closed when it was not the opening hours (0030's `closed_cause`): each is
+ * answered with the closed message, but only `hours` is "Out of hours".
+ */
+export const CLOSED_CAUSE_LABELS: Record<Exclude<AgencyInboundClosedCause, 'hours'>, string> = {
+  switched_off: 'Inbound switched off',
+  no_route: 'Number not on a route',
+  credential_inactive: 'Phone line not active',
+};
+
+/** Why a row was missed: the reason's label, or for a closed call the cause when it was not the hours. */
+export function missedReasonLabel(call: Pick<AgencyInboundMissedCall, 'reason' | 'closed_cause'>): string {
+  if (call.reason === 'closed' && call.closed_cause && call.closed_cause !== 'hours') return CLOSED_CAUSE_LABELS[call.closed_cause];
+  return MISSED_REASON_LABELS[call.reason];
+}
 
 /** Who a row is assigned to, for a supervisor: "You", a name, "Former member", or the account. */
 export function missedAssigneeLabel(
@@ -41,7 +64,13 @@ export function missedHandledLabel(
 }
 
 /** The second line under a reached row: why it closed without anyone marking it. */
-export const MISSED_REACHED_NOTE = 'Closed on its own: the customer was put through to an agent after this call.';
+export const MISSED_REACHED_NOTE = 'Closed on its own: an agent spoke to the customer after this call.';
+
+/** A Reopen that did not go through. */
+export function reopenRefusalCopy(refusal: InboundRefusal): string {
+  if (refusal.code === 'inbound_missed_call_not_found') return 'This missed call isn’t yours to reopen, or it no longer exists. Refresh the list.';
+  return 'We couldn’t reopen this call. Try again in a moment.';
+}
 
 /** A reassign that did not go through, in the supervisor's terms. */
 export function reassignRefusalCopy(refusal: InboundRefusal): string {
