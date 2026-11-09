@@ -10,10 +10,21 @@
  * AgencyInboundCallRepository.refuseAdmission}): an admission taken back, so `arrived` reads
  * "not admitted" and a refused call ends straight from it. Every transition is one guarded UPDATE whose `WHERE`
  * names the states it may leave, so two writers racing on one call cannot both move it, and
- * **an `ended` row never moves again**: {@link AgencyInboundCallRepository.transition} cannot
- * leave `ended` and {@link AgencyInboundCallRepository.end} and the sweep only end a row that is
- * not. `bridged_at` and `answered_by_user_id` are stamped by the move to `connected`, never
+ * **an `ended` row never moves again**: no move leaves `ended`, and
+ * {@link AgencyInboundCallRepository.end} and the sweep only end a row that is not.
+ * `bridged_at` and `answered_by_user_id` are stamped by the move to `connected`, never
  * overwritten.
+ *
+ * ── The agent side (P2, `0027_inbound_connect.sql`, docs/inbound.md §2, §6) ──────
+ * {@link AgencyInboundCallRepository.transition} makes the arrival-side moves (`greeting`,
+ * `queued`); the agent-side ones carry the session and are guarded on it:
+ * {@link AgencyInboundCallRepository.offer} (`session_id`, `offered_at`, `offer_count`),
+ * {@link AgencyInboundCallRepository.requeue} (back to `queued`, the session cleared, `queued_at`
+ * kept) and {@link AgencyInboundCallRepository.connect} (`bridged_at`, the agent). A session holds
+ * one unsettled call (`uq_agency_inbound_calls_session_unsettled`). `settled_at` says nothing more
+ * is owed: an unbridged call settles in the UPDATE that ends it; a bridged one when its outcome is
+ * saved ({@link AgencyInboundCallRepository.saveDisposition}) or lapses
+ * ({@link AgencyInboundCallRepository.lapseUnsettled}), never on the end itself or by the sweep.
  *
  * ── Who owns what ──────────────────────────────────────────────────────────────
  * This file writes the spine row and, at arrival, its `agency_calls` leg. The contact's inbound
@@ -34,8 +45,14 @@ import type {
   AgencyInboundStickyReason,
   AgencyKeysetPage,
 } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_INBOUND_OUTCOME_LAPSE_MS,
+  type AgencyInboundDispositionSource,
+} from '@magick-agency/contracts/agency';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
+import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
+import { inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -55,6 +72,34 @@ export const INBOUND_CALL_TRANSITIONS = Object.freeze({
 } as const satisfies Record<Exclude<AgencyInboundCallState, 'arrived' | 'ended'>, readonly AgencyInboundCallState[]>);
 
 export type AgencyInboundTransitionTarget = keyof typeof INBOUND_CALL_TRANSITIONS;
+
+/**
+ * The moves {@link AgencyInboundCallRepository.transition} makes: the arrival side's. `offered`,
+ * the move back to `queued` from it, and `connected` carry the agent's session and are
+ * {@link AgencyInboundCallRepository.offer}, {@link AgencyInboundCallRepository.requeue} and
+ * {@link AgencyInboundCallRepository.connect}.
+ */
+export type AgencyInboundArrivalTransition = Extract<AgencyInboundTransitionTarget, 'greeting' | 'queued'>;
+
+/** Why {@link AgencyInboundCallRepository.offer} refused. */
+export type AgencyInboundOfferRefusal =
+  /** No such call, or not in a state an offer leaves (it ended, or is offered or connected already). */
+  | 'not_offerable'
+  /** The session already holds an unsettled inbound call (`uq_agency_inbound_calls_session_unsettled`). */
+  | 'session_busy';
+
+/** Why {@link AgencyInboundCallRepository.saveDisposition} refused (the soft phone's reasons). */
+export type AgencyInboundDispositionRefusal =
+  /** No such call. */
+  | 'not_found'
+  /** The call has not ended. */
+  | 'live'
+  /** The call ended without reaching an agent: no conversation, no outcome. */
+  | 'not_bridged'
+  /** Another code is already saved. */
+  | 'different_code'
+  /** The lapse sweep closed it `no_disposition`. */
+  | 'lapsed';
 
 /** An `agency_inbound_calls` row. */
 export interface AgencyInboundCallRecord {
@@ -89,6 +134,28 @@ export interface AgencyInboundCallRecord {
   follow_up_assignee_user_id: string | null;
   handled_by_user_id: string | null;
   handled_at: Date | null;
+  // P2 (0027): the agent side.
+  /** The agent session it is offered to or connected with; null while not with one (cleared by a requeue). */
+  session_id: string | null;
+  /** The first time it queued (the queue's maximum wait counts from it). */
+  queued_at: Date | null;
+  /** The latest offer. */
+  offered_at: Date | null;
+  offer_count: number;
+  /** The leg's `recording_requested`, mirrored at arrival. */
+  recording_requested: boolean;
+  disposition_code: string | null;
+  disposition_source: AgencyInboundDispositionSource | null;
+  notes: string | null;
+  callback_at: Date | null;
+  dispositioned_by_user_id: string | null;
+  dispositioned_at: Date | null;
+  dispositioned_on_behalf: boolean;
+  /** Nothing more is owed: set as an unbridged call ends, or when a bridged one's outcome is saved or lapses. */
+  settled_at: Date | null;
+  voicemail_seconds: number | null;
+  /** The ringing outbound attempt this call cancelled (§5.4). */
+  clash_attempt_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -136,7 +203,22 @@ export interface AgencyInboundEndInput {
   /** The due time of the callback the caller booked on the matched contact in the same transaction, if any. */
   callbackDueAt: Date | null;
   voicemailKey: string | null;
+  /** The voicemail's length (P2); only with `voicemailKey` (CHECKed). Absent: none. */
+  voicemailSeconds?: number | null;
   endedAt?: Date;
+}
+
+/** An outcome to save ({@link AgencyInboundCallRepository.saveDisposition}), already validated against its catalog. */
+export interface AgencyInboundDispositionInput {
+  id: string;
+  code: string;
+  /** `campaign` exactly when the call matched a campaign (CHECKed). */
+  source: AgencyInboundDispositionSource;
+  /** Null keeps the stored notes. */
+  notes: string | null;
+  callbackAt: Date | null;
+  actorUserId: string;
+  onBehalf: boolean;
 }
 
 /** The filters of the Missed list, already parsed and validated by the API layer. */
@@ -167,6 +249,9 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
   c.sticky_user_id, c.sticky_reason, c.state, c.outcome, c.arrived_at, c.answered_at, c.bridged_at,
   c.answered_by_user_id, c.ended_at, c.talk_seconds, c.webrtc_call_id, c.voicemail_key, c.callback_due_at,
   c.follow_up_status, c.follow_up_reason, c.follow_up_assignee_user_id, c.handled_by_user_id, c.handled_at,
+  c.session_id, c.queued_at, c.offered_at, c.offer_count, c.recording_requested, c.disposition_code,
+  c.disposition_source, c.notes, c.callback_at, c.dispositioned_by_user_id, c.dispositioned_at,
+  c.dispositioned_on_behalf, c.settled_at, c.voicemail_seconds, c.clash_attempt_id,
   c.created_at, c.updated_at`;
 
 /** A row's Missed-list joins: the route's name and the matched campaign's. Both LEFT, no FK. */
@@ -206,16 +291,17 @@ export class AgencyInboundCallRepository {
         `INSERT INTO agency_inbound_calls AS c
            (tenant_id, account_id, route_id, phone_number_id, provider, telephony_credential_id, provider_call_id,
             from_e164, to_e164, matched_contact_id, matched_campaign_id, caller_dnc, sticky_user_id, sticky_reason,
-            answered_at)
+            answered_at, recording_requested)
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::varchar, $6::uuid, $7::varchar,
                  $8::varchar, $9::varchar, $10::uuid, $11::uuid, $12::boolean, $13::uuid, $14::varchar,
-                 CASE WHEN $15::boolean THEN now() END)
+                 CASE WHEN $15::boolean THEN now() END, $16::boolean)
          ON CONFLICT (provider, provider_call_id) DO NOTHING
          RETURNING ${CALL_COLUMNS}`,
         [
           input.tenantId, input.accountId, input.routeId, input.phoneNumberId, input.provider, input.telephonyCredentialId,
           input.providerCallId, input.fromE164, input.toE164, id.match?.contactId ?? null, id.match?.campaignId ?? null,
           id.callerDnc, id.sticky?.userId ?? null, id.sticky?.reason ?? null, input.answered,
+          input.recordingRequested,
         ],
       );
       const inserted = rows[0];
@@ -279,27 +365,116 @@ export class AgencyInboundCallRepository {
   }
 
   /**
-   * Move the call to `to` from one of the states {@link INBOUND_CALL_TRANSITIONS} allows. The move
-   * to `connected` takes the agent and stamps `bridged_at` (first stamp wins). Null when the call
-   * is missing or in a state the move does not leave (an ended call, or one already further on);
-   * the caller re-reads to tell which.
+   * An arrival-side move: to `greeting` (from `arrived`), or to `queued` from `arrived` or
+   * `greeting`, stamping `queued_at` the first time. The move back to `queued` from `offered` is
+   * {@link requeue} (it carries the session). Null when the call is missing or in a state the move
+   * does not leave (an ended call, or one already further on); the caller re-reads to tell which.
    */
   async transition(
     id: string,
-    to: AgencyInboundTransitionTarget,
-    opts: { answeredByUserId?: string; at?: Date } = {},
+    to: AgencyInboundArrivalTransition,
+    opts: { at?: Date } = {},
     deps: { client?: Db } = {},
   ): Promise<AgencyInboundCallRecord | null> {
-    if (to === 'connected' && !opts.answeredByUserId) throw new Error('a connected inbound call needs the agent who took it');
+    const from = INBOUND_CALL_TRANSITIONS[to].filter((state) => state !== 'offered');
     const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
       `UPDATE agency_inbound_calls c
           SET state = $2::varchar,
-              bridged_at = CASE WHEN $2::varchar = 'connected' THEN COALESCE(c.bridged_at, $4::timestamptz) ELSE c.bridged_at END,
-              answered_by_user_id = CASE WHEN $2::varchar = 'connected' THEN COALESCE(c.answered_by_user_id, $5::uuid)
-                                         ELSE c.answered_by_user_id END
+              queued_at = CASE WHEN $2::varchar = 'queued' THEN COALESCE(c.queued_at, $4::timestamptz) ELSE c.queued_at END
         WHERE c.id = $1::uuid AND c.state = ANY($3::varchar[])
         RETURNING ${CALL_COLUMNS}`,
-      [id, to, INBOUND_CALL_TRANSITIONS[to], opts.at ?? new Date(), opts.answeredByUserId ?? null],
+      [id, to, from, opts.at ?? new Date()],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Offer the call to agent session `sessionId` (§2 step 5): `queued` → `offered` (also from
+   * `arrived` / `greeting`, a connect with nobody waiting ahead), with `session_id`, `offered_at`
+   * and `offer_count + 1`. Run it AFTER the agent's Redis reservation
+   * (`AgentStateMachine.reserveForInbound`) and release that reservation when this refuses:
+   *  - `not_offerable`: the call ended (the caller hung up), is gone, or is with an agent already;
+   *  - `session_busy`: the session holds another unsettled inbound call
+   *    (`uq_agency_inbound_calls_session_unsettled`). Checked in the same statement; a concurrent
+   *    offer to the same session that slips past the check meets the unique index, whose 23505 is
+   *    answered the same way. Outside a caller's transaction only: inside one, that error aborts
+   *    the caller's transaction, so pass `client` only where the Redis reservation already makes
+   *    the race impossible.
+   */
+  async offer(
+    id: string,
+    sessionId: string,
+    opts: { at?: Date } = {},
+    deps: { client?: Db } = {},
+  ): Promise<{ ok: true; call: AgencyInboundCallRecord } | { ok: false; reason: AgencyInboundOfferRefusal }> {
+    const db = deps.client ?? getPool();
+    let rows: AgencyInboundCallRecord[];
+    try {
+      ({ rows } = await db.query<AgencyInboundCallRecord>(
+        `UPDATE agency_inbound_calls c
+            SET state = 'offered', session_id = $2::uuid, offered_at = $4::timestamptz, offer_count = c.offer_count + 1
+          WHERE c.id = $1::uuid AND c.state = ANY($3::varchar[])
+            AND NOT EXISTS (
+              SELECT 1 FROM agency_inbound_calls o
+               WHERE o.session_id = $2::uuid AND o.settled_at IS NULL AND o.id <> $1::uuid)
+          RETURNING ${CALL_COLUMNS}`,
+        [id, sessionId, INBOUND_CALL_TRANSITIONS.offered, opts.at ?? new Date()],
+      ));
+    } catch (err) {
+      if (isUniqueViolation(err, SESSION_UNSETTLED_INDEX)) return { ok: false, reason: 'session_busy' };
+      throw err;
+    }
+    if (rows[0]) return { ok: true, call: rows[0] };
+    const { rows: busy } = await db.query<{ busy: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM agency_inbound_calls o
+          WHERE o.session_id = $2::uuid AND o.settled_at IS NULL AND o.id <> $1::uuid) AS busy`,
+      [id, sessionId],
+    );
+    return { ok: false, reason: busy[0]?.busy ? 'session_busy' : 'not_offerable' };
+  }
+
+  /**
+   * The station was lost before audio bound (§5.1, §2 "The agent's station drops"): `offered` →
+   * `queued`, the session cleared, `queued_at` kept (stamped now if it was offered straight from
+   * the greeting), so the queue's maximum wait still counts from the first queueing. Only while it
+   * is offered to `sessionId`: a stale requeue for a session the call has since left does nothing.
+   * Null when nothing moved.
+   */
+  async requeue(
+    id: string,
+    sessionId: string,
+    opts: { at?: Date } = {},
+    deps: { client?: Db } = {},
+  ): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c
+          SET state = 'queued', session_id = NULL, queued_at = COALESCE(c.queued_at, $3::timestamptz)
+        WHERE c.id = $1::uuid AND c.state = 'offered' AND c.session_id = $2::uuid
+        RETURNING ${CALL_COLUMNS}`,
+      [id, sessionId, opts.at ?? new Date()],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Audio bound (§2 step 6): `offered` → `connected`, stamping `bridged_at` and the agent who took
+   * it (first stamp wins). Only while it is offered to `sessionId`. Null when nothing moved (it
+   * ended, was requeued, or is another session's).
+   */
+  async connect(
+    id: string,
+    input: { sessionId: string; answeredByUserId: string; at?: Date },
+    deps: { client?: Db } = {},
+  ): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c
+          SET state = 'connected',
+              bridged_at = COALESCE(c.bridged_at, $3::timestamptz),
+              answered_by_user_id = COALESCE(c.answered_by_user_id, $4::uuid)
+        WHERE c.id = $1::uuid AND c.state = ANY($5::varchar[]) AND c.session_id = $2::uuid
+        RETURNING ${CALL_COLUMNS}`,
+      [id, input.sessionId, input.at ?? new Date(), input.answeredByUserId, INBOUND_CALL_TRANSITIONS.connected],
     );
     return rows[0] ?? null;
   }
@@ -329,6 +504,10 @@ export class AgencyInboundCallRepository {
    * one, ends it once (`ended: false` with the row as the first writer left it; null when
    * missing). The CHECKs refuse a contradiction (`answered` without a bridge, a follow-up on an
    * answered call) rather than this method coercing it.
+   *
+   * A call that was never bridged is settled as it ends (`settled_at = ended_at`: nobody spoke to
+   * the caller, so no outcome is owed, and the session it was offered to is free again). A bridged
+   * one stays unsettled: its outcome is owed ({@link saveDisposition}, {@link lapseUnsettled}).
    */
   async end(
     id: string,
@@ -341,13 +520,14 @@ export class AgencyInboundCallRepository {
           SET state = 'ended', outcome = $2::varchar, ended_at = $3::timestamptz, talk_seconds = $4::int,
               follow_up_status = CASE WHEN $5::varchar IS NULL THEN NULL ELSE 'open' END,
               follow_up_reason = $5::varchar, follow_up_assignee_user_id = $6::uuid,
-              callback_due_at = $7::timestamptz, voicemail_key = $8::text
+              callback_due_at = $7::timestamptz, voicemail_key = $8::text, voicemail_seconds = $9::int,
+              settled_at = CASE WHEN c.bridged_at IS NULL THEN $3::timestamptz END
         WHERE c.id = $1::uuid AND c.state <> 'ended'
         RETURNING ${CALL_COLUMNS}`,
       [
         id, input.outcome, input.endedAt ?? new Date(), input.talkSeconds,
         input.followUp?.reason ?? null, input.followUp?.assigneeUserId ?? null,
-        input.callbackDueAt, input.voicemailKey,
+        input.callbackDueAt, input.voicemailKey, input.voicemailSeconds ?? null,
       ],
     );
     if (rows[0]) return { ended: true, call: rows[0] };
@@ -395,6 +575,149 @@ export class AgencyInboundCallRepository {
       [id],
     );
     return rows[0] ?? null;
+  }
+
+  /**
+   * The session's unsettled inbound call (offered, connected, or ended with its outcome owed), or
+   * null: at most one (`uq_agency_inbound_calls_session_unsettled`, which serves the read). The
+   * authority on whether the session owes one: the `available` guard reads it before the Redis
+   * write, and a restart rehydrates the agent from it.
+   */
+  async findUnsettledForSession(sessionId: string, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `SELECT ${CALL_COLUMNS} FROM agency_inbound_calls c
+        WHERE c.session_id = $1::uuid AND c.settled_at IS NULL`,
+      [sessionId],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * The oldest inbound call of the account from `phoneE164` that keeps the number busy (live, or
+   * bridged and owing its outcome: `inboundNumberBusySql`), or null: the soft phone's pre-dial
+   * (docs/inbound.md §5.4, Q19). One probe of `idx_agency_inbound_calls_live_from_digits`. An
+   * unusable number (no digits) matches nothing.
+   */
+  async findBusyForNumber(tenantId: string, accountId: string, phoneE164: string): Promise<AgencyInboundCallRecord | null> {
+    const digits = phoneE164.replace(/[^0-9]/g, '');
+    if (!digits) return null;
+    const { rows } = await getPool().query<AgencyInboundCallRecord>(
+      `SELECT ${CALL_COLUMNS} FROM agency_inbound_calls c
+        WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid
+          AND ${inboundFromDigitsSql('c')} = $3::text
+          AND ${inboundNumberBusySql('c')}
+        ORDER BY c.arrived_at, c.id
+        LIMIT 1`,
+      [tenantId, accountId, digits],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Replace the notes (`PATCH /inbound/calls/:id`) while the call is unsettled; `''` clears them.
+   * Last write wins, so an autosave needs no merge. Null when there is no such call or it is
+   * settled.
+   */
+  async updateNotes(id: string, notes: string, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
+    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
+      `UPDATE agency_inbound_calls c SET notes = NULLIF($2::text, '')
+        WHERE c.id = $1::uuid AND c.settled_at IS NULL
+        RETURNING ${CALL_COLUMNS}`,
+      [id, notes],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Save the outcome AND settle the call, in one guarded statement (§2 step 8), with the soft
+   * phone's discipline (`AgencyManualCallRepository.recordDisposition`): `disposition_code IS NULL
+   * OR disposition_code = $code` makes the first write and a same-code replay one successful path
+   * (notes and callback last-write-wins; `notes: null` keeps the stored notes) and a different
+   * code a no-op, atomically; the call must have ENDED after it BRIDGED; a lapsed `no_disposition`
+   * call is never overwritten. `settled_at` is stamped by the first write and kept by a replay.
+   *
+   * Run it on the transaction that then writes DNC (suppress codes, B8) and settles the matched
+   * contact (`settleFromInbound`) — only when `replay` is false. Release the session's Redis
+   * `inbound` field and return the agent after it commits.
+   */
+  async saveDisposition(
+    input: AgencyInboundDispositionInput,
+    deps: { client?: Db } = {},
+  ): Promise<
+    | { ok: true; call: AgencyInboundCallRecord; replay: boolean }
+    | { ok: false; reason: AgencyInboundDispositionRefusal; call: AgencyInboundCallRecord | null }
+  > {
+    const db = deps.client ?? getPool();
+    const { rows } = await db.query<AgencyInboundCallRecord & { prev_code: string | null }>(
+      `WITH prev AS (
+         SELECT id, disposition_code FROM agency_inbound_calls WHERE id = $1::uuid FOR UPDATE
+       )
+       UPDATE agency_inbound_calls c
+          SET disposition_code = $2::varchar,
+              disposition_source = $3::varchar,
+              notes = COALESCE($4::text, c.notes),
+              callback_at = $5::timestamptz,
+              dispositioned_by_user_id = $6::uuid,
+              dispositioned_on_behalf = $7::boolean,
+              dispositioned_at = now(),
+              settled_at = COALESCE(c.settled_at, now())
+         FROM prev
+        WHERE c.id = prev.id
+          AND c.state = 'ended'
+          AND c.bridged_at IS NOT NULL
+          AND c.disposition_code IS DISTINCT FROM '${AUTO_DISPOSITION_CODE}'
+          AND ((c.disposition_code IS NULL AND c.settled_at IS NULL) OR c.disposition_code = $2::varchar)
+        RETURNING ${CALL_COLUMNS}, prev.disposition_code AS prev_code`,
+      [input.id, input.code, input.source, input.notes, input.callbackAt, input.actorUserId, input.onBehalf],
+    );
+    const row = rows[0];
+    if (row) {
+      const { prev_code, ...call } = row;
+      return { ok: true, call, replay: prev_code === input.code };
+    }
+    const call = await this.findByIdAnyTenant(input.id, db);
+    if (!call) return { ok: false, reason: 'not_found', call: null };
+    if (call.state !== 'ended') return { ok: false, reason: 'live', call };
+    if (call.disposition_code === AUTO_DISPOSITION_CODE) return { ok: false, reason: 'lapsed', call };
+    if (call.bridged_at === null) return { ok: false, reason: 'not_bridged', call };
+    return { ok: false, reason: 'different_code', call };
+  }
+
+  /**
+   * The outcome-lapse sweep (§2 step 8, Q11; the soft phone's rule): close every bridged call
+   * whose outcome did not come within `lapseMs` of `ended_at`
+   * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}), or whose session has LEFT: `no_disposition`, the
+   * source its match implies, no `dispositioned_by_user_id` (nobody recorded it), settled. At most
+   * `limit`, oldest end first, over `idx_agency_inbound_calls_unsettled_lapse`.
+   *
+   * **Releases nothing.** It returns the rows it closed; the caller clears each session's Redis
+   * `inbound` field (by this id) and returns the agent. The pick is a MATERIALIZED `FOR UPDATE
+   * SKIP LOCKED` CTE, so two overlapping sweeps never close one call twice, and an agent saving
+   * the outcome concurrently either wins (the UPDATE's `settled_at IS NULL` re-check) or waits.
+   */
+  async lapseUnsettled(opts: { lapseMs?: number; limit?: number } = {}): Promise<AgencyInboundCallRecord[]> {
+    const { rows } = await getPool().query<AgencyInboundCallRecord>(
+      `WITH picked AS MATERIALIZED (
+         SELECT c.id
+           FROM agency_inbound_calls c
+           LEFT JOIN agency_agent_sessions s ON s.id = c.session_id
+          WHERE c.bridged_at IS NOT NULL AND c.settled_at IS NULL AND c.state = 'ended'
+            AND (c.ended_at < now() - make_interval(secs => $1::double precision / 1000) OR s.left_at IS NOT NULL)
+          ORDER BY c.ended_at
+          LIMIT $2::int
+            FOR UPDATE OF c SKIP LOCKED
+       )
+       UPDATE agency_inbound_calls c
+          SET settled_at = now(),
+              disposition_code = '${AUTO_DISPOSITION_CODE}',
+              disposition_source = CASE WHEN c.matched_campaign_id IS NULL THEN 'route' ELSE 'campaign' END,
+              dispositioned_at = now()
+         FROM picked
+        WHERE c.id = picked.id AND c.settled_at IS NULL AND c.state = 'ended'
+        RETURNING ${CALL_COLUMNS}`,
+      [opts.lapseMs ?? AGENCY_INBOUND_OUTCOME_LAPSE_MS, opts.limit ?? 500],
+    );
+    return rows;
   }
 
   /**
@@ -477,9 +800,11 @@ export class AgencyInboundCallRepository {
   /**
    * The startup and periodic sweep (§10): end every call still not ended that arrived before
    * `olderThan`, at most `limit` of them, oldest first. A call bridged to an agent ends
-   * `answered` (it was answered; the process that held it is gone) with no follow-up; every other
-   * one ends `abandoned_in_queue` with an open Missed row (reason `abandoned_in_queue`) assigned
-   * to its sticky agent, else the account. Claimed with `MATERIALIZED … FOR UPDATE SKIP LOCKED`,
+   * `answered` (it was answered; the process that held it is gone) with no follow-up, and stays
+   * UNSETTLED: its agent still owes the outcome, writes it after reconnecting (the session is
+   * rehydrated with the call re-claimed), or the lapse sweep closes it. Every other one ends
+   * `abandoned_in_queue` with an open Missed row (reason `abandoned_in_queue`) assigned to its
+   * sticky agent, else the account, and is settled (nobody spoke to the caller). Claimed with `MATERIALIZED … FOR UPDATE SKIP LOCKED`,
    * so two sweeps, or a sweep and a hangup webhook, never end one call twice. Returns the rows it
    * ended: the caller books each one's callback, emits metrics and audits.
    */
@@ -498,7 +823,8 @@ export class AgencyInboundCallRepository {
               outcome = CASE WHEN c.bridged_at IS NOT NULL THEN 'answered' ELSE 'abandoned_in_queue' END,
               follow_up_status = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE 'open' END,
               follow_up_reason = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE 'abandoned_in_queue' END,
-              follow_up_assignee_user_id = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE c.sticky_user_id END
+              follow_up_assignee_user_id = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE c.sticky_user_id END,
+              settled_at = CASE WHEN c.bridged_at IS NOT NULL THEN NULL ELSE now() END
          FROM picked
         WHERE c.id = picked.id AND c.state <> 'ended'
         RETURNING ${CALL_COLUMNS}`,
@@ -506,6 +832,14 @@ export class AgencyInboundCallRepository {
     );
     return rows.sort((a, b) => a.arrived_at.getTime() - b.arrived_at.getTime());
   }
+}
+
+/** The one-unsettled-call-per-session index (`0027_inbound_connect.sql`). */
+const SESSION_UNSETTLED_INDEX = 'uq_agency_inbound_calls_session_unsettled';
+
+function isUniqueViolation(err: unknown, constraint: string): boolean {
+  const e = err as { code?: unknown; constraint?: unknown } | null;
+  return !!e && e.code === '23505' && e.constraint === constraint;
 }
 
 export const agencyInboundCallRepository = new AgencyInboundCallRepository();

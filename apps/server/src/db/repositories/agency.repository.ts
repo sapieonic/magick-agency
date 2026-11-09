@@ -10,6 +10,7 @@
  */
 export { AgencyCampaignRepository, agencyCampaignRepository } from './agency/campaign.repository.js';
 export { AgencyContactRepository, agencyContactRepository } from './agency/contact.repository.js';
+export type { AgencyInboundContactSettlement } from './agency/contact.repository.js';
 export type {
   AgencyAgentClaim,
   AgencyAgentQueueProbe,
@@ -261,8 +262,12 @@ export {
 } from './agency/inbound-call.repository.js';
 export type {
   AgencyInboundArrivalInput,
+  AgencyInboundArrivalTransition,
   AgencyInboundCallRecord,
+  AgencyInboundDispositionInput,
+  AgencyInboundDispositionRefusal,
   AgencyInboundEndInput,
+  AgencyInboundOfferRefusal,
   AgencyInboundIdentification,
   AgencyInboundMissedListInput,
   AgencyInboundMissedRow,

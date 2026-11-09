@@ -142,6 +142,9 @@ enum ReleaseReason implements WireEnum {
   campaignStopped('campaign_stopped'),
   supervisorReleased('supervisor_released'),
   orphaned('orphaned'),
+
+  /// The customer rang in while the dial still rang them: the dial was cancelled. No disposition.
+  inboundCall('inbound_call'),
   unknown('');
 
   const ReleaseReason(this.wire);

@@ -716,10 +716,11 @@ describe('AgencyDialer queued break ', () => {
     expect(ws.sent.find((f: any) => f.event === 'agent_state').state).toBe('available');
   });
 
-  it('announces and mirrors NOTHING when the soft phone refuses `available` (docs/softphone.md §4.1)', async () => {
+  it('announces and mirrors NOTHING when the soft phone or an inbound call refuses `available` (docs/softphone.md §4.1, docs/inbound.md §6)', async () => {
     // A supervisor's force-available on an agent with a soft-phone call reaches
-    // `releaseAgent`; the Lua guard refuses and the agent stays on their break.
-    for (const refusal of ['manual_call_live', 'softphone_session'] as const) {
+    // `releaseAgent`; the Lua guard refuses and the agent stays on their break. An inbound
+    // call the session holds refuses the same way (`-3`).
+    for (const refusal of ['manual_call_live', 'softphone_session', 'inbound_call_owed'] as const) {
       vi.clearAllMocks();
       const stations = new StationRegistry(null, '', 'r1');
       const agents = reservedAgents();

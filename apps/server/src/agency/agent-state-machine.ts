@@ -5,7 +5,7 @@ import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 const log = createChildLogger({ component: 'agency-agent-state' });
 
 /**
- * ── The soft phone's two fields on the agent hash (docs/softphone.md §4.1) ───
+ * ── The soft phone's two fields, and the inbound call's one, on the agent hash ──
  *
  * Besides `state`, `attempt` and `since` the hash carries:
  *
@@ -14,21 +14,28 @@ const log = createChildLogger({ component: 'agency-agent-state' });
  *   `break`, cleared by {@link RELEASE_MANUAL_SCRIPT} only by the id that holds it.
  * - `softphone` — `'1'` on a soft-phone SESSION (`kind = 'softphone'`), which can
  *   never become `available` (written by {@link REHYDRATE_SOFTPHONE_SCRIPT}).
+ * - `inbound` — the id of the inbound call this session holds (docs/inbound.md §6, P2):
+ *   offered to it, connected, or ended with its outcome owed. Set only by
+ *   {@link RESERVE_INBOUND_SCRIPT} (with `state = reserved`) and by
+ *   {@link REHYDRATE_INBOUND_SCRIPT}; cleared by {@link RELEASE_INBOUND_SCRIPT} only by
+ *   the id that holds it.
  *
- * **Every write that makes an agent `available` refuses, atomically, while either
- * is set** — the guard below runs inside the same script as the write, so ending
+ * **Every write that makes an agent `available` refuses, atomically, while any of
+ * them is set** — the guard below runs inside the same script as the write, so ending
  * the break and dialing cannot interleave (a check-then-set would let a dial land
  * between the check and the write and put a soft-phone caller in the pacing pool).
- * HSET touches only the fields it names, so both survive every other transition,
+ * HSET touches only the fields it names, so all three survive every other transition,
  * the renew and the heartbeat; only the lease lapsing or `clear` drops them.
  *
- * Returns `-1` for `manual`, `-2` for `softphone`, from inside the write scripts.
+ * Returns `-1` for `manual`, `-2` for `softphone`, `-3` for `inbound`, from inside the
+ * write scripts.
  */
 const AVAILABLE_GUARD_LUA = `
 local function refuse_available(key)
-  local f = redis.call('HMGET', key, 'manual', 'softphone')
+  local f = redis.call('HMGET', key, 'manual', 'softphone', 'inbound')
   if f[1] and f[1] ~= '' then return -1 end
   if f[2] == '1' then return -2 end
+  if f[3] and f[3] ~= '' then return -3 end
   return 0
 end
 `;
@@ -43,13 +50,21 @@ end
  * There is no read-then-write, so there is no window in which two attempts hold
  * the same agent. A 0 means another tick got there first and the engine should
  * move to the next candidate — it is a normal outcome, not an error. A move TO
- * `available` is refused (-1/-2) while the soft-phone fields say so.
+ * `available` is refused (-1/-2/-3) while the soft-phone or inbound fields say so,
+ * and a move TO `reserved` (an attempt's reservation: the paced one, the wrap-up
+ * redial's, the lease extension at dial) is refused (-3) while the session holds an
+ * inbound call, so no attempt can ever be reserved onto an agent an inbound caller
+ * holds. The inbound reservation is {@link RESERVE_INBOUND_SCRIPT}, never this.
  */
 const CAS_SCRIPT = `${AVAILABLE_GUARD_LUA}
 if redis.call('HGET', KEYS[1], 'state') ~= ARGV[1] then return 0 end
 if ARGV[2] == 'available' then
   local refused = refuse_available(KEYS[1])
   if refused ~= 0 then return refused end
+end
+if ARGV[2] == 'reserved' then
+  local held = redis.call('HGET', KEYS[1], 'inbound')
+  if held and held ~= '' then return -3 end
 end
 redis.call('HSET', KEYS[1], 'state', ARGV[2], 'attempt', ARGV[3], 'since', ARGV[5])
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
@@ -60,9 +75,9 @@ return 1
  * Unconditional set — for transitions the caller has already authorised (an agent
  * clicking "available", a join, a forced release). Still creates the key with a
  * TTL, because an agent state with no lease is an agent nothing can detect the
- * death of. Unconditional in everything but the soft phone's guard: `available`
- * is refused (-1/-2) while the session holds a manual call or is a soft-phone
- * session.
+ * death of. Unconditional in everything but the guard: `available` is refused
+ * (-1/-2/-3) while the session holds a manual call, is a soft-phone session, or
+ * holds an inbound call.
  */
 const SET_SCRIPT = `${AVAILABLE_GUARD_LUA}
 if ARGV[1] == 'available' then
@@ -139,6 +154,82 @@ return {st, changed}
 `;
 
 /**
+ * Reserve the session for an inbound call (docs/inbound.md §2 step 5, P2).
+ *
+ * KEYS[1] = the agent hash. ARGV[1] = inbound call id, ARGV[2] = lease ms,
+ * ARGV[3] = now (epoch ms), ARGV[4..] = the states it may be taken from.
+ *
+ * Returns `{1, from}` reserved (`from`: the state it was taken from), or the id
+ * already holds it (idempotent: nothing is written, `from` is the state now, '' with
+ * no lease); `{0, state}` not in one of the states (`state` '' when there is no
+ * lease); `{-1, ''}` a soft-phone call holds it; `{-2, ''}` a soft-phone session;
+ * `{2, heldId}` another inbound call holds it.
+ *
+ * One compare-and-swap, as an attempt's reservation is: the state and every field
+ * are checked and written in one script, so an inbound offer and a pacing
+ * reservation (both from `available`), or two inbound calls, cannot both win. The
+ * write: `state = reserved`, `attempt = ''` (an inbound reservation is not an
+ * attempt's), `since`, `inbound = id` and the lease (`reserved_dialing`, which the
+ * connector renews while the offer stands). `fromStates` is `available` for an idle
+ * agent, and `reserved` / `on_call` / `wrapup` for the release hook, which takes the
+ * agent `releaseAgent` would otherwise return to the pool.
+ */
+const RESERVE_INBOUND_SCRIPT = `
+local st = redis.call('HGET', KEYS[1], 'state')
+local f = redis.call('HMGET', KEYS[1], 'manual', 'softphone', 'inbound')
+if f[3] and f[3] ~= '' then
+  if f[3] == ARGV[1] then return {1, st or ''} end
+  return {2, f[3]}
+end
+if not st then return {0, ''} end
+local allowed = false
+for i = 4, #ARGV do
+  if ARGV[i] == st then allowed = true end
+end
+if not allowed then return {0, st} end
+if f[1] and f[1] ~= '' then return {-1, ''} end
+if f[2] == '1' then return {-2, ''} end
+redis.call('HSET', KEYS[1], 'state', 'reserved', 'attempt', '', 'since', ARGV[3], 'inbound', ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return {1, st}
+`;
+
+/** Clear `inbound`, but only if THIS call holds it. 1 released, 0 not held by it. */
+const RELEASE_INBOUND_SCRIPT = `
+if redis.call('HGET', KEYS[1], 'inbound') ~= ARGV[1] then return 0 end
+redis.call('HDEL', KEYS[1], 'inbound')
+return 1
+`;
+
+/**
+ * Rehydrate a session that owes an inbound call's outcome (docs/inbound.md §2,
+ * "Server restart"): the call was bridged and is not settled, so the session must
+ * not be `available` until the outcome is saved or lapses.
+ *
+ * KEYS[1] = the agent hash. ARGV[1] = the owed call id, ARGV[2] = break lease ms,
+ * ARGV[3] = now (epoch ms).
+ *
+ * A lapsed lease (no key), `offline` or `available` becomes `break` (an `available`
+ * one is exactly what the guard exists to prevent: a lease that lapsed and was
+ * rewritten by something that did not know); any other live state is kept. The
+ * `inbound` field is then written to the owed id whatever it held: the database is
+ * the authority (one unsettled inbound call per session, a unique index), so a
+ * different id in the field is stale. Returns `{state, changed}`.
+ */
+const REHYDRATE_INBOUND_SCRIPT = `
+local st = redis.call('HGET', KEYS[1], 'state')
+local changed = 0
+if (not st) or st == 'offline' or st == 'available' then
+  redis.call('HSET', KEYS[1], 'state', 'break', 'attempt', '', 'since', ARGV[3])
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  st = 'break'
+  changed = 1
+end
+redis.call('HSET', KEYS[1], 'inbound', ARGV[1])
+return {st, changed}
+`;
+
+/**
  * Renew a lease **without resurrecting it**.
  *
  * The invariant this protects is the whole point of the lease design: a key TTL
@@ -197,9 +288,12 @@ export type ReservationResult = 'reserved' | 'lost' | 'unavailable';
  *   awaiting its outcome). The routes answer `409 manual_call_live`.
  * - `softphone_session` — refused: a soft-phone session can never be `available`
  *   (the routes answer `409 wrong_session_kind`).
+ * - `inbound_call_owed` — refused: the session holds an inbound call (offered,
+ *   connected, or ended with its outcome owed; docs/inbound.md §6). The routes answer
+ *   `409 inbound_call_live`.
  * - `unavailable` — Redis is absent or the write failed (logged).
  */
-export type AgentSetResult = 'ok' | 'manual_call_live' | 'softphone_session' | 'unavailable';
+export type AgentSetResult = 'ok' | 'manual_call_live' | 'softphone_session' | 'inbound_call_owed' | 'unavailable';
 
 /** What {@link AgentStateMachine.claimManual} learned. */
 export type ManualClaimResult =
@@ -214,8 +308,24 @@ function setResultFrom(res: unknown): AgentSetResult {
   if (res === 1) return 'ok';
   if (res === -1) return 'manual_call_live';
   if (res === -2) return 'softphone_session';
+  if (res === -3) return 'inbound_call_owed';
   return 'unavailable';
 }
+
+/** The states {@link AgentStateMachine.reserveForInbound} may take an agent from. */
+export type InboundReserveFromState = Extract<AgencyAgentState, 'available' | 'reserved' | 'on_call' | 'wrapup'>;
+
+/** What {@link AgentStateMachine.reserveForInbound} did. */
+export type InboundReservationResult =
+  /** Reserved for the call, from `from`; or already held by it (nothing written, `from` the state now, null: no lease). */
+  | { ok: true; from: AgencyAgentState | null }
+  /** Not in one of the states asked for (`state` null: no lease at all). */
+  | { ok: false; reason: 'wrong_state'; state: AgencyAgentState | null }
+  /** Another inbound call holds the session. */
+  | { ok: false; reason: 'held'; heldBy: string }
+  /** The session holds a soft-phone call, or is a soft-phone session. */
+  | { ok: false; reason: 'manual_call_live' | 'softphone_session' }
+  | { ok: false; reason: 'unavailable' };
 
 /** An agent's live state as Redis holds it — the authority on availability. */
 export interface AgentLiveState {
@@ -227,6 +337,8 @@ export interface AgentLiveState {
   manualCallId: string | null;
   /** A soft-phone session (`softphone` field): never `available`. */
   softphone: boolean;
+  /** The inbound call this session holds (the `inbound` field), or null. */
+  inboundCallId: string | null;
 }
 
 /** An `HGETALL` reply as an {@link AgentLiveState}; null for a lapsed (empty) key. */
@@ -239,6 +351,7 @@ function parseLiveState(h: Record<string, string> | null | undefined): AgentLive
     since: Number.isFinite(since) ? since : null,
     manualCallId: h.manual || null,
     softphone: h.softphone === '1',
+    inboundCallId: h.inbound || null,
   };
 }
 
@@ -443,6 +556,88 @@ export class AgentStateMachine {
       return { state: state as AgencyAgentState, changed: changed === 1 };
     } catch (err) {
       log.error({ err, sessionId }, 'Soft-phone rehydrate failed');
+      return null;
+    }
+  }
+
+  // ─── Inbound calls (docs/inbound.md §2, §6, P2) ───────────────────────────
+
+  /**
+   * Reserve the session for an inbound call: from one of `fromStates`, with no
+   * soft-phone call, not a soft-phone session, and no other inbound call (see
+   * {@link RESERVE_INBOUND_SCRIPT}). Writes `reserved` with the `reserved_dialing`
+   * lease, which the connector renews while the offer stands. Idempotent for the id
+   * that already holds it (`from` is then the state now, and nothing was written).
+   * Fails closed (`unavailable`) when Redis cannot answer.
+   */
+  async reserveForInbound(
+    sessionId: string,
+    inboundCallId: string,
+    fromStates: readonly InboundReserveFromState[],
+  ): Promise<InboundReservationResult> {
+    if (!this.redis) return { ok: false, reason: 'unavailable' };
+    if (fromStates.length === 0) return { ok: false, reason: 'wrong_state', state: null };
+    try {
+      const [code, value] = await this.redis.eval(
+        RESERVE_INBOUND_SCRIPT, 1, this.key(sessionId),
+        inboundCallId, AGENT_LEASE_MS.reserved_dialing, Date.now().toString(), ...fromStates,
+      ) as [number, string];
+      const state = value ? (value as AgencyAgentState) : null;
+      if (code === 1) return { ok: true, from: state };
+      if (code === 2) return { ok: false, reason: 'held', heldBy: value };
+      if (code === -1) return { ok: false, reason: 'manual_call_live' };
+      if (code === -2) return { ok: false, reason: 'softphone_session' };
+      return { ok: false, reason: 'wrong_state', state };
+    } catch (err) {
+      log.error({ err, sessionId, inboundCallId }, 'Inbound reservation failed — treating as unavailable');
+      return { ok: false, reason: 'unavailable' };
+    }
+  }
+
+  /**
+   * Clear the session's `inbound` field — only if `inboundCallId` holds it. Moves no
+   * state: the caller returns the agent (`releaseAgent`) after, so the `available`
+   * the release writes passes the guard.
+   */
+  async releaseInbound(sessionId: string, inboundCallId: string): Promise<boolean> {
+    if (!this.redis) return false;
+    try {
+      return (await this.redis.eval(RELEASE_INBOUND_SCRIPT, 1, this.key(sessionId), inboundCallId)) === 1;
+    } catch (err) {
+      log.warn({ err, sessionId, inboundCallId }, 'Inbound claim release failed');
+      return false;
+    }
+  }
+
+  /** The inbound call this session holds, or null (also when Redis cannot answer). */
+  async inboundCallOf(sessionId: string): Promise<string | null> {
+    if (!this.redis) return null;
+    try {
+      return (await this.redis.hget(this.key(sessionId), 'inbound')) || null;
+    } catch (err) {
+      log.warn({ err, sessionId }, 'Inbound claim read failed');
+      return null;
+    }
+  }
+
+  /**
+   * Rehydrate a session that owes an inbound call's outcome into `break` with the
+   * call re-claimed (see {@link REHYDRATE_INBOUND_SCRIPT}). Null when Redis cannot
+   * answer.
+   */
+  async rehydrateInbound(
+    sessionId: string,
+    owedInboundCallId: string,
+  ): Promise<{ state: AgencyAgentState; changed: boolean } | null> {
+    if (!this.redis) return null;
+    try {
+      const [state, changed] = await this.redis.eval(
+        REHYDRATE_INBOUND_SCRIPT, 1, this.key(sessionId),
+        owedInboundCallId, AGENT_LEASE_MS.break, Date.now().toString(),
+      ) as [string, number];
+      return { state: state as AgencyAgentState, changed: changed === 1 };
+    } catch (err) {
+      log.error({ err, sessionId, owedInboundCallId }, 'Inbound rehydrate failed');
       return null;
     }
   }

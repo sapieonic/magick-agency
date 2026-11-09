@@ -42,6 +42,8 @@ export const SOFTPHONE_REFUSAL_COPY: Record<AgencySoftphoneErrorCode, string> = 
   carrier_account_unavailable:
     'This caller ID’s carrier account can’t place calls: it needs attention, so nothing was dialled. '
     + 'Contact support, or pick a caller ID on another carrier.',
+  customer_on_inbound_call:
+    'This customer is on a call to us right now. Wait for that call to finish, then try again.',
 };
 
 /**

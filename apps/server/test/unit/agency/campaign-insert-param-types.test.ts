@@ -189,7 +189,7 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
     // deliberately hard-coded and deliberately annoying to change: it is the only
     // thing standing between a silently-stale parser and a whole file of
     // assertions that pass over an empty set.
-    expect(pairs).toHaveLength(30);
+    expect(pairs).toHaveLength(31);
     expect(types['calling_window_start']).toBe('time');
     expect(types['calling_window_end']).toBe('time');
     expect(types['calling_days']).toBe('smallint[]');

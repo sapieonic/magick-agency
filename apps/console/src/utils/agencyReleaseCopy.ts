@@ -97,6 +97,11 @@ const COPY: Record<AgencyReleaseReason, ReleaseCopy> = {
     subtext: 'Something went wrong on our side and the call was cleaned up. Nothing you did.',
     tone: 'neutral',
   },
+  inbound_call: {
+    headline: 'The customer rang us',
+    subtext: 'They called in while we were ringing them, so this call was cancelled. Nothing to do.',
+    tone: 'neutral',
+  },
 };
 
 /**

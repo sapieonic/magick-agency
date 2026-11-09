@@ -35,6 +35,9 @@
  *     not locks: a pacing claim of another row of the number can still land between
  *     them and step 3's claim (decisions §5, "Soft phone vs one live call per number
  *     across the account", which holds both open questions).
+ *     Then the number on an INBOUND call to the account (live, or bridged and owing its
+ *     outcome: docs/inbound.md §5.4, Q19) refuses `customer_on_inbound_call`, no override,
+ *     tagged or not.
  *     Then, tagged on a `strict` campaign (contact assignment): a picked contact
  *     assigned to another agent refuses `contact_assigned_elsewhere`, no override,
  *     unless the actor supervises (`SoftphoneActor.supervise`). The pool and the
@@ -117,6 +120,11 @@ export interface ManualPredialDeps {
    * tag's own match (step 4).
    */
   findInFlightInAccount: (phoneE164: string) => Promise<AgencyContactRecord | null>;
+  /**
+   * The account's inbound call from this number that keeps it busy (live, or bridged and owing
+   * its outcome; docs/inbound.md §5.4), or null. Asked for every dial, after the roster reads.
+   */
+  findBusyInboundInAccount: (phoneE164: string) => Promise<{ id: string } | null>;
   /**
    * Tagged calls: the tag's dedicated caller IDs (`agency_campaign_agent_caller_ids`, DN4), as the
    * dial paths read them (`DedicatedCallerIdCache.read`, cached per campaign).
@@ -318,6 +326,10 @@ export async function runManualPredial(
     // or went in flight between the two reads, which refuses all the same).
     return { ok: false, refusal: { code: 'contact_in_flight', campaign_id: live.campaign_id, contact_id: live.id } };
   }
+  // The customer is on an inbound call to the account (Q19): one live call per number holds for
+  // their own call too, so the soft phone does not ring them over it. No override.
+  const inbound = await deps.findBusyInboundInAccount(destinationE164);
+  if (inbound) return { ok: false, refusal: { code: 'customer_on_inbound_call', inbound_call_id: inbound.id } };
   if (input.tag && assignedElsewhere(input.tag, contact, input.actor)) {
     return { ok: false, refusal: { code: 'contact_assigned_elsewhere' } };
   }

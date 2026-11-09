@@ -53,6 +53,8 @@ const Map<SoftphoneErrorCode, String> softphoneRefusalCopy = {
   SoftphoneErrorCode.carrierAccountUnavailable:
       'This caller ID’s carrier account can’t place calls: it needs attention, so nothing was dialled. '
       'Contact support, or pick a caller ID on another carrier.',
+  SoftphoneErrorCode.customerOnInboundCall:
+      'This customer is on a call to us right now. Wait for that call to finish, then try again.',
 };
 
 /// What the refused request was doing, where one code means different things.

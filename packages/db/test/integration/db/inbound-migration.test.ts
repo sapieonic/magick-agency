@@ -277,6 +277,12 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
       'callback_due_at timestamp with time zone', 'follow_up_status character varying', 'follow_up_reason character varying',
       'follow_up_assignee_user_id uuid', 'handled_by_user_id uuid', 'handled_at timestamp with time zone',
       'created_at timestamp with time zone not null', 'updated_at timestamp with time zone not null',
+      // 0027 (inbound P2): the agent side (inbound-connect-migration.test.ts pins them).
+      'session_id uuid', 'queued_at timestamp with time zone', 'offered_at timestamp with time zone',
+      'offer_count smallint not null', 'recording_requested boolean not null', 'disposition_code character varying',
+      'disposition_source character varying', 'notes text', 'callback_at timestamp with time zone',
+      'dispositioned_by_user_id uuid', 'dispositioned_at timestamp with time zone', 'dispositioned_on_behalf boolean not null',
+      'settled_at timestamp with time zone', 'voicemail_seconds integer', 'clash_attempt_id uuid',
     ]);
     expect(await call()).toMatchObject({ state: 'arrived', provider: 'plivo', caller_dnc: false, outcome: null, follow_up_status: null });
   });
@@ -329,7 +335,8 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
 
   it('bridged exactly with its agent; connected and answered only once bridged', async () => {
     const agent = randomUUID();
-    await call({ state: 'connected', bridged_at: new Date(), answered_by_user_id: agent });
+    // 0027: a connected call is with a session.
+    await call({ state: 'connected', bridged_at: new Date(), answered_by_user_id: agent, session_id: randomUUID(), offered_at: new Date(), offer_count: 1 });
     await call({ state: 'ended', outcome: 'answered', ended_at: new Date(), bridged_at: new Date(), answered_by_user_id: agent, talk_seconds: 0 });
     for (const bad of [
       { bridged_at: new Date() },
@@ -580,7 +587,7 @@ describe('0024 — down', () => {
     } finally {
       await migrate('up');
     }
-    expect((await columns('agency_inbound_calls')).length).toBe(33);
+    expect((await columns('agency_inbound_calls')).length).toBe(48); // 0024's 33, and 0027's 15
     expect((await checkDef('ck_agency_calls_origin'))!.validated).toBe(true);
   });
 });

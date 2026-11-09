@@ -45,12 +45,13 @@ function input(over: Partial<ManualPredialInput> = {}): ManualPredialInput {
 
 function deps(opts: {
   matches?: AgencyContactRecord[]; dnc?: unknown; inFlight?: AgencyContactRecord | null;
-  dedicated?: ReadonlyMap<string, string>;
+  dedicated?: ReadonlyMap<string, string>; inbound?: { id: string } | null;
 } = {}) {
   return {
     dnc: { checkEntry: vi.fn().mockResolvedValue(opts.dnc ?? { result: 'clear' }) },
     findRosterMatches: vi.fn().mockResolvedValue(opts.matches ?? []),
     findInFlightInAccount: vi.fn().mockResolvedValue(opts.inFlight ?? null),
+    findBusyInboundInAccount: vi.fn().mockResolvedValue(opts.inbound ?? null),
     findDedicatedCallerIds: vi.fn().mockResolvedValue(opts.dedicated ?? new Map()),
   };
 }
@@ -303,6 +304,23 @@ describe('the roster match', () => {
     expect(d.findInFlightInAccount).toHaveBeenCalledWith('+919811100001');
     // No override reaches past it, and nothing after it is asked.
     expect(d.dnc.checkEntry).not.toHaveBeenCalled();
+  });
+
+  it('the customer on an inbound call to the account refuses, tagged or not, whatever the overrides (Q19)', async () => {
+    const notes = { dnc_note: 'customer asked for this call', hours_note: 'customer asked for this call' };
+    for (const over of [{ tag: null, accountNumbers: ['+15550000001'] }, {}]) {
+      const d = deps({ matches: [contact('c1', 'pending')], inbound: { id: 'ib-1' } });
+      const r = await runManualPredial(input({ ...over, overrides: notes }), d);
+      expect(r.ok ? null : r.refusal).toEqual({ code: 'customer_on_inbound_call', inbound_call_id: 'ib-1' });
+      expect(d.findBusyInboundInAccount).toHaveBeenCalledWith('+919811100001');
+      expect(d.dnc.checkEntry).not.toHaveBeenCalled();
+    }
+    // The roster's own refusal comes first: it names the campaign calling them.
+    const sibling = contact('c9', 'in_flight', { campaign_id: 'camp-parent' } as Partial<AgencyContactRecord>);
+    const d = deps({ inFlight: sibling, inbound: { id: 'ib-1' } });
+    const r = await runManualPredial(input(), d);
+    expect(r.ok ? null : r.refusal).toMatchObject({ code: 'contact_in_flight' });
+    expect(d.findBusyInboundInAccount).not.toHaveBeenCalled();
   });
 
   it('tagged: the refusal holds with every override note given, and with no roster match on the tag', async () => {

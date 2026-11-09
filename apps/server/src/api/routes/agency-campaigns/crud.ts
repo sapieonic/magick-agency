@@ -201,6 +201,8 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       disposition_catalog: body?.disposition_catalog,
       // Automatic outcomes (0022). Omitted ⇒ `{}`; checked against the catalog by `configRejected`.
       outcome_dispositions: body?.outcome_dispositions,
+      // Inbound sticky routing (0024). Omitted ⇒ `true`; shape-checked by `configRejected`.
+      inbound_sticky_enabled: body?.inbound_sticky_enabled as boolean | undefined,
       context_display: body?.context_display,
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,

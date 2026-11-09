@@ -142,6 +142,12 @@ export interface AgencySupervisorAgent {
    * until a station has attached. The floor marks `mobile` with a phone glyph.
    */
   client_kind: AgencyClientKind;
+  /**
+   * The session holds a live inbound call (offered to them, or connected: docs/inbound.md §6),
+   * which the floor marks "Inbound call". False while its outcome is owed after it ended: the
+   * agent is then in wrap-up like any other.
+   */
+  on_inbound_call: boolean;
 }
 
 /**

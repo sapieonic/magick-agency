@@ -75,7 +75,8 @@
       "campaign_paused",
       "campaign_stopped",
       "supervisor_released",
-      "orphaned"
+      "orphaned",
+      "inbound_call"
     ]
   },
   "campaign_change_reasons": {
@@ -142,7 +143,9 @@
       "ended",
       "media",
       "manual_call",
-      "queue"
+      "queue",
+      "inbound_call",
+      "customer_waiting"
     ]
   },
   "wrapup_hold_reasons": {
@@ -282,7 +285,8 @@
       "fields_invalid",
       "settings_invalid",
       "contact_assigned_elsewhere",
-      "carrier_account_unavailable"
+      "carrier_account_unavailable",
+      "customer_on_inbound_call"
     ]
   },
   "manual_call_states": {

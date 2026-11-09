@@ -441,6 +441,13 @@ void main() {
   test('every station server event in the fixtures has its own frame type', () {
     final samples = loadFixtureFile('station.json');
     final events = {for (final s in samples.values) StationFrame.decode(jsonEncode(s)).event};
-    expect(events, containsAll(StationEvent.values.where((e) => e != StationEvent.unknown)));
+    // Inbound calls go to console stations only until P3 (the contract's
+    // AGENCY_STATION_CONSOLE_ONLY_EVENTS): the app is never sent them, so the
+    // fixtures carry no sample of them.
+    const consoleOnly = {StationEvent.inboundCall, StationEvent.customerWaiting};
+    expect(
+      events,
+      containsAll(StationEvent.values.where((e) => e != StationEvent.unknown && !consoleOnly.contains(e))),
+    );
   });
 }

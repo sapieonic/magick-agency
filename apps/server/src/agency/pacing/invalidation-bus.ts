@@ -21,6 +21,7 @@
  * | `contacts_changed`       | contacts arrived on the campaign            | the CSV ingest's roster chunks |
  * | `station_ready`          | a station was sent `ready` on a `strict` / `preferred` campaign, so what it last heard of its queue is that frame's | the station attach |
 | `dedications_changed`    | the campaign's effective dedicated caller IDs (DN1): one set, replaced or released, or an agent's staffing on it closed | `AgencyAgentCallerIdRepository.set` / `.clear`, `returnContactsOnUnstaff` (every unstaff path) |
+ * | `inbound_waiting`        | how many inbound callers wait for the account's agents, and whom they want (docs/inbound.md §5.2) | the inbound connector (P2; no consumer yet) |
  *
  * ── Serialisable on purpose ─────────────────────────────────────────────────
  * Events are plain JSON objects and carry ids only, never a row, a callback or a
@@ -60,7 +61,24 @@ export type PacingInvalidationEvent =
    * The campaign's dedicated caller-ID map (`DedicatedCallerIdCache`) is stale. Wakes nothing:
    * a dedication changes which number a dial uses, never whether the campaign can dial.
    */
-  | { type: 'dedications_changed'; campaignId: string };
+  | { type: 'dedications_changed'; campaignId: string }
+  /**
+   * Inbound callers wait for the account's agents (docs/inbound.md §5.2, P2): pacing should leave
+   * them room. `n` callers are queued; `preferredSessionIds` are the sessions they are sticky to
+   * (pacing drops them from its candidates); the hold applies to the campaigns in
+   * `poolCampaignIds` (null: every campaign of the account; the route's agent pool), and lapses
+   * `ttlMs` after it arrives unless republished (a hint, never an authority: see the module note).
+   * `n = 0` with no ids lifts it. Bounded by {@link parsePacingInvalidationEvent}.
+   */
+  | {
+    type: 'inbound_waiting';
+    tenantId: string;
+    accountId: string;
+    n: number;
+    preferredSessionIds: string[];
+    poolCampaignIds: string[] | null;
+    ttlMs: number;
+  };
 
 export type PacingInvalidationEventType = PacingInvalidationEvent['type'];
 
@@ -74,6 +92,45 @@ export interface PacingInvalidationBus {
 }
 
 const isId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 128;
+
+/** Bounds of an `inbound_waiting` event, enforced by {@link parsePacingInvalidationEvent}. */
+export const INBOUND_WAITING_LIMITS = Object.freeze({
+  /** Callers counted; past it the event is malformed (a route's `max_waiting` is at most 100). */
+  MAX_N: 500,
+  /** Ids in `preferredSessionIds` and in `poolCampaignIds` each; more is malformed. */
+  MAX_IDS: 100,
+  /** `ttlMs` is clamped into this range: a hold never lasts less than a second or more than 30. */
+  TTL_MS: Object.freeze({ min: 1_000, max: 30_000 }),
+});
+
+/** A list of at most `INBOUND_WAITING_LIMITS.MAX_IDS` ids, de-duplicated in order; null when malformed. */
+function idList(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length > INBOUND_WAITING_LIMITS.MAX_IDS || !v.every(isId)) return null;
+  return [...new Set(v as string[])];
+}
+
+function parseInboundWaiting(e: Record<string, unknown>): PacingInvalidationEvent | null {
+  if (!isId(e['tenantId']) || !isId(e['accountId'])) return null;
+  const n = e['n'];
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > INBOUND_WAITING_LIMITS.MAX_N) return null;
+  const preferredSessionIds = idList(e['preferredSessionIds']);
+  if (!preferredSessionIds) return null;
+  const rawPool = e['poolCampaignIds'];
+  const poolCampaignIds = rawPool === null || rawPool === undefined ? null : idList(rawPool);
+  if (rawPool !== null && rawPool !== undefined && !poolCampaignIds) return null;
+  const ttl = e['ttlMs'];
+  if (typeof ttl !== 'number' || !Number.isFinite(ttl)) return null;
+  const { min, max } = INBOUND_WAITING_LIMITS.TTL_MS;
+  return {
+    type: 'inbound_waiting',
+    tenantId: e['tenantId'],
+    accountId: e['accountId'],
+    n,
+    preferredSessionIds,
+    poolCampaignIds,
+    ttlMs: Math.min(max, Math.max(min, Math.round(ttl))),
+  };
+}
 
 /**
  * Decode one event from the wire, or null for anything malformed. Unknown types are
@@ -103,6 +160,8 @@ export function parsePacingInvalidationEvent(raw: unknown): PacingInvalidationEv
       return isId(e['sessionId']) && isId(e['campaignId'])
         ? { type: 'station_ready', sessionId: e['sessionId'], campaignId: e['campaignId'] }
         : null;
+    case 'inbound_waiting':
+      return parseInboundWaiting(e);
     default:
       return null;
   }

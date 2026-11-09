@@ -120,6 +120,8 @@ const ROSTER = [
     break_reason: null,
     calls_handled: '3',
     redials: '1',
+    // P2 (0027): a live inbound call offered to or connected with the session.
+    on_inbound_call: true,
   },
   {
     session_id: 'sess-3',
@@ -387,7 +389,10 @@ describe('the floor, and the breakdown drawn from it', () => {
       redials: 2,
       // 0006: the app the station last attached from; a row without one reads `web`.
       client_kind: 'web',
+      // 0027: the floor's "Inbound call" marker; a row without one reads false.
+      on_inbound_call: false,
     });
+    expect(s.agents.map((a) => a.on_inbound_call)).toEqual([false, true, false, false]);
     expect(s.agents[2]).toMatchObject({ state: 'break', break_reason: 'lunch', calls_handled: 0 });
     // Distinct per agent, so a mapper reading one agent's count onto another fails.
     expect(s.agents.map((a) => a.calls_handled)).toEqual([7, 3, 0, 12]);

@@ -22,6 +22,7 @@
  */
 
 import type { AgencyKeysetPage } from '../../agency/spine';
+import type * as Core from '../../agency/inbound';
 import type {
   AgencyInboundCallOutcome,
   AgencyInboundFollowUpStatus,
@@ -34,6 +35,12 @@ import type { AgencyInboundErrorCode } from '../../errors';
 export {
   AGENCY_INBOUND_CALL_OUTCOMES,
   AGENCY_INBOUND_CALL_STATES,
+  AGENCY_INBOUND_CATALOG_SOURCES,
+  AGENCY_INBOUND_CONNECT_DELAY_MS,
+  AGENCY_INBOUND_DISPOSITION_SOURCES,
+  AGENCY_INBOUND_OUTCOME_LAPSE_MS,
+  AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
+  AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS,
   AGENCY_INBOUND_CLIP_SLOTS,
   AGENCY_INBOUND_FOLLOW_UP_STATUSES,
   AGENCY_INBOUND_MISSED_REASONS,
@@ -44,6 +51,16 @@ export {
   AGENCY_INBOUND_UNCONNECTED_ACTIONS,
 } from '../../agency/inbound';
 export type {
+  AgencyInboundCall,
+  AgencyInboundCallDispositionResponse,
+  AgencyInboundCallDncResponse,
+  AgencyInboundCallMatch,
+  AgencyInboundCallResponse,
+  AgencyInboundCallSticky,
+  AgencyInboundCatalogSource,
+  AgencyInboundDispositionSource,
+  AgencyStationCustomerWaitingFrame,
+  AgencyStationInboundCallFrame,
   AgencyInboundCallOutcome,
   AgencyInboundCallState,
   AgencyInboundClips,
@@ -76,6 +93,23 @@ export interface AgencyInboundErrorResponse {
   phone_number_id?: string;
   /** `inbound_number_in_use`: the route holding it, when it is one of this account's (else absent). */
   route_id?: string;
+  /** `inbound_call_live`, and the inbound call routes' refusals: the call refused for. */
+  inbound_call_id?: string;
+  /** `inbound_disposition_invalid` with `reason: 'unknown_code'`: the codes the call's catalog accepts. */
+  allowed_codes?: string[];
+  /** `inbound_disposition_invalid`: which rule refused (the soft phone's four). */
+  reason?: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
+}
+
+/**
+ * 409 `inbound_call_live` from the campaign session routes (`available`, `force-available`,
+ * `leave`): the session holds an inbound call that is offered, connected or awaiting its outcome.
+ * The agent's own console already shows it (the `inbound_call` frame, re-sent after every
+ * reconnect); a supervisor is told which call.
+ */
+export interface AgencyInboundCallLiveRefusal extends AgencyInboundErrorResponse {
+  code: 'inbound_call_live';
+  inbound_call_id: string;
 }
 
 /**
@@ -85,6 +119,46 @@ export interface AgencyInboundErrorResponse {
  * / `overflow_action`, and the console offers only these.
  */
 export const AGENCY_INBOUND_AVAILABLE_ACTIONS: readonly AgencyInboundUnconnectedAction[] = Object.freeze(['callback']);
+
+// ─── The inbound call routes (P2, §6): the internal bodies without the server-filled actor ──
+
+/** `PATCH /inbound/calls/:id`. */
+export type AgencyInboundCallUpdateRequest = Omit<Core.AgencyInboundCallUpdateRequest, 'agent_user_id' | 'on_behalf'>;
+
+/** `POST /inbound/calls/:id/hangup`: no body. */
+export type AgencyInboundCallHangupRequest = Record<string, never>;
+
+/** `POST /inbound/calls/:id/disposition`. */
+export type AgencyInboundCallDispositionRequest = Omit<Core.AgencyInboundCallDispositionRequest, 'agent_user_id' | 'on_behalf'>;
+
+/** `POST /inbound/calls/:id/dnc`. */
+export type AgencyInboundCallDncRequest = Omit<Core.AgencyInboundCallDncRequest, 'agent_user_id' | 'on_behalf'>;
+
+// ─── The supervisor's queue (P2, §6) ────────────────────────────────────────
+
+/**
+ * One route's queue as the supervisor's tile shows it (`GET /inbound/queue`, `agency.supervise`,
+ * polled every 5 s): what this process's queue holds now. Not paged; one per live route.
+ */
+export interface AgencyInboundQueueTile {
+  route_id: string;
+  route_name: string;
+  /** The route's hours say open now. */
+  open_now: boolean;
+  /** Callers queued for an agent (offered calls are not waiting). */
+  waiting: number;
+  /** The longest current wait, in whole seconds; 0 with nobody waiting. */
+  longest_wait_seconds: number;
+  /** Calls offered to or connected with an agent now. */
+  connected: number;
+  /** Agents who could take this route's next caller now. */
+  eligible_agents: number;
+}
+
+export interface AgencyInboundQueueResponse {
+  /** By route name. */
+  tiles: AgencyInboundQueueTile[];
+}
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
@@ -206,6 +280,11 @@ export interface AgencyInboundMissedCall {
   /** When the callback this call booked on the matched contact is due; NULL: none was booked. */
   callback_due_at: string | null;
   has_voicemail: boolean;
+  /**
+   * P2: where the voicemail plays from (`GET /inbound/missed/:id/voicemail`, relative to the
+   * proxy), when `has_voicemail`. Absent from a build that serves no voicemail.
+   */
+  voicemail_url?: string;
   /** NULL: the account (anyone with the list). */
   assignee_user_id: string | null;
   assignee_name: string | null;

@@ -30,6 +30,18 @@ describe('refusals', () => {
       inbound_number_not_linked: 409,
       inbound_number_in_use: 409,
       inbound_missed_call_not_found: 404,
+      inbound_call_live: 409,
+      inbound_call_not_found: 404,
+      inbound_call_not_dispositionable: 409,
+      inbound_disposition_invalid: 400,
+      inbound_outcome_already_saved: 409,
+    });
+    expect(inboundRefusalBody({ code: 'inbound_call_live', inbound_call_id: 'ib-1' })).toEqual({
+      status: 409,
+      body: {
+        error: 'Conflict', code: 'inbound_call_live', message: 'An inbound call is in progress or still needs its outcome.',
+        inbound_call_id: 'ib-1',
+      },
     });
     expect(inboundRefusalBody({ code: 'inbound_number_in_use', phone_number_id: 'n-1', route_id: 'r-1' })).toEqual({
       status: 409,

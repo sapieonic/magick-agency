@@ -43,6 +43,29 @@ export function contactPhoneDigitsSql(alias: string): string {
 }
 
 /**
+ * {@link CONTACT_PHONE_DIGITS_SQL} on the CALLER's number (`from_e164`) of the inbound call at
+ * table alias `alias`: the key expression of `idx_agency_inbound_calls_live_from_digits`
+ * (`0027_inbound_connect.sql`), byte for byte with the column swapped. `from_e164` is stored
+ * normalised (`plivoNumberToE164`), so equal digits are the same number.
+ */
+export function inboundFromDigitsSql(alias: string): string {
+  return CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.from_e164`);
+}
+
+/**
+ * The inbound call at `alias` keeps its caller's number busy for the account (docs/inbound.md
+ * §5.4, MC4): it has a number, and it is admitted and live (greeting, waiting, offered,
+ * connected; `arrived` is "not admitted", as the account's live count reads it: a call refused at
+ * the cap holds no line and ends at once) or was bridged and
+ * still owes its outcome. Literally the predicate of `idx_agency_inbound_calls_live_from_digits`,
+ * so the planner proves a probe that repeats it may use the partial index. Unparenthesised as a
+ * whole: AND it, never OR it.
+ */
+export function inboundNumberBusySql(alias: string): string {
+  return `${alias}.from_e164 IS NOT NULL AND ((${alias}.state <> 'ended' AND ${alias}.state <> 'arrived') OR (${alias}.bridged_at IS NOT NULL AND ${alias}.settled_at IS NULL))`;
+}
+
+/**
  * The wrap-up resolutions that are evidence of how long wrap-up TAKES.
  *
  * `disposition_submitted` (the agent finished and said so), `auto_return` (the
@@ -532,8 +555,8 @@ export function readAttemptMetrics(row: {
 }
 
 /**
- * The thirty columns a campaign is created with, in the order `create()` and
- * `retryFromCampaign` bind `$1..$30`. A retry appends its five lineage columns
+ * The thirty-one columns a campaign is created with, in the order `create()` and
+ * `retryFromCampaign` bind `$1..$31`. A retry appends its five lineage columns
  * after them. One list, so a column added to the config is added to both writers or
  * to neither — an optional input field beside an explicit column list typechecks
  * and silently drops the value.
@@ -545,4 +568,4 @@ export const CAMPAIGN_INSERT_COLUMNS_SQL = `tenant_id, account_id, name, caller_
           abandon_announcement_id, abandonment_ceiling_pct, allow_wrapup_redial,
           assignment_mode, on_unstaff, callback_owner_grace_minutes, callback_fallback,
           allow_agent_retry, agent_retry_rounds, agent_retry_cooldown_minutes, telephony_credential_id,
-          outcome_dispositions`;
+          outcome_dispositions, inbound_sticky_enabled`;

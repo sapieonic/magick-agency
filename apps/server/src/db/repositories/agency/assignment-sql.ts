@@ -13,7 +13,7 @@
 import type { AgencyAssignmentReason, AgencyDisposition } from '@magick-agency/contracts/agency';
 import type { AgencyCampaignRecord } from '../../models/agency.model.js';
 import type { params } from './query-builders.js';
-import { contactPhoneDigitsSql } from './sql-fragments.js';
+import { contactPhoneDigitsSql, inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
 
 /** The states of a contact on a call or held for its write-up, as an `IN` list. */
 export const LIVE_STATES_SQL = `('in_flight', 'connected')`;
@@ -42,7 +42,9 @@ export function presentSessionSql(alias: string): string {
 /**
  * Whether contact `c`'s number is live on its ACCOUNT: some contact of the same tenant and
  * account as `c`, on any campaign, on the same digits (`CONTACT_PHONE_DIGITS_SQL`) is
- * `in_flight` or `connected`, `c` itself included. Every claim that starts a call refuses a
+ * `in_flight` or `connected`, `c` itself included; or the customer is on an INBOUND call to the
+ * account from that number (docs/inbound.md §5.4): waiting, offered, connected, or bridged and
+ * still owing its outcome (`inboundNumberBusySql`). Every claim that starts a call refuses a
  * contact whose number is live (`NOT` this), so one number never carries two calls at once,
  * whichever of the account's campaigns placed them (decisions MC4): an account may run several
  * campaigns (MC6), a retry child can run beside its parent, and two rosters can share a number.
@@ -53,15 +55,28 @@ export function presentSessionSql(alias: string): string {
  * account_id, <the digits>) WHERE state IN ('in_flight', 'connected')`. The index's key
  * expression is `CONTACT_PHONE_DIGITS_SQL` byte for byte and its predicate is
  * {@link LIVE_STATES_SQL}'s list, so the planner proves the probe's `state IN …` implies it;
- * respell either side and the probe falls back to `idx_agency_contacts_phone` or a scan.
+ * respell either side and the probe falls back to `idx_agency_contacts_phone` or a scan. The
+ * inbound arm is one probe of `idx_agency_inbound_calls_live_from_digits` (0027): `(tenant_id,
+ * account_id, <the caller's digits>)` over the live-or-unsettled calls only, the same two rules
+ * (`inboundFromDigitsSql`, `inboundNumberBusySql`). An inbound call on the tenant default (no
+ * account) belongs to no account's roster and keeps nothing busy.
+ *
+ * Shared by pacing's claims, the agent's own dial and the agent retry, so all three skip a number
+ * whose customer is ringing in (MC4). Parenthesised: safe under `NOT`.
  */
 export function numberLiveSql(alias: string): string {
-  return `EXISTS (
+  return `(EXISTS (
               SELECT 1 FROM agency_contacts live
                WHERE live.tenant_id = ${alias}.tenant_id
                  AND live.account_id = ${alias}.account_id
                  AND ${contactPhoneDigitsSql('live')} = ${contactPhoneDigitsSql(alias)}
-                 AND live.state IN ${LIVE_STATES_SQL})`;
+                 AND live.state IN ${LIVE_STATES_SQL})
+           OR EXISTS (
+              SELECT 1 FROM agency_inbound_calls inb
+               WHERE inb.tenant_id = ${alias}.tenant_id
+                 AND inb.account_id = ${alias}.account_id
+                 AND ${inboundFromDigitsSql('inb')} = ${contactPhoneDigitsSql(alias)}
+                 AND ${inboundNumberBusySql('inb')}))`;
 }
 
 /**

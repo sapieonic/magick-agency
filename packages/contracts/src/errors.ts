@@ -426,7 +426,9 @@ export type AgencySoftphoneErrorCode =
   /** 409. Contact assignment: the tagged campaign is `strict` and the number's contact belongs to another agent. A supervisor is not refused. */
   | 'contact_assigned_elsewhere'
   /** 409. The carrier account the caller ID's number is on cannot place calls: it is no longer active (disabled, invalid, revoked) or the carrier refused its credentials. Nothing was dialled, and retrying cannot help until support has fixed the account; another caller ID may. */
-  | 'carrier_account_unavailable';
+  | 'carrier_account_unavailable'
+  /** 409. The number is on an inbound call to the account right now: the customer is waiting for an agent, talking to one, or their call's outcome is still owed (docs/inbound.md §5.4, MC4). No override; `inbound_call_id` names the call. */
+  | 'customer_on_inbound_call';
 
 /** Runtime list of {@link AgencySoftphoneErrorCode}, in declaration order. */
 export const AGENCY_SOFTPHONE_ERROR_CODES = [
@@ -456,6 +458,7 @@ export const AGENCY_SOFTPHONE_ERROR_CODES = [
   'settings_invalid',
   'contact_assigned_elsewhere',
   'carrier_account_unavailable',
+  'customer_on_inbound_call',
 ] as const satisfies readonly AgencySoftphoneErrorCode[];
 
 const _allSoftphoneCodesListed: AllListed<
@@ -530,6 +533,12 @@ void _allReportCodesListed;
 // shapes in `./api/agency/inbound`). The body is `{ error, message, details? }`. HTTP status
 // beside each code. The route repository's refusal reasons map onto them one to one
 // (`apps/server/src/db/repositories/agency/inbound-route.repository.ts`).
+//
+// P2 adds the inbound CALL's codes (the agent's panel, docs/inbound.md §6): its finish routes
+// (`/proxy/agency/inbound/calls/*`), and `inbound_call_live`, which the campaign session routes
+// answer beside their action codes (as they answer the soft phone's `manual_call_live`). None of
+// them may overlap the action, soft-phone or report unions (`test/errors.test.ts`), so the outcome
+// refusal is `inbound_disposition_invalid`, not the soft phone's `disposition_invalid`.
 
 /** Why an inbound route refused. */
 export type AgencyInboundErrorCode =
@@ -548,7 +557,17 @@ export type AgencyInboundErrorCode =
   /** 409. A number already answers another live route. `details.phone_number_id`, `details.route_id`. */
   | 'inbound_number_in_use'
   /** 404. No such Missed inbound row the caller may see. */
-  | 'inbound_missed_call_not_found';
+  | 'inbound_missed_call_not_found'
+  /** 409. `POST /sessions/:id/available`, `force-available`, `leave` and the return from the soft phone (P2): the session holds an inbound call that is offered, connected or awaiting its outcome. `inbound_call_id` names it. */
+  | 'inbound_call_live'
+  /** 404. No such inbound call the caller may act on (the agent who took it, or `agency.supervise`). */
+  | 'inbound_call_not_found'
+  /** 409. The call cannot take an outcome: it is still live, or it ended without reaching an agent. */
+  | 'inbound_call_not_dispositionable'
+  /** 400. The outcome code is not in the call's catalog (`allowed_codes`), or its note or callback time is missing or invalid (`reason`). */
+  | 'inbound_disposition_invalid'
+  /** 409. Another outcome is already saved on the call, or it lapsed `no_disposition`. */
+  | 'inbound_outcome_already_saved';
 
 /** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
 export const AGENCY_INBOUND_ERROR_CODES = [
@@ -560,6 +579,11 @@ export const AGENCY_INBOUND_ERROR_CODES = [
   'inbound_number_not_linked',
   'inbound_number_in_use',
   'inbound_missed_call_not_found',
+  'inbound_call_live',
+  'inbound_call_not_found',
+  'inbound_call_not_dispositionable',
+  'inbound_disposition_invalid',
+  'inbound_outcome_already_saved',
 ] as const satisfies readonly AgencyInboundErrorCode[];
 
 const _allInboundCodesListed: AllListed<

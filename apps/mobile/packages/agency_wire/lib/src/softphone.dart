@@ -1906,6 +1906,10 @@ enum SoftphoneErrorCode implements WireEnum {
   /// 409: the caller ID's carrier account cannot place calls (no longer active,
   /// or its credentials refused). Nothing was dialled; retrying cannot help.
   carrierAccountUnavailable('carrier_account_unavailable'),
+
+  /// 409: the number is on an inbound call to the account right now (waiting, connected, or its
+  /// outcome owed). No override.
+  customerOnInboundCall('customer_on_inbound_call'),
   unknown('');
 
   const SoftphoneErrorCode(this.wire);

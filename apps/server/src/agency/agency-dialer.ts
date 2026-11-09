@@ -62,7 +62,8 @@ import {
 /**
  * What {@link AgencyDialer.releaseAgent} did: the state it wrote (`offline` for a
  * departed agent, else `break` for a queued break or `available`) and the write's
- * result. A refused `available` (`manual_call_live`, `softphone_session`) moved nothing.
+ * result. A refused `available` (`manual_call_live`, `softphone_session`,
+ * `inbound_call_owed`) moved nothing.
  */
 export interface AgentReleaseResult {
   state: 'available' | 'break' | 'offline';
@@ -1832,8 +1833,10 @@ export class AgencyDialer {
    *
    * Returns what it did: the state written and the write's {@link AgentSetResult}.
    * `manual_call_live` / `softphone_session` mean the soft phone's guard refused
-   * `available` and NOTHING moved; the supervisor's force-available answers that
-   * as a 409 rather than claiming the agent is back. The settle paths ignore it.
+   * `available` and NOTHING moved; `inbound_call_owed` the inbound call's guard (the
+   * session holds an inbound call, docs/inbound.md §6). The supervisor's
+   * force-available answers either as a 409 rather than claiming the agent is back.
+   * The settle paths ignore it.
    */
   async releaseAgent(sessionId: string): Promise<AgentReleaseResult> {
     // ── NOT purely replica-local, contrary to an earlier version of this note ──
@@ -1886,6 +1889,13 @@ export class AgencyDialer {
     // a move that did not happen (a supervisor's force-available reaches here).
     if (set === 'manual_call_live' || set === 'softphone_session') {
       log.info({ sessionId, refused: set }, 'Release to available refused — the session is on the soft phone');
+      return { state, result: set };
+    }
+    // The inbound call's guard (docs/inbound.md §6): the session holds an inbound call, which
+    // returns the agent itself once its outcome is saved or lapses. Nothing moved, so nothing is
+    // mirrored or announced.
+    if (set === 'inbound_call_owed') {
+      log.info({ sessionId }, 'Release to available refused — the session holds an inbound call');
       return { state, result: set };
     }
     await mirrored(

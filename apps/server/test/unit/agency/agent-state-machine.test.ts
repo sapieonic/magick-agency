@@ -212,6 +212,7 @@ describe('AgentStateMachine transitions', () => {
     await sm.set('s1', 'reserved', { attemptId: 'att-9' });
     expect(await sm.get('s1')).toEqual({
       state: 'reserved', attemptId: 'att-9', since: expect.any(Number), manualCallId: null, softphone: false,
+      inboundCallId: null,
     });
 
     await sm.set('s1', 'available');
@@ -259,9 +260,9 @@ describe('AgentStateMachine.getMany — one round trip for many agents', () => {
     });
     const sm = new AgentStateMachine(redis as any, '');
     expect(await sm.getMany(['a', 'b', 'c'])).toEqual([
-      { state: 'available', attemptId: null, since: 1700, manualCallId: null, softphone: false },
+      { state: 'available', attemptId: null, since: 1700, manualCallId: null, softphone: false, inboundCallId: null },
       null, // lapsed lease
-      { state: 'on_call', attemptId: 'att-1', since: null, manualCallId: null, softphone: false },
+      { state: 'on_call', attemptId: 'att-1', since: null, manualCallId: null, softphone: false, inboundCallId: null },
     ]);
     expect(redis.exec).toHaveBeenCalledTimes(1);
     expect(redis.hgetall).toHaveBeenCalledTimes(3);

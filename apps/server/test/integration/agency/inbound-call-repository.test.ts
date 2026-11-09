@@ -179,18 +179,18 @@ describe('the lifecycle', () => {
   it('moves along the transition map, back from offered to queued, and stamps the bridge once', async () => {
     const call = await arrived();
     const agent = randomUUID();
+    const session = randomUUID();
     expect((await repo.transition(call.id, 'greeting'))!.state).toBe('greeting');
     expect((await repo.transition(call.id, 'queued'))!.state).toBe('queued');
-    expect((await repo.transition(call.id, 'offered'))!.state).toBe('offered');
+    expect((await repo.offer(call.id, session)).ok).toBe(true);
     // The station was lost before audio bound: back to the queue (§5.1).
-    expect((await repo.transition(call.id, 'queued'))!.state).toBe('queued');
+    expect((await repo.requeue(call.id, session))!.state).toBe('queued');
     expect(await repo.transition(call.id, 'greeting')).toBeNull(); // never back to the greeting
-    expect(await repo.transition(call.id, 'connected', { answeredByUserId: agent })).toBeNull(); // only from offered
-    await repo.transition(call.id, 'offered');
+    expect(await repo.connect(call.id, { sessionId: session, answeredByUserId: agent })).toBeNull(); // only from offered
+    await repo.offer(call.id, session);
     const at = new Date('2026-11-09T10:00:00Z');
-    const connected = await repo.transition(call.id, 'connected', { answeredByUserId: agent, at });
+    const connected = await repo.connect(call.id, { sessionId: session, answeredByUserId: agent, at });
     expect(connected).toMatchObject({ state: 'connected', bridged_at: at, answered_by_user_id: agent });
-    await expect(repo.transition(call.id, 'connected')).rejects.toThrow(/needs the agent/);
     expect(await repo.transition(randomUUID(), 'greeting')).toBeNull();
   });
 
@@ -224,7 +224,8 @@ describe('the lifecycle', () => {
       outcome: 'abandoned_in_queue', talkSeconds: 5, followUp: null, callbackDueAt: due, voicemailKey: 'vm',
     });
     expect(second).toEqual({ ended: false, call: ended.call });
-    for (const to of ['greeting', 'queued', 'offered'] as const) expect(await repo.transition(call.id, to)).toBeNull();
+    for (const to of ['greeting', 'queued'] as const) expect(await repo.transition(call.id, to)).toBeNull();
+    expect(await repo.offer(call.id, randomUUID())).toEqual({ ok: false, reason: 'not_offerable' });
     expect(await repo.findById(T, call.id)).toEqual(ended.call);
     expect(await repo.end(randomUUID(), { outcome: 'failed', talkSeconds: null, followUp: null, callbackDueAt: null, voicemailKey: null }))
       .toEqual({ ended: false, call: null });
@@ -235,8 +236,9 @@ describe('the lifecycle', () => {
     await expect(repo.end(call.id, { outcome: 'answered', talkSeconds: 30, followUp: null, callbackDueAt: null, voicemailKey: null }))
       .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_inbound_calls_bridged' });
     const agent = randomUUID();
-    await repo.transition(call.id, 'offered');
-    await repo.transition(call.id, 'connected', { answeredByUserId: agent });
+    const session = randomUUID();
+    await repo.offer(call.id, session);
+    await repo.connect(call.id, { sessionId: session, answeredByUserId: agent });
     expect(await repo.end(call.id, { outcome: 'answered', talkSeconds: 30, followUp: null, callbackDueAt: null, voicemailKey: null }))
       .toMatchObject({ ended: true, call: { outcome: 'answered', talk_seconds: 30, follow_up_status: null } });
   });
@@ -348,8 +350,9 @@ describe('the sweep (§10)', () => {
     await repo.transition(waiting.id, 'queued');
     const nobody = await arrived();
     const bridged = await arrived();
-    await repo.transition(bridged.id, 'offered');
-    await repo.transition(bridged.id, 'connected', { answeredByUserId: randomUUID() });
+    const session = randomUUID();
+    await repo.offer(bridged.id, session);
+    await repo.connect(bridged.id, { sessionId: session, answeredByUserId: randomUUID() });
     const recent = await arrived();
     const done = await missedCall();
     await pool().query(`UPDATE agency_inbound_calls SET arrived_at = $1 WHERE id <> $2`, [old, recent.id]);

@@ -13,7 +13,11 @@
  */
 
 import type { AllListed } from '../primitives';
-import type { AgencyDisposition } from './session';
+import type { AgencyActorFields } from './actions';
+import type { AgencyContactState } from './enums';
+import type { AgencyContextDisplay, AgencyDisposition } from './session';
+import { SOFTPHONE_OUTCOME_LAPSE_MS, type AgencyManualCallDncScope } from './softphone';
+import type { AgencyPriorAttempt } from './station';
 
 // ─── The spine ──────────────────────────────────────────────────────────────
 
@@ -220,3 +224,210 @@ export const AGENCY_INBOUND_ROUTE_LIMITS = Object.freeze({
  */
 export const AGENCY_CONTACT_CALLBACK_SOURCES = ['inbound'] as const;
 export type AgencyContactCallbackSource = (typeof AGENCY_CONTACT_CALLBACK_SOURCES)[number];
+
+// ─── Connecting agents (P2, docs/inbound.md §6) ─────────────────────────────
+
+/**
+ * Which catalog an inbound call's outcome is saved against, as stored
+ * (`agency_inbound_calls.disposition_source`, `0027_inbound_connect.sql`): `campaign`, the
+ * matched campaign's `disposition_catalog` (whatever its status now, as the soft phone's
+ * `call_campaign`); `route`, the route's `disposition_catalog`, which is the built-in
+ * `AGENCY_DEFAULT_DISPOSITION_CATALOG` when the route has none. `campaign` exactly when the call
+ * matched a campaign (CHECKed).
+ */
+export const AGENCY_INBOUND_DISPOSITION_SOURCES = ['campaign', 'route'] as const;
+export type AgencyInboundDispositionSource = (typeof AGENCY_INBOUND_DISPOSITION_SOURCES)[number];
+
+/**
+ * Which catalog the panel offers, as the agent sees it: the matched campaign's, the route's own,
+ * or the built-in one (a route with an empty catalog). `route` and `builtin` both store
+ * {@link AgencyInboundDispositionSource} `route`.
+ */
+export const AGENCY_INBOUND_CATALOG_SOURCES = ['campaign', 'route', 'builtin'] as const;
+export type AgencyInboundCatalogSource = (typeof AGENCY_INBOUND_CATALOG_SOURCES)[number];
+
+/**
+ * How long after the offer frame the server binds the agent's audio (IB1: the panel is on screen,
+ * and the chime played, before any audio). Server-timed, no client acknowledgement (Q4).
+ */
+export const AGENCY_INBOUND_CONNECT_DELAY_MS = 1_500;
+
+/**
+ * How long an answered inbound call may wait for its outcome before the lapse sweep closes it
+ * `no_disposition` and returns the agent: the soft phone's rule, the same 30 minutes (Q11).
+ */
+export const AGENCY_INBOUND_OUTCOME_LAPSE_MS = SOFTPHONE_OUTCOME_LAPSE_MS;
+
+/** The longest voicemail recorded from our own stream (Q14). */
+export const AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS = 120;
+
+/**
+ * The SYSTEM disposition on a ringing outbound attempt cancelled because its customer rang in
+ * (§5.4, Q8): the attempt ends `canceled` with this code, the contact goes back uncharged, and
+ * the station's `released` frame says `inbound_call`. Reserved: refused in every catalog, as
+ * `redialed` is.
+ */
+export const AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE = 'inbound_call';
+
+/** The roster contact an inbound caller matched (§4.1), as the agent's panel shows it. */
+export interface AgencyInboundCallMatch {
+  contact_id: string;
+  campaign_id: string;
+  campaign_name: string;
+  /** The contact's state now. */
+  contact_state: AgencyContactState;
+  /** Every non-phone CSV column; untrusted display text. Render with `context_display`. */
+  context: Record<string, unknown>;
+  /** The matched campaign's, for rendering `context`. */
+  context_display: AgencyContextDisplay;
+  /** Earlier dials of this contact, newest first (the lineage, as on a campaign call). */
+  prior_attempts: AgencyPriorAttempt[];
+}
+
+/** Why the panel names this agent as the caller's own (§4.1), and whether it is the viewer. */
+export interface AgencyInboundCallSticky {
+  reason: AgencyInboundStickyReason;
+  /** The sticky agent is the agent this call is offered to or connected with. */
+  is_you: boolean;
+}
+
+/**
+ * One inbound call as the agent's panel renders it (P2). The `inbound_call` station frame carries
+ * it whole on every change, as the `manual_call` frame carries `AgencyManualCall`, so the console
+ * replaces its copy rather than patching it. Also the body of the inbound call routes.
+ *
+ * `state` is the authority: `offered` (the panel is up, audio binds at `connects_at`),
+ * `connected` (`bridged_at` set: audio both ways), `ended`. A requeued call (the station was lost
+ * before audio bound) is no longer this session's, and its last frame is never followed by a
+ * `connected` one.
+ */
+export interface AgencyInboundCall {
+  id: string;
+  /** The agent session it is offered to or connected with. */
+  session_id: string;
+  state: AgencyInboundCallState;
+  /** NULL until ended. */
+  outcome: AgencyInboundCallOutcome | null;
+  /** E.164; NULL when the caller withheld their number ("Number withheld"). */
+  from_e164: string | null;
+  /** The number they rang, E.164. */
+  to_e164: string;
+  route: { id: string; name: string } | null;
+  /** The caller's number is on a DNC list: show the badge; a customer's own call is an enquiry. */
+  caller_dnc: boolean;
+  /** NULL: no sticky agent was found. */
+  sticky: AgencyInboundCallSticky | null;
+  /** NULL: the caller matched no roster contact. */
+  match: AgencyInboundCallMatch | null;
+  catalog_source: AgencyInboundCatalogSource;
+  /** The catalog the outcome is saved against, resolved: never empty. */
+  disposition_catalog: AgencyDisposition[];
+  /** The call is recorded (the route records and the account allows it). */
+  recording: boolean;
+  /** How long the caller waited before this offer, in whole seconds. */
+  waited_seconds: number;
+  // ISO-8601 timestamps.
+  offered_at: string;
+  /** When audio binds (`offered_at` + {@link AGENCY_INBOUND_CONNECT_DELAY_MS}); NULL once connected or ended. */
+  connects_at: string | null;
+  bridged_at: string | null;
+  ended_at: string | null;
+  /** Talk time from the bind, once ended; NULL before. */
+  talk_seconds: number | null;
+  /** When an owed outcome lapses (`ended_at` + {@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}); NULL when none is owed. */
+  outcome_due_at: string | null;
+  disposition_code: string | null;
+  notes: string | null;
+  /** A callback asked for in the outcome. */
+  callback_at: string | null;
+  /** Who saved the outcome, which is not always who took the call. */
+  dispositioned_by_user_id: string | null;
+  dispositioned_on_behalf: boolean;
+  /** Outcome saved, lapsed, or the call ended unbridged. NULL while live or awaiting an outcome. */
+  settled_at: string | null;
+}
+
+/**
+ * Every change of an inbound call offered to or connected with this session, and once more after
+ * a station reconnect (right after `ready`). The console plays the inbound chime once per call id,
+ * on `offered` (IB1). Never sent to a mobile station (P3).
+ */
+export interface AgencyStationInboundCallFrame {
+  event: 'inbound_call';
+  call: AgencyInboundCall;
+}
+
+/**
+ * "Your customer is waiting": a caller sticky to this agent is queued while the agent is reserved,
+ * on a call or in wrap-up (§4.3). They are offered the call when they free, ahead of the team.
+ * Re-sent after a reconnect while the caller still waits. Never sent to a mobile station (P3).
+ */
+export interface AgencyStationCustomerWaitingFrame {
+  event: 'customer_waiting';
+  inbound_call_id: string;
+  /** E.164; NULL when withheld. */
+  from_e164: string | null;
+  /** The matched contact's display name, when the roster has one. */
+  match_name?: string;
+  /** ISO-8601: when the caller started waiting. */
+  waiting_since: string;
+}
+
+// ─── The inbound call routes (internal handler bodies) ──────────────────────
+//
+// The finish routes are never behind `agency_inbound_enabled` (an agent the flag is switched off
+// under can finish their call), as the soft phone's are not. Refusals: `AgencyInboundErrorCode`
+// (`../errors.ts`). The actor fields are filled by the public API layer.
+
+/** `GET /inbound/calls/:id`, the routes below, and every refusal that carries the call. */
+export interface AgencyInboundCallResponse {
+  call: AgencyInboundCall;
+}
+
+/** `PATCH /inbound/calls/:id`: the notes (`''` clears them), last write wins, while unsettled. */
+export interface AgencyInboundCallUpdateRequest extends AgencyActorFields {
+  notes?: string;
+}
+
+/** `POST /inbound/calls/:id/hangup`. Answers the call as read after the hangup was issued. */
+export type AgencyInboundCallHangupRequest = AgencyActorFields;
+
+/**
+ * `POST /inbound/calls/:id/disposition`: save the outcome once the call has ended after it was
+ * bridged. The same `code` again is an idempotent 200 (notes and callback last-write-wins); a
+ * different code on a settled call is `inbound_outcome_already_saved`. `agency.supervise` may act
+ * on behalf.
+ */
+export interface AgencyInboundCallDispositionRequest extends AgencyActorFields {
+  code: string;
+  notes?: string;
+  /** ISO-8601; required when the catalog entry sets `requires_datetime`. */
+  callback_at?: string;
+}
+
+export interface AgencyInboundCallDispositionResponse {
+  call: AgencyInboundCall;
+  /** Where the outcome left the matched contact; NULL when there is none. */
+  contact_state: AgencyContactState | null;
+  /** ISO-8601: when the dialer will call the contact again, or NULL. */
+  next_attempt_at: string | null;
+  /** ISO-8601: the `callback_at` asked for, echoed; NULL when none. */
+  callback_requested_at: string | null;
+}
+
+/**
+ * `POST /inbound/calls/:id/dnc`: mark the caller's number Do Not Call. Campaign scope when the
+ * call matched a campaign, else the call's account; never tenant-wide (the soft phone's rule).
+ */
+export interface AgencyInboundCallDncRequest extends AgencyActorFields {
+  reason?: string;
+}
+
+export interface AgencyInboundCallDncResponse {
+  call_id: string;
+  phone_e164: string;
+  scope: AgencyManualCallDncScope;
+  /** False when the `dnc_entries` write is still in flight; the roster row is suppressed either way. */
+  dnc_recorded: boolean;
+  contact_state: AgencyContactState | null;
+}

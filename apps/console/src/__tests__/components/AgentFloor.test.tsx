@@ -49,6 +49,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
     break_reason: null,
     calls_handled: 3,
     client_kind: 'web',
+    on_inbound_call: false,
     ...over,
   };
 }

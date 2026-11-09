@@ -163,11 +163,14 @@ describe('POST /softphone/calls', () => {
     { code: 'dnc_listed', entry: { id: 'e', scope: 'tenant', reason: null, created_at: 'x' } }, { code: 'dnc_unavailable' },
     { code: 'manual_call_live', call: call as never }, { code: 'outcome_pending', call: call as never },
     { code: 'concurrency_limit' }, { code: 'station_unavailable' }, { code: 'dial_failed' },
+    { code: 'customer_on_inbound_call', inbound_call_id: 'ib' },
+    // The inbound family's code (the return from the soft phone), answered 409 by the same helper.
+    { code: 'inbound_call_live', inbound_call_id: 'ib' },
   ];
   it.each(refusals.map((r) => [r.code, r] as const))('maps %s to its status with its fields', async (code, refusal) => {
     runtime.softphone.placeCall.mockResolvedValue({ ok: false, refusal });
     const res = await post('/softphone/calls', body);
-    expect(res.statusCode).toBe(SOFTPHONE_REFUSAL_STATUS[code]);
+    expect(res.statusCode).toBe(code === 'inbound_call_live' ? 409 : SOFTPHONE_REFUSAL_STATUS[code]);
     expect(res.json()).toEqual({ error: expect.any(String), message: expect.any(String), ...refusal });
   });
 

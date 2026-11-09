@@ -7,6 +7,7 @@
 
 import type { AgencyStationWrapupFrame, AgencyWrapupState } from './actions';
 import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, AgencyCampaignStatus } from './enums';
+import type { AgencyStationCustomerWaitingFrame, AgencyStationInboundCallFrame } from './inbound';
 import type { AgencyStationManualCallFrame } from './softphone';
 import type { AllListed } from '../primitives';
 
@@ -176,7 +177,22 @@ export type AgencyStationServerFrame =
   // SP: a soft-phone call's every state change (`./softphone.ts`).
   | AgencyStationManualCallFrame
   // Contact assignment: this agent's own queue (strict / preferred campaigns).
-  | AgencyStationQueueFrame;
+  | AgencyStationQueueFrame
+  // Inbound calls (P2, docs/inbound.md §6): the call offered to or connected with this agent,
+  // and a sticky caller waiting for them (`./inbound.ts`). Console stations only.
+  | AgencyStationInboundCallFrame
+  | AgencyStationCustomerWaitingFrame;
+
+/**
+ * Server frames never sent to a MOBILE station (`client=mobile`): an inbound call is offered to
+ * console stations only until the app's wire types land (docs/inbound.md §4.3, P3). The mobile
+ * app's enums still know the events (`fixtures/agent/literals.json`), but the agent fixtures
+ * (`fixtures/agent/station.json`) carry no sample of them and the app decodes none.
+ */
+export const AGENCY_STATION_CONSOLE_ONLY_EVENTS = [
+  'inbound_call',
+  'customer_waiting',
+] as const satisfies readonly AgencyStationServerFrame['event'][];
 
 /**
  * Sent once, immediately on socket open, after session rehydration.
@@ -473,7 +489,13 @@ export type AgencyReleaseReason =
   | 'campaign_stopped'
   | 'supervisor_released'
   /** The reaper found the attempt stranded by a crash. */
-  | 'orphaned';
+  | 'orphaned'
+  /**
+   * The customer rang in while the dial still rang them (docs/inbound.md §5.4): the dial was
+   * cancelled, the contact goes back uncharged, and this agent, who had the contact's panel, is
+   * offered the inbound call. No disposition expected.
+   */
+  | 'inbound_call';
 
 /** Authoritative agent-state transition. The console must not infer state. */
 export interface AgencyStationAgentStateFrame {

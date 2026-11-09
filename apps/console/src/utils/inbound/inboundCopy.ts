@@ -22,6 +22,11 @@ export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode, string> = {
   inbound_number_not_linked: 'One of the numbers isn’t linked to inbound calls. Contact support to have it linked.',
   inbound_number_in_use: 'One of the numbers already answers another route. Remove it there first, or choose another number.',
   inbound_missed_call_not_found: 'This missed call isn’t yours to handle, or it no longer exists.',
+  inbound_call_live: 'An inbound call is in progress or still needs its outcome. Save the outcome first.',
+  inbound_call_not_found: 'We can’t find that call any more — it may already be closed.',
+  inbound_call_not_dispositionable: 'This call can’t take an outcome: it hasn’t ended, or nobody spoke to the caller.',
+  inbound_disposition_invalid: 'That outcome can’t be saved. Check the outcome, its note and its callback time.',
+  inbound_outcome_already_saved: 'This call’s outcome is already saved.',
 };
 
 /** A refusal in the console's words, naming the number when there is one. */

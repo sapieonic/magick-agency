@@ -506,6 +506,7 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     calls_handled: string;
     redials: string;
     client_kind: AgencyClientKind;
+    on_inbound_call: boolean;
   }>(
     // `calls_handled` counts by `reserved_agent_id`, which is a SESSION id,
     // so this is the attempts handled in THIS session — what
@@ -527,7 +528,14 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
               -- session's placed wrap-up redials.
               COUNT(a.id) FILTER (WHERE ${CONVERSATION_ATTEMPT_SQL})::text AS calls_handled,
               COUNT(a.id) FILTER (WHERE a.redial_number > 0 AND a.dialed_at IS NOT NULL)::text AS redials,
-              s.client_kind
+              s.client_kind,
+              -- A live inbound call offered to or connected with the session (docs/inbound.md §6):
+              -- one probe of uq_agency_inbound_calls_session_unsettled (0027).
+              EXISTS (
+                SELECT 1 FROM agency_inbound_calls ib
+                 WHERE ib.session_id = s.id AND ib.settled_at IS NULL
+                   AND ib.state IN ('offered', 'connected')
+              ) AS on_inbound_call
          FROM agency_agent_sessions s
          LEFT JOIN agency_call_attempts a
                 ON a.reserved_agent_id = s.id
@@ -550,6 +558,7 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     redials: Number(r.redials ?? 0),
     // The app the station last attached from (0006); the floor's phone marker.
     client_kind: r.client_kind === 'mobile' ? 'mobile' : 'web',
+    on_inbound_call: r.on_inbound_call === true,
   }));
 }
 

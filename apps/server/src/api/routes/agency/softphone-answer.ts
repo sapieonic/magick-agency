@@ -12,6 +12,7 @@ import type {
   AgencySoftphoneErrorResponse,
 } from '@magick-agency/contracts/agency';
 import { softphoneRefusalMessage, type SoftphoneRefusal } from '../../../agency/softphone/types.js';
+import type { AgencyInboundCallLiveRefusal } from '@magick-agency/contracts/api/agency/inbound';
 
 /**
  * The HTTP status of every soft-phone refusal, as `errors.ts` states it beside each code.
@@ -29,6 +30,7 @@ export const SOFTPHONE_REFUSAL_STATUS: Readonly<Record<AgencySoftphoneErrorCode,
   override_note_invalid: 400,
   contact_in_flight: 409,
   contact_assigned_elsewhere: 409,
+  customer_on_inbound_call: 409,
   session_on_campaign: 409,
   session_on_softphone: 409,
   session_not_found: 404,
@@ -92,8 +94,10 @@ function isApiRefusal(refusal: SoftphoneRefusal | SoftphoneApiRefusal): refusal 
 /** `{ error, code, message, ...refusal }` with the contract status. */
 export function softphoneRefusalBody(
   refusal: SoftphoneRefusal | SoftphoneApiRefusal,
-): { status: number; body: AgencySoftphoneErrorResponse & Record<string, unknown> } {
-  const status = SOFTPHONE_REFUSAL_STATUS[refusal.code];
+): { status: number; body: (AgencySoftphoneErrorResponse | AgencyInboundCallLiveRefusal) & Record<string, unknown> } {
+  // `inbound_call_live` is the inbound family's code (409), answered by the return from the
+  // soft phone on a session that owes an inbound call's outcome.
+  const status = refusal.code === 'inbound_call_live' ? 409 : SOFTPHONE_REFUSAL_STATUS[refusal.code];
   const message = isApiRefusal(refusal) ? API_MESSAGES[refusal.code] : softphoneRefusalMessage(refusal);
   return {
     status,

@@ -9,7 +9,8 @@ import { createChildLogger } from '@magick-agency/observability';
 import { agencyAgentSessionRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
-import { onSoftphoneBreak, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
+import { onSoftphoneBreak, owedInboundCallId, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
+import type { AgencyInboundCallLiveRefusal } from '@magick-agency/contracts/api/agency/inbound';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
 import { DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
@@ -77,6 +78,15 @@ async function mayStartOrResume(tenantId: string, campaignId: string, agentUserI
  * Registered by `agencyRoutes` inside its authenticated scope (`sub`, the one carrying
  * `authMiddleware`), so every route here runs behind it.
  */
+
+/** The force-available refusal's sentence while the agent holds an inbound call. */
+const FORCE_INBOUND_MESSAGE = 'The agent has an inbound call open: its outcome must be saved before they can go available.';
+
+/** 409 `inbound_call_live` (docs/inbound.md §6): the session holds an inbound call. */
+function inboundCallLive(inboundCallId: string, message: string): AgencyInboundCallLiveRefusal {
+  return { error: 'Conflict', code: 'inbound_call_live', inbound_call_id: inboundCallId, message };
+}
+
 export async function registerSessionRoutes(sub: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // ── POST /sessions — join a campaign, get everything the console needs ──
   sub.post('/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -466,6 +476,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       return reply.code(503).send(err);
     }
     if (!set.ok && set.refusal.code !== 'unavailable') {
+      if (set.refusal.code === 'inbound_call_live') {
+        return reply.code(409).send(inboundCallLive(
+          set.refusal.inboundCallId, 'Save the outcome of your inbound call before going available.'));
+      }
       if (set.refusal.code === 'manual_call_live') {
         const err: AgencySoftphoneCallPendingRefusal = {
           error: 'Conflict', code: 'manual_call_live', call: set.refusal.call,
@@ -538,10 +552,24 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     } else {
       const owed = await owedSoftphoneCall(runtime.agents, session.id);
       if (owed) return manualCallLive(owed);
+      // An inbound call the agent holds (offered, connected, or owing its outcome) is not a
+      // wrap-up a supervisor may force: its outcome is saved on the call, on behalf if need be
+      // (docs/inbound.md §6). Read from the database first, as the soft phone's is.
+      const owedInbound = await owedInboundCallId(runtime.agents, session.id);
+      if (owedInbound) return reply.code(409).send(inboundCallLive(owedInbound, FORCE_INBOUND_MESSAGE));
       // Not in wrap-up — fall through to a plain return rather than 409ing. A
       // supervisor pressing this on an agent who just finished should not get an
       // error for winning a race by half a second.
       const released = await runtime.dialer.releaseAgent(session.id);
+      if (released.result === 'inbound_call_owed') {
+        const held = await owedInboundCallId(runtime.agents, session.id) ?? await runtime.agents.inboundCallOf(session.id);
+        if (held) return reply.code(409).send(inboundCallLive(held, FORCE_INBOUND_MESSAGE));
+        const err: AgencySoftphoneErrorResponse = {
+          error: 'Service Unavailable', code: 'dial_failed',
+          message: 'Could not change the agent\'s status just now; nothing changed. Try again.',
+        };
+        return reply.code(503).send(err);
+      }
       if (released.result === 'manual_call_live' || released.result === 'softphone_session') {
         const call = await owedSoftphoneCall(runtime.agents, session.id);
         if (call) return manualCallLive(call);

@@ -28,6 +28,11 @@ export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, num
   inbound_number_not_linked: 409,
   inbound_number_in_use: 409,
   inbound_missed_call_not_found: 404,
+  inbound_call_live: 409,
+  inbound_call_not_found: 404,
+  inbound_call_not_dispositionable: 409,
+  inbound_disposition_invalid: 400,
+  inbound_outcome_already_saved: 409,
 };
 
 /** English fallback copy, British spelling. The console words each code itself. */
@@ -40,6 +45,11 @@ const INBOUND_REFUSAL_MESSAGES: Readonly<Record<AgencyInboundErrorCode, string>>
   inbound_number_not_linked: 'That number is not linked to inbound calls. Contact support to have it linked.',
   inbound_number_in_use: 'That number already answers another inbound route.',
   inbound_missed_call_not_found: 'Missed call not found.',
+  inbound_call_live: 'An inbound call is in progress or still needs its outcome.',
+  inbound_call_not_found: 'Inbound call not found.',
+  inbound_call_not_dispositionable: 'This call cannot take an outcome: it has not ended, or it never reached an agent.',
+  inbound_disposition_invalid: 'That outcome cannot be saved as submitted.',
+  inbound_outcome_already_saved: 'This call’s outcome is already saved, or has lapsed.',
 };
 
 const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
@@ -51,7 +61,19 @@ const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
 
 /** A refusal: its code and the fields its body carries. */
 export type InboundRefusal =
-  | { code: Exclude<AgencyInboundErrorCode, 'inbound_route_invalid' | 'inbound_number_not_found' | 'inbound_number_not_linked' | 'inbound_number_in_use'> }
+  | {
+    code: Exclude<
+      AgencyInboundErrorCode,
+      'inbound_route_invalid' | 'inbound_number_not_found' | 'inbound_number_not_linked' | 'inbound_number_in_use'
+      | 'inbound_call_live' | 'inbound_disposition_invalid'
+    >;
+  }
+  | { code: 'inbound_call_live'; inbound_call_id: string }
+  | {
+    code: 'inbound_disposition_invalid';
+    reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
+    allowed_codes?: string[];
+  }
   | { code: 'inbound_route_invalid'; details: Array<{ path: string; message: string }> }
   | { code: 'inbound_number_not_found' | 'inbound_number_not_linked'; phone_number_id: string }
   | { code: 'inbound_number_in_use'; phone_number_id: string; route_id?: string };

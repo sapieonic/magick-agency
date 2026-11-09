@@ -1125,6 +1125,48 @@ the callback index for the code-less fallback pick on a large pending roster, do
 every migration), the down → up suite, the server's `test/integration/agency/insights-reads.test.ts`
 (the as-of-now reads still covered) and `inbound-follow-up.test.ts` (the count itself).
 
+### 0027 — `migrations/0027_inbound_connect.sql`
+
+Connecting agents to inbound calls (`docs/inbound.md` §2, §6, P2): the agent side of the spine.
+
+- **`agency_inbound_calls`** gains `session_id` (the agent session it is offered to or connected
+  with; no FK; cleared by a requeue), `queued_at` (first queueing: the maximum wait counts from it),
+  `offered_at` (the latest offer), `offer_count` (`SMALLINT NOT NULL DEFAULT 0`),
+  `recording_requested` (`BOOLEAN NOT NULL DEFAULT false`, the leg's, mirrored at arrival), the
+  outcome as the soft phone's (`disposition_code` VARCHAR(64), `disposition_source` `campaign |
+  route`, `notes`, `callback_at`, `dispositioned_by_user_id`, `dispositioned_at`,
+  `dispositioned_on_behalf` `BOOLEAN NOT NULL DEFAULT false`), `settled_at`, `voicemail_seconds`
+  and `clash_attempt_id` (the ringing attempt the call cancelled, §5.4; no FK).
+- **CHECKs**: `ck_agency_inbound_calls_session` (`offered` / `connected` ⇒ a session, `offered_at`
+  and an offer; `arrived` / `greeting` / `queued` ⇒ no session; `offer_count >= 0`);
+  `ck_agency_inbound_calls_settled` (settled only once ended; an ended call offered to a session
+  but never bridged is settled, so the session is free); `ck_agency_inbound_calls_disposition` (an outcome only on a bridged call, with its
+  source and time; the source only with a code, `campaign` exactly when the call matched a
+  campaign; who saved it and on behalf only with a code); `ck_agency_inbound_calls_voicemail` (a
+  length only with the voicemail, never negative). Added validated (the table is small, and the
+  file already holds ACCESS EXCLUSIVE for the columns).
+- **`uq_agency_inbound_calls_session_unsettled`** `(session_id) WHERE session_id IS NOT NULL AND
+  settled_at IS NULL`: one unsettled inbound call per agent session (the soft phone's
+  `uq_agency_manual_call_unsettled` rule).
+- **`idx_agency_inbound_calls_live_from_digits`** `(tenant_id, account_id,
+  regexp_replace(from_e164, '[^0-9]', '', 'g')) WHERE from_e164 IS NOT NULL AND ((state <> 'ended'
+  AND state <> 'arrived') OR (bridged_at IS NOT NULL AND settled_at IS NULL))`: the inbound arm of
+  the account's busy probe (`numberLiveSql`, MC4) and the soft phone's pre-dial; the key is
+  `CONTACT_PHONE_DIGITS_SQL` with the column swapped. `arrived` is "not admitted" (0026's rule).
+- **`idx_agency_inbound_calls_unsettled_lapse`** `(ended_at) WHERE bridged_at IS NOT NULL AND
+  settled_at IS NULL`: the outcome-lapse sweep.
+- **Backfill**: every row 0024 ended is settled at its `ended_at` (P1 connected nobody), and
+  `recording_requested` is copied from the leg; `updated_at` is kept (the trigger is disabled
+  around the two UPDATEs).
+
+**Down** refuses while any call is with an agent or owes its outcome (`session_id` set and
+unsettled), or carries an outcome, notes or a callback; otherwise drops the indexes, CHECKs and
+columns. **Tests**: `test/integration/db/inbound-connect-migration.test.ts` (columns and defaults,
+every CHECK from both sides, the disposition sources against the contract's list, the unique
+index, both partial indexes by definition and by the planner on a large history, the backfill,
+the Down's refusals, down then up), the down → up suite, and the server's
+`test/integration/agency/inbound-connect-repository.test.ts`.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

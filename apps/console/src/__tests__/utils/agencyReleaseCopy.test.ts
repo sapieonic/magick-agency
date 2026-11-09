@@ -29,6 +29,7 @@ const ALL_REASONS: AgencyReleaseReason[] = [
   'campaign_stopped',
   'supervisor_released',
   'orphaned',
+  'inbound_call',
 ];
 
 function frame(overrides: Partial<AgencyStationReleasedFrame> = {}): AgencyStationReleasedFrame {

@@ -177,6 +177,7 @@ describe('soft-phone codes', () => {
       'settings_invalid',
       'contact_assigned_elsewhere',
       'carrier_account_unavailable',
+      'customer_on_inbound_call',
     ]);
     expectUnique(AGENCY_SOFTPHONE_ERROR_CODES);
   });
@@ -290,6 +291,11 @@ describe('inbound codes', () => {
       'inbound_number_not_linked',
       'inbound_number_in_use',
       'inbound_missed_call_not_found',
+      'inbound_call_live',
+      'inbound_call_not_found',
+      'inbound_call_not_dispositionable',
+      'inbound_disposition_invalid',
+      'inbound_outcome_already_saved',
     ]);
     expectUnique(AGENCY_INBOUND_ERROR_CODES);
   });
