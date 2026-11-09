@@ -254,6 +254,18 @@ describe('pacing\'s live count (IB5)', () => {
     expect(await attempts.countLiveForAccount(T, A)).toBe(0);
     // Only from `greeting`: an ended or further-on call never goes back.
     expect(await spine.refuseAdmission(done.id)).toBeNull();
+
+    // A recorded route's caller turned away hears "busy" and is never recorded: the request is
+    // taken back with the admission, on the spine and on its media leg.
+    const recorded = (await spine.insertArrival({
+      tenantId: T, accountId: A, routeId: null, phoneNumberId: null, provider: 'plivo', telephonyCredentialId: cred,
+      providerCallId: `CA-${randomUUID()}`, fromE164: '+919812345678', toE164: '+14155550101',
+      identification: { match: null, callerDnc: false, sticky: null }, answered: true, recordingRequested: true, analysisProfileId: null,
+    })).call!;
+    await spine.transition(recorded.id, 'greeting');
+    expect(await spine.refuseAdmission(recorded.id)).toMatchObject({ state: 'arrived', recording_requested: false });
+    const leg = await pool().query('SELECT recording_requested FROM agency_calls WHERE id = $1', [recorded.webrtc_call_id]);
+    expect(leg.rows[0].recording_requested).toBe(false);
   });
 });
 

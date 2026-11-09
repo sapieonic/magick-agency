@@ -1513,7 +1513,10 @@ export class AgencyDialer {
       if (live.supersededByInbound?.settled === settled) delete live.supersededByInbound;
       settled(false);
     }, (err: unknown) => {
+      // The hand-over is dropped now rather than at its 15 s backstop (the caller queues
+      // normally). The mark stays: a dial that ends after all still settles as the clash.
       log.error({ err, attemptId }, 'Could not cancel a dial its customer superseded');
+      settled(false);
     });
     return true;
   }
@@ -2069,8 +2072,14 @@ export class AgencyDialer {
       ? (await Promise.resolve().then(() => this.agents.get(sessionId)).catch(() => null))?.state ?? null
       : null;
 
+    // Announced below, not by the write: the `available` listeners start an inbound search (which
+    // may reserve this agent and send `reserved` and `inbound_call` at once) and a pacing tick, and
+    // neither may overtake this release's own mirror and `available` frame. Announced by the
+    // write, a search that won the race left the station a stale `available` after the offer and
+    // the row reading `available` under it.
     const set = await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
+      announce: false,
     });
     // The soft phone's guard (docs/softphone.md §4.1): `available` is refused while
     // the session holds a soft-phone call or is a soft-phone session. The agent
@@ -2098,6 +2107,7 @@ export class AgencyDialer {
       since: since.toISOString(),
       ...(queuedBreak ? { break_reason: queuedBreak.code } : {}),
     });
+    if (state === 'available' && set === 'ok') this.agents.announceAvailable(sessionId);
     if (queuedBreak) {
       log.info({ sessionId, reason: queuedBreak.code }, 'Queued break applied after wrap-up');
     }

@@ -267,8 +267,13 @@ export const AGENT_LEASE_MS = {
   reserved_dialing: 15_000,
   /** Bridged. Renewed by the owning replica every 5s, tied to the live session. */
   on_call: 15_000,
-  /** Wrap-up. Renewed by the station heartbeat, exactly as `available` is. */
-  wrapup: 15_000,
+  /**
+   * Wrap-up. Renewed by the station heartbeat as `available` is, and as long (the console pings
+   * every 10 s and is closed after 30 s of silence), while this process vouches for the wrap-up
+   * (`heartbeatLeaseMs`, `station-socket.ts`). Its end is never this TTL: the wrap-up's timer, an
+   * outcome or a supervisor ends it, and a station that goes away is written `offline`.
+   */
+  wrapup: 45_000,
   /** Idle. Renewed by the station socket heartbeat (10s ping, 3 misses). */
   available: 45_000,
   break: 45_000,
@@ -384,7 +389,12 @@ export class AgentStateMachine {
     return () => { this.availableListeners.delete(listener); };
   }
 
-  private announceAvailable(sessionId: string): void {
+  /**
+   * Tell the {@link onAvailable} listeners that `sessionId` entered `available`. Called by
+   * {@link set} and {@link transition} after their write, and by a caller that wrote with
+   * `announce: false`, once, after the write succeeded.
+   */
+  announceAvailable(sessionId: string): void {
     for (const listener of this.availableListeners) {
       try {
         listener(sessionId);
@@ -476,7 +486,13 @@ export class AgentStateMachine {
   async set(
     sessionId: string,
     state: AgencyAgentState,
-    opts: { attemptId?: string; leaseMs?: number } = {},
+    /**
+     * `announce: false`: an `available` write is NOT announced here; the caller announces it
+     * ({@link announceAvailable}) once it has told the agent and mirrored the row, so nothing a
+     * listener starts (an inbound offer, a pacing tick) can reach the agent before its own
+     * `available` frame does (`AgencyDialer.releaseAgent`).
+     */
+    opts: { attemptId?: string; leaseMs?: number; announce?: boolean } = {},
   ): Promise<AgentSetResult> {
     if (!this.redis) return 'unavailable';
     const leaseMs = opts.leaseMs ?? AGENT_LEASE_MS.available;
@@ -487,7 +503,7 @@ export class AgentStateMachine {
       );
       const result = setResultFrom(res);
       if (result !== 'ok') log.info({ sessionId, state, result }, 'Agent state set refused');
-      else if (state === 'available') this.announceAvailable(sessionId);
+      else if (state === 'available' && opts.announce !== false) this.announceAvailable(sessionId);
       return result;
     } catch (err) {
       log.error({ err, sessionId, state }, 'Agent state set failed');

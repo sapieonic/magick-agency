@@ -30,12 +30,14 @@ import { publishPacingInvalidation, type PacingInvalidationEvent } from '../paci
 import {
   RELEASE_STATES,
   callerForReleasedAgent,
+  inStickyPhase,
   inboundIneligibility,
   searchOrder,
   stickyAgentOf,
   stickyAgentStatus,
   type InboundAgentView,
   type InboundCallerView,
+  type StickyAgentStatus,
 } from './eligibility.js';
 import { InboundQueue, accountKeyOfCall, type InboundQueueRouteSnapshot } from './inbound-queue.js';
 import { inboundCallToWire, loadInboundPanelContext, type InboundPanelContext } from './inbound-call-wire.js';
@@ -63,9 +65,14 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  *  2. The search ({@link search}, one at a time per account): for each waiting caller in order,
  *     each candidate is CAS-reserved from `available` (`reserveForInbound`); the first to win is
  *     offered the call. Lost CAS: the next candidate. A caller nobody can take keeps waiting until
- *     an agent frees: `onAgentAvailable` (an `available` write) or the release hook
- *     ({@link takeOnRelease}: `releaseAgent` asks before writing `available`, so an agent coming
- *     out of a call or a wrap-up is offered the caller with no `available` instant in between).
+ *     an agent frees: `onAgentAvailable` (an `available` write, announced only after
+ *     `releaseAgent` has mirrored it and told the agent) or the release hook ({@link takeOnRelease}:
+ *     `releaseAgent` asks before writing `available`, so an agent coming out of a call or a wrap-up
+ *     is offered the caller with no `available` instant in between; however long the wrap-up, its
+ *     lease is still there: the station heartbeat renews a `wrapup` this process vouches for, a
+ *     campaign wrap-up held here or an inbound outcome owed, `heartbeatLeaseMs`). The account is
+ *     searched again on every republish (2 s) while callers wait: the backstop for a change no event
+ *     reports (a busy sticky agent going away makes their caller the team's, Q6).
  *  3. The offer ({@link offer}, on the call's serial chain): the spine `offered` (guarded; a call
  *     that ended or a session that owes another outcome refuses and the reservation is given
  *     back), then SYNCHRONOUSLY the `agent_state: reserved` and the `inbound_call` frames (state
@@ -75,6 +82,8 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  *     socket must be OPEN (else the offer is cancelled), then `bindBorrowedBrowserLeg` stops the
  *     hold synchronously, re-arms the max duration, starts talk time and emits `bridged`. On
  *     `bridged`: the spine `connected` (`bridged_at`, the agent), the agent `on_call`, the frame.
+ *     Audio flows from the bind whatever the database says: a `connected` write that fails leaves
+ *     the call connected in memory (`connectOwed`) and is retried at its end, before `answered`.
  *  5. The end (the bridge's `ended`): connected → the spine `answered` (owed: `settled_at` NULL),
  *     the agent `wrapup` with the `inbound` field kept (no auto-return, Q11), the frame with
  *     `outcome_due_at`; offered → the caller hung up: the router's settle (`abandoned_in_queue`,
@@ -100,14 +109,17 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  * release hook) awaits the chain of the caller it offers, which holds no long task while the caller
  * waits: the one long step on a waiting caller's chain is their exit (the overflow message, a
  * voicemail: minutes), and a caller is marked `leaving` SYNCHRONOUSLY the moment that exit is
- * decided (the maximum-wait timer, a cancelled offer past it), before it is queued on the chain.
+ * decided (the maximum-wait timer, a cancelled offer past it, over `max_waiting` with nobody free),
+ * before it is queued on the chain.
  * A leaving caller is never reserved for, and the mark is re-checked after each CAS with no await
  * before the offer is queued, so the lock is never held behind a message.
  *
  * ── The in-flight clash (§5.4): the hand-over ──────────────────────────────────────
  * The router, at the answer, cancels an outbound dial still ringing the caller's number on a
  * carrier that can (the dialer's `supersedeForInbound`), after {@link expectHandover} promised
- * this call to that dial's session. No other agent is offered the call meanwhile. The cancelled
+ * this call to that dial's session; it promises it only to a session the hook can take (a console
+ * station on a campaign, OPEN), so a phone's or a soft-phone session's dial is never cancelled
+ * for nothing. No other agent is offered the call meanwhile. The cancelled
  * dial's end releases the session, and the release hook ({@link takeOnRelease}) takes it for the
  * call first, CAS from `reserved`, so the agent who had the customer's panel gets their call with
  * no `available` instant between: offered at once when the call is queued, else HELD for it
@@ -191,12 +203,24 @@ interface HeldCall {
   agentUserId: string | null;
   /** The station socket was bound to the call (the bind succeeded). */
   bound: boolean;
+  /**
+   * When audio bridged, if the spine's `connect` write failed then (a database blip): the pair is
+   * talking, so the call is connected in memory and the write is retried at its end, before the
+   * `answered` end that needs `bridged_at`. Null otherwise.
+   */
+  connectOwed: Date | null;
   bindTimer: NodeJS.Timeout | null;
   lease: NodeJS.Timeout | null;
   panel: Promise<InboundPanelContext>;
   stickyCandidates: InboundTakeInput['stickyCandidates'];
   /** The session told "Your customer is waiting" for this caller, until cleared. */
   waitingNotified: string | null;
+  /**
+   * Where the caller's sticky agent was at the account's last search (null: not searched yet).
+   * `inbound_waiting`'s `n` leaves out a `strict` caller with that agent not away: only they may
+   * take it ({@link publishWaiting}).
+   */
+  stickyStatus: StickyAgentStatus | null;
   /** The hold's promise, once started. */
   hold: Promise<InboundHoldResult> | null;
   /** The agent whose cancelled outbound dial this call superseded (the clash, §5.4), until offered or dropped. */
@@ -276,8 +300,16 @@ export class InboundConnector {
       if (!held) return; // not an inbound call this connector holds
       void this.serial(held.id, () => this.onLifecycle(held, ev));
     });
+    // While callers wait: `inbound_waiting` republished, and the account searched again. The
+    // search is the backstop for a change no event reports: a busy sticky agent going away
+    // (a queued break applied, the station gone) makes their caller the team's at once (Q6),
+    // and it refreshes the sticky agents' status that `n` is counted from. Not while the account's
+    // lock is held or waited for: that search (or release) is the one this would queue behind.
     this.republishTimer = setInterval(() => {
-      for (const key of [...this.holding]) this.publishWaiting(key);
+      for (const key of [...this.holding]) {
+        this.publishWaiting(key);
+        if (this.queue.waiting(key).length > 0 && !this.locks.has(key)) this.searchInBackground(key);
+      }
     }, this.deps.republishMs ?? INBOUND_WAITING_REPUBLISH_MS);
     this.republishTimer.unref?.();
   }
@@ -285,9 +317,10 @@ export class InboundConnector {
   /**
    * Stop taking work: no more queueing, searching, offering or release hook, every timer dropped
    * (a bind not yet made never will be). The lifecycle listener stays until the calls still held
-   * have ended: the bridge's graceful shutdown ends them `service_shutdown`, which settles a caller
-   * nobody took `failed` with its follow-up and callback (Q18) and leaves an answered one owing its
-   * outcome. A process that dies instead leaves them to the next start's sweep.
+   * have ended: the inbound stop (`startInboundCalls`) ends them `service_shutdown` and waits for
+   * {@link drain}, which settles a caller nobody took `failed` with its follow-up and callback (Q18)
+   * and leaves an answered one owing its outcome. A process that dies instead leaves them to the
+   * next start's sweep.
    */
   stop(): void {
     this.stopped = true;
@@ -406,12 +439,14 @@ export class InboundConnector {
       sessionId: null,
       agentUserId: null,
       bound: false,
+      connectOwed: null,
       bindTimer: null,
       lease: null,
       // Read once, while the preamble plays, so the offer frame is built with no await.
       panel: loadInboundPanelContext(call, { stickyCandidates: input.stickyCandidates }),
       stickyCandidates: input.stickyCandidates,
       waitingNotified: null,
+      stickyStatus: null,
       hold: null,
       handover: null,
       leaving: false,
@@ -455,8 +490,8 @@ export class InboundConnector {
    */
   async takeOnRelease(sessionId: string): Promise<boolean> {
     if (this.stopped) return false;
-    const station = this.deps.stations.get(sessionId);
-    if (!station || station.campaignId === null || station.clientKind === 'mobile' || station.ws.readyState !== 1) return false;
+    const station = this.releasableStation(sessionId);
+    if (!station) return false;
     const key = accountKeyOfCall(station.tenantId, station.accountId);
     if (!this.handovers.has(sessionId) && this.queue.waiting(key).length === 0) return false;
     return this.withAccountLock(key, async () => {
@@ -509,6 +544,10 @@ export class InboundConnector {
    */
   expectHandover(sessionId: string, callId: string): boolean {
     if (this.stopped || this.handovers.has(sessionId)) return false;
+    // Only a session the release hook can take: a phone (Q20), a soft-phone session or a station
+    // not OPEN never takes an inbound call, so its dial is left to ring (cancelled, the agent
+    // would lose it for nothing and the caller would queue for someone else all the same).
+    if (!this.releasableStation(sessionId)) return false;
     const held = this.calls.get(callId);
     if (!held || held.handover || held.leaving || (held.phase !== 'preamble' && held.phase !== 'queued')) return false;
     if (held.phase === 'queued' && this.queue.offeredTo(callId) !== null) return false;
@@ -693,9 +732,14 @@ export class InboundConnector {
     }
     if (admitted === 'over_cap') {
       // Over `max_waiting`: only an agent free right now keeps this caller.
-      void this.trackBackground(this.search(held.accountKey).then(() => this.serial(held.id, async () => {
-        if (held.phase === 'queued') await this.leave(held, 'overflow');
-      })));
+      void this.trackBackground(this.search(held.accountKey).then(() => {
+        // Marked before the exit is queued, as every exit is (the header): no search reserves for a
+        // caller whose overflow message is about to play.
+        if (held.phase === 'queued' && this.queue.offeredTo(held.id) === null) held.leaving = true;
+        return this.serial(held.id, async () => {
+          if (held.phase === 'queued') await this.leave(held, 'overflow');
+        });
+      }));
       return;
     }
     this.searchInBackground(held.accountKey);
@@ -718,6 +762,8 @@ export class InboundConnector {
     const held = this.calls.get(callId);
     if (!held) return;
     if (which === 'sticky_lapse') {
+      // The team may take them now: counted in `n` again, and searched for.
+      this.publishWaiting(held.accountKey);
       this.searchInBackground(held.accountKey);
       return;
     }
@@ -820,15 +866,24 @@ export class InboundConnector {
     if (held.phase !== 'offered' || !held.sessionId) return;
     const sessionId = held.sessionId;
     const at = new Date(this.now());
-    const row = await agencyInboundCallRepository.connect(held.id, {
-      sessionId, answeredByUserId: held.agentUserId ?? (await this.agentOf(sessionId)), at,
+    const row = await this.writeConnected(held, sessionId, at).catch((err: unknown) => {
+      log.error({ err, inboundCallId: held.id, sessionId }, 'Could not write an inbound call connected — the pair is talking; retried at its end');
+      return undefined;
     });
-    if (!row) return;
-    held.record = row;
+    // Not on offer to this session any more (it ended): nothing to connect.
+    if (row === null) return;
+    if (row) {
+      held.record = row;
+    } else {
+      // Audio flows both ways whatever the row says: connected in memory, so its end is an
+      // answered call owing its outcome, never a caller who "hung up on offer" (m7).
+      held.connectOwed = at;
+      held.record = { ...held.record, state: 'connected', bridged_at: at, answered_by_user_id: held.agentUserId };
+    }
     held.phase = 'connected';
     this.stopLease(held);
     trackInboundOffer('connected');
-    trackInboundWait('connected', (at.getTime() - (row.queued_at ?? row.arrived_at).getTime()) / 1000);
+    trackInboundWait('connected', (at.getTime() - (held.record.queued_at ?? held.record.arrived_at).getTime()) / 1000);
     this.queue.remove(held.id);
     if (!await this.deps.agents.transition(sessionId, 'reserved', 'on_call', { leaseMs: AGENT_LEASE_MS.on_call })) {
       log.warn({ inboundCallId: held.id, sessionId }, 'Inbound call bridged with the agent no longer reserved for it');
@@ -874,8 +929,24 @@ export class InboundConnector {
   private async endConnected(held: HeldCall, ev: WebRtcLifecycleEvent): Promise<void> {
     const sessionId = held.sessionId!;
     const talkSeconds = typeof ev.talkTimeSeconds === 'number' ? Math.max(0, Math.round(ev.talkTimeSeconds)) : null;
+    if (held.connectOwed) {
+      // The bridge's `connect` write failed: `answered` needs `bridged_at`, so it goes first.
+      const row = await this.writeConnected(held, sessionId, held.connectOwed).catch((err: unknown) => {
+        log.error({ err, inboundCallId: held.id, sessionId }, 'Could not write an inbound call connected at its end');
+        return null;
+      });
+      if (row) {
+        held.record = row;
+        held.connectOwed = null;
+      }
+    }
+    // The agent's side below runs whatever this write does: a row it could not end is the stale
+    // sweep's (bridged: `answered`, owing its outcome).
     const res = await agencyInboundCallRepository.end(held.id, {
       outcome: 'answered', talkSeconds, followUp: null, callbackDueAt: null, voicemailKey: null,
+    }).catch((err: unknown) => {
+      log.error({ err, inboundCallId: held.id, sessionId }, 'Could not end an answered inbound call — the stale sweep ends it');
+      return { call: null, ended: false };
     });
     if (res.call) held.record = res.call;
     if (res.ended) trackInboundCallEnded('answered');
@@ -952,6 +1023,7 @@ export class InboundConnector {
       if (callers.length === 0) return;
       const views = await this.agentViews(accountKey);
       this.notifyBusyStickyAgents(callers, views);
+      if (this.noteStickyStatus(callers, views)) this.publishWaiting(accountKey);
       const taken = new Set<string>();
       for (const step of searchOrder(callers, views, this.now())) {
         const held = this.calls.get(step.callId);
@@ -1057,6 +1129,33 @@ export class InboundConnector {
     }
   }
 
+  /** Each caller's sticky agent's status as this search saw it ({@link HeldCall.stickyStatus}). True: one changed. */
+  private noteStickyStatus(callers: readonly InboundCallerView[], views: readonly InboundAgentView[]): boolean {
+    let changed = false;
+    for (const caller of callers) {
+      const held = this.calls.get(caller.callId);
+      if (!held) continue;
+      const status = caller.stickyMode === 'off' ? null : stickyAgentStatus(stickyAgentOf(caller, views), caller);
+      if (held.stickyStatus !== status) changed = true;
+      held.stickyStatus = status;
+    }
+    return changed;
+  }
+
+  /**
+   * No team agent should be held back for this caller (see {@link publishWaiting}): promised to the
+   * agent of the dial it superseded (a hand-over, §5.4), or `strict` with their sticky agent not
+   * away as of the last search (only that agent may ever take them). A `loose` caller in its sticky
+   * phase IS counted: the team takes them when the phase lapses, and the agent held back is the one
+   * free to (Q2's accepted over-hold).
+   */
+  private notTheTeams(entry: InboundCallerView): boolean {
+    const held = this.calls.get(entry.callId);
+    if (!held) return false;
+    if (held.handover) return true;
+    return entry.stickyMode === 'strict' && held.stickyStatus !== null && inStickyPhase(entry, held.stickyStatus, this.now());
+  }
+
   private async waitingFrame(held: HeldCall): Promise<AgencyStationCustomerWaitingFrame> {
     const ctx = await held.panel;
     const name = ctx.match ? matchName(ctx.match.context) : undefined;
@@ -1080,12 +1179,16 @@ export class InboundConnector {
 
   /**
    * `inbound_waiting` for the account (docs/inbound.md §5.2): republished every
-   * {@link INBOUND_WAITING_REPUBLISH_MS} while anyone waits, and once more with `n = 0`.
+   * {@link INBOUND_WAITING_REPUBLISH_MS} while anyone waits, and once more with `n = 0` and no
+   * preferred session when nobody does. `n` counts the callers the team may take, now or when a
+   * `loose` sticky phase lapses ({@link notTheTeams}): a `strict` caller whose sticky agent is not
+   * away is that agent's alone (held back as a preferred session), and one promised by a hand-over
+   * is its superseded dial's agent's; holding a team agent for either would idle them for nothing.
    */
   private publishWaiting(accountKey: string): void {
-    const summary = this.queue.waitingSummary(accountKey);
+    const summary = this.queue.waitingSummary(accountKey, (e) => this.notTheTeams(e));
     const [tenantId, accountId] = accountKey.split(':') as [string, string];
-    if (summary.n === 0) {
+    if (this.queue.waiting(accountKey).length === 0) {
       if (!this.holding.delete(accountKey)) return;
       this.publish({ type: 'inbound_waiting', tenantId, accountId, n: 0, preferredSessionIds: [], poolCampaignIds: null, ttlMs: INBOUND_WAITING_TTL_MS });
       return;
@@ -1182,6 +1285,24 @@ export class InboundConnector {
   private forSession(sessionId: string): HeldCall | undefined {
     const id = this.bySession.get(sessionId);
     return id === undefined ? undefined : this.calls.get(id);
+  }
+
+  /**
+   * The session's station if the release hook may take it for an inbound call: held here, OPEN, a
+   * console (a phone has no inbound frame yet, Q20) on a campaign (not the soft phone). The one
+   * predicate {@link takeOnRelease} and {@link expectHandover} share.
+   */
+  private releasableStation(sessionId: string) {
+    const station = this.deps.stations.get(sessionId);
+    if (!station || station.campaignId === null || station.clientKind === 'mobile' || station.ws.readyState !== 1) return null;
+    return station;
+  }
+
+  /** The spine `offered → connected` for `sessionId` (`connect`); null: not on offer to it. Throws on a failed write. */
+  private async writeConnected(held: HeldCall, sessionId: string, at: Date): Promise<AgencyInboundCallRecord | null> {
+    return agencyInboundCallRepository.connect(held.id, {
+      sessionId, answeredByUserId: held.agentUserId ?? (await this.agentOf(sessionId)), at,
+    });
   }
 
   private async agentOf(sessionId: string): Promise<string> {

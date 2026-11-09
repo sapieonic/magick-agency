@@ -716,6 +716,37 @@ describe('AgencyDialer queued break ', () => {
     expect(ws.sent.find((f: any) => f.event === 'agent_state').state).toBe('available');
   });
 
+  it('announces `available` only AFTER its own mirror and frame, so a search it wakes cannot be overtaken by them (docs/inbound.md §6)', async () => {
+    // The `available` listeners start an inbound search, which may reserve the agent and send
+    // `reserved` + `inbound_call` at once. Announced by the write itself, that search could land
+    // its frames before this release's stale `available`, and its row mirror under it.
+    const order: string[] = [];
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    vi.spyOn(agents, 'set').mockImplementation(async (_s, state, opts) => {
+      order.push(`set:${state}:${opts?.announce === false ? 'quiet' : 'announced'}`);
+      return 'ok';
+    });
+    agents.onAvailable(() => order.push('announced'));
+    repos.session.setState.mockImplementation(async () => { order.push('mirror'); });
+    const dialer = new AgencyDialer(fakeBridge() as any, stations, agents, fakeWrapup() as any, fakeBreaks(null) as any);
+    const ws = fakeWs();
+    const send = ws.send.bind(ws);
+    ws.send = (data: string) => {
+      if (JSON.parse(data).event === 'agent_state') order.push('frame');
+      return send(data);
+    };
+    await attachStation(stations, 's1', ws);
+    await dialer.releaseAgent('s1');
+    expect(order).toEqual(['set:available:quiet', 'mirror', 'frame', 'announced']);
+
+    // A queued break is no `available`: nothing to announce.
+    order.length = 0;
+    const onBreak = new AgencyDialer(fakeBridge() as any, stations, agents, fakeWrapup() as any, fakeBreaks({ code: 'lunch', label: 'Lunch' }) as any);
+    await onBreak.releaseAgent('s1');
+    expect(order).not.toContain('announced');
+  });
+
   it('announces and mirrors NOTHING when the soft phone or an inbound call refuses `available` (docs/softphone.md §4.1, docs/inbound.md §6)', async () => {
     // A supervisor's force-available on an agent with a soft-phone call reaches
     // `releaseAgent`; the Lua guard refuses and the agent stays on their break. An inbound

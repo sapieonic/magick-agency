@@ -119,6 +119,33 @@ describe('restore after a reconnect', () => {
     expect(h.result.current.call).toBeNull();
   });
 
+  it('says a call on offer went back to the queue when the server no longer has it for us (its frame went to the old socket)', async () => {
+    api.getInboundCall.mockRejectedValue(Object.assign(new Error('gone'), { statusCode: 404, details: { code: 'inbound_call_not_found' } }));
+    const h = render();
+    expect(h.result.current.phase).toBe('offered');
+    h.set({ connection: 'reconnecting' });
+    await act(async () => h.set({ connection: 'open' }));
+    expect(h.result.current.call).toBeNull();
+    expect(h.result.current.notice).toBe(INBOUND_REQUEUED_COPY);
+
+    // Taken by another session meanwhile: the same.
+    api.getInboundCall.mockResolvedValue(connected({ session_id: 'sess-other' }));
+    const g = render();
+    g.set({ connection: 'reconnecting' });
+    await act(async () => g.set({ connection: 'open' }));
+    expect(g.result.current.call).toBeNull();
+    expect(g.result.current.notice).toBe(INBOUND_REQUEUED_COPY);
+  });
+
+  it('a connected call the server no longer has for us leaves with no requeue notice (it was never on offer)', async () => {
+    api.getInboundCall.mockRejectedValue(Object.assign(new Error('gone'), { statusCode: 404, details: { code: 'inbound_call_not_found' } }));
+    const h = render({ frameCall: connected() });
+    h.set({ connection: 'reconnecting' });
+    await act(async () => h.set({ connection: 'open' }));
+    expect(h.result.current.call).toBeNull();
+    expect(h.result.current.notice).toBeNull();
+  });
+
   it('adopts the server’s copy: a call that ended while the socket was away owes its outcome', async () => {
     api.getInboundCall.mockResolvedValue(owing());
     const h = render({ frameCall: connected() });

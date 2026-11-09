@@ -2,7 +2,7 @@ import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../config/index.js';
 import { withRetry } from '../utils/retry.js';
-import { deleteFile } from '../storage/s3.js';
+import { deleteFile, isStorageConfigured } from '../storage/s3.js';
 
 /*
  * Retention purge for call data:
@@ -89,6 +89,8 @@ export interface RetentionPurgeReport {
    * calls' `voicemail_key` cleared (that would be, in dry-run mode). 0 with the window unset.
    */
   inbound_voicemails_deleted: number;
+  /** Inbound voicemails whose object could not be deleted this run: their rows keep the key for the next. */
+  inbound_voicemails_failed: number;
   error?: string;
 }
 
@@ -137,6 +139,7 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
     tables: {},
     agency_transcripts_nulled: 0,
     inbound_voicemails_deleted: 0,
+    inbound_voicemails_failed: 0,
   };
 
   log.info(
@@ -165,7 +168,6 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
           log.info({ table: target.table, reportKey, deleted: total }, 'Table purged');
         }
       }
-      report.inbound_voicemails_deleted = await purgeInboundVoicemails(dryRun, cutoff);
     }
 
     // Transcript window: null conversation_log + transcript_meta on agency_calls
@@ -174,6 +176,14 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
     const transcriptDays = config.retention.agencyTranscriptRetentionDays;
     if (transcriptDays !== undefined) {
       report.agency_transcripts_nulled = await purgeAgencyTranscripts(dryRun, transcriptDays);
+    }
+
+    // Last: the one step that depends on the bucket, so an object store that is down (or not
+    // configured) never holds back the database steps above.
+    if (cutoff) {
+      const voicemails = await purgeInboundVoicemails(dryRun, cutoff);
+      report.inbound_voicemails_deleted = voicemails.deleted;
+      report.inbound_voicemails_failed = voicemails.failed;
     }
   } catch (err: any) {
     report.error = err?.message ?? String(err);
@@ -241,11 +251,13 @@ const VOICEMAIL_BATCH_SIZE = 200;
 /**
  * Inbound voicemails on the call-data window (docs/inbound.md §7): for every call that arrived
  * before `cutoff` and still names a voicemail, the object is deleted from the bucket, THEN the
- * row forgets it (only while it still names that key). A delete that fails stops the run (the
- * error is reported) with the row still naming its object, so the next run retries it: an object
- * is never orphaned by a cleared row. In dry-run mode it counts.
+ * row forgets it (only while it still names that key), so an object is never orphaned by a
+ * cleared row. A delete that fails leaves its row naming the object for the next run and is
+ * counted in `failed`; the rest go on (a keyset walk, so a failing row is not read again in this
+ * run). With no bucket configured nothing can be deleted: the step is skipped with a warning and
+ * the rows keep their keys. In dry-run mode it counts.
  */
-async function purgeInboundVoicemails(dryRun: boolean, cutoff: Date): Promise<number> {
+async function purgeInboundVoicemails(dryRun: boolean, cutoff: Date): Promise<{ deleted: number; failed: number }> {
   const pool = getPool();
   if (dryRun) {
     const result = await pool.query<{ n: number }>(
@@ -253,30 +265,44 @@ async function purgeInboundVoicemails(dryRun: boolean, cutoff: Date): Promise<nu
         WHERE voicemail_key IS NOT NULL AND arrived_at < $1`,
       [cutoff],
     );
-    return result.rows[0]?.n ?? 0;
+    return { deleted: result.rows[0]?.n ?? 0, failed: 0 };
   }
-  let total = 0;
+  if (!isStorageConfigured()) {
+    log.warn('No audio bucket is configured — inbound voicemails past the window are left for a run that can delete them');
+    return { deleted: 0, failed: 0 };
+  }
+  let deleted = 0;
+  let failed = 0;
+  let after = null as { arrivedAt: Date; id: string } | null;
   for (;;) {
-    const { rows } = await pool.query<{ id: string; voicemail_key: string }>(
-      `SELECT id, voicemail_key FROM agency_inbound_calls
+    const { rows }: { rows: Array<{ id: string; voicemail_key: string; arrived_at: Date }> } = await pool.query(
+      `SELECT id, voicemail_key, arrived_at FROM agency_inbound_calls
         WHERE voicemail_key IS NOT NULL AND arrived_at < $1
-        ORDER BY arrived_at
+          AND ($3::timestamptz IS NULL OR (arrived_at, id) > ($3::timestamptz, $4::uuid))
+        ORDER BY arrived_at, id
         LIMIT $2`,
-      [cutoff, VOICEMAIL_BATCH_SIZE],
+      [cutoff, VOICEMAIL_BATCH_SIZE, after?.arrivedAt ?? null, after?.id ?? null],
     );
     for (const row of rows) {
-      await deleteFile(row.voicemail_key);
-      const cleared = await pool.query(
-        `UPDATE agency_inbound_calls SET voicemail_key = NULL, voicemail_seconds = NULL
-          WHERE id = $1 AND voicemail_key = $2`,
-        [row.id, row.voicemail_key],
-      );
-      total += cleared.rowCount ?? 0;
+      try {
+        await deleteFile(row.voicemail_key);
+        const cleared = await pool.query(
+          `UPDATE agency_inbound_calls SET voicemail_key = NULL, voicemail_seconds = NULL
+            WHERE id = $1 AND voicemail_key = $2`,
+          [row.id, row.voicemail_key],
+        );
+        deleted += cleared.rowCount ?? 0;
+      } catch (err) {
+        failed++;
+        log.warn({ err, inboundCallId: row.id }, 'Could not delete an inbound voicemail — the next run retries it');
+      }
     }
-    if (rows.length < VOICEMAIL_BATCH_SIZE) break;
+    const last = rows.at(-1);
+    if (!last || rows.length < VOICEMAIL_BATCH_SIZE) break;
+    after = { arrivedAt: last.arrived_at, id: last.id };
   }
-  if (total > 0) log.info({ voicemailsDeleted: total }, 'Inbound voicemails deleted (retention window)');
-  return total;
+  if (deleted > 0 || failed > 0) log.info({ voicemailsDeleted: deleted, voicemailsFailed: failed }, 'Inbound voicemails deleted (retention window)');
+  return { deleted, failed };
 }
 
 /** Posts the run summary to the configured Slack incoming webhook. Best-effort. */
@@ -304,6 +330,9 @@ async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: stri
     tableLines,
     `agency transcripts nulled: ${report.agency_transcripts_nulled.toLocaleString()}`,
     `inbound voicemails ${report.dry_run ? 'matched' : 'deleted'}: ${report.inbound_voicemails_deleted.toLocaleString()}`,
+    report.inbound_voicemails_failed > 0
+      ? `inbound voicemails not deleted (retried next run): ${report.inbound_voicemails_failed.toLocaleString()}`
+      : null,
     `Duration: ${(report.duration_ms / 1000).toFixed(1)}s`,
   ]
     .filter((line): line is string => line !== null)

@@ -63,6 +63,8 @@ vi.mock('../../../src/storage/s3.js', async (orig) => {
 import { randomUUID } from 'node:crypto';
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { getAgencyRuntime } from '../../../src/bootstrap/agency.js';
+import { agencyInboundCallRepository } from '../../../src/db/repositories/agency.repository.js';
+import { INBOUND_VOICEMAIL_BUDGET_SECONDS } from '../../../src/agency/inbound/inbound-call-router.js';
 import {
   ACCOUNT, PLIVO_E2E_ENV, TENANT, callRow, closePlivoDb, initPlivoDb, startPlivoRig, waitFor, type PlivoRig,
 } from './plivo-rig.js';
@@ -288,6 +290,29 @@ describe('voicemail (§7, IB3, Q14)', () => {
     const ended = await spineWhen(call, 'ended', (r) => r.state === 'ended');
     expect(ended).toMatchObject({ outcome: 'closed', follow_up_reason: 'closed', voicemail_key: null, voicemail_seconds: null });
     expect(bucket.files.size).toBe(0);
+  });
+
+  it('a voicemail is budgeted its prompt and whole recording whatever the account`s ceiling; one whose row cannot be written is discarded, never left for nothing to name', async () => {
+    await setRoute(world, { weekly_hours: [], after_hours_action: 'voicemail' });
+    const accept = vi.spyOn(rig!.bridge, 'acceptInboundCall');
+    const end = vi.spyOn(agencyInboundCallRepository, 'end').mockRejectedValueOnce(new Error('Connection terminated unexpectedly'));
+    try {
+      let done = false;
+      const call = ring(world, speaker(() => done));
+      await spineWhen(call, 'answered', (r) => r.state === 'greeting' || r.state === 'arrived');
+      expect(accept.mock.calls[0]![0]).toMatchObject({ connectable: false, parkedSeconds: INBOUND_VOICEMAIL_BUDGET_SECONDS });
+      await waitFor('the beep and the recording', () => call.receivedFrameCount >= 30);
+      await sleep(2500);
+      done = true;
+      await call.done;
+      // The recording was stored, then the row's write failed: the object is deleted again.
+      await waitFor('the settle attempted', () => end.mock.calls.length > 0);
+      await getAgencyRuntime()?.inbound?.drain();
+      await waitFor('the orphan discarded', () => bucket.files.size === 0);
+    } finally {
+      accept.mockRestore();
+      end.mockRestore();
+    }
   });
 });
 

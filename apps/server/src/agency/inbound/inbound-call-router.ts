@@ -161,6 +161,13 @@ export const INBOUND_PREAMBLE_ALLOWANCE_SECONDS = 60;
 export const INBOUND_EXIT_ALLOWANCE_SECONDS = AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS + 30;
 
 /**
+ * The least budget of a call that leaves a voicemail and is never connected (after hours, or an
+ * open route's caller nobody can be put through to, §7): the greeting, the message and the beep,
+ * and the whole recording. `acceptInboundCall` takes the account's max duration when longer.
+ */
+export const INBOUND_VOICEMAIL_BUDGET_SECONDS = INBOUND_PREAMBLE_ALLOWANCE_SECONDS + INBOUND_EXIT_ALLOWANCE_SECONDS;
+
+/**
  * The parked budget of a connectable call (`acceptInboundCall`'s `parkedSeconds`): everything
  * that may happen before an agent's bind — the preamble, the queue's maximum wait, and what a
  * caller who reaches nobody hears after it. The bridge's parked backstop ends a call still
@@ -373,8 +380,10 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         tenantId: arrival.tenantId, accountId, routeId: route?.id ?? null, phoneNumberId, provider: arrival.provider,
         telephonyCredentialId: arrival.credentialId, providerCallId: arrival.carrierCallId,
         fromE164: arrival.fromE164, toE164: arrival.toE164, identification, answered: true,
-        // A call no agent can take is never recorded (a recording starts at the bind, §6).
-        recordingRequested: recorded, analysisProfileId: route?.analysis_profile_id ?? null,
+        // A call no agent can take is never recorded (a recording starts at the bind, §6): nor is
+        // one over the route's `max_concurrent`, which hears "busy" (and one the bridge's shared
+        // scopes turn away has the flag taken back with its admission, `refuseAdmission`).
+        recordingRequested: recorded && underCap, analysisProfileId: route?.analysis_profile_id ?? null,
       }, { client });
       if (!inserted.call) return null;
       if (inserted.created && underCap) {
@@ -434,7 +443,8 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       // only hears a message, so nothing is parked or recorded.
       connectable: queue,
       browserCloseGraceMs: queue ? DEFERRED_HANGUP_MS : 0,
-      parkedSeconds: queue && route ? parkedSecondsFor(route) : 0,
+      // A voicemail's floor: the prompt and the whole recording, whatever the account's ceiling.
+      parkedSeconds: queue && route ? parkedSecondsFor(route) : voicemail ? INBOUND_VOICEMAIL_BUDGET_SECONDS : 0,
       record: queue && recorded,
     });
     if (!accepted.accepted) {
@@ -767,8 +777,34 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     // A caller the fallback answered was told to try again: no Missed row and no callback (§3.3).
     const reason = this.givenUp.has(carrierKey(call.provider, call.provider_call_id)) ? null : missedReasonFor(end);
     const followUp = reason ? { reason, assigneeUserId: call.sticky_user_id } : null;
+    let ended: boolean;
+    try {
+      ended = await this.writeEnd(call, outcome, followUp, voicemail);
+    } catch (err) {
+      // Not written (the sweep ends the call, with no voicemail): no row will name the object,
+      // so nothing would ever play or purge it. Best-effort, then the caller logs the failure.
+      if (voicemail) await discardVoicemail({ storage: this.deps.voicemailStorage }, voicemail.key);
+      throw err;
+    }
+    if (ended) {
+      trackInboundCallEnded(outcome);
+      log.info({ inboundCallId: call.id, outcome }, 'Inbound call ended');
+    } else if (voicemail) {
+      // Another writer ended the call first: no row names this voicemail, so nothing would ever
+      // play or purge it.
+      await discardVoicemail({ storage: this.deps.voicemailStorage }, voicemail.key);
+    }
+  }
+
+  /** {@link settle}'s write: the callback booked and the call ended in one transaction. False: another writer ended it first. */
+  private async writeEnd(
+    call: AgencyInboundCallRecord,
+    outcome: AgencyInboundCallOutcome,
+    followUp: { reason: AgencyInboundMissedReason; assigneeUserId: string | null } | null,
+    voicemail: InboundCallEnd['voicemail'],
+  ): Promise<boolean> {
     const owed = followUp ? await this.callbackOwed(call) : null;
-    const ended = await withTransaction(async (client, tx) => {
+    return withTransaction(async (client, tx) => {
       const booked = owed
         ? await agencyContactRepository.bookInboundCallback({ tenantId: call.tenant_id, contactId: owed.contactId, dueAt: owed.dueAt }, { client })
         : null;
@@ -783,14 +819,6 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       if (booked?.reopened) log.info({ inboundCallId: call.id, contactId: booked.contactId }, 'Inbound call reopened an exhausted contact as a callback (IB4)');
       return true;
     }, { pool: getPool() });
-    if (ended) {
-      trackInboundCallEnded(outcome);
-      log.info({ inboundCallId: call.id, outcome }, 'Inbound call ended');
-    } else if (voicemail) {
-      // Another writer ended the call first: no row names this voicemail, so nothing would ever
-      // play or purge it.
-      await discardVoicemail({ storage: this.deps.voicemailStorage }, voicemail.key);
-    }
   }
 
   /**
@@ -908,24 +936,34 @@ export interface InboundConnectOptions {
   connector?: Pick<InboundConnectorDeps, 'connectDelayMs' | 'republishMs' | 'now'>;
 }
 
+/** How long the inbound stop waits for the calls it ends to settle (see {@link startInboundCalls}). */
+export const INBOUND_SHUTDOWN_DRAIN_MS = 10_000;
+
 /**
  * Start inbound calls in this process (`bootstrap/agency.ts`): the startup sweep, THEN the router
  * registered on the seam (so no call this process answers can be swept as a leftover), then the
  * periodic sweep. With `connect` (P2) the connector is built beside the router, put in the agency
  * runtime (`attachInbound`: the release hook, the `available` listener, the station close) and
- * started, and the outcome-lapse sweep runs every minute. The stop unregisters the router
- * (arriving calls hear the fallback message), stops the sweeps and detaches the connector; calls
- * still held settle as their sessions end (the bridge's shutdown), and the next start's sweep
- * ends any that could not.
+ * started, and the outcome-lapse sweep runs every minute.
+ *
+ * The stop, synchronously before its first await: unregisters the router (arriving calls hear the
+ * fallback message), stops the sweeps and detaches the connector. Then it ends every call this
+ * process still holds (the connector's and the router's own message and voicemail sequences)
+ * `service_shutdown`, as the bridge's graceful shutdown would, and waits for them to settle (a
+ * caller nobody took: `failed` with its Missed row and callback, Q18; an answered one: owing its
+ * outcome), at most {@link INBOUND_SHUTDOWN_DRAIN_MS}. Ended later, by the voice stop, their settles
+ * raced the database pool's close and the next start's sweep wrote `abandoned_in_queue` instead.
  */
 export async function startInboundCalls(deps: Omit<AgencyInboundCallRouterDeps, 'bridge' | 'connect'> & {
   bridge: AgencyInboundCallRouterDeps['bridge'] & InboundConnectorDeps['bridge'];
   sweepIntervalMs?: number;
   connect?: InboundConnectOptions;
+  /** The stop's bound on waiting for the calls it ends (tests). */
+  shutdownDrainMs?: number;
 }): Promise<{
   router: AgencyInboundCallRouter;
   connector: InboundConnector | null;
-  stop: () => void;
+  stop: () => Promise<void>;
 }> {
   const { connect: connectOpts, ...routerDeps } = deps;
   const connectDeps = connectOpts
@@ -988,13 +1026,30 @@ export async function startInboundCalls(deps: Omit<AgencyInboundCallRouterDeps, 
   return {
     router,
     connector,
-    stop: () => {
+    stop: async () => {
       clearInterval(timer);
       if (lapseTimer) clearInterval(lapseTimer);
       if (getInboundCallRouter() === router) setInboundCallRouter(null);
       if (connector && connectOpts) {
         connector.stop();
         connectOpts.runtime.attachInbound(null);
+      }
+      const held = router.liveCallIds();
+      if (held.length === 0) return;
+      log.info({ calls: held.length }, 'Ending inbound calls for shutdown');
+      let timeout: NodeJS.Timeout | undefined;
+      const settled = (async () => {
+        await Promise.allSettled(held.map((id) => deps.bridge.forceEndWithOutcome(id, 'service_shutdown')));
+        await Promise.all([router.drain(), connector?.drain()]);
+      })().catch((err: unknown) => log.error({ err }, 'Ending inbound calls for shutdown failed'));
+      const bound = new Promise<'timeout'>((resolve) => {
+        timeout = setTimeout(() => resolve('timeout'), deps.shutdownDrainMs ?? INBOUND_SHUTDOWN_DRAIN_MS);
+        timeout.unref?.();
+      });
+      const result = await Promise.race([settled, bound]);
+      if (timeout) clearTimeout(timeout);
+      if (result === 'timeout') {
+        log.warn({ calls: router.liveCallIds().length }, 'Inbound calls still settling at shutdown — the next start\'s sweep ends them');
       }
     },
   };

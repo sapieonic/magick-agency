@@ -160,6 +160,8 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
   const retire = useCallback((held: AgencyInboundCall) => {
     setStaleKeys((current) => new Set([...current, snapshotKey(held)]));
   }, []);
+  /** Why a call left the station without the agent's outcome (see {@link InboundCallState.notice}). */
+  const [notice, setNotice] = useState<string | null>(null);
 
   const fresh = (candidate: AgencyInboundCall | null) =>
     candidate && !staleKeys.has(snapshotKey(candidate)) ? candidate : null;
@@ -179,15 +181,22 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     const held = heldRef.current;
     if (!held || inboundPhase(held) === null || !tenantId || !accountId) return;
     const seq = ++reconcileSeq.current;
+    // A call still on offer that the server no longer holds for us went back to the queue while
+    // the socket was away (its `queued` frame went to the old socket): the agent is told so, as
+    // the frame would have told them. The copy that leaves no longer says why, so it is said here.
+    const leaveOffered = () => {
+      retire(held);
+      if (inboundPhase(held) === 'offered') setNotice(INBOUND_REQUEUED_COPY);
+    };
     getInboundCall(held.id, tenantId, accountId)
       .then((answer) => {
         if (seq !== reconcileSeq.current) return;
-        if (sessionId && answer.session_id && answer.session_id !== sessionId) retire(held);
+        if (sessionId && answer.session_id && answer.session_id !== sessionId) leaveOffered();
         else adoptCall(answer);
       })
       .catch((err: unknown) => {
         if (seq !== reconcileSeq.current) return;
-        if (errorCode(err) === 'inbound_call_not_found') retire(held);
+        if (errorCode(err) === 'inbound_call_not_found') leaveOffered();
       });
   }, [heldRef, tenantId, accountId, sessionId, adoptCall, retire]);
 
@@ -214,7 +223,6 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
   const [dncOutcome, setDncOutcome] = useState<string | null>(null);
   const [dncFailure, setDncFailure] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
-  const [notice, setNotice] = useState<string | null>(null);
   /** The agent edited the notes on this call (so blank on screen means cleared, not never typed). */
   const notesTouchedRef = useRef(false);
 

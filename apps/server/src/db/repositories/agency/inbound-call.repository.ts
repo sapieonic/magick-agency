@@ -486,12 +486,23 @@ export class AgencyInboundCallRepository {
    * both read `arrived` as "not admitted". The one move back to `arrived`, and only from
    * `greeting` (the state admission leaves it in), so it never undoes a call further on. Null when
    * the call is missing or not in `greeting`.
+   *
+   * The recording the arrival asked for is taken back with it, on the spine and its media leg
+   * (`recording_requested = false`): the caller hears "busy" and nobody is connected, so nothing
+   * records the call, and a flag left set would read as a recording asked for and missing.
    */
   async refuseAdmission(id: string, deps: { client?: Db } = {}): Promise<AgencyInboundCallRecord | null> {
     const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
-      `UPDATE agency_inbound_calls c SET state = 'arrived'
-        WHERE c.id = $1::uuid AND c.state = 'greeting'
-        RETURNING ${CALL_COLUMNS}`,
+      `WITH refused AS (
+         UPDATE agency_inbound_calls c SET state = 'arrived', recording_requested = false
+          WHERE c.id = $1::uuid AND c.state = 'greeting'
+          RETURNING ${CALL_COLUMNS}
+       ), leg AS (
+         UPDATE agency_calls l SET recording_requested = false
+           FROM refused r
+          WHERE l.id = r.webrtc_call_id AND l.recording_requested
+       )
+       SELECT * FROM refused`,
       [id],
     );
     return rows[0] ?? null;

@@ -230,14 +230,17 @@ export interface WebRtcInboundCallParams {
    */
   browserCloseGraceMs: number;
   /**
-   * Connectable calls only (ignored, and 0 by convention, otherwise): the longest the call may be
-   * held before an agent is put through, in seconds: the caller's messages, the queue's maximum
-   * wait, and anything played or recorded after it (an overflow message, a voicemail). The call's
-   * whole budget is `parkedSeconds` + the account's maximum duration: the answer's
-   * `maxDurationSeconds` (and so the stream's own timeout) and the slot and token lifetimes are
-   * that sum, while the bridge's own timer ends a call still unbound after `parkedSeconds`, as a
-   * backstop, and is re-armed with the full maximum duration at the bind. Never taken as less than
-   * the media deadline (`INBOUND_MEDIA_DEADLINE_SECONDS`).
+   * A connectable call: the longest the call may be held before an agent is put through, in
+   * seconds: the caller's messages, the queue's maximum wait, and anything played or recorded
+   * after it (an overflow message, a voicemail). The call's whole budget is `parkedSeconds` + the
+   * account's maximum duration: the answer's `maxDurationSeconds` (and so the stream's own timeout)
+   * and the slot and token lifetimes are that sum, while the bridge's own timer ends a call still
+   * unbound after `parkedSeconds`, as a backstop, and is re-armed with the full maximum duration at
+   * the bind. Never taken as less than the media deadline (`INBOUND_MEDIA_DEADLINE_SECONDS`).
+   *
+   * Any other call (it only hears a message, or leaves a voicemail): a FLOOR on its budget, which is
+   * the account's maximum duration or this, whichever is longer (0: the maximum duration). A
+   * voicemail's prompt and recording must fit whatever the account's ceiling (docs/inbound.md §7).
    */
   parkedSeconds: number;
   /**

@@ -192,18 +192,25 @@ export class InboundQueue {
     return [...new Set([...this.held.values()].map((h) => accountKeyOfCall(h.entry.tenantId, h.entry.accountId)))];
   }
 
-  /** What `inbound_waiting` says for `accountKey` (see {@link InboundWaitingSummary}). */
-  waitingSummary(accountKey: string): InboundWaitingSummary {
+  /**
+   * What `inbound_waiting` says for `accountKey` (see {@link InboundWaitingSummary}). `n` leaves
+   * out the callers `notTheTeams` names: those no team agent will be given (the connector decides:
+   * a `strict` caller's sticky agent not away, a hand-over). Holding team agents back for them
+   * would keep idle agents from dialling for callers they cannot take.
+   */
+  waitingSummary(accountKey: string, notTheTeams: (entry: InboundQueueEntry) => boolean = () => false): InboundWaitingSummary {
     const waiting = this.waiting(accountKey);
     const sticky = new Set<string>();
     let pool: Set<string> | null = new Set<string>();
+    let n = 0;
     for (const e of waiting) {
       if (e.stickyMode !== 'off' && e.stickyUserId) sticky.add(e.stickyUserId);
+      if (!notTheTeams(e)) n++;
       const scoped = e.accountId === e.routeAccountId && e.poolCampaignIds.length > 0;
       if (!scoped) pool = null;
       else if (pool) for (const id of e.poolCampaignIds) pool.add(id);
     }
-    return { n: waiting.length, stickyUserIds: [...sticky], poolCampaignIds: waiting.length === 0 ? [] : pool ? [...pool] : null };
+    return { n, stickyUserIds: [...sticky], poolCampaignIds: waiting.length === 0 ? [] : pool ? [...pool] : null };
   }
 
   /** Every route with a caller held, for the supervisor's queue tile. */

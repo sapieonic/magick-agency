@@ -140,6 +140,7 @@ const router = () => new AgencyInboundCallRouter({
 /** A connector over the shared Redis and Postgres, returning agents as `releaseAgent` would (its hook first). */
 function connector(opts: {
   stationsOf?: FakeStations; releaseAgent?: (id: string) => Promise<unknown>; connectDelayMs?: number; agentsOf?: typeof agents;
+  publish?: (event: import('../../../src/agency/pacing/invalidation-bus.js').PacingInvalidationEvent) => void; republishMs?: number;
 } = {}): Connector {
   const st = opts.stationsOf ?? stations;
   const exits = router();
@@ -153,7 +154,8 @@ function connector(opts: {
     }),
     exits,
     connectDelayMs: opts.connectDelayMs ?? 150,
-    publish: () => {},
+    publish: opts.publish ?? (() => {}),
+    ...(opts.republishMs ? { republishMs: opts.republishMs } : {}),
   });
   c.start();
   connectors.push(c);
@@ -623,5 +625,72 @@ describe('a caller past their maximum wait is marked leaving at once (M4): no lo
     clip.open();
     await until('overflowed', async () => (await row(call.id)).state === 'ended');
     expect((await row(call.id)).outcome).toBe('overflow');
+  });
+});
+
+describe('the P2 review fix pass: hand-overs only to a session that can take one, the waiting count, a failed connect write', () => {
+  it('no hand-over to a session the release hook can never take (a phone, a station not OPEN, the soft phone): nothing is promised, so the router cancels no dial', async () => {
+    const c = connector();
+    const phone = await agent('reserved');
+    stations.get(phone)!.clientKind = 'mobile';
+    const closed = await agent('reserved');
+    stations.get(closed)!.ws.readyState = 3;
+    const softphone = await agent('reserved');
+    stations.get(softphone)!.campaignId = null;
+    bridge.preambleGate = gate().wait;
+    const { call } = await caller(c);
+    for (const s of [phone, closed, softphone]) expect(c.expectHandover(s, call.id), s).toBe(false);
+    // And the release of any of them takes nothing.
+    for (const s of [phone, closed, softphone]) expect(await c.takeOnRelease(s)).toBe(false);
+    // A console agent on a campaign still gets one.
+    const desk = await agent('reserved');
+    expect(c.expectHandover(desk, call.id)).toBe(true);
+  });
+
+  it('`inbound_waiting` holds no team agent for a caller only their busy sticky agent may take; the sticky agent going away (no release ran) hands the caller to the team at the next search', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const c = connector({ publish: (e) => events.push(e as unknown as Record<string, unknown>), republishMs: 100 });
+    const owner = await agent('wrapup');
+    const strict = { ...route, sticky_mode: 'strict' as const };
+    const { call } = await caller(c, {
+      identification: { match: null, callerDnc: false, sticky: { userId: stations.get(owner)!.agentUserId, reason: 'owner' } },
+    }, strict);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    const team = await agent('available');
+    c.onAgentAvailable(team);
+    const held = await until('published: the owner preferred, no team agent held', () => {
+      const last = events.filter((e) => e['type'] === 'inbound_waiting').at(-1);
+      return last && (last['preferredSessionIds'] as string[]).includes(owner) && last['n'] === 0 ? last : null;
+    });
+    expect(held['n']).toBe(0);
+    await sleep(300);
+    expect(inboundFrames(team)).toEqual([]);
+    expect((await row(call.id)).state).toBe('queued');
+    // The owner's queued break is applied at the end of their wrap-up: away, with no release hook run.
+    await agents.set(owner, 'break', { leaseMs: 60_000 });
+    await until('connected to the team', async () => (await row(call.id)).state === 'connected', 3000);
+    expect((await row(call.id)).session_id).toBe(team);
+  });
+
+  it('a bridged call whose `connected` write fails is still an answered call at its end, owing its outcome (never a caller who "hung up on offer")', async () => {
+    const c = connector();
+    const s1 = await agent();
+    const connect = vi.spyOn(calls, 'connect').mockRejectedValueOnce(new Error('Connection terminated unexpectedly'));
+    try {
+      const { call } = await caller(c);
+      await until('bound', () => bridge.binds.includes(call.id));
+      await until('on_call', async () => (await agents.get(s1))?.state === 'on_call');
+      expect((await row(call.id)).state).toBe('offered'); // the write failed
+      await until('the panel says connected', () => inboundFrames(s1).at(-1)?.['state'] === 'connected');
+      bridge.end(call.id, 'pstn_stream_closed', 42);
+      await until('ended', async () => (await row(call.id)).state === 'ended');
+      await drain();
+      expect(await row(call.id)).toMatchObject({
+        outcome: 'answered', bridged_at: expect.any(Date), settled_at: null, follow_up_status: null, session_id: s1, talk_seconds: 42,
+      });
+      expect(await agents.get(s1)).toMatchObject({ state: 'wrapup', inboundCallId: call.id });
+    } finally {
+      connect.mockRestore();
+    }
   });
 });

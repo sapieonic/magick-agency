@@ -572,6 +572,11 @@ describe('a Missed row`s voicemail (P2, §7): GET /proxy/agency/inbound/missed/:
     expect(part.statusCode).toBe(206);
     expect(part.headers['content-range']).toBe('bytes 10-19/1000');
     expect(part.rawPayload.length).toBe(10);
+    // No automatic HEAD: Fastify's would run the handler and open a bucket stream for nothing.
+    const head = await loaded.app.inject({
+      method: 'HEAD', url: `/proxy/agency/inbound/missed/${ids['mine']}/voicemail`, headers: headersFor(sup(), floor),
+    });
+    expect(head.statusCode).toBe(404);
   });
 
   it('the Missed list`s rules: another agent`s row, a row with none, another account`s or tenant`s, an object aged out, a malformed id: inbound_missed_call_not_found', async () => {

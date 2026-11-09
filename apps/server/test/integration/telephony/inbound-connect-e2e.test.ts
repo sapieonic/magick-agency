@@ -440,7 +440,7 @@ describe('inbound P2: restart, recording, concurrency', () => {
       await waitFor('available after the outcome', async () => (await liveOf(agent.sessionId))?.state === 'available');
       expect(await liveOf(agent.sessionId)).toMatchObject({ inboundCallId: null });
     } finally {
-      restarted.stop();
+      await restarted.stop();
       runtime.attachInbound(connector);
       setInboundCallRouter(running);
     }
@@ -473,12 +473,18 @@ describe('inbound P2: restart, recording, concurrency', () => {
   });
 
   it('11. concurrency: over the route`s max_concurrent the caller hears busy (overflow_no_capacity); a caller over the ACCOUNT`s limit is still put through (IB5)', async () => {
-    await setRoute(world, { max_concurrent: 1, max_waiting: 1 });
+    await setRoute(world, { max_concurrent: 1, max_waiting: 1, record_calls: true });
     const first = ring(world, callerScript(() => false), '447700901101');
-    await spineWhen(first, 'first queued', (r) => r.state === 'queued');
+    const queued = await spineWhen(first, 'first queued', (r) => r.state === 'queued');
+    expect(queued.recording_requested).toBe(true);
     const busy = ring(world, callerScript(() => false), '447700901102');
     const refused = await spineWhen(busy, 'busy', (r) => r.state === 'ended');
     expect(refused).toMatchObject({ outcome: 'overflow_no_capacity', follow_up_reason: 'overflow_no_capacity', session_id: null });
+    // Turned away, so never recorded: the arrival asks for no recording, on the spine or its leg.
+    expect(refused.recording_requested).toBe(false);
+    const refusedLeg = await pool().query('SELECT recording_requested FROM agency_calls WHERE id = $1', [refused.webrtc_call_id]);
+    expect(refusedLeg.rows[0].recording_requested).toBe(false);
+    await setRoute(world, { record_calls: false });
 
     // The account's own limit is full (one live call, a limit of one): the next caller is admitted anyway and connects.
     await setRoute(world, { max_concurrent: 5, max_waiting: 5 });
@@ -496,5 +502,31 @@ describe('inbound P2: restart, recording, concurrency', () => {
     const connected = await spineWhen(third, 'third connected', (r) => r.state === 'connected');
     expect([a.sessionId, b.sessionId]).toContain(connected.session_id);
     hangUp = true;
+  });
+
+  it('12. a graceful shutdown: the inbound stop ends the calls it holds (service_shutdown) and has settled them (failed, the Missed row, Q18) by the time it returns', async () => {
+    const runtime = getAgencyRuntime()!;
+    const running = getInboundCallRouter();
+    const connector = runtime.inbound;
+    // A second start, as test 8's restart, so its stop can be driven without stopping the agency.
+    const restarted = await startInboundCalls({
+      bridge: world.rig.bridge, dnc: new DncRegistry(),
+      connect: { runtime, enabled: async () => true, mediaWorkers: 0 },
+    });
+    try {
+      const call = ring(world, callerScript(() => false), '447700901201');
+      const queued = await spineWhen(call, 'queued', (r) => r.state === 'queued');
+      expect(restarted.router.liveCallIds()).toEqual([queued.id]);
+      await restarted.stop();
+      // Settled before the stop returned: nothing is left for the next start's sweep.
+      expect((await agencyInboundCallRepository.findByIdAnyTenant(queued.id))!).toMatchObject({
+        state: 'ended', outcome: 'failed', follow_up_reason: 'failed', follow_up_status: 'open', settled_at: expect.any(Date),
+      });
+      expect(restarted.router.liveCallIds()).toEqual([]);
+    } finally {
+      await restarted.stop();
+      runtime.attachInbound(connector);
+      setInboundCallRouter(running);
+    }
   });
 });

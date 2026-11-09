@@ -1356,7 +1356,8 @@ export class WebRtcBridgeManager {
    * it if it is still unbound after `parkedSeconds`, a backstop the caller's queue should never
    * reach; the bind re-arms the timer with the full max duration. Its talk time counts from the
    * bind (0 for a call no agent took), and `record` (under the account's recording ceiling)
-   * records it from the bind.
+   * records it from the bind. Any other call's budget is the account's max duration, or
+   * `parkedSeconds` when that is longer (a voicemail's prompt and recording must fit).
    *
    * Idempotent per leg: a retried answer webhook (Plivo's own retry) is answered with the live
    * session's stream. A leg that has already ended here is `accepted: false` (`ended`): its
@@ -1403,8 +1404,10 @@ export class WebRtcBridgeManager {
     const parkedSeconds = params.connectable
       ? Math.max(INBOUND_MEDIA_DEADLINE_SECONDS, Math.ceil(Number.isFinite(params.parkedSeconds) ? params.parkedSeconds : 0))
       : 0;
-    // A connectable call may be held `parkedSeconds` before its max duration even starts.
-    const budgetSeconds = parkedSeconds + maxDuration;
+    // A connectable call may be held `parkedSeconds` before its max duration even starts; any other
+    // call's `parkedSeconds` is a floor on its budget (a voicemail's prompt and recording).
+    const floorSeconds = !params.connectable && Number.isFinite(params.parkedSeconds) ? Math.max(0, Math.ceil(params.parkedSeconds)) : 0;
+    const budgetSeconds = params.connectable ? parkedSeconds + maxDuration : Math.max(maxDuration, floorSeconds);
     // Recording is decided once, under the account's ceiling (NULL ⇒ not allowed, as for a dial).
     const recordEnabled = params.connectable && params.record
       && ((await accountSettingsRepository.getAllowRecording(params.tenantId, params.accountId).catch((err: unknown) => {
@@ -1465,7 +1468,7 @@ export class WebRtcBridgeManager {
     this.sessions.set(params.callId, session);
     this.anchorAnswer(session);
     // A connectable call's timer is the parked backstop until the bind re-arms it.
-    session.setMaxDurationTimer(params.connectable ? parkedSeconds : maxDuration, () => {
+    session.setMaxDurationTimer(params.connectable ? parkedSeconds : budgetSeconds, () => {
       this.inBackground(this.localHangup(params.callId, { status: session.localEndStatus(), outcome: 'max_duration_reached' }),
         params.callId, 'Error ending an inbound call on max duration');
     });

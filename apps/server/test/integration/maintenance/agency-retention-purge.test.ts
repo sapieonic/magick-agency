@@ -20,7 +20,7 @@ const cfg = vi.hoisted(() => ({
 }));
 vi.mock('../../../src/config/index.js', () => cfg);
 const bucket = vi.hoisted(() => ({ deleted: [] as string[] }));
-vi.mock('../../../src/storage/s3.js', () => ({ deleteFile: async (key: string) => { bucket.deleted.push(key); } }));
+vi.mock('../../../src/storage/s3.js', () => ({ deleteFile: async (key: string) => { bucket.deleted.push(key); }, isStorageConfigured: () => true }));
 const { runRetentionPurge } = await import('../../../src/maintenance/retention-purge.js');
 
 const analysis = () => JSON.stringify({ common: { overall_sentiment: { label: 'positive' }, summary: 'keep this summary' } });

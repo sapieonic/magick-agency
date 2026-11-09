@@ -468,7 +468,7 @@ describe('an inbound call on a linked Plivo number, P1 (nobody is connected)', (
       expect(row.callback_due_at).not.toBeNull();
       expect(await contactRow(contactId)).toMatchObject({ state: 'pending', callback_source: 'inbound' });
     } finally {
-      restarted.stop();
+      await restarted.stop();
       setInboundCallRouter(running);
     }
   });

@@ -77,8 +77,11 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
    * (an `<audio>` element seeking) is passed to the bucket and answered 206 with its
    * `Content-Range`. A row with no voicemail, or one whose object is gone, is
    * `inbound_missed_call_not_found` (the console says it is no longer available).
+   *
+   * No automatic HEAD route: Fastify's runs this handler and drops the body, so a HEAD would open
+   * a bucket stream for nothing. An `<audio>` element asks with GET.
    */
-  app.get<{ Params: { id: string } }>('/inbound/missed/:id/voicemail', { preHandler: read }, async (request, reply) => {
+  app.get<{ Params: { id: string } }>('/inbound/missed/:id/voicemail', { preHandler: read, exposeHeadRoute: false }, async (request, reply) => {
     const actor = inboundActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await callCore({

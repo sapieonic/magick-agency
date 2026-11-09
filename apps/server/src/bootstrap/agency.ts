@@ -146,14 +146,17 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
-    // First: an arriving call now hears the fallback message rather than reaching a stopping runtime.
-    inbound.stop();
+    // First, synchronously: an arriving call now hears the fallback message rather than reaching
+    // a stopping runtime. Its calls still held are then ended and settled (bounded) while the
+    // runtime and the database are still up, before the runtime stops below.
+    const inboundStopped = inbound.stop();
     // The report pipeline stops beside the rest (it needs none of it), so its bounded wait
     // overlaps the runtime's completion-notice drain, which in one process runs in
     // `agencyRuntime.stop()`. With media workers it already stopped as a shutdown drain
     // (`index.ts`), and this is the same, settled promise.
     const reportsStopped = reports.stop();
     const rest = (async () => {
+      await inboundStopped;
       // The batch in flight commits or rolls back; marks left over are the next boot's.
       await insightsRollup.stop();
       // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents

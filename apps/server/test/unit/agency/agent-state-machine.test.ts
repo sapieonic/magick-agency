@@ -192,7 +192,7 @@ describe('AgentStateMachine lease lifecycle ', () => {
     expect(Object.values(AGENT_LEASE_MS)).not.toContain(DEFERRED_HANGUP_MS);
     // And it must not merely differ by coincidence — wrapup's lease is the flat
     // heartbeat lease, identical to available's.
-    expect(AGENT_LEASE_MS.wrapup).toBe(AGENT_LEASE_MS.on_call);
+    expect(AGENT_LEASE_MS.wrapup).toBe(AGENT_LEASE_MS.available);
     expect(AGENT_LEASE_MS.available).toBe(AGENT_LEASE_MS.break);
   });
 });

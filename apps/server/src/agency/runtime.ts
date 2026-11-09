@@ -360,7 +360,12 @@ export class AgencyRuntime {
         .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
       return 'wrapup';
     }
-    if (live) return live.state;
+    // A `wrapup` lease nothing here holds (no wrap-up in this process, no inbound outcome owed:
+    // the inbound arm above answered for that) was left by a previous process. Nothing would
+    // ever end it, and the heartbeat does not renew it (`heartbeatLeaseMs`), so it is a lapsed
+    // lease that has not lapsed yet: `break`, as below.
+    const orphanedWrapup = live?.state === 'wrapup' && !wrapup && !live.inboundCallId;
+    if (live && !orphanedWrapup) return live.state;
 
     await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
     // Best-effort mirror. Redis is the authority; a failed write here costs a

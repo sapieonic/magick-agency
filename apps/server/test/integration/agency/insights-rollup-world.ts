@@ -31,7 +31,7 @@ const CALLER_IDS = ['+919000000001', '+919000000002', '+919000000003'];
 
 export interface WorldCampaign { id: string; zone: string; agents: Array<{ sessionId: string; userId: string }>; contactIds: string[] }
 
-const ATTEMPT_COLUMNS: Array<[string, string]> = [
+export const ATTEMPT_COLUMNS: Array<[string, string]> = [
   ['id', 'uuid'], ['campaign_id', 'uuid'], ['contact_id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'],
   ['attempt_number', 'int'], ['webrtc_call_id', 'uuid'], ['caller_id', 'text'], ['reserved_agent_id', 'uuid'],
   ['state', 'text'], ['outcome', 'text'], ['disposition_code', 'text'], ['callback_at', 'timestamptz'],

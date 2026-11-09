@@ -13,9 +13,22 @@
  * conversations and successes).
  */
 import { ABANDONED_ATTEMPT_PREDICATE_SQL } from '@magick-agency/domain/abandonment-predicate';
-import { AGENCY_REDIALED_DISPOSITION_CODE, AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
+  AGENCY_REDIALED_DISPOSITION_CODE,
+  AGENCY_WRAPUP_REDIAL_LIMIT,
+} from '@magick-agency/contracts/agency';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { CONVERSATION_ATTEMPT_SQL, HUMAN_CONNECT_ATTEMPT_SQL, WRAPUP_MEASURED_RESOLUTIONS_SQL } from './sql-fragments.js';
+
+/**
+ * The system's disposition codes, which record an event and never the customer's outcome:
+ * `redialed` (the write-up moved to the redial) and `inbound_call` (a ringing dial cancelled
+ * because the customer rang in, docs/inbound.md §5.4). The override lookup skips them: neither
+ * granted the override a later dial spent.
+ */
+const SYSTEM_CODES_SQL = [AGENCY_REDIALED_DISPOSITION_CODE, AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE]
+  .map((code) => `'${code}'`).join(', ');
 
 /**
  * The bucket width, in minutes: `agency_insights_bucket()` (0012) bins `dialed_at` on it from
@@ -194,7 +207,7 @@ export const INSIGHTS_RECOMPUTE_SQL = `WITH k AS (${KEYS_SQL}),
                    WHERE p.contact_id = a.contact_id
                      AND p.attempt_number < a.attempt_number
                      AND p.disposition_code IS NOT NULL
-                     AND p.disposition_code <> '${AGENCY_REDIALED_DISPOSITION_CODE}'
+                     AND p.disposition_code NOT IN (${SYSTEM_CODES_SQL})
                    ORDER BY p.attempt_number DESC LIMIT 1)
                 END AS override_code,
                 (call.recording_url IS NOT NULL) AS recorded,

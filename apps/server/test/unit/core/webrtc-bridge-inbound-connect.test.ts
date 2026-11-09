@@ -199,10 +199,25 @@ describe('acceptInboundCall: a connectable call is parked', () => {
 
   it('a call that is not connectable keeps P1`s budget and refuses a bind', async () => {
     const { mgr } = bridge();
-    expect(await mgr.acceptInboundCall({ ...PARAMS, connectable: false, parkedSeconds: 999 })).toMatchObject({ maxDurationSeconds: MAX });
+    expect(await mgr.acceptInboundCall({ ...PARAMS, connectable: false, parkedSeconds: 0 })).toMatchObject({ maxDurationSeconds: MAX });
     connectStream(mgr);
     expect(mgr.getSession(LEG)!.browserWsOwned).toBe(true);
     expect(mgr.bindBorrowedBrowserLeg(INBOUND, fakeWs() as any)).toBe(false);
+  });
+
+  it('a call that is not connectable takes `parkedSeconds` as a floor on its budget (a voicemail fits a low ceiling), never less than the max duration', async () => {
+    vi.useFakeTimers();
+    const { mgr } = bridge();
+    expect(await mgr.acceptInboundCall({ ...PARAMS, connectable: false, parkedSeconds: MAX + 400 })).toMatchObject({ maxDurationSeconds: MAX + 400 });
+    connectStream(mgr);
+    // Not ended at the account's ceiling: the floor is the call's own timer too.
+    await vi.advanceTimersByTimeAsync(MAX * 1000 + 1000);
+    expect(mgr.getSession(LEG)).toBeDefined();
+    await vi.advanceTimersByTimeAsync(400 * 1000);
+    expect(mgr.getSession(LEG)).toBeUndefined();
+    expect(mockRepo.update).toHaveBeenCalledWith(LEG, expect.objectContaining({ outcome: 'max_duration_reached' }));
+    const { mgr: other } = bridge();
+    expect(await other.acceptInboundCall({ ...PARAMS, connectable: false, parkedSeconds: 30 })).toMatchObject({ maxDurationSeconds: MAX });
   });
 
   it('the parked time is never shorter than the media deadline', async () => {
