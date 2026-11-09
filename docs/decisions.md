@@ -32,7 +32,7 @@ as **default, pending Manas**.
 |---|---|---|---|
 | 1 | Invites still outstanding on the previous platform at launch | Re-issue them (only token hashes are stored, so they cannot be imported) | default, pending Manas |
 | 2 | Existing phone numbers | — (move them to agency's VoiceLink account if VoiceLink allows, or buy new ones; a new caller ID is visible to customers) | open |
-| 3 | Inbound calls to agency numbers in v1 | Play a message and hang up | default, pending Manas |
+| 3 | Inbound calls to agency numbers in v1 | Play a message and hang up. **Superseded for Plivo numbers linked to inbound** by IB1–IB8 (2026-11-09, [`inbound.md`](inbound.md)); unlinked numbers and VoiceLink keep this default | default, pending Manas |
 | 4 | Abandon clip | Uploaded audio file only, no TTS | default, pending Manas |
 | 5 | Platform API keys | None in v1 | default, pending Manas |
 | 6 | Super-admins | Created fresh in agency, not imported | default, pending Manas |
@@ -507,6 +507,21 @@ Migration `0023_reports.sql`; wire
 | RP9 | Rates are floored as each source floors them (agent 20, campaign 25) until the open "Rate floors" item is settled | **default, pending Manas** |
 | RP10–RP16 | Build calls: reports inside the agency area (B4); occupancy against the floor is the roster's; 100,000-row detail sheets; the attempt-fenced render callback and the tick's reconcile; one run per subscription period; the renderer as its own app; ad hoc emails only on request | build |
 
+Inbound calls, 2026-11-09 (designed, reviewed by an independent reviewer and revised the same day;
+**not built**). The design, the build plan and its status are [`inbound.md`](inbound.md); Manas
+accepted all eight recommendations the same day.
+
+| ID | Decision | Status |
+|---|---|---|
+| IB1 | Available agents are auto-connected with a distinct chime, as for outbound; a Take call prompt only for pickups from break or the soft phone (P3) | **Decided** |
+| IB2 | Sticky routing: `loose` by default, 30 s wait, 30-day lookback; signals owner, last call from the number rung, last agent spoken to; last dialled (unanswered) off. `strict` / `off` per route | **Decided** |
+| IB3 | When nobody answers, a callback follow-up by default; voicemail optional per route | **Decided** |
+| IB4 | An inbound call reopens a contact whose retries are exhausted, as an inbound callback; a terminal outcome is never reopened | **Decided** |
+| IB5 | Live inbound calls count in the account's live total (outbound pacing shrinks); never refused for the account limit below the route's own cap | **Decided** |
+| IB6 | Only super-admins link numbers to inbound (it writes the tenant's Plivo account) | **Decided** |
+| IB7 | A recording notice plays by default whenever the route records, before the bridge | **Decided** |
+| IB8 | Connecting agents (P2) runs single-process; cross-worker handover is P3, gated on the live Plivo check | **Decided** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
@@ -538,5 +553,6 @@ Migration `0023_reports.sql`; wire
 | CH6–CH11, CH12 b–d, CH13, CH14 | Customer history defaults | Built, pending ratification (§4, "Customer history"): the 30-minute search id, the retry-chain grouping, what each role is shown, the audit coverage, 30 searches a minute per user, the inferred upload file, export in the console only, the history bounded to a number's newest 2,000 roster rows | Manas (ratify) |
 | CH12 a, CH12 e | Customer history: what the schema cannot show | (a) Must DNC removals appear in a number's history? They would need the number kept on removal, today deliberately not recorded. (e) Should the roster ingest drop a bracketed trunk `(0)` as the soft phone and the search do? It changes what existing rosters dedupe on | Manas |
 | PL1–PL16 | Plivo on tenants' own accounts | Built, pending ratification (§4, "Plivo on tenants' own accounts"), and unproven on a real Plivo account until step 5: the 403 reading (PL1), the two automatic pauses, the caller-ID and sync rules, the recording host, the calls-per-second default | Manas (ratify) |
+| — | Inbound: live Plivo checks (P0) | Application create and number link, answer/hangup parameters and timeout, fallback answer URL, moving a live streamed call to new XML, DTMF over the stream ([`inbound.md`](inbound.md) §12). Needs a Plivo account, as PL step 5 does | Manas (account) |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |

@@ -59,6 +59,8 @@ and re-run: server 9123 unit / 2278 + 15 integration + 9 expected fail, db 428 /
 renderer 86 ([`reports.md`](reports.md); `status.md`, "Test counts"). They have not run on AWS or
 in CI.
 
+**Designed, not built.** Inbound calls on Plivo numbers (2026-11-09, IB1–IB8 decided by Manas): [`inbound.md`](inbound.md), whose §12 is the build plan.
+
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and
@@ -88,6 +90,7 @@ Details and next steps: [`status.md`](status.md).
 | [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |
 | [`customer-history.md`](customer-history.md) | Customer history: one phone number searched across the tenant's campaigns and the soft phone; decisions CH1–CH13, the number rule shared by console, server and app, the API (the number only in `POST` bodies, a short-lived search id), the summary and the timeline, visibility, audit and rate limit, the v2 key-column design |
 | [`reports.md`](reports.md) | Reports: agent performance reviews, campaign and account reports as PDF and Excel, ad hoc or on a schedule; decisions RP1–RP16, the contracts and datasets (every figure the screens' own), the pipeline (assembler, SQS or in-process renderer, the signed callback, the tick), who may run what, config, S3 keys |
+| [`inbound.md`](inbound.md) | Inbound calls (designed 2026-11-09, not built): answering customers who ring back on Plivo numbers linked to inbound, the sticky agent and its fallbacks, the queue and pacing priority, off hours, follow-ups (Missed inbound list, inbound callbacks), who configures what, decisions IB1–IB8, the phased build plan and its status |
 | [`insights.md`](insights.md) | The campaign's analytic tabs (Overview, Calls, Agents, Callbacks, Health): decisions IN1–IN13, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
