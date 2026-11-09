@@ -4,14 +4,22 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { PoolClient } from 'pg';
 import { closeTestPool, getTestPool } from '../setup/test-utils.js';
+import { insertPlanRoster } from '../fixtures.js';
 
 afterAll(closeTestPool);
 
-/** The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts). */
+/**
+ * The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts), over
+ * a roster and attempts of the test's own, ANALYZEd in the rolled-back transaction
+ * ({@link insertPlanRoster}). Without them the plan followed what earlier files left: in a full
+ * run the sweep was served from idx_agency_contacts_insights (rebuilt small by a down → up) with
+ * `state` as a condition on its second column, over this index bloated by dead rows.
+ */
 async function planOf(sql: string): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
     await client.query('BEGIN');
+    await insertPlanRoster(client);
     await client.query('SET LOCAL enable_seqscan = off');
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
     return rows.map((r) => r['QUERY PLAN']).join('\n');

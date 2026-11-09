@@ -33,8 +33,9 @@ async function indexDef(name: string): Promise<string | undefined> {
 
 /**
  * The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts), over
- * a roster of this test's own, ANALYZEd inside the rolled-back transaction (statistics are
- * transactional, so they leave with the rows).
+ * a roster of this test's own, ANALYZEd inside the rolled-back transaction (the column statistics
+ * leave with the rows; the table's reltuples and relpages, written in place, do not: see
+ * insertPlanRoster in ../fixtures.ts).
  *
  * Without its own rows the plan followed whatever statistics earlier files left on
  * agency_contacts: on a table last analyzed empty (reltuples 0, no column statistics) the planner

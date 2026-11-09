@@ -6,6 +6,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { PoolClient } from 'pg';
 import { closeTestPool, getTestPool } from '../setup/test-utils.js';
+import { insertPlanRoster } from '../fixtures.js';
 
 afterAll(closeTestPool);
 
@@ -20,12 +21,16 @@ async function indexDef(name: string): Promise<string | undefined> {
 /**
  * The plan for `sql` with sequential scans priced out, so the test's near-empty tables do not
  * make a scan cheaper than any index. What remains is whether the index is USABLE for the
- * predicate — the property a partial index can silently lack.
+ * predicate — the property a partial index can silently lack. With `roster`, over a campaign's
+ * roster and attempts of the test's own, ANALYZEd in the rolled-back transaction
+ * ({@link insertPlanRoster}: without it the contacts' plan followed the statistics and index
+ * sizes earlier files left).
  */
-async function planOf(sql: string, without: string[] = []): Promise<string> {
+async function planOf(sql: string, without: string[] = [], opts: { roster?: boolean } = {}): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
     await client.query('BEGIN');
+    if (opts.roster) await insertPlanRoster(client);
     await client.query('SET LOCAL enable_seqscan = off');
     // An equally usable index the test does not ask about, dropped inside the rolled-back
     // transaction: on a near-empty table the two tie, and the planner's pick follows whatever
@@ -85,6 +90,8 @@ describe('0003 — agency attempt and contact indexes', () => {
          JOIN agency_contacts ct ON ct.id = a.contact_id
         WHERE a.state = 'ended' AND a.outcome = 'connected' AND a.bridged_at IS NOT NULL
           AND a.disposition_code IS NULL AND ct.state = 'connected'`,
+      [],
+      { roster: true },
     )).toContain('idx_agency_contacts_connected');
   });
 
