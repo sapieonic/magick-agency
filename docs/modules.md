@@ -1813,17 +1813,34 @@ in history state, `utils/softphone/prefill.ts`, read by `SoftphonePage` and `use
 (`/app/inbound/new`, `/app/inbound/:routeId`). The form's rules are `utils/inbound/routeForm.ts`
 (defaults, the midnight mapping, overnight stretches, client checks keyed by body path, the PATCH of
 what changed, why a number cannot be chosen); copy and the Missed query in `utils/inbound/inboundCopy.ts`;
-the client is `api/inbound.ts` (writes resolve to a refusal value, reads throw). Navigation: Inbound
-calls in `Sidebar` and Inbound settings in `AgencySidebar` (`agency.inbound.write`), Missed calls in
-`AgencySidebar` (the workspace floor) and `AgentNav`.
+the client is `api/inbound.ts` (writes resolve to a refusal value, reads throw; every path in
+`INBOUND_PATHS`). Navigation: Inbound calls in `Sidebar` and Inbound settings in `AgencySidebar`
+(`agency.inbound.write`), Missed calls in `AgencySidebar` (the workspace floor) and `AgentNav`.
 
-Files: `Inbound.module.css`, `MissedCallsList.tsx`
+P2 (docs/inbound.md §6): `InboundCallView.tsx`, the agent's inbound call in place on the station
+(`AgentConsolePage`), its rail, columns and action bar in the station's frozen geometry, with
+`useInboundShortcuts.ts`; its state is `hooks/useInboundCall.ts` (the call from the frame and the
+routes' answers, the reconnect's reconciliation, notes autosave, the outcome, hang-up and DNC) and
+its pure rules `utils/inbound/inboundCall.ts` (phase, `newerInboundCall`, the rail, the copy).
+`CustomerWaitingPill.tsx` (the station's action bar), `InboundQueueTiles.tsx` (the supervisor's
+queue, `hooks/useInboundQueue.ts`, on the campaigns home and Missed calls), `VoicemailPlayer.tsx`
+(a Missed row's `voicemail_url`). The station's reducer holds `inboundCall` and `customerWaiting`;
+`utils/agencyCues.ts` has the `inbound_ring` cue (`CueDispatcher.onInboundCall`).
+
+Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `InboundCallView.tsx` (+ `.module.css`), `InboundQueueTiles.tsx` (+ `.module.css`), `MissedCallsList.tsx`, `VoicemailPlayer.tsx`, `useInboundShortcuts.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` | 10 |
+| `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` (with the queue tiles and the voicemail player) | 14 |
 | `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
-| `apps/console/src/__tests__/utils/inboundRouteForm.test.ts` | 9 |
+| `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (the actions offered once the server's list includes voicemail) | 1 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.inbound.test.tsx` (the panel on the offer, the frozen geometry across offered / connected / owing, hang-up, outcome, notes, DNC, the early hang-up notice, restore after `ready`, the waiting pill) | 12 |
+| `apps/console/src/__tests__/hooks/useInboundCall.test.ts` | 19 |
+| `apps/console/src/__tests__/components/InboundQueueTiles.test.tsx` | 6 |
+| `apps/console/src/__tests__/api/inboundCalls.test.ts` (the call routes, the queue and the voicemail URL) | 11 |
+| `apps/console/src/__tests__/utils/inboundCall.test.ts` | 16 |
+| `apps/console/src/__tests__/utils/agencyStationReducer.inbound.test.ts` | 6 |
+| `apps/console/src/__tests__/utils/inboundRouteForm.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/inboundCopy.test.ts` | 6 |
 
 ### `apps/console/src/contexts/`
@@ -1848,7 +1865,7 @@ The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a
 
 Call audio (`media=alaw8` by default, `pcm16` the fallback; `utils/agencyMedia.ts`): `useAgencyStation` names the format on every upgrade (`mediaFormat` option and result), reads binary as `ArrayBuffer`, sends A-law as binary and refuses a frame in the other format, and turns to `pcm16` for good on 1008 `invalid_media` or JSON `media` on an `alaw8` socket. `useAudioCapture` builds the one capture worklet in the socket's format and switches it in place (`setFormat`); `useAudioPlayback.playAlaw` decodes through `utils/alaw8/g711.js` into the same 16 kHz scheduler as `play`; `useAgencyAudio.sync` takes the station's `format`.
 
-Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
+Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useInboundCall.ts`, `useInboundQueue.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1893,7 +1910,7 @@ Files: `AppHomeRedirect.tsx`, `accounts/AccountsPage.module.css`, `accounts/Acco
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.carrier.test.tsx` | ~7 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 46 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 48 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgencyHomeRedirect.test.tsx` | 7 |
@@ -1974,7 +1991,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyActivityCopy.test.ts` | 60 |
 | `apps/console/src/__tests__/utils/agencyOutcomeDispositions.test.ts` | 27 |
 | `apps/console/src/__tests__/utils/agencyAgentCallerIdCopy.test.ts` | 7 |
-| `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 68 |
+| `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 69 |
 | `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 73 |
 | `apps/console/src/__tests__/utils/agencyAssignmentCopy.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyAssignmentOps.test.ts` | 21 |
@@ -1987,7 +2004,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyAttemptFilters.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyBestHours.test.ts` | 45 |
-| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 86 |
+| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 89 |
 | `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 36 |
 | `apps/console/src/__tests__/utils/agencyCampaignContribution.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/agencyCampaignControls.test.ts` | 10 |
@@ -2003,7 +2020,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyCompareTray.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyContext.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/agencyCuePrefs.test.ts` | 6 |
-| `apps/console/src/__tests__/utils/agencyCues.test.ts` | 20 |
+| `apps/console/src/__tests__/utils/agencyCues.test.ts` (with the inbound chime) | 28 |
 | `apps/console/src/__tests__/utils/agencyDiagnostics.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyDispositionForm.test.ts` | 26 |
 | `apps/console/src/__tests__/utils/agencyDispositionSubmit.test.ts` | 34 |
@@ -2071,7 +2088,7 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/utils/softphoneCallState.test.ts` | 17 |
+| `apps/console/src/__tests__/utils/softphoneCallState.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/softphoneFields.test.ts` | 18 |
 | `apps/console/src/__tests__/utils/softphoneOverrides.timezone.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/softphonePhoneInput.test.ts` | 31 |
