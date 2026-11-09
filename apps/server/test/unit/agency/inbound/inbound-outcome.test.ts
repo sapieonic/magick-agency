@@ -2,7 +2,8 @@
 // the outcome from how its messages ended, and the Missed row's reason from the outcome.
 import { describe, expect, it } from 'vitest';
 import { AGENCY_INBOUND_CALL_OUTCOMES, AGENCY_INBOUND_MISSED_REASONS } from '@magick-agency/contracts/agency';
-import { missedReasonFor, outcomeAfterPlayback } from '../../../../src/agency/inbound/inbound-call-router.js';
+import { missedReasonFor, outcomeAfterPlayback, takesVoicemail } from '../../../../src/agency/inbound/inbound-call-router.js';
+import { waitResultOf } from '../../../../src/agency/inbound/inbound-connector.js';
 
 describe('outcomeAfterPlayback', () => {
   it('every message heard: the plan\'s outcome', () => {
@@ -37,5 +38,32 @@ describe('missedReasonFor', () => {
     }
     expect(missedReasonFor('abandoned_in_queue')).toBe('abandoned_in_queue');
     expect(missedReasonFor('failed')).toBe('failed');
+  });
+});
+
+describe('voicemail (§7, IB3)', () => {
+  it('a voicemail\'s Missed reason is the action that took it: closed after hours, overflow from the queue', () => {
+    expect(missedReasonFor({ outcome: 'voicemail', voicemail: { key: 'k', seconds: 4, reason: 'closed' } })).toBe('closed');
+    expect(missedReasonFor({ outcome: 'voicemail', voicemail: { key: 'k', seconds: 4, reason: 'overflow' } })).toBe('overflow');
+    // An end without one named reads as an overflow; any other end keeps its outcome.
+    expect(missedReasonFor('voicemail')).toBe('overflow');
+    expect(missedReasonFor({ outcome: 'closed' })).toBe('closed');
+    expect(missedReasonFor({ outcome: 'answered' })).toBeNull();
+  });
+
+  it('is taken only where the route\'s action for the case says so, and only with storage to keep it', () => {
+    const route = { after_hours_action: 'voicemail' as const, overflow_action: 'callback' as const };
+    expect(takesVoicemail(route, 'closed', true)).toBe(true);
+    expect(takesVoicemail(route, 'overflow', true)).toBe(false);
+    expect(takesVoicemail({ ...route, overflow_action: 'voicemail' }, 'overflow', true)).toBe(true);
+    expect(takesVoicemail(route, 'closed', false)).toBe(false);
+    expect(takesVoicemail(null, 'closed', true)).toBe(false);
+  });
+
+  it('the wait metric reads a voicemail as an overflow (nobody took the caller)', () => {
+    expect(waitResultOf('voicemail')).toBe('overflow');
+    expect(waitResultOf('overflow')).toBe('overflow');
+    expect(waitResultOf('abandoned_in_queue')).toBe('abandoned');
+    expect(waitResultOf('failed')).toBe('failed');
   });
 });

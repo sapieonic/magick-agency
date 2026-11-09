@@ -63,11 +63,10 @@ describe('refusals', () => {
   });
 });
 
-describe('voicemail in this build', () => {
-  it('is refused on either action, by path', () => {
+describe('voicemail in this build (P2)', () => {
+  it('is accepted on either action: the build records one', () => {
     expect(unavailableActionIssues({ after_hours_action: 'callback', overflow_action: 'callback' })).toEqual([]);
-    expect(unavailableActionIssues({ after_hours_action: 'voicemail', overflow_action: 'voicemail' }).map((i) => i.path))
-      .toEqual(['after_hours_action', 'overflow_action']);
+    expect(unavailableActionIssues({ after_hours_action: 'voicemail', overflow_action: 'voicemail' })).toEqual([]);
   });
 });
 
@@ -91,8 +90,11 @@ describe('a Missed row on the wire', () => {
       caller_dnc: true, matched_contact_id: null, matched_campaign_id: null, matched_campaign_name: null,
       callback_due_at: '2026-11-09T09:00:00.000Z', has_voicemail: true, assignee_user_id: 'u-1', assignee_name: 'Asha',
       status: 'handled', handled_by_user_id: 'u-2', handled_by_name: null, handled_at: '2026-11-08T10:00:00.000Z',
+      voicemail_url: '/inbound/missed/c-1/voicemail',
     });
     expect(inboundMissedToWire(row).assignee_name).toBeNull();
+    // No voicemail, no `voicemail_url` (the console offers no player).
+    expect(inboundMissedToWire({ ...row, voicemail_key: null })).not.toHaveProperty('voicemail_url');
   });
 });
 

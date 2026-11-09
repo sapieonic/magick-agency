@@ -32,6 +32,26 @@ const mocks = vi.hoisted(() => {
   return { verifyIdToken: vi.fn() };
 });
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: mocks.verifyIdToken }));
+/** The app's bucket, in memory: the voicemails the playback route streams (ranges as S3 answers them). */
+const bucket = vi.hoisted(() => ({ files: new Map<string, Buffer>() }));
+vi.mock('../../../src/storage/s3.js', async (orig) => {
+  const actual = await orig<typeof import('../../../src/storage/s3.js')>();
+  const { Readable } = await import('node:stream');
+  return {
+    ...actual,
+    isStorageConfigured: () => true,
+    getFileStream: async (key: string, opts: { range?: string } = {}) => {
+      const file = bucket.files.get(key);
+      if (!file) throw Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } });
+      const m = opts.range ? /^bytes=(\d+)-(\d*)$/.exec(opts.range) : null;
+      if (!m) return { body: Readable.from([file]), contentLength: file.length };
+      const start = Number(m[1]);
+      const end = m[2] ? Math.min(Number(m[2]), file.length - 1) : file.length - 1;
+      const part = file.subarray(start, end + 1);
+      return { body: Readable.from([part]), contentLength: part.length, contentRange: `bytes ${start}-${end}/${file.length}` };
+    },
+  };
+});
 
 import { getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import {
@@ -125,7 +145,7 @@ async function createRoute(actor: Actor, body: Record<string, unknown>, opts: { 
 /** An ended call that reached nobody: an open Missed row. */
 async function missed(o: {
   tenant?: string; account?: string; assignee?: string | null; reason?: 'closed' | 'overflow' | 'abandoned_in_queue';
-  at: Date; from?: string | null; dnc?: boolean;
+  at: Date; from?: string | null; dnc?: boolean; voicemail?: { key: (id: string) => string; seconds: number };
 }): Promise<string> {
   const tenant = o.tenant ?? floor.tenant;
   const row = (await agencyInboundCallRepository.insertArrival({
@@ -138,8 +158,8 @@ async function missed(o: {
   await q('UPDATE agency_inbound_calls SET arrived_at = $2 WHERE id = $1', [row.id, o.at]);
   const reason = o.reason ?? 'closed';
   await agencyInboundCallRepository.end(row.id, {
-    outcome: reason, talkSeconds: null, followUp: { reason, assigneeUserId: o.assignee ?? null },
-    callbackDueAt: null, voicemailKey: null,
+    outcome: o.voicemail ? 'voicemail' : reason, talkSeconds: null, followUp: { reason, assigneeUserId: o.assignee ?? null },
+    callbackDueAt: null, voicemailKey: o.voicemail?.key(row.id) ?? null, voicemailSeconds: o.voicemail?.seconds ?? null,
   });
   return row.id;
 }
@@ -258,14 +278,26 @@ describe('validation', () => {
     expect(paths).toEqual(expect.arrayContaining(['name', 'timezone', 'weekly_hours[0].day', '']));
   });
 
-  it('refuses voicemail in this build, on create and on a PATCH', async () => {
+  it('takes voicemail (P2), on create and on a PATCH, and says what a route without its recordings will do (advisory, never a refusal)', async () => {
     const res = await call('POST', '/routes', sup(), { name: 'VM', timezone: 'UTC', overflow_action: 'voicemail' });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().details).toEqual([{ path: 'overflow_action', message: expect.stringContaining('voicemail') }]);
-    const route = await createRoute(sup(), { name: 'VM later' });
-    const patch = await call('PATCH', `/routes/${route.id}`, sup(), { after_hours_action: 'voicemail' });
-    expect(patch.json().details.map((d: { path: string }) => d.path)).toEqual(['after_hours_action']);
-    await call('DELETE', `/routes/${route.id}`, sup());
+    expect(res.statusCode, res.body).toBe(201);
+    const created = res.json().route;
+    expect(created.overflow_action).toBe('voicemail');
+    // No recordings: a waiting caller hears only the beep before their voicemail (agents are
+    // connected in one process), and withheld callers too.
+    expect(created.warnings.map((w: { code: string; path: string }) => `${w.code}@${w.path}`))
+      .toEqual(['voicemail_beep_only@clips.callback', 'voicemail_beep_only@clips.closed']);
+    expect(created.warnings[0].message).toMatch(/Choose a recording for “We’ll call you back”/);
+    const patch = await call('PATCH', `/routes/${created.id}`, sup(), { after_hours_action: 'voicemail', overflow_action: 'callback', clips: { callback: clipA } });
+    expect(patch.statusCode, patch.body).toBe(200);
+    expect(patch.json().route.warnings.map((w: { code: string; path: string }) => `${w.code}@${w.path}`))
+      .toEqual(['overflow_message_silent@clips.closed', 'voicemail_needs_prompt@clips.closed']);
+    // Every read carries them.
+    const read = await call('GET', `/routes/${created.id}`, sup());
+    expect(read.json().route.warnings).toHaveLength(2);
+    const listed = (await call('GET', '/routes', sup())).json().routes.find((r: { id: string }) => r.id === created.id);
+    expect(listed.warnings).toHaveLength(2);
+    await call('DELETE', `/routes/${created.id}`, sup());
   });
 
   it('takes only the account’s own clips, profile and pool campaigns', async () => {
@@ -497,5 +529,76 @@ describe('the Missed inbound list and Mark handled', () => {
     expect((await call('POST', `/missed/${ids['none1']}/handled`, sup())).json().call.handled_by_name).toBe('account_admin 0.0');
     expect((await call('POST', `/missed/${ids['inB']}/handled`, sup())).statusCode).toBe(404);
     expect((await call('POST', `/missed/${ids['otherTenant']}/handled`, sup())).statusCode).toBe(404);
+  });
+});
+
+describe('a Missed row`s voicemail (P2, §7): GET /proxy/agency/inbound/missed/:id/voicemail', () => {
+  const vm = (tenant: string, account: string) => ({ key: (id: string) => `inbound-voicemail/${tenant}/${account}/${id}.wav`, seconds: 3 });
+  const wav = (n: number) => Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(n - 4, 7)]);
+  const ids: Record<string, string> = {};
+
+  beforeAll(async () => {
+    const at = new Date(Date.now() - 86_400_000);
+    ids['mine'] = await missed({ assignee: agent(0).id, at, voicemail: vm(floor.tenant, floor.account) });
+    ids['theirs'] = await missed({ assignee: agent(1).id, at, voicemail: vm(floor.tenant, floor.account) });
+    ids['none'] = await missed({ assignee: agent(0).id, at });
+    ids['inB'] = await missed({ account: accountB, assignee: null, at, voicemail: vm(floor.tenant, accountB) });
+    ids['gone'] = await missed({ assignee: null, at, voicemail: vm(floor.tenant, floor.account) });
+    for (const k of ['mine', 'theirs', 'inB']) {
+      const account = k === 'inB' ? accountB : floor.account;
+      bucket.files.set(`inbound-voicemail/${floor.tenant}/${account}/${ids[k]}.wav`, wav(1000));
+    }
+  });
+
+  it('names it on the Missed row (`voicemail_url`, relative to the proxy) only when there is one', async () => {
+    const rows = (await call('GET', '/missed', agent(0))).json().rows as Array<Record<string, unknown>>;
+    expect(rows.find((r) => r['id'] === ids['mine'])).toMatchObject({ has_voicemail: true, voicemail_url: `/inbound/missed/${ids['mine']}/voicemail`, outcome: 'voicemail' });
+    expect(rows.find((r) => r['id'] === ids['none'])).not.toHaveProperty('voicemail_url');
+  });
+
+  it('streams it, audio/wav, whole or by range, to the agent it is assigned to and to a supervisor', async () => {
+    for (const actor of [agent(0), sup()]) {
+      const res = await call('GET', `/missed/${ids['mine']}/voicemail`, actor);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.headers['content-type']).toBe('audio/wav');
+      expect(res.headers['content-length']).toBe('1000');
+      expect(res.headers['accept-ranges']).toBe('bytes');
+      expect(res.rawPayload.length).toBe(1000);
+      expect(res.rawPayload.subarray(0, 4).toString()).toBe('RIFF');
+    }
+    const part = await loaded.app.inject({
+      method: 'GET', url: `/proxy/agency/inbound/missed/${ids['mine']}/voicemail`, headers: headersFor(sup(), floor, { range: 'bytes=10-19' }),
+    });
+    expect(part.statusCode).toBe(206);
+    expect(part.headers['content-range']).toBe('bytes 10-19/1000');
+    expect(part.rawPayload.length).toBe(10);
+  });
+
+  it('the Missed list`s rules: another agent`s row, a row with none, another account`s or tenant`s, an object aged out, a malformed id: inbound_missed_call_not_found', async () => {
+    const notFound = async (path: string, actor: Actor, opts: { account?: string; f?: TenantFloor } = {}) => {
+      const res = await call('GET', path, actor, undefined, opts);
+      expect(res.statusCode, `${path} ${res.body}`).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+    };
+    await notFound(`/missed/${ids['theirs']}/voicemail`, agent(0));
+    await notFound(`/missed/${ids['none']}/voicemail`, sup());
+    await notFound(`/missed/${ids['inB']}/voicemail`, sup());
+    await notFound(`/missed/${ids['mine']}/voicemail`, other.supervisors[0]!, { f: other });
+    await notFound(`/missed/${ids['gone']}/voicemail`, sup());
+    await notFound('/missed/not-a-uuid/voicemail', sup());
+    // Account B's own supervisor plays it.
+    expect((await call('GET', `/missed/${ids['inB']}/voicemail`, supB, undefined, { account: accountB })).statusCode).toBe(200);
+  });
+
+  it('the permission and the flag guard it like the list', async () => {
+    await setFlag(floor.tenant, false, floor.account);
+    try {
+      const res = await call('GET', `/missed/${ids['mine']}/voicemail`, agent(0));
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toMatchObject({ code: 'inbound_disabled' });
+    } finally {
+      await q(`DELETE FROM feature_flag_overrides WHERE flag_key = 'agency_inbound_enabled' AND account_id = $1`, [floor.account]);
+      await getFeatureFlagService().invalidate({ tenantId: floor.tenant });
+    }
   });
 });

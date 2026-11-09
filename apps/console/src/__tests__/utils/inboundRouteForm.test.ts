@@ -161,8 +161,8 @@ describe('offeredUnconnectedActions (P2): what the editor offers for a call nobo
     expect(offeredUnconnectedActions(['callback'], ['voicemail', 'callback'])).toEqual(['callback', 'voicemail']);
   });
 
-  it('this build offers callback alone, so the editor shows no choice yet', () => {
-    expect(offeredUnconnectedActions(AGENCY_INBOUND_AVAILABLE_ACTIONS)).toEqual(['callback']);
+  it('this build offers callback and voicemail (P2 records one), so the editor offers the choice', () => {
+    expect(offeredUnconnectedActions(AGENCY_INBOUND_AVAILABLE_ACTIONS)).toEqual(['callback', 'voicemail']);
     expect(UNCONNECTED_ACTION_LABELS.voicemail.hint).toMatch(/up to 2 minutes/);
   });
 });

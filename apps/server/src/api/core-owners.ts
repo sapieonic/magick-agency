@@ -80,6 +80,7 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'GET /inbound/clips': 'none',
   'GET /inbound/missed': 'none',
   'POST /inbound/missed/:id/handled': 'none',
+  'GET /inbound/missed/:id/voicemail': 'none',
   // The answered inbound call (`agency/inbound-calls.ts`): inbound callers are connected only in
   // one process (IB8), so the connector and the agents it took are this process's.
   'GET /inbound/calls/:id': 'none',

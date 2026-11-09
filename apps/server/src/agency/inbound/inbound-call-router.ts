@@ -38,9 +38,11 @@ import type { ClipSequenceResult, WebRtcBridgeManager } from '../../core/webrtc-
 import type { DncRegistry } from '../dnc-registry.js';
 import { identifyInboundCaller } from './identify-caller.js';
 import { resolveInboundClips, routeClipId } from './inbound-clips.js';
-import { InboundConnector, type InboundCallExits, type InboundConnectorDeps } from './inbound-connector.js';
+import { InboundConnector, type InboundCallEnd, type InboundCallExits, type InboundConnectorDeps } from './inbound-connector.js';
 import { INBOUND_LAPSE_SWEEP_INTERVAL_MS } from './inbound-disposition.js';
+import { discardVoicemail, takeVoicemail, voicemailAvailable, type InboundVoicemailDeps } from './inbound-voicemail.js';
 import type { AgencyRuntime } from '../runtime.js';
+import type { AgencyDialer } from '../agency-dialer.js';
 
 const log = createChildLogger({ component: 'agency-inbound-router' });
 
@@ -121,6 +123,20 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  * AgencyInboundCallRouter.settleCall}, the one way every unconnected exit is written. A call
  * whose stream turns out to have no global or carrier slot hears "busy" as in P1.
  *
+ * ── P2: the in-flight clash (§5.4, Q7, Q8) ───────────────────────────────────────
+ * A `queue` caller whose number a paced dial is ringing right now: the dial is cancelled (on a
+ * carrier that can stop it ringing) and its agent is handed this call ({@link
+ * AgencyInboundCallRouter.supersedeRingingDial}).
+ *
+ * ── P2: voicemail (§7, IB3, Q14) ─────────────────────────────────────────────────
+ * A route whose action for the case is `voicemail` (`after_hours_action` out of hours,
+ * `overflow_action` for an open route's caller nobody takes: the P1 plan, or the queue's exit)
+ * takes one: the case's message as the prompt, the beep, up to 120 s recorded from our stream,
+ * stored as a WAV (`inbound-voicemail.ts`), the call `voicemail` with the case's Missed reason.
+ * A caller who leaves before speaking ends as the case's own outcome. Without storage
+ * configured, or (before the stream is ours) without a recording for the prompt, the action's
+ * message plays as for `callback`. Busy callers (`overflow_no_capacity`) leave none.
+ *
  * ── The follow-up (§7, IB3, IB4) ─────────────────────────────────────────────────
  * Every call that reached no one is a Missed row (`follow_up_status = 'open'`, its reason,
  * assignee the sticky agent if they can see the account, else the account). And, for a matched
@@ -141,7 +157,7 @@ type PlannedOutcome = Extract<AgencyInboundCallOutcome, 'closed' | 'overflow' | 
 
 /** How long a connectable call may wait before an agent is bound beyond the queue's maximum wait: the preamble. */
 export const INBOUND_PREAMBLE_ALLOWANCE_SECONDS = 60;
-/** After the queue: the overflow message, or a voicemail's prompt and recording (the follow-up package). */
+/** After the queue: the overflow message, or a voicemail's prompt and recording. */
 export const INBOUND_EXIT_ALLOWANCE_SECONDS = AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS + 30;
 
 /**
@@ -169,18 +185,39 @@ const GIVEN_UP_MAX = 10_000;
 
 const carrierKey = (provider: string, carrierCallId: string): string => `${provider}:${carrierCallId}`;
 
-/** The Missed row's reason for an outcome that reached nobody; null for `answered` / `rejected`. */
-export function missedReasonFor(outcome: AgencyInboundCallOutcome): AgencyInboundMissedReason | null {
+/**
+ * The Missed row's reason for how a call that reached nobody ended; null for `answered` /
+ * `rejected`. A voicemail's reason is the action that took it (`closed` after hours, `overflow`
+ * from the queue), carried on its end; one with none named reads as an overflow.
+ */
+export function missedReasonFor(end: AgencyInboundCallOutcome | InboundCallEnd): AgencyInboundMissedReason | null {
+  const { outcome, voicemail } = typeof end === 'string' ? { outcome: end, voicemail: null } : end;
   switch (outcome) {
     case 'answered':
     case 'rejected':
       return null;
     case 'voicemail':
-      // P2 records voicemail; until then the reason is the action that led to it.
-      return 'overflow';
+      return voicemail?.reason ?? 'overflow';
     default:
       return outcome;
   }
+}
+
+/** The action a route takes for a caller nobody answers in that case: after hours, or from the queue. */
+export type InboundUnconnectedCase = Extract<AgencyInboundMissedReason, 'closed' | 'overflow'>;
+
+/**
+ * Whether a caller who reaches nobody leaves a voicemail (§7, IB3): the route's action for the
+ * case is `voicemail` (`after_hours_action` for a call out of hours, `overflow_action` for one
+ * that waited or would have, `max_waiting` included), and this process can store one.
+ */
+export function takesVoicemail(
+  route: Pick<AgencyInboundRouteRecord, 'after_hours_action' | 'overflow_action'> | null,
+  which: InboundUnconnectedCase,
+  storageConfigured: boolean,
+): boolean {
+  if (!route || !storageConfigured) return false;
+  return (which === 'closed' ? route.after_hours_action : route.overflow_action) === 'voicemail';
 }
 
 /** How a call that was playing its messages ends, from how the sequence ended (see the header). */
@@ -205,9 +242,12 @@ interface LiveInboundCall {
 }
 
 export interface AgencyInboundCallRouterDeps {
-  bridge: Pick<WebRtcBridgeManager, 'acceptInboundCall' | 'playClipSequenceThenHangUp' | 'stopInboundHold'>;
+  bridge: Pick<WebRtcBridgeManager,
+    'acceptInboundCall' | 'playClipSequenceThenHangUp' | 'stopInboundHold' | 'recordInboundAudio' | 'forceEndWithOutcome'>;
   dnc: Pick<DncRegistry, 'check' | 'checkEntry'>;
   now?: () => Date;
+  /** Where voicemails are stored (§7): the app's bucket by default; tests replace it. */
+  voicemailStorage?: InboundVoicemailDeps['storage'];
   /**
    * P2: connecting agents (the `queue` plan). Absent: P1 (nobody is connected). `connector` is
    * set once the connector exists (`startInboundCalls` builds the two together).
@@ -218,6 +258,8 @@ export interface AgencyInboundCallRouterDeps {
     enabled(tenantId: string, accountId: string): Promise<boolean>;
     /** `MEDIA_WORKERS` (IB8): P2 connects only in one process. */
     mediaWorkers: number;
+    /** The dialer, for the in-flight clash (§5.4): a ringing dial to the caller cancelled and its agent handed the call. */
+    dialer?: Pick<AgencyDialer, 'findRingingAttemptTo' | 'supersedeForInbound'> | null;
   };
 }
 
@@ -313,6 +355,9 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
 
     let planned: PlannedOutcome = arrival.credentialStatus !== 'active' || !route
       || inboundScheduleState(route, at) !== 'open' ? 'closed' : 'overflow';
+    // Out of the route's hours (not a credential that is not active, nor no route): the route's
+    // after-hours action applies (a voicemail, §7).
+    const afterHours = planned === 'closed' && arrival.credentialStatus === 'active' && route !== null;
     // P2: an open route's caller may be put through to an agent (the header). Decided before the
     // insert, so the leg asks for the recording the route wants (IB7's notice depends on it).
     const connectable = planned === 'overflow' && route !== null && await this.mayConnect(arrival.tenantId, accountId);
@@ -359,7 +404,14 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
 
     // No recording for the plan's message: the carrier speaks it, and the call ends here with its
     // follow-up (no stream, no session, no slot). A caller who may queue is put through instead.
+    // A caller nobody will take leaves a voicemail when the route's action for their case says so
+    // (§7): after hours, or an open route's caller nobody can be put through to. Its prompt is the
+    // plan's message, so a route with no recording for it answers with the carrier's spoken
+    // message as P1 (no voicemail: a beep out of silence invites nothing).
     const queue = connectable && admitted;
+    const unconnectedCase: InboundUnconnectedCase | null = planned === 'overflow' ? 'overflow' : planned === 'closed' && afterHours ? 'closed' : null;
+    const voicemail = !queue && unconnectedCase !== null
+      && takesVoicemail(route, unconnectedCase, voicemailAvailable({ storage: this.deps.voicemailStorage }));
     let messageSlot = PLAN_MESSAGE[planned].slot;
     if (!queue && !routeClipId(route, messageSlot)) {
       await this.endLeg(legId, { status: 'completed', outcome: `inbound_${planned}` });
@@ -404,6 +456,10 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     if (!this.live.has(call.id)) {
       if (queue && accepted.capacity !== 'no_capacity' && route) {
         this.hold(call, route, stickyCandidates, recorded && route.recording_notice);
+        // Held first, so a ringing dial to this caller can hand its agent this very call.
+        this.supersedeRingingDial(call);
+      } else if (voicemail && accepted.capacity !== 'no_capacity' && unconnectedCase && route) {
+        this.voicemail(call, unconnectedCase, ['greeting', messageSlot], route);
       } else {
         // The global or carrier scope is full for a caller who would have queued and the route has
         // no busy recording: the call-back message, as P1's overflow plan (the stream is promised).
@@ -466,30 +522,37 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
   // ── The connector's exits (P2: `InboundCallExits`) ─────────────────────────
 
   /**
-   * End an unconnected call the connector held as `outcome`, with its Missed row and callback:
-   * `settle`, the one writer of every unconnected end. An answer given up on (its caller heard
-   * the fallback) ends `failed` with no follow-up, as everywhere else.
+   * End an unconnected call the connector held as `end` (an outcome, or a voicemail with its
+   * recording), with its Missed row and callback: `settle`, the one writer of every unconnected
+   * end. An answer given up on (its caller heard the fallback) ends `failed` with no follow-up,
+   * as everywhere else.
    */
-  async settleCall(call: AgencyInboundCallRecord, outcome: AgencyInboundCallOutcome): Promise<void> {
+  async settleCall(call: AgencyInboundCallRecord, end: AgencyInboundCallOutcome | InboundCallEnd): Promise<void> {
     const givenUp = this.givenUp.has(carrierKey(call.provider, call.provider_call_id));
-    await this.settle(call, givenUp ? 'failed' : outcome);
+    await this.settle(call, givenUp ? 'failed' : end);
   }
 
   /**
-   * A queued caller reached nobody: the hold stops and the route's overflow message plays, then
-   * the call is put down (`playClipSequenceThenHangUp`). The message is the "we'll call you back"
-   * recording, or for a caller who withheld their number the closed one (no promise nobody can
-   * keep). With no recording for it the caller is put down with no message: a stream cannot be
-   * moved to the carrier's spoken words (recorded built-in clips are open, docs/inbound.md §12).
+   * A queued caller reached nobody: the hold stops and the route's overflow action runs. The
+   * message is the "we'll call you back" recording, or for a caller who withheld their number the
+   * closed one (no promise nobody can keep).
+   *  - `callback` (IB3's default): the message plays and the call is put down
+   *    (`playClipSequenceThenHangUp`). With no recording for it the caller is put down with no
+   *    message: a stream cannot be moved to the carrier's spoken words (the route API and editor
+   *    warn of it, `inboundRouteWarnings`; the carrier transfer is P0's, docs/inbound.md §12).
+   *  - `voicemail` (§7): the message is the prompt, then the beep, then up to 120 s recorded
+   *    ({@link voicemailEnd}). With no recording for the message, the beep alone (the caller has
+   *    been holding for us, so it invites their message).
    * The outcome is `overflow` once decided, even if the caller hangs up during the message (the
-   * reason stays, as P1's closed message keeps its reason); `failed` only when the stream was
-   * lost with no hangup from the caller.
-   *
-   * The voicemail follow-up dispatches on `route.overflow_action` here.
+   * reason stays, as P1's closed message keeps its reason), `voicemail` when one was left;
+   * `failed` only when the stream was lost with no hangup from the caller.
    */
-  async overflow(call: AgencyInboundCallRecord, route: AgencyInboundRouteRecord): Promise<AgencyInboundCallOutcome> {
+  async overflow(call: AgencyInboundCallRecord, route: AgencyInboundRouteRecord): Promise<InboundCallEnd> {
     this.deps.bridge.stopInboundHold(call.id);
     const slot: AgencyInboundClipSlot = call.from_e164 === null ? 'closed' : 'callback';
+    if (takesVoicemail(route, 'overflow', voicemailAvailable({ storage: this.deps.voicemailStorage }))) {
+      return this.voicemailEnd(call, 'overflow', route, [slot]);
+    }
     if (!routeClipId(route, slot)) log.warn({ inboundCallId: call.id, slot }, 'No recording for the overflow message — the caller is put down without one');
     let result: ClipSequenceResult = 'not_found';
     try {
@@ -498,8 +561,8 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     } catch (err) {
       log.error({ err, inboundCallId: call.id }, 'Inbound overflow message failed');
     }
-    if (result === 'completed' || result === 'aborted') return 'overflow';
-    return this.live.get(call.id)?.callerHungUp ? 'overflow' : 'failed';
+    if (result === 'completed' || result === 'aborted') return { outcome: 'overflow' };
+    return { outcome: this.live.get(call.id)?.callerHungUp ? 'overflow' : 'failed' };
   }
 
   /** The route's clips for `slots`, as hashes (`inbound-clips.ts`: never throws). */
@@ -556,6 +619,108 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     void run.finally(() => this.running.delete(run));
   }
 
+  /**
+   * The in-flight clash (docs/inbound.md §5.4, Q7, Q8): a paced dial still ringing this caller's
+   * number on the call's account is cancelled, and its agent, who has the customer's panel, is
+   * handed this call. Only for a call the connector holds (the `queue` plan: someone can take it).
+   * Synchronous from the dialer's read to the cancel, so the dial cannot be answered in between:
+   *  1. the ringing dial (`findRingingAttemptTo`); on a carrier that cannot cancel ringing
+   *     (VoiceLink) nothing is cancelled and the caller queues normally (Q7);
+   *  2. the call promised to its session (`expectHandover`: no other agent is offered it);
+   *  3. the dial superseded (`supersedeForInbound`: marked, `forceEndWithOutcome(…, 'canceled')`).
+   * The dialer's `ended` arm settles it (`canceled`, the code `inbound_call`, the contact back
+   * uncharged, released `inbound_call`) and releases the agent, whose release hook takes them for
+   * this call; then `clash_attempt_id` is stamped. A dial not cancelled after all (answered first,
+   * or gone) drops the hand-over and the caller queues normally.
+   *
+   * The soft phone's manual dial to the same number is left alone (decided): a soft-phone session
+   * can never take an inbound reservation (it is on the `soft_phone` break, §4.3; pickups from the
+   * soft phone are P3), so cancelling the agent's own dial would leave both with nothing; the
+   * caller queues for the team and the manual dial meets a busy line as it would.
+   */
+  private supersedeRingingDial(call: AgencyInboundCallRecord): void {
+    const connect = this.deps.connect;
+    const dialer = connect?.dialer;
+    const connector = connect?.connector;
+    if (!dialer || !connector || !call.from_e164 || !call.account_id) return;
+    const ringing = dialer.findRingingAttemptTo(call.tenant_id, call.account_id, call.from_e164);
+    if (!ringing) return;
+    if (!ringing.cancelsRinging) {
+      log.info({ inboundCallId: call.id, attemptId: ringing.attemptId }, 'Customer rang in while a dial to them rings on a carrier that cannot cancel it — queued normally (Q7)');
+      return;
+    }
+    const sessionId = ringing.sessionId;
+    if (!connector.expectHandover(sessionId, call.id)) return;
+    const superseded = dialer.supersedeForInbound(ringing.attemptId, {
+      inboundCallId: call.id,
+      settled: (cancelled) => {
+        connector.dropHandover(sessionId);
+        if (!cancelled) return;
+        void agencyInboundCallRepository.setClashAttempt(call.id, ringing.attemptId)
+          .catch((err: unknown) => log.warn({ err, inboundCallId: call.id }, 'Could not record the dial this inbound call superseded'));
+      },
+    });
+    if (!superseded) connector.dropHandover(sessionId);
+  }
+
+  /**
+   * After hours or from an open route nobody can be put through to (the P1 plan), the route's
+   * action is a voicemail (§7): the greeting and the plan's message as the prompt, the beep, the
+   * recording ({@link voicemailEnd}), then the call settled. In the background, held in `live`
+   * as `play` is.
+   */
+  private voicemail(
+    call: AgencyInboundCallRecord,
+    which: InboundUnconnectedCase,
+    slots: readonly AgencyInboundClipSlot[],
+    route: AgencyInboundRouteRecord,
+  ): void {
+    const live: LiveInboundCall = { planned: which, callerHungUp: false };
+    this.live.set(call.id, live);
+    const run = (async () => {
+      const key = carrierKey(call.provider, call.provider_call_id);
+      try {
+        const end = await this.voicemailEnd(call, which, route, slots);
+        await this.settle(call, this.givenUp.has(key) ? 'failed' : end);
+      } catch (err) {
+        log.error({ err, inboundCallId: call.id }, 'Could not settle an inbound voicemail call — the sweep will');
+      } finally {
+        this.live.delete(call.id);
+        if (live.callerHungUp) this.givenUp.delete(key);
+      }
+    })();
+    this.running.add(run);
+    void run.finally(() => this.running.delete(run));
+  }
+
+  /**
+   * Take a voicemail after `slots` (`inbound-voicemail.ts`) and answer how the call ends: a
+   * voicemail (outcome `voicemail`, its key and length, the Missed reason of the case that took
+   * it); a caller who left before speaking: the case's own outcome (`closed` / `overflow`), no
+   * voicemail; no media to record from: `failed`, unless the caller hung up first.
+   */
+  private async voicemailEnd(
+    call: AgencyInboundCallRecord,
+    which: InboundUnconnectedCase,
+    route: AgencyInboundRouteRecord,
+    slots: readonly AgencyInboundClipSlot[],
+  ): Promise<InboundCallEnd> {
+    const prompt = await resolveInboundClips(route, slots, { tenantId: route.tenant_id, accountId: route.account_id });
+    const taken = await takeVoicemail(
+      { bridge: this.deps.bridge, ...(this.deps.voicemailStorage ? { storage: this.deps.voicemailStorage } : {}) },
+      { id: call.id, tenant_id: call.tenant_id, account_id: call.account_id ?? route.account_id },
+      prompt,
+    );
+    switch (taken.kind) {
+      case 'kept':
+        return { outcome: 'voicemail', voicemail: { key: taken.key, seconds: taken.seconds, reason: which } };
+      case 'none':
+        return { outcome: which };
+      case 'lost':
+        return { outcome: this.live.get(call.id)?.callerHungUp ? which : 'failed' };
+    }
+  }
+
   /** Play `slots` (the greeting and the plan's message), then settle the call from how the sequence ended. In the background. */
   private play(
     call: AgencyInboundCallRecord,
@@ -597,9 +762,10 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
    * callback in the same transaction: a call another writer already ended is rolled back whole, so
    * it books nothing twice.
    */
-  private async settle(call: AgencyInboundCallRecord, outcome: AgencyInboundCallOutcome): Promise<void> {
+  private async settle(call: AgencyInboundCallRecord, end: AgencyInboundCallOutcome | InboundCallEnd): Promise<void> {
+    const { outcome, voicemail = null } = typeof end === 'string' ? { outcome: end } : end;
     // A caller the fallback answered was told to try again: no Missed row and no callback (§3.3).
-    const reason = this.givenUp.has(carrierKey(call.provider, call.provider_call_id)) ? null : missedReasonFor(outcome);
+    const reason = this.givenUp.has(carrierKey(call.provider, call.provider_call_id)) ? null : missedReasonFor(end);
     const followUp = reason ? { reason, assigneeUserId: call.sticky_user_id } : null;
     const owed = followUp ? await this.callbackOwed(call) : null;
     const ended = await withTransaction(async (client, tx) => {
@@ -607,7 +773,8 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         ? await agencyContactRepository.bookInboundCallback({ tenantId: call.tenant_id, contactId: owed.contactId, dueAt: owed.dueAt }, { client })
         : null;
       const res = await agencyInboundCallRepository.end(call.id, {
-        outcome, talkSeconds: null, followUp, callbackDueAt: booked?.dueAt ?? null, voicemailKey: null,
+        outcome, talkSeconds: null, followUp, callbackDueAt: booked?.dueAt ?? null,
+        voicemailKey: voicemail?.key ?? null, voicemailSeconds: voicemail?.seconds ?? null,
       }, { client });
       if (!res.ended) {
         await tx.rollback();
@@ -619,6 +786,10 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     if (ended) {
       trackInboundCallEnded(outcome);
       log.info({ inboundCallId: call.id, outcome }, 'Inbound call ended');
+    } else if (voicemail) {
+      // Another writer ended the call first: no row names this voicemail, so nothing would ever
+      // play or purge it.
+      await discardVoicemail({ storage: this.deps.voicemailStorage }, voicemail.key);
     }
   }
 
@@ -758,7 +929,12 @@ export async function startInboundCalls(deps: Omit<AgencyInboundCallRouterDeps, 
 }> {
   const { connect: connectOpts, ...routerDeps } = deps;
   const connectDeps = connectOpts
-    ? { connector: null as InboundConnector | null, enabled: connectOpts.enabled, mediaWorkers: connectOpts.mediaWorkers }
+    ? {
+      connector: null as InboundConnector | null,
+      enabled: connectOpts.enabled,
+      mediaWorkers: connectOpts.mediaWorkers,
+      dialer: connectOpts.runtime.dialer,
+    }
     : undefined;
   const router = new AgencyInboundCallRouter({ ...routerDeps, ...(connectDeps ? { connect: connectDeps } : {}) });
   let connector: InboundConnector | null = null;

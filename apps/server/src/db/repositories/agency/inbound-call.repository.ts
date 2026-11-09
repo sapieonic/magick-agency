@@ -535,6 +535,20 @@ export class AgencyInboundCallRepository {
   }
 
   /**
+   * Record the ringing outbound attempt this call superseded (the in-flight clash, §5.4), once
+   * the attempt was cancelled for it: first write wins. False when the call is missing or already
+   * names one.
+   */
+  async setClashAttempt(id: string, attemptId: string): Promise<boolean> {
+    const { rowCount } = await getPool().query(
+      `UPDATE agency_inbound_calls SET clash_attempt_id = $2::uuid
+        WHERE id = $1::uuid AND clash_attempt_id IS NULL`,
+      [id, attemptId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
    * Whether a call on `credentialId` that arrived before `before` has not ended (a Re-point's
    * check that the token it would drop is no longer needed). Over `idx_agency_inbound_calls_open`
    * (0024: `arrived_at`, live rows only).

@@ -14,6 +14,11 @@
  *  - `GET    /inbound/clips`                  `agency.inbound.write` → {@link AgencyInboundClipsResponse} (the account's audio files)
  *  - `GET    /inbound/missed`                 `agency.inbound.read`, {@link AgencyInboundMissedListQuery} → {@link AgencyInboundMissedPage}
  *  - `POST   /inbound/missed/:id/handled`     `agency.inbound.read`, no body → {@link AgencyInboundMarkHandledResponse}
+ *  - `GET    /inbound/missed/:id/voicemail`   `agency.inbound.read` → the row's voicemail, `audio/wav`, streamed (P2;
+ *    a `Range` request is answered 206; the Missed list's assignee rule; `inbound_missed_call_not_found` when the
+ *    row has none, or it has aged out)
+ *
+ * Every route read and write carries the route's `warnings` (P2, {@link inboundRouteWarnings}).
  *
  * `agency.inbound.read` floors at `agent`: an agent sees and handles only the rows assigned to
  * them (the route forces `assignee=me`); with `agency.supervise` the caller sees the account's.
@@ -113,12 +118,88 @@ export interface AgencyInboundCallLiveRefusal extends AgencyInboundErrorResponse
 }
 
 /**
- * The unconnected actions a route may be set to in this build. `voicemail` is in the vocabulary
- * (and the column) but needs P2's recording from our stream: until then a create or PATCH that
- * leaves either action on `voicemail` is refused `inbound_route_invalid` at `after_hours_action`
- * / `overflow_action`, and the console offers only these.
+ * The unconnected actions a route may be set to in this build: the callback follow-up (IB3's
+ * default) and, since P2 records from our own stream, a voicemail (§7). A create or PATCH that
+ * leaves either action on one not listed is refused `inbound_route_invalid` at
+ * `after_hours_action` / `overflow_action`, and the console offers only these.
  */
-export const AGENCY_INBOUND_AVAILABLE_ACTIONS: readonly AgencyInboundUnconnectedAction[] = Object.freeze(['callback']);
+export const AGENCY_INBOUND_AVAILABLE_ACTIONS: readonly AgencyInboundUnconnectedAction[] = Object.freeze(['callback', 'voicemail']);
+
+/**
+ * What a route's warning is about (`inboundRouteWarnings`). Advisory: a route is saved whatever
+ * they say.
+ *  - `overflow_message_silent`: a caller who waited and reached nobody is put down without a word
+ *    (a call on our stream cannot fall back to the carrier's spoken message);
+ *  - `voicemail_beep_only`: such a caller hears only the beep before their voicemail;
+ *  - `voicemail_needs_prompt`: a caller who has not been put on hold hears the standard spoken
+ *    message and cannot leave a voicemail (it needs a recording to prompt them).
+ */
+export type AgencyInboundRouteWarningCode = 'overflow_message_silent' | 'voicemail_beep_only' | 'voicemail_needs_prompt';
+
+/** A route's warning: the clip slot it is about (the editor's field path), and what to do, in words. */
+export interface AgencyInboundRouteWarning {
+  code: AgencyInboundRouteWarningCode;
+  path: 'clips.callback' | 'clips.closed';
+  message: string;
+}
+
+/**
+ * What a route will do that its admin probably does not want, from its messages and actions
+ * (docs/inbound.md §6, §7): a missing recording for a message some caller would hear in silence,
+ * or a voicemail that cannot be taken. `connectsAgents`: callers may be put through to agents
+ * (the server: one process, IB8; the console: assumed, as it can only edit a route with
+ * `agency_inbound_enabled` on): a caller who waited is already on our stream, so their overflow
+ * message has no spoken stand-in. Out of hours, and when nobody can be connected, the carrier
+ * speaks a missing message itself, so only a voicemail needs a recording there.
+ *
+ * The overflow message is the We’ll call you back recording, or the Closed one for a caller who
+ * withheld their number (no promise of a callback nobody can make).
+ */
+export function inboundRouteWarnings(
+  config: Pick<AgencyInboundRouteConfig, 'clips' | 'overflow_action' | 'after_hours_action'>,
+  opts: { connectsAgents: boolean },
+): AgencyInboundRouteWarning[] {
+  const out: AgencyInboundRouteWarning[] = [];
+  const { callback, closed } = config.clips;
+  if (opts.connectsAgents && config.overflow_action === 'callback') {
+    if (!callback) {
+      out.push({
+        code: 'overflow_message_silent', path: 'clips.callback',
+        message: 'Callers who wait and reach nobody are put down without hearing anything. Choose a recording for “We’ll call you back” so they know we’ll call them back.',
+      });
+    }
+    if (!closed) {
+      out.push({
+        code: 'overflow_message_silent', path: 'clips.closed',
+        message: 'Callers who withhold their number, wait and reach nobody are put down without hearing anything. Choose a recording for “Closed”.',
+      });
+    }
+  }
+  if (config.overflow_action === 'voicemail' && !callback) {
+    out.push(opts.connectsAgents
+      ? {
+        code: 'voicemail_beep_only', path: 'clips.callback',
+        message: 'Callers who wait and reach nobody hear only a beep before their voicemail. Choose a recording for “We’ll call you back” to invite their message.',
+      }
+      : {
+        code: 'voicemail_needs_prompt', path: 'clips.callback',
+        message: 'Callers nobody can answer hear the standard spoken message and cannot leave a voicemail. Choose a recording for “We’ll call you back”.',
+      });
+  }
+  if (opts.connectsAgents && config.overflow_action === 'voicemail' && !closed) {
+    out.push({
+      code: 'voicemail_beep_only', path: 'clips.closed',
+      message: 'Callers who withhold their number, wait and reach nobody hear only a beep before their voicemail. Choose a recording for “Closed”.',
+    });
+  }
+  if (config.after_hours_action === 'voicemail' && !closed) {
+    out.push({
+      code: 'voicemail_needs_prompt', path: 'clips.closed',
+      message: 'Out of hours, callers hear the standard spoken message and cannot leave a voicemail. Choose a recording for “Closed”.',
+    });
+  }
+  return out;
+}
 
 // ─── The inbound call routes (P2, §6): the internal bodies without the server-filled actor ──
 
@@ -178,6 +259,12 @@ export interface AgencyInboundRoute extends AgencyInboundRouteConfig {
   numbers: AgencyInboundRouteNumber[];
   created_at: string;
   updated_at: string;
+  /**
+   * P2: what the route will do that its admin probably does not want
+   * (`inboundRouteWarnings`; advisory, never a refusal). Served on every route read and write;
+   * absent from a build that does not compute them.
+   */
+  warnings?: AgencyInboundRouteWarning[];
 }
 
 export interface AgencyInboundRoutesResponse {

@@ -50,6 +50,7 @@ import {
   AGENCY_INBOUND_CLIP_SLOTS,
   AGENCY_INBOUND_ROUTE_LIMITS as L,
   AGENCY_INBOUND_STICKY_MODES,
+  inboundRouteWarnings,
   type AgencyInboundClipOption,
   type AgencyInboundNumberOption,
   type AgencyInboundRoute,
@@ -213,6 +214,13 @@ export default function InboundRouteEditorPage() {
     draft.afterHoursAction,
     draft.overflowAction,
   ]);
+  // Advisory, as the server's `warnings`: a message some caller would hear in silence, or a
+  // voicemail that cannot be taken. Agents are assumed connectable (the editor is reached only with
+  // inbound calls on for the account). Never blocks the save.
+  const messageWarnings = inboundRouteWarnings(
+    { clips: draft.clips, overflow_action: draft.overflowAction, after_hours_action: draft.afterHoursAction },
+    { connectsAgents: true },
+  );
 
   return (
     <div className={styles.page}>
@@ -560,8 +568,9 @@ export default function InboundRouteEditorPage() {
             <h2 className={styles.cardTitle} id="ib-unanswered">When nobody answers</h2>
             <p className={styles.cardLead}>
               Out of hours the caller hears your Closed message, when every line is busy your All lines busy message, and
-              otherwise your We’ll call you back message. The call then ends and appears under Missed calls, assigned to their
-              agent or the account. A customer on a campaign also gets a callback booked for when you next open.
+              otherwise your We’ll call you back message. The call then ends, or, if you choose a voicemail below, the caller
+              can leave a message of up to two minutes after a beep. Either way it appears under Missed calls, assigned to
+              their agent or the account. A customer on a campaign also gets a callback booked for when you next open.
             </p>
             {actionChoices.length > 1 ? (
               <>
@@ -587,6 +596,15 @@ export default function InboundRouteEditorPage() {
             )}
             {errors.render('after_hours_action')}
             {errors.render('overflow_action')}
+            {messageWarnings.length > 0 ? (
+              <ul className={styles.warnings} data-testid="inbound-route-warnings" aria-label="Before you save">
+                {messageWarnings.map((w) => (
+                  <li key={`${w.code}:${w.path}`} className={styles.warning} data-testid={`inbound-route-warning-${w.code}`}>
+                    {w.message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
 
           <section className="card" aria-labelledby="ib-recording" data-testid="inbound-route-recording">

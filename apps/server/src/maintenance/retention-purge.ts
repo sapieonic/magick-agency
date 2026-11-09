@@ -2,12 +2,17 @@ import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../config/index.js';
 import { withRetry } from '../utils/retry.js';
+import { deleteFile } from '../storage/s3.js';
 
 /*
  * Retention purge for call data:
  *  - the rows purged are `dialer_analysis_jobs` and `agency_calls`, on the
  *    `AGENCY_RETENTION_DAYS` window; when it is unset the row purge does NOT run
  *    (the default, pending Manas);
+ *  - on the same window, inbound voicemails (docs/inbound.md §7): the call's recording, kept in
+ *    the app's bucket (a carrier-recorded call keeps its recording at the carrier, which the
+ *    `agency_calls` row points at), is deleted and the spine row forgets it
+ *    (`voicemail_key`, `voicemail_seconds`); the inbound spine row itself is kept;
  *  - audit partitions are NOT purged here: `audit/audit-partition-maintenance.ts`
  *    owns creating and dropping them, so two jobs never drop the same partitions;
  *  - the transcript step nulls `conversation_log` AND `transcript_meta` (the
@@ -79,6 +84,11 @@ export interface RetentionPurgeReport {
    * until the row cutoff.
    */
   agency_transcripts_nulled: number;
+  /**
+   * Inbound voicemails past the row cutoff: their objects deleted from the bucket and their
+   * calls' `voicemail_key` cleared (that would be, in dry-run mode). 0 with the window unset.
+   */
+  inbound_voicemails_deleted: number;
   error?: string;
 }
 
@@ -126,6 +136,7 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
     duration_ms: 0,
     tables: {},
     agency_transcripts_nulled: 0,
+    inbound_voicemails_deleted: 0,
   };
 
   log.info(
@@ -154,6 +165,7 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
           log.info({ table: target.table, reportKey, deleted: total }, 'Table purged');
         }
       }
+      report.inbound_voicemails_deleted = await purgeInboundVoicemails(dryRun, cutoff);
     }
 
     // Transcript window: null conversation_log + transcript_meta on agency_calls
@@ -223,6 +235,50 @@ async function purgeAgencyTranscripts(dryRun: boolean, retentionDays: number): P
   return total;
 }
 
+/** Voicemails deleted per batch: each is one object delete, so far fewer than a row batch. */
+const VOICEMAIL_BATCH_SIZE = 200;
+
+/**
+ * Inbound voicemails on the call-data window (docs/inbound.md §7): for every call that arrived
+ * before `cutoff` and still names a voicemail, the object is deleted from the bucket, THEN the
+ * row forgets it (only while it still names that key). A delete that fails stops the run (the
+ * error is reported) with the row still naming its object, so the next run retries it: an object
+ * is never orphaned by a cleared row. In dry-run mode it counts.
+ */
+async function purgeInboundVoicemails(dryRun: boolean, cutoff: Date): Promise<number> {
+  const pool = getPool();
+  if (dryRun) {
+    const result = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM agency_inbound_calls
+        WHERE voicemail_key IS NOT NULL AND arrived_at < $1`,
+      [cutoff],
+    );
+    return result.rows[0]?.n ?? 0;
+  }
+  let total = 0;
+  for (;;) {
+    const { rows } = await pool.query<{ id: string; voicemail_key: string }>(
+      `SELECT id, voicemail_key FROM agency_inbound_calls
+        WHERE voicemail_key IS NOT NULL AND arrived_at < $1
+        ORDER BY arrived_at
+        LIMIT $2`,
+      [cutoff, VOICEMAIL_BATCH_SIZE],
+    );
+    for (const row of rows) {
+      await deleteFile(row.voicemail_key);
+      const cleared = await pool.query(
+        `UPDATE agency_inbound_calls SET voicemail_key = NULL, voicemail_seconds = NULL
+          WHERE id = $1 AND voicemail_key = $2`,
+        [row.id, row.voicemail_key],
+      );
+      total += cleared.rowCount ?? 0;
+    }
+    if (rows.length < VOICEMAIL_BATCH_SIZE) break;
+  }
+  if (total > 0) log.info({ voicemailsDeleted: total }, 'Inbound voicemails deleted (retention window)');
+  return total;
+}
+
 /** Posts the run summary to the configured Slack incoming webhook. Best-effort. */
 async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: string): Promise<void> {
   const webhookUrl = config.retention.slackWebhookUrl;
@@ -247,6 +303,7 @@ async function postSlackSummary(report: RetentionPurgeReport, requestedBy?: stri
     `Rows ${report.dry_run ? 'matched' : 'deleted'} (${totalRows.toLocaleString()} total):`,
     tableLines,
     `agency transcripts nulled: ${report.agency_transcripts_nulled.toLocaleString()}`,
+    `inbound voicemails ${report.dry_run ? 'matched' : 'deleted'}: ${report.inbound_voicemails_deleted.toLocaleString()}`,
     `Duration: ${(report.duration_ms / 1000).toFixed(1)}s`,
   ]
     .filter((line): line is string => line !== null)

@@ -76,14 +76,19 @@ class FakeBridge {
   readonly listeners = new Set<(ev: Lifecycle) => void>();
   readonly live = new Map<string, { bound: boolean; hold?: (r: 'released' | 'aborted') => void }>();
   binds: string[] = [];
+  /** While set, the preamble (greeting, notice) is still playing: `onPreambleDone` waits for it. */
+  preambleGate: Promise<void> | null = null;
+  /** While set, the overflow message is still playing (`playClipSequenceThenHangUp` waits for it). */
+  clipGate: Promise<void> | null = null;
   onLifecycle(l: (ev: Lifecycle) => void) { this.listeners.add(l); return () => { this.listeners.delete(l); }; }
   take(id: string) { this.live.set(id, { bound: false }); }
   playInboundHold(id: string, opts: { onPreambleDone?: () => void }) {
     const c = this.live.get(id);
     if (!c) return Promise.resolve('not_found' as const);
+    const preamble = this.preambleGate ?? Promise.resolve();
     return new Promise<'released' | 'aborted'>((resolve) => {
       c.hold = resolve;
-      setImmediate(() => opts.onPreambleDone?.());
+      void preamble.then(() => setImmediate(() => { if (this.live.has(id)) opts.onPreambleDone?.(); }));
     });
   }
   stopInboundHold(id: string) { this.live.get(id)?.hold?.('released'); }
@@ -98,7 +103,11 @@ class FakeBridge {
   }
   reattachBorrowedBrowserLeg() { return true; }
   async forceEndWithOutcome(id: string, outcome: string) { return this.end(id, outcome); }
-  async playClipSequenceThenHangUp(id: string) { this.end(id, 'inbound_overflow'); return 'completed' as const; }
+  async playClipSequenceThenHangUp(id: string) {
+    if (this.clipGate) await this.clipGate;
+    this.end(id, 'inbound_overflow');
+    return 'completed' as const;
+  }
   async acceptInboundCall() { throw new Error('not used'); }
   end(id: string, outcome = 'pstn_stream_closed', talkTimeSeconds = 0): boolean {
     const c = this.live.get(id);
@@ -129,13 +138,15 @@ const router = () => new AgencyInboundCallRouter({
 });
 
 /** A connector over the shared Redis and Postgres, returning agents as `releaseAgent` would (its hook first). */
-function connector(opts: { stationsOf?: FakeStations; releaseAgent?: (id: string) => Promise<unknown>; connectDelayMs?: number } = {}): Connector {
+function connector(opts: {
+  stationsOf?: FakeStations; releaseAgent?: (id: string) => Promise<unknown>; connectDelayMs?: number; agentsOf?: typeof agents;
+} = {}): Connector {
   const st = opts.stationsOf ?? stations;
   const exits = router();
   const c: Connector = new InboundConnector({
     bridge: bridge as never,
     stations: st as never,
-    agents,
+    agents: opts.agentsOf ?? agents,
     releaseAgent: opts.releaseAgent ?? (async (id) => {
       if (await c.takeOnRelease(id)) return;
       await agents.set(id, 'available', { leaseMs: AGENT_LEASE_MS.available });
@@ -158,7 +169,7 @@ async function agent(state: 'available' | 'wrapup' | 'on_call' | 'reserved' | 'b
 }
 
 /** An admitted call the router hands to `c` (its media leg faked in the bridge). */
-async function caller(c: Connector, over: Partial<Parameters<typeof calls.insertArrival>[0]> = {}): Promise<{ call: CallRecord; done: Promise<void> }> {
+async function caller(c: Connector, over: Partial<Parameters<typeof calls.insertArrival>[0]> = {}, routeOf = route): Promise<{ call: CallRecord; done: Promise<void> }> {
   const { call } = await calls.insertArrival({
     tenantId: T, accountId: A, routeId: route.id, phoneNumberId: null, provider: 'plivo', telephonyCredentialId: credentialId,
     providerCallId: `CA-${randomUUID()}`, fromE164: `+4477009${String(Math.floor(Math.random() * 90_000) + 10_000)}`, toE164: '+14155550100',
@@ -167,7 +178,7 @@ async function caller(c: Connector, over: Partial<Parameters<typeof calls.insert
   });
   await calls.transition(call!.id, 'greeting');
   bridge.take(call!.id);
-  const done = c.take({ call: (await calls.findByIdAnyTenant(call!.id))!, route, stickyCandidates: [], recordingNotice: false });
+  const done = c.take({ call: (await calls.findByIdAnyTenant(call!.id))!, route: routeOf, stickyCandidates: [], recordingNotice: false });
   return { call: call!, done };
 }
 
@@ -460,5 +471,157 @@ describe('the inbound connector`s races (real Redis and Postgres)', () => {
     }
     expect((await agents.get(s1))?.inboundCallId ?? null).toBeNull();
     expect(bridge.listeners.size).toBe(0); // no call held: the stopped connector unsubscribed
+  });
+});
+
+/** A gate a test opens when it wants: `{ wait, open }`. */
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const wait = new Promise<void>((r) => { open = r; });
+  return { wait, open };
+}
+
+const stateFrames = (sessionId: string) => (stations.get(sessionId)?.ws.sent ?? [])
+  .filter((f) => f['event'] === 'agent_state').map((f) => f['state']);
+
+describe('the in-flight clash`s hand-over (§5.4): the superseded dial`s agent gets the call, whatever its phase', () => {
+  it('released during the caller`s preamble: held for the call (reserved, the field set, never `available`), offered it the moment it queues; nobody else is', async () => {
+    const c = connector();
+    const ringingAgent = await agent('reserved'); // their dial to this customer was ringing
+    const other = await agent('available');
+    const preamble = gate();
+    bridge.preambleGate = preamble.wait;
+    const { call } = await caller(c);
+    expect(c.expectHandover(ringingAgent, call.id)).toBe(true);
+    // The cancelled dial's end releases the agent: the hook takes them for the call still greeting.
+    expect(await c.takeOnRelease(ringingAgent)).toBe(true);
+    expect(await agents.get(ringingAgent)).toMatchObject({ state: 'reserved', inboundCallId: call.id });
+    expect(c.findCallForSession(ringingAgent)).toEqual({ callId: call.id, phase: 'offered' });
+    expect(stateFrames(ringingAgent)).toEqual(['reserved']);
+    expect((await row(call.id)).state).toBe('greeting'); // no agent bound during the greeting (Q5)
+    expect(bridge.binds).toEqual([]);
+    // A free agent appears meanwhile: not offered this call.
+    c.onAgentAvailable(other);
+    await sleep(100);
+    await drain();
+    expect(inboundFrames(other)).toEqual([]);
+
+    preamble.open();
+    await until('connected to the agent of the superseded dial', async () => (await row(call.id)).state === 'connected');
+    expect((await row(call.id)).session_id).toBe(ringingAgent);
+    expect(inboundFrames(ringingAgent).map((f) => f['state'])).toEqual(['offered', 'connected']);
+    expect(await agents.get(other)).toMatchObject({ state: 'available', inboundCallId: null });
+    expect(inboundFrames(other)).toEqual([]);
+  });
+
+  it('released after the caller queued: no other agent is offered them in between, then the dial`s agent is', async () => {
+    const c = connector();
+    const ringingAgent = await agent('reserved');
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    expect(c.expectHandover(ringingAgent, call.id)).toBe(true);
+    const other = await agent('available');
+    c.onAgentAvailable(other);
+    await sleep(150);
+    await drain();
+    expect((await row(call.id)).state).toBe('queued');
+    expect(inboundFrames(other)).toEqual([]);
+    expect(await c.takeOnRelease(ringingAgent)).toBe(true);
+    await until('connected', async () => (await row(call.id)).state === 'connected');
+    expect((await row(call.id)).session_id).toBe(ringingAgent);
+  });
+
+  it('the caller hangs up during the preamble with the agent held: the agent is let go (field cleared, returned)', async () => {
+    const c = connector();
+    const ringingAgent = await agent('reserved');
+    bridge.preambleGate = gate().wait; // never opens
+    const { call } = await caller(c);
+    c.expectHandover(ringingAgent, call.id);
+    expect(await c.takeOnRelease(ringingAgent)).toBe(true);
+    bridge.end(call.id);
+    await until('ended', async () => (await row(call.id)).state === 'ended');
+    await drain();
+    expect(await row(call.id)).toMatchObject({ outcome: 'abandoned_in_queue', follow_up_status: 'open', session_id: null });
+    expect(await agents.get(ringingAgent)).toMatchObject({ state: 'available', inboundCallId: null });
+    expect(c.findCallForSession(ringingAgent)).toBeNull();
+  });
+
+  it('the station drops while held through the preamble: let go; the caller queues for the team', async () => {
+    const c = connector();
+    const ringingAgent = await agent('reserved');
+    const preamble = gate();
+    bridge.preambleGate = preamble.wait;
+    const { call } = await caller(c);
+    c.expectHandover(ringingAgent, call.id);
+    expect(await c.takeOnRelease(ringingAgent)).toBe(true);
+    stations.get(ringingAgent)!.ws.readyState = 3;
+    c.onStationClosed(ringingAgent);
+    await drain();
+    expect((await agents.get(ringingAgent))?.inboundCallId ?? null).toBeNull();
+    const other = await agent('available');
+    preamble.open();
+    await until('connected to the team', async () => (await row(call.id)).state === 'connected');
+    expect((await row(call.id)).session_id).toBe(other);
+  });
+
+  it('a hand-over the release never takes (dropped: the dial answered first, a queued break) leaves the caller to the team', async () => {
+    const c = connector();
+    const ringingAgent = await agent('reserved');
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    c.expectHandover(ringingAgent, call.id);
+    const other = await agent('available');
+    c.onAgentAvailable(other);
+    await sleep(100);
+    expect((await row(call.id)).state).toBe('queued');
+    c.dropHandover(ringingAgent);
+    await until('connected to the team', async () => (await row(call.id)).state === 'connected');
+    expect((await row(call.id)).session_id).toBe(other);
+    // A later release of the dial's agent takes nothing.
+    expect(await c.takeOnRelease(ringingAgent)).toBe(false);
+  });
+
+  it('one hand-over per call and per session; none for a call not waiting here', async () => {
+    const c = connector();
+    const a1 = await agent('reserved');
+    const a2 = await agent('reserved');
+    bridge.preambleGate = gate().wait;
+    const { call } = await caller(c);
+    expect(c.expectHandover(a1, call.id)).toBe(true);
+    expect(c.expectHandover(a2, call.id)).toBe(false);
+    expect(c.expectHandover(a1, randomUUID())).toBe(false);
+  });
+});
+
+describe('a caller past their maximum wait is marked leaving at once (M4): no lock waits behind their message', () => {
+  it('a search that reserved an agent while the caller`s maximum wait passed gives the agent back instead of queueing an offer behind the overflow message; releases of the account are never blocked', async () => {
+    const short = { ...route, queue_max_wait_seconds: 1 };
+    const reserveGate = gate();
+    const slow = Object.create(agents) as typeof agents;
+    slow.reserveForInbound = async (...args) => { await reserveGate.wait; return agents.reserveForInbound(...args); };
+    const c = connector({ agentsOf: slow });
+    const clip = gate();
+    bridge.clipGate = clip.wait; // the overflow message plays until the test says
+    const { call } = await caller(c, {}, short);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    const s1 = await agent('available');
+    c.onAgentAvailable(s1); // the search holds the account's lock, waiting on the CAS
+    await sleep(1300); // the maximum wait passes meanwhile: the overflow message starts (and holds)
+    reserveGate.open();
+    // The release of another agent of the account is not stuck behind the message.
+    const s2 = await agent('wrapup');
+    const started = Date.now();
+    const released = await Promise.race([c.takeOnRelease(s2).then(() => 'released'), sleep(1500).then(() => 'blocked')]);
+    expect(released).toBe('released');
+    expect(Date.now() - started).toBeLessThan(1000);
+    await until('the reserved agent given back', async () => {
+      const live = await agents.get(s1);
+      return live?.state === 'available' && live.inboundCallId === null;
+    });
+    expect((await row(call.id)).offer_count).toBe(0);
+    expect(inboundFrames(s1)).toEqual([]);
+    clip.open();
+    await until('overflowed', async () => (await row(call.id)).state === 'ended');
+    expect((await row(call.id)).outcome).toBe('overflow');
   });
 });

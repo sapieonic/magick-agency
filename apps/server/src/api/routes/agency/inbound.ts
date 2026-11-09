@@ -13,9 +13,8 @@
  *  1. The body's shape and bounds (`agency/inbound/route-config.ts`; a PATCH is merged onto the
  *     stored route and judged whole, read `FOR UPDATE` in the write's transaction, so two PATCHes
  *     cannot each pass the cross-field rules and together break them).
- *  2. This build's actions: `voicemail` needs P2 (recording from our stream), so a route left
- *     on it is refused at `after_hours_action` / `overflow_action`
- *     (`AGENCY_INBOUND_AVAILABLE_ACTIONS`).
+ *  2. This build's actions (`AGENCY_INBOUND_AVAILABLE_ACTIONS`: the callback and, since P2, the
+ *     voicemail): a route left on another is refused at `after_hours_action` / `overflow_action`.
  *  3. References the table cannot check: each clip is one of the ACCOUNT's audio files (the
  *     clips' FK names `audio_files` with no tenant: without this an id from another tenant
  *     would play their recording to our caller, the campaign abandon clip's rule), the analysis
@@ -36,7 +35,9 @@ import {
   type AgencyInboundClipsResponse,
   type AgencyInboundMissedPage,
   type AgencyInboundNumbersResponse,
+  type AgencyInboundRoute,
   type AgencyInboundRouteConfig,
+  inboundRouteWarnings,
   type AgencyInboundRouteResponse,
   type AgencyInboundRoutesResponse,
 } from '@magick-agency/contracts/api/agency/inbound';
@@ -45,6 +46,7 @@ import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { audioFileRepository } from '@magick-agency/db/repositories/audio-file.repository';
 import { callAnalysisProfileRepository } from '@magick-agency/db/repositories/call-analysis-profile.repository';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
+import { config } from '../../../config/index.js';
 import {
   agencyCampaignRepository,
   agencyInboundCallRepository,
@@ -66,6 +68,7 @@ import {
   inboundRouteConfigOf,
   sendInboundRefusal,
   type InboundCallHandledAudit,
+  type InboundVoicemailLocation,
   type InboundCoreAnswer,
   type InboundRefusal,
   type InboundRouteCreatedAudit,
@@ -107,17 +110,28 @@ function routeIdOr404(request: FastifyRequest<{ Params: { id: string } }>, reply
   return null;
 }
 
+/**
+ * A route as every route read and write answers it, with its warnings (`inboundRouteWarnings`):
+ * what a caller would hear in silence, or a voicemail that cannot be taken. Advisory only. Agents
+ * are connected (so a waiting caller's overflow message has no spoken stand-in) in one process
+ * (IB8); with media workers on, P2 keeps P1's answer and the carrier speaks a missing message.
+ */
+function routeWithWarnings(route: Parameters<typeof inboundRouteToWire>[0]): AgencyInboundRoute {
+  const wire = inboundRouteToWire(route);
+  return { ...wire, warnings: inboundRouteWarnings(wire, { connectsAgents: config.processes.mediaWorkers === 0 }) };
+}
+
 // ─── Validation past the shape ──────────────────────────────────────────────
 
 const ACTION_FIELDS = ['after_hours_action', 'overflow_action'] as const;
 
-/** Step 2 of the module note: `voicemail` is refused until P2 can record one. */
+/** Step 2 of the module note: an action this build cannot carry out is refused (`AGENCY_INBOUND_AVAILABLE_ACTIONS`). */
 export function unavailableActionIssues(config: Pick<AgencyInboundRouteConfig, 'after_hours_action' | 'overflow_action'>): InboundRouteIssue[] {
   return ACTION_FIELDS
     .filter((field) => !AGENCY_INBOUND_AVAILABLE_ACTIONS.includes(config[field]))
     .map((field) => ({
       path: field,
-      message: `${field} cannot be ${config[field]} yet: a call that reaches nobody gets a callback follow-up.`,
+      message: `${field} cannot be ${config[field]} in this build: a call that reaches nobody gets a callback follow-up.`,
     }));
 }
 
@@ -174,7 +188,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
   // ── GET /inbound/routes — the account's live routes, oldest first ─────────
   sub.get('/inbound/routes', async (request, reply) => {
     const routes = await agencyInboundRouteRepository.listForAccount(getTenantId(request), getAccountId(request));
-    const body: AgencyInboundRoutesResponse = { routes: routes.map(inboundRouteToWire) };
+    const body: AgencyInboundRoutesResponse = { routes: routes.map(routeWithWarnings) };
     return reply.send(body);
   });
 
@@ -184,7 +198,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     if (!id) return reply;
     const route = await agencyInboundRouteRepository.findById(getTenantId(request), getAccountId(request), id);
     if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
-    const body: AgencyInboundRouteResponse = { route: inboundRouteToWire(route) };
+    const body: AgencyInboundRouteResponse = { route: routeWithWarnings(route) };
     return reply.send(body);
   });
 
@@ -228,7 +242,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, out.value.routeId);
     if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
     const audit: InboundRouteCreatedAudit = { route_id: route.id, numbers_added: out.value.added };
-    return answer<AgencyInboundRouteResponse, InboundRouteCreatedAudit>(reply, 201, { route: inboundRouteToWire(route) }, audit);
+    return answer<AgencyInboundRouteResponse, InboundRouteCreatedAudit>(reply, 201, { route: routeWithWarnings(route) }, audit);
   });
 
   // ── PATCH /inbound/routes/:id — judged as the route it makes ──────────────
@@ -276,7 +290,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
 
     const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, id);
     if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
-    return answer<AgencyInboundRouteResponse, InboundRouteUpdatedAudit>(reply, 200, { route: inboundRouteToWire(route) }, out.value);
+    return answer<AgencyInboundRouteResponse, InboundRouteUpdatedAudit>(reply, 200, { route: routeWithWarnings(route) }, out.value);
   });
 
   // ── DELETE /inbound/routes/:id — soft delete; its numbers are detached ────
@@ -334,6 +348,23 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
       limit,
     });
     const body: AgencyInboundMissedPage = { rows: page.rows.map((row) => inboundMissedToWire(row)), next_cursor: page.next_cursor, limit: page.limit };
+    return reply.send(body);
+  });
+
+  // ── GET /inbound/missed/:id/voicemail — where a Missed row's voicemail is ──
+  // The object's key and length, for the public route to stream from the bucket (bytes do not
+  // travel through `callCore`, which buffers). The list's rules: the account's row, and without
+  // `agency.supervise` only one assigned to the caller; a row with no voicemail (none left, or
+  // aged out) is the same 404 as a row that is not there.
+  sub.get<{ Params: { id: string } }>('/inbound/missed/:id/voicemail', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    if (!UUID_RE.test(request.params.id)) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    const row = await agencyInboundCallRepository.findMissed(actor.tenantId, actor.accountId, request.params.id);
+    if (!row || !row.voicemail_key || (!actor.supervise && row.follow_up_assignee_user_id !== actor.userId)) {
+      return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    }
+    const body: InboundVoicemailLocation = { call_id: row.id, voicemail_key: row.voicemail_key, voicemail_seconds: row.voicemail_seconds };
     return reply.send(body);
   });
 

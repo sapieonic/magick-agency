@@ -2494,6 +2494,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/inbound/missed/:id/voicemail",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "a Missed row's voicemail (P2), the row's voicemail_url, streamed by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/inbound/calls/:id",
       "source": "apps/console/src/api/inbound.ts",
       "status": "served",

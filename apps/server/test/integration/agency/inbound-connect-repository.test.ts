@@ -559,6 +559,27 @@ describe('the matched contact', () => {
     // Not in flight any more: nothing to return.
     expect(await contacts.unclaimUncharged(contact.id as string)).toBeNull();
   });
+
+  it('endSupersededByInbound (the clash, §5.4): one transaction, the attempt canceled with the system code and nobody\'s write-up, the contact back uncharged with its reopen restored; once', async () => {
+    const { agencyAttemptRepository: attempts } = await import('../../../src/db/repositories/agency.repository.js');
+    const { insertAgencyAttempt } = await import('./agency-factories.js');
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id, { phone_e164: CALLER, state: 'in_flight', attempt_count: 2, our_fault_attempts: 1 });
+    const attempt = await insertAgencyAttempt(campaign.id as string, contact.id as string, { state: 'ringing', agent_reopened: true, dialed_at: new Date() });
+    const out = await attempts.endSupersededByInbound({ attemptId: attempt.id as string, contactId: contact.id as string, code: 'inbound_call', talkSeconds: null });
+    expect(out).toMatchObject({ contactReturned: true, attempt: { state: 'ended', outcome: 'canceled', disposition_code: 'inbound_call', dispositioned_by_user_id: null } });
+    expect(out!.attempt.ended_at).not.toBeNull();
+    expect(out!.attempt.dispositioned_at).not.toBeNull();
+    expect(await row(contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 2, our_fault_attempts: 1, agent_reopen_pending: true });
+    // A second settle (a replayed end) writes nothing.
+    expect(await attempts.endSupersededByInbound({ attemptId: attempt.id as string, contactId: contact.id as string, code: 'inbound_call', talkSeconds: null })).toBeNull();
+    // A contact no longer in flight (settled elsewhere) is left as it is; the attempt still ends.
+    const c2 = await insertAgencyContact(campaign.id, { phone_e164: '+919876500002', state: 'completed', source_row_number: 2 });
+    const a2 = await insertAgencyAttempt(campaign.id as string, c2.id as string, { state: 'ringing' });
+    expect(await attempts.endSupersededByInbound({ attemptId: a2.id as string, contactId: c2.id as string, code: 'inbound_call', talkSeconds: 0 }))
+      .toMatchObject({ contactReturned: false, attempt: { outcome: 'canceled' } });
+    expect(await row(c2.id as string)).toMatchObject({ state: 'completed' });
+  });
 });
 
 describe('the supervisor floor', () => {

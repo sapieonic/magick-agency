@@ -33,6 +33,7 @@ import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from '
 import { attemptAgentUserSql } from './drilldown-sql.js';
 import { projectAttemptRow } from './projections.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
+import { agencyContactRepository } from './contact.repository.js';
 
 /**
  * Tell pacing that live calls ENDED on these rows' accounts, so a campaign held at
@@ -446,6 +447,50 @@ export class AgencyAttemptRepository {
       [attemptId, outcome, code],
     );
     return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Settle a ringing dial its customer superseded by ringing in (the in-flight clash,
+   * docs/inbound.md §5.4, Q8), in ONE transaction:
+   *
+   *  1. the attempt `ended`, outcome `canceled`, with the reserved system code
+   *     `inbound_call` (`AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`, refused in every catalog)
+   *     as its write-up, attributed to nobody: the customer's own call took it over, so no
+   *     outcome is owed on it. Only while the row is not already `ended` (a second settle is a
+   *     no-op and returns null);
+   *  2. its contact back to `pending` now, UNCHARGED (`unclaimUncharged`): neither
+   *     `attempt_count` nor the our-fault ledger moves, and an agent's "Retry not reached"
+   *     marker the dial consumed is restored. Only while the contact is still `in_flight`.
+   *
+   * The inbound call's own busy probe (`numberLiveSql`'s inbound arm) keeps pacing off the
+   * number while the customer is on the line. Returns the ended row, or null when it was
+   * already ended.
+   */
+  async endSupersededByInbound(input: {
+    attemptId: string;
+    contactId: string;
+    code: string;
+    talkSeconds: number | null;
+  }): Promise<{ attempt: AgencyCallAttemptRecord; contactReturned: boolean } | null> {
+    const out = await withTransaction(async (client) => {
+      const { rows } = await client.query<AgencyCallAttemptRecord>(
+        `UPDATE agency_call_attempts
+            SET state = 'ended', outcome = 'canceled', ended_at = now(),
+                talk_seconds = COALESCE($2::int, talk_seconds),
+                disposition_code = $3, dispositioned_at = now(),
+                updated_at = now()
+          WHERE id = $1 AND state <> 'ended'
+        RETURNING *`,
+        [input.attemptId, input.talkSeconds, input.code],
+      );
+      const attempt = rows[0];
+      if (!attempt) return null;
+      const returned = await agencyContactRepository.unclaimUncharged(
+        input.contactId, { restoreAgentReopen: attempt.agent_reopened === true }, { client });
+      return { attempt, contactReturned: returned !== null };
+    }, { pool: getPool() });
+    if (out) announceCapacityFreed([out.attempt]);
+    return out;
   }
 
   async findById(id: string): Promise<AgencyCallAttemptRecord | null> {

@@ -151,9 +151,9 @@ describe('the route editor', () => {
     expect(noneOf('Greeting')).toBe('No greeting');
     expect(screen.getByTestId('inbound-route-clips').textContent).toMatch(/read out in a standard voice/);
     expect(screen.getByTestId('inbound-route-clips').textContent).not.toMatch(/plays nothing|hear nothing/);
-    // Voicemail is not offered.
-    expect(screen.getByTestId('inbound-voicemail-note').textContent).toMatch(/Voicemail isn’t available yet/);
-    expect(screen.queryByRole('radio', { name: /voicemail/i })).toBeNull();
+    // Voicemail is offered (P2) for both cases.
+    expect(screen.queryByTestId('inbound-voicemail-note')).toBeNull();
+    expect(screen.getAllByRole('radio', { name: /take a voicemail/i })).toHaveLength(2);
 
     fireEvent.change(screen.getByTestId('inbound-route-name'), { target: { value: 'Sales' } });
     fireEvent.change(screen.getByTestId('inbound-route-timezone'), { target: { value: 'Europe/London' } });

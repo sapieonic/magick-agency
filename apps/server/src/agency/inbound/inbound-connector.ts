@@ -4,6 +4,7 @@ import {
   type AgencyInboundCall,
   type AgencyInboundCallOutcome,
   type AgencyInboundClipSlot,
+  type AgencyInboundMissedReason,
   type AgencyInboundStickyReason,
   type AgencyStationCustomerWaitingFrame,
 } from '@magick-agency/contracts/agency';
@@ -95,15 +96,30 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  * per ACCOUNT (not for correctness, which the CAS gives: to stop a pile-up of CAS attempts).
  * **No chain task ever waits for an account's mutex**: a task that returns an agent
  * (`releaseAgent`, which runs the hook, which takes the mutex) does it in the background
- * ({@link releaseInBackground}), and a task that wants a search schedules one. The search awaits
- * the chain of the caller it offers, which holds no such task while the caller waits.
+ * ({@link releaseInBackground}), and a task that wants a search schedules one. The search (and the
+ * release hook) awaits the chain of the caller it offers, which holds no long task while the caller
+ * waits: the one long step on a waiting caller's chain is their exit (the overflow message, a
+ * voicemail: minutes), and a caller is marked `leaving` SYNCHRONOUSLY the moment that exit is
+ * decided (the maximum-wait timer, a cancelled offer past it), before it is queued on the chain.
+ * A leaving caller is never reserved for, and the mark is re-checked after each CAS with no await
+ * before the offer is queued, so the lock is never held behind a message.
  *
- * ── Extension points (the follow-up packages) ─────────────────────────────────────
- *  - The in-flight clash (§5.4): {@link expectHandover} names the session a cancelled outbound
- *    attempt is about to release; {@link takeOnRelease} then offers that session THIS call before
- *    anything else, from `reserved`.
- *  - Voicemail (§7): a caller who reaches nobody leaves through {@link InboundCallExits.overflow},
- *    the router's, which picks what the route's overflow action plays.
+ * ── The in-flight clash (§5.4): the hand-over ──────────────────────────────────────
+ * The router, at the answer, cancels an outbound dial still ringing the caller's number on a
+ * carrier that can (the dialer's `supersedeForInbound`), after {@link expectHandover} promised
+ * this call to that dial's session. No other agent is offered the call meanwhile. The cancelled
+ * dial's end releases the session, and the release hook ({@link takeOnRelease}) takes it for the
+ * call first, CAS from `reserved`, so the agent who had the customer's panel gets their call with
+ * no `available` instant between: offered at once when the call is queued, else HELD for it
+ * (reserved, the `inbound` field set) until its preamble ends, then offered ({@link onQueued}).
+ * A hand-over the release did not take (a queued break, the station gone, the carrier answering
+ * the dial first) is dropped and the caller queues normally; {@link INBOUND_HANDOVER_TIMEOUT_MS}
+ * bounds the wait.
+ *
+ * ── Voicemail (§7) ───────────────────────────────────────────────────────────────
+ * A caller who reaches nobody leaves through {@link InboundCallExits.overflow}, the router's,
+ * which carries out the route's overflow action (the call-back message, or a voicemail) and
+ * answers how the call is settled ({@link InboundCallEnd}).
  */
 
 /** How long a published `inbound_waiting` holds pacing back unless republished. */
@@ -111,19 +127,29 @@ export const INBOUND_WAITING_TTL_MS = 5_000;
 /** How often the connector republishes `inbound_waiting` while callers wait. */
 export const INBOUND_WAITING_REPUBLISH_MS = 2_000;
 
+/**
+ * How an unconnected call ends: its outcome and, for a voicemail (§7), the recording and the
+ * Missed reason of the action that took it (`closed` after hours, `overflow` from the queue).
+ */
+export interface InboundCallEnd {
+  outcome: AgencyInboundCallOutcome;
+  voicemail?: { key: string; seconds: number; reason: AgencyInboundMissedReason } | null;
+}
+
 /** What a call that reaches nobody does, and how its end is written: the router's. */
 export interface InboundCallExits {
   /**
-   * End an unconnected call as `outcome` with its Missed row and callback (`settle`), once: a
-   * second end of the same call is a no-op (the spine's terminal guard).
+   * End an unconnected call as `end` (an outcome, or an outcome with its voicemail) with its
+   * Missed row and callback (`settle`), once: a second end of the same call is a no-op (the
+   * spine's terminal guard).
    */
-  settleCall(call: AgencyInboundCallRecord, outcome: AgencyInboundCallOutcome): Promise<void>;
+  settleCall(call: AgencyInboundCallRecord, end: AgencyInboundCallOutcome | InboundCallEnd): Promise<void>;
   /**
-   * The caller reached nobody (the maximum wait, over `max_waiting`): stop the hold and play the
-   * route's overflow action, which ends the call. Resolves with the outcome to settle the call
-   * with; never throws.
+   * The caller reached nobody (the maximum wait, over `max_waiting`): stop the hold and carry out
+   * the route's overflow action (the call-back message, or a voicemail), which ends the call.
+   * Resolves with how to settle the call; never throws.
    */
-  overflow(call: AgencyInboundCallRecord, route: AgencyInboundRouteRecord): Promise<AgencyInboundCallOutcome>;
+  overflow(call: AgencyInboundCallRecord, route: AgencyInboundRouteRecord): Promise<InboundCallEnd>;
   /** The route's clips for `slots` as hashes, the slots with nothing to play left out. Never throws. */
   clips(route: AgencyInboundRouteRecord, slots: readonly AgencyInboundClipSlot[]): Promise<string[]>;
 }
@@ -173,9 +199,36 @@ interface HeldCall {
   waitingNotified: string | null;
   /** The hold's promise, once started. */
   hold: Promise<InboundHoldResult> | null;
+  /** The agent whose cancelled outbound dial this call superseded (the clash, §5.4), until offered or dropped. */
+  handover: Handover | null;
+  /**
+   * The caller is on their way out (the maximum wait passed while they waited): set SYNCHRONOUSLY
+   * by the timer, before its `leave` is queued on the chain, so no search or release hook reserves
+   * an agent for them and then waits on the chain behind their overflow message or voicemail
+   * (minutes, under the account's lock).
+   */
+  leaving: boolean;
   /** Resolves `take`'s promise: the call has left the connector. */
   finish: () => void;
 }
+
+/**
+ * A call promised to the agent of the outbound dial it superseded ({@link InboundConnector.expectHandover}).
+ * `held`: that agent is already reserved for it (their dial ended while the call was still in its
+ * preamble), and is offered it the moment it queues. Not `held`: the dial is still ending; no other
+ * agent is offered the call meanwhile, and {@link INBOUND_HANDOVER_TIMEOUT_MS} bounds the wait.
+ */
+interface Handover {
+  sessionId: string;
+  held: boolean;
+  timer: NodeJS.Timeout | null;
+}
+
+/**
+ * How long a call waits for the agent of the dial it superseded to be released before it is
+ * offered to anyone (a backstop: the cancelled dial's end releases them within moments).
+ */
+export const INBOUND_HANDOVER_TIMEOUT_MS = 15_000;
 
 /** The raw queue view the supervisor's tile is built from ({@link InboundConnector.queueSnapshot}). */
 export interface InboundQueueSnapshot extends InboundQueueRouteSnapshot {
@@ -240,7 +293,10 @@ export class InboundConnector {
     this.stopped = true;
     if (this.republishTimer) clearInterval(this.republishTimer);
     this.republishTimer = null;
-    for (const held of this.calls.values()) this.clearTimers(held);
+    for (const held of this.calls.values()) {
+      this.clearTimers(held);
+      if (held.handover?.timer) clearTimeout(held.handover.timer);
+    }
     this.queue.clear();
     this.unsubscribeWhenIdle();
   }
@@ -283,7 +339,10 @@ export class InboundConnector {
    */
   findCallForSession(sessionId: string): { callId: string; phase: 'offered' | 'connected' } | null {
     const held = this.forSession(sessionId);
-    if (!held || (held.phase !== 'offered' && held.phase !== 'connected')) return null;
+    if (!held) return null;
+    // A session held for a superseding call through its preamble is as good as offered it.
+    if (held.phase === 'preamble' && held.handover?.held && held.handover.sessionId === sessionId) return { callId: held.id, phase: 'offered' };
+    if (held.phase !== 'offered' && held.phase !== 'connected') return null;
     return { callId: held.id, phase: held.phase };
   }
 
@@ -354,6 +413,8 @@ export class InboundConnector {
       stickyCandidates: input.stickyCandidates,
       waitingNotified: null,
       hold: null,
+      handover: null,
+      leaving: false,
       finish,
     };
     this.calls.set(call.id, held);
@@ -397,23 +458,30 @@ export class InboundConnector {
     const station = this.deps.stations.get(sessionId);
     if (!station || station.campaignId === null || station.clientKind === 'mobile' || station.ws.readyState !== 1) return false;
     const key = accountKeyOfCall(station.tenantId, station.accountId);
-    const handover = this.handovers.get(sessionId);
-    if (!handover && this.queue.waiting(key).length === 0) return false;
+    if (!this.handovers.has(sessionId) && this.queue.waiting(key).length === 0) return false;
     return this.withAccountLock(key, async () => {
-      this.handovers.delete(sessionId);
+      const handover = this.handovers.get(sessionId);
+      if (handover) {
+        const taken = await this.takeHandover(sessionId, handover, station.agentUserId);
+        if (taken) return true;
+      }
       const callers = this.callerViews(key);
       if (callers.length === 0) return false;
       const views = await this.agentViews(key);
       const self = views.find((v) => v.sessionId === sessionId);
       if (!self) return false;
-      const callId = handover && callers.some((c) => c.callId === handover)
-        ? handover
-        : callerForReleasedAgent(self, callers, views, this.now());
+      const callId = callerForReleasedAgent(self, callers, views, this.now());
       if (!callId) return false;
       const held = this.calls.get(callId);
-      if (!held) return false;
+      if (!held || held.leaving) return false;
       const reserved = await this.deps.agents.reserveForInbound(sessionId, callId, RELEASE_STATES);
       if (!reserved.ok) return false;
+      // Re-checked after the CAS and queued with no await between: a caller marked leaving
+      // meanwhile would put this offer behind their whole overflow message (the header).
+      if (held.leaving) {
+        await this.giveBack(sessionId, callId, 'call_gone');
+        return false;
+      }
       const offered = await this.serial(callId, () => this.offer(held, sessionId));
       if (offered === 'offered') return true;
       await this.giveBack(sessionId, callId, offered);
@@ -422,17 +490,125 @@ export class InboundConnector {
   }
 
   /**
-   * The in-flight clash (§5.4; the follow-up package): the outbound attempt ringing on
-   * `sessionId` is being cancelled because its customer rang in on `callId`. When `releaseAgent`
-   * then runs for the session, the hook offers it this call first. Dropped by that release, or
-   * by {@link dropHandover} when the cancel did not land.
+   * The in-flight clash (docs/inbound.md §5.4): the outbound dial ringing on `sessionId` is about
+   * to be cancelled because its customer rang in on `callId`, which this connector holds (in its
+   * preamble, or already queued). From now on the call is promised to that session: no other
+   * agent is offered it, and when the cancelled dial's end releases the session
+   * (`releaseAgent` → {@link takeOnRelease}) the session is taken for it whatever the call's
+   * phase, so the hand-over always lands:
+   *  - the call already queued: offered to them at once;
+   *  - the call still in its preamble: the session is reserved for it there and then (the CAS
+   *    from `reserved`, the `inbound` field set: no `available` instant pacing could take), and
+   *    offered it the moment the preamble ends ({@link onQueued}).
+   * Dropped ({@link dropHandover}) when the dial was not cancelled after all, when the release
+   * did not reach the hook (a queued break, the station gone), or after
+   * {@link INBOUND_HANDOVER_TIMEOUT_MS}: the caller then queues normally.
+   *
+   * False, and nothing promised: the call is not held here waiting (ended, offered, overflowing),
+   * or one of the two already has a hand-over.
    */
-  expectHandover(sessionId: string, callId: string): void {
+  expectHandover(sessionId: string, callId: string): boolean {
+    if (this.stopped || this.handovers.has(sessionId)) return false;
+    const held = this.calls.get(callId);
+    if (!held || held.handover || held.leaving || (held.phase !== 'preamble' && held.phase !== 'queued')) return false;
+    if (held.phase === 'queued' && this.queue.offeredTo(callId) !== null) return false;
+    const timer = setTimeout(() => this.dropHandover(sessionId), INBOUND_HANDOVER_TIMEOUT_MS);
+    timer.unref?.();
+    held.handover = { sessionId, held: false, timer };
     this.handovers.set(sessionId, callId);
+    log.info({ inboundCallId: callId, sessionId }, 'Inbound call promised to the agent of the dial it superseded');
+    return true;
   }
 
+  /**
+   * Drop a hand-over not yet taken by the session's release ({@link expectHandover}): the call
+   * queues normally and the account is searched. A no-op once the release took it (the session
+   * is reserved for the call then) or when none is pending.
+   */
   dropHandover(sessionId: string): void {
+    const callId = this.handovers.get(sessionId);
+    if (callId === undefined) return;
     this.handovers.delete(sessionId);
+    const held = this.calls.get(callId);
+    if (!held || held.handover?.sessionId !== sessionId || held.handover.held) return;
+    if (held.handover.timer) clearTimeout(held.handover.timer);
+    held.handover = null;
+    log.info({ inboundCallId: callId, sessionId }, 'Hand-over of a superseding inbound call dropped — the caller queues normally');
+    if (held.phase === 'queued') this.searchInBackground(held.accountKey);
+  }
+
+  /**
+   * The release hook's hand-over (under the account's lock): reserve `sessionId` for the call
+   * promised to it (CAS from `reserved` / `on_call` / `wrapup`) and offer it, or hold the session
+   * for it while the call's preamble plays. True: the session was taken; false: the hand-over is
+   * gone (the call left, or the CAS lost) and the release goes on as it would have.
+   */
+  private async takeHandover(sessionId: string, callId: string, agentUserId: string): Promise<boolean> {
+    this.handovers.delete(sessionId);
+    const held = this.calls.get(callId);
+    if (!held || held.handover?.sessionId !== sessionId) return false;
+    if (held.handover.timer) clearTimeout(held.handover.timer);
+    const reserved = held.phase === 'preamble' || held.phase === 'queued'
+      ? await this.deps.agents.reserveForInbound(sessionId, callId, RELEASE_STATES)
+      : null;
+    if (!reserved?.ok) {
+      held.handover = null;
+      if (reserved) log.warn({ inboundCallId: callId, sessionId, reserved }, 'Could not take the superseded dial\'s agent for its customer\'s call');
+      if (held.phase === 'queued') this.searchInBackground(held.accountKey);
+      return false;
+    }
+    if (held.leaving) {
+      // Overflowing meanwhile (the maximum wait): never wait on its chain under the lock.
+      held.handover = null;
+      await this.deps.agents.releaseInbound(sessionId, callId);
+      return false;
+    }
+    // On the call's chain: the preamble's end (`onQueued`) and the call's end are serialised with it.
+    return this.serial(callId, async () => {
+      if (held.phase === 'queued') {
+        held.handover = null;
+        const offered = await this.offer(held, sessionId);
+        if (offered === 'offered') return true;
+        await this.giveBack(sessionId, callId, offered);
+        return false;
+      }
+      if (held.phase !== 'preamble') {
+        held.handover = null;
+        await this.deps.agents.releaseInbound(sessionId, callId);
+        return false;
+      }
+      // Held through the preamble (Q5: no agent is bound during the greeting or the notice).
+      held.handover = { sessionId, held: true, timer: null };
+      held.sessionId = sessionId;
+      held.agentUserId = agentUserId;
+      this.bySession.set(sessionId, callId);
+      this.deps.stations.send(sessionId, { event: 'agent_state', state: 'reserved', since: new Date(this.now()).toISOString() });
+      this.startLease(held, 'reserved');
+      await agencyAgentSessionRepository.setState(sessionId, 'reserved')
+        .catch((err: unknown) => log.warn({ err, sessionId }, 'Could not mirror an inbound reservation'));
+      log.info({ inboundCallId: callId, sessionId }, 'Superseded dial\'s agent held for its customer\'s call until the preamble ends');
+      return true;
+    });
+  }
+
+  /**
+   * Let go of a session held for this call through its preamble (the hand-over), if any: the
+   * reservation's `inbound` field cleared and, with `returnAgent`, the agent returned to the pool
+   * in the background. A hand-over not yet taken is just dropped. On the call's chain.
+   */
+  private async releaseHandover(held: HeldCall, opts: { returnAgent: boolean }): Promise<void> {
+    const handover = held.handover;
+    if (!handover) return;
+    held.handover = null;
+    if (handover.timer) clearTimeout(handover.timer);
+    if (this.handovers.get(handover.sessionId) === held.id) this.handovers.delete(handover.sessionId);
+    if (!handover.held) return;
+    this.stopLease(held);
+    if (this.bySession.get(handover.sessionId) === held.id) this.bySession.delete(handover.sessionId);
+    held.sessionId = null;
+    held.agentUserId = null;
+    await this.deps.agents.releaseInbound(handover.sessionId, held.id);
+    if (opts.returnAgent) this.releaseInBackground(handover.sessionId);
   }
 
   /**
@@ -445,6 +621,9 @@ export class InboundConnector {
     const held = this.forSession(sessionId);
     if (held && held.phase === 'offered' && !held.bound) {
       void this.serial(held.id, () => this.cancelOffer(held, sessionId, 'station_lost'));
+    } else if (held?.handover?.held && held.handover.sessionId === sessionId) {
+      // Held for a superseding call still in its preamble: let go (the runtime writes `offline`).
+      void this.serial(held.id, () => this.releaseHandover(held, { returnAgent: false }));
     }
   }
 
@@ -495,6 +674,23 @@ export class InboundConnector {
     }, route.max_waiting);
     this.noteRouteWaiting(route.id);
     this.publishWaiting(held.accountKey);
+    if (held.handover?.held) {
+      // The superseded dial's agent, held for this call through the preamble (§5.4): offered now.
+      const sessionId = held.handover.sessionId;
+      held.handover = null;
+      this.stopLease(held);
+      held.sessionId = null;
+      held.agentUserId = null;
+      if (this.bySession.get(sessionId) === held.id) this.bySession.delete(sessionId);
+      const offered = await this.offer(held, sessionId);
+      if (offered === 'offered') return;
+      // The session owes another call, or the call went: the reservation is given back, the
+      // agent returned, and the caller (if still here) searched for like any other.
+      void this.trackBackground(this.giveBack(sessionId, held.id, offered, { release: true }));
+    } else if (held.handover) {
+      // Promised to the superseded dial's agent, whose release is on its way: kept for them.
+      return;
+    }
     if (admitted === 'over_cap') {
       // Over `max_waiting`: only an agent free right now keeps this caller.
       void this.trackBackground(this.search(held.accountKey).then(() => this.serial(held.id, async () => {
@@ -512,6 +708,7 @@ export class InboundConnector {
     if (held.phase === 'preamble' || held.phase === 'queued') {
       log.warn({ inboundCallId: held.id }, 'Inbound hold found no media session — ending the call failed');
       this.queue.remove(held.id);
+      await this.releaseHandover(held, { returnAgent: true });
       await this.deps.exits.settleCall(held.record, 'failed');
       this.finishCall(held, 'failed');
     }
@@ -524,7 +721,10 @@ export class InboundConnector {
       this.searchInBackground(held.accountKey);
       return;
     }
-    // An offer in flight runs to its bind or its cancel (the cancel overflows a lapsed caller).
+    // An offer in flight runs to its bind or its cancel (the cancel overflows a lapsed caller). A
+    // caller still waiting is marked leaving NOW, before the chain gets to it: from this instant no
+    // search or release hook reserves an agent for them (M4: none waits behind their message).
+    if (held.phase === 'queued' && this.queue.offeredTo(callId) === null) held.leaving = true;
     void this.serial(callId, async () => {
       if (held.phase === 'queued') await this.leave(held, 'overflow');
     });
@@ -537,14 +737,16 @@ export class InboundConnector {
   private async leave(held: HeldCall, why: 'overflow'): Promise<void> {
     if (held.phase !== 'queued') return;
     held.phase = 'leaving';
+    held.leaving = true;
     this.queue.remove(held.id);
     this.noteRouteWaiting(held.route.id);
     this.clearWaitingNotice(held);
     this.publishWaiting(held.accountKey);
+    await this.releaseHandover(held, { returnAgent: true });
     log.info({ inboundCallId: held.id, why }, 'Inbound caller reached nobody — overflow');
-    const outcome = await this.deps.exits.overflow(held.record, held.route);
-    await this.deps.exits.settleCall(held.record, outcome);
-    this.finishCall(held, outcome === 'overflow' ? 'overflow' : outcome === 'abandoned_in_queue' ? 'abandoned' : 'failed');
+    const end = await this.deps.exits.overflow(held.record, held.route);
+    await this.deps.exits.settleCall(held.record, end);
+    this.finishCall(held, waitResultOf(end.outcome));
   }
 
   /**
@@ -553,6 +755,10 @@ export class InboundConnector {
    */
   private async offer(held: HeldCall, sessionId: string): Promise<'offered' | 'call_gone' | 'session_busy'> {
     if (this.stopped || held.phase !== 'queued' || this.queue.offeredTo(held.id) !== null) return 'call_gone';
+    // Promised to the superseded dial's agent meanwhile (§5.4): not this session's to take.
+    if (held.handover && held.handover.sessionId !== sessionId) return 'call_gone';
+    // Its maximum wait passed while this offer waited on the chain: it overflows instead.
+    if (held.leaving) return 'call_gone';
     const at = new Date(this.now());
     const res = await agencyInboundCallRepository.offer(held.id, sessionId, { at });
     if (!res.ok) {
@@ -648,6 +854,8 @@ export class InboundConnector {
       return;
     }
     const outcome = unconnectedOutcome(ev.outcome);
+    // A session held for this call through its preamble (the clash's hand-over) goes back.
+    await this.releaseHandover(held, { returnAgent: true });
     await this.deps.exits.settleCall(held.record, outcome);
     if (phase === 'offered' && held.sessionId) {
       const sessionId = held.sessionId;
@@ -659,7 +867,7 @@ export class InboundConnector {
       this.bySession.delete(sessionId);
       this.releaseInBackground(sessionId);
     }
-    this.finishCall(held, outcome === 'abandoned_in_queue' ? 'abandoned' : outcome === 'overflow' ? 'overflow' : 'failed');
+    this.finishCall(held, waitResultOf(outcome));
     this.publishWaiting(held.accountKey);
   }
 
@@ -716,6 +924,8 @@ export class InboundConnector {
     // The session's last frame of this call says it is no longer theirs (if the socket is still there).
     const ctx = await held.panel;
     this.deps.stations.send(sessionId, { event: 'inbound_call', call: { ...inboundCallToWire(row, ctx, null, this.connectDelayMs), session_id: sessionId } });
+    // Marked before it is waiting again, so no search takes a caller about to overflow (M4).
+    if (this.queue.maxWaitLapsed(held.id)) held.leaving = true;
     this.queue.requeueHead(held.id);
     this.noteRouteWaiting(held.route.id);
     log.info({ inboundCallId: held.id, sessionId, why }, 'Inbound offer cancelled before audio bound — the caller is back at the head of the queue');
@@ -745,12 +955,19 @@ export class InboundConnector {
       const taken = new Set<string>();
       for (const step of searchOrder(callers, views, this.now())) {
         const held = this.calls.get(step.callId);
-        if (!held || held.phase !== 'queued' || this.queue.offeredTo(step.callId) !== null) continue;
+        if (!held || held.phase !== 'queued' || held.handover || held.leaving || this.queue.offeredTo(step.callId) !== null) continue;
         for (const sessionId of step.candidates) {
           if (taken.has(sessionId)) continue;
           const reserved = await this.deps.agents.reserveForInbound(sessionId, step.callId, ['available']);
           if (!reserved.ok) continue;
           taken.add(sessionId);
+          // Re-checked after the CAS, and the offer queued with no await between (M4): a caller
+          // marked leaving (or promised elsewhere) meanwhile is not waited for under the lock;
+          // its chain may be playing a message or recording a voicemail for minutes.
+          if (held.leaving || held.handover) {
+            giveBacks.push(() => this.giveBack(sessionId, step.callId, 'call_gone', { release: true }));
+            break;
+          }
           const offered = await this.serial(step.callId, () => this.offer(held, sessionId));
           if (offered === 'offered') break;
           // Given back after the lock: `releaseAgent` runs the release hook, which takes it.
@@ -784,9 +1001,16 @@ export class InboundConnector {
     if (opts.release) await this.deps.releaseAgent(sessionId);
   }
 
-  /** The account's waiting callers as the search sees them, in service order. */
+  /**
+   * The account's waiting callers as the search sees them, in service order. A caller promised
+   * to the agent of the dial it superseded (a hand-over, §5.4) is theirs alone until it is taken
+   * or dropped.
+   */
   private callerViews(accountKey: string): InboundCallerView[] {
-    return this.queue.waiting(accountKey);
+    return this.queue.waiting(accountKey).filter((c) => {
+      const held = this.calls.get(c.callId);
+      return !held?.handover && !held?.leaving;
+    });
   }
 
   private callerView(held: HeldCall): Omit<InboundCallerView, 'queuedAt'> {
@@ -891,6 +1115,12 @@ export class InboundConnector {
   private finishCall(held: HeldCall, result: InboundWaitResult): void {
     if (held.phase === 'done') return;
     this.clearTimers(held);
+    if (held.handover) {
+      // Every path that ends a held hand-over lets its session go first (`releaseHandover`).
+      if (held.handover.timer) clearTimeout(held.handover.timer);
+      if (this.handovers.get(held.handover.sessionId) === held.id) this.handovers.delete(held.handover.sessionId);
+      held.handover = null;
+    }
     if (held.record.queued_at) trackInboundWait(result, (this.now() - held.record.queued_at.getTime()) / 1000);
     held.phase = 'done';
     if (held.sessionId && this.bySession.get(held.sessionId) === held.id) this.bySession.delete(held.sessionId);
@@ -927,7 +1157,12 @@ export class InboundConnector {
         if (result !== 'lost' || held.sessionId !== sessionId) return;
         log.warn({ inboundCallId: held.id, sessionId, state }, 'Inbound call\'s agent lease lost');
         this.stopLease(held);
-        if (state === 'reserved') void this.serial(held.id, () => this.cancelOffer(held, sessionId, 'lease_lost'));
+        if (state !== 'reserved') return;
+        void this.serial(held.id, async () => {
+          // Held for a superseding call through its preamble: let go; else the offer is cancelled.
+          if (held.phase === 'preamble' && held.handover?.held) await this.releaseHandover(held, { returnAgent: true });
+          else await this.cancelOffer(held, sessionId, 'lease_lost');
+        });
       });
     }, AGENT_LEASE_MS.renew_interval);
     held.lease.unref?.();
@@ -996,6 +1231,19 @@ export class InboundConnector {
       release();
       if (this.locks.get(accountKey) === mine) this.locks.delete(accountKey);
     }
+  }
+}
+
+/** The wait metric's result for a call that left unconnected (a voicemail is an overflow: nobody took the caller). */
+export function waitResultOf(outcome: AgencyInboundCallOutcome): InboundWaitResult {
+  switch (outcome) {
+    case 'abandoned_in_queue':
+      return 'abandoned';
+    case 'overflow':
+    case 'voicemail':
+      return 'overflow';
+    default:
+      return 'failed';
   }
 }
 

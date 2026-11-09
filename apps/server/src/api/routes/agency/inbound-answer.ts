@@ -132,6 +132,21 @@ export interface InboundCallHandledAudit {
   reason: string;
 }
 
+/**
+ * `GET /inbound/missed/:id/voicemail` (internal): where the row's voicemail is stored, for the
+ * public route to stream (never served to a client: the key is a bucket path).
+ */
+export interface InboundVoicemailLocation {
+  call_id: string;
+  voicemail_key: string;
+  voicemail_seconds: number | null;
+}
+
+/** The voicemail's path under `/proxy/agency`, as a Missed row names it (`voicemail_url`). */
+export function voicemailPath(callId: string): string {
+  return `/inbound/missed/${callId}/voicemail`;
+}
+
 /** A DNC row a mark landed on (`created`: newly listed), with its scope. */
 export interface InboundDncEntryAudit {
   id: string;
@@ -208,6 +223,8 @@ export function inboundMissedToWire(row: AgencyInboundMissedRow, names: Readonly
     matched_campaign_name: row.matched_campaign_name,
     callback_due_at: iso(row.callback_due_at),
     has_voicemail: row.voicemail_key !== null,
+    // Relative to the proxy, as the console resolves it (`voicemailFetchUrl`).
+    ...(row.voicemail_key !== null ? { voicemail_url: voicemailPath(row.id) } : {}),
     assignee_user_id: row.follow_up_assignee_user_id,
     assignee_name: row.follow_up_assignee_user_id ? (names.get(row.follow_up_assignee_user_id) ?? null) : null,
     status: row.follow_up_status!,

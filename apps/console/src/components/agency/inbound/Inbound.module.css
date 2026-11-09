@@ -150,6 +150,25 @@
   color: var(--text-muted);
 }
 
+/* A route's advisory warnings (`inboundRouteWarnings`): what a caller would hear in silence. */
+.warnings {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.warning {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warning);
+  border-radius: 0 8px 8px 0;
+  background: var(--warning-subtle);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
 .srOnly {
   position: absolute;
   width: 1px;
