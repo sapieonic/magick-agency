@@ -138,6 +138,12 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_inbound_route.updated',
   'agency_inbound_route.deleted',
   'agency_inbound_call.handled',
+  // An answered inbound call (P2, docs/inbound.md §6): hung up, its outcome saved, its caller marked
+  // DNC, by the agent who took it or a supervisor (`details.on_behalf`), filed under the inbound
+  // call; `campaign_id` the matched campaign, when the caller matched one. Ids and codes only.
+  'agency_inbound_call.hung_up',
+  'agency_inbound_call.dispositioned',
+  'agency_inbound_call.dnc_marked',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────

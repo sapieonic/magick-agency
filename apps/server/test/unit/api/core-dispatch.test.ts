@@ -106,6 +106,8 @@ const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
     "the spine CSV export's page loop; its two callers pass literal `/agency-campaigns/${id}/attempts` and `/contacts` objects"],
   ['api/routes/proxy-agency-softphone/calls.ts call.path',
     "`forwardCall`, the five call actions' shared body; each route passes its own literal `/agency/softphone/calls…` object"],
+  ['api/routes/proxy-agency-inbound/calls.ts call.path',
+    "`forward`, the answered inbound call's four writes' shared body; each route passes its own literal `/agency/inbound/calls/${id}…` object"],
   ['api/routes/proxy-agency-campaigns/lifecycle.ts <no path>',
     "`runTransition`, the four lifecycle controls' shared body (`{ ...call }`); each route passes its own literal `/agency-campaigns/${id}/<verb>` object"],
 ]);
@@ -166,6 +168,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-campaigns/retry.ts',
       'api/routes/proxy-agency-campaigns/spine.ts',
       'api/routes/proxy-agency-campaigns/stats.ts',
+      'api/routes/proxy-agency-inbound/calls.ts',
       'api/routes/proxy-agency-inbound/missed.ts',
       'api/routes/proxy-agency-inbound/routes.ts',
       'api/routes/proxy-agency-inbound/shared.ts', // the `CoreCallResult` type only; calls nothing

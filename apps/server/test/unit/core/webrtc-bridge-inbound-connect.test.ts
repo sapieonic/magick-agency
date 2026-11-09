@@ -288,6 +288,46 @@ describe('playInboundHold', () => {
     expect(lifecycle.map((e) => e.phase)).toEqual(['answered', 'bridged']);
   });
 
+  it('onPreambleDone fires once, when the preamble has played and the hold loop starts (at once with no preamble)', async () => {
+    const { mgr } = bridge();
+    await mgr.acceptInboundCall(PARAMS);
+    let doneAt = -1;
+    const hold = mgr.playInboundHold(INBOUND, {
+      preambleClipHashes: ['pre', 'pre2'], holdClipHash: 'hold',
+      onPreambleDone: () => { doneAt = frames(carrier).length; },
+    });
+    await tick(20);
+    expect(doneAt).toBe(-1); // no media yet: nothing has played, so it is not done
+    const carrier = connectStream(mgr);
+    const preFrames = framesOf(clips.pre!).length + framesOf(clips.pre2!).length;
+    await vi.waitFor(() => expect(frames(carrier).length).toBeGreaterThan(preFrames + 3), { timeout: 2000 });
+    // Called after the last preamble frame was sent and before the first hold frame.
+    expect(doneAt).toBe(preFrames);
+    mgr.stopInboundHold(INBOUND);
+    expect(await hold).toBe('released');
+
+    // A second hold with no preamble: done as soon as the media is ready; a throwing listener is the hold's no concern.
+    let calls = 0;
+    const again = mgr.playInboundHold(INBOUND, { preambleClipHashes: [], holdClipHash: 'hold', onPreambleDone: () => { calls++; throw new Error('boom'); } });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    await tick(80);
+    expect(calls).toBe(1);
+    mgr.stopInboundHold(INBOUND);
+    expect(await again).toBe('released');
+  });
+
+  it('onPreambleDone never fires for a caller who leaves during the preamble', async () => {
+    const { mgr } = bridge();
+    await mgr.acceptInboundCall(PARAMS);
+    const done = vi.fn();
+    const carrier = connectStream(mgr);
+    const hold = mgr.playInboundHold(INBOUND, { preambleClipHashes: ['pre', 'pre2', 'pre'], holdClipHash: 'hold', onPreambleDone: done });
+    await vi.waitFor(() => expect(frames(carrier).length).toBeGreaterThan(0));
+    carrier.close();
+    expect(await hold).toBe('aborted');
+    expect(done).not.toHaveBeenCalled();
+  });
+
   it('the bind stops the hold synchronously: the hold`s sink refuses the very next frame', async () => {
     const { mgr } = bridge();
     await mgr.acceptInboundCall(PARAMS);

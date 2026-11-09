@@ -877,6 +877,16 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       };
       return reply.code(409).send(err);
     }
+    // An inbound call offered to or connected with the session holds the station the same way
+    // (docs/inbound.md §2): leaving would drop a customer the agent was about to hear, or is
+    // talking to. One owing its outcome does not: the lapse sweep closes a call whose session left.
+    if (runtime.inbound?.findCallForSession(session.id)) {
+      const err: AgencyActionErrorResponse = {
+        error: 'Conflict', code: 'agent_on_live_call',
+        message: 'Finish or hang up your inbound call before leaving the station.',
+      };
+      return reply.code(409).send(err);
+    }
     // A wrap-up redial being set up has no live attempt yet (the dialer registers it a
     // moment later): leaving now would detach the station the redial is about to ring
     // into. Refused like the live call it is about to be.

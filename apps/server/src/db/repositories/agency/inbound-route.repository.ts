@@ -369,6 +369,20 @@ export class AgencyInboundRouteRepository {
     return { ...route, numbers: (await this.numbersOf([route.id], db)).get(route.id) ?? [] };
   }
 
+  /**
+   * The route a call came in on, deleted or not (an inbound call's panel names it, and its outcome
+   * catalog is the route's, for as long as the call is owed one: P2). Tenant-scoped only: a call's
+   * account can differ from its route's (the matched contact's, docs/inbound.md §8.3). Null when
+   * the tenant has no such route.
+   */
+  async findForCall(tenantId: string, id: string, db: Db = getPool()): Promise<AgencyInboundRouteRecord | null> {
+    const { rows } = await db.query<AgencyInboundRouteRecord>(
+      `SELECT ${ROUTE_COLUMNS} FROM agency_inbound_routes r WHERE r.id = $1::uuid AND r.tenant_id = $2::uuid`,
+      [id, tenantId],
+    );
+    return rows[0] ?? null;
+  }
+
   /** The account's live routes, oldest first, each with its live numbers. */
   async listForAccount(tenantId: string, accountId: string): Promise<AgencyInboundRouteWithNumbers[]> {
     const { rows } = await getPool().query<AgencyInboundRouteRecord>(

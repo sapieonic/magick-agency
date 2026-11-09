@@ -7,6 +7,7 @@ import { registerSoftphoneRoutes } from './agency/softphone.js';
 import { registerRedialRoutes } from './agency/redial.js';
 import { registerMyContactCallRoutes } from './agency/my-contact-call.js';
 import { registerInboundRoutes } from './agency/inbound.js';
+import { registerInboundCallRoutes } from './agency/inbound-calls.js';
 
 export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // This module is the session and attempt handlers only, registered on the
@@ -31,5 +32,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     await registerSoftphoneRoutes(sub, runtime);
     // Inbound calls (docs/inbound.md §7, §8.1): the account's routes and its Missed inbound list.
     await registerInboundRoutes(sub);
+    // The answered inbound call (docs/inbound.md §6): read, notes, hang up, the outcome, Mark DNC.
+    await registerInboundCallRoutes(sub, runtime);
   });
 }

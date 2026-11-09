@@ -598,4 +598,19 @@ export async function handleStationSocket(
   if (manualCall && stillOurs()) {
     runtime.stations.send(sessionId, { event: 'manual_call', call: manualCall }, socket);
   }
+
+  // ── Inbound calls (docs/inbound.md §2, P2) ───────────────────────────────
+  // The same for an inbound call: re-adopt a bound call's leg onto this socket, restore the
+  // session's unsettled inbound call (connected, or owing its outcome) with an `inbound_call` frame,
+  // and re-send "Your customer is waiting" for every caller still waiting for this agent. A
+  // console only: the app has no inbound frame (Q20), and a phone is never offered a call.
+  const inbound = runtime.inbound;
+  if (!inbound || upgrade.client === 'mobile' || !stillOurs()) return;
+  const restored = await inbound.reattachStation(sessionId, socket).catch((err: unknown) => {
+    log.warn({ err, sessionId }, 'Could not restore the inbound call on reconnect');
+    return null;
+  });
+  if (!restored || !stillOurs()) return;
+  if (restored.call) runtime.stations.send(sessionId, { event: 'inbound_call', call: restored.call }, socket);
+  for (const frame of restored.waiting) runtime.stations.send(sessionId, frame, socket);
 }

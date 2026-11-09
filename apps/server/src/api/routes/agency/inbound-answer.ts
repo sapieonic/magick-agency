@@ -132,6 +132,42 @@ export interface InboundCallHandledAudit {
   reason: string;
 }
 
+/** A DNC row a mark landed on (`created`: newly listed), with its scope. */
+export interface InboundDncEntryAudit {
+  id: string;
+  created: boolean;
+  scope: 'campaign' | 'account';
+}
+
+/** `POST /inbound/calls/:id/hangup`: `hung_up` false when the call had already ended (not audited). */
+export interface InboundCallHangupAudit {
+  call_id: string;
+  on_behalf: boolean;
+  campaign_id: string | null;
+  hung_up: boolean;
+}
+
+/** `POST /inbound/calls/:id/disposition`. */
+export interface InboundCallDispositionAudit {
+  call_id: string;
+  on_behalf: boolean;
+  campaign_id: string | null;
+  disposition_code: string;
+  /** The same code again: nothing settled a second time. */
+  replay: boolean;
+  dnc_entry: InboundDncEntryAudit | null;
+}
+
+/** `POST /inbound/calls/:id/dnc`. */
+export interface InboundCallDncAudit {
+  call_id: string;
+  on_behalf: boolean;
+  campaign_id: string | null;
+  scope: 'campaign' | 'account';
+  dnc_recorded: boolean;
+  dnc_entry: InboundDncEntryAudit | null;
+}
+
 /** Is this an envelope? Checked by the public layer, which refuses (502) a body that is not. */
 export function isInboundCoreAnswer(body: unknown): body is InboundCoreAnswer<unknown, Record<string, unknown>> {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return false;

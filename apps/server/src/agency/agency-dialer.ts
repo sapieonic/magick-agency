@@ -63,12 +63,20 @@ import {
  * What {@link AgencyDialer.releaseAgent} did: the state it wrote (`offline` for a
  * departed agent, else `break` for a queued break or `available`) and the write's
  * result. A refused `available` (`manual_call_live`, `softphone_session`,
- * `inbound_call_owed`) moved nothing.
+ * `inbound_call_owed`) moved nothing. `reserved`: the inbound release hook took the agent
+ * for a waiting caller instead (docs/inbound.md §2), and `releaseAgent` wrote nothing.
  */
 export interface AgentReleaseResult {
-  state: 'available' | 'break' | 'offline';
+  state: 'available' | 'break' | 'offline' | 'reserved';
   result: AgentSetResult;
 }
+
+/**
+ * The inbound connector's release hook (`InboundConnector.takeOnRelease`): asked by
+ * {@link AgencyDialer.releaseAgent} before it writes `available`; true when it reserved the
+ * agent for a waiting inbound caller and offered them the call.
+ */
+export type InboundReleaseHook = (sessionId: string) => Promise<boolean>;
 
 const log = createChildLogger({ component: 'agency-dialer' });
 
@@ -230,6 +238,8 @@ export class AgencyDialer {
    */
   private readonly unboundStationGrace = new Map<string, NodeJS.Timeout>();
   private unsubscribeLifecycle: (() => void) | null = null;
+  /** {@link registerInboundTake}: the inbound connector's release hook, while one runs. */
+  private inboundTake: InboundReleaseHook | null = null;
 
   constructor(
     private readonly bridge: WebRtcBridgeManager,
@@ -244,6 +254,14 @@ export class AgencyDialer {
      */
     private readonly refusalBreaker: CarrierRefusalBreaker = new CarrierRefusalBreaker(null, ''),
   ) {}
+
+  /**
+   * Install (or, with null, remove) the inbound release hook (docs/inbound.md §2: "the release
+   * hook"). {@link releaseAgent} asks it, with no queued break, before writing `available`.
+   */
+  registerInboundTake(hook: InboundReleaseHook | null): void {
+    this.inboundTake = hook;
+  }
 
   /** Subscribe to bridge lifecycle. Call once at wiring time. */
   start(): void {
@@ -1872,6 +1890,19 @@ export class AgencyDialer {
     // takes a break and later goes available is not silently pulled back out of the
     // pool on their next call's release.
     const queuedBreak = this.breaks.take(sessionId);
+    // ── A waiting inbound caller first (docs/inbound.md §2, "Sticky agent in wrap-up") ──────
+    // Before any `available` write, so an agent coming out of a call or a wrap-up is offered a
+    // caller with no `available` instant pacing could reserve them in (WR5: an outcome owed is
+    // already saved when this runs). A queued break wins: the agent asked for it, and the caller
+    // keeps waiting for someone else. The hook reserves by a compare-and-swap from the state the
+    // agent is in (`reserved`, `on_call`, `wrapup`) and sends the offer's frames itself.
+    if (!queuedBreak && this.inboundTake) {
+      const taken = await this.inboundTake(sessionId).catch((err: unknown) => {
+        log.error({ err, sessionId }, 'Inbound release hook failed — returning the agent to the pool');
+        return false;
+      });
+      if (taken) return { state: 'reserved', result: 'ok' };
+    }
     const state = queuedBreak ? 'break' : 'available';
     const since = new Date();
     // A queued switch to the soft phone applying now is audited (SP7), with the state

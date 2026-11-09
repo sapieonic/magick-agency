@@ -45,6 +45,13 @@ describe('inbound_call', () => {
 });
 
 describe('customer_waiting', () => {
+  it('goes on the server`s clear for that caller; a clear for another caller changes nothing', () => {
+    const waiting = waitingWhile('on_call');
+    const other = stationReducer(waiting, { type: 'customer_waiting', frame: { ...WAITING, inbound_call_id: 'ib-9', cleared: true } });
+    expect(other).toBe(waiting);
+    expect(stationReducer(waiting, { type: 'customer_waiting', frame: { ...WAITING, cleared: true } }).customerWaiting).toBeNull();
+  });
+
   it('stands while the agent is reserved, on a call or in wrap-up', () => {
     for (const state of ['reserved', 'on_call', 'wrapup'] as const) {
       const waiting = waitingWhile(state);

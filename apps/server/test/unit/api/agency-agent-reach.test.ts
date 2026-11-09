@@ -162,6 +162,14 @@ const EXPECTED_AGENT_REACHABLE = [
   // `agency.inbound.write` (account admin) and refuse an agent.
   'GET /proxy/agency/inbound/missed',
   'POST /proxy/agency/inbound/missed/:id/handled',
+  // The answered inbound call's finish (docs/inbound.md §6, P2): `agency.inbound.read`, so the
+  // agent who took a call can finish it. The internal handler acts only on a call offered to or
+  // connected with the caller's own session (another's answers `inbound_call_not_found`).
+  'GET /proxy/agency/inbound/calls/:id',
+  'PATCH /proxy/agency/inbound/calls/:id',
+  'POST /proxy/agency/inbound/calls/:id/hangup',
+  'POST /proxy/agency/inbound/calls/:id/disposition',
+  'POST /proxy/agency/inbound/calls/:id/dnc',
   // Reports (docs/reports.md, RP5): `agency.station.connect`, so an agent can export their OWN
   // review and see their own runs. The reach over a subject is the route's (another agent, a
   // campaign or the account is a 403 past the guards; others' runs are 404s). Subscriptions are

@@ -371,6 +371,12 @@ export interface AgencyStationCustomerWaitingFrame {
   match_name?: string;
   /** ISO-8601: when the caller started waiting. */
   waiting_since: string;
+  /**
+   * The caller no longer waits for this agent (taken by them or by someone else, sent to the
+   * overflow message, or hung up): the console removes the "waiting" notice for
+   * `inbound_call_id`. Absent on the frame that announces the wait.
+   */
+  cleared?: true;
 }
 
 // ─── The inbound call routes (internal handler bodies) ──────────────────────

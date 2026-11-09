@@ -113,6 +113,7 @@ interface CoreInboundCallParams {
 interface CoreInboundHoldOptions {
   preambleClipHashes: readonly string[];
   holdClipHash: string | null;
+  onPreambleDone?: () => void;
 }
 type CoreInboundHoldResult = 'released' | 'aborted' | 'no_media' | 'not_found';
 interface CoreInboundRecordOptions {

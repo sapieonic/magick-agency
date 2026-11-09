@@ -84,8 +84,9 @@ export interface StationState {
   inboundCall: AgencyInboundCall | null;
   /**
    * "Your customer is waiting": a caller sticky to this agent is queued while the agent is busy
-   * (`customer_waiting`). No frame says the caller stopped waiting, so it is cleared by what
-   * makes it untrue: an offer (`inbound_call`), a `ready` (a snapshot: the server re-sends it
+   * (`customer_waiting`). Cleared by the server's `customer_waiting` with `cleared: true` for that
+   * caller (taken by anyone, overflowed, hung up), and, as a backstop, by what makes it untrue: an
+   * offer (`inbound_call`), a `ready` (a snapshot: the server re-sends it
    * after `ready` while the caller still waits), and the agent leaving the busy states
    * (`available`: the release hook would have offered them the caller first; `break` and
    * `offline`: they are not eligible, so the caller goes to the team).
@@ -339,6 +340,13 @@ export function stationReducer(state: StationState, action: StationAction): Stat
     }
 
     case 'customer_waiting':
+      // `cleared`: that caller no longer waits for this agent (taken, overflowed, gone). Only the
+      // pill for THAT caller goes; a clear for another caller changes nothing.
+      if (action.frame.cleared) {
+        return state.customerWaiting?.inbound_call_id === action.frame.inbound_call_id
+          ? patch(state, { customerWaiting: null })
+          : state;
+      }
       return patch(state, { customerWaiting: action.frame });
   }
 }

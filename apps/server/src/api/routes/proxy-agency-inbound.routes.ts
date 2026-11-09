@@ -4,6 +4,7 @@ import { tenantContextMiddleware } from '../middleware/tenant-context.middleware
 import { rejectPathEscapingParams } from './helpers/path-params.js';
 import { registerInboundRouteRoutes } from './proxy-agency-inbound/routes.js';
 import { registerInboundMissedRoutes } from './proxy-agency-inbound/missed.js';
+import { registerInboundCallRoutes } from './proxy-agency-inbound/calls.js';
 
 /*
  * Inbound calls in the console (docs/inbound.md §7, §8.1; the wire is
@@ -13,10 +14,14 @@ import { registerInboundMissedRoutes } from './proxy-agency-inbound/missed.js';
  *  - `./proxy-agency-inbound/routes.ts`: the account's inbound routes (list, read, create, change,
  *    delete) and the route editor's choices (numbers, clips), `agency.inbound.write`;
  *  - `./proxy-agency-inbound/missed.ts`: the Missed inbound list and Mark handled,
- *    `agency.inbound.read` (an agent's own rows; the account's with `agency.supervise`).
+ *    `agency.inbound.read` (an agent's own rows; the account's with `agency.supervise`);
+ *  - `./proxy-agency-inbound/calls.ts` (P2): the answered call's finish (read, notes, hang up, the
+ *    outcome, Mark DNC), `agency.inbound.read`: the agent who took it, or `agency.supervise`.
  *
  * Guards, in this order, on every route: session and tenant context (the hooks below); the
- * route's permission; `agency_inbound_enabled` (`403 inbound_disabled`, `./shared.ts`). Each runs
+ * route's permission; `agency_inbound_enabled` (`403 inbound_disabled`, `./shared.ts`), except on
+ * the finish routes, which are never gated (an agent the flag is switched off under can still
+ * finish a call they took, as on the soft phone). Each runs
  * the internal handler (`agency/inbound.ts`) in-process through `callCore`, which validates,
  * checks the account's references and writes; this layer audits and fills names.
  *
@@ -31,4 +36,5 @@ export async function proxyAgencyInboundRoutes(app: FastifyInstance): Promise<vo
 
   await registerInboundRouteRoutes(app);
   await registerInboundMissedRoutes(app);
+  await registerInboundCallRoutes(app);
 }

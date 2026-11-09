@@ -187,6 +187,9 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_inbound_route.updated', label: 'Inbound route changed', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_route.deleted', label: 'Inbound route deleted', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.handled', label: 'Missed inbound call marked handled', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_call.hung_up', label: 'Inbound call ended', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls', product: 'agency' },
 
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },

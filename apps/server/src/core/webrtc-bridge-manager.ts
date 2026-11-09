@@ -1586,6 +1586,13 @@ export class WebRtcBridgeManager {
         log.error({ callId: session.callId }, 'Inbound hold: the carrier cannot encode the hold tone — nothing to play');
         return 'no_media';
       }
+      if (playback.stopped || !leg.isOpen()) return ended();
+      // The preamble is over (or there was none): the caller is now only waiting.
+      try {
+        opts.onPreambleDone?.();
+      } catch (err) {
+        log.error({ err, callId: session.callId }, 'Inbound hold: the preamble-done listener threw');
+      }
       // The loop ends only when the hold is stopped or the leg goes. A pass cut by its own
       // deadline (a carrier that stopped reading) is retried while the leg is up: the caller is
       // still held, and the call's budget bounds the retries.

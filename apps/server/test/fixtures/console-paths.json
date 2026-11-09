@@ -2493,6 +2493,48 @@
       "reason": "inbound Missed list, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
     },
     {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/calls/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/agency/inbound/calls/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/hangup",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/disposition",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/dnc",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/queue",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the supervisor’s inbound queue tiles (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
       "method": "POST",
       "path": "/proxy/agency/softphone/sessions",
       "source": "apps/console/src/api/softphone.ts",

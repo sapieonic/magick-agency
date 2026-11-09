@@ -258,6 +258,14 @@ export interface InboundHoldOptions {
    * clip not on this replica's disk: the built-in generated hold tone instead (Q24), never silence.
    */
   holdClipHash: string | null;
+  /**
+   * Called once, synchronously, when the preamble has finished playing and the hold loop starts
+   * (straight after the media is ready when there is no preamble). The agency side queues the
+   * caller from here, so no agent is bound while the greeting or the recording notice (IB7) is
+   * still playing (docs/inbound.md §2, Q5). Not called when the hold ends before the loop starts
+   * (the caller left, a stop, no media). A listener that throws is logged, never the hold's fault.
+   */
+  onPreambleDone?: () => void;
 }
 
 /**

@@ -904,3 +904,38 @@ export function trackInboundAnswer(result: InboundAnswerResult, seconds: number)
 export function trackInboundCallEnded(outcome: string): void {
   agencyInboundCallsTotal.inc({ outcome });
 }
+
+/** How an inbound caller's wait ended (`agency_inbound_wait_seconds`). */
+export type InboundWaitResult = 'connected' | 'abandoned' | 'overflow' | 'failed';
+
+/** How one offer of an inbound caller to an agent ended (`agency_inbound_offers_total`). */
+export type InboundOfferResult = 'connected' | 'caller_left' | 'station_lost' | 'lease_lost' | 'refused';
+
+export const agencyInboundQueueWaiting = gauge<'route_id'>(meter, 'agency_inbound_queue_waiting', {
+  description: 'Inbound callers waiting for an agent on a route right now (on offer excluded), set as the queue changes',
+});
+
+export const agencyInboundWaitSeconds = histogram<'result'>(meter, 'agency_inbound_wait_seconds', {
+  description: 'Seconds an inbound caller waited in the queue (from first queueing), by how the wait ended: connected, abandoned, overflow or failed',
+  unit: 's',
+  buckets: [1, 5, 10, 20, 30, 60, 120, 300, 600],
+});
+
+export const agencyInboundOffersTotal = counter<'result'>(meter, 'agency_inbound_offers_total', {
+  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost or refused (the call or the session was no longer free)',
+});
+
+/** One inbound route's waiting callers now (0 once nobody waits on it). */
+export function trackInboundQueueWaiting(routeId: string, waiting: number): void {
+  agencyInboundQueueWaiting.set({ route_id: routeId }, waiting);
+}
+
+/** One inbound caller's wait ended (once per call that queued). */
+export function trackInboundWait(result: InboundWaitResult, seconds: number): void {
+  agencyInboundWaitSeconds.observe({ result }, Math.max(0, seconds));
+}
+
+/** One offer ended. */
+export function trackInboundOffer(result: InboundOfferResult): void {
+  agencyInboundOffersTotal.inc({ result });
+}

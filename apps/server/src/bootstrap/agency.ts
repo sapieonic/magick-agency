@@ -11,6 +11,7 @@ import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
 import { startReportPipeline, type ReportPipeline } from '../agency/reports/pipeline.js';
 import { startInboundCalls } from '../agency/inbound/inbound-call-router.js';
 import { DncRegistry } from '../agency/dnc-registry.js';
+import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -121,10 +122,20 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   // occupancy from dead rows and quietly dial nothing forever.
   await agencyRuntime.start();
 
-  // Inbound calls (docs/inbound.md, P1): the startup sweep ends calls a restart left open, then
+  // Inbound calls (docs/inbound.md): the startup sweep ends calls a restart left open, then
   // the router takes the inbound answer and hangup webhooks (`seams/inbound-call-router.ts`).
   // Not gated on `agency_inbound_enabled`: a call on a linked number is always answered (§8.1).
-  const inbound = await startInboundCalls({ bridge: ensureVoiceEngine(ctx.redis).bridge, dnc: new DncRegistry() });
+  // P2 (docs/inbound.md §2): the connector puts waiting callers through to agents, gated on the
+  // account's `agency_inbound_enabled` and on one process (IB8); the outcome-lapse sweep with it.
+  const inbound = await startInboundCalls({
+    bridge: ensureVoiceEngine(ctx.redis).bridge,
+    dnc: new DncRegistry(),
+    connect: {
+      runtime: agencyRuntime,
+      enabled: (tenantId, accountId) => getFeatureFlagService().isEnabled(FLAGS.agency_inbound_enabled, { tenantId, accountId }),
+      mediaWorkers: ctx.config.processes.mediaWorkers,
+    },
+  });
 
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
