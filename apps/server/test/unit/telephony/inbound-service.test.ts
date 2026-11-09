@@ -161,6 +161,38 @@ describe('TelephonyInboundService', () => {
     expect(await svc.health(CRED)).toMatchObject({ ok: true, value: { health: { health: 'unreachable' } } });
   });
 
+  it('the carrier\'s read-only answers come before the transaction opens; only the carrier writes run inside it (m5)', async () => {
+    const connect = vi.fn(async () => ({ query: async () => ({ rows: [] }), release: () => undefined }));
+    const deps = (svc as unknown as { deps: ConstructorParameters<typeof TelephonyInboundService>[0] }).deps;
+    const s = new TelephonyInboundService({ ...deps, pool: { connect } as never });
+    await s.enable(CRED, ACTOR);
+    const opened = connect.mock.invocationCallOrder[0]!;
+    expect(carrier.findInboundApplications.mock.invocationCallOrder[0]!).toBeLessThan(opened);
+    expect(carrier.createInboundApplication.mock.invocationCallOrder[0]!).toBeGreaterThan(opened);
+
+    numbers = [numberRecord()];
+    await s.link('pn-1', ACTOR);
+    const linkOpened = connect.mock.invocationCallOrder[1]!;
+    expect(carrier.getNumberApp.mock.invocationCallOrder[0]!).toBeLessThan(linkOpened);
+    expect(carrier.setNumberApp.mock.invocationCallOrder[0]!).toBeGreaterThan(linkOpened);
+  });
+
+  it('Re-point asks whether a call from before the last Re-point is live only while the previous token is in its grace', async () => {
+    const deps = (svc as unknown as { deps: ConstructorParameters<typeof TelephonyInboundService>[0] }).deps;
+    const anyLiveArrivedBefore = vi.fn().mockResolvedValue(true);
+    const s = new TelephonyInboundService({ ...deps, calls: { anyLiveArrivedBefore } });
+    stored = inboundRecord({ app_id: 'app-1', previous_token_expires_at: null });
+    (deps.repo.repointInbound as ReturnType<typeof vi.fn>).mockResolvedValue(stored);
+    expect((await s.repoint(CRED, ACTOR)).ok).toBe(true);
+    expect(anyLiveArrivedBefore).not.toHaveBeenCalled();
+    const expires = new Date(Date.now() + 3_600_000);
+    stored = inboundRecord({ app_id: 'app-1', previous_token_expires_at: expires });
+    expect(await s.repoint(CRED, ACTOR)).toMatchObject({ ok: false, code: 'inbound_previous_token_in_use' });
+    // The last Re-point was the grace before the expiry.
+    expect(anyLiveArrivedBefore).toHaveBeenCalledWith(CRED, new Date(expires.getTime() - 24 * 3600 * 1000), expect.anything());
+    expect(carrier.updateInboundApplication).toHaveBeenCalledTimes(1);
+  });
+
   it('a number already on the Application is linked with no previous app (it cannot be known)', async () => {
     numbers = [numberRecord()];
     carrier.getNumberApp.mockResolvedValue({ appId: 'app-1' });
