@@ -32,7 +32,7 @@ console ──POST /proxy/agency/reports──► server (agency area, main proc
 
 | ID | Ruling | Status |
 |---|---|---|
-| RP1 | The server assembles the dataset with the reads the screens use (insights `compute*`, the agent record and roster through `callCore`, the same repositories); the renderer never touches the database. A Lambda reading RDS directly is later, once AWS deploys are automated. | default, pending Manas |
+| RP1 | The server assembles the dataset with the reads the screens use (insights `compute*`, the agent record and roster through `callCore`, the same repositories); the renderer never touches the database. A Lambda reading the database directly is later, once AWS deploys are automated. | default, pending Manas |
 | RP2 | Window: at most 30 days, or exactly one local calendar month (stored cap 31 days + 1 hour, the hour a clock change adds). Same cap for every kind in v1. | default, pending Manas |
 | RP3 | Zone: campaign report in the campaign's `default_timezone`; agent and account reports in the zone the request names (IANA, validated). No account time zone setting yet; the console defaults the form to the browser's zone. | default, pending Manas |
 | RP4 | Scheduled recipients are members of the tenant only, re-checked against RBAC at send time. | default, pending Manas |
@@ -184,6 +184,7 @@ must be a UUID (refused otherwise) and is written in lower case.
 | `AGENCY_REPORTS_SQS_QUEUE_URL` | | required when `sqs`; `sqs` also needs `S3_AUDIO_BUCKET` set, or boot fails |
 | `AGENCY_REPORTS_CALLBACK_BASE_URL` | | the server's public base URL (scheme and host, no path), required when `sqs` |
 | `AGENCY_REPORTS_CALLBACK_SECRET` | | ≥ 32 characters with no leading or trailing whitespace, required when `sqs` |
+| `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS` | | Only during a rotation of the secret: also accepted by the webhook, never signed with; same rules. Remove it when the rotation is done (`aws/README.md`, "Rotating the callback secret") |
 | `AGENCY_REPORTS_CHROME_PATH` | | Chromium for `inline` (else the renderer's own discovery: `CHROME_PATH`, Playwright's Chromium, then the usual system paths) |
 | `AGENCY_REPORTS_MAX_DETAIL_ROWS` | 100000 | RP12 |
 | `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS` | 2000 | assembler poll |

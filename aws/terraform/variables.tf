@@ -147,13 +147,13 @@ variable "enable_ssm" {
 
 variable "enable_reports" {
   type        = bool
-  description = "Create the report-jobs queue (and its dead-letter queue), the report-renderer Lambda with its `live` alias, the bucket's lifecycle rules for report-datasets/ and reports/, and the server's sqs:SendMessage. Off by default: an environment plans no change until it is switched on (aws/README.md, \"Reports\")."
+  description = "Create the report-jobs queue (and its dead-letter queue), the report-renderer Lambda with its `live` alias, its Chromium layer, the callback secret in SSM, the bucket's lifecycle rules for report-datasets/ and reports/, and the server's sqs:SendMessage. Off by default: an environment plans no change until it is switched on (aws/README.md, \"Reports\")."
   default     = false
 }
 
 variable "report_renderer_zip" {
   type        = string
-  description = "Path to the renderer's Lambda zip, built by `pnpm --filter @magick-agency/report-renderer build:lambda` (apps/report-renderer/dist/report-renderer-lambda.zip; relative paths resolve from aws/terraform). Required with enable_reports."
+  description = "A prebuilt renderer Lambda zip to deploy instead of building one. Null (the default) builds it from this checkout at every plan (scripts/build-report-renderer.mjs, which needs Node 22 and pnpm 10); the build is reproducible, so an unchanged checkout publishes no new version. Relative paths resolve from aws/terraform."
   default     = null
 }
 
@@ -165,7 +165,7 @@ variable "report_renderer_handler" {
 
 variable "report_renderer_chromium_layer_arn" {
   type        = string
-  description = "Versioned ARN of a Lambda layer carrying @sparticuz/chromium for x86_64, published in this account and region or a public one. Its Chromium must match the puppeteer-core the renderer pins. Required with enable_reports."
+  description = "Versioned ARN of an existing @sparticuz/chromium x86_64 layer to use instead of publishing one. Null (the default) publishes the layer this module pins for the renderer's @sparticuz/chromium version (apps/report-renderer/chromium-layer.json). An override's Chromium must match the puppeteer-core the renderer pins."
   default     = null
 
   validation {
@@ -174,24 +174,22 @@ variable "report_renderer_chromium_layer_arn" {
   }
 }
 
-variable "reports_callback_secret" {
-  type        = string
-  description = "AGENCY_REPORTS_CALLBACK_SECRET: the HMAC key the renderer signs its callback with. The server's env must hold the same value. At least 32 characters (`openssl rand -base64 48`). Kept in this module's state and in the function's configuration. Required with enable_reports."
-  default     = null
-  sensitive   = true
+variable "reports_callback_secret_generation" {
+  type        = number
+  description = "Generation of the callback secret (AGENCY_REPORTS_CALLBACK_SECRET), which this module generates and keeps in SSM. Raise it by one to rotate; aws/README.md, \"Rotating the callback secret\", has the order that keeps callbacks in flight verifying."
+  default     = 1
 
   validation {
-    condition     = var.reports_callback_secret == null || length(coalesce(var.reports_callback_secret, "x")) >= 32
-    error_message = "reports_callback_secret must be at least 32 characters, as the server requires."
+    condition     = var.reports_callback_secret_generation >= 1 && floor(var.reports_callback_secret_generation) == var.reports_callback_secret_generation
+    error_message = "reports_callback_secret_generation must be a whole number, 1 or more."
   }
+}
 
-  # reports_server_env prints it single-quoted for a .env file, where a single quote cannot be
-  # escaped, and the server refuses leading or trailing whitespace (it signs with the value as
-  # written). `openssl rand -base64 48` never produces either.
-  validation {
-    condition     = var.reports_callback_secret == null || can(regex("^[^\\s'][^'\\r\\n]*[^\\s']$", coalesce(var.reports_callback_secret, "xx")))
-    error_message = "reports_callback_secret must not contain a single quote or a line break, nor start or end with whitespace."
-  }
+variable "reports_callback_secret_sign_with_previous" {
+  type        = bool
+  description = "Whether the Lambda signs with the previous generation instead of the current one. Set for one apply during a rotation, together with the raised generation, so the server can take the new secret before the Lambda uses it."
+  default     = false
+  # Needs a previous generation: checked by the function's precondition (reports.tf).
 }
 
 variable "report_renderer_live_version" {

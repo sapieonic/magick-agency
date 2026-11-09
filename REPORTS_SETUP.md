@@ -72,7 +72,7 @@ nor Chromium).
    FF_AGENCY_REPORTS=true
    ```
 
-   (or turn it on for one tenant in super-admin, as in step B8).
+   (or turn it on for one tenant in super-admin, as in step B6).
 
 5. **Restart the server** (`pnpm --filter @magick-agency/server dev`). Its log should show
    `S3 client initialized`, the report assembler and tick starting, and no line saying the
@@ -84,85 +84,70 @@ nor Chromium).
 
 Reports render on an AWS Lambda fed by an SQS queue, created by the same `aws/terraform` module
 that made the bucket. The server sends one message per render; the Lambda reads the dataset from
-S3, writes the files and posts a signed callback to the server's public URL. Nothing in CI builds
-or applies this: you do it by hand, at the release you are deploying, from the machine that holds
-the environment's Terraform state.
+S3, writes the files and posts a signed callback to the server's public URL. The module also
+builds the Lambda's zip from your checkout, publishes its Chromium layer and generates the
+callback secret, so there is nothing to prepare by hand. Nothing in CI applies this: you do it by
+hand, at the release you are deploying, from the machine that holds the environment's Terraform
+state.
 
 Before you start:
 
 - **The deployment itself is working.** Reports add to a running deployment; they do not replace
   any of it. If you are deploying from scratch, follow [`DEPLOYMENT.md`](DEPLOYMENT.md) first
-  (sections 1–9: the VM, Postgres, the S3 bucket and server key from `aws/terraform` in 3.4,
+  (sections 1–9: the VM, Supabase Postgres, the S3 bucket and server key from `aws/terraform` in 3.4,
   DNS, `docker/.env`, Caddy, Firebase, VoiceLink, the first super-admin), and come back here.
   Section 3.5 and 6.4 there point to this page. Migration `0023` is applied by the server's
   container at start, like every migration.
 - **The Terraform state for this environment** is on the machine you apply from (the same
   `aws/terraform` workspace that created the bucket; state is local and per workspace).
-- **Tools:** the AWS CLI, Terraform, Node 22 and pnpm 10, with an AWS identity that can create,
-  besides the bucket's resources, SQS queues, Lambda functions and layers, aliases, event source
-  mappings, CloudWatch log groups and IAM roles.
+- **Tools:** the AWS CLI, Terraform, Node 22 and pnpm 10 (the plan builds the Lambda zip), and
+  HTTPS to GitHub (the plan downloads the Chromium layer zip once and checks its SHA-256). The AWS
+  identity must be able to create, besides the bucket's resources, SQS queues, Lambda functions
+  and layers, aliases, event source mappings, CloudWatch log groups, IAM roles and SSM parameters.
 
-1. **Check out the release** you are deploying (its tag), then build the Lambda zip:
+1. **Check out the release** you are deploying (its tag). `pnpm install` is not needed first:
+   the plan runs it if the renderer has no `node_modules`.
 
-   ```bash
-   pnpm install
-   pnpm --filter @magick-agency/report-renderer build:lambda
-   # → apps/report-renderer/dist/report-renderer-lambda.zip
-   ```
-
-2. **Publish the Chromium layer** in the same region. The zip does not carry Chromium; a Lambda
-   layer does. Use `@sparticuz/chromium` **153.0.0**, x64, the version
-   `apps/report-renderer/CLAUDE.md` pins (it must match the renderer's `puppeteer-core`). Download
-   that version's x64 layer zip from the `@sparticuz/chromium` releases, then (or use a public
-   layer's versioned ARN for the same version in your region instead):
-
-   ```bash
-   aws lambda publish-layer-version --layer-name chromium \
-     --zip-file fileb://chromium-v153.0.0-layer.x64.zip \
-     --compatible-runtimes nodejs22.x --compatible-architectures x86_64
-   ```
-
-   Keep the `LayerVersionArn` it prints.
-
-3. **Make a callback secret**, at least 32 characters with no spaces at either end:
-
-   ```bash
-   openssl rand -base64 48
-   ```
-
-4. **Add the reports variables** to the environment's tfvars (for example
+2. **Turn reports on** in the environment's tfvars (for example
    `aws/terraform/production.tfvars`):
 
    ```hcl
-   enable_reports                     = true
-   report_renderer_zip                = "../../apps/report-renderer/dist/report-renderer-lambda.zip"
-   report_renderer_chromium_layer_arn = "arn:aws:lambda:<region>:<account>:layer:chromium:<n>"
-   reports_callback_secret            = "<the secret from step 3>"
+   enable_reports = true
    ```
 
-   `report_retention_days` (default 90) is how long finished files are kept; if you change it,
-   set the server's `AGENCY_REPORTS_RETENTION_DAYS` to the same number.
+   That is the only setting. `report_retention_days` (default 90) is how long finished files are
+   kept; if you change it, set the server's `AGENCY_REPORTS_RETENTION_DAYS` to the same number.
+   An environment that already had `report_renderer_zip`, `report_renderer_chromium_layer_arn`
+   or `reports_callback_secret` set: remove them ([`aws/README.md`](aws/README.md), "Moving from
+   the hand-prepared inputs").
 
-5. **Apply and print the server's settings:**
+3. **Apply and print the server's settings:**
 
    ```bash
    cd aws/terraform
+   terraform init                          # installs the providers and module reports use
    terraform workspace select production
    terraform apply -var-file=production.tfvars
    terraform output -raw reports_server_env; echo
+   sh -c "$(terraform output -raw reports_callback_secret_env_command)"
    ```
 
-   That prints `AGENCY_REPORTS_RENDERER=sqs`, `AGENCY_REPORTS_SQS_QUEUE_URL=…`,
-   `AGENCY_REPORTS_CALLBACK_SECRET=…` and `AGENCY_REPORTS_RENDER_TIMEOUT_MS=900000`. The server's
-   existing S3 key needs no change: the apply added permission to send to the queue.
+   The plan builds `apps/report-renderer/dist/report-renderer-lambda.zip` and fetches
+   `@sparticuz/chromium`'s layer zip at the version the renderer pins (the first time, about
+   72 MB); the apply publishes the layer and the function and generates the secret in SSM.
+   The first output prints `AGENCY_REPORTS_RENDERER=sqs`, `AGENCY_REPORTS_SQS_QUEUE_URL=…`,
+   `AGENCY_REPORTS_RENDER_TIMEOUT_MS=900000` and a comment line saying where the secret is; the
+   command after it reads the secret from SSM and prints `AGENCY_REPORTS_CALLBACK_SECRET='…'` (or
+   fails, printing nothing, if the AWS CLI cannot read it). The server's existing S3 key needs no change: the
+   apply added permission to send to the queue.
 
    The render timeout is `reports_render_timeout_seconds` (default 900) and must stay at least the
    queue's visibility timeout plus the function's timeout (600 + 300 s): the apply refuses a
    smaller value. If you change it, change it in the tfvars and copy the printed line, never only
    in `docker/.env` (aws/README.md, "Timeouts").
 
-6. **Configure the server.** On the VM, add those four lines to `docker/.env`, plus the public
-   base URL the Lambda will call back on:
+4. **Configure the server.** On the VM, add those lines to `docker/.env` (in place of any older
+   reports lines), plus the public base URL the Lambda will call back on:
 
    ```bash
    AGENCY_REPORTS_CALLBACK_BASE_URL=https://agency.example.com
@@ -170,13 +155,13 @@ Before you start:
 
    Scheme and host only, no path (the server appends `/webhooks/reports/rendered`; a path is
    refused at boot). With the API on its own host ([`DEPLOYMENT.md`](DEPLOYMENT.md) 7.3), use
-   that host. Quote the secret. The server refuses to start under `sqs` if the queue URL, the base
+   that host. Keep the secret's quotes. The server refuses to start under `sqs` if the queue URL, the base
    URL or the secret is missing, if the secret is shorter than 32 characters or has spaces at either end, or if
    `S3_AUDIO_BUCKET` is not set.
 
    For emails, make sure `MAILJET_*` and `CONSOLE_BASE_URL` are set too (DEPLOYMENT.md 6.2, 6.3).
 
-7. **Deploy the server** at the same release. If the release is new, follow
+5. **Deploy the server** at the same release. If the release is new, follow
    [`DEPLOYMENT.md`](DEPLOYMENT.md), "Deploying a new version" (it rebuilds the web image too,
    whose nginx forwards `/webhooks` to the server). If only `docker/.env` changed:
 
@@ -200,19 +185,19 @@ Before you start:
    Do not test it with an unsigned `POST`: the server refuses it (401) but counts it as a bad
    signature, which fires `agy-reports-callback-bad-signature`.
 
-8. **Turn the flag on for a tenant.** In super-admin: *Tenants* → the tenant → *Feature Flags* →
+6. **Turn the flag on for a tenant.** In super-admin: *Tenants* → the tenant → *Feature Flags* →
    `agency_reports_enabled` → on (for the tenant, or one of its accounts). To roll it out to
    many tenants or everyone, use the *Feature Flags* page in the super-admin menu. Each tenant's
    reports run on your compute and its files are stored for 90 days, which is why the flag starts
    off.
 
-9. **Apply the Grafana alerts** if you run them ([`grafana/README.md`](grafana/README.md)): the
+7. **Apply the Grafana alerts** if you run them ([`grafana/README.md`](grafana/README.md)): the
    `reports` group adds `agy-reports-pending-too-long`, `agy-reports-failing` and
    `agy-reports-callback-bad-signature`, and the dashboard gains a "Reports" row. Their runbooks
    are in [`docs/operations.md`](docs/operations.md), "Alert runbooks".
 
-10. **Run a report** (below), then watch it through: the run should go from *Preparing* to
-    *Ready* within a minute or two for a small window.
+8. **Run a report** (below), then watch it through: the run should go from *Preparing* to
+   *Ready* within a minute or two for a small window.
 
 ## Your first report
 
@@ -241,13 +226,14 @@ only, and every recipient must be a supervisor on the account.
 
 | What you see | Likely cause | Fix |
 |---|---|---|
-| No *Reports* item, or `403 feature_disabled` | the flag is off for this tenant or account | step 4 (dev) or B8 |
+| No *Reports* item, or `403 feature_disabled` | the flag is off for this tenant or account | step A4 (dev) or B6 |
 | Runs fail "We couldn't gather the figures for this report." | no S3 bucket, or the server cannot write to it | `S3_AUDIO_BUCKET` and the `AWS_*` keys; the server log has the run id and the error |
 | Runs fail "Building the files failed." in development | the inline renderer found no Chromium | step A3; the boot log says the renderer cannot be loaded |
-| The same in production | the server is still on `inline` (its boot log says the renderer cannot be loaded) | `AGENCY_REPORTS_RENDERER=sqs` and the other step B6 lines |
-| Runs sit in *Preparing…* for about 15 minutes, then turn *Ready* or fail "Building the files took too long and was stopped." | the Lambda's callback does not reach the server (the server finds the files in S3 by itself after the render timeout) | `AGENCY_REPORTS_CALLBACK_BASE_URL`, the `curl` check in step B7, and the Lambda's logs (`/aws/lambda/<prefix>-<environment>-report-renderer`) |
-| `agy-reports-callback-bad-signature` fires | the Lambda's secret and the server's differ, or a clock is minutes off | set both to the same value (tfvars `reports_callback_secret` and `docker/.env`), apply, restart |
-| Runs fail "The report was prepared by a different version of the service." | the server was deployed before the Lambda | build and apply the renderer at the server's release, then *Run again* |
+| The same in production | the server is still on `inline` (its boot log says the renderer cannot be loaded) | `AGENCY_REPORTS_RENDERER=sqs` and the other step B4 lines |
+| Runs sit in *Preparing…* for about 15 minutes, then turn *Ready* or fail "Building the files took too long and was stopped." | the Lambda's callback does not reach the server (the server finds the files in S3 by itself after the render timeout) | `AGENCY_REPORTS_CALLBACK_BASE_URL`, the `curl` check in step B5, and the Lambda's logs (`/aws/lambda/<prefix>-<environment>-report-renderer`) |
+| `agy-reports-callback-bad-signature` fires | the server's secret is not the one the Lambda signs with (a rotation half done, an old `docker/.env` line after a duplicate), or a clock is minutes off | compare `printf %s "$AGENCY_REPORTS_CALLBACK_SECRET" \| sha256sum` on the server with `terraform output reports_callback_secret_signing_sha256`; replace the server's line with what `reports_callback_secret_env_command` prints, recreate the server |
+| Runs fail "The report was prepared by a different version of the service." | the server was deployed before the Lambda | apply `aws/terraform` at the server's release, then *Run again* |
+| The plan fails in `build-report-renderer` or `fetch-chromium-layer` | no Node or pnpm on the machine, a broken checkout, no route to GitHub, or a downloaded layer zip whose SHA-256 is not the pinned one | the message names which; a checksum mismatch is never retried with another file |
 | No email | Mailjet not set, the user turned the email off in their notification settings, or they had not ticked "Email me" | `MAILJET_*`; their *Notifications* settings |
 
 More: [`docs/operations.md`](docs/operations.md), "Reports: when runs are stuck" and the reports
@@ -255,8 +241,11 @@ runbooks.
 
 ## After the first time
 
-- **Every release that changes the renderer:** build the zip and apply **before** deploying the
-  server ([`aws/README.md`](aws/README.md), "Deploy order").
+- **Every release:** apply `aws/terraform` at the release's tag **before** deploying the server
+  ([`aws/README.md`](aws/README.md), "Deploy order"). A release that does not change the renderer
+  plans no change to the function.
+- **Rotating the callback secret:** [`aws/README.md`](aws/README.md), "Rotating the callback
+  secret" (two applies, no refused callbacks).
 - **Rollback, or turning reports off:** [`aws/README.md`](aws/README.md), "Rollback".
 - **Tuning** (rows per detail sheet, timeouts, how many runs a tenant may have pending, retention):
   [`docs/reports.md`](docs/reports.md), "Config". The defaults are a sensible start.

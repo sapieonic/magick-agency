@@ -7,3 +7,5 @@ terraform.tfstate.d/
 *.tfplan
 *.tfvars
 !terraform.tfvars.example
+# The Chromium layer zip, downloaded and checksum-verified at plan time (scripts/fetch-chromium-layer.mjs).
+.artifacts/

@@ -24,6 +24,7 @@ import { reportOutputKey } from '../../../../src/agency/reports/report-keys.js';
 import { ACCOUNT, OTHER_ACCOUNT, RUN, TENANT, runRecord } from './run-fixture.js';
 
 const SECRET = 'a-report-callback-secret-of-at-least-32-chars';
+const PREVIOUS = 'the-secret-before-the-rotation-also-32-chars';
 const NOW_MS = Date.parse('2026-11-08T12:00:00Z');
 const NOW_S = Math.floor(NOW_MS / 1000);
 const scope = { tenantId: TENANT, accountId: ACCOUNT, runId: RUN };
@@ -59,13 +60,14 @@ function repo(state: { attempt: number; status: string } = { attempt: 2, status:
 let app: FastifyInstance;
 let r: ReturnType<typeof repo>;
 
-async function build(state?: { attempt: number; status: string }, secret: string | null = SECRET) {
+async function build(state?: { attempt: number; status: string }, secret: string | null = SECRET, previousSecret?: string) {
   r = repo(state);
   const deps: ApplyRenderOutcomeDeps = { repo: r, retentionDays: 90, now: () => new Date(NOW_MS) };
   app = Fastify({ logger: false });
   await app.register(reportRenderedWebhookRoutes, {
     prefix: '/webhooks',
     callbackSecret: secret ?? undefined,
+    previousCallbackSecret: previousSecret,
     retentionDays: 90,
     apply: (runId, attempt, cb) => applyRenderOutcome(runId, attempt, cb, deps),
     nowMs: () => NOW_MS,
@@ -108,6 +110,15 @@ describe('POST /webhooks/reports/rendered', () => {
     expect(r.findByIdAnyTenant).not.toHaveBeenCalled();
     expect(r.applyRenderResult).not.toHaveBeenCalled();
     expect(metrics.callbacks).toHaveBeenCalledWith({ result: 'bad_signature' });
+  });
+
+  it('applies a callback signed with AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS while it is set, and refuses it once removed', async () => {
+    await build(undefined, SECRET, PREVIOUS);
+    const body = JSON.stringify(rendered());
+    expect((await post(body, signed(body, NOW_S, PREVIOUS))).statusCode).toBe(204);
+    expect(metrics.callbacks).toHaveBeenCalledWith({ result: 'applied' });
+    await build(undefined, SECRET);
+    expect((await post(body, signed(body, NOW_S, PREVIOUS))).statusCode).toBe(401);
   });
 
   it('signs the exact bytes: the same JSON re-serialised differently does not verify', async () => {
@@ -227,8 +238,19 @@ describe('verifyReportCallback', () => {
   it('accepts the signature the renderer computes, in either case', () => {
     const sig = signReportCallback(SECRET, NOW_S, '{}');
     for (const signature of [sig, sig.toUpperCase()]) {
-      expect(verifyReportCallback({ secret: SECRET, timestamp: String(NOW_S), signature, rawBody: '{}', nowMs: NOW_MS })).toEqual({ ok: true });
+      expect(verifyReportCallback({ secret: SECRET, timestamp: String(NOW_S), signature, rawBody: '{}', nowMs: NOW_MS })).toEqual({ ok: true, secret: 'current' });
     }
+  });
+
+  it('accepts the previous secret too while one is set, and says which matched (a rotation)', () => {
+    const base = { secret: SECRET, rawBody: '{}', nowMs: NOW_MS, timestamp: String(NOW_S) };
+    const old = signReportCallback(PREVIOUS, NOW_S, '{}');
+    expect(verifyReportCallback({ ...base, previousSecret: PREVIOUS, signature: old })).toEqual({ ok: true, secret: 'previous' });
+    expect(verifyReportCallback({ ...base, previousSecret: PREVIOUS, signature: signReportCallback(SECRET, NOW_S, '{}') }))
+      .toEqual({ ok: true, secret: 'current' });
+    // Without it the old signature is a mismatch; without a current secret nothing verifies.
+    expect(verifyReportCallback({ ...base, signature: old })).toEqual({ ok: false, reason: 'mismatch' });
+    expect(verifyReportCallback({ ...base, secret: undefined, previousSecret: PREVIOUS, signature: old })).toEqual({ ok: false, reason: 'no_secret' });
   });
 
   it('names why it refused', () => {

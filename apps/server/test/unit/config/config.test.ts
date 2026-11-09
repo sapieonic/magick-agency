@@ -69,6 +69,7 @@ describe('parseConfig', () => {
         sqsQueueUrl: undefined,
         callbackBaseUrl: undefined,
         callbackSecret: undefined,
+        callbackSecretPrevious: undefined,
         chromePath: undefined,
         maxDetailRows: 100_000,
         assemblerIntervalMs: 2_000,
@@ -161,6 +162,19 @@ describe('parseConfig', () => {
       }
       // Inline uses a configured secret too (the webhook verifies with it), so the rule holds there.
       expect(messages({ AGENCY_REPORTS_CALLBACK_SECRET: ' padded ' })).toEqual([refused]);
+    });
+
+    it('the previous secret (a rotation) is optional, read as written, and held to the same rules', () => {
+      const previous = 'p'.repeat(32);
+      expect(reports({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS: previous })?.callbackSecretPrevious).toBe(previous);
+      expect(reports({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS: '' })?.callbackSecretPrevious).toBeUndefined();
+      expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS: 'p'.repeat(31) })).toEqual([
+        'agency.reports.callbackSecretPrevious: AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS must be at least 32 characters, like the secret',
+      ]);
+      expect(messages({ ...SQS, AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS: ` ${previous}` })).toEqual([
+        'agency.reports.callbackSecretPrevious: AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS has leading or trailing whitespace: '
+          + 'remove it here and in the renderer\'s copy (the callback is signed with the value exactly as written)',
+      ]);
     });
 
     it('inline needs none of the sqs settings', () => {
