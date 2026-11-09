@@ -9,6 +9,7 @@ import {
   AGENCY_FLOOR_TICK_MS,
   agentInitials,
   canForceAvailable,
+  owesInboundOutcome,
   floorRiskSummary,
   floorStateSlices,
   floorTotals,
@@ -369,7 +370,7 @@ function AgentRow({
             {warning && (
               <AlertTriangle size={12} aria-hidden="true" data-testid={`floor-warning-${agent.session_id}`} />
             )}
-            End wrap-up…
+            {owesInboundOutcome(agent) ? 'Close inbound call…' : 'End wrap-up…'}
           </button>
         ) : warning ? (
           <span className={styles.riskFlag} title={note ?? undefined}>

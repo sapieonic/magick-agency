@@ -334,7 +334,7 @@ export function floorStateLabel(
     & Partial<Pick<AgencySupervisorAgent, 'on_inbound_call' | 'inbound_outcome_owed'>>,
 ): string {
   if (agent.on_inbound_call) return INBOUND_CALL_FLOOR_LABEL;
-  if (isInboundWrapup(agent)) return INBOUND_WRAPUP_FLOOR_LABEL;
+  if (agent.state === 'wrapup' && owesInboundOutcome(agent)) return INBOUND_WRAPUP_FLOOR_LABEL;
   if (isOnSoftphone(agent)) return SOFTPHONE_BREAK_REASON_LABEL;
   const label = AGENCY_FLOOR_STATE_LABELS[agent.state];
   if (agent.state !== 'break' || !agent.break_reason) return label;
@@ -634,9 +634,12 @@ export function rankFloor(
 /**
  * Whether the force-return control is offered for this session.
  *
- * **`wrapup` only.** The route is the one thing that can end a held wrap-up, and
- * that is all it is for; offering it against an `available` or `on_call` session
- * would advertise an action the server will refuse. Note this is deliberately NOT
+ * **`wrapup`, or an inbound outcome owed.** The route is the one thing that can end a
+ * held wrap-up, and that is all it is for; offering it against an `available` or
+ * `on_call` session would advertise an action the server will refuse. The one other
+ * state it serves is an agent who owes an inbound call's outcome while on a break (a
+ * restart rehydrates them onto `break`): the server closes that call's outcome as it
+ * would from a wrap-up ({@link owesInboundOutcome}). Note this is deliberately NOT
  * gated on `wrapup_overrun` — a supervisor may know the agent has left for the
  * day thirty seconds in, and the console making them wait out a grace period it
  * invented would be the console overruling them.
@@ -646,22 +649,23 @@ export function rankFloor(
  * `requirePermission('agency.supervise')` exactly, or the button 403s on click.
  */
 export function canForceAvailable(agent: AgencySupervisorAgent): boolean {
-  return agent.state === 'wrapup';
+  return agent.state === 'wrapup' || owesInboundOutcome(agent);
 }
 
 /**
- * The agent is in an inbound wrap-up: in `wrapup`, owing the outcome of an inbound call that
- * ended after they took it (`inbound_outcome_owed`, docs/inbound.md §6). Force-available then
- * closes that call's outcome as lapsed ("closed by a supervisor") and returns them, so the drawer
- * offers it as "Close and make available" with its own confirm.
+ * The agent owes the outcome of an inbound call that ended after they took it
+ * (`inbound_outcome_owed`, docs/inbound.md §6): in an inbound wrap-up, or on a break (a restart
+ * rehydrates them there). Force-available then closes that call's outcome as lapsed ("closed by a
+ * supervisor") and returns them, whatever their state, so the drawer offers it as "Close and make
+ * available" with its own confirm (SWE-N6).
  */
-export function isInboundWrapup(
-  agent: Pick<AgencySupervisorAgent, 'state'> & Partial<Pick<AgencySupervisorAgent, 'inbound_outcome_owed'>>,
+export function owesInboundOutcome(
+  agent: Partial<Pick<AgencySupervisorAgent, 'inbound_outcome_owed'>>,
 ): boolean {
-  return agent.state === 'wrapup' && agent.inbound_outcome_owed === true;
+  return agent.inbound_outcome_owed === true;
 }
 
-/** The inbound wrap-up's force-return copy: the trigger, the confirm and the outcomes. */
+/** The inbound force-return copy: the trigger, the confirm and the outcomes. */
 export const INBOUND_FORCE_AVAILABLE = {
   trigger: 'Close and make available',
   title: 'Close this inbound call and make the agent available?',
@@ -669,6 +673,8 @@ export const INBOUND_FORCE_AVAILABLE = {
     '{name} hasn’t saved the outcome of an inbound call yet. The call is closed with no outcome, recorded as closed by '
     + 'a supervisor, and {name} goes straight back into the pool and can be sent a new call immediately. The outcome '
     + 'can’t be filled in afterwards.',
+  /** Added to the message for an agent on a break: making them available ends it. */
+  onBreak: '{name} is on a break: this ends it.',
   /** Not the trigger's words, as the campaign confirm's (a restatement, never the same button twice). */
   confirmLabel: 'Close the call and return them',
   done: '{name} is available again. Their inbound call is closed.',
@@ -676,8 +682,15 @@ export const INBOUND_FORCE_AVAILABLE = {
   refused: '{name} still owes this inbound call’s outcome and it couldn’t be closed. Ask them to save it, then try again.',
 } as const;
 
-export function inboundForceAvailableCopy(key: 'message' | 'done' | 'refused', displayName: string): string {
-  return INBOUND_FORCE_AVAILABLE[key].replaceAll('{name}', displayName);
+export function inboundForceAvailableCopy(
+  key: 'message' | 'done' | 'refused',
+  displayName: string,
+  state?: AgencySupervisorAgent['state'],
+): string {
+  const text = key === 'message' && state === 'break'
+    ? `${INBOUND_FORCE_AVAILABLE.message} ${INBOUND_FORCE_AVAILABLE.onBreak}`
+    : INBOUND_FORCE_AVAILABLE[key];
+  return text.replaceAll('{name}', displayName);
 }
 
 /** Free-text reason cap, mirroring the API's `forceAvailableSchema`. */

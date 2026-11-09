@@ -7,7 +7,8 @@ import { ApiError } from '../../api/client';
  * An agent in an inbound wrap-up on the supervisor's floor (`docs/inbound.md` §6): their ended
  * inbound call still owes its outcome (`inbound_outcome_owed`). The floor names it, and the drawer
  * offers "Close and make available": force-available, which closes the call's outcome as lapsed
- * ("closed by a supervisor") and returns the agent. The API is mocked; a server that predates
+ * ("closed by a supervisor") and returns the agent; so does an agent on a break who owes one (a
+ * restart rehydrates them there). The API is mocked; a server that predates
  * closing an inbound wrap-up refuses `409 inbound_call_live`, which the drawer says plainly.
  */
 
@@ -98,6 +99,32 @@ describe('an inbound wrap-up on the floor', () => {
       .toBe('Ravi still owes this inbound call’s outcome and it couldn’t be closed. Ask them to save it, then try again.');
     expect(onForced).not.toHaveBeenCalled();
     expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it('an agent on a break who owes the outcome (a restart’s rehydrate) is offered the same close, saying the break ends (SWE-N6)', async () => {
+    const onForced = open(agent({ state: 'break', break_reason: 'Lunch' }));
+    expect(screen.getByTestId('agent-drawer-state').textContent).toBe('On break · Lunch');
+    expect(screen.getByTestId('force-available-button').textContent).toBe('Close and make available');
+    fireEvent.click(screen.getByTestId('force-available-button'));
+    expect(screen.getByText('Close this inbound call and make the agent available?')).toBeTruthy();
+    const message = screen.getByText(/recorded as closed by a supervisor/);
+    expect(message.textContent).toContain('The call is closed with no outcome');
+    expect(message.textContent).toContain('Ravi is on a break: this ends it.');
+    fireEvent.click(screen.getByRole('button', { name: 'Close the call and return them' }));
+    await waitFor(() => expect(onForced).toHaveBeenCalled());
+    expect(mocks.showToast).toHaveBeenCalledWith('Ravi is available again. Their inbound call is closed.', 'success');
+  });
+
+  it('the row’s control says what it does: close the inbound call, or end the wrap-up', () => {
+    render(<AgentFloor campaignId="camp-1" stats={stats([
+      agent({ session_id: 's-in', state: 'break', break_reason: 'Lunch' }),
+      agent({ session_id: 's-out', agent_name: 'Tom', inbound_outcome_owed: false }),
+      agent({ session_id: 's-free', agent_name: 'Asha', state: 'break', break_reason: 'Lunch', inbound_outcome_owed: false }),
+    ])} wrapupSeconds={30} canSupervise onForced={vi.fn()} />);
+    expect(screen.getByTestId('floor-row-s-in').textContent).toContain('Close inbound call…');
+    expect(screen.getByTestId('floor-row-s-out').textContent).toContain('End wrap-up…');
+    // A break owing nothing has nothing to force.
+    expect(screen.getByTestId('floor-row-s-free').textContent).not.toMatch(/End wrap-up…|Close inbound call…/);
   });
 
   it('a campaign wrap-up keeps End wrap-up and its own confirm', () => {

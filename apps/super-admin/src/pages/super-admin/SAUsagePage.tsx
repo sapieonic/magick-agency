@@ -154,8 +154,10 @@ export default function SAUsagePage() {
   const inboundColumns: Column<UsageRow>[] = [
     nameColumn,
     { key: 'in-calls', label: 'Calls', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_calls))}</span> },
-    { key: 'in-answered', label: 'Answered', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_answered_calls))}</span> },
-    { key: 'in-connected', label: 'Connected', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_connected_calls))}</span> },
+    // "Picked up by the service": our answer took the call (a message, the queue, a voicemail), which
+    // the carrier bills; not an agent answering it, which is "Put through to an agent".
+    { key: 'in-answered', label: 'Picked up by the service', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_answered_calls))}</span> },
+    { key: 'in-connected', label: 'Put through to an agent', align: 'right', render: (r) => <span className={styles.num}>{formatNumber(n(r.counts.inbound_connected_calls))}</span> },
     { key: 'in-carrier', label: 'Carrier time', align: 'right', render: (r) => seconds(n(r.counts.inbound_seconds)) },
     { key: 'in-hold', label: 'Hold time', align: 'right', render: (r) => seconds(n(r.counts.inbound_hold_seconds)) },
     { key: 'in-talk', label: 'Talk time', align: 'right', render: (r) => seconds(n(r.counts.inbound_talk_seconds)) },
@@ -266,8 +268,10 @@ export default function SAUsagePage() {
         Counts only — nothing is charged and no rounding is applied; times are exact seconds shown as
         h:mm:ss. Every dial figure is counted on the dial time of the attempt, so a window covers the
         same set of dials in every column. Inbound calls are not dials: they are counted apart, on the
-        time each call arrived. Their carrier time runs from our answer to the end of the call (what the
-        carrier bills, messages and holding included), and hold time is the part a caller spent waiting
+        time each call arrived. “Picked up by the service” counts the calls our service answered (with a
+        message, the queue or a voicemail), each billed by the carrier; “Put through to an agent” counts
+        those an agent then spoke to. Their carrier time runs from our answer to the end of the call (what
+        the carrier bills, messages and holding included), and hold time is the part a caller spent waiting
         for an agent. Calls to a number no account route answers, from callers who match no contact,
         belong to no account and are not counted here. The end date is inclusive; the window is capped
         at {USAGE_COUNTS_MAX_WINDOW_DAYS} days.
@@ -287,8 +291,8 @@ export default function SAUsagePage() {
       )}
       {totals && (
         <div className={styles.statsGrid} data-testid="usage-inbound-totals">
-          <StatCard title="Inbound calls" value={formatNumber(n(totals.inbound_calls))} subtitle={`${formatNumber(n(totals.inbound_answered_calls))} answered`} icon={<PhoneIncoming size={18} />} />
-          <StatCard title="Inbound connected" value={formatNumber(n(totals.inbound_connected_calls))} icon={<PhoneForwarded size={18} />} color="var(--success)" />
+          <StatCard title="Inbound calls" value={formatNumber(n(totals.inbound_calls))} subtitle={`${formatNumber(n(totals.inbound_answered_calls))} picked up by the service`} icon={<PhoneIncoming size={18} />} />
+          <StatCard title="Inbound put through to an agent" value={formatNumber(n(totals.inbound_connected_calls))} icon={<PhoneForwarded size={18} />} color="var(--success)" />
           <StatCard title="Inbound carrier time" value={formatSeconds(n(totals.inbound_seconds))} subtitle={`${formatNumber(n(totals.inbound_seconds))} s`} icon={<Timer size={18} />} color="var(--accent)" />
           <StatCard title="Inbound hold time" value={formatSeconds(n(totals.inbound_hold_seconds))} subtitle={`${formatNumber(n(totals.inbound_hold_seconds))} s`} icon={<Hourglass size={18} />} />
         </div>

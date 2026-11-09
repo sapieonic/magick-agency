@@ -11,7 +11,9 @@ const api = vi.hoisted(() => ({
 vi.mock('../../api/inbound', () => api);
 
 import {
+  INBOUND_CLOSED_BY_SUPERVISOR_COPY,
   INBOUND_HUNG_UP_EARLY_COPY,
+  INBOUND_OUTCOME_WINDOW_ENDED_COPY,
   INBOUND_MUTED_AT_CONNECT_COPY,
   INBOUND_REQUEUED_COPY,
   NOTES_DEBOUNCE_MS,
@@ -101,6 +103,20 @@ describe('the call held', () => {
     expect(g.result.current.notice).toBe(INBOUND_REQUEUED_COPY);
   });
 
+  it('says a call closed with no outcome closed because its window ran out, or because a supervisor closed it first', () => {
+    // `owing()` is due at 10:33 server time.
+    const before = serverClock(0, () => Date.parse('2026-11-09T10:10:00Z'));
+    const after = serverClock(0, () => Date.parse('2026-11-09T10:33:05Z'));
+    const lapsed = owing({ settled_at: '2026-11-09T10:33:04Z', outcome: 'answered' });
+    const h = render({ frameCall: owing(), clock: after });
+    h.set({ frameCall: lapsed });
+    expect(h.result.current.call).toBeNull();
+    expect(h.result.current.notice).toBe(INBOUND_OUTCOME_WINDOW_ENDED_COPY);
+    const g = render({ frameCall: owing(), clock: before });
+    g.set({ frameCall: owing({ settled_at: '2026-11-09T10:09:59Z' }) });
+    expect(g.result.current.notice).toBe(INBOUND_CLOSED_BY_SUPERVISOR_COPY);
+  });
+
   it('tells a muted agent so the moment the caller is connected', () => {
     const h = render({ audio: { ...audio, muted: true } });
     h.set({ frameCall: connected() });
@@ -118,6 +134,7 @@ describe('restore after a reconnect', () => {
     expect(api.getInboundCall).toHaveBeenCalledWith('ib-1', 't-1', 'a-1');
     expect(h.result.current.call).toBeNull();
   });
+
 
   it('says a call on offer went back to the queue when the server no longer has it for us (its frame went to the old socket)', async () => {
     api.getInboundCall.mockRejectedValue(Object.assign(new Error('gone'), { statusCode: 404, details: { code: 'inbound_call_not_found' } }));
@@ -257,6 +274,25 @@ describe('the outcome', () => {
     await act(async () => h.result.current.saveOutcome());
     expect(api.getInboundCall).toHaveBeenCalledWith('ib-1', 't-1', 'a-1');
     expect(h.result.current.call).toBeNull();
+  });
+
+  it('says the time ran out, not that an outcome is already saved', async () => {
+    api.dispositionInboundCall.mockResolvedValue({ ok: false, refusal: refusal({ code: 'inbound_outcome_already_saved' }) });
+    api.getInboundCall.mockReturnValue(new Promise(() => {}));
+    const h = render({ frameCall: owing(), clock: serverClock(0, () => Date.parse('2026-11-09T10:33:01Z')) });
+    picked(h, 'resolved');
+    await act(async () => h.result.current.saveOutcome());
+    expect(h.result.current.padRejection).toBe(INBOUND_OUTCOME_WINDOW_ENDED_COPY);
+    expect(h.result.current.announcement).toBe(`The outcome wasn’t saved. ${INBOUND_OUTCOME_WINDOW_ENDED_COPY}`);
+  });
+
+  it('inside the window, “already saved” is what it says', async () => {
+    api.dispositionInboundCall.mockResolvedValue({ ok: false, refusal: refusal({ code: 'inbound_outcome_already_saved' }) });
+    api.getInboundCall.mockReturnValue(new Promise(() => {}));
+    const h = render({ frameCall: owing(), clock: serverClock(0, () => Date.parse('2026-11-09T10:20:00Z')) });
+    picked(h, 'resolved');
+    await act(async () => h.result.current.saveOutcome());
+    expect(h.result.current.padRejection).toBe('This call’s outcome is already saved.');
   });
 });
 

@@ -69,6 +69,24 @@ export const INBOUND_DISPOSITION_RULE_COPY = {
 export const INBOUND_MUTED_AT_CONNECT_COPY = 'You are muted. The caller can’t hear you — press M to unmute.';
 export const INBOUND_HUNG_UP_EARLY_COPY = 'The caller hung up before you were connected.';
 export const INBOUND_REQUEUED_COPY = 'The call went back to the queue while your station was away.';
+/** The outcome window ended before an outcome was saved: the call was closed without one (`no_disposition`). */
+export const INBOUND_OUTCOME_WINDOW_ENDED_COPY = 'The time to save this call’s outcome ran out, so it was closed without one.';
+/** A supervisor closed the call before its window ended ("Close and make available"). */
+export const INBOUND_CLOSED_BY_SUPERVISOR_COPY = 'A supervisor closed this call without an outcome.';
+
+/**
+ * Why an answered call left the station with no outcome saved (settled, bridged, no code): its
+ * outcome window ran out (the lapse), or a supervisor closed it first. The wire says only that it
+ * closed with none; the window's end (`outcome_due_at`, on the server's clock) tells the two apart.
+ */
+export function closedWithoutOutcomeCopy(call: AgencyInboundCall, clock: ServerClock): string {
+  return windowEnded(call, clock) ? INBOUND_OUTCOME_WINDOW_ENDED_COPY : INBOUND_CLOSED_BY_SUPERVISOR_COPY;
+}
+
+/** The call's outcome window has ended (its deadline reached on the server's clock). */
+function windowEnded(call: AgencyInboundCall, clock: ServerClock): boolean {
+  return clock.until(call.outcome_due_at) === 0;
+}
 
 export interface InboundCallAudio {
   muted: boolean;
@@ -169,6 +187,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
   const phase = inboundPhase(newest);
   const call = phase !== null ? newest : null;
   const heldRef = useLatestRef(newest);
+  const clockRef = useLatestRef(clock);
 
   /**
    * Ask the server about the call held. Its answer is adopted when it is still this session's;
@@ -266,9 +285,11 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
       // Why it left, when the agent did not save its outcome: the copy that left with it.
       const last = heldRef.current && heldRef.current.id === prev.id ? heldRef.current : prev;
       if (last.settled_at !== null && last.bridged_at === null) setNotice(INBOUND_HUNG_UP_EARLY_COPY);
+      else if (last.settled_at !== null && last.disposition_code === null) setNotice(closedWithoutOutcomeCopy(last, clockRef.current));
       else if (last.state === 'queued') setNotice(INBOUND_REQUEUED_COPY);
     }
     // Keyed on the call's identity and presence, not the object: every frame is a new object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.id, call === null]);
 
   /** The notice is about the call that just left; it does not outstay the next minute. */
@@ -284,6 +305,8 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     const prev = prevPhaseRef.current;
     prevPhaseRef.current = phase;
     if (phase === 'connected' && prev !== 'connected' && audio.muted) setAnnouncement(INBOUND_MUTED_AT_CONNECT_COPY);
+    // Keyed on the phase: the mute state is read at the moment the caller is connected.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   // ── Notes autosave ────────────────────────────────────────────────────────
@@ -408,7 +431,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
       setAnnouncement('Outcome saved.');
       return;
     }
-    const message = dispositionRefusalCopy(result.refusal);
+    const message = dispositionRefusalCopy(result.refusal, { windowEnded: windowEnded(target, clock) });
     const { refusal } = result;
     if (refusal.code === 'inbound_disposition_invalid' && refusal.allowedCodes?.length) {
       setCatalogOverride({ callId: target.id, catalog: resyncCatalog(catalog, refusal.allowedCodes) });
@@ -508,8 +531,13 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
   };
 }
 
-/** An outcome refused, in the console's words: the rule when the server named one. */
-export function dispositionRefusalCopy(refusal: InboundRefusal): string {
+/**
+ * An outcome refused, in the console's words: the rule when the server named one. "Already saved"
+ * once the call's outcome window has ended (`windowEnded`) is the lapse closing it, not an outcome
+ * someone saved: it says the window ended.
+ */
+export function dispositionRefusalCopy(refusal: InboundRefusal, opts: { windowEnded?: boolean } = {}): string {
+  if (refusal.code === 'inbound_outcome_already_saved' && opts.windowEnded) return INBOUND_OUTCOME_WINDOW_ENDED_COPY;
   if (refusal.code === 'inbound_disposition_invalid') {
     return refusal.reason ? INBOUND_DISPOSITION_RULE_COPY[refusal.reason] : INBOUND_REFUSAL_COPY.inbound_disposition_invalid;
   }

@@ -122,7 +122,10 @@ describe('SAUsagePage', () => {
     renderPage();
     const totals = await screen.findByTestId('usage-inbound-totals');
     expect(within(totals).getByText('Inbound calls')).toBeTruthy();
-    expect(within(totals).getByText('11 answered')).toBeTruthy();
+    // Inbound "answered" is what the service picked up, not what an agent took: said so.
+    expect(within(totals).getByText('11 picked up by the service')).toBeTruthy();
+    expect(within(totals).getByText('Inbound put through to an agent')).toBeTruthy();
+    expect(within(totals).queryByText(/\banswered\b/)).toBeNull();
     expect(within(totals).getByText('2:02:02')).toBeTruthy(); // carrier time, 7322 s
     expect(within(totals).getByText('0:02:05')).toBeTruthy(); // hold, 125 s
     // The dials are what they are: the table shows them by default.
@@ -131,6 +134,9 @@ describe('SAUsagePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Inbound calls' }));
     expect(await screen.findByRole('columnheader', { name: 'Carrier time' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Hold time' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Picked up by the service' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Put through to an agent' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Answered' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Dials' })).toBeNull();
     expect(screen.getByTitle('7,322 s')).toBeTruthy();
     expect(screen.getByText(/Inbound calls are not dials/)).toBeTruthy();

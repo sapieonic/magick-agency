@@ -404,13 +404,15 @@ describe('agentDisplayName — what a tile calls someone the API could not resol
 });
 
 describe('the force-return control', () => {
-  it('is offered on a wrap-up and on nothing else', () => {
+  it('is offered on a wrap-up and on nothing else, unless an inbound outcome is owed', () => {
     // The route is the one thing that can end a HELD wrap-up, and that is all it
     // is for. Offering it elsewhere advertises an action the API will refuse.
     expect(canForceAvailable(agent({ state: 'wrapup' }))).toBe(true);
     for (const state of ['offline', 'available', 'reserved', 'on_call', 'break'] as const) {
       expect(canForceAvailable(agent({ state }))).toBe(false);
     }
+    // An agent on a break who owes an inbound outcome (rehydrated there): the server closes it.
+    expect(canForceAvailable(agent({ state: 'break', inbound_outcome_owed: true }))).toBe(true);
   });
 
   it('is offered on ANY wrap-up, not only an overrunning one', () => {

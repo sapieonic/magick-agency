@@ -99,7 +99,9 @@ const COPY: Record<AgencyReleaseReason, ReleaseCopy> = {
   },
   inbound_call: {
     headline: 'The customer rang us',
-    subtext: 'They called in while we were ringing them, so this call was cancelled. Nothing to do.',
+    // What happened, not "nothing to do": the dial was stopped and the agent is handed their call
+    // (docs/inbound.md §5.4), offered here the moment their greeting ends. Two lines at phone width.
+    subtext: 'We stopped this call because they rang us. Their call comes to you next.',
     tone: 'neutral',
   },
 };

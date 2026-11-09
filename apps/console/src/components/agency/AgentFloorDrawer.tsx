@@ -16,7 +16,7 @@ import {
   hasResolvedName,
   INBOUND_FORCE_AVAILABLE,
   inboundForceAvailableCopy,
-  isInboundWrapup,
+  owesInboundOutcome,
   secondsInStateBucket,
   timeInStateMs,
   type AgencyFloorSort,
@@ -101,8 +101,8 @@ export function AgentFloorDrawer({
     `agency.supervise` the API gates the route on, or the button 403s on click.
   */
   const showForce = canSupervise && canForceAvailable(agent);
-  // An inbound wrap-up: the return closes the inbound call's owed outcome (the server's rule).
-  const inbound = isInboundWrapup(agent);
+  // An inbound outcome owed (in wrap-up, or on a break): the return closes it (the server's rule).
+  const inbound = owesInboundOutcome(agent);
 
   const runForce = async () => {
     setBusy(true);
@@ -221,7 +221,7 @@ export function AgentFloorDrawer({
         <ConfirmDialog
           open
           title={inbound ? INBOUND_FORCE_AVAILABLE.title : FORCE_AVAILABLE_CONFIRM.title}
-          message={inbound ? inboundForceAvailableCopy('message', displayName) : forceAvailableConfirmMessage(displayName)}
+          message={inbound ? inboundForceAvailableCopy('message', displayName, agent.state) : forceAvailableConfirmMessage(displayName)}
           confirmLabel={inbound ? INBOUND_FORCE_AVAILABLE.confirmLabel : FORCE_AVAILABLE_CONFIRM.confirmLabel}
           danger
           disabled={busy}
