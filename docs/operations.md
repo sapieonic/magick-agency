@@ -212,6 +212,7 @@ production.
 | `PLIVO_CALLS_PER_SECOND` | `2` (1–100) | New calls a second per Plivo account (Plivo's account default), counted across every process in Redis (a sliding 1000 ms window per account: no 1000 ms span admits more). One value for every tenant's account: raise it only when every Plivo account in use allows more |
 | `PLIVO_DIAL_RATE_MAX_WAIT_MS` | `5000` (0–60000) | The longest a dial waits for a calls-per-second slot; then it is refused unsent (`carrier_rate_limited`), a retryable refusal the dialler treats as back-pressure |
 | `PLIVO_REQUEST_TIMEOUT_MS` | `15000` (1000–120000) | Each Plivo REST request (create-call, cancel, hangup, number sync). A timed-out create-call may have placed the call: never retried, the contact's redial deferred 15 min as for VoiceLink |
+| `PLIVO_INBOUND_FALLBACK_ANSWER_URL` | empty | The fallback answer URL inbound Plivo Applications get ([`inbound.md`](inbound.md) §3.3): a static XML file hosted off this deployment, fetched with GET, so a caller hears something while this server is down. Empty: this server's own `…/inbound-fallback` route (POST). Absolute `https:`, no fragment, or the server does not start. Read at Enable and Re-point: after a change, Re-point each credential with inbound enabled |
 | `PLIVO_RING_TIMEOUT_SECONDS` | `45` (5–120) | How long Plivo lets a dial ring (`ring_timeout`). A call with no answer or terminal callback 30 s past it is ended by the bridge (`ring_deadline_passed`), so a lost callback does not hold its slots and agent to the max duration |
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
 | `CONCURRENCY_RECONCILE_INTERVAL_MS` | `300000` | Self-heal reconcile cadence |
@@ -532,6 +533,19 @@ Then per tenant:
    tenant has more than one carrier account; pick the Plivo account (its alias plus the
    credential's label). The caller IDs offered are then that account's synced numbers. The soft
    phone's untagged calls dial on the carrier account of the caller ID chosen.
+
+**Inbound calls** ([`inbound.md`](inbound.md) §8; IB6, super-admins only). On the credential's
+row, the Inbound calls section: **Enable inbound** creates one Application on the tenant's Plivo
+account (needs `PLIVO_WEBHOOK_BASE_URL`; optionally host the fallback XML first, §3.3). Then link
+numbers one by one on the Phone Numbers page (a synced number's row → Inbound calls → **Link to
+inbound**); the app the number was on is remembered and **Unlink** restores it. Pilot one tenant
+first. **Check health** compares the Application with what is stored; after `url_mismatch`,
+`app_missing` or a change of `PLIVO_WEBHOOK_BASE_URL` / `PLIVO_INBOUND_FALLBACK_ANSWER_URL`,
+**Re-point** (calls already answered keep working for 24 h on the old token). Unassigning, retiring
+or deleting a linked number, a sync that retires it, and disabling the credential unlink it
+automatically (each restored at Plivo when possible; the audit row `phone_number.inbound_unlinked`
+says `carrier: failed` with the app to put back by hand otherwise). A credential with inbound enabled
+cannot be revoked (409 `inbound_enabled`): unlink its numbers, **Disable inbound**, then revoke.
 
 **Automatic pauses.** Three reasons on a campaign's pause say its carrier account cannot dial. The
 first two are set on the first refused dial, the third after five in a row; each is written to the activity trail as "Auto-paused" with the reason,

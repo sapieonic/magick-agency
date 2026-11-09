@@ -4,8 +4,9 @@ Customers ring back the numbers agency dials them from. This is the design for a
 calls on Plivo numbers (tenants' own accounts, B18–B22), putting the caller through to the agent who
 spoke to them where possible, and turning every call nobody takes into a follow-up. VoiceLink
 follows later behind the same router. Designed and reviewed 2026-11-09; Manas locked IB1–IB8 the
-same day. **P1's foundation is built** (§9: schema, contracts, the schedule rule, repositories);
-no route, webhook or screen is yet. §12 is the build plan and its status.
+same day. **P1's foundation is built** (§9: schema, contracts, the schedule rule, repositories),
+and so is its operator side (§8.1, §8.2: the credential's Application, number links, the lifecycle
+cascade, the super-admin routes and screens). §12 is the build plan and its status.
 
 It replaces launch decision 3 ("inbound calls play a message and hang up") for Plivo numbers that a
 super-admin links to inbound. Unlinked numbers, and every VoiceLink number, keep today's behaviour.
@@ -76,11 +77,19 @@ Connected: inbound outcome + wrap-up (§6); hangup via the credential-level stat
 | `POST /api/v1/webhooks/plivo/inbound-status/:credentialId` | the Application's `hangup_url` | `CallUUID` → `agency_calls.provider_call_id` (new index); nonce set per credential |
 | per-call recording / stream URLs | rendered by us per call | call id + per-call token, as outbound (Q6) |
 
-The Application's fallback answer URL points at a static "we can't take your call, we'll call you
-back" XML, so a deploy or outage never leaves a caller in silence. Signatures are verified against
-the URL stored on the credential, never rebuilt from env, because the URL lives in the tenant's
-Plivo account; the credential page shows a health check (the Application's URLs compared with the
-stored ones) and a Re-point action. Do not reuse `plivoCallEvent` (it hardcodes `outbound` and reads
+The Application's fallback answer URL points at a static "we can't take your call" XML, so a
+deploy or outage never leaves a caller in silence: `PLIVO_INBOUND_FALLBACK_ANSWER_URL` when the
+operator sets one (a file hosted off this deployment, fetched with GET, §3.3), else our own
+`POST /api/v1/webhooks/plivo/inbound-fallback` (which covers a failing answer route, not this server
+being down). Signatures are verified against the URL stored on the credential, never rebuilt from
+env, because the URL lives in the tenant's Plivo account; the credential page shows a health check
+(the Application's URLs compared with the stored ones) and a Re-point action.
+
+All three URLs are built in one module, `apps/server/src/telephony/plivo/inbound-urls.ts`, on
+`PLIVO_WEBHOOK_BASE_URL` as written (only trailing slashes stripped, as the outbound dial's URLs):
+`plivoInboundUrls` (what Enable and Re-point give the carrier and store, WITHOUT the token),
+`withInboundToken` (`?token=` appended for the carrier) and `inboundSignedUrl` (the signature's
+subject: the stored URL plus the request's own query), which the webhooks use. Do not reuse `plivoCallEvent` (it hardcodes `outbound` and reads
 the answer callback as answered); inbound events get their own reader and fixture entries.
 
 ### 3.2 Holding on our stream
@@ -96,6 +105,30 @@ With `MEDIA_WORKERS > 0` a call lives on its agent's worker (`slotFor(sessionId)
 with workers on, the answer is placed on the sticky agent's worker when one is known and the pool is
 limited to that worker. Cross-worker handover (a Plivo transfer to a new `<Stream>` URL on the
 agent's worker) is P3, after the P0 check.
+
+### 3.3 The fallback answer XML
+
+Plivo fetches the Application's fallback answer URL when the answer URL fails or times out. Our own
+route covers a failing answer handler; a static file hosted elsewhere also covers this deployment
+being down. To host one:
+
+1. Put this file on any `https:` host that does not depend on this deployment (an S3 bucket behind
+   CloudFront, any CDN or static host), answering `GET` with `Content-Type: application/xml`:
+
+   ```xml
+   <Response>
+     <Speak>Sorry, we cannot take your call right now. Please try again shortly.</Speak>
+     <Hangup/>
+   </Response>
+   ```
+
+   (`<Play>` of a hosted MP3 works too.) It must not promise a callback: a call answered by the
+   fallback never reaches us, so it leaves no Missed row.
+2. Set `PLIVO_INBOUND_FALLBACK_ANSWER_URL` to its URL (absolute `https:`, no fragment; checked at
+   startup) and restart the server.
+3. **Re-point** every credential with inbound enabled: an Application keeps the URL it was given
+   until then (the health check says `stored_urls_current: false` meanwhile). The Application then
+   fetches it with GET; our own route is fetched with POST.
 
 ## 4. Identifying the caller and the sticky agent
 
@@ -235,12 +268,45 @@ channel; the station frame is the in-app alert, e-mail is not used for missed ca
 
 | Level | Who | What |
 |---|---|---|
-| Tenant's Plivo credential | super-admin | **Enable inbound**: create one Plivo Application on the tenant's account (answer, hangup and fallback answer URLs); store `inbound_app_id`, `inbound_answer_url`. Health check and Re-point on the credential page |
+| Tenant's Plivo credential | super-admin | **Enable inbound**: create one Plivo Application on the tenant's account (answer, hangup and fallback answer URLs); store `inbound_app_id`, the URLs, the token's hash. Health check and Re-point on the credential page; **Disable** deletes it, refused while numbers are linked |
 | Each number | super-admin (IB6) | **Link to inbound** per number, never on sync. Store the number's previous Plivo app (`inbound_previous_app_id`) so Unlink restores it |
 | Tenant / account | super-admin | Flag `agency_inbound_enabled` (default off) gates the console surfaces; calls on linked numbers are always answered |
 | Account | account admin (`agency.inbound.write`) | Inbound routes: name, numbers, hours/timezone/holidays, clips (greeting, hold, closed, busy, recording notice), sticky mode/wait/lookback, agent pool, queue limits, after-hours and overflow actions, recording and summary profile, outcome catalog for unmatched callers |
 | Campaign | supervisor | Optional `inbound_sticky_enabled` (default on) |
 | Agent | — | No setting. Sees their own Missed rows (`agency.inbound.read`, floored at `agent`) |
+
+**As built** (`apps/server/src/telephony/credentials/inbound-service.ts`, `TelephonyInboundService`,
+on the credential service: docs/seams.md §3.4). Routes, all super-admin, beside the credential routes
+(`api/routes/super-admin-telephony-credentials/inbound.ts`; wire `contracts/api/platform/super-admin-inbound`):
+`GET /telephony-credentials/:id/inbound`, `POST …/inbound/enable | disable | repoint`,
+`GET …/inbound/health`, `GET /phone-numbers/:id/inbound`, `POST /phone-numbers/:id/inbound/link | unlink`.
+Refusals are the credential routes' codes (`inbound_enabled`, `inbound_not_enabled`,
+`inbound_numbers_linked`, `inbound_unconfigured` 503, `phone_number_not_linkable`,
+`phone_number_not_linked`, `carrier_number_missing`, `carrier_refused`, and the existing
+`carrier_rejected` / `carrier_unreachable`). The REST calls are `PlivoAdapter`'s (fixed host; shapes in
+`plivo-inbound.wire.ts`, pinned by the fixture's `inbound` entries, unverified until P0).
+
+- The Application is named `inbound-<credential id>` on the tenant's account. Health compares each
+  URL's address, method and (answer, hangup) token with what is stored: `ok`, `url_mismatch`
+  (naming the URLs), `app_missing`, `unreachable`; `stored_urls_current` says whether env would give
+  the same URLs now. Re-point updates the Application (new token; the old one accepted for
+  `INBOUND_TOKEN_REPOINT_GRACE_SECONDS`, 24 h); an Application gone from the account is made again
+  and every linked number moved onto it.
+- Link: only an active number synced from the credential, assigned to its tenant, while the
+  credential is active with inbound enabled. The app the carrier had it on is stored
+  (`inbound_previous_app_id`) and Unlink restores it (none: the number is left on no app).
+- **Partial failures.** Each operator write runs its carrier call inside the database transaction
+  that records it, the credential row locked (`lockInbound`; a link takes it `FOR SHARE`), and
+  commits last: a carrier refusal writes nothing. If the commit fails after the carrier accepted:
+  Enable left an Application nothing stores, which the next Enable adopts by its name (an
+  Application made in a transaction that fails before the commit is deleted on the spot); Re-point
+  left a token we do not know (calls refused until the next Re-point; health says `url_mismatch`);
+  Disable left a stored id Plivo no longer has (the next Disable reads the 404 as done); Link left
+  the number on the Application unlinked (the next Link finds it there and stores no previous app);
+  Unlink left it restored but linked (the next Unlink sets it again).
+- A credential the carrier refuses (the tenant closed or rotated the account) that is not active may
+  Disable inbound without deleting the Application, audited `application_deleted: false` with the
+  app id to remove by hand; an active one must delete it.
 
 ### 8.2 Number lifecycle cascade
 
@@ -248,6 +314,26 @@ One function, called from account tagging, unassign, retire by sync (PL5), crede
 revoke: marks the route number inactive, clears the link, and while the credential still works
 unlinks the Plivo number back to its previous app. Revoke is refused while numbers are linked.
 Each step audited.
+
+**As built:** `TelephonyInboundService.reconcileNumber` / `reconcileCredential`. For each linked
+number that may no longer be (not `active`, or not assigned to its credential's tenant; on a
+credential disable, every linked number): its route detached (`detachNumberEverywhere`,
+`number_unlinked`) and its link cleared in one transaction, committed whatever the carrier says;
+then, while the number is still the account's (`active`), put back on its previous app through the
+credential (`call_control`: a disabled credential still opens). Audited `phone_number.inbound_unlinked`
+with `cause` (`unlinked` by hand, `unassigned`, `retired_by_sync`, `retired`, `deleted`,
+`credential_disabled`) and `carrier` (`restored`, `number_missing`, `skipped_not_active`, `failed`:
+the previous app id is in the row, to put back by hand). It never fails the write that called it (a
+failure is logged; the next sync's reconcile retries). Call sites: `DELETE /super-admin/phone-numbers/:id/assign/:tenantId`,
+`DELETE /super-admin/phone-numbers/:id` (retire), `POST …/:id/delete`, `PUT /super-admin/phone-numbers/:id`
+to a retired or deleted status, `POST /telephony-credentials/:id/sync-numbers` (after the sync) and
+`POST /telephony-credentials/:id/disable`. The Application stays on a credential disable (Disable
+inbound removes it). **Revoke** is refused while inbound is enabled (`inbound_enabled`, 409, naming
+the linked count), in the service and in the revoking statement (and by
+`ck_telephony_credentials_inbound_revoked`). **Account tagging** has no write path in this build
+(`tenantPhoneAssignmentRepository.tagToAccount` / `untagFromAccount` have no caller): tags do not
+change a link (it is the tenant's), and a route that may no longer use a number is a route matter
+for the route's own attach rule; a tagging route, when one is added, should call the cascade.
 
 ### 8.3 Which account a call belongs to
 
@@ -342,7 +428,7 @@ inbound section in account reports.
 | Phase | Scope | Status |
 |---|---|---|
 | P0 | Live Plivo checks, alongside the planned real Plivo call (step 5): create an Application and link/unlink a number; answer-URL params, timeout and inbound `CallStatus`; hangup URL params; fallback answer URL; moving a live streamed call to new XML (voicemail, worker handover); DTMF over the stream. Results into `plivo-carrier.fixture.json` | not started (needs a Plivo account) |
-| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | in progress: foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). Next, in parallel: the super-admin slice (Application, link/unlink, cascade, screens), the webhook slice (answer and status, route resolution, clips, spine writes, follow-ups, sweep, metrics) and the console slice (routes and Missed list API and screens) |
+| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | in progress: foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). **Super-admin slice done** (`feat(server,super-admin,contracts,db): inbound Plivo Application, number links and the lifecycle cascade`, §8.1, §8.2, §3.3): Enable / Disable / Health / Re-point, Link / Unlink, the cascade at every write that exists, revoke refused, the routes, the credential page's Inbound section and the numbers page's Link / Unlink and badge, the fixture's Application and number shapes (unverified until P0), the mock carrier's; `agency_inbound_enabled` is toggled on the generic flag screens. Rollout: link a pilot tenant's numbers first. In parallel: the webhook slice (answer and status, route resolution, clips, spine writes, follow-ups, sweep, metrics) and the console slice (routes and Missed list API and screens) |
 | P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | not started |
 | P3 | Mobile app frames (Dart wire), pickups from break and soft phone, media-worker handover, reports/Insights, "press 1 for a callback" if DTMF works | not started |
 | P4 | VoiceLink behind a carrier-module `inbound` capability | not started |

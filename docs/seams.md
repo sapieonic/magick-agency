@@ -161,7 +161,13 @@ shared repository, so it works the same before and after voice bootstrap), and t
 background work, the hourly sweep, is started from `bootstrap/voice.ts`. Route tests inject a
 fake through the plugin's `service` option. If the service ever gains state that needs
 bootstrap ordering, move it behind a seam like §3.3. Number sync
-(`POST /super-admin/telephony-credentials/:id/sync-numbers`, `syncNumbers`) goes the same way.
+(`POST /super-admin/telephony-credentials/:id/sync-numbers`, `syncNumbers`) goes the same way, and so
+does inbound on a credential (docs/inbound.md §8): the routes in
+`api/routes/super-admin-telephony-credentials/inbound.ts`, registered by the same plugin, call
+`TelephonyInboundService` through `getTelephonyInboundService()` (`telephony/credentials/`, built on
+the credential service, which opens the secrets; tests inject a fake through the plugin's `inbound`
+option). The super-admin phone routes call its §8.2 cascade (`reconcileNumber`) after an unassign,
+retire or delete, the same way.
 
 The other readers of the credential store outside the voice area import it directly too, for the
 same reason (no bootstrap state), and none of them opens a secret except through the service:
