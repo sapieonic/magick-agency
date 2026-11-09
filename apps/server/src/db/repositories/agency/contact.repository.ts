@@ -26,6 +26,7 @@ import type {
 // of this rule was deliberately not written.
 import { normalizeE164 } from '../../../agency/dnc-registry.js';
 import { CONTACT_PHONE_DIGITS_SQL, contactPhoneDigitsSql } from './sql-fragments.js';
+import { unclaimContactUncharged, type UnclaimedContact } from './contact-unclaim-sql.js';
 import {
   contactListFilterConditions,
   keysetCondition,
@@ -1156,18 +1157,9 @@ export class AgencyContactRepository {
     contactId: string,
     opts: { restoreAgentReopen?: boolean } = {},
     deps: { client?: Pick<PoolClient, 'query'> } = {},
-  ): Promise<{ contactId: string; state: AgencyContactState; nextAttemptAt: Date | null } | null> {
-    const { rows } = await (deps.client ?? getPool()).query<{ id: string; state: AgencyContactState; next_attempt_at: Date | null }>(
-      `UPDATE agency_contacts
-          SET state = 'pending', next_attempt_at = now(),
-              agent_reopen_pending = agent_reopen_pending OR $2::boolean,
-              updated_at = now()
-        WHERE id = $1::uuid AND state = 'in_flight'
-        RETURNING id, state, next_attempt_at`,
-      [contactId, opts.restoreAgentReopen === true],
-    );
-    const row = rows[0];
-    return row ? { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at } : null;
+  ): Promise<UnclaimedContact | null> {
+    // The statement is shared with the attempt repository's clash settle (contact-unclaim-sql.ts).
+    return unclaimContactUncharged(deps.client ?? getPool(), contactId, opts.restoreAgentReopen === true);
   }
 
   /**

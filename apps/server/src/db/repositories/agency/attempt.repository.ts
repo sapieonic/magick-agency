@@ -33,7 +33,7 @@ import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from '
 import { attemptAgentUserSql } from './drilldown-sql.js';
 import { projectAttemptRow } from './projections.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
-import { agencyContactRepository } from './contact.repository.js';
+import { unclaimContactUncharged } from './contact-unclaim-sql.js';
 
 /**
  * Tell pacing that live calls ENDED on these rows' accounts, so a campaign held at
@@ -458,7 +458,8 @@ export class AgencyAttemptRepository {
    *     as its write-up, attributed to nobody: the customer's own call took it over, so no
    *     outcome is owed on it. Only while the row is not already `ended` (a second settle is a
    *     no-op and returns null);
-   *  2. its contact back to `pending` now, UNCHARGED (`unclaimUncharged`): neither
+   *  2. its contact back to `pending` now, UNCHARGED (`unclaimContactUncharged`, the statement
+   *     `AgencyContactRepository.unclaimUncharged` runs, shared through `contact-unclaim-sql.ts`): neither
    *     `attempt_count` nor the our-fault ledger moves, and an agent's "Retry not reached"
    *     marker the dial consumed is restored. Only while the contact is still `in_flight`.
    *
@@ -485,8 +486,7 @@ export class AgencyAttemptRepository {
       );
       const attempt = rows[0];
       if (!attempt) return null;
-      const returned = await agencyContactRepository.unclaimUncharged(
-        input.contactId, { restoreAgentReopen: attempt.agent_reopened === true }, { client });
+      const returned = await unclaimContactUncharged(client, input.contactId, attempt.agent_reopened === true);
       return { attempt, contactReturned: returned !== null };
     }, { pool: getPool() });
     if (out) announceCapacityFreed([out.attempt]);
