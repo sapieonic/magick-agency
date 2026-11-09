@@ -249,8 +249,9 @@ an inbound call (`api/routes/webhooks/plivo-inbound.ts` under `/api/v1/webhooks/
 credential's purpose token, the V3 signature over the URL stored on the credential plus the query,
 the per-credential nonce, the XML Plivo runs); what the call means is the agency area's, reached
 only through `InboundCallRouter`: `answer(arrival, { signal })` returns a decision (`stream` with
-the URL; `spoken` with an `InboundSpokenMessage`, `closed`, `callback` or `busy`, whose words and
-XML are the voice area's, `PLIVO_INBOUND_SPOKEN_XML`; `hangup`; `fallback`), and the route aborts
+the URL; `spoken` with an `InboundSpokenMessage`, `closed`, `callback` or `busy`, whose XML is the
+voice area's, `PLIVO_INBOUND_SPOKEN_XML`, saying the words of the standard recordings the agency area
+plays on its stream, `AGENCY_INBOUND_STANDARD_WORDS` in the contract; `hangup`; `fallback`), and the route aborts
 `signal` when the answer's budget runs out and it has answered the fallback message, after which
 the router places nothing more and leaves no follow-up; `ended(hangup)` settles the call and
 returns its media leg, which the route then hands to the bridge as a carrier hangup
