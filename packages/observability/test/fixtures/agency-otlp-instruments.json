@@ -158,7 +158,7 @@
   {
     "name": "agency_inbound_answer_seconds",
     "kind": "Histogram",
-    "description": "Seconds the inbound answer webhook took to answer the carrier, by result: stream, closed, hangup, fallback, refused or timed_out",
+    "description": "Seconds the inbound answer webhook took to answer the carrier, by result: stream, spoken (a message the carrier speaks), hangup, fallback, refused or timed_out",
     "unit": "s",
     "advice": {
       "explicitBucketBoundaries": [
