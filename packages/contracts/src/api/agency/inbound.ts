@@ -168,9 +168,11 @@ export const AGENCY_INBOUND_AVAILABLE_ACTIONS: readonly AgencyInboundUnconnected
  *    tells callers and has no notice recording;
  *  - `closed`, `busy`, `callback`: the three messages a caller nobody takes is answered with
  *    (a caller who withheld their number, or whose number is on DNC, is never promised a
- *    callback: they hear `closed` instead of `callback`);
+ *    callback: in opening hours they hear `busy` instead of `callback`);
  *  - `voicemail_prompt`: before the beep of a voicemail, when the route has no recording for the
- *    message that would prompt it.
+ *    message that would prompt it;
+ *  - `voicemail_prompt_neutral`: before the beep of a voicemail left by a caller who may not be
+ *    promised a callback (withheld, DNC): it asks for their number and promises nothing.
  * The hold slot has no standard recording: an unset hold slot plays the built-in hold tone.
  */
 export type AgencyInboundStandardRecording =
@@ -179,7 +181,8 @@ export type AgencyInboundStandardRecording =
   | 'closed'
   | 'busy'
   | 'callback'
-  | 'voicemail_prompt';
+  | 'voicemail_prompt'
+  | 'voicemail_prompt_neutral';
 
 export const AGENCY_INBOUND_STANDARD_RECORDINGS = [
   'please_hold',
@@ -188,6 +191,7 @@ export const AGENCY_INBOUND_STANDARD_RECORDINGS = [
   'busy',
   'callback',
   'voicemail_prompt',
+  'voicemail_prompt_neutral',
 ] as const satisfies readonly AgencyInboundStandardRecording[];
 
 /** The exact words of each standard recording, and of the carrier's spoken stand-in for it. */
@@ -198,6 +202,7 @@ export const AGENCY_INBOUND_STANDARD_WORDS: Readonly<Record<AgencyInboundStandar
   busy: 'Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye.',
   callback: 'Thank you for calling. Everyone is busy at the moment, so we’ll call you back as soon as we can. Goodbye.',
   voicemail_prompt: 'Please leave your name and a short message after the tone, and we’ll call you back.',
+  voicemail_prompt_neutral: 'Please leave your name, your number and a short message after the tone.',
 });
 
 /**

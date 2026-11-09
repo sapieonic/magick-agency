@@ -31,7 +31,8 @@ import type { WebRtcInboundAcceptance } from '../../../src/core/webrtc-bridge-ma
  *    no follow-up after, whoever ends it;
  *  - a caller the bridge's shared scopes turn away is not admitted (`arrived`), so neither the
  *    route nor the account's live total holds it, and with no busy recording hears our standard one;
- *  - a DNC caller is never promised a callback, spoken or played (the closed words);
+ *  - a withheld or DNC caller is never promised a callback, spoken or played, nor told we are
+ *    closed in opening hours (the busy words, PM-N1); their voicemail has our neutral prompt;
  *  - the queue's exits (`overflow`) and the connector's preamble (`clips`): a slot with no
  *    recording plays our standard recording (please hold, the notice, call-back, closed, the
  *    voicemail prompt), never silence.
@@ -223,12 +224,12 @@ describe('a message with no recording is spoken, never silence', () => {
     expect((await spine(a.carrierCallId))[0]).toEqual(row);
   });
 
-  it('a withheld caller is never promised a callback: the closed words', async () => {
+  it('a withheld caller in opening hours is never promised a callback, nor told we are closed: the busy words (PM-N1)', async () => {
     const n = await number(X, credX);
     await route(X, XA, n.id);
     const { router } = harness();
     const a = arrival(X, credX, n.e164, { fromE164: null });
-    expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'closed' });
+    expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'busy' });
     expect((await spine(a.carrierCallId))[0]).toMatchObject({ outcome: 'overflow', follow_up_reason: 'overflow' });
   });
 
@@ -410,25 +411,27 @@ describe('what a caller hears with no recording of the route’s: our standard r
     return { call, route: routeRecord };
   }
 
-  it('a DNC caller is never promised a callback: the closed words spoken, or the closed recording played', async () => {
+  it('a DNC caller in opening hours is never promised a callback nor told we are closed: the busy words spoken, or the busy recording played (PM-N1)', async () => {
     const n = await number(X, credX);
     const routeId = await route(X, XA, n.id);
     const { bridge, router } = richHarness({ dnc: true });
     const a = arrival(X, credX, n.e164);
-    expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'closed' });
+    expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'busy' });
     expect((await spine(a.carrierCallId))[0]).toMatchObject({ caller_dnc: true, outcome: 'overflow', follow_up_reason: 'overflow' });
 
-    // A call-back recording is not for them: still the closed words, spoken.
+    // A call-back recording is not for them, nor a closed one ("we're closed" in opening hours):
+    // still the busy words, spoken.
     const callback = await clip(X, XA);
-    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { callback: callback.id } }, null)).ok).toBe(true);
-    expect(await router.answer(arrival(X, credX, n.e164))).toEqual({ kind: 'spoken', message: 'closed' });
-    expect(bridge.acceptInboundCall).not.toHaveBeenCalled();
-    // With a closed recording too, the call streams and plays the closed one, never the call-back.
     const closed = await clip(X, XA);
-    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { closed: closed.id } }, null)).ok).toBe(true);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { callback: callback.id, closed: closed.id } }, null)).ok).toBe(true);
+    expect(await router.answer(arrival(X, credX, n.e164))).toEqual({ kind: 'spoken', message: 'busy' });
+    expect(bridge.acceptInboundCall).not.toHaveBeenCalled();
+    // With a busy recording, the call streams and plays the busy one, never the call-back or closed.
+    const busy = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { busy: busy.id } }, null)).ok).toBe(true);
     expect(await router.answer(arrival(X, credX, n.e164))).toMatchObject({ kind: 'stream' });
     await router.drain();
-    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(expect.any(String), { clipHashes: [closed.hash], outcome: 'inbound_overflow' });
+    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(expect.any(String), { clipHashes: [busy.hash], outcome: 'inbound_overflow' });
   });
 
   it('the queue’s exit with no call-back recording plays ours, then puts the call down (no silent hang-up)', async () => {
@@ -440,22 +443,24 @@ describe('what a caller hears with no recording of the route’s: our standard r
     expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [await standardClipHash('callback')], outcome: 'inbound_overflow' });
   });
 
-  it('the queue’s exit for a withheld or DNC caller: the closed message, the route’s or ours', async () => {
+  it('the queue’s exit for a withheld or DNC caller: the busy message, the route’s or ours, never the closed one (PM-N1)', async () => {
     const n = await number(X, credX);
     const routeId = await route(X, XA, n.id);
     const { bridge, router } = richHarness();
+    const closed = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { closed: closed.id } }, null)).ok).toBe(true);
     for (const o of [{ fromE164: null }, { dnc: true }]) {
       bridge.playClipSequenceThenHangUp.mockClear();
       const { call, route: r } = await heldCall(n, routeId, o);
       await router.overflow(call, r);
-      expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [await standardClipHash('closed')], outcome: 'inbound_overflow' });
+      expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [await standardClipHash('busy')], outcome: 'inbound_overflow' });
     }
-    const closed = await clip(X, XA);
-    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { closed: closed.id } }, null)).ok).toBe(true);
+    const busy = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { busy: busy.id } }, null)).ok).toBe(true);
     const { call, route: r } = await heldCall(n, routeId, { dnc: true });
     bridge.playClipSequenceThenHangUp.mockClear();
     await router.overflow(call, r);
-    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [closed.hash], outcome: 'inbound_overflow' });
+    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [busy.hash], outcome: 'inbound_overflow' });
   });
 
   it('a voicemail from the queue with no recording for its message: our voicemail prompt, then the beep', async () => {
@@ -470,16 +475,24 @@ describe('what a caller hears with no recording of the route’s: our standard r
     expect(bridge.playClipSequenceThenHangUp).not.toHaveBeenCalled();
   });
 
-  it('a voicemail from the queue for a DNC caller with no closed recording: no voicemail promising a call back; the closed message', async () => {
+  it('a voicemail from the queue for a withheld or DNC caller: our neutral prompt (their number, no promise), whatever the route’s recordings', async () => {
     const n = await number(X, credX);
-    const { call, route: r } = await heldCall(n, await route(X, XA, n.id, { overflow_action: 'voicemail' }), { dnc: true });
-    const { bridge, router } = richHarness();
-    expect(await router.overflow(call, r)).toEqual({ outcome: 'overflow' });
-    expect(bridge.recordInboundAudio).not.toHaveBeenCalled();
-    expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(call.id, { clipHashes: [await standardClipHash('closed')], outcome: 'inbound_overflow' });
+    const routeId = await route(X, XA, n.id, { overflow_action: 'voicemail' });
+    const callback = await clip(X, XA);
+    const closed = await clip(X, XA);
+    expect((await agencyInboundRouteRepository.update(X, XA, routeId, { clips: { callback: callback.id, closed: closed.id } }, null)).ok).toBe(true);
+    for (const o of [{ fromE164: null }, { dnc: true }]) {
+      const { call, route: r } = await heldCall(n, routeId, o);
+      const { bridge, router } = richHarness();
+      expect(await router.overflow(call, r)).toEqual({ outcome: 'overflow' });
+      expect(bridge.recordInboundAudio).toHaveBeenCalledWith(call.id, expect.objectContaining({
+        promptClipHashes: [await standardClipHash('voicemail_prompt_neutral')], beep: true,
+      }));
+      expect(bridge.playClipSequenceThenHangUp).not.toHaveBeenCalled();
+    }
   });
 
-  it('after hours, a voicemail route with no closed recording takes the voicemail on our stream with our prompt; a withheld caller hears closed, spoken', async () => {
+  it('after hours, a voicemail route with no closed recording takes the voicemail on our stream with our prompt; a withheld caller too, with our neutral prompt', async () => {
     const n = await number(X, credX);
     await route(X, XA, n.id, { weekly_hours: [], after_hours_action: 'voicemail' });
     const { bridge, router } = richHarness();
@@ -490,8 +503,28 @@ describe('what a caller hears with no recording of the route’s: our standard r
       promptClipHashes: [await standardClipHash('voicemail_prompt')],
     }));
     expect((await spine(a.carrierCallId))[0]).toMatchObject({ state: 'ended', outcome: 'closed', follow_up_reason: 'closed' });
+    bridge.recordInboundAudio.mockClear();
     const w = arrival(X, credX, n.e164, { fromE164: null });
-    expect(await router.answer(w)).toEqual({ kind: 'spoken', message: 'closed' });
+    expect(await router.answer(w)).toMatchObject({ kind: 'stream' });
+    await router.drain();
+    expect(bridge.recordInboundAudio).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      promptClipHashes: [await standardClipHash('voicemail_prompt_neutral')],
+    }));
+    expect((await spine(w.carrierCallId))[0]).toMatchObject({ state: 'ended', outcome: 'closed', follow_up_reason: 'closed' });
+  });
+
+  it('in opening hours, a withheld caller on a route whose overflow action is voicemail leaves one (our neutral prompt), never the closed words', async () => {
+    const n = await number(X, credX);
+    await route(X, XA, n.id, { overflow_action: 'voicemail' });
+    const { bridge, router } = richHarness();
+    const w = arrival(X, credX, n.e164, { fromE164: null });
+    expect(await router.answer(w)).toMatchObject({ kind: 'stream' });
+    await router.drain();
+    expect(bridge.recordInboundAudio).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      promptClipHashes: [await standardClipHash('voicemail_prompt_neutral')],
+    }));
+    expect(bridge.playClipSequenceThenHangUp).not.toHaveBeenCalled();
+    expect((await spine(w.carrierCallId))[0]).toMatchObject({ state: 'ended', outcome: 'overflow', follow_up_reason: 'overflow' });
   });
 
   it('the connector’s preamble: our "please hold" for no greeting, our notice for no notice recording; the hold has none (the built-in tone)', async () => {

@@ -13,6 +13,7 @@ import {
   type InboundAgentView,
   type InboundCallerView,
 } from '../../../src/agency/inbound/eligibility.js';
+import { rejoinState } from '../../../src/agency/inbound/inbound-connector.js';
 
 /**
  * Who may take a waiting inbound caller (docs/inbound.md §4.3, §5.1): every row of the §4.3
@@ -241,5 +242,43 @@ describe('the review fix pass: membership, a declined offer, and whether anyone 
     expect(anyoneCouldTake(c, [])).toBe(false);
     expect(anyoneCouldTake(c, [agent('a', { state: 'break' }), agent('b', { state: 'wrapup' })])).toBe(true);
     expect(anyoneCouldTake({ ...c, declinedSessionIds: new Set(['s-b']) }, [agent('a', { state: 'break' }), agent('b')])).toBe(false);
+  });
+});
+
+describe('the rejoin grace (SWE-F1): a station closed moments ago still counts, and is never offered', () => {
+  it('a rejoining session in a state that could take the caller counts for couldTakeLater; it is never a candidate, nor the tile`s', () => {
+    const c = caller('1');
+    for (const state of ['available', 'reserved', 'on_call', 'wrapup'] as const) {
+      const back = agent('a', { state, stationOpen: false, rejoining: true });
+      expect(couldTakeLater(back, c), state).toBe(true);
+      expect(inboundIneligibility(back, c, ['available', ...RELEASE_STATES]), state).toBe('no_station');
+    }
+    const back = agent('a', { stationOpen: false, rejoining: true });
+    expect(anyoneCouldTake(c, [back])).toBe(true);
+    expect(candidatesFor(c, [back], NOW)).toEqual([]);
+    expect(stickyAgentStatus(back, { ...c, stickyUserId: 'u-a' })).toBe('away');
+    // Without the grace the same closed station is nobody.
+    expect(anyoneCouldTake(c, [agent('a', { stationOpen: false })])).toBe(false);
+  });
+
+  it.each([
+    ['on a break', agent('a', { state: 'break', stationOpen: false, rejoining: true })],
+    ['offline', agent('a', { state: 'offline', stationOpen: false, rejoining: true })],
+    ['on the phone app', agent('a', { clientKind: 'mobile', stationOpen: false, rejoining: true })],
+    ['outside the pool', agent('a', { campaignId: 'camp-2', stationOpen: false, rejoining: true })],
+    ['no longer a member', agent('a', { member: false, stationOpen: false, rejoining: true })],
+  ] as const)('a rejoining session %s does not count', (_what, a) => {
+    expect(couldTakeLater(a, caller('1', { poolCampaignIds: ['camp-1'] }))).toBe(false);
+  });
+
+  it('rejoinState: the state now while it could take a caller; else, over the close`s `offline` or a lapsed lease, the state at the close; anything else written since stands', () => {
+    const live = (state: AgencyAgentState) => ({ state, attemptId: null, since: NOW, manualCallId: null, softphone: false, inboundCallId: null });
+    expect(rejoinState(live('on_call'), live('on_call'))).toEqual(live('on_call'));
+    expect(rejoinState(live('offline'), live('wrapup'))).toEqual(live('wrapup'));
+    expect(rejoinState(null, live('available'))).toEqual(live('available'));
+    expect(rejoinState(live('offline'), live('break'))).toEqual(live('offline'));
+    expect(rejoinState(live('break'), live('available'))).toEqual(live('break'));
+    expect(rejoinState(live('offline'), null)).toEqual(live('offline'));
+    expect(rejoinState(null, null)).toBeNull();
   });
 });

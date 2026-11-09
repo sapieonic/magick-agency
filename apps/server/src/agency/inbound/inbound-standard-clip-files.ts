@@ -16,6 +16,7 @@ export const INBOUND_STANDARD_CLIP_FILES: Readonly<Record<AgencyInboundStandardR
   busy: 'busy.wav',
   callback: 'callback.wav',
   voicemail_prompt: 'voicemail-prompt.wav',
+  voicemail_prompt_neutral: 'voicemail-prompt-neutral.wav',
 });
 
 const ASSET_SUBDIR = path.join('assets', 'inbound');

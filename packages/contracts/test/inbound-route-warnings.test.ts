@@ -82,4 +82,10 @@ describe('the standard recordings', () => {
     const promising = AGENCY_INBOUND_STANDARD_RECORDINGS.filter((r) => /call you back/i.test(AGENCY_INBOUND_STANDARD_WORDS[r]));
     expect(promising).toEqual(['callback', 'voicemail_prompt']);
   });
+
+  it('the neutral voicemail prompt (withheld and DNC callers) asks for a number and promises nothing', () => {
+    const words = AGENCY_INBOUND_STANDARD_WORDS.voicemail_prompt_neutral;
+    expect(words).toMatch(/your number/);
+    expect(words).not.toMatch(/call you back|closed|busy/i);
+  });
 });

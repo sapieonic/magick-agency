@@ -9,10 +9,11 @@ What an inbound caller hears when the route has no recording of its own for a me
 |---|---|---|
 | `please-hold.wav` | to a caller who will wait for an agent, when the route has no greeting (then the hold sound) | Thank you for calling. Please hold and we’ll put you through to the next person available. |
 | `recording-notice.wav` | before an agent joins a recorded call, when the route tells callers and has no notice recording | This call may be recorded for quality and training purposes. |
-| `closed.wav` | out of hours; and instead of the call-back message to a caller who withheld their number or is on DNC | Thank you for calling. We’re closed at the moment. Please call again during our opening hours. Goodbye. |
-| `busy.wav` | when the route or the lines are full | Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye. |
+| `closed.wav` | out of hours | Thank you for calling. We’re closed at the moment. Please call again during our opening hours. Goodbye. |
+| `busy.wav` | when the route or the lines are full; and, in opening hours, instead of the call-back message to a caller who withheld their number or is on DNC | Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye. |
 | `callback.wav` | to a caller who waited and reached nobody | Thank you for calling. Everyone is busy at the moment, so we’ll call you back as soon as we can. Goodbye. |
 | `voicemail-prompt.wav` | before the beep of a voicemail, when the route has no recording for its message | Please leave your name and a short message after the tone, and we’ll call you back. |
+| `voicemail-prompt-neutral.wav` | before the beep of a voicemail left by a caller who withheld their number or is on DNC (never promised a callback), whatever the route's recordings | Please leave your name, your number and a short message after the tone. |
 
 The words are `AGENCY_INBOUND_STANDARD_WORDS` (`packages/contracts/src/api/agency/inbound.ts`). A
 call answered before anything streams hears the same words spoken by the carrier (`<Speak>`), so
@@ -39,8 +40,12 @@ on the path:
 ```bash
 pnpm tsx scripts/generate-inbound-clips.ts \
   --piper /path/to/venv/bin/piper \
-  --model /path/to/en-gb-southern_english_female-low.onnx
+  --model /path/to/en-gb-southern_english_female-low.onnx \
+  [--only voicemail_prompt_neutral]
 ```
+
+`--only` (a comma-separated list of the contract's names) regenerates just those recordings and
+leaves the others byte for byte as committed.
 
 ## Voice, licence and attribution
 

@@ -19,9 +19,15 @@ import type { WebRtcInboundAcceptance } from '../../../src/core/webrtc-bridge-ma
  * with no connector: the open route's call-back recording over our stream). A flag read that fails
  * is not "off".
  *
+ * The switch wins over everything else the route would do: a route at its `max_concurrent` still
+ * answers closed (SWE-F4, not "all lines busy"), and a route whose action is voicemail, after
+ * hours or for an open route's caller, takes none (SWE-F5).
+ *
  * Mutation-checked: dropping `switchedOff` from the plan in `decide` streams the call-back
  * recording with the flag off (the first test goes red); dropping it from the spoken-message
- * condition streams the closed recording instead of speaking it (red as well).
+ * condition streams the closed recording instead of speaking it (red as well); dropping
+ * `!switchedOff` from `afterHours` takes the after-hours voicemail (the SWE-F5 test goes red);
+ * dropping it from the `max_concurrent` rewrite speaks "busy" at the cap (the SWE-F4 test goes red).
  */
 
 const X = DEFAULTS.tenantId;
@@ -56,12 +62,13 @@ async function clip(): Promise<{ id: string; hash: string }> {
 const ALWAYS = [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '00:00', end: '24:00' }));
 
 /** An open route answering a fresh linked number, with a recording in every message slot. */
-async function openRouteWithEveryRecording(): Promise<{ e164: string; callback: string }> {
+async function openRouteWithEveryRecording(o: Record<string, unknown> = {}): Promise<{ e164: string; callback: string }> {
   const n = await linkedNumber();
   const [greeting, callback, closed, busy] = [await clip(), await clip(), await clip(), await clip()];
   const parsed = parseInboundRouteCreate({
     name: `Route ${++seq}`, timezone: 'UTC', weekly_hours: ALWAYS,
     clips: { greeting: greeting.id, callback: callback.id, closed: closed.id, busy: busy.id },
+    ...o,
   });
   if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
   const created = await agencyInboundRouteRepository.create({ tenantId: X, accountId: XA, createdBy: null, config: parsed.config });
@@ -76,7 +83,10 @@ const ADMITTED: WebRtcInboundAcceptance = { accepted: true, streamUrl: 'wss://ag
 function harness(enabled: () => Promise<boolean>) {
   const bridge = {
     acceptInboundCall: vi.fn(async (): Promise<WebRtcInboundAcceptance> => ADMITTED),
-    playClipSequenceThenHangUp: vi.fn(async () => 'completed' as const),
+    playClipSequenceThenHangUp: vi.fn(async (): Promise<'completed'> => 'completed'),
+    stopInboundHold: vi.fn(),
+    recordInboundAudio: vi.fn(async () => ({ result: 'aborted' as const, pcm16: Buffer.alloc(1600), sampleRate: 8000, seconds: 0.1 })),
+    forceEndWithOutcome: vi.fn(async () => undefined),
   };
   const flag = vi.fn(enabled);
   const router = new AgencyInboundCallRouter({
@@ -84,6 +94,8 @@ function harness(enabled: () => Promise<boolean>) {
     dnc: { check: async () => 'clear', checkEntry: async () => ({ result: 'clear' }) } as never,
     // The P2 gate as `startInboundCalls` wires it, with no connector: nobody is put through.
     connect: { connector: null, enabled: flag, mediaWorkers: 0 },
+    // A bucket, so a route whose action is voicemail would take one if the switch let it.
+    voicemailStorage: { configured: () => true, upload: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) },
   });
   return { bridge, router, flag };
 }
@@ -142,6 +154,34 @@ describe('the inbound kill switch: agency_inbound_enabled off (§8.1)', () => {
     expect(bridge.playClipSequenceThenHangUp).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ outcome: 'inbound_overflow' }));
     expect((bridge.playClipSequenceThenHangUp.mock.calls[0] as unknown as [string, { clipHashes: string[] }])[1].clipHashes).toContain(route.callback);
     expect(await spine(a.carrierCallId)).toMatchObject({ outcome: 'overflow' });
+  });
+
+  it('SWE-F4: with the route at its max_concurrent, the switch still wins: the closed words and the closed outcome and reason, not "all lines busy"', async () => {
+    const route = await openRouteWithEveryRecording({ max_concurrent: 1, max_waiting: 1 });
+    let on = true;
+    const { bridge, router } = harness(async () => on);
+    // One live admitted call holds the route's only line (its message never ends).
+    bridge.playClipSequenceThenHangUp.mockImplementation(() => new Promise<'completed'>(() => undefined));
+    expect(await router.answer(arrival(route.e164))).toMatchObject({ kind: 'stream' });
+    on = false; // switched off mid-traffic
+    const a = arrival(route.e164);
+    expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'closed' });
+    expect(await spine(a.carrierCallId)).toMatchObject({ state: 'ended', outcome: 'closed', follow_up_reason: 'closed' });
+    expect(bridge.acceptInboundCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('SWE-F5: a route whose action is voicemail takes none with the switch off: an open route`s caller, and one out of hours, both hear the closed words', async () => {
+    const open = await openRouteWithEveryRecording({ overflow_action: 'voicemail' });
+    const closedNow = await openRouteWithEveryRecording({ weekly_hours: [], after_hours_action: 'voicemail' });
+    const { bridge, router } = harness(async () => false);
+    for (const r of [open, closedNow]) {
+      const a = arrival(r.e164);
+      expect(await router.answer(a)).toEqual({ kind: 'spoken', message: 'closed' });
+      expect(await spine(a.carrierCallId)).toMatchObject({ state: 'ended', outcome: 'closed', follow_up_reason: 'closed', voicemail_key: null });
+    }
+    await router.drain();
+    expect(bridge.acceptInboundCall).not.toHaveBeenCalled();
+    expect(bridge.recordInboundAudio).not.toHaveBeenCalled();
   });
 
   it('a flag read that fails is not "off": the call is answered as if inbound were on', async () => {

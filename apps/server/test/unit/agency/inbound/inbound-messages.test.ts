@@ -1,7 +1,9 @@
 // Which message a caller nobody takes hears, and what prompts their voicemail (docs/inbound.md
 // §3.4, §7; `inbound-call-router.ts`): a caller who withheld their number or is on DNC is never
-// promised a callback, on every path; a voicemail's prompt is the route's recording for the
-// message, else our standard prompt, never one that promises a callback to such a caller.
+// promised a callback, on every path, and never told "we're closed" while the line is open
+// (PM-N1: the busy words instead); a voicemail's prompt is the route's recording for the message,
+// else our standard prompt, and for such a caller always our neutral prompt, so they can always
+// leave one where the route takes voicemail.
 import { describe, expect, it } from 'vitest';
 import {
   mayPromiseCallback,
@@ -34,10 +36,10 @@ describe('messageSlotFor and the carrier’s spoken words', () => {
     expect(messageSlotFor('overflow_no_capacity', CALLER)).toBe('busy');
   });
 
-  it('a withheld or DNC caller hears closed instead of the call-back promise; busy promises nothing, so stays', () => {
+  it('a withheld or DNC caller in opening hours hears the busy words instead of the call-back promise, never "we`re closed" (PM-N1); a closed plan stays closed and over capacity stays busy, for everyone', () => {
     for (const caller of [WITHHELD, DNC]) {
-      expect(messageSlotFor('overflow', caller)).toBe('closed');
-      expect(spokenMessageFor('overflow', caller)).toBe('closed');
+      expect(messageSlotFor('overflow', caller)).toBe('busy');
+      expect(spokenMessageFor('overflow', caller)).toBe('busy');
       expect(messageSlotFor('overflow_no_capacity', caller)).toBe('busy');
       expect(messageSlotFor('closed', caller)).toBe('closed');
     }
@@ -56,10 +58,13 @@ describe('voicemailPrompt', () => {
     expect(voicemailPrompt(route(), 'closed', CALLER)).toEqual({ slot: null, standard: 'voicemail_prompt' });
   });
 
-  it('a withheld or DNC caller: the route’s closed recording only (no standard fallback); with none, no voicemail', () => {
+  it('a withheld or DNC caller: always our neutral prompt (asks for their number, promises nothing), whatever the route’s recordings', () => {
+    const recorded = route({ closed_audio_id: 'cl', busy_audio_id: 'b', callback_audio_id: 'cb' });
     for (const caller of [WITHHELD, DNC]) {
-      expect(voicemailPrompt(route({ closed_audio_id: 'cl' }), 'closed', caller)).toEqual({ slot: 'closed', standard: null });
-      expect(voicemailPrompt(route(), 'closed', caller)).toBeNull();
+      for (const slot of ['closed', 'busy', 'callback'] as const) {
+        expect(voicemailPrompt(recorded, slot, caller)).toEqual({ slot: null, standard: 'voicemail_prompt_neutral' });
+        expect(voicemailPrompt(route(), slot, caller)).toEqual({ slot: null, standard: 'voicemail_prompt_neutral' });
+      }
     }
   });
 });

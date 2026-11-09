@@ -27,10 +27,11 @@ import {
   type AgencyInboundRouteRecord,
 } from '../../db/repositories/agency.repository.js';
 import type { InboundHoldResult, WebRtcBridgeManager, WebRtcLifecycleEvent } from '../../core/webrtc-bridge-manager.js';
-import type { StationRegistry } from '../station-registry.js';
-import { AGENT_LEASE_MS, type AgentStateMachine } from '../agent-state-machine.js';
+import type { StationDetached, StationRegistry } from '../station-registry.js';
+import { AGENT_LEASE_MS, type AgentLiveState, type AgentStateMachine } from '../agent-state-machine.js';
 import { publishPacingInvalidation, type PacingInvalidationEvent } from '../pacing/invalidation-bus.js';
 import {
+  COULD_TAKE_STATES,
   RELEASE_STATES,
   anyoneCouldTake,
   callerForReleasedAgent,
@@ -127,6 +128,17 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  * promises and runs those steps; this connector lends it its calls, chains, reservations and
  * offers ({@link handoverHost}).
  *
+ * ── Could anyone take them (PM-M6), and the rejoin grace (SWE-F1) ─────────────────
+ * A waiting caller nobody in their pool could take, now or once their current work ends
+ * (`anyoneCouldTake`), is overflowed at once ({@link overflowWhomNobodyCanTake}); the router asks
+ * the same question before the greeting ({@link couldAnyoneTake}) and answers such a caller with
+ * the overflow action directly. A station that has just closed still counts for
+ * {@link INBOUND_STATION_REJOIN_GRACE_MS}: the registry's detach tells this connector the station
+ * and it reads the agent's state at once (issued before the close handler's `offline` write, on
+ * the same Redis connection); while the grace runs the session is a `rejoining` view (counted,
+ * never offered), and when it ends the account is searched again, so a caller held only by an
+ * agent who never came back is overflowed then, not at the maximum wait.
+ *
  * ── Voicemail (§7) ───────────────────────────────────────────────────────────────
  * A caller who reaches nobody leaves through {@link InboundCallExits.overflow}, the router's,
  * which carries out the route's overflow action (the call-back message, or a voicemail) and
@@ -137,6 +149,14 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
 export const INBOUND_WAITING_TTL_MS = 5_000;
 /** How often the connector republishes `inbound_waiting` while callers wait. */
 export const INBOUND_WAITING_REPUBLISH_MS = 2_000;
+
+/**
+ * How long a session whose station socket closed still counts as one who could take a waiting
+ * caller (SWE-F1): past the console's reconnect and the bridge's deferred hangup
+ * (`DEFERRED_HANGUP_MS`, 8 s), so a blip of the one agent who could take the account's callers
+ * does not overflow every one of them.
+ */
+export const INBOUND_STATION_REJOIN_GRACE_MS = 15_000;
 
 /**
  * How an unconnected call ends: its outcome and, for a voicemail (§7), the recording and the
@@ -168,7 +188,7 @@ export interface InboundCallExits {
 export interface InboundConnectorDeps {
   bridge: Pick<WebRtcBridgeManager,
     'onLifecycle' | 'playInboundHold' | 'stopInboundHold' | 'bindBorrowedBrowserLeg' | 'reattachBorrowedBrowserLeg' | 'forceEndWithOutcome' | 'isCallEnding'>;
-  stations: Pick<StationRegistry, 'all' | 'get' | 'socketFor' | 'send' | 'isLocallyOwned'>;
+  stations: Pick<StationRegistry, 'all' | 'get' | 'socketFor' | 'send' | 'isLocallyOwned' | 'onDetached'>;
   agents: Pick<AgentStateMachine,
     'getMany' | 'get' | 'reserveForInbound' | 'releaseInbound' | 'rehydrateInbound' | 'transition' | 'set' | 'renewLease'>;
   /** Return an agent to the pool: `AgencyDialer.releaseAgent` (a queued break, this connector's hook, else `available`). */
@@ -184,6 +204,8 @@ export interface InboundConnectorDeps {
   now?: () => number;
   connectDelayMs?: number;
   republishMs?: number;
+  /** {@link INBOUND_STATION_REJOIN_GRACE_MS} (tests: shorter). */
+  rejoinGraceMs?: number;
 }
 
 /** What the router knows of a call it hands over. */
@@ -248,6 +270,15 @@ interface HeldCall {
 }
 
 
+/** A station that closed within the rejoin grace (see the header): who it was, when, and its agent's state then. */
+interface RejoiningStation {
+  station: StationDetached;
+  closedAt: number;
+  /** The agent's Redis state as the close was heard (null: no lease, or the read failed). */
+  atClose: Promise<AgentLiveState | null>;
+  timer: NodeJS.Timeout;
+}
+
 /** The raw queue view the supervisor's tile is built from ({@link InboundConnector.queueSnapshot}). */
 export interface InboundQueueSnapshot extends InboundQueueRouteSnapshot {
   /** Calls of the route connected to an agent in this process now. */
@@ -273,6 +304,10 @@ export class InboundConnector {
   private readonly publish: (event: PacingInvalidationEvent) => void;
   private readonly members: NonNullable<InboundConnectorDeps['members']>;
   private unsubscribe: (() => void) | null = null;
+  private unsubscribeDetach: (() => void) | null = null;
+  /** Stations closed within the rejoin grace, by session (see the header). */
+  private readonly rejoining = new Map<string, RejoiningStation>();
+  private readonly rejoinGraceMs: number;
   /** {@link stop} ran: no new work; the listener stays for the calls still held. */
   private stopped = false;
   private republishTimer: NodeJS.Timeout | null = null;
@@ -281,6 +316,7 @@ export class InboundConnector {
     this.now = deps.now ?? Date.now;
     this.connectDelayMs = deps.connectDelayMs ?? AGENCY_INBOUND_CONNECT_DELAY_MS;
     this.publish = deps.publish ?? publishPacingInvalidation;
+    this.rejoinGraceMs = deps.rejoinGraceMs ?? INBOUND_STATION_REJOIN_GRACE_MS;
     this.members = deps.members ?? ((tenantId, accountId, userIds) =>
       agencyInboundAnswerRepository.filterAccountMembers(tenantId, accountId, userIds));
     this.queue = new InboundQueue({
@@ -298,6 +334,7 @@ export class InboundConnector {
       if (!held) return; // not an inbound call this connector holds
       void this.serial(held.id, () => this.onLifecycle(held, ev));
     });
+    this.unsubscribeDetach = this.deps.stations.onDetached((_sessionId, station) => this.onStationDetached(station));
     // While callers wait: `inbound_waiting` republished, and the account searched again. The
     // search is the backstop for a change no event reports: a busy sticky agent going away
     // (a queued break applied, the station gone) makes their caller the team's at once (Q6),
@@ -325,6 +362,10 @@ export class InboundConnector {
     if (this.republishTimer) clearInterval(this.republishTimer);
     this.republishTimer = null;
     for (const held of this.calls.values()) this.clearTimers(held);
+    this.unsubscribeDetach?.();
+    this.unsubscribeDetach = null;
+    for (const r of this.rejoining.values()) clearTimeout(r.timer);
+    this.rejoining.clear();
     this.handovers.clearTimers();
     this.queue.clear();
     this.unsubscribeWhenIdle();
@@ -456,10 +497,7 @@ export class InboundConnector {
       }
       return v;
     };
-    const next: InboundCallerView = {
-      callId: '', tenantId: route.tenant_id, accountId: route.account_id, routeAccountId: route.account_id,
-      poolCampaignIds: route.pool_campaign_ids, stickyMode: 'off', stickyUserId: null, stickyWaitMs: 0, queuedAt: 0,
-    };
+    const next = nextCallerView(route.tenant_id, route.account_id, route);
     const waiting = this.queue.waiting().filter((e) => e.routeId === route.id);
     const probes: InboundCallerView[] = waiting.length > 0 ? waiting : [next];
     const free = new Set<string>();
@@ -470,6 +508,22 @@ export class InboundConnector {
     }
     const own = await views(accountKeyOfCall(route.tenant_id, route.account_id));
     return { eligible: free.size, noneCouldTake: !anyoneCouldTake(next, own) };
+  }
+
+  /**
+   * Whether anyone could take a caller of `accountId` arriving on `route` now or once their
+   * current work ends ({@link anyoneCouldTake}, the rule the queue applies to a waiting caller,
+   * with the same presence read: the stations held here and those within the rejoin grace). The
+   * router asks it before the greeting (PM-M6, SWE-N4): false, and the caller is answered with the
+   * route's overflow action instead of being queued. A failed read rejects.
+   */
+  async couldAnyoneTake(input: {
+    tenantId: string;
+    accountId: string;
+    route: Pick<AgencyInboundRouteRecord, 'account_id' | 'pool_campaign_ids'>;
+  }): Promise<boolean> {
+    const caller = nextCallerView(input.tenantId, input.accountId, input.route);
+    return anyoneCouldTake(caller, await this.agentViews(accountKeyOfCall(input.tenantId, input.accountId)));
   }
 
   // ─── The router's hand-over ───────────────────────────────────────────────
@@ -657,7 +711,8 @@ export class InboundConnector {
    * The session's station socket closed (the runtime's close handler, before it writes
    * `offline`): an offer whose audio has not bound is cancelled and the caller goes back to the
    * head of the queue. A bound call is the bridge's (its deferred hangup). Synchronous: the
-   * cancel runs on the call's chain.
+   * cancel runs on the call's chain. Whether the account's waiting callers still have anyone who
+   * could take them is the rejoin grace's to answer ({@link onStationDetached}).
    */
   onStationClosed(sessionId: string): void {
     const held = this.forSession(sessionId);
@@ -667,13 +722,34 @@ export class InboundConnector {
       // Held for a superseding call still in its preamble: let go (the runtime writes `offline`).
       void this.serial(held.id, () => this.handovers.release(held.id, { returnAgent: false }));
     }
-    // Presence changed: the account's waiting callers may have nobody left who could take them
-    // (PM-M6). The search decides; this socket is no longer OPEN, so its station no longer counts.
-    const station = this.deps.stations.get(sessionId);
-    if (station && !this.stopped) {
-      const key = accountKeyOfCall(station.tenantId, station.accountId);
-      if (this.queue.waiting(key).length > 0) this.searchInBackground(key);
-    }
+  }
+
+  /**
+   * A station left the registry (its socket closed, or the silent-station sweep detached it): the
+   * rejoin grace starts (see the header). The agent's state is read now, synchronously issued, so
+   * it is the state before the close handler's `offline` write (one Redis connection, in order);
+   * read later it would say `offline` and the agent would not count. When the grace ends the
+   * account is searched again: the callers still waiting are judged without this station unless
+   * it came back.
+   */
+  private onStationDetached(station: StationDetached): void {
+    if (this.stopped) return;
+    const prior = this.rejoining.get(station.sessionId);
+    if (prior) clearTimeout(prior.timer);
+    const atClose = this.deps.agents.get(station.sessionId).catch(() => null);
+    const record: RejoiningStation = {
+      station,
+      closedAt: this.now(),
+      atClose,
+      timer: setTimeout(() => {
+        if (this.rejoining.get(station.sessionId) === record) this.rejoining.delete(station.sessionId);
+        if (this.stopped) return;
+        const key = accountKeyOfCall(station.tenantId, station.accountId);
+        if (this.queue.waiting(key).length > 0) this.searchInBackground(key);
+      }, this.rejoinGraceMs),
+    };
+    record.timer.unref?.();
+    this.rejoining.set(station.sessionId, record);
   }
 
   /**
@@ -994,7 +1070,9 @@ export class InboundConnector {
 
   /**
    * Cancel an offer whose audio has not bound (see the header). On the call's chain. `why` names
-   * the offer's end for the metric.
+   * the offer's end for the metric. A caller whose maximum wait passed during the offer is marked
+   * leaving here and overflowed by the NEXT step of their chain, after the step that cancelled has
+   * returned its agent (SWE-F3).
    */
   private async cancelOffer(
     held: HeldCall,
@@ -1027,7 +1105,10 @@ export class InboundConnector {
     this.noteRouteWaiting(held.route.id);
     log.info({ inboundCallId: held.id, sessionId, why }, 'Inbound offer cancelled before audio bound — the caller is back at the head of the queue');
     if (this.queue.maxWaitLapsed(held.id)) {
-      await this.leave(held, 'max_wait');
+      // Queued on the call's chain, not run here (SWE-F3): the step that cancelled (an agent's
+      // decline, a refused bind) returns its agent and answers first; the exit (the overflow
+      // message, a voicemail: seconds to minutes) runs after it, as the maximum-wait timer's does.
+      void this.serial(held.id, () => this.leave(held, 'max_wait'));
       return row;
     }
     this.publishWaiting(held.accountKey);
@@ -1161,13 +1242,18 @@ export class InboundConnector {
    */
   private async agentViews(accountKey: string): Promise<InboundAgentView[]> {
     const stations = this.deps.stations.all().filter((s) => accountKeyOfCall(s.tenantId, s.accountId) === accountKey);
-    if (stations.length === 0) return [];
+    // Stations closed within the rejoin grace (SWE-F1), not back yet: counted, never offered.
+    const now = this.now();
+    const rejoining = [...this.rejoining.values()].filter((r) => accountKeyOfCall(r.station.tenantId, r.station.accountId) === accountKey
+      && now - r.closedAt < this.rejoinGraceMs && !this.deps.stations.get(r.station.sessionId));
+    if (stations.length === 0 && rejoining.length === 0) return [];
     const [tenantId, accountId] = accountKey.split(':') as [string, string];
-    const [states, members] = await Promise.all([
-      this.deps.agents.getMany(stations.map((s) => s.sessionId)),
-      this.members(tenantId, accountId, [...new Set(stations.map((s) => s.agentUserId))]),
+    const [states, members, atClose] = await Promise.all([
+      this.deps.agents.getMany([...stations.map((s) => s.sessionId), ...rejoining.map((r) => r.station.sessionId)]),
+      this.members(tenantId, accountId, [...new Set([...stations, ...rejoining.map((r) => r.station)].map((s) => s.agentUserId))]),
+      Promise.all(rejoining.map((r) => r.atClose)),
     ]);
-    return stations.map((s, i) => ({
+    const open: InboundAgentView[] = stations.map((s, i) => ({
       sessionId: s.sessionId,
       agentUserId: s.agentUserId,
       tenantId: s.tenantId,
@@ -1175,9 +1261,26 @@ export class InboundConnector {
       campaignId: s.campaignId,
       clientKind: s.clientKind,
       stationOpen: s.ws.readyState === 1,
+      // Closed (and detached: its grace began) while this read was in flight. Its state was read
+      // in the same synchronous run as the registry, so before the close: the grace's rule.
+      ...(s.ws.readyState !== 1 && this.rejoining.has(s.sessionId) && !this.deps.stations.get(s.sessionId) ? { rejoining: true } : {}),
       member: members.has(s.agentUserId),
       live: states[i] ?? null,
     }));
+    const back: InboundAgentView[] = rejoining.map((r, i) => ({
+      sessionId: r.station.sessionId,
+      agentUserId: r.station.agentUserId,
+      tenantId: r.station.tenantId,
+      accountId: r.station.accountId,
+      campaignId: r.station.campaignId,
+      clientKind: r.station.clientKind,
+      stationOpen: false,
+      rejoining: true,
+      member: members.has(r.station.agentUserId),
+      live: rejoinState(states[stations.length + i] ?? null, atClose[i] ?? null),
+    }));
+    // Open stations first: a user's open session is the one `stickyAgentOf` finds.
+    return [...open, ...back];
   }
 
   /** "Your customer is waiting" to each busy sticky agent not yet told (§4.3). */
@@ -1420,6 +1523,30 @@ export class InboundConnector {
       if (this.locks.get(accountKey) === mine) this.locks.delete(accountKey);
     }
   }
+}
+
+/** A caller of `accountId` arriving on `route`, as the search would see them (the next caller: no sticky agent, none declined). */
+function nextCallerView(
+  tenantId: string,
+  accountId: string,
+  route: Pick<AgencyInboundRouteRecord, 'account_id' | 'pool_campaign_ids'>,
+): InboundCallerView {
+  return {
+    callId: '', tenantId, accountId, routeAccountId: route.account_id,
+    poolCampaignIds: route.pool_campaign_ids, stickyMode: 'off', stickyUserId: null, stickyWaitMs: 0, queuedAt: 0,
+  };
+}
+
+/**
+ * The state a station within the rejoin grace is judged by: its agent's state now while that is
+ * still one who could take a caller (`COULD_TAKE_STATES`: a live call keeps `on_call` across the
+ * blip); else, when nothing but the close has written since (`offline`, or the lease gone), the
+ * state the agent was in when the station closed. Anything else written since (a break) stands.
+ */
+export function rejoinState(now: AgentLiveState | null, atClose: AgentLiveState | null): AgentLiveState | null {
+  if (now && (COULD_TAKE_STATES as readonly string[]).includes(now.state)) return now;
+  if ((!now || now.state === 'offline') && atClose && (COULD_TAKE_STATES as readonly string[]).includes(atClose.state)) return atClose;
+  return now;
 }
 
 /** The wait metric's result for a call that left unconnected (a voicemail is an overflow: nobody took the caller). */

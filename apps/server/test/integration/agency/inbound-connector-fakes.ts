@@ -38,6 +38,31 @@ export interface FakeStationEntry {
 
 export class FakeStations {
   readonly entries = new Map<string, FakeStationEntry>();
+  private readonly detachListeners = new Set<(sessionId: string, station: Omit<FakeStationEntry, 'ws'>) => void>();
+  onDetached(l: (sessionId: string, station: Omit<FakeStationEntry, 'ws'>) => void) {
+    this.detachListeners.add(l);
+    return () => { this.detachListeners.delete(l); };
+  }
+  /**
+   * The station socket closes as in production: the socket CLOSED, the entry detached (its
+   * listeners told, with the station as it was), and the runtime's close handler's `onClosed`
+   * (the connector's `onStationClosed`, then `offline` written) run after.
+   */
+  async close(id: string, onClosed?: () => Promise<void> | void): Promise<void> {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    entry.ws.readyState = 3;
+    this.entries.delete(id);
+    const { ws: _ws, ...station } = entry;
+    for (const l of this.detachListeners) l(id, station);
+    await onClosed?.();
+  }
+  /** The same station back on a new socket (a reconnect). */
+  reattach(station: Omit<FakeStationEntry, 'ws'>): FakeStationEntry {
+    const entry = { ...station, ws: new FakeWs() };
+    this.entries.set(station.sessionId, entry);
+    return entry;
+  }
   add(e: Omit<FakeStationEntry, 'ws' | 'clientKind'> & { clientKind?: 'web' | 'mobile' }): FakeStationEntry {
     const entry = { clientKind: 'web' as const, ...e, ws: new FakeWs() };
     this.entries.set(e.sessionId, entry);

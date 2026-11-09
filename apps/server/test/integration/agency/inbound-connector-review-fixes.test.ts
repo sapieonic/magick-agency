@@ -4,7 +4,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { DEFAULTS, insertTenant } from '../setup/factories.js';
 import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js';
 import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test-redis.js';
-import { FakeBridge, FakeStations, sleep, until } from './inbound-connector-fakes.js';
+import { FakeBridge, FakeStations, gate, sleep, until } from './inbound-connector-fakes.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -17,6 +17,7 @@ const { InboundConnector } = await import('../../../src/agency/inbound/inbound-c
 const { AgencyInboundCallRouter } = await import('../../../src/agency/inbound/inbound-call-router.js');
 const { parseInboundRouteCreate } = await import('../../../src/agency/inbound/route-config.js');
 const { InboundCallService } = await import('../../../src/agency/inbound/inbound-disposition.js');
+const { standardClipHash } = await import('../../../src/agency/inbound/inbound-standard-clips.js');
 type Connector = InstanceType<typeof InboundConnector>;
 type CallRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundCallRecord;
 type RouteRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundRouteRecord;
@@ -53,7 +54,7 @@ const router = () => new AgencyInboundCallRouter({
   dnc: { check: async () => 'clear', checkEntry: async () => ({ result: 'clear' }) } as never,
 });
 
-function connector(opts: { connectDelayMs?: number; republishMs?: number } = {}): Connector {
+function connector(opts: { connectDelayMs?: number; republishMs?: number; rejoinGraceMs?: number } = {}): Connector {
   const c: Connector = new InboundConnector({
     bridge: bridge as never,
     stations: stations as never,
@@ -66,6 +67,7 @@ function connector(opts: { connectDelayMs?: number; republishMs?: number } = {})
     connectDelayMs: opts.connectDelayMs ?? 150,
     publish: () => {},
     republishMs: opts.republishMs ?? 60_000,
+    ...(opts.rejoinGraceMs !== undefined ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
   });
   c.start();
   connectors.push(c);
@@ -204,16 +206,73 @@ describe('PM-M6: a caller nobody in the pool could take is not held to the maxim
     expect(await row(call.id)).toMatchObject({ outcome: 'overflow', follow_up_status: 'open' });
   });
 
-  it('the last station that could take them closing (the runtime`s close handler) overflows them at once, with no republish', async () => {
-    const c = connector(); // republish every minute: only the close can tell the connector
-    const s1 = await agent('on_call');
+});
+
+/**
+ * The station closing as in production (`FakeStations.close`): the registry detaches it (the
+ * connector hears the detach), then the runtime's close handler tells the connector and, with no
+ * live call on the socket, writes the agent `offline`.
+ */
+async function closeStation(c: Connector, sessionId: string, opts: { liveCall?: boolean } = {}): Promise<void> {
+  await stations.close(sessionId, async () => {
+    if (opts.liveCall) return; // the bridge's deferred hangup owns presence (`releaseStationOnClose`)
+    c.onStationClosed(sessionId);
+    await agents.set(sessionId, 'offline', { leaseMs: 60_000 });
+  });
+}
+
+describe('SWE-F1: the rejoin grace — a station that has just closed still counts as one who could take the caller', () => {
+  it('a blip under the grace does not overflow: the only agent on a call (live call: Redis keeps on_call) or in wrap-up (written offline) drops and comes back; the 2 s republish searches meanwhile', async () => {
+    const c = connector({ republishMs: 100, rejoinGraceMs: 1500 });
+    const onCall = await agent('on_call');
     const { call } = await caller(c);
     await until('queued', async () => (await row(call.id)).state === 'queued');
-    await sleep(200);
+    const station = { ...stations.get(onCall)! };
+    await closeStation(c, onCall, { liveCall: true });
+    await sleep(600); // several republish searches inside the grace
     expect((await row(call.id)).state).toBe('queued');
-    stations.get(s1)!.ws.readyState = 3;
-    c.onStationClosed(s1);
-    await until('overflowed', async () => (await row(call.id)).state === 'ended', 2000);
+    stations.reattach(station);
+    await sleep(1400); // the grace has ended: the agent, back and on their call, still counts
+    expect((await row(call.id)).state).toBe('queued');
+
+    // In wrap-up: the close writes `offline`; the state at the close (wrap-up) is what counts.
+    await agents.set(onCall, 'wrapup', { leaseMs: 60_000 });
+    await closeStation(c, onCall);
+    expect(await agents.get(onCall)).toMatchObject({ state: 'offline' });
+    await sleep(600);
+    expect((await row(call.id)).state).toBe('queued');
+    stations.reattach(station);
+    await agents.set(onCall, 'wrapup', { leaseMs: 60_000 }); // the rehydrate restores the wrap-up this process holds
+    await sleep(1400);
+    expect((await row(call.id)).state).toBe('queued');
+    expect((await row(call.id)).outcome).toBeNull();
+  });
+
+  it('a close that outlasts the grace overflows them when it ends (its own timer: no republish), not before and not at the maximum wait', async () => {
+    const c = connector({ rejoinGraceMs: 1000 }); // republish every minute: only the grace's timer can tell
+    const s1 = await agent('wrapup');
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    const closedAt = Date.now();
+    await closeStation(c, s1);
+    await sleep(500);
+    expect((await row(call.id)).state).toBe('queued');
+    await until('overflowed', async () => (await row(call.id)).state === 'ended', 3000);
+    expect(Date.now() - closedAt).toBeGreaterThanOrEqual(1000);
+    expect(Date.now() - closedAt).toBeLessThan(2500);
+    expect(await row(call.id)).toMatchObject({ outcome: 'overflow', follow_up_reason: 'overflow', offer_count: 0 });
+  });
+
+  it('a station that closes while its agent is on a break never counted: it does not hold the caller', async () => {
+    const c = connector({ rejoinGraceMs: 60_000 });
+    const s1 = await agent('on_call');
+    const s2 = await agent('break');
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    await closeStation(c, s2);
+    await agents.set(s1, 'break', { leaseMs: 60_000 });
+    c.onAgentAvailable(s1); // a search (any presence event): s1 on a break, s2 gone on a break
+    await until('overflowed', async () => (await row(call.id)).state === 'ended', 3000);
     expect((await row(call.id)).outcome).toBe('overflow');
   });
 });
@@ -290,6 +349,55 @@ describe('QA-F3: hanging up an offered call is the agent declining it', () => {
     expect(await row(call.id)).toMatchObject({ outcome: 'overflow', follow_up_reason: 'overflow' });
     await drain();
     expect(await agents.get(s1)).toMatchObject({ state: 'available', inboundCallId: null });
+  });
+});
+
+describe('SWE-F3: a decline or a refused bind after the caller`s maximum wait passed during the offer', () => {
+  it('the decline answers and the agent is back in the pool at once; the overflow message plays after, on the call`s chain', async () => {
+    const short = { ...route, queue_max_wait_seconds: 1 };
+    const c = connector({ connectDelayMs: 60_000 }); // the offer stands past the maximum wait
+    const s1 = await agent('available');
+    await agent('on_call'); // someone who could take the caller later: no `no_agents` overflow
+    const clip = gate();
+    bridge.clipGate = clip.wait; // the overflow message plays until the test says
+    const { call } = await caller(c, {}, short);
+    await until('offered', async () => (await row(call.id)).state === 'offered');
+    await sleep(1200); // the maximum wait passes during the offer
+    const started = Date.now();
+    const answered = await Promise.race([service(c).hangup(actorOf(s1), call.id).then(() => 'answered'), sleep(2000).then(() => 'blocked')]);
+    expect(answered).toBe('answered');
+    expect(Date.now() - started).toBeLessThan(1500);
+    await until('the agent back in the pool', async () => {
+      const live = await agents.get(s1);
+      return live?.state === 'available' && live.inboundCallId === null;
+    }, 1500);
+    // The overflow message is still playing: the call has not ended yet.
+    expect((await row(call.id)).state).toBe('queued');
+    clip.open();
+    await until('overflowed', async () => (await row(call.id)).state === 'ended');
+    expect(await row(call.id)).toMatchObject({ outcome: 'overflow', follow_up_reason: 'overflow' });
+    expect(offersTo(s1)).toBe(1);
+  });
+
+  it('a bind refused (station OPEN) past the maximum wait: the agent released before the overflow runs', async () => {
+    const short = { ...route, queue_max_wait_seconds: 1 };
+    const c = connector({ connectDelayMs: 1300 }); // the bind comes after the maximum wait
+    const s1 = await agent('available');
+    await agent('on_call');
+    const clip = gate();
+    bridge.clipGate = clip.wait;
+    const { call } = await caller(c, {}, short);
+    bridge.refuseBind.set(call.id, 'other');
+    await until('offered', async () => (await row(call.id)).state === 'offered');
+    await until('the bind refused', () => !bridge.refuseBind.has(call.id), 3000);
+    await until('the agent back in the pool while the message plays', async () => {
+      const live = await agents.get(s1);
+      return live?.state === 'available' && live.inboundCallId === null;
+    }, 1500);
+    expect((await row(call.id)).state).toBe('queued');
+    clip.open();
+    await until('overflowed', async () => (await row(call.id)).state === 'ended');
+    expect((await row(call.id)).outcome).toBe('overflow');
   });
 });
 
@@ -401,5 +509,97 @@ describe('the supervisor`s tile: who it counts (QA-F5) and `no_agents_available`
     expect((await service(c).queueTiles(T, A))[0]).toMatchObject({ eligible_agents: 0, no_agents_available: false });
     await agents.set(s1, 'available', { leaseMs: 60_000 });
     expect((await service(c).queueTiles(T, A))[0]).toMatchObject({ eligible_agents: 1, no_agents_available: false });
+  });
+});
+
+describe('PM-M6 / SWE-N4: nobody could take the caller — decided at the answer, before any "please hold"', () => {
+  const ALWAYS = [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '00:00', end: '24:00' }));
+  let seq = 0;
+
+  /** An open route of the account answering a fresh number linked to inbound on the credential. */
+  async function openRoute(o: Record<string, unknown> = {}): Promise<string> {
+    const e164 = `+1415557${String(1000 + ++seq).padStart(4, '0')}`;
+    const plivo = (await pool().query<{ id: string }>(`SELECT id FROM telephony_providers WHERE name = 'plivo'`)).rows[0]!.id;
+    const { rows: [n] } = await pool().query<{ id: string }>(
+      `INSERT INTO phone_numbers (phone_number, provider_id, telephony_credential_id, status, inbound_linked_at)
+       VALUES ($1, $2, $3, 'active', now()) RETURNING id`, [e164, plivo, credentialId]);
+    await pool().query('INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id) VALUES ($1, $2)', [T, n!.id]);
+    const parsed = parseInboundRouteCreate({ name: `Open ${seq}`, timezone: 'UTC', weekly_hours: ALWAYS, sticky_mode: 'off', ...o });
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
+    const created = await routes.create({ tenantId: T, accountId: A, createdBy: null, config: parsed.config });
+    if (!created.ok) throw new Error(created.reason);
+    const attached = await routes.attachNumber({ tenantId: T, accountId: A, routeId: created.route.id, phoneNumberId: n!.id, attachedBy: null });
+    if (!attached.ok) throw new Error(attached.reason);
+    return e164;
+  }
+
+  /** The router as `startInboundCalls` wires it, with this connector; the bridge's stream and voicemail faked. */
+  function routed(c: Connector) {
+    const accept = vi.fn(async (input: { correlationId: string }) => {
+      bridge.take(input.correlationId);
+      return { accepted: true as const, streamUrl: 'wss://agency.test/stream', maxDurationSeconds: 1800, capacity: 'admitted' as const };
+    });
+    const recordInboundAudio = vi.fn(async () => ({ result: 'aborted' as const, pcm16: Buffer.alloc(1600), sampleRate: 8000, seconds: 0.1 }));
+    const r = new AgencyInboundCallRouter({
+      bridge: Object.assign(bridge, { acceptInboundCall: accept, recordInboundAudio }) as never,
+      dnc: { check: async () => 'clear', checkEntry: async () => ({ result: 'clear' }) } as never,
+      connect: { connector: c, enabled: async () => true, mediaWorkers: 0 },
+      voicemailStorage: { configured: () => true, upload: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) },
+    });
+    return { r, accept, recordInboundAudio };
+  }
+
+  const arrive = (toE164: string) => ({
+    credentialId, tenantId: T, provider: 'plivo', credentialStatus: 'active' as const,
+    carrierCallId: `CA-${randomUUID()}`, fromE164: '+447700900777', toE164,
+  });
+  const byCarrierId = async (id: string) => (await pool().query<CallRecord>('SELECT * FROM agency_inbound_calls WHERE provider_call_id = $1', [id])).rows[0]!;
+
+  it('nobody logged in, or only an agent on a break: the call-back message at once (spoken, no stream), never queued, overflow with its Missed row', async () => {
+    const c = connector();
+    const e164 = await openRoute();
+    const { r, accept } = routed(c);
+    const a = arrive(e164);
+    expect(await r.answer(a)).toEqual({ kind: 'spoken', message: 'callback' });
+    await agent('break');
+    const b = arrive(e164);
+    expect(await r.answer(b)).toEqual({ kind: 'spoken', message: 'callback' });
+    expect(accept).not.toHaveBeenCalled();
+    expect(c.heldCallIds()).toEqual([]);
+    for (const id of [a.carrierCallId, b.carrierCallId]) {
+      expect(await byCarrierId(id)).toMatchObject({ state: 'ended', outcome: 'overflow', follow_up_status: 'open', follow_up_reason: 'overflow', queued_at: null });
+    }
+  });
+
+  it('nobody, on a route whose overflow action is voicemail: the voicemail at once (our prompt, the beep), with no "please hold" and no queue', async () => {
+    const c = connector();
+    const e164 = await openRoute({ overflow_action: 'voicemail' });
+    const { r, recordInboundAudio } = routed(c);
+    const a = arrive(e164);
+    expect(await r.answer(a)).toMatchObject({ kind: 'stream' });
+    await r.drain();
+    expect(c.heldCallIds()).toEqual([]);
+    expect(recordInboundAudio).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      promptClipHashes: [await standardClipHash('voicemail_prompt')], beep: true,
+    }));
+    expect(await byCarrierId(a.carrierCallId)).toMatchObject({ state: 'ended', outcome: 'overflow', queued_at: null });
+  });
+
+  it('an agent who could take them later (on a call), or whose station closed within the rejoin grace: queued as before', async () => {
+    const c = connector({ rejoinGraceMs: 60_000 });
+    const e164 = await openRoute();
+    const { r } = routed(c);
+    const s1 = await agent('on_call');
+    const a = arrive(e164);
+    expect(await r.answer(a)).toMatchObject({ kind: 'stream' });
+    const first = await byCarrierId(a.carrierCallId);
+    expect(c.holds(first.id)).toBe(true);
+    await until('queued', async () => (await row(first.id)).state === 'queued');
+    // The same agent, in wrap-up, drops: within the grace they still count.
+    await agents.set(s1, 'wrapup', { leaseMs: 60_000 });
+    await closeStation(c, s1);
+    const b = arrive(e164);
+    expect(await r.answer(b)).toMatchObject({ kind: 'stream' });
+    expect(c.holds((await byCarrierId(b.carrierCallId)).id)).toBe(true);
   });
 });

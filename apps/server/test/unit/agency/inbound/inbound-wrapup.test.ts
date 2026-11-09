@@ -28,10 +28,14 @@ describe('the inbound wrap-up rule', () => {
     expect(inboundOutcomeWindowMs({ wrapupSeconds: 120, autoReturn: true }, 60_000)).toBe(60_000);
   });
 
-  it('unmatched (or the campaign row gone): the account default, a new campaign`s 30 s with auto-return', () => {
-    expect(inboundWrapupRule(null)).toEqual({ wrapupSeconds: 30, autoReturn: true });
+  it('unmatched (or the campaign row gone): its own default, 120 s with auto-return (not a new campaign`s 30 s)', () => {
+    expect(inboundWrapupRule(null)).toEqual({ wrapupSeconds: 120, autoReturn: true });
     expect(inboundWrapupRule(null)).toEqual(INBOUND_DEFAULT_WRAPUP);
-    expect(inboundOutcomeWindowMs(inboundWrapupRule(null))).toBe(30_000);
+    expect(inboundOutcomeWindowMs(inboundWrapupRule(null))).toBe(120_000);
+  });
+
+  it('a matched campaign keeps its own rule, whatever the unmatched default', () => {
+    expect(inboundWrapupRule({ wrapup_seconds: 30, wrapup_auto_return: true })).toEqual({ wrapupSeconds: 30, autoReturn: true });
   });
 });
 

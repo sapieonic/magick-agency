@@ -36,7 +36,7 @@ type Lifecycle = import('../../../src/core/webrtc-bridge-manager.js').WebRtcLife
  *    `break`, never `available`, also when the spine cannot be read, and the lapse that settles
  *    the other call later does not lift that break.
  *  - The inbound wrap-up's auto-return (PM): the outcome lapses at the matched campaign's
- *    `wrapup_seconds` when it auto-returns, else at the account default (a new campaign's 30 s),
+ *    `wrapup_seconds` when it auto-returns, else at the unmatched default (120 s, its own),
  *    never past the 30-minute backstop; the agent in that wrap-up is returned.
  *  - A supervisor's force-available on an agent who owes an inbound outcome
  *    (`closeOwedForSupervisor`): the call closed as the lapse closes it, the claim cleared, the
@@ -79,6 +79,7 @@ class FakeStations {
   get(id: string) { return this.entries.get(id); }
   socketFor(id: string) { return this.entries.get(id)?.ws; }
   isLocallyOwned(id: string) { return this.entries.has(id); }
+  onDetached() { return () => {}; }
   send(id: string, frame: unknown) {
     const ws = this.entries.get(id)?.ws;
     if (!ws || ws.readyState !== 1) return false;
@@ -140,9 +141,16 @@ let dialer: InstanceType<typeof AgencyDialer>;
 let breaks: InstanceType<typeof BreakRegistry>;
 let service: InstanceType<typeof InboundCallService>;
 
-/** A live campaign session with a station on this "process", in `state` in Redis. */
+/**
+ * A live campaign session with a station on this "process", in `state` in Redis, its agent an
+ * active user with a tenant-wide membership: one the connector may offer a caller (QA-F10's member
+ * read; a stranger is nobody who could take them, PM-M6, and the caller would overflow at once).
+ */
 async function agent(state: 'available' | 'wrapup' | 'break' | 'offline' = 'available'): Promise<string> {
-  const session = await insertAgentSession(campaignId);
+  const userId = randomUUID();
+  await pool().query('INSERT INTO users (id, firebase_uid, email) VALUES ($1, $2, $3)', [userId, `fb-ret-${userId}`, `ret-${userId}@example.test`]);
+  await pool().query(`INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, 'agent')`, [userId, T]);
+  const session = await insertAgentSession(campaignId, { agent_user_id: userId });
   stations.add({ sessionId: session.id as string, campaignId, tenantId: T, accountId: A, agentUserId: session.agent_user_id as string });
   await agents.set(session.id as string, state, { leaseMs: 60_000 });
   return session.id as string;
@@ -325,14 +333,19 @@ describe('a settle never moves an agent off a break, or out of offline, into the
   });
 });
 
-describe('the inbound wrap-up auto-returns as the outbound one (PM): the matched campaign`s window, else the account default, never past 30 minutes', () => {
-  it('the account default is the campaign column defaults (30 s, auto-return on)', async () => {
+describe('the inbound wrap-up auto-returns as the outbound one (PM): the matched campaign`s window, else the unmatched default (120 s), never past 30 minutes', () => {
+  it('an unmatched call`s default is its own (120 s, auto-return on), not a new campaign`s column default; a matched campaign keeps its own', async () => {
+    expect(INBOUND_DEFAULT_WRAPUP).toEqual({ wrapupSeconds: 120, autoReturn: true });
     const { rows } = await pool().query<{ column_name: string; column_default: string }>(
       `SELECT column_name, column_default FROM information_schema.columns
-        WHERE table_name = 'agency_campaigns' AND column_name IN ('wrapup_seconds', 'wrapup_auto_return')`);
-    const defaults = Object.fromEntries(rows.map((r) => [r.column_name, r.column_default]));
-    expect(Number(defaults['wrapup_seconds'])).toBe(INBOUND_DEFAULT_WRAPUP.wrapupSeconds);
-    expect(defaults['wrapup_auto_return']).toBe(String(INBOUND_DEFAULT_WRAPUP.autoReturn));
+        WHERE table_name = 'agency_campaigns' AND column_name = 'wrapup_seconds'`);
+    expect(Number(rows[0]!.column_default)).toBe(30);
+    const campaignDefault = (await insertAgencyCampaign({})).id as string;
+    const session = async () => (await insertAgentSession(campaignId)).id as string;
+    const matched40 = await owed(await session(), 40, campaignDefault);
+    const unmatched40 = await owed(await session(), 40);
+    const lapsed = new Set((await calls.lapseUnsettled()).map((r) => r.id));
+    expect({ matched: lapsed.has(matched40.id), unmatched: lapsed.has(unmatched40.id) }).toEqual({ matched: true, unmatched: false });
   });
 
   it('the lapse picks each call at its own window', async () => {
@@ -349,9 +362,9 @@ describe('the inbound wrap-up auto-returns as the outbound one (PM): the matched
       noTimer: await owed(await session(), 600, noTimer),
       longBeforeBackstop: await owed(await session(), 29 * 60, long),
       longPastBackstop: await owed(await session(), 31 * 60, long),
-      unmatchedBefore: await owed(await session(), 20),
-      unmatchedAfter: await owed(await session(), 35),
-      goneCampaignAfter: await owed(await session(), 35, randomUUID()),
+      unmatchedBefore: await owed(await session(), 110),
+      unmatchedAfter: await owed(await session(), 125),
+      goneCampaignAfter: await owed(await session(), 125, randomUUID()),
     };
     const lapsed = new Set((await calls.lapseUnsettled()).map((r) => r.id));
     const picked = Object.fromEntries(Object.entries(cases).map(([k, c]) => [k, lapsed.has(c.id)]));

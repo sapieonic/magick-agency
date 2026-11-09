@@ -41,6 +41,9 @@ interface StationEntry {
   lastSeen: number;
 }
 
+/** A station as it was when it detached (`onDetached`): who it was, with no socket. */
+export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind'>>;
+
 /** What `attach` takes: the entry, with the client kind defaulting to `web`. */
 export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind'> & { clientKind?: AgencyClientKind };
 
@@ -93,10 +96,14 @@ export class StationRegistry {
     return () => { this.attachListeners.delete(listener); };
   }
 
-  private readonly detachListeners = new Set<(sessionId: string) => void>();
+  private readonly detachListeners = new Set<(sessionId: string, station: StationDetached) => void>();
 
-  /** Be told after every detach (a media worker tells the primary's directory). Total. */
-  onDetached(listener: (sessionId: string) => void): () => void {
+  /**
+   * Be told after every detach (a media worker tells the primary's directory; the inbound
+   * connector's rejoin grace), with the station as it was. Synchronous, before the ownership key
+   * is deleted. Total.
+   */
+  onDetached(listener: (sessionId: string, station: StationDetached) => void): () => void {
     this.detachListeners.add(listener);
     return () => { this.detachListeners.delete(listener); };
   }
@@ -206,8 +213,12 @@ export class StationRegistry {
     if (!entry || (ws && entry.ws !== ws)) return;
     this.stations.delete(sessionId);
     this.stopProbe(sessionId);
+    const station: StationDetached = {
+      sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId,
+      agentUserId: entry.agentUserId, clientKind: entry.clientKind,
+    };
     for (const listener of this.detachListeners) {
-      try { listener(sessionId); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
+      try { listener(sessionId, station); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
     }
     if (this.redis) {
       await this.redis.del(this.ownershipKey(sessionId)).catch((err) =>

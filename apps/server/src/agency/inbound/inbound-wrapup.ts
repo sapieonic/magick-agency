@@ -9,8 +9,8 @@ import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
  * the outcome lapses `wrapup_seconds` after the call ended (`no_disposition`, as the reaper closes
  * an outbound wrap-up's attempt after its window) and the agent is returned; with auto-return off,
  * or `wrapup_seconds = 0` ("no timer"), the agent stays until they save it. A caller who matched
- * no campaign takes the account default, which is the default every new campaign of the account
- * starts with ({@link INBOUND_DEFAULT_WRAPUP}: there is no account-level wrap-up setting).
+ * no campaign takes its own default ({@link INBOUND_DEFAULT_WRAPUP}, 120 s with auto-return: a new
+ * enquiry with no contact record needs longer than a campaign call; there is no account setting).
  * {@link AGENCY_INBOUND_OUTCOME_LAPSE_MS} (30 minutes) stays as the backstop: no outcome waits
  * longer, whatever the campaign says.
  *
@@ -26,10 +26,11 @@ export interface InboundWrapupRule {
 }
 
 /**
- * The account default (no campaign matched): the column defaults of `agency_campaigns`
- * (`wrapup_seconds` 30, `wrapup_auto_return` true), pinned to them by an integration test.
+ * The rule for a caller who matched no campaign: 120 s with auto-return. Its own constant, not a
+ * new campaign's default (30 s): an unmatched caller is a new enquiry with no contact record, and
+ * the agent needs time to note who they are before the outcome lapses (PM decision, round 2).
  */
-export const INBOUND_DEFAULT_WRAPUP: Readonly<InboundWrapupRule> = Object.freeze({ wrapupSeconds: 30, autoReturn: true });
+export const INBOUND_DEFAULT_WRAPUP: Readonly<InboundWrapupRule> = Object.freeze({ wrapupSeconds: 120, autoReturn: true });
 
 /** The rule for a call matched to `campaign` (null: unmatched, or the campaign row is gone). */
 export function inboundWrapupRule(

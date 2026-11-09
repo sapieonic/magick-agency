@@ -49,6 +49,14 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  * nobody on a break, offline, on the phone app, outside the pool or out of the account will ever
  * be offered them.
  *
+ * A station that closed moments ago still counts (SWE-F1): a session whose socket closed less than
+ * the rejoin grace ago (`INBOUND_STATION_REJOIN_GRACE_MS`, the console's reconnect and the
+ * bridge's 8 s deferred hangup) and whose agent was working or available then
+ * ({@link InboundAgentView.rejoining}) is one who could take the caller once they are back. Never
+ * offered (no open station), only counted, so a Wi-Fi blip, a page refresh or a backlog close of
+ * the one agent who could take the callers does not overflow every one of them at once. The
+ * connector asks again when the grace ends.
+ *
  * ── Order ───────────────────────────────────────────────────────────────────────
  * Callers are served FIFO by when they queued, a requeued caller (its station lost before audio
  * bound) back at the head (`inbound-queue.ts`). For each caller the agents are tried: in its
@@ -73,6 +81,12 @@ export interface InboundAgentView {
   clientKind: AgencyClientKind;
   /** Held by this process with its socket OPEN. */
   stationOpen: boolean;
+  /**
+   * The station closed less than the rejoin grace ago, and `live` is the state the agent was in
+   * then or is in now (the close handler writes `offline`): the session counts for
+   * {@link couldTakeLater} as if its station were open, and is never offered a caller.
+   */
+  rejoining?: boolean;
   /**
    * The agent is an active user with an active membership that can see the account (tenant-wide
    * or this account), as of the connector's last read: false for one removed or deactivated.
@@ -156,7 +170,8 @@ export const COULD_TAKE_STATES = ['available', ...RELEASE_STATES] as const satis
  * soft-phone call already held (it ends). A session in soft-phone mode does not qualify.
  */
 export function couldTakeLater(agent: InboundAgentView, caller: InboundCallerView): boolean {
-  const why = inboundIneligibility(agent, caller, COULD_TAKE_STATES);
+  // A station back in a moment counts as open here, and here only (see the header).
+  const why = inboundIneligibility(agent.rejoining ? { ...agent, stationOpen: true } : agent, caller, COULD_TAKE_STATES);
   return why === null || (why === 'holds_call' && agent.live !== null && !agent.live.softphone);
 }
 

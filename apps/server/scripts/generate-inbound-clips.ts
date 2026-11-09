@@ -12,7 +12,11 @@
  *
  *   pnpm tsx scripts/generate-inbound-clips.ts \
  *     --piper /path/to/venv/bin/piper \
- *     --model /path/to/en-gb-southern_english_female-low.onnx
+ *     --model /path/to/en-gb-southern_english_female-low.onnx \
+ *     [--only voicemail_prompt_neutral,closed]
+ *
+ * `--only` regenerates just the named recordings (a new one, or one whose words changed), so the
+ * others stay byte for byte as committed.
  *
  * Each recording is synthesised at the voice's own rate, then converted with ffmpeg to the form
  * the bridge plays without any work per call: WAV, PCM16, 8 kHz (the telephony rate), mono, with
@@ -25,6 +29,7 @@ import path from 'node:path';
 import {
   AGENCY_INBOUND_STANDARD_RECORDINGS,
   AGENCY_INBOUND_STANDARD_WORDS,
+  type AgencyInboundStandardRecording,
 } from '@magick-agency/contracts/api/agency/inbound';
 import { INBOUND_STANDARD_CLIP_FILES, inboundStandardClipDir } from '../src/agency/inbound/inbound-standard-clip-files.js';
 
@@ -38,6 +43,20 @@ function arg(name: string): string {
   return value;
 }
 
+/** `--only a,b`: the recordings to regenerate (every one when absent); an unknown name is refused. */
+function only(): readonly AgencyInboundStandardRecording[] {
+  const i = process.argv.indexOf('--only');
+  if (i < 0) return AGENCY_INBOUND_STANDARD_RECORDINGS;
+  const names = (process.argv[i + 1] ?? '').split(',').map((n) => n.trim()).filter(Boolean);
+  const known = new Set<string>(AGENCY_INBOUND_STANDARD_RECORDINGS);
+  const unknown = names.filter((n) => !known.has(n));
+  if (names.length === 0 || unknown.length > 0) {
+    console.error(`--only takes recordings among ${AGENCY_INBOUND_STANDARD_RECORDINGS.join(', ')}${unknown.length ? ` (unknown: ${unknown.join(', ')})` : ''}`);
+    process.exit(2);
+  }
+  return names as AgencyInboundStandardRecording[];
+}
+
 function run(cmd: string, args: string[], input?: string): void {
   const res = spawnSync(cmd, args, { input, stdio: ['pipe', 'inherit', 'inherit'] });
   if (res.status !== 0) {
@@ -48,10 +67,11 @@ function run(cmd: string, args: string[], input?: string): void {
 
 const piper = arg('piper');
 const model = arg('model');
+const recordings = only();
 const outDir = inboundStandardClipDir();
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'inbound-clips-'));
 try {
-  for (const recording of AGENCY_INBOUND_STANDARD_RECORDINGS) {
+  for (const recording of recordings) {
     const words = AGENCY_INBOUND_STANDARD_WORDS[recording];
     // Piper reads curly apostrophes as written; plain ones keep its phonemiser on familiar ground.
     const spoken = words.replace(/’/g, "'");
