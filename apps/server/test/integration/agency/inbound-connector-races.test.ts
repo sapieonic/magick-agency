@@ -424,6 +424,8 @@ describe('the in-flight clash`s hand-over (§5.4): the superseded dial`s agent g
     preamble.open();
     await until('connected to the agent of the superseded dial', async () => (await row(call.id)).state === 'connected');
     expect((await row(call.id)).session_id).toBe(ringingAgent);
+    // The row is written `connected` before the agent's `on_call` and the connected frame (QA-F2's class).
+    await until('the connected frame', () => inboundFrames(ringingAgent).at(-1)?.['state'] === 'connected');
     expect(inboundFrames(ringingAgent).map((f) => f['state'])).toEqual(['offered', 'connected']);
     expect(await agents.get(other)).toMatchObject({ state: 'available', inboundCallId: null });
     expect(inboundFrames(other)).toEqual([]);
