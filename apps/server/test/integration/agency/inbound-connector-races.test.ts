@@ -373,7 +373,7 @@ describe('the inbound connector`s races (real Redis and Postgres)', () => {
     expect(await service.sweepLapsed()).toBe(0);
   });
 
-  it('a graceful shutdown (Q18): the stopped connector takes no new work; callers nobody took end failed with their Missed row; the agent on offer is released', async () => {
+  it('a graceful shutdown (IQ18): the stopped connector takes no new work; callers nobody took end failed with their Missed row; the agent on offer is released', async () => {
     const c = connector();
     const s1 = await agent();
     const offered = await caller(c);
@@ -413,7 +413,7 @@ describe('the in-flight clash`s hand-over (§5.4): the superseded dial`s agent g
     expect(await agents.get(ringingAgent)).toMatchObject({ state: 'reserved', inboundCallId: call.id });
     expect(c.findCallForSession(ringingAgent)).toEqual({ callId: call.id, phase: 'offered' });
     expect(stateFrames(ringingAgent)).toEqual(['reserved']);
-    expect((await row(call.id)).state).toBe('greeting'); // no agent bound during the greeting (Q5)
+    expect((await row(call.id)).state).toBe('greeting'); // no agent bound during the greeting (IQ5)
     expect(bridge.binds).toEqual([]);
     // A free agent appears meanwhile: not offered this call.
     c.onAgentAvailable(other);

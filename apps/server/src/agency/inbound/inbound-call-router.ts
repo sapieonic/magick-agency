@@ -116,11 +116,11 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  * Exactly one writer ends a call: this process's play loop while it holds the call, else the
  * hangup webhook, else the sweep; the spine's terminal guard makes any second end a no-op.
  *
- * ── P2: the `queue` plan (docs/inbound.md §2, §5; IB8, Q12, Q13) ────────────────
+ * ── P2: the `queue` plan (docs/inbound.md §2, §5; IB8, IQ12, IQ13) ────────────────
  * An open route's admitted caller (a slot taken, or over the account's own limit: IB5 still
  * connects them) is put through to an agent when the account's `agency_inbound_enabled` flag is
  * on and the server runs one process (`MEDIA_WORKERS = 0`, IB8; with media workers P2 keeps the
- * P1 answer, logged once, Q13). The stream is taken in CONNECTABLE (`acceptInboundCall`): parked
+ * P1 answer, logged once, IQ13). The stream is taken in CONNECTABLE (`acceptInboundCall`): parked
  * for {@link parkedSecondsFor}, an agent's station bindable to it, recorded from the bind when the
  * route records (and the account allows it). The connector (`inbound-connector.ts`) then owns the
  * call: the greeting and, for a recorded call, the recording notice (IB7), the hold, the queue,
@@ -129,12 +129,12 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  * AgencyInboundCallRouter.settleCall}, the one way every unconnected exit is written. A call
  * whose stream turns out to have no global or carrier slot hears "busy" as in P1.
  *
- * ── P2: the in-flight clash (§5.4, Q7, Q8) ───────────────────────────────────────
+ * ── P2: the in-flight clash (§5.4, IQ7, IQ8) ───────────────────────────────────────
  * A `queue` caller whose number a paced dial is ringing right now: the dial is cancelled (on a
  * carrier that can stop it ringing) and its agent is handed this call ({@link
  * AgencyInboundCallRouter.supersedeRingingDial}).
  *
- * ── P2: voicemail (§7, IB3, Q14) ─────────────────────────────────────────────────
+ * ── P2: voicemail (§7, IB3, IQ14) ─────────────────────────────────────────────────
  * A route whose action for the case is `voicemail` (`after_hours_action` out of hours,
  * `overflow_action` for an open route's caller nobody takes: the P1 plan, or the queue's exit)
  * takes one: the case's message as the prompt, the beep, up to 120 s recorded from our stream,
@@ -800,12 +800,12 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
   }
 
   /**
-   * The in-flight clash (docs/inbound.md §5.4, Q7, Q8): a paced dial still ringing this caller's
+   * The in-flight clash (docs/inbound.md §5.4, IQ7, IQ8): a paced dial still ringing this caller's
    * number on the call's account is cancelled, and its agent, who has the customer's panel, is
    * handed this call. Only for a call the connector holds (the `queue` plan: someone can take it).
    * Synchronous from the dialer's read to the cancel, so the dial cannot be answered in between:
    *  1. the ringing dial (`findRingingAttemptTo`); on a carrier that cannot cancel ringing
-   *     (VoiceLink) nothing is cancelled and the caller queues normally (Q7);
+   *     (VoiceLink) nothing is cancelled and the caller queues normally (IQ7);
    *  2. the call promised to its session (`expectHandover`: no other agent is offered it);
    *  3. the dial superseded (`supersedeForInbound`: marked, `forceEndWithOutcome(…, 'canceled')`).
    * The dialer's `ended` arm settles it (`canceled`, the code `inbound_call`, the contact back
@@ -826,7 +826,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     const ringing = dialer.findRingingAttemptTo(call.tenant_id, call.account_id, call.from_e164);
     if (!ringing) return;
     if (!ringing.cancelsRinging) {
-      log.info({ inboundCallId: call.id, attemptId: ringing.attemptId }, 'Customer rang in while a dial to them rings on a carrier that cannot cancel it — queued normally (Q7)');
+      log.info({ inboundCallId: call.id, attemptId: ringing.attemptId }, 'Customer rang in while a dial to them rings on a carrier that cannot cancel it — queued normally (IQ7)');
       return;
     }
     const sessionId = ringing.sessionId;

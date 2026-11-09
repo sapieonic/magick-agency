@@ -64,7 +64,7 @@ describe('inboundIneligibility (§4.3)', () => {
     ['another account', agent('a', { accountId: 'account-2' }), 'other_account'],
     ['another tenant', agent('a', { tenantId: 'tenant-2' }), 'other_account'],
     ['a soft-phone session', agent('a', { campaignId: null }), 'not_campaign_session'],
-    ['the mobile app (Q20)', agent('a', { clientKind: 'mobile' }), 'mobile'],
+    ['the mobile app (IQ20)', agent('a', { clientKind: 'mobile' }), 'mobile'],
     ['no open station here', agent('a', { stationOpen: false }), 'no_station'],
     ['no lease (offline, lapsed)', { ...agent('a'), live: null }, 'wrong_state'],
     ['offline', agent('a', { state: 'offline' }), 'wrong_state'],
@@ -81,7 +81,7 @@ describe('inboundIneligibility (§4.3)', () => {
     expect(inboundIneligibility({ ...base, live: { ...base.live!, softphone: true } }, c)).toBe('holds_call');
     expect(inboundIneligibility({ ...base, live: { ...base.live!, inboundCallId: 'x' } }, c)).toBe('holds_call');
   });
-  it('the route`s pool applies only when the call is in the route`s account (Q21)', () => {
+  it('the route`s pool applies only when the call is in the route`s account (IQ21)', () => {
     const pooled = caller('1', { poolCampaignIds: ['camp-2'] });
     expect(inboundIneligibility(agent('a'), pooled)).toBe('not_in_pool');
     expect(inboundIneligibility(agent('a', { campaignId: 'camp-2' }), pooled)).toBeNull();
@@ -95,7 +95,7 @@ describe('inboundIneligibility (§4.3)', () => {
   });
 });
 
-describe('the sticky agent`s status and phase (§4.2, §4.3, Q6)', () => {
+describe('the sticky agent`s status and phase (§4.2, §4.3, IQ6)', () => {
   const c = caller('1', { stickyUserId: 'u-s' });
   it('available, busy (reserved / on a call / wrap-up, even holding another inbound call), else away', () => {
     expect(stickyAgentStatus(agent('s'), c)).toBe('available');
@@ -111,7 +111,7 @@ describe('the sticky agent`s status and phase (§4.2, §4.3, Q6)', () => {
     const onSoftphone = agent('s', { state: 'on_call' });
     expect(stickyAgentStatus({ ...onSoftphone, live: { ...onSoftphone.live!, manualCallId: 'm' } }, c)).toBe('away');
   });
-  it('loose: only the sticky agent until the sticky wait; strict: until the maximum wait; off: never; away: never (Q6)', () => {
+  it('loose: only the sticky agent until the sticky wait; strict: until the maximum wait; off: never; away: never (IQ6)', () => {
     expect(inStickyPhase(c, 'available', NOW)).toBe(true);
     expect(inStickyPhase(c, 'busy', c.queuedAt + 29_999)).toBe(true);
     expect(inStickyPhase(c, 'busy', c.queuedAt + 30_000)).toBe(false);
@@ -143,7 +143,7 @@ describe('candidatesFor: who to try, in order', () => {
     expect(candidatesFor(lapsed, floor, NOW)).toEqual(['s-young', 's-old', 's-tie-a', 's-tie-b']);
     expect(candidatesFor({ ...lapsed, stickyUserId: 'u-busy' }, floor, NOW)).toEqual(['s-old', 's-tie-a', 's-tie-b', 's-young']);
   });
-  it('a sticky agent away: the team at once, under strict too (Q6)', () => {
+  it('a sticky agent away: the team at once, under strict too (IQ6)', () => {
     const awayFloor = [...floor, agent('gone', { state: 'break' })];
     expect(candidatesFor(caller('1', { stickyUserId: 'u-gone', stickyMode: 'strict' }), awayFloor, NOW))
       .toEqual(['s-old', 's-tie-a', 's-tie-b', 's-young']);

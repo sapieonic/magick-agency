@@ -1273,7 +1273,7 @@ describe('PacingEngine rounds: supervise pass primes the row cache', () => {
   });
 });
 
-// ─── Inbound callers first (docs/inbound.md §5.2, Q2) ───────────────────────
+// ─── Inbound callers first (docs/inbound.md §5.2, IQ2) ───────────────────────
 
 describe('PacingEngine rounds: inbound_waiting holds agents back for waiting inbound callers', () => {
   const waiting = (over: Partial<Extract<PacingInvalidationEvent, { type: 'inbound_waiting' }>> = {}): PacingInvalidationEvent => ({

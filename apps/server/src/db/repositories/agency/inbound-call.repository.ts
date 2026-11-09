@@ -660,7 +660,7 @@ export class AgencyInboundCallRepository {
   /**
    * The oldest inbound call of the account from `phoneE164` that keeps the number busy (live, or
    * bridged and owing its outcome: `inboundNumberBusySql`), or null: the soft phone's pre-dial
-   * (docs/inbound.md §5.4, Q19). One probe of `idx_agency_inbound_calls_live_from_digits`. An
+   * (docs/inbound.md §5.4, IQ19). One probe of `idx_agency_inbound_calls_live_from_digits`. An
    * unusable number (no digits) matches nothing.
    */
   async findBusyForNumber(tenantId: string, accountId: string, phoneE164: string): Promise<AgencyInboundCallRecord | null> {

@@ -1556,7 +1556,7 @@ export class WebRtcBridgeManager {
 
   /**
    * Hold an inbound caller: play `preambleClipHashes` once (the greeting, a recording notice),
-   * then loop the hold clip (or, with none, the built-in generated hold tone: Q24) until the hold
+   * then loop the hold clip (or, with none, the built-in generated hold tone: IQ24) until the hold
    * is stopped. **Never hangs up**, and nothing here ends the call: the caller decides what
    * follows (an agent, an overflow message, a voicemail), and the call's own budget (the parked
    * max-duration backstop, {@link acceptInboundCall}) bounds it.
@@ -1636,7 +1636,7 @@ export class WebRtcBridgeManager {
 
   /**
    * Record an inbound caller (a voicemail): stop whatever the bridge plays to them (the hold),
-   * play `promptClipHashes` once and, with `beep`, the built-in 400 ms beep (Q14), then capture
+   * play `promptClipHashes` once and, with `beep`, the built-in 400 ms beep (IQ14), then capture
    * the caller's audio until `maxSeconds` of it (or of wall clock from its start, so a carrier
    * that stops sending frames still ends it), or until the caller hangs up. **Never hangs up**: a
    * `completed` recording leaves the caller on the line for the caller to end.

@@ -1624,7 +1624,7 @@ export class PacingEngine {
     candidates.sort((a, b) =>
       a.availableSince - b.availableSince || a.sessionId.localeCompare(b.sessionId));
 
-    // ── Inbound callers first (docs/inbound.md §5.2, Q2) ─────────────────────
+    // ── Inbound callers first (docs/inbound.md §5.2, IQ2) ─────────────────────
     // While inbound callers wait for this account's agents, the agents they are sticky to and the
     // `n` longest idle are not this tick's to reserve (`pacing/inbound-hold-back.ts`). After the
     // sort, so the agents held back are the ones the inbound search would offer the callers to.

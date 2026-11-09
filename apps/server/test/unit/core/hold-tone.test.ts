@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 // The bridge's generated tones (`core/bridge/hold-tone.ts`): the built-in hold tone an inbound
-// caller hears when the route has no hold clip (Q24) and the beep before a recording (Q14).
+// caller hears when the route has no hold clip (IQ24) and the beep before a recording (IQ14).
 
 import {
   HOLD_TONE_PATTERN, RECORD_BEEP_PATTERN, TONE_SAMPLE_RATE, holdTonePcm16, recordBeepPcm16, synthesizeTones,

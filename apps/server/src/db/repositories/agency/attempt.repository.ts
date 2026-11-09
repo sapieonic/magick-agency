@@ -451,7 +451,7 @@ export class AgencyAttemptRepository {
 
   /**
    * Settle a ringing dial its customer superseded by ringing in (the in-flight clash,
-   * docs/inbound.md §5.4, Q8), in ONE transaction:
+   * docs/inbound.md §5.4, IQ8), in ONE transaction:
    *
    *  1. the attempt `ended`, outcome `canceled`, with the reserved system code
    *     `inbound_call` (`AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`, refused in every catalog)

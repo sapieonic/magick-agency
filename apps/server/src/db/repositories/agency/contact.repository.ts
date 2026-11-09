@@ -1045,7 +1045,7 @@ export class AgencyContactRepository {
 
   /**
    * Settle the roster contact an inbound call matched, from the outcome its agent saved
-   * (docs/inbound.md §6; SP6's forward-only rule, decisions IB4 and Q9). The caller resolves the
+   * (docs/inbound.md §6; SP6's forward-only rule, decisions IB4 and IQ9). The caller resolves the
    * disposition into a {@link AgencyInboundContactSettlement}; this applies it to the contact as
    * it stands now, on the locked row, so the arm and the write cannot disagree:
    *
@@ -1055,7 +1055,7 @@ export class AgencyContactRepository {
    *    (`callback_reopened`, 0029), which goes back to `exhausted` (never claimed: the dialer
    *    claims `pending` only): the customer was reached, and the reopen was only for that
    *    callback (SWE-F2);
-   *  - `exhausted`: the same, so only a callback reopens it (Q9, the customer asked to be called),
+   *  - `exhausted`: the same, so only a callback reopens it (IQ9, the customer asked to be called),
    *    and a success or a suppress closes it; `none` leaves it exhausted;
    *  - `in_flight` / `connected` (another call is live on it, or owes its outcome): only
    *    `suppressed` applies; that call's own settlement does the rest;
@@ -1150,7 +1150,7 @@ export class AgencyContactRepository {
   }
 
   /**
-   * Return a contact whose ringing dial was cancelled because its customer rang in (§5.4, Q8):
+   * Return a contact whose ringing dial was cancelled because its customer rang in (§5.4, IQ8):
    * `in_flight` → `pending`, due now, UNCHARGED: neither `attempt_count` nor the our-fault ledger
    * moves, and `last_outcome` is left as it was (the attempt ends `canceled` with the system code
    * `inbound_call`; the conversation happens on the inbound call). An inbound callback on it is

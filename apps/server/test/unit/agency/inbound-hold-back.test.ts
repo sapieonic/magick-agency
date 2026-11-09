@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { holdBackForInbound, inboundHoldApplies, type InboundHold } from '../../../src/agency/pacing/inbound-hold-back.js';
 
 /**
- * Pacing leaves room for waiting inbound callers (docs/inbound.md §5.2, Q2): the preferred
+ * Pacing leaves room for waiting inbound callers (docs/inbound.md §5.2, IQ2): the preferred
  * sessions, then `n` longest-idle candidates, only on campaigns the hold applies to, and never
  * once it has lapsed.
  */

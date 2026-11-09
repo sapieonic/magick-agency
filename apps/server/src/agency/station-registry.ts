@@ -549,7 +549,7 @@ export class StationRegistry {
    *
    * ── Console-only events ─────────────────────────────────────────────────
    * An event in `AGENCY_STATION_CONSOLE_ONLY_EVENTS` (the inbound call frames) is never sent to a
-   * MOBILE station, whoever asks: the app has no wire type for it yet (docs/inbound.md §4.3, Q20).
+   * MOBILE station, whoever asks: the app has no wire type for it yet (docs/inbound.md §4.3, IQ20).
    * Enforced here, the one send path, so the rule does not rest on every inbound caller of `send`
    * having already ruled a phone out. Dropped, logged, and answered false (not delivered).
    */

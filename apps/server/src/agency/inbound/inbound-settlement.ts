@@ -13,14 +13,14 @@ import type { DispositionDecision } from '../disposition-policy.js';
  * | Outcome (`resolveDispositionDecision`)                  | Asks of the contact | pending | exhausted | in_flight / connected | completed / suppressed |
  * |---------------------------------------------------------|---------------------|---------|-----------|-----------------------|------------------------|
  * | `suppress` (DNC, written with it, B8)                   | `suppressed`        | suppressed | suppressed | suppressed          | nothing                |
- * | `terminal`, or a success code (`is_success`)            | `completed`         | completed | completed (Q9: a success closes it) | nothing | nothing           |
- * | a callback (`requires_datetime`, time given)            | `callback` at it    | pending at the time | pending at the time (reopened, IB4, Q9) | nothing | nothing |
+ * | `terminal`, or a success code (`is_success`)            | `completed`         | completed | completed (IQ9: a success closes it) | nothing | nothing           |
+ * | a callback (`requires_datetime`, time given)            | `callback` at it    | pending at the time | pending at the time (reopened, IB4, IQ9) | nothing | nothing |
  * | anything else (a retry code, a plain label), or the outcome lapsing | `none`  | unchanged (one its inbound callback reopened: back to exhausted) | unchanged (exhausted) | nothing | nothing |
  *
  * The callback time is the agent's, moved into the contact's calling window by the caller
  * (`manualDispositionDecision`, the soft phone's), so it is the decision's `nextAttemptAt`. A
  * pending inbound callback on the contact (`callback_source`) is cleared by every arm: the
- * customer got through (Q9); one that reopened an exhausted contact (`callback_reopened`, 0029)
+ * customer got through (IQ9); one that reopened an exhausted contact (`callback_reopened`, 0029)
  * leaves it exhausted again unless the outcome itself moves it (SWE-F2). A call whose outcome
  * lapses (or a supervisor closes) settles as `none` ({@link INBOUND_LAPSE_SETTLEMENT}). A
  * DNC-suppressed contact is never moved.

@@ -31,10 +31,10 @@ const log = createChildLogger({ component: 'agency-inbound-wire' });
  * audio, with no `await` between the reservation and the frame):
  *  - {@link loadInboundPanelContext}: everything the row does not carry, read ONCE (when the call
  *    queues, or for a finish route's answer): the route's name, the matched contact with its
- *    campaign's name, context display and prior attempts, and the outcome catalog (Q10);
+ *    campaign's name, context display and prior attempts, and the outcome catalog (IQ10);
  *  - {@link inboundCallToWire}: pure, the spine row plus that context, for every frame.
  *
- * ── The catalog (Q10, docs/inbound.md §6) ────────────────────────────────────────
+ * ── The catalog (IQ10, docs/inbound.md §6) ────────────────────────────────────────
  * A call matched to a campaign takes the CAMPAIGN's catalog, whatever the campaign's status now
  * (as the soft phone's `call_campaign`), stored as source `campaign`; an empty one (or a campaign
  * row gone) is the built-in catalog, still `campaign` (the soft phone's rule: a bridged call

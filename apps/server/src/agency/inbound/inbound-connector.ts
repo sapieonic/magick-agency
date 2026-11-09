@@ -64,7 +64,7 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  * ── A call's phases (in memory; the spine row is the durable half) ───────────────
  *   preamble → queued ⇄ offered → connected → done   (and `leaving`: its overflow message plays)
  *  1. `preamble`: the greeting and, for a recorded call, the notice (IB7) play through the hold
- *     member; the hold loop follows. When the preamble is over (`onPreambleDone`, Q5) the spine
+ *     member; the hold loop follows. When the preamble is over (`onPreambleDone`, IQ5) the spine
  *     moves to `queued` (`queued_at`), the caller is queued (over `max_waiting` only an agent free
  *     right now keeps them), "Your customer is waiting" goes to a busy sticky agent, pacing is
  *     told (`inbound_waiting`) and the account is searched.
@@ -78,20 +78,20 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  *     lease is still there: the station heartbeat renews a `wrapup` this process vouches for, a
  *     campaign wrap-up held here or an inbound outcome owed, `heartbeatLeaseMs`). The account is
  *     searched again on every republish (2 s) while callers wait: the backstop for a change no event
- *     reports (a busy sticky agent going away makes their caller the team's, Q6).
+ *     reports (a busy sticky agent going away makes their caller the team's, IQ6).
  *  3. The offer ({@link offer}, on the call's serial chain): the spine `offered` (guarded; a call
  *     that ended or a session that owes another outcome refuses and the reservation is given
  *     back), then SYNCHRONOUSLY the `agent_state: reserved` and the `inbound_call` frames (state
  *     `offered`, `connects_at`), so the panel and the chime come before any audio (IB1). The
  *     lease is renewed every 5 s; a lost lease cancels the offer.
- *  4. The bind, `AGENCY_INBOUND_CONNECT_DELAY_MS` after the offer (server-timed, Q4): the station
+ *  4. The bind, `AGENCY_INBOUND_CONNECT_DELAY_MS` after the offer (server-timed, IQ4): the station
  *     socket must be OPEN (else the offer is cancelled), then `bindBorrowedBrowserLeg` stops the
  *     hold synchronously, re-arms the max duration, starts talk time and emits `bridged`. On
  *     `bridged`: the spine `connected` (`bridged_at`, the agent), the agent `on_call`, the frame.
  *     Audio flows from the bind whatever the database says: a `connected` write that fails leaves
  *     the call connected in memory (`connectOwed`) and is retried at its end, before `answered`.
  *  5. The end (the bridge's `ended`): connected → the spine `answered` (owed: `settled_at` NULL),
- *     the agent `wrapup` with the `inbound` field kept (no auto-return, Q11), the frame with
+ *     the agent `wrapup` with the `inbound` field kept (no auto-return, IQ11), the frame with
  *     `outcome_due_at`; offered → the caller hung up: the router's settle (`abandoned_in_queue`,
  *     the Missed row and the callback), the reservation released and the agent returned
  *     (`releaseAgent`: a queued break applies, else the hook may offer the next caller);
@@ -337,7 +337,7 @@ export class InboundConnector {
     this.unsubscribeDetach = this.deps.stations.onDetached((_sessionId, station) => this.onStationDetached(station));
     // While callers wait: `inbound_waiting` republished, and the account searched again. The
     // search is the backstop for a change no event reports: a busy sticky agent going away
-    // (a queued break applied, the station gone) makes their caller the team's at once (Q6),
+    // (a queued break applied, the station gone) makes their caller the team's at once (IQ6),
     // and it refreshes the sticky agents' status that `n` is counted from. Not while the account's
     // lock is held or waited for: that search (or release) is the one this would queue behind.
     this.republishTimer = setInterval(() => {
@@ -353,7 +353,7 @@ export class InboundConnector {
    * Stop taking work: no more queueing, searching, offering or release hook, every timer dropped
    * (a bind not yet made never will be). The lifecycle listener stays until the calls still held
    * have ended: the inbound stop (`startInboundCalls`) ends them `service_shutdown` and waits for
-   * {@link drain}, which settles a caller nobody took `failed` with its follow-up and callback (Q18)
+   * {@link drain}, which settles a caller nobody took `failed` with its follow-up and callback (IQ18)
    * and leaves an answered one owing its outcome. A process that dies instead leaves them to the
    * next start's sweep.
    */
@@ -480,7 +480,7 @@ export class InboundConnector {
    * the search applies (`eligibility.ts`), so the tile never counts an agent the connector would
    * not offer them to (QA-F5):
    *  - `eligible`: with callers waiting on the route, the sessions free now (`available`, holding
-   *    nothing) who may take at least one of them, each caller judged by ITS account (Q21: a caller
+   *    nothing) who may take at least one of them, each caller judged by ITS account (IQ21: a caller
    *    matched into another account is that account's agents' alone, and the route's pool applies
    *    only to callers of the route's account); with nobody waiting, those who may take the route's
    *    next caller (one of the route's account);
@@ -1046,7 +1046,7 @@ export class InboundConnector {
     });
     if (res.call) held.record = res.call;
     if (res.ended) trackInboundCallEnded('answered');
-    // An outcome is owed (Q11): `wrapup`, the `inbound` field kept, no auto-return. An agent whose
+    // An outcome is owed (IQ11): `wrapup`, the `inbound` field kept, no auto-return. An agent whose
     // station is gone is `offline` (they come back to `break` with the call re-claimed).
     const since = new Date(this.now()).toISOString();
     if (this.deps.stations.isLocallyOwned(sessionId)) {
@@ -1314,7 +1314,7 @@ export class InboundConnector {
    * agent of the dial it superseded (a hand-over, §5.4), or `strict` with their sticky agent not
    * away as of the last search (only that agent may ever take them). A `loose` caller in its sticky
    * phase IS counted: the team takes them when the phase lapses, and the agent held back is the one
-   * free to (Q2's accepted over-hold).
+   * free to (IQ2's accepted over-hold).
    */
   private notTheTeams(entry: InboundCallerView): boolean {
     const held = this.calls.get(entry.callId);
@@ -1459,7 +1459,7 @@ export class InboundConnector {
 
   /**
    * The session's station if the release hook may take it for an inbound call: held here, OPEN, a
-   * console (a phone has no inbound frame yet, Q20) on a campaign (not the soft phone). The one
+   * console (a phone has no inbound frame yet, IQ20) on a campaign (not the soft phone). The one
    * predicate {@link takeOnRelease} and {@link expectHandover} share.
    */
   private releasableStation(sessionId: string) {
@@ -1563,7 +1563,7 @@ export function waitResultOf(outcome: AgencyInboundCallOutcome): InboundWaitResu
 }
 
 /**
- * How a call nobody took ends, from the bridge's outcome: our shutdown is `failed` (Q18: our side,
+ * How a call nobody took ends, from the bridge's outcome: our shutdown is `failed` (IQ18: our side,
  * with its follow-up and callback); a stream that never opened is `failed`; the parked backstop
  * (the call's budget ran out unbound) is `overflow`; anything else is the caller hanging up while
  * they waited.

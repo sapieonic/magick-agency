@@ -120,7 +120,7 @@ export class InboundHandovers {
    */
   expect(sessionId: string, callId: string): boolean {
     if (this.host.stopped() || this.bySession.has(sessionId)) return false;
-    // Only a session the release hook can take: a phone (Q20), a soft-phone session or a station
+    // Only a session the release hook can take: a phone (IQ20), a soft-phone session or a station
     // not OPEN never takes an inbound call, so its dial is left to ring (cancelled, the agent
     // would lose it for nothing and the caller would queue for someone else all the same).
     if (!this.host.releasable(sessionId)) return false;
@@ -196,7 +196,7 @@ export class InboundHandovers {
         await this.host.unreserve(sessionId, callId);
         return false;
       }
-      // Held through the preamble (Q5: no agent is bound during the greeting or the notice).
+      // Held through the preamble (IQ5: no agent is bound during the greeting or the notice).
       this.byCall.set(callId, { sessionId, held: true, timer: null });
       await this.host.seat(callId, sessionId, agentUserId);
       log.info({ inboundCallId: callId, sessionId }, 'Superseded dial\'s agent held for its customer\'s call until the preamble ends');

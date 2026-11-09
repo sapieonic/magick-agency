@@ -36,7 +36,7 @@
  *     them and step 3's claim (decisions §5, "Soft phone vs one live call per number
  *     across the account", which holds both open questions).
  *     Then the number on an INBOUND call to the account (live, or bridged and owing its
- *     outcome: docs/inbound.md §5.4, Q19) refuses `customer_on_inbound_call`, no override,
+ *     outcome: docs/inbound.md §5.4, IQ19) refuses `customer_on_inbound_call`, no override,
  *     tagged or not.
  *     Then, tagged on a `strict` campaign (contact assignment): a picked contact
  *     assigned to another agent refuses `contact_assigned_elsewhere`, no override,
@@ -326,7 +326,7 @@ export async function runManualPredial(
     // or went in flight between the two reads, which refuses all the same).
     return { ok: false, refusal: { code: 'contact_in_flight', campaign_id: live.campaign_id, contact_id: live.id } };
   }
-  // The customer is on an inbound call to the account (Q19): one live call per number holds for
+  // The customer is on an inbound call to the account (IQ19): one live call per number holds for
   // their own call too, so the soft phone does not ring them over it. No override.
   const inbound = await deps.findBusyInboundInAccount(destinationE164);
   if (inbound) return { ok: false, refusal: { code: 'customer_on_inbound_call', inbound_call_id: inbound.id } };

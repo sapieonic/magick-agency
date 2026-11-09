@@ -1,6 +1,6 @@
 /**
  * The uncharged return of a contact whose ringing dial its customer superseded by ringing in
- * (docs/inbound.md §5.4, Q8), as ONE statement run on the caller's queryable. Two repository
+ * (docs/inbound.md §5.4, IQ8), as ONE statement run on the caller's queryable. Two repository
  * files run it: {@link AgencyContactRepository.unclaimUncharged} on its own, and
  * `AgencyAttemptRepository.endSupersededByInbound` inside the transaction that ends the attempt.
  * It lives here, not on the contact repository, so the attempt repository reaches it without

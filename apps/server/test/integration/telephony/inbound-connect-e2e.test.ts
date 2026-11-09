@@ -470,7 +470,7 @@ describe('inbound P2: restart, recording, concurrency', () => {
     const connected = await spineWhen(call, 'connected', (r) => r.state === 'connected');
     expect(connected.recording_requested).toBe(true);
     expect(inboundCalls(agent)[0]).toMatchObject({ recording: true });
-    // The greeting and the notice were played whole before the offer (Q5, IB7).
+    // The greeting and the notice were played whole before the offer (IQ5, IB7).
     const preambleFrames = Math.ceil(world.clips.greeting.bytes / 160) + Math.ceil(world.clips.notice.bytes / 160);
     const beforeOffer = call.receivedFrameCount - call.framesReceivedAfter(connected.offered_at!.getTime());
     expect(beforeOffer).toBeGreaterThanOrEqual(preambleFrames);
@@ -520,7 +520,7 @@ describe('inbound P2: restart, recording, concurrency', () => {
     hangUp = true;
   });
 
-  it('12. a graceful shutdown: the inbound stop ends the calls it holds (service_shutdown) and has settled them (failed, the Missed row, Q18) by the time it returns', async () => {
+  it('12. a graceful shutdown: the inbound stop ends the calls it holds (service_shutdown) and has settled them (failed, the Missed row, IQ18) by the time it returns', async () => {
     const runtime = getAgencyRuntime()!;
     const running = getInboundCallRouter();
     const connector = runtime.inbound;

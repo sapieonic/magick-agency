@@ -657,7 +657,7 @@ export class AgencyRuntime {
         continue;
       }
       // A live inbound call bound to this socket (docs/inbound.md §2): rule 1 as written. Only a
-      // console takes inbound calls (Q20), so there is no phone arm.
+      // console takes inbound calls (IQ20), so there is no phone arm.
       if (this.inbound?.hasLiveCall(entry.sessionId)) continue;
 
       if (entry.ws.readyState === 3 /* CLOSED */) {

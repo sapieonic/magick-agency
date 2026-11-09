@@ -144,7 +144,7 @@ describe('the answered inbound call`s routes', () => {
     const saved = await call('POST', `/calls/${c.id}/disposition`, agent(0), { code: 'callback', callback_at: at, notes: 'secret note' });
     expect(saved.statusCode, saved.body).toBe(200);
     expect(saved.json()).toMatchObject({ call: { disposition_code: 'callback', settled_at: expect.any(String) }, contact_state: 'pending', callback_requested_at: at });
-    // An exhausted contact reopened by the callback (Q9), never charged.
+    // An exhausted contact reopened by the callback (IQ9), never charged.
     const { rows } = await q('SELECT state, attempt_count FROM agency_contacts WHERE id = $1', [c.contactId]);
     expect(rows[0]).toMatchObject({ state: 'pending', attempt_count: 3 });
     // The same code again: a replay; another code: refused.

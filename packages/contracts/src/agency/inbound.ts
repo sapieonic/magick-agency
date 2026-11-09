@@ -268,22 +268,22 @@ export type AgencyInboundCatalogSource = (typeof AGENCY_INBOUND_CATALOG_SOURCES)
 
 /**
  * How long after the offer frame the server binds the agent's audio (IB1: the panel is on screen,
- * and the chime played, before any audio). Server-timed, no client acknowledgement (Q4).
+ * and the chime played, before any audio). Server-timed, no client acknowledgement (IQ4).
  */
 export const AGENCY_INBOUND_CONNECT_DELAY_MS = 1_500;
 
 /**
  * How long an answered inbound call may wait for its outcome before the lapse sweep closes it
- * `no_disposition` and returns the agent: the soft phone's rule, the same 30 minutes (Q11).
+ * `no_disposition` and returns the agent: the soft phone's rule, the same 30 minutes (IQ11).
  */
 export const AGENCY_INBOUND_OUTCOME_LAPSE_MS = SOFTPHONE_OUTCOME_LAPSE_MS;
 
-/** The longest voicemail recorded from our own stream (Q14). */
+/** The longest voicemail recorded from our own stream (IQ14). */
 export const AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS = 120;
 
 /**
  * The SYSTEM disposition on a ringing outbound attempt cancelled because its customer rang in
- * (§5.4, Q8): the attempt ends `canceled` with this code, the contact goes back uncharged, and
+ * (§5.4, IQ8): the attempt ends `canceled` with this code, the contact goes back uncharged, and
  * the station's `released` frame says `inbound_call`. Reserved: refused in every catalog, as
  * `redialed` is.
  */

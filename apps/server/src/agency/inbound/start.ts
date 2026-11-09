@@ -38,7 +38,7 @@ export const INBOUND_SWEEP_STALE_AFTER_MS = (WEBRTC_MAX_DURATION_SECONDS + INBOU
 
 /**
  * What {@link startInboundCalls} connects agents with (P2): the agency runtime's pieces, and the
- * gate (Q12, Q13). Absent: P1 (nobody is connected).
+ * gate (IQ12, IQ13). Absent: P1 (nobody is connected).
  */
 export interface InboundConnectOptions {
   runtime: Pick<AgencyRuntime, 'stations' | 'agents' | 'dialer' | 'inboundCalls' | 'attachInbound'>;
@@ -66,7 +66,7 @@ export const INBOUND_SHUTDOWN_DRAIN_MS = 10_000;
  * fallback message), stops the sweeps and detaches the connector. Then it ends every call this
  * process still holds (the connector's and the router's own message and voicemail sequences)
  * `service_shutdown`, as the bridge's graceful shutdown would, and waits for them to settle (a
- * caller nobody took: `failed` with its Missed row and callback, Q18; an answered one: owing its
+ * caller nobody took: `failed` with its Missed row and callback, IQ18; an answered one: owing its
  * outcome), at most {@link INBOUND_SHUTDOWN_DRAIN_MS}. Ended later, by the voice stop, their settles
  * raced the database pool's close and the next start's sweep wrote them instead.
  */
@@ -126,7 +126,7 @@ export async function startInboundCalls(deps: Omit<AgencyInboundCallRouterDeps, 
       .finally(() => { sweeping = false; });
   }, deps.sweepIntervalMs ?? INBOUND_SWEEP_INTERVAL_MS);
   timer.unref?.();
-  // The outcome lapse (Q11): answered calls whose outcome never came, closed `no_disposition`.
+  // The outcome lapse (IQ11): answered calls whose outcome never came, closed `no_disposition`.
   let lapsing = false;
   const lapseTimer = connectOpts
     ? setInterval(() => {

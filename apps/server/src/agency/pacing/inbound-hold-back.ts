@@ -1,5 +1,5 @@
 /**
- * ─── PACING LEAVES ROOM FOR WAITING INBOUND CALLERS (docs/inbound.md §5.2, Q2; P2) ─────────
+ * ─── PACING LEAVES ROOM FOR WAITING INBOUND CALLERS (docs/inbound.md §5.2, IQ2; P2) ─────────
  *
  * The inbound connector publishes `inbound_waiting` (`invalidation-bus.ts`) for an account while
  * callers wait for its agents: `n` callers, the sessions they are sticky to, and the campaigns
@@ -13,9 +13,9 @@
  *     callers to: it orders the team longest idle first, as pacing does).
  *
  * It subtracts from the idle side, never from `limit − occupied`, which already counts the
- * waiting calls through the account's live total (IB5's third arm), Q2. The hold is per campaign,
+ * waiting calls through the account's live total (IB5's third arm), IQ2. The hold is per campaign,
  * so with several campaigns on the account it may hold back up to `n` agents on each: an
- * over-hold, accepted and bounded by `n` (Q2), and only while callers wait.
+ * over-hold, accepted and bounded by `n` (IQ2), and only while callers wait.
  *
  * It is a hint, never an authority: the reservation CAS decides (an inbound offer and a pacing
  * reservation both CAS from `available`; one wins). So the hold lapses at `expiresAt` unless

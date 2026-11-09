@@ -28,7 +28,7 @@ export function tileNeedsAttention(tile: AgencyInboundQueueTile): boolean {
  * The supervisor's inbound queue (P2, `docs/inbound.md` §6): one tile per live route — open or
  * closed, callers waiting and the longest wait, calls offered or connected, agents free who could
  * take its callers, and whether an open route has nobody at all who could take a call — read
- * every 5 s (Q23). On the agency home and the Missed calls page.
+ * every 5 s (IQ23). On the agency home and the Missed calls page.
  *
  * Renders nothing without `agency_inbound_enabled` or `agency.supervise` (the route's own
  * permission), or before the first answer. Not a live region: numbers that change every five

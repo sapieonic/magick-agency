@@ -1,6 +1,6 @@
 /**
  * Tones the bridge generates itself, with no clip and no speech: the built-in hold tone an
- * on-hold inbound caller hears when the route has no hold clip (decision Q24), and the beep
+ * on-hold inbound caller hears when the route has no hold clip (decision IQ24), and the beep
  * before a recording (`WebRtcBridgeManager.recordInboundAudio`). PCM16 little-endian mono, at
  * {@link TONE_SAMPLE_RATE}; the carrier module encodes them for its wire like any cached clip.
  *
@@ -31,7 +31,7 @@ export const HOLD_TONE_PATTERN: readonly ToneSegment[] = [
   { frequencyHz: null, durationMs: 3520 },
 ];
 
-/** The beep before a recording starts: one 400 ms note (decision Q14). */
+/** The beep before a recording starts: one 400 ms note (decision IQ14). */
 export const RECORD_BEEP_PATTERN: readonly ToneSegment[] = [
   { frequencyHz: null, durationMs: 100 },
   { frequencyHz: 1000, durationMs: 400 },

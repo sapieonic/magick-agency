@@ -1449,14 +1449,14 @@ export class AgencyDialer {
     if (contactAfterDial) await this.settleContactAfterDial(live, settled);
   }
 
-  // ─── The in-flight clash (docs/inbound.md §5.4, Q7, Q8) ─────────────────────
+  // ─── The in-flight clash (docs/inbound.md §5.4, IQ7, IQ8) ─────────────────────
 
   /**
    * An unanswered paced dial this replica drives to `phoneE164`'s number on the account (digits
    * compared, as the busy probe compares them), or null: what a customer ringing in may
    * supersede ({@link supersedeForInbound}). `cancelsRinging`: the dial's carrier can stop it
    * ringing (Plivo, PL8); on one that cannot (VoiceLink) nothing is cancelled and the caller
-   * queues normally (Q7).
+   * queues normally (IQ7).
    *
    * Never a dial still being placed (the carrier may not have it yet, and an end racing the
    * dial is the dial's own failure path's to settle), an answered or bridged one (a
@@ -1531,7 +1531,7 @@ export class AgencyDialer {
   }
 
   /**
-   * The `ended` arm of a dial its customer superseded (§5.4, Q8): the attempt `canceled` with
+   * The `ended` arm of a dial its customer superseded (§5.4, IQ8): the attempt `canceled` with
    * the system code `inbound_call` and its contact back `pending` uncharged, in one transaction
    * (`endSupersededByInbound`); the `released` frame with reason `inbound_call` (unless the
    * agent was never shown the dial: late binding); then the agent released, which runs the

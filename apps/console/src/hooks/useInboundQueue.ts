@@ -3,7 +3,7 @@ import { getInboundQueue } from '../api/inbound';
 import { useVisibleInterval } from './useVisibleInterval';
 import type { AgencyInboundQueueTile } from '../types/inbound';
 
-/** The supervisor's queue tiles poll this often (Q23: no push over a socket). */
+/** The supervisor's queue tiles poll this often (IQ23: no push over a socket). */
 export const INBOUND_QUEUE_POLL_MS = 5_000;
 
 export interface InboundQueueState {

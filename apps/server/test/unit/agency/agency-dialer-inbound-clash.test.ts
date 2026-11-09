@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// The in-flight clash, the dialer's half (docs/inbound.md §5.4, Q7, Q8): a ringing paced dial
+// The in-flight clash, the dialer's half (docs/inbound.md §5.4, IQ7, IQ8): a ringing paced dial
 // whose customer rings in is found, cancelled and settled as the clash (`canceled`, the system
 // code `inbound_call`, the contact back uncharged, released `inbound_call`), and its agent
 // released through the inbound hook; a dial the carrier answered first is kept as a call. The
@@ -125,7 +125,7 @@ beforeEach(() => {
 });
 
 describe('findRingingAttemptTo', () => {
-  it('finds the ringing dial to the same number on the account, digits compared; says whether its carrier can cancel it (Q7)', async () => {
+  it('finds the ringing dial to the same number on the account, digits compared; says whether its carrier can cancel it (IQ7)', async () => {
     const { dialer } = await ringing(fakeBridge());
     expect(dialer.findRingingAttemptTo('t1', 'a1', '+919876543210')).toEqual({ attemptId: 'att-1', sessionId: 's1', cancelsRinging: true });
     expect(dialer.findRingingAttemptTo('t1', 'a1', '+91 98765 43210')?.attemptId).toBe('att-1');

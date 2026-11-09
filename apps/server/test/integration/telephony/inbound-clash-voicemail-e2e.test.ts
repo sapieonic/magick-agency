@@ -211,7 +211,7 @@ describe('the in-flight clash (§5.4): a customer ringing while we dial them', (
   });
 });
 
-describe('voicemail (§7, IB3, Q14)', () => {
+describe('voicemail (§7, IB3, IQ14)', () => {
   /** Answer, stream the caller's voice, hang up when `until` holds. */
   const speaker = (until: () => boolean): PlivoCallStep[] => [
     { do: 'answer' }, { do: 'connect' }, { do: 'start' }, { do: 'mediaBackground', pattern: SPEECH },

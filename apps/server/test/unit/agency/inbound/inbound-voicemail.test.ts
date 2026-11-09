@@ -1,4 +1,4 @@
-// Voicemail (docs/inbound.md §7, IB3, Q14; `inbound-voicemail.ts`): what is recorded, when it is
+// Voicemail (docs/inbound.md §7, IB3, IQ14; `inbound-voicemail.ts`): what is recorded, when it is
 // kept, where it is stored and how the call ends. The bridge and the bucket are fakes; the
 // recording member itself is the bridge's (its own suite), the end-to-end path the inbound
 // voicemail e2e suite.

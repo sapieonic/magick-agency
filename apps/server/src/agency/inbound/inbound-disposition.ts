@@ -13,7 +13,7 @@
  * agent it bridged to), or a caller vouched for as `agency.supervise` (then `on_behalf`). Anyone
  * else, a call of another account, or a call that never reached an agent: `inbound_call_not_found`.
  *
- * ── The outcome (§2 step 8; Q10, Q11) ────────────────────────────────────────────
+ * ── The outcome (§2 step 8; IQ10, IQ11) ────────────────────────────────────────────
  * Only once the call ENDED after it BRIDGED. Against the matched campaign's catalog (whatever its
  * status), else the route's, else the built-in one (`resolveInboundCatalog`). One transaction:
  * the spine row saved and settled (`saveDisposition`, the soft phone's discipline: the same code
@@ -233,7 +233,7 @@ export class InboundCallService {
       if (r.code === 'disposition_invalid') {
         return refuse({ code: 'inbound_disposition_invalid', reason: r.reason, ...(r.allowed_codes ? { allowed_codes: r.allowed_codes } : {}) });
       }
-      // No call fields on an inbound call (Q22): unreachable with none in force.
+      // No call fields on an inbound call (IQ22): unreachable with none in force.
       return refuse({ code: 'inbound_disposition_invalid', reason: 'unknown_code' });
     }
     const { entry, notes, callbackAt } = prepared.prepared;

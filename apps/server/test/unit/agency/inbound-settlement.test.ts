@@ -9,7 +9,7 @@ import type { AgencyInboundCallRecord } from '../../../src/db/repositories/agenc
 /**
  * An answered inbound call's outcome (docs/inbound.md §6): what it asks of the matched contact
  * (SP6 forward only, never charged; the table in `inbound-settlement.ts`), the catalog it is
- * saved against (Q10), the panel row, and how a call nobody took ends.
+ * saved against (IQ10), the panel row, and how a call nobody took ends.
  */
 
 const NOW = new Date('2026-11-09T12:00:00Z');
@@ -27,7 +27,7 @@ describe('inboundContactSettlement (the decision table)', () => {
   it('terminal → completed', () => {
     expect(settle({ code: 'not_interested', label: 'No', terminal: true })).toEqual({ kind: 'completed' });
   });
-  it('a success code → completed (Q9)', () => {
+  it('a success code → completed (IQ9)', () => {
     expect(settle({ code: 'sale', label: 'Sale', is_success: true })).toEqual({ kind: 'completed' });
   });
   it('a callback with its time → callback at it', () => {
@@ -45,7 +45,7 @@ describe('inboundContactSettlement (the decision table)', () => {
   });
 });
 
-describe('resolveInboundCatalog (Q10)', () => {
+describe('resolveInboundCatalog (IQ10)', () => {
   const campaignCatalog: AgencyDisposition[] = [{ code: 'sale', label: 'Sale' }];
   const routeCatalog: AgencyDisposition[] = [{ code: 'enquiry', label: 'Enquiry' }];
   it('a matched call: the campaign`s catalog (whatever its status), stored `campaign`', () => {
@@ -64,7 +64,7 @@ describe('resolveInboundCatalog (Q10)', () => {
 });
 
 describe('unconnectedOutcome: a call nobody took', () => {
-  it('our shutdown and a stream that never opened are failed (Q18); the parked backstop is overflow; else the caller hung up', () => {
+  it('our shutdown and a stream that never opened are failed (IQ18); the parked backstop is overflow; else the caller hung up', () => {
     expect(unconnectedOutcome('service_shutdown')).toBe('failed');
     expect(unconnectedOutcome('inbound_media_timeout')).toBe('failed');
     expect(unconnectedOutcome('max_duration_reached')).toBe('overflow');

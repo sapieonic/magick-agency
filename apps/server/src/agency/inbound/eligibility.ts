@@ -12,12 +12,12 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  * ── An agent who may take a caller ──────────────────────────────────────────────
  *  - a live CAMPAIGN session (a soft-phone session has no campaign and is never offered one: §4.3,
  *    "break/soft_phone → skipped") in the CALL's account (the matched contact's, which can differ
- *    from the route's: Q21);
+ *    from the route's: IQ21);
  *  - when the call's account is the route's, on one of the route's pool campaigns (an empty pool:
  *    every campaign of the account). The pool is the route's account's notion, so it does not
- *    apply to a caller whose match put them in another account (Q21);
+ *    apply to a caller whose match put them in another account (IQ21);
  *  - a console station (`client_kind = 'mobile'` is treated as offline: the app has no inbound
- *    frame yet, Q20), held by this process and OPEN;
+ *    frame yet, IQ20), held by this process and OPEN;
  *  - an active user with an active membership that can see the call's account
  *    (`InboundAgentView.member`, read by the connector at each search, so an agent removed from the
  *    account or deactivated while the caller waits is never offered the call: QA-F10);
@@ -27,14 +27,14 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  *    The release hook asks the same question of an agent it is about to return to the pool, who
  *    is still `reserved`, `on_call` or `wrapup` ({@link RELEASE_STATES}).
  *
- * ── The sticky agent (§4.2, §4.3, IB2, Q6) ──────────────────────────────────────
+ * ── The sticky agent (§4.2, §4.3, IB2, IQ6) ──────────────────────────────────────
  * The caller's sticky agent is `sticky_user_id`. Their live session decides:
  *  - `available` and eligible → offered now;
  *  - `reserved` / `on_call` / `wrapup` (eligible but for the state) → `busy`: the caller waits for
  *    them ("Your customer is waiting"), and the release hook gives them the caller when that work
  *    ends (taken from wrap-up with no `available` instant);
  *  - anything else (offline, on a break or the soft phone, a phone, another account, outside the
- *    pool, no session) → `away`: the team at once, under `strict` too (Q6). The follow-up, if
+ *    pool, no session) → `away`: the team at once, under `strict` too (IQ6). The follow-up, if
  *    nobody answers, is still assigned to them (the router's settle).
  *
  * The STICKY PHASE is the time only the sticky agent may take the caller: `loose` until

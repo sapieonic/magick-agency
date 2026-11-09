@@ -258,14 +258,14 @@ export interface InboundHoldOptions {
   preambleClipHashes: readonly string[];
   /**
    * Looped after the preamble until the hold is stopped. Null (the route has no hold clip), or a
-   * clip not on this replica's disk: the built-in generated hold tone instead (Q24), never silence.
+   * clip not on this replica's disk: the built-in generated hold tone instead (IQ24), never silence.
    */
   holdClipHash: string | null;
   /**
    * Called once, synchronously, when the preamble has finished playing and the hold loop starts
    * (straight after the media is ready when there is no preamble). The agency side queues the
    * caller from here, so no agent is bound while the greeting or the recording notice (IB7) is
-   * still playing (docs/inbound.md §2, Q5). Not called when the hold ends before the loop starts
+   * still playing (docs/inbound.md §2, IQ5). Not called when the hold ends before the loop starts
    * (the caller left, a stop, no media). A listener that throws is logged, never the hold's fault.
    */
   onPreambleDone?: () => void;
@@ -288,7 +288,7 @@ export interface InboundRecordOptions {
   maxSeconds: number;
   /** Played once before recording, in order (the prompt); a clip not on this replica's disk is skipped. */
   promptClipHashes?: readonly string[];
-  /** Play the built-in 400 ms beep after the prompt, just before recording starts (Q14). */
+  /** Play the built-in 400 ms beep after the prompt, just before recording starts (IQ14). */
   beep?: boolean;
 }
 

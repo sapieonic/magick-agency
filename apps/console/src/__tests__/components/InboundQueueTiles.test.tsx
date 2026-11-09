@@ -15,7 +15,7 @@ import { INBOUND_QUEUE_POLL_MS } from '../../hooks/useInboundQueue';
 import { queueTile } from '../helpers/inbound';
 
 /**
- * The supervisor's inbound queue tiles (P2, Q23): one per live route, read every 5 s while the
+ * The supervisor's inbound queue tiles (P2, IQ23): one per live route, read every 5 s while the
  * page is visible, the last good numbers kept (and said to be stale) when a read fails, nothing
  * at all without the flag or `agency.supervise`.
  */
