@@ -218,11 +218,18 @@ describe('inbound P2: sticky routing (§4.2, §4.3)', () => {
     const toTeam = await spineWhen(call, 'offered to the team', (r) => r.state === 'offered' || r.state === 'connected', 15_000);
     expect(toTeam.session_id).toBe(b.sessionId);
     expect(Date.now() - queuedAt).toBeGreaterThanOrEqual(4000);
+    // The spine is committed before the connector sends the frames (and A's socket carries the
+    // first call's audio ahead of its notice): the frames are waited for, never read at the instant
+    // the row is seen.
+    await waitFor('the offer to B', () => inboundCalls(b).length > 0, 5000);
     expect(inboundCalls(b)[0]).toMatchObject({ id: queued.id, sticky: { reason: 'owner', is_you: false } });
-    expect(framesOf(a, 'customer_waiting').at(-1)).toMatchObject({ inbound_call_id: queued.id, cleared: true });
+    await waitFor('the owner\'s notice cleared', () => framesOf(a, 'customer_waiting').at(-1)?.['cleared'] === true, 5000);
     hangUp = true;
     first.release();
     await spineWhen(call, 'ended', (r) => r.state === 'ended');
+    // The owner was told once and cleared once, in that order, and never told again after it.
+    expect(framesOf(a, 'customer_waiting').map((f) => [f['inbound_call_id'], f['cleared'] ?? false]))
+      .toEqual([[queued.id, false], [queued.id, true]]);
   });
 
   it('3. strict: only the owner; the maximum wait overflows the caller (the callback message), the Missed row assigned to the owner, the callback booked', async () => {
