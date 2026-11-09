@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useMemo, useRef } fro
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Toast } from '../components/Toast';
-import type { ToastType, ToastData } from '../components/Toast';
+import type { ToastType, ToastData, ToastAction } from '../components/Toast';
 import { getErrorMessage } from '../errors';
 
 const MAX_TOASTS = 5;
@@ -11,7 +11,8 @@ const DEFAULT_DURATION = 4000;
 const ERROR_DURATION = 8000;
 
 interface ToastContextValue {
-  showToast: (message: string, type?: ToastType, duration?: number) => void;
+  /** `action` adds one button beside the message (see `ToastAction`). */
+  showToast: (message: string, type?: ToastType, duration?: number, action?: ToastAction) => void;
   /**
    * Show an error toast from a thrown value. Extracts a user-facing message
    * (and, for masked errors, the embedded request id, which `Toast` renders as
@@ -31,10 +32,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const showToast = useCallback(
-    (message: string, type: ToastType = 'info', duration: number = DEFAULT_DURATION) => {
+    (message: string, type: ToastType = 'info', duration: number = DEFAULT_DURATION, action?: ToastAction) => {
       counterRef.current += 1;
       const id = `toast-${counterRef.current}-${Date.now()}`;
-      const newToast: ToastData = { id, message, type, duration };
+      const newToast: ToastData = { id, message, type, duration, ...(action ? { action } : {}) };
 
       setToasts(prev => {
         const next = [...prev, newToast];

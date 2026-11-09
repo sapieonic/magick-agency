@@ -70,6 +70,7 @@ const ALL_MIGRATIONS = [
   '0014_insights_rollup_first_dials_carrier_errors', '0015_multiple_running_campaigns', '0016_customer_history_indexes',
   '0017_customer_history_contacts_index', '0018_agent_caller_ids', '0019_plivo_numbers_and_carrier_pause',
   '0020_carrier_account_unavailable_pause', '0021_carrier_refusing_calls_pause', '0022_outcome_dispositions',
+  '0023_reports',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

@@ -43,8 +43,9 @@ import {
   resolveMetricsExportIntervalMs,
   resolveMetricsExportTimeoutMs,
   withFreshGauges,
-  withTimeout,
 } from './utils/otel-sdk-config.js';
+// Imports nothing, so it cannot pull the app graph in ahead of the SDK either.
+import { withTimeout } from './utils/with-timeout.js';
 // Imports nothing (see its header), so it cannot pull the app graph in ahead of the SDK.
 import {
   OUTGOING_REDACTED_QUERY_PARAMS,

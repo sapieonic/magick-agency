@@ -11,7 +11,7 @@ import type { AppContext } from './app-context.js';
 import { dbTlsOptions } from './db-tls.js';
 import { redisClientOptions } from './utils/redis-options.js';
 import { startPlatform } from './bootstrap/platform.js';
-import { getAgencyRuntime, startAgency } from './bootstrap/agency.js';
+import { getAgencyRuntime, getReportPipeline, startAgency } from './bootstrap/agency.js';
 import { startVoice } from './bootstrap/voice.js';
 import { plannedAnalysisWorkers, startAnalysis } from './bootstrap/analysis.js';
 import { initAnalytics } from './analytics/posthog.js';
@@ -166,6 +166,12 @@ async function main(): Promise<void> {
   // with the analysis stop, after pacing has halted and before agency's (docs/scaling.md §6.4).
   if (media) plan.drains.push(await startMediaWorkers(media));
   plan.drains.push(await startAnalysis(ctx));
+  // The report pipeline's stop (bounded as a whole, 20 s, `REPORT_PIPELINE_STOP_WAIT_MS`) runs
+  // beside the completion-notice drain, wherever that runs, so the two waits overlap: with media
+  // workers that drain is here, so the pipeline drains here too; in one process it is inside
+  // agency's stop, which stops the pipeline beside it (`bootstrap/agency.ts`).
+  const reports = getReportPipeline();
+  if (media && reports) plan.drains.push(() => reports.stop());
 
   // Listen only after the bootstraps (the startup reaper and the agency runtime's
   // start complete first), so no request — an agent going available, say — lands

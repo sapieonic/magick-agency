@@ -146,6 +146,23 @@ terraform output -raw server_env
 The server talks to AWS S3 itself (there is no custom endpoint setting), so keep the bucket on AWS
 even if you run the rest on another cloud.
 
+### 3.5 Reports renderer (optional)
+
+Agent, campaign and account reports ([`docs/reports.md`](docs/reports.md)) render PDF and Excel
+files with headless Chromium. In production that runs outside the server: an SQS queue and a
+Lambda, created by the same `aws/terraform` with `enable_reports = true`. It needs the Lambda zip
+built from the release, a Chromium layer and a callback secret; [`aws/README.md`](aws/README.md)
+("Reports") has the steps, and [`REPORTS_SETUP.md`](REPORTS_SETUP.md) walks through the whole
+first-time setup, Path B. Skip this section if reports stay off. Nothing here deploys it from
+CI: you build the zip and apply by hand, and on every release that changes the renderer you apply
+it **before** you deploy the server (aws/README.md, "Deploy order").
+
+At the end, print the reports lines for step 6.4:
+
+```bash
+terraform output -raw reports_server_env
+```
+
 ## 4. Map your domain
 
 Do this as soon as the Elastic IP exists. DNS can take a while to propagate, and Caddy needs the
@@ -317,6 +334,22 @@ TRUST_PROXY_HOPS=2
 | `MOBILE_*` | Optional, only with the mobile app; see 8.5 |
 
 `NODE_ENV`, `PORT` and `REDIS_URL` are set by the compose file. Do not set them here.
+
+### 6.4 Reports (optional, with step 3.5)
+
+| Keys | Value |
+|---|---|
+| `AGENCY_REPORTS_RENDERER` | `sqs` (the default, `inline`, renders in the server process and needs the renderer and Chromium there, neither of which the production image carries; it is for development) |
+| `AGENCY_REPORTS_SQS_QUEUE_URL` | The `report-jobs` queue URL from step 3.5 |
+| `AGENCY_REPORTS_CALLBACK_SECRET` | The same value as the Lambda's (`reports_callback_secret` in the tfvars), at least 32 characters. Quote it |
+| `AGENCY_REPORTS_RENDER_TIMEOUT_MS` | `900000` (the default). At least the `report-jobs` queue's visibility timeout plus the function's timeout (600 + 300 s), so an SQS redelivery finishes while the server still waits for it; set it through `reports_render_timeout_seconds` in the tfvars, which refuses a smaller value |
+| `AGENCY_REPORTS_CALLBACK_BASE_URL` | The server's public base URL, e.g. `https://agency.example.com` (with the API on its own host, that host). The Lambda posts the rendered result to it over the internet |
+
+All but the base URL come from `terraform output -raw reports_server_env`. The server's S3 key needs no
+change; Terraform has added `sqs:SendMessage` on the queue to its policy. The other reports
+settings have defaults ([`docs/reports.md`](docs/reports.md), "Config"). Reports stay hidden until
+the `agency_reports_enabled` flag is on for a tenant. The first-time walkthrough, with the checks
+to run after: [`REPORTS_SETUP.md`](REPORTS_SETUP.md).
 
 ## 7. Start the stack and put TLS in front
 
@@ -702,6 +735,10 @@ cd ~/magick-agency && git fetch && git checkout <new tag or commit>
 docker compose -f docker/docker-compose.prod.yml up -d --build
 ```
 
+With reports on (step 3.5), apply the renderer from the same release first, then deploy the
+server: the live renderer must read the datasets both the old and the new server write
+([`aws/README.md`](aws/README.md), "Deploy order").
+
 Migrations run on start. There is one server, so a deploy is a short outage: shutdown hangs up
 live calls, and agents come back in `break` and have to go available again. Deploy outside calling
 hours. Rolling back to an older commit does not undo a migration; check what a release adds to
@@ -754,6 +791,10 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 - `SUPER_ADMIN_JWT_SECRET`: changing it signs every super-admin out.
 - `RECORDING_URL_SIGNING_SECRET`: changing it breaks recording links already handed out.
 - Database password: change it in RDS, update `DATABASE_URL`, recreate the server.
+- `AGENCY_REPORTS_CALLBACK_SECRET`: set the new value as `reports_callback_secret` and apply (the
+  Lambda publishes a version with it), then update `docker/.env` and recreate the server. Callbacks
+  signed with the other secret in between are refused (`agy-reports-callback-bad-signature`); the
+  server re-sends those runs, so do both steps together.
 
 ## 13. Troubleshooting
 
@@ -781,3 +822,4 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 | Agents' station sockets drop every minute | A load balancer idle timeout at its default | 3600 s (section 10) |
 | All users hit rate limits together | `TRUST_PROXY_HOPS` lower than the real chain (for example 1 behind Caddy, or 2 behind Cloudflare's proxy) | Match it to the number of proxies |
 | Invite links point at the wrong host | `CONSOLE_BASE_URL` | Fix it; resend the invites |
+| Reports stay "rendering" and then fail `render_timed_out` | The renderer never reached the server: `AGENCY_REPORTS_CALLBACK_BASE_URL` wrong, the secrets differ, or the Lambda fails (its logs, the queue's DLQ) | `docs/operations.md`, "Reports: when runs are stuck" |

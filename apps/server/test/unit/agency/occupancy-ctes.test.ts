@@ -65,6 +65,12 @@ describe('occupancyIntervalsCtes', () => {
     expect(campaign).toContain('ev.break_reason,');
   });
 
+  it('every variant carries each interval\'s session (the report builders group by it)', () => {
+    for (const variant of ['agent', 'roster', 'campaign'] as const) {
+      expect(occupancyIntervalsCtes(variant, ''), variant).toContain('                ev.session_id,\n                ev.to_state AS state,');
+    }
+  });
+
   it('both sess CTEs bind the same five positions and select joined_at for the bound', () => {
     for (const variant of ['agent', 'roster'] as const) {
       const sess = occupancyIntervalsCtes(variant, '').split('), in_window AS (')[0]!;

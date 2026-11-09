@@ -1,0 +1,470 @@
+// The reports tick over fakes: the flag gate (a subscription's period skipped and the email
+// withheld while `agency_reports_enabled` is off), a subscription's period and catch-up (only the latest missed
+// period), the duplicate, the advance strictly after now; the reconcile paths (unsent → sent;
+// timed out with every file in S3 → applied through the shared path; without them → re-sent, then
+// failed `render_timed_out` at the last attempt); notify only for the tick that marked the run;
+// expiry; the gauges; and per-item isolation (one bad run never stops the tick). The SQL behind
+// each fake is pinned by the repositories' integration tests.
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PoolClient } from 'pg';
+
+const metrics = vi.hoisted(() => ({ subs: vi.fn(), pending: vi.fn(), oldest: vi.fn(), runs: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/agency', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  agencyReportsSubscriptionRunsTotal: { inc: metrics.subs },
+  agencyReportsPendingRuns: { set: metrics.pending },
+  agencyReportsOldestPendingSeconds: { set: metrics.oldest },
+  agencyReportsRunsTotal: { inc: metrics.runs },
+}));
+
+import { createReportTick, dueSendAt, startReportTick, type ReportTickDeps } from '../../../../src/agency/reports/tick.js';
+import { reportOutputKey } from '../../../../src/agency/reports/report-keys.js';
+import type { ReportSubscriptionSubject } from '../../../../src/agency/reports/subscription-subject.js';
+import type {
+  ReportRunFence,
+  ReportRunSubscriptionInput,
+  ReportSubscriptionDueHandler,
+  ReportSubscriptionRecord,
+} from '../../../../src/db/repositories/agency.repository.js';
+import { ACCOUNT, RUN, SUBSCRIPTION, TENANT, runRecord, subscriptionRecord } from './run-fixture.js';
+
+const NOW = new Date('2026-11-08T09:30:00Z');
+const RUN_B = '99999999-9999-4999-8999-999999999999';
+const scope = { tenantId: TENANT, accountId: ACCOUNT, runId: RUN };
+const client = {} as PoolClient;
+
+function deps(over: Partial<ReportTickDeps> = {}) {
+  const d = {
+    runs: {
+      createForSubscription: vi.fn(async (input: ReportRunSubscriptionInput, _db?: unknown): Promise<ReturnType<typeof runRecord> | null> => runRecord({ subscription_id: input.subscriptionId })),
+      findAssembledUnsent: vi.fn(async () => [] as ReturnType<typeof runRecord>[]),
+      findRenderingSentBefore: vi.fn(async () => [] as ReturnType<typeof runRecord>[]),
+      markSent: vi.fn(async (_id: string, fence: ReportRunFence): Promise<number | null> => ('renderAttempt' in fence ? fence.renderAttempt : 0) + 1),
+      markFailed: vi.fn(async (id: string, ..._rest: unknown[]) => runRecord({ id, status: 'failed' })),
+      findFinishedUnnotified: vi.fn(async () => [] as ReturnType<typeof runRecord>[]),
+      markNotified: vi.fn(async (_id: string) => true),
+      expireDue: vi.fn(async (_now: Date) => 0),
+      pendingStats: vi.fn(async () => ({ queued: 0, assembling: 0, rendering: 0, oldestCreatedAt: null as Date | null })),
+    },
+    subscriptions: {
+      claimDue: vi.fn(async (_now: Date, _limit: number, _handler: ReportSubscriptionDueHandler): Promise<never[]> => []),
+    },
+    reportsEnabled: vi.fn(async (_scope: { tenantId: string; accountId: string | null }) => true),
+    // As the real probe answers: a campaign comes back with its zone (unchanged here), others with none.
+    subject: vi.fn(async (sub: ReportSubscriptionRecord): Promise<ReportSubscriptionSubject> => ({ available: true, timezone: sub.kind === 'campaign' ? sub.timezone : null })),
+    dispatcher: { dispatch: vi.fn(async () => {}), idle: vi.fn(async () => {}) },
+    headObject: vi.fn(async (_key: string) => null as { bytes: number } | null),
+    apply: vi.fn(async () => ({ result: 'applied' as const, run: runRecord({ status: 'ready' }) })),
+    notify: vi.fn(async (_run: ReturnType<typeof runRecord>) => {}),
+    now: () => NOW,
+  };
+  return Object.assign(d, over) as typeof d;
+}
+
+const opts = { intervalMs: 60_000, renderTimeoutMs: 900_000, maxAttempts: 3 };
+
+/**
+ * Run the tick's subscription step for one subscription; the handler's decision and the run input.
+ * The fake claim answers as the repository does: `disabled` for a disable, else `advanced`; with
+ * `commitFails`, `error` after the handler ran (the advance UPDATE or the commit failed, so the run
+ * insert rolled back).
+ */
+async function dueOnce(sub: ReportSubscriptionRecord, d = deps(), { commitFails = false } = {}) {
+  let decision: unknown;
+  d.subscriptions.claimDue.mockImplementation(async (_now, _limit, handler) => {
+    decision = await handler(sub, client);
+    if (commitFails) return [{ subscriptionId: sub.id, outcome: 'error', error: new Error('commit failed') }] as never[];
+    if ('disable' in (decision as object)) return [{ subscriptionId: sub.id, outcome: 'disabled' }] as never[];
+    return [{ subscriptionId: sub.id, outcome: 'advanced', nextRunAt: (decision as { nextRunAt: Date }).nextRunAt }] as never[];
+  });
+  const result = await createReportTick(opts, d).runTick();
+  return { decision: decision as { nextRunAt: Date; timezone?: string } & { disable?: true }, input: d.runs.createForSubscription.mock.calls[0]?.[0], result, d };
+}
+
+beforeEach(() => { vi.clearAllMocks(); });
+
+describe('subscriptions → runs', () => {
+  it('a daily subscription due now covers the previous local day, joins the claim\'s transaction and advances a day', async () => {
+    const sub = subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, input, result, d } = await dueOnce(sub);
+    expect(input).toMatchObject({
+      subscriptionId: SUBSCRIPTION, periodStart: '2026-11-07', localFrom: '2026-11-07', localTo: '2026-11-07',
+      timezone: 'Europe/London', tenantId: TENANT, accountId: ACCOUNT, kind: 'campaign', formats: ['pdf'],
+      rangeFrom: new Date('2026-11-07T00:00:00Z'), rangeTo: new Date('2026-11-08T00:00:00Z'),
+    });
+    expect(d.runs.createForSubscription.mock.calls[0]![1]).toBe(client);
+    expect(decision.nextRunAt).toEqual(new Date('2026-11-09T08:00:00Z'));
+    expect(decision.nextRunAt.getTime()).toBeGreaterThan(NOW.getTime());
+    expect(result.subscriptions.created).toBe(1);
+    expect(metrics.subs).toHaveBeenCalledWith({ result: 'created' });
+  });
+
+  it('after downtime sends only the most recent missed period, once', async () => {
+    // Due five days ago; four sends were missed.
+    const sub = subscriptionRecord({ next_run_at: new Date('2026-11-03T08:00:00Z') });
+    const { input, decision, d } = await dueOnce(sub);
+    expect(d.runs.createForSubscription).toHaveBeenCalledTimes(1);
+    expect(input).toMatchObject({ periodStart: '2026-11-07', localTo: '2026-11-07' });
+    expect(decision.nextRunAt).toEqual(new Date('2026-11-09T08:00:00Z'));
+  });
+
+  it('weekly and monthly periods: the seven days ending yesterday, the previous calendar month', async () => {
+    // Sunday 2026-11-08 is ISO weekday 7.
+    const weekly = subscriptionRecord({ cadence: 'weekly', send_weekday: 7, next_run_at: new Date('2026-11-08T08:00:00Z') });
+    expect((await dueOnce(weekly)).input).toMatchObject({ localFrom: '2026-11-01', localTo: '2026-11-07' });
+    const monthly = subscriptionRecord({ cadence: 'monthly', send_monthday: 1, next_run_at: new Date('2026-11-01T08:00:00Z') });
+    const { input, decision } = await dueOnce(monthly);
+    expect(input).toMatchObject({ localFrom: '2026-10-01', localTo: '2026-10-31' });
+    expect(decision.nextRunAt).toEqual(new Date('2026-12-01T08:00:00Z'));
+  });
+
+  it('a period that already has its run is a duplicate: counted, still advanced', async () => {
+    const d = deps();
+    d.runs.createForSubscription.mockResolvedValue(null as never);
+    const { decision, result } = await dueOnce(subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') }), d);
+    expect(result.subscriptions).toMatchObject({ created: 0, duplicate: 1 });
+    expect(metrics.subs).toHaveBeenCalledWith({ result: 'duplicate' });
+    expect(decision.nextRunAt.getTime()).toBeGreaterThan(NOW.getTime());
+  });
+
+  it('counts a subscription whose handler failed and carries on', async () => {
+    const d = deps();
+    d.subscriptions.claimDue.mockResolvedValue([
+      { subscriptionId: SUBSCRIPTION, outcome: 'error', error: new Error('boom') },
+      { subscriptionId: RUN_B, outcome: 'advanced', nextRunAt: new Date() },
+    ] as never);
+    const result = await createReportTick(opts, d).runTick();
+    expect(result.subscriptions.errors).toBe(1);
+    expect(d.runs.expireDue).toHaveBeenCalled();
+  });
+
+  it('counts nothing but the error when the advance or the commit fails after the handler ran (the run rolled back)', async () => {
+    const due = new Date('2026-11-08T08:00:00Z');
+    // Each decision the handler can reach: created, duplicate, flag off, disabled.
+    const cases: Array<[string, (d: ReturnType<typeof deps>) => void]> = [
+      ['created', () => {}],
+      ['duplicate', (d) => { d.runs.createForSubscription.mockResolvedValue(null as never); }],
+      ['flag_off', (d) => { d.reportsEnabled.mockResolvedValue(false); }],
+      ['disabled', (d) => { d.subject.mockResolvedValue({ available: false, reason: 'gone' }); }],
+    ];
+    for (const [name, arrange] of cases) {
+      metrics.subs.mockClear();
+      const d = deps();
+      arrange(d);
+      const { result } = await dueOnce(subscriptionRecord({ next_run_at: due }), d, { commitFails: true });
+      expect(result.subscriptions, name).toEqual({ created: 0, duplicate: 0, disabled: 0, flagOff: 0, errors: 1 });
+      expect(metrics.subs, name).not.toHaveBeenCalled();
+      // The retry next tick commits: counted once, then.
+      const retried = await dueOnce(subscriptionRecord({ next_run_at: due }), d);
+      const counted = name === 'flag_off' ? 'flagOff' : name;
+      expect(retried.result.subscriptions, name).toMatchObject({ [counted]: 1, errors: 0 });
+      expect(metrics.subs, name).toHaveBeenCalledTimes(name === 'disabled' ? 0 : 1);
+    }
+  });
+
+  it('a subscription whose subject is gone is disabled at the claim: no run, nothing emailed every period', async () => {
+    const d = deps();
+    d.subject.mockResolvedValue({ available: false, reason: 'the campaign no longer exists in the account' });
+    const sub = subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, result } = await dueOnce(sub, d);
+    expect(decision).toEqual({ disable: true });
+    expect(d.subject).toHaveBeenCalledWith(sub);
+    expect(d.runs.createForSubscription).not.toHaveBeenCalled();
+    expect(result.subscriptions).toMatchObject({ created: 0, disabled: 1 });
+  });
+
+  it('a campaign subscription is cut in the campaign\'s CURRENT zone, and the stored zone follows it', async () => {
+    const d = deps();
+    // Stored as London at creation; the campaign has since moved to New York (UTC-5 in November).
+    d.subject.mockResolvedValue({ available: true, timezone: 'America/New_York' });
+    const sub = subscriptionRecord({ timezone: 'Europe/London', next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, input } = await dueOnce(sub, d);
+    // 09:30Z is 04:30 in New York: the latest complete day there is 7 November.
+    expect(input).toMatchObject({
+      timezone: 'America/New_York', localFrom: '2026-11-07', localTo: '2026-11-07', periodStart: '2026-11-07',
+      rangeFrom: new Date('2026-11-07T05:00:00Z'), rangeTo: new Date('2026-11-08T05:00:00Z'),
+    });
+    // The next send is 08:00 New York (13:00Z), today, and the decision stores the zone.
+    expect(decision).toEqual({ nextRunAt: new Date('2026-11-08T13:00:00Z'), timezone: 'America/New_York' });
+
+    // An unchanged zone writes none.
+    d.runs.createForSubscription.mockClear();
+    d.subject.mockResolvedValue({ available: true, timezone: 'Europe/London' });
+    expect((await dueOnce(sub, d)).decision).not.toHaveProperty('timezone');
+  });
+
+  it('an unset or unusable campaign zone is UTC, as the builder and the Insights reads take it', async () => {
+    // Taking the builder's rule (campaignZone) means the run's zone is the one the builder
+    // expects, so the run is never failed as a changed zone (and never stops the schedule).
+    for (const zone of ['Mars/Olympus', null]) {
+      const d = deps();
+      d.subject.mockResolvedValue({ available: true, timezone: zone });
+      const { decision, input } = await dueOnce(subscriptionRecord({ timezone: 'Europe/London', next_run_at: new Date('2026-11-08T08:00:00Z') }), d);
+      expect(input).toMatchObject({ timezone: 'UTC' });
+      expect(decision).toMatchObject({ timezone: 'UTC' });
+    }
+    // An agent or account subscription keeps its own zone (the probe returns none for them).
+    const d = deps();
+    const agent = subscriptionRecord({ kind: 'agent', timezone: 'Europe/London', next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, input } = await dueOnce(agent, d);
+    expect(input).toMatchObject({ timezone: 'Europe/London' });
+    expect(decision).not.toHaveProperty('timezone');
+  });
+
+  it('with the flag off for the account the period is skipped: no run, no probe, the schedule advances', async () => {
+    const d = deps();
+    d.reportsEnabled.mockResolvedValue(false);
+    const sub = subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') });
+    const { decision, result } = await dueOnce(sub, d);
+    expect(d.reportsEnabled).toHaveBeenCalledWith({ tenantId: TENANT, accountId: ACCOUNT });
+    expect(d.subject).not.toHaveBeenCalled();
+    expect(d.runs.createForSubscription).not.toHaveBeenCalled();
+    // Not disabled: turning the flag back on resumes from the next send.
+    expect(decision).toEqual({ nextRunAt: new Date('2026-11-09T08:00:00Z') });
+    expect(result.subscriptions).toMatchObject({ created: 0, disabled: 0, flagOff: 1 });
+    expect(metrics.subs).toHaveBeenCalledWith({ result: 'flag_off' });
+  });
+
+  it('dueSendAt: the due time, or the latest missed send when that is later', () => {
+    expect(dueSendAt(subscriptionRecord({ next_run_at: new Date('2026-11-08T08:00:00Z') }), NOW)).toEqual(new Date('2026-11-08T08:00:00Z'));
+    expect(dueSendAt(subscriptionRecord({ next_run_at: new Date('2026-10-01T08:00:00Z') }), NOW)).toEqual(new Date('2026-11-08T08:00:00Z'));
+  });
+});
+
+describe('reconcile', () => {
+  it('sends a run whose dataset was recorded but never sent, fenced on the attempt it read', async () => {
+    const d = deps();
+    const run = runRecord({ status: 'assembling', dataset_key: 'k', render_attempt: 0 });
+    d.runs.findAssembledUnsent.mockResolvedValue([run]);
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.runs.markSent).toHaveBeenCalledWith(RUN, { renderAttempt: 0 });
+    expect(d.dispatcher.dispatch).toHaveBeenCalledWith(run, 1);
+    expect(result.resent).toBe(1);
+  });
+
+  it('sends nothing when the fence refuses (another pass sent it)', async () => {
+    const d = deps();
+    d.runs.findAssembledUnsent.mockResolvedValue([runRecord({ dataset_key: 'k' })]);
+    d.runs.markSent.mockResolvedValue(null as never);
+    await createReportTick(opts, d).runTick();
+    expect(d.dispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('looks for timed-out runs sent before now minus the render timeout', async () => {
+    const d = deps();
+    await createReportTick(opts, d).runTick();
+    expect(d.runs.findRenderingSentBefore).toHaveBeenCalledWith(new Date(NOW.getTime() - 900_000), 50);
+  });
+
+  it('a timed-out run whose every file is in S3 is applied as rendered through the shared path', async () => {
+    const d = deps();
+    d.runs.findRenderingSentBefore.mockResolvedValue([runRecord({ status: 'rendering', render_attempt: 2 })]);
+    d.headObject.mockImplementation(async (key: string) => ({ bytes: key.endsWith('.pdf') ? 10 : 20 }));
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.apply).toHaveBeenCalledWith(RUN, 2, {
+      run_id: RUN, attempt: 2, status: 'rendered', error: null, renderer_version: 'reconciled',
+      files: [
+        { format: 'pdf', key: reportOutputKey(scope, 'pdf'), bytes: 10 },
+        { format: 'xlsx', key: reportOutputKey(scope, 'xlsx'), bytes: 20 },
+      ],
+    });
+    expect(d.runs.markSent).not.toHaveBeenCalled();
+    expect(result.reconciled).toBe(1);
+  });
+
+  it('a timed-out run missing a file is re-sent while attempts remain', async () => {
+    const d = deps();
+    const run = runRecord({ status: 'rendering', render_attempt: 2 });
+    d.runs.findRenderingSentBefore.mockResolvedValue([run]);
+    d.headObject.mockImplementation(async (key: string) => (key.endsWith('.pdf') ? { bytes: 1 } : null));
+    await createReportTick(opts, d).runTick();
+    expect(d.apply).not.toHaveBeenCalled();
+    expect(d.runs.markSent).toHaveBeenCalledWith(RUN, { renderAttempt: 2 });
+    expect(d.dispatcher.dispatch).toHaveBeenCalledWith(run, 3);
+  });
+
+  it('at the last attempt it fails render_timed_out, fenced on that attempt, and counts it', async () => {
+    const d = deps();
+    d.runs.findRenderingSentBefore.mockResolvedValue([runRecord({ status: 'rendering', render_attempt: 3 })]);
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', { renderAttempt: 3 });
+    expect(d.dispatcher.dispatch).not.toHaveBeenCalled();
+    expect(result.timedOut).toBe(1);
+    expect(metrics.runs).toHaveBeenCalledWith({ kind: 'agent', status: 'failed' });
+  });
+
+  it('one run that throws does not stop the others', async () => {
+    const d = deps();
+    d.runs.findRenderingSentBefore.mockResolvedValue([
+      runRecord({ id: RUN, status: 'rendering', render_attempt: 1 }),
+      runRecord({ id: RUN_B, status: 'rendering', render_attempt: 1 }),
+    ]);
+    d.runs.markSent.mockImplementation(async (id: string, fence: ReportRunFence) => {
+      if (id === RUN) throw new Error('db hiccup');
+      return ('renderAttempt' in fence ? fence.renderAttempt : 0) + 1;
+    });
+    const result = await createReportTick(opts, d).runTick();
+    expect(result.errors).toBe(1);
+    expect(d.runs.markSent).toHaveBeenCalledWith(RUN_B, { renderAttempt: 1 });
+  });
+
+  it('a HEAD that fails (not a 404) counts as files missing: re-sent while attempts remain, then failed, never stuck', async () => {
+    const d = deps();
+    d.headObject.mockRejectedValue(Object.assign(new Error('Access Denied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }));
+    const run = runRecord({ status: 'rendering', render_attempt: 1 });
+    d.runs.findRenderingSentBefore.mockResolvedValue([run]);
+    let result = await createReportTick(opts, d).runTick();
+    expect(result.errors).toBe(0);
+    expect(d.apply).not.toHaveBeenCalled();
+    expect(d.dispatcher.dispatch).toHaveBeenCalledWith(run, 2);
+
+    d.runs.findRenderingSentBefore.mockResolvedValue([runRecord({ status: 'rendering', render_attempt: 3 })]);
+    result = await createReportTick(opts, d).runTick();
+    expect(d.runs.markFailed).toHaveBeenCalledWith(RUN, 'render_timed_out', { renderAttempt: 3 });
+    expect(result.timedOut).toBe(1);
+  });
+});
+
+describe('notify, expire, gauges', () => {
+  it('only the tick that marked a run notified sends its email', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' }), runRecord({ id: RUN_B, status: 'ready' })]);
+    d.runs.markNotified.mockImplementation(async (id: string) => id === RUN);
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ id: RUN }));
+    expect(result.notified).toBe(1);
+  });
+
+  it('with the flag off for the run\'s account the run is marked notified and no email is sent', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' }), runRecord({ id: RUN_B, status: 'ready', account_id: null })]);
+    d.reportsEnabled.mockImplementation(async ({ accountId }) => accountId === null);
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.reportsEnabled).toHaveBeenCalledWith({ tenantId: TENANT, accountId: ACCOUNT });
+    expect(d.runs.markNotified).toHaveBeenCalledWith(RUN);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(d.notify).toHaveBeenCalledWith(expect.objectContaining({ id: RUN_B }));
+    expect(result).toMatchObject({ notified: 1, notifySkipped: 1 });
+
+    // A flag read that throws leaves the run unmarked, for the next tick.
+    const d2 = deps();
+    d2.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' })]);
+    d2.reportsEnabled.mockRejectedValue(new Error('flags down'));
+    expect((await createReportTick(opts, d2).runTick()).errors).toBe(1);
+    expect(d2.runs.markNotified).not.toHaveBeenCalled();
+  });
+
+  it('an email that throws is isolated', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN }), runRecord({ id: RUN_B })]);
+    d.notify.mockRejectedValueOnce(new Error('mail down'));
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.notify).toHaveBeenCalledTimes(2);
+    expect(result.errors).toBe(1);
+  });
+
+  it('expires ready runs at now and sets the pending gauges', async () => {
+    const d = deps();
+    d.runs.expireDue.mockResolvedValue(4);
+    d.runs.pendingStats.mockResolvedValue({ queued: 2, assembling: 1, rendering: 3, oldestCreatedAt: new Date(NOW.getTime() - 120_000) });
+    const result = await createReportTick(opts, d).runTick();
+    expect(d.runs.expireDue).toHaveBeenCalledWith(NOW);
+    expect(result.expired).toBe(4);
+    expect(metrics.pending).toHaveBeenCalledWith({ status: 'queued' }, 2);
+    expect(metrics.pending).toHaveBeenCalledWith({ status: 'assembling' }, 1);
+    expect(metrics.pending).toHaveBeenCalledWith({ status: 'rendering' }, 3);
+    expect(metrics.oldest).toHaveBeenCalledWith(120);
+  });
+
+  it('a step that throws does not stop the steps after it', async () => {
+    const d = deps();
+    d.subscriptions.claimDue.mockRejectedValue(new Error('db down'));
+    d.runs.findFinishedUnnotified.mockRejectedValue(new Error('db down'));
+    const result = await createReportTick(opts, d).runTick();
+    expect(result.errors).toBe(2);
+    expect(d.runs.expireDue).toHaveBeenCalled();
+    expect(d.runs.pendingStats).toHaveBeenCalled();
+  });
+});
+
+describe('stopping', () => {
+  it('once stopping, the notify loop takes no further run: one not started stays unnotified for the restart', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' }), runRecord({ id: RUN_B, status: 'ready' })]);
+    let stopping = false;
+    // SIGTERM lands while the first run's emails are going out.
+    d.notify.mockImplementation(async () => { stopping = true; });
+    const result = await createReportTick(opts, d).runTick(() => stopping);
+    expect(d.runs.markNotified.mock.calls).toEqual([[RUN]]);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(result.notified).toBe(1);
+    // And no step after it starts.
+    expect(d.runs.expireDue).not.toHaveBeenCalled();
+    expect(d.runs.pendingStats).not.toHaveBeenCalled();
+  });
+
+  it('the unsent and reconcile loops stop between runs too, and a stopped tick starts no step', async () => {
+    const d = deps();
+    let stopping = false;
+    d.runs.findAssembledUnsent.mockResolvedValue([runRecord({ id: RUN, dataset_key: 'k' }), runRecord({ id: RUN_B, dataset_key: 'k' })]);
+    d.dispatcher.dispatch.mockImplementation(async () => { stopping = true; });
+    await createReportTick(opts, d).runTick(() => stopping);
+    expect(d.runs.markSent.mock.calls.map((c) => c[0])).toEqual([RUN]);
+    expect(d.runs.findRenderingSentBefore).not.toHaveBeenCalled();
+
+    const d2 = deps();
+    stopping = false;
+    d2.runs.findRenderingSentBefore.mockResolvedValue([
+      runRecord({ id: RUN, status: 'rendering', render_attempt: 3 }),
+      runRecord({ id: RUN_B, status: 'rendering', render_attempt: 3 }),
+    ]);
+    d2.runs.markFailed.mockImplementation(async (id: string) => { stopping = true; return runRecord({ id, status: 'failed' }); });
+    await createReportTick(opts, d2).runTick(() => stopping);
+    expect(d2.runs.markFailed.mock.calls.map((c) => c[0])).toEqual([RUN]);
+    expect(d2.runs.findFinishedUnnotified).not.toHaveBeenCalled();
+
+    const d3 = deps();
+    await createReportTick(opts, d3).runTick(() => true);
+    expect(d3.subscriptions.claimDue).not.toHaveBeenCalled();
+    expect(d3.runs.pendingStats).not.toHaveBeenCalled();
+  });
+
+  it('stop() returns within its limit while a tick hangs, and stops the tick taking further runs', async () => {
+    const d = deps();
+    d.runs.findFinishedUnnotified.mockResolvedValue([runRecord({ id: RUN, status: 'ready' }), runRecord({ id: RUN_B, status: 'ready' })]);
+    let release!: () => void;
+    // The first email hangs (a slow mail transport); the tick started at boot is parked on it.
+    d.notify.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+    const tick = startReportTick({ ...opts, intervalMs: 3_600_000 }, d);
+    await vi.waitFor(() => expect(d.notify).toHaveBeenCalledTimes(1));
+    const started = Date.now();
+    const outcome = await Promise.race([
+      tick.stop(50).then(() => 'stopped'),
+      new Promise((r) => setTimeout(() => r('hung'), 2_000)),
+    ]);
+    expect(outcome).toBe('stopped');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // The email in hand finishes; the second run is never taken.
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(d.runs.markNotified.mock.calls).toEqual([[RUN]]);
+    expect(d.runs.pendingStats).not.toHaveBeenCalled();
+    expect(await tick.runTick()).toBeNull();
+  });
+
+  it('stop() waits for a tick that finishes inside its limit', async () => {
+    const d = deps();
+    let release!: () => void;
+    d.runs.expireDue.mockImplementationOnce(() => new Promise<number>((r) => { release = () => r(0); }));
+    const tick = startReportTick({ ...opts, intervalMs: 3_600_000 }, d);
+    await vi.waitFor(() => expect(d.runs.expireDue).toHaveBeenCalled());
+    let stopped = false;
+    const stopping = tick.stop(5_000).then(() => { stopped = true; });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+});

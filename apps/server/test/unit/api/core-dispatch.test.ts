@@ -157,6 +157,7 @@ describe('callCore — static resolution against the private internal handler in
     expect(callers.sort()).toEqual([
       'api/agency.plugin.ts', // installs the instance (`setCoreHandlers`); calls nothing
       'api/routes/helpers/core-campaign.ts', // the campaign ownership probe the route files share
+      'api/routes/helpers/live-stats.ts', // the stats strip, for the running headline (the summary route and the campaign report)
       'api/routes/proxy-agency-agent.routes.ts',
       'api/routes/proxy-agency-assignment/my-contact-actions.ts', // the agent's dial of one of their contacts
       'api/routes/proxy-agency-calls.routes.ts',
@@ -165,7 +166,6 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-campaigns/retry.ts',
       'api/routes/proxy-agency-campaigns/spine.ts',
       'api/routes/proxy-agency-campaigns/stats.ts',
-      'api/routes/proxy-agency-insights/as-of-now.ts', // the stats strip, for the running headline
       'api/routes/proxy-agency-performance/floor.ts',
       'api/routes/proxy-agency-performance/per-agent.ts',
       'api/routes/proxy-agency-softphone/calls.ts',

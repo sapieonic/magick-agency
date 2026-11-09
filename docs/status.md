@@ -1047,9 +1047,58 @@ domain, contracts and console.
   The contract change adds only optional fields, which the Dart decoders, reading by name,
   never read.
 
+### Reports 2026-11-08 (RP1–RP16, [`reports.md`](reports.md))
+
+Agent performance reviews, campaign reports and account reports as a PDF and an Excel workbook,
+built outside the dialer process, run ad hoc or delivered on a schedule, behind the flag
+`agency_reports_enabled`. Designed and reviewed the same day (the design was revised after an
+independent review), then built in parallel workstreams, integrated, reviewed again by three
+independent reviewers (no blockers; every minor finding fixed with a test or stated) and re-run.
+
+| Area | What was built |
+|---|---|
+| Contracts | `src/api/agency/reports.ts` (runs, subscriptions, the window rule `reportWindowProblem`, error codes) and `src/reports/` (the versioned `ReportDataset` per kind, reusing the screens' wire types; the render message, the signed callback, file names) |
+| Database | `0023_reports.sql`: `report_runs`, `report_subscriptions`, and an agent-first sessions index; repositories with fenced claims (`claim_generation`, `render_attempt`), a per-tenant pending limit and subscription claims that create the run and advance `next_run_at` in one transaction |
+| Datasets | Agent, campaign and account builders that read with the screens' own code; an oracle suite holds every figure to the screen's response for the same window; the `self` audience drops floor bands, call analysis and recording columns and masks phone numbers |
+| Pipeline | The assembler (detail sheets streamed to S3, capped at 100,000 rows), SQS or in-process rendering, the signed and attempt-fenced callback `POST /webhooks/reports/rendered`, the reports tick (subscriptions with catch-up, reconcile of lost messages, the report-ready email, expiry), routes `/proxy/agency/reports*` and `/proxy/agency/report-subscriptions*`, audit, metrics |
+| Renderer | `apps/report-renderer` (component `report-renderer`): React → HTML → headless Chromium for the PDF (fonts embedded, outside requests blocked), exceljs streaming for the workbook, a Lambda handler with its zip build |
+| Console | Reports page (history, subscriptions), one run's page, the export dialog and its entry points (agent record, My performance, Insights, Analytics) |
+| Infrastructure | `aws/terraform/reports.tf` behind `enable_reports` (queue, dead-letter queue, Lambda and alias, least-privilege role, lifecycle rules), three Grafana alert rules and a dashboard row |
+
+**Not verified here:** a real AWS run (SQS, the Lambda with the `@sparticuz/chromium` layer, S3
+lifecycle), `docker build` of either image, the mobile `agency_wire` Dart tests (Dart was not
+installed; the only contract fixture change is a new flag in `platform.json`), and the Grafana
+module's `terraform validate` (its provider download timed out; `fmt` passed). CI has not run on
+this branch: every count below is a local run, so the renderer's PDF suite on GitHub's runner,
+`build-lambda.mjs` in CI and the `mobile.yml` job are unproven until the branch is pushed.
+
 ## Test counts
 
-Latest run, 2026-11-07, the eight PR #56 review fixes on top of `8423bae` (the PL11 breaker counts
+Latest run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
+gate on schedules and emails, `subject_changed`, the restart reclaim, final callback refusals) and
+the simplification pass (shared helpers, one definition-key list in the contracts, the workbook's
+Definition cells filled, the console's outcome words in the workbook, lighter dataset reads,
+report polling paused in a hidden tab and backed off) and the PR review's fixes (a bounded
+pipeline shutdown, subscription runs counted after commit, the per-user rate counted in the
+insert, lower-cased header ids, re-enable resolving the subject, one build deadline over detail
+streaming, superseded renders dropped, the renderer out of the production image), from inside each package, with no other run sharing this worktree's database: `pnpm lint` clean in
+9 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass; `pnpm build` clean;
+`contracts-literals --check` up to date (51 vocabularies); `aws/terraform` `terraform test` 9 pass and
+`validate` clean. `apps/mobile` was not run (no Flutter or Dart in this environment).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9152 passed + 1 expected fail + 42 skipped (457 files) | rest lane 2293 passed + 9 expected fail + 2 skipped (224 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 632 (64 files) |
+| `apps/console` | 5876 (305 files) | — |
+| `apps/super-admin` | 471 (35 files) | — |
+| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped: the opt-in preview and a CI-only browser check) | — |
+| `packages/contracts` | 352 (12 files) | — |
+| `packages/web-ui` | 240 (20 files) | — |
+| `packages/domain` | 142 (9 files) | — |
+| `packages/observability` | 14 (3 files) | — |
+
+Previous run, 2026-11-07, the eight PR #56 review fixes on top of `8423bae` (the PL11 breaker counts
 4xx only, a sync takes over a revoked same-account credential's numbers, the dialable caller-ID
 cache's in-flight race and its media-worker invalidation, an unsent dial no longer resets the
 streak, a keyring fault is a bridge failure, the Plivo CDR's `call_state`, the breaker's `DEL`
@@ -1375,6 +1424,10 @@ files are listed in [`modules.md`](modules.md).
   (`apps/server/src/instrumentation.ts`) pushes traces, metrics and logs over OTLP when
   `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` are set; it was
   checked end to end against a local OTLP collector only.
+
+**Reports, not yet run for real:** the SQS renderer and its Lambda have not run on AWS (the
+Chromium layer, S3 lifecycle and the signed callback over the internet are tested only with
+mocks and the in-process renderer); see "Reports 2026-11-08" above.
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.

@@ -37,8 +37,8 @@ import {
   resolveMetricsExportIntervalMs,
   resolveMetricsExportTimeoutMs,
   withFreshGauges,
-  withTimeout,
 } from '../../../src/utils/otel-sdk-config.js';
+import { withTimeout } from '../../../src/utils/with-timeout.js';
 
 class CollectingReader extends MetricReader {
   protected async onShutdown(): Promise<void> {}

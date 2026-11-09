@@ -12,6 +12,12 @@ resource "aws_iam_user" "server" {
 # ListBucket, without which a missing object reads as 403 instead of 404. No
 # delete: nothing calls deleteFile or deleteByPrefix today. Add s3:DeleteObject
 # here when something does.
+#
+# Reports need no new S3 grant: the bucket-wide PutObject covers the datasets the server
+# writes under report-datasets/, and GetObject covers the 5-minute presigned downloads of
+# reports/ and the tick's HeadObject check for rendered files (RP13). Expiry is S3's
+# lifecycle (s3.tf), so still no delete. With enable_reports, the server also sends the
+# render jobs: sqs:SendMessage on report-jobs, and nothing else on SQS.
 data "aws_iam_policy_document" "server_s3" {
   statement {
     sid       = "ObjectReadWrite"
@@ -25,6 +31,16 @@ data "aws_iam_policy_document" "server_s3" {
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.media.arn]
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_reports ? [aws_sqs_queue.report_jobs[0].arn] : []
+    content {
+      sid       = "SendReportJobs"
+      effect    = "Allow"
+      actions   = ["sqs:SendMessage"]
+      resources = [statement.value]
+    }
   }
 }
 

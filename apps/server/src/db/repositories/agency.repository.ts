@@ -181,3 +181,60 @@ export type {
   CustomerHistorySummaryContactRow,
   CustomerHistoryUploadRow,
 } from './agency/customer-history.repository.js';
+export {
+  REPORT_RUN_CLAIM_SQL,
+  REPORT_RUN_COLUMNS,
+  REPORT_RUN_PENDING_LOCK_SQL,
+  ReportRunRepository,
+  reportRunRepository,
+} from './agency/report-run.repository.js';
+export type {
+  ReportAssembledInput,
+  ReportPendingStats,
+  ReportRenderApplyOutcome,
+  ReportRenderResult,
+  ReportRunCreateInput,
+  ReportRunCreateLimits,
+  ReportRunCreateOutcome,
+  ReportRunFence,
+  ReportRunFile,
+  ReportRunListParams,
+  ReportRunRecord,
+  ReportRunSubscriptionInput,
+} from './agency/report-run.repository.js';
+export {
+  REPORT_SUBSCRIPTION_CLAIM_DUE_SQL,
+  ReportSubscriptionRepository,
+  reportSubscriptionRepository,
+} from './agency/report-subscription.repository.js';
+export type {
+  ReportSubscriptionCreateInput,
+  ReportSubscriptionDueDecision,
+  ReportSubscriptionDueHandler,
+  ReportSubscriptionDueOutcome,
+  ReportSubscriptionPatch,
+  ReportSubscriptionRecord,
+} from './agency/report-subscription.repository.js';
+// The report builders' own reads and detail statements (agency/reports/datasets/).
+export {
+  AgencyReportDatasetRepository,
+  agencyReportDatasetRepository,
+  agentCallsStatement,
+  agentSessionsStatement,
+  agentStateLogStatement,
+  campaignAttemptsStatement,
+  campaignSessionsStatement,
+  REPORT_CURSOR_BATCH,
+  reportCursorRows,
+} from './agency/report-dataset-reads.js';
+export type {
+  ReportAgentAttemptDayRow,
+  ReportAgentCallRow,
+  ReportAgentOutcomeRow,
+  ReportAgentScope,
+  ReportAttemptRow,
+  ReportSessionDetailRow,
+  ReportStateIntervalRow,
+  ReportStateLogRow,
+  ReportStatement,
+} from './agency/report-dataset-reads.js';

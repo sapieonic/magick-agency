@@ -65,16 +65,29 @@ export function asciiFallbackName(raw: string): string {
 }
 
 /**
+ * A complete `Content-Disposition: attachment` value for a download named `baseName.extension`.
+ *
+ * `baseName` is the name WITHOUT the extension, cut to the length budget by code point; the
+ * extension (ASCII, e.g. `csv`, `pdf`, `xlsx`; empty for none) is appended to both names here.
+ * Also the `ResponseContentDisposition` a presigned S3 URL carries (`storage/s3.ts`
+ * `getPresignedUrl`).
+ */
+export function attachmentHeader(baseName: string, extension: string): string {
+  const suffix = extension === '' ? '' : `.${extension}`;
+  const ascii = `${asciiFallbackName(baseName)}${suffix}`;
+  // encodeURIComponent leaves !'()* alone, and `'` is a delimiter in the
+  // ext-value grammar, so those are encoded by hand.
+  const encoded = encodeURIComponent(`${truncateCodePoints(baseName, MAX_FILENAME_LENGTH)}${suffix}`)
+    .replace(/['()!*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
  * A complete `Content-Disposition` value for a CSV download.
  *
  * `baseName` is the name WITHOUT the extension — the `.csv` is appended here so
  * no call site can forget it or double it.
  */
 export function csvAttachmentHeader(baseName: string): string {
-  const ascii = `${asciiFallbackName(baseName)}.csv`;
-  // encodeURIComponent leaves !'()* alone, and `'` is a delimiter in the
-  // ext-value grammar, so those are encoded by hand.
-  const encoded = encodeURIComponent(`${truncateCodePoints(baseName, MAX_FILENAME_LENGTH)}.csv`)
-    .replace(/['()!*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+  return attachmentHeader(baseName, 'csv');
 }

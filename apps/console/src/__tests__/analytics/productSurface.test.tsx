@@ -214,6 +214,10 @@ describe('who calls it', () => {
     // `/dialer/customers`, customer history for an agent, outside the agency shell
     // because that shell renders nothing for an agent.
     'AgentCustomerHistoryPage',
+    // `/dialer/reports` and `/dialer/reports/:runId`, a dedicated agent's own reports,
+    // outside the agency shell for the same reason.
+    'AgentReportsPage',
+    'AgentReportRunPage',
     'AgencyJoinPage',
   ];
 

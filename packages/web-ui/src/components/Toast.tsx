@@ -5,11 +5,22 @@ import styles from './Toast.module.css';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
+/**
+ * One button inside a toast, beside its message: "View report" on a queued export. Pressing
+ * it runs `onClick` and dismisses the toast. A callback rather than a link because the toast
+ * container is portalled outside the router; the caller closes over its own `navigate`.
+ */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface ToastData {
   id: string;
   message: string;
   type: ToastType;
   duration: number;
+  action?: ToastAction;
 }
 
 interface ToastProps {
@@ -150,6 +161,18 @@ export function Toast({ toast, onDismiss }: ToastProps) {
       <div className={styles.content}>
         <span className={styles.message}>{text}</span>
         {requestId && <RequestId requestId={requestId} tone="error" />}
+        {toast.action && (
+          <button
+            type="button"
+            className={styles.actionButton}
+            onClick={() => {
+              toast.action?.onClick();
+              dismiss();
+            }}
+          >
+            {toast.action.label}
+          </button>
+        )}
       </div>
       <button
         type="button"

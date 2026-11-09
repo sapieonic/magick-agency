@@ -99,6 +99,9 @@ cp apps/console/.env.example apps/console/.env.local
 Use the same Firebase project as the server's `FIREBASE_PROJECT_ID`. `VITE_API_BASE_URL` can
 stay unset in dev: both UIs proxy API calls to `localhost:3021`.
 
+Reports (PDF and Excel exports) need an S3 bucket, a Chromium and a feature flag on top of this;
+[`REPORTS_SETUP.md`](REPORTS_SETUP.md), Path A, has the steps.
+
 ### 7. Start everything
 
 In three terminals:

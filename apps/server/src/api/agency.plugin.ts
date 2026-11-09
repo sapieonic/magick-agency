@@ -19,6 +19,9 @@ import { proxyAgencyCustomersRoutes } from './routes/proxy-agency-customers.rout
 import { proxyAgencyPerformanceRoutes } from './routes/proxy-agency-performance.routes.js';
 import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
 import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
+import { proxyAgencyReportsRoutes } from './routes/proxy-agency-reports.routes.js';
+import { reportRenderedWebhookRoutes } from './routes/webhooks/report-rendered.js';
+import { agencyConfigSchema } from '../config/blocks/agency.js';
 import type { AgencyCampaignRouteDeps } from './routes/agency-campaigns.routes.js';
 import { callAnalysisProfilesRoutes } from './routes/call-analysis-profiles.routes.js';
 import { platformProfileRouteAuth } from './profile-route-auth.js';
@@ -142,6 +145,11 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
     await scope.register(proxyAgencyCustomersRoutes, { prefix: P.proxyAgency, ctx });
   });
 
+  // ── Reports (`proxy-agency-reports.routes.ts`, docs/reports.md; its own 404s for ids) ──
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyReportsRoutes, { prefix: P.proxyAgency, ctx });
+  });
+
   // ── Agent performance (its own 400 for `:userId`) ──────────────────────────────────
   await app.register(async (scope) => {
     await scope.register(proxyAgencyPerformanceRoutes, { prefix: P.proxyAgency });
@@ -221,6 +229,24 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   await app.register(proxyAgencyStationRoutes, {
     prefix: P.proxyAgencyStation,
     getRuntime: () => (ctx ? getAgencyRuntime() : null),
+  });
+};
+
+/**
+ * The agency area's one session-less surface: the report renderer's signed callback,
+ * `POST /webhooks/reports/rendered` (`routes/webhooks/report-rendered.ts`, docs/reports.md RP13).
+ * Its own plugin, registered by `app.ts` beside {@link agencyPlugin}, because everything that
+ * plugin registers is a console route behind a session (the agent-reach and route-table suites
+ * hold it to that); this one is authenticated by its HMAC signature alone.
+ */
+export const AGENCY_WEBHOOK_PREFIX = '/webhooks';
+
+export const agencyWebhooksPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = async (app, opts) => {
+  const reports = opts.ctx?.config.agency.reports ?? agencyConfigSchema.parse({}).agency.reports;
+  await app.register(reportRenderedWebhookRoutes, {
+    prefix: AGENCY_WEBHOOK_PREFIX,
+    callbackSecret: reports.callbackSecret,
+    retentionDays: reports.retentionDays,
   });
 };
 

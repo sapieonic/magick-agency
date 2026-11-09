@@ -7,7 +7,7 @@
  * must never pull in `src/config/index.js`, whose module body can
  * `process.exit(1)`. Only OTel libraries, Node built-ins and
  * `@magick-agency/observability/service` (a constant with no imports) are imported here.
- * `OTEL_SHUTDOWN_TIMEOUT_MS` and `withTimeout` (at the end) bound the final flush.
+ * `OTEL_SHUTDOWN_TIMEOUT_MS` (with `withTimeout`, `./with-timeout.ts`) bounds the final flush.
  *
  * Grafana Cloud (fed by the OTLP exporter configured from this) is the only
  * billed and alertable metrics path, and it enforces a per-instance active-series
@@ -334,19 +334,6 @@ export function withFreshGauges(exporter: PushMetricExporter): PushMetricExporte
  * collector answers well inside this (0.4s for a whole SIGTERM shutdown, measured).
  */
 export const OTEL_SHUTDOWN_TIMEOUT_MS = 5_000;
-
-/**
- * Settle with `promise`, or reject after `ms`, whichever is first. The timer is cleared on
- * settle and `unref`ed, so it never holds the process open.
- */
-export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
-    timer.unref();
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
 
 // ── Traces: what is recorded at all ─────────────────────────────────────────
 //

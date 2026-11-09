@@ -70,6 +70,19 @@ const WEBRTC_JSON_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The call analysis's overall sentiment label as a scalar, out of a `call_analysis` JSONB column
+ * expression (`column`, e.g. `call_analysis` or `c.call_analysis`): the nested
+ * `common.overall_sentiment.label` shape, else the legacy-flat `overall_sentiment.label`. One
+ * spelling for the call list's Sentiment column and the agent review's quality block.
+ */
+export function callSentimentLabelSql(column: string): string {
+  return `COALESCE(
+    ${column}->'common'->'overall_sentiment'->>'label',
+    ${column}->'overall_sentiment'->>'label'
+  )`;
+}
+
+/**
  * `campaign_id` is projected deliberately. It is the scope discriminator and the list could not label — or even
  * recognise — a foreign row without it.
  *
@@ -93,10 +106,7 @@ const WEBRTC_LIST_COLUMNS = `
   answered_at, ended_at, duration_seconds, talk_time_seconds,
   analysis_profile_id, analysis_language, analysis_status,
   analysis_consent, analysis_consent_at,
-  COALESCE(
-    call_analysis->'common'->'overall_sentiment'->>'label',
-    call_analysis->'overall_sentiment'->>'label'
-  ) AS analysis_sentiment_label,
+  ${callSentimentLabelSql('call_analysis')} AS analysis_sentiment_label,
   created_at, updated_at
 `;
 

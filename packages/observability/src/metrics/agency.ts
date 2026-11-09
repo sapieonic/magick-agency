@@ -830,3 +830,52 @@ export const agencyInsightsRollupBucketsTotal = counter(meter, 'agency_insights_
 export const agencyInsightsRollupFailuresTotal = counter(meter, 'agency_insights_rollup_failures_total', {
   description: 'Insights rollup batches that failed and were rolled back (their marks stay dirty)',
 });
+
+// ─── Reports (docs/reports.md) ────────────────────────────────────────────────
+//
+// The report pipeline in `apps/server/src/agency/reports/`: the assembler builds a run's dataset,
+// the renderer (a Lambda, or in process) builds its files and calls back, and the reports tick
+// notifies, reconciles lost sends, turns subscriptions into runs and expires files. Labels are
+// small closed vocabularies (kind, status, result), never a tenant, run or subscription id. The
+// histograms run from seconds to tens of minutes: an assembly reads a month of one account, a
+// render is a headless browser and a workbook, and RP13 re-sends after 15 minutes.
+
+/** Seconds-to-minutes buckets shared by the two report duration histograms. */
+const REPORT_DURATION_BUCKETS = [1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900, 1800];
+
+export const agencyReportsRunsTotal = counter<'kind' | 'status'>(meter, 'agency_reports_runs_total', {
+  description: 'Report runs that reached a terminal status (ready or failed), by kind',
+});
+
+export const agencyReportsAssembleSeconds = histogram<'kind'>(meter, 'agency_reports_assemble_seconds', {
+  description: 'Seconds the assembler took to build and upload one report dataset, claim to recorded',
+  unit: 's',
+  buckets: REPORT_DURATION_BUCKETS,
+});
+
+export const agencyReportsRenderSeconds = histogram<'kind'>(meter, 'agency_reports_render_seconds', {
+  description: 'Seconds from sending a report run to the renderer to applying its callback',
+  unit: 's',
+  buckets: REPORT_DURATION_BUCKETS,
+});
+
+export const agencyReportsPendingRuns = gauge<'status'>(meter, 'agency_reports_pending_runs', {
+  description: 'Report runs queued, assembling or rendering, set by the reports tick',
+});
+
+export const agencyReportsOldestPendingSeconds = gauge(meter, 'agency_reports_oldest_pending_seconds', {
+  description: 'Age of the oldest pending report run at the last tick, seconds (0 when none)',
+  unit: 's',
+});
+
+export const agencyReportsCallbacksTotal = counter<'result'>(meter, 'agency_reports_callbacks_total', {
+  description: 'Render callbacks received, by result: applied, stale, bad_signature or invalid',
+});
+
+export const agencyReportsEmailsTotal = counter<'result'>(meter, 'agency_reports_emails_total', {
+  description: 'Report-ready emails, by result: sent, skipped or failed',
+});
+
+export const agencyReportsSubscriptionRunsTotal = counter<'result'>(meter, 'agency_reports_subscription_runs_total', {
+  description: 'Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)',
+});

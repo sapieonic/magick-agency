@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -169,6 +169,28 @@ describe('docker/docker-compose.prod.yml keeps the deployment invariants', () =>
 describe('docker/Dockerfile and docker/entrypoint.sh', () => {
   it('sets NODE_ENV=production in the image (turns verified Postgres TLS on)', () => {
     expect(read('Dockerfile')).toMatch(/^ENV NODE_ENV=production$/m);
+  });
+
+  // The renderer (RP15) runs in production on the Lambda; in this process only under `inline`
+  // (development and tests). As a devDependency it, puppeteer-core, exceljs, React and the fonts
+  // stay out of `pnpm deploy --prod`, so the image carries none of them.
+  it('keeps the report renderer out of the production image', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as {
+      dependencies: Record<string, string>; devDependencies: Record<string, string>;
+    };
+    expect(pkg.dependencies).not.toHaveProperty('@magick-agency/report-renderer');
+    expect(pkg.devDependencies).toHaveProperty('@magick-agency/report-renderer');
+    const dockerfile = read('Dockerfile');
+    expect(dockerfile).not.toMatch(/^COPY apps\/report-renderer\/ /m); // its sources
+    expect(dockerfile).toMatch(/^RUN pnpm install --frozen-lockfile --filter-prod @magick-agency\/server\.\.\.$/m);
+    expect(dockerfile).toMatch(/^RUN pnpm --filter @magick-agency\/server deploy --prod /m);
+    // A literal import would be bundled (workspace packages are) and need puppeteer-core at run
+    // time; the server reaches the renderer only through dispatch.ts's non-literal import().
+    const src = fileURLToPath(new URL('../../../src/', import.meta.url));
+    const literal = /(?:from\s+|import\(\s*|require\(\s*)['"]@magick-agency\/report-renderer['"]/;
+    const offenders = (readdirSync(src, { recursive: true }) as string[])
+      .filter((f) => f.endsWith('.ts') && literal.test(readFileSync(join(src, f), 'utf8')));
+    expect(offenders).toEqual([]);
   });
 
   it('runs migrations, then execs the server, failing the start if migrations fail', () => {

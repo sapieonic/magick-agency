@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router-dom';
-import { Bell, Briefcase, ChartNoAxesCombined, ListChecks, Phone, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
+import { Bell, Briefcase, ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import { hasPermission, type Permission } from '../../utils/permissions';
 import { useTenant } from '../../contexts/TenantContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { REPORTS_FLAG } from '../../utils/reports/reportsFlag';
 import styles from './AgencySidebar.module.css';
 
 interface Props {
@@ -66,6 +67,22 @@ const NAV_ITEMS: NavItem[] = [
     icon: ChartNoAxesCombined,
     end: false,
     permission: 'agency.campaigns.read',
+  },
+  {
+    /*
+     * Reports (`docs/reports.md`): a supervisor's history and subscriptions; a viewer
+     * or operator sees the runs they requested (their own review). Floored at the
+     * agency workspace's own floor (`agency.campaigns.read`, viewer) rather than at
+     * `agency.station.connect`, because a dedicated `agent` gets no destinations in
+     * this shell: their entry is "My reports" in the agent nav (`/dialer/reports`).
+     * Behind `agency_reports_enabled`, default off.
+     */
+    label: 'Reports',
+    to: '/agency/reports',
+    icon: FileText,
+    end: false,
+    permission: 'agency.campaigns.read',
+    flag: REPORTS_FLAG,
   },
   {
     /*
@@ -145,8 +162,10 @@ const SHOW_BADGE = showsShellBadge(brand.name);
 export function AgencySidebar({ onClose }: Props) {
   const { role } = useTenant();
   const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const reports = useFeatureFlagEnabled(REPORTS_FLAG);
+  const flagOn: Record<string, boolean> = { [SOFTPHONE_FLAG]: softphone, [REPORTS_FLAG]: reports };
   const items = NAV_ITEMS.filter(
-    (item) => hasPermission(role, item.permission) && (!item.flag || (item.flag === SOFTPHONE_FLAG && softphone)),
+    (item) => hasPermission(role, item.permission) && (!item.flag || flagOn[item.flag] === true),
   );
 
   return (

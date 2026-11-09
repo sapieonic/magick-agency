@@ -1,11 +1,12 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
-import { ChartNoAxesCombined, ListChecks, Phone, PhoneOutgoing, Search } from 'lucide-react';
+import { ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneOutgoing, Search } from 'lucide-react';
 import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { useReportsAccess } from '../../hooks/useReportsAccess';
 import styles from './AgentNav.module.css';
 
 /**
@@ -40,6 +41,7 @@ const ICONS: Record<AgentSurfaceId, typeof ListChecks> = {
   performance: ChartNoAxesCombined,
   attempts: PhoneOutgoing,
   customers: Search,
+  reports: FileText,
 };
 
 /**
@@ -91,9 +93,13 @@ export function AgentNav({
 }) {
   const softphone = useSoftphoneAvailable();
   const customers = useCustomerHistoryAvailable();
+  // "My reports": the reports flag on and the caller can open a station (their own
+  // review is the one report they may run, RP5). Fails closed without the providers.
+  const reportsAccess = useReportsAccess();
+  const reports = reportsAccess.enabled && reportsAccess.canSelf;
   const hintId = useId();
   const hint = lockedReason ? null : leaveHint;
-  const surfaces = agentSurfacesFor({ softphone, customers });
+  const surfaces = agentSurfacesFor({ softphone, customers, reports });
   return (
     <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
       {surfaces.map((surface) => {

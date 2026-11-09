@@ -138,6 +138,14 @@ counterpart (`CustomerSearchOptionsResponse` included). It reuses the dialer voc
 `AgencyAttemptOutcome`, `AgencyCampaignStatus`, `AgencyContactState`, `AgencyDncEntryScope` and
 `AgencyOverrideKind` (`override_applied`) by import rather than redeclaring them.
 
+Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
+subscriptions are served by the public API layer itself, so `AgencyReportRun`,
+`AgencyCreateReportRequest`, `AgencyReportSubscription` and the rest have no dialer counterpart.
+`AgencyReportErrorCode` / `AGENCY_REPORT_ERROR_CODES` are declared in `../../errors.ts` (§5) and
+re-exported, like the soft-phone codes. The report DATASET (`../../reports/`, its own subpath)
+embeds console wire types from this directory (the Insights objects, `AgencyAgentStatsTotals`,
+the roster row with its name and `AgencyRosterBenchmark`), never their dialer twins.
+
 ## 5. Request fields the server sets itself
 
 - `agent_user_id` on `AgencyCreateSessionRequest` and `AgencyActorFields` is filled by the public API

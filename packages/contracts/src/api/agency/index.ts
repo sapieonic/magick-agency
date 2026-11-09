@@ -23,4 +23,5 @@ export * from './assignment';
 export * from './agent-caller-id';
 export * from './insights';
 export * from './customer-history';
+export * from './reports';
 export * from './shared';

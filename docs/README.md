@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-07.
+are as of 2026-11-08.
 
 ## What Magick Agency is
 
@@ -52,6 +52,13 @@ Automatic outcomes for unanswered calls (2026-11-07: a campaign maps no answer, 
 invalid number and abandoned to one of its outcomes, filed on the call as a label only, OD1–OD8)
 is merged over Plivo the same day (its migration is 0022): db unit 428, console 5742.
 
+Reports (2026-11-08: agent performance reviews, campaign and account reports as PDF and Excel,
+ad hoc or on a schedule, behind a flag, RP1–RP16) are built through the server, a renderer app that
+runs as a Lambda or in process, the console and the infrastructure, reviewed independently twice
+and re-run: server 9123 unit / 2278 + 15 integration + 9 expected fail, db 428 / 632, console 5876,
+renderer 86 ([`reports.md`](reports.md); `status.md`, "Test counts"). They have not run on AWS or
+in CI.
+
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and
@@ -80,10 +87,12 @@ Details and next steps: [`status.md`](status.md).
 | [`mobile.md`](mobile.md) | The agent mobile app (`apps/mobile`, Flutter): V1 scope, the foreground rule and `device_away`, how it talks to the server and the station socket (`client=mobile`, `media=alaw8`), the app's structure, builds and releases, what is not verified |
 | [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |
 | [`customer-history.md`](customer-history.md) | Customer history: one phone number searched across the tenant's campaigns and the soft phone; decisions CH1–CH13, the number rule shared by console, server and app, the API (the number only in `POST` bodies, a short-lived search id), the summary and the timeline, visibility, audit and rate limit, the v2 key-column design |
+| [`reports.md`](reports.md) | Reports: agent performance reviews, campaign and account reports as PDF and Excel, ad hoc or on a schedule; decisions RP1–RP16, the contracts and datasets (every figure the screens' own), the pipeline (assembler, SQS or in-process renderer, the signed callback, the tick), who may run what, config, S3 keys |
 | [`insights.md`](insights.md) | The campaign's analytic tabs (Overview, Calls, Agents, Callbacks, Health): decisions IN1–IN13, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
+| [`../REPORTS_SETUP.md`](../REPORTS_SETUP.md) | Setting reports up for the first time, on a development machine (the in-process renderer) and in a deployment (the Lambda, the queue, the server's settings, the flag), with the first report and what to check when it fails |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |
 | [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo; each app and package has its own `CLAUDE.md` with its area's rules |
 | `../packages/db/BASELINE.md` | The baseline schema inventory |

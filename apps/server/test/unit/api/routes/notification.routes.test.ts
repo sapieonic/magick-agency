@@ -237,11 +237,13 @@ describe('/notifications/preferences', () => {
    * so GET is an empty list, not a 403, and a PUT is accepted and stored.
    */
   describe('an agent', () => {
-    it('GETs its own preferences: 200, an empty list', async () => {
+    it('GETs its own preferences: 200, only the report-ready email (no supervisor notice)', async () => {
       mocks.findByUserAndTenant.mockResolvedValue([membership('agent')]);
       const res = await app.inject({ method: 'GET', url: '/notifications/preferences' });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ events: [] });
+      // `agency.report.ready` is explicit-audience: an agent who asks for their own review can
+      // turn its email off. `agency.campaign.completed` floors at `agency.supervise`.
+      expect(res.json().events.map((e: { key: string }) => e.key)).toEqual(['agency.report.ready']);
       expect(mocks.findForUser).toHaveBeenCalledWith(USER, TENANT);
     });
 
@@ -252,7 +254,8 @@ describe('/notifications/preferences', () => {
         payload: { preferences: [{ event_key: 'agency.campaign.completed', enabled: false }] },
       });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ preferences: [] });
+      // The agent cannot receive the supervisor notice, so the response lists only what it can.
+      expect(res.json().preferences.map((p: { event_key: string }) => p.event_key)).toEqual(['agency.report.ready']);
       expect(mocks.upsertMany).toHaveBeenCalledWith([
         {
           user_id: USER, tenant_id: TENANT, event_key: 'agency.campaign.completed',

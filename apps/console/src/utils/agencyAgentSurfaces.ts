@@ -36,7 +36,7 @@
  * same agent. Reaching the chooser is what Leave is for.
  */
 
-export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts' | 'phone' | 'customers';
+export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts' | 'phone' | 'customers' | 'reports';
 
 export interface AgentSurface {
   id: AgentSurfaceId;
@@ -87,14 +87,28 @@ export const SOFTPHONE_SURFACE: AgentSurface = { id: 'phone', to: '/dialer/phone
 export const CUSTOMERS_SURFACE: AgentSurface = { id: 'customers', to: '/dialer/customers', label: 'Search a number' };
 
 /**
- * The agent's screens for this account: the three, plus the soft phone when it is on
- * for them, plus customer history when they may search.
+ * "My reports" (`docs/reports.md`): the agent's own exported reviews, behind the
+ * `agency_reports_enabled` flag. Kept out of {@link AGENT_SURFACES} because it is
+ * flag-gated; after "My calls", beside the agent's other histories, and before the
+ * customer search tool.
  */
-export function agentSurfacesFor(options: { softphone: boolean; customers?: boolean }): readonly AgentSurface[] {
+export const REPORTS_SURFACE: AgentSurface = { id: 'reports', to: '/dialer/reports', label: 'My reports' };
+
+/**
+ * The agent's screens for this account: the three, plus the soft phone when it is on
+ * for them, plus their reports when reports are on, plus customer history when they
+ * may search.
+ */
+export function agentSurfacesFor(options: {
+  softphone: boolean;
+  customers?: boolean;
+  reports?: boolean;
+}): readonly AgentSurface[] {
   const base = options.softphone
     ? [AGENT_SURFACES[0]!, SOFTPHONE_SURFACE, ...AGENT_SURFACES.slice(1)]
     : AGENT_SURFACES;
-  return options.customers ? [...base, CUSTOMERS_SURFACE] : base;
+  if (!options.customers && !options.reports) return base;
+  return [...base, ...(options.reports ? [REPORTS_SURFACE] : []), ...(options.customers ? [CUSTOMERS_SURFACE] : [])];
 }
 
 /** The surface at a path, or `null`. Exact match — none of these has children. */

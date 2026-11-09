@@ -89,6 +89,14 @@ const CustomerHistoryPage = lazy(() => import('./pages/agency/CustomerHistoryPag
 const AgentCustomerHistoryPage = lazy(() =>
   import('./pages/agency/CustomerHistoryPage').then((m) => ({ default: m.AgentCustomerHistoryPage })),
 );
+const ReportsPage = lazy(() => import('./pages/agency/ReportsPage'));
+const ReportRunPage = lazy(() => import('./pages/agency/ReportRunPage'));
+const AgentReportsPage = lazy(() =>
+  import('./pages/agency/ReportsPage').then((m) => ({ default: m.AgentReportsPage })),
+);
+const AgentReportRunPage = lazy(() =>
+  import('./pages/agency/ReportRunPage').then((m) => ({ default: m.AgentReportRunPage })),
+);
 
 export default function App() {
   return (
@@ -436,6 +444,46 @@ export default function App() {
                   }
                 />
                 {/*
+                  `/dialer/reports` and `/dialer/reports/:runId` — a dedicated agent's
+                  own exported reviews (`docs/reports.md`, RP5). The same pages as
+                  `/agency/reports*`, in the agent's own frame, because the agency
+                  shell renders nothing for an agent; the agency paths send a
+                  dedicated agent here (the "report ready" email links to those).
+                  Gated as their siblings are, plus the `agency_reports_enabled` flag.
+                */}
+                <Route
+                  path="/dialer/reports"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          <RequireFlag flag="agency_reports_enabled">
+                            <ProductSurface product="agency">
+                              <AgentReportsPage />
+                            </ProductSurface>
+                          </RequireFlag>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/dialer/reports/:runId"
+                  element={
+                    <RequireAuth>
+                      <RequireCapability capability="agency">
+                        <RequireFlag flag="agency_dialer_enabled">
+                          <RequireFlag flag="agency_reports_enabled">
+                            <ProductSurface product="agency">
+                              <AgentReportRunPage />
+                            </ProductSurface>
+                          </RequireFlag>
+                        </RequireFlag>
+                      </RequireCapability>
+                    </RequireAuth>
+                  }
+                />
+                {/*
                   `/dialer/customers` — customer history for an agent
                   (`docs/customer-history.md` §5): every agent may search a number
                   (CH1), and the agency shell, whose top bar carries the box, renders
@@ -593,6 +641,19 @@ export default function App() {
                     checks `agency.customer_history.read`; the server enforces it.
                   */}
                   <Route path="customers" element={<CustomerHistoryPage />} />
+                  {/*
+                    Reports (`docs/reports.md`): the history and subscriptions, and one
+                    run (the "report ready" email's link). Behind the
+                    `agency_reports_enabled` flag on top of the shell's dialer gate.
+                  */}
+                  <Route
+                    path="reports"
+                    element={<RequireFlag flag="agency_reports_enabled"><ReportsPage /></RequireFlag>}
+                  />
+                  <Route
+                    path="reports/:runId"
+                    element={<RequireFlag flag="agency_reports_enabled"><ReportRunPage /></RequireFlag>}
+                  />
                   {/*
                     The soft phone's supervisor surfaces (`docs/softphone.md` §7):
                     the account's soft-phone calls, one call's detail, and a

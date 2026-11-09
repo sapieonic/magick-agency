@@ -61,6 +61,15 @@ const DEFAULT_WINDOW = DEFAULT_RATE_LIMIT_WINDOW;
 const WEBHOOK_PATH_PREFIX = '/api/v1/webhooks';
 
 /**
+ * The agency area's session-less callback, `POST /webhooks/reports/rendered` (the report
+ * renderer, docs/reports.md RP13, `routes/webhooks/report-rendered.ts`). Outside
+ * {@link WEBHOOK_PATH_PREFIX} because its path is the render protocol's, and in the same
+ * `webhook` bucket for the same reason as the carrier callbacks: machine traffic from a few
+ * egress IPs that retries, which must not spend (or be refused against) the console's ceiling.
+ */
+const REPORT_WEBHOOK_PATH_PREFIX = '/webhooks/reports';
+
+/**
  * Carrier-facing media paths: the AI media-stream WS upgrade, the WS-static one
  * nested beneath it (`/api/v1/media-stream/static`, so the prefix below already
  * covers it — see `ws-static-media-url.ts` for why it nests), the legacy static
@@ -186,6 +195,7 @@ export type RateLimitRouteClass = (typeof RATE_LIMIT_ROUTE_CLASSES)[number];
  */
 const ROUTE_CLASS_PREFIXES: ReadonlyArray<readonly [string, RateLimitRouteClass]> = [
   [WEBHOOK_PATH_PREFIX, 'webhooks'],
+  [REPORT_WEBHOOK_PATH_PREFIX, 'webhooks'],
   ['/api/v1/media-stream', 'media_stream'],
   ['/api/v1/static-media-stream', 'media_stream'],
   ['/api/v1/tts-audio', 'tts_audio'],
@@ -237,7 +247,7 @@ function hasPrefix(path: string, prefix: string): boolean {
 
 /** True for any request routed to a provider webhook endpoint. */
 function isWebhookPath(path: string): boolean {
-  return hasPrefix(path, WEBHOOK_PATH_PREFIX);
+  return hasPrefix(path, WEBHOOK_PATH_PREFIX) || hasPrefix(path, REPORT_WEBHOOK_PATH_PREFIX);
 }
 
 /**

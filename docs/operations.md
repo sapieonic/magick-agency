@@ -198,6 +198,8 @@ production.
 | `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
 | `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`, `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` | `15000` (1000–600000), `200` (1–5000) | The insights rollup job (`docs/insights.md`): how often a pass recomputes the dirty 15-minute buckets, and how many a batch claims. The page's range sections lag the attempts by about one interval; `agency_insights_rollup_dirty_buckets` and `_oldest_dirty_seconds` say how far |
 | `AGENCY_CUSTOMER_SEARCH_PER_MINUTE`, `AGENCY_CUSTOMER_SEARCH_TTL_MINUTES`, `AGENCY_CUSTOMER_EXPORT_MAX_ROWS` | `30` (1–10000), `30` (1–1440), `10000` (1–100000) | Customer history (`docs/customer-history.md`): searches and exports a minute per user (CH11, its own bucket besides `RATE_LIMIT_USER_MAX`), how long a search id serves its timeline and export, and the export's row cap (`X-Export-Truncated: true` past it). Timeline pages and `GET /proxy/agency/customers/options` are not charged to the per-minute cap |
+| `AGENCY_REPORTS_RENDERER`, `AGENCY_REPORTS_SQS_QUEUE_URL`, `AGENCY_REPORTS_CALLBACK_BASE_URL`, `AGENCY_REPORTS_CALLBACK_SECRET`, `AGENCY_REPORTS_CHROME_PATH` | `inline`, unset | Reports (`docs/reports.md`): `inline` renders in process; `sqs` sends runs to the renderer Lambda and needs the queue URL, the server's public base URL (callback `<base>/webhooks/reports/rendered`) and a secret of at least 32 characters (used exactly as written: leading or trailing whitespace fails boot), and the S3 bucket (`S3_AUDIO_BUCKET`), or boot fails; the base URL is scheme and host only. Per tenant it also needs the `agency_reports_enabled` flag (default off; `FF_AGENCY_REPORTS` sets the default) |
+| `AGENCY_REPORTS_MAX_DETAIL_ROWS`, `AGENCY_REPORTS_ASSEMBLER_INTERVAL_MS`, `AGENCY_REPORTS_TICK_INTERVAL_MS`, `AGENCY_REPORTS_RENDER_TIMEOUT_MS`, `AGENCY_REPORTS_MAX_ATTEMPTS`, `AGENCY_REPORTS_RETENTION_DAYS`, `AGENCY_REPORTS_TENANT_PENDING_LIMIT`, `AGENCY_REPORTS_USER_PER_MINUTE` | `100000`, `2000`, `60000`, `900000`, `3`, `90`, `5`, `3` | Reports: detail-sheet row cap (RP12), assembler poll, tick, render timeout and sends before `render_timed_out` (RP13), file retention in days (RP8), runs pending per tenant, ad hoc requests per user per minute |
 | `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B27); the web image is then built with `CONSOLE_API_BASE_URL` |
 | `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
@@ -412,7 +414,8 @@ schema when it seeds) and refuses any other name or port. How to run it, its set
 
 On SIGTERM or SIGINT the server closes HTTP first, then halts pacing (waiting up to 5 s for
 ticks in flight), stops analysis, then agency (in-flight campaign-completion mails get up to
-30 s), voice (the bridge hangs up live calls and releases their slots) and platform (audit
+30 s, and beside them the report pipeline stops: 20 s at most for its assembler, tick and inline
+renders together, `REPORT_PIPELINE_STOP_WAIT_MS`), voice (the bridge hangs up live calls and releases their slots) and platform (audit
 buffers flushed), then closes Redis and Postgres (`apps/server/src/index.ts`,
 `cluster/shutdown-order.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
 so the production compose file sets `stop_grace_period: 45s` on the server. On any other runtime,
@@ -648,11 +651,120 @@ nothing, so two probers see the same numbers and a stall stays visible for the w
 For history, the *Processes* row reads the OTel runtime gauges (`nodejs_eventloop_*`, one series
 per process, per export interval), which keep their own histogram and are not touched by probes.
 
+## Reports
+
+Reports ([`reports.md`](reports.md)) are assembled in the main process and rendered either in
+process (`AGENCY_REPORTS_RENDERER=inline`, the default: development and tests, Chromium on the
+server) or by the `report-renderer` Lambda behind the `report-jobs` SQS queue
+(`AGENCY_REPORTS_RENDERER=sqs`, production; created by `aws/terraform` with `enable_reports`,
+[`aws/README.md`](../aws/README.md) "Reports"). Every reports setting and its default is in
+[`reports.md`](reports.md), "Config". The renderer path needs four:
+
+| Variable | Value |
+|---|---|
+| `AGENCY_REPORTS_RENDERER` | `sqs` |
+| `AGENCY_REPORTS_SQS_QUEUE_URL` | `terraform output report_jobs_queue_url` |
+| `AGENCY_REPORTS_CALLBACK_SECRET` | The Lambda's `reports_callback_secret`, the same value (≥ 32 characters) |
+| `AGENCY_REPORTS_CALLBACK_BASE_URL` | The server's public base URL, which the Lambda calls back |
+
+`terraform output -raw reports_server_env` prints the first three, and
+`AGENCY_REPORTS_RENDER_TIMEOUT_MS` from `reports_render_timeout_seconds` (default 900 s; it must
+stay at least the queue's visibility timeout plus the function's timeout, "Reports: sizing the
+render timeout"). Deploy the renderer before the
+server on every release (aws/README.md, "Deploy order"); roll it back by pointing its `live` alias
+at the previous version ("Rollback" there).
+
+### Reports: when runs are stuck
+
+A run moves `queued` → `assembling` → `rendering` → `ready` (or `failed`), and turns `expired`
+after `AGENCY_REPORTS_RETENTION_DAYS`. Where to look, in order:
+
+1. **The dashboard's *Reports* row.** *Pending Runs and Oldest Pending* shows which status runs
+   pile up in (`agency_reports_pending_runs`, set by the reports tick every minute) and how old
+   the oldest is (`agency_reports_oldest_pending_seconds`, which `agy-reports-pending-too-long`
+   watches). *Callbacks* shows whether renders come back, and how they are refused.
+2. **The run row.** `report_runs` holds each run's `status`, `error` (`code` and `message`: the
+   stage that failed, `docs/reports.md` "Contracts"), `render_attempt` and `sent_at`. Runs stuck
+   in `queued` or `assembling` are the server's assembler (its logs for the run id; usually
+   Postgres). Runs stuck in `rendering` were sent and have not called back.
+3. **SQS and the Lambda, in CloudWatch** (the renderer path only). The `report-jobs` queue's
+   `ApproximateNumberOfMessagesVisible` and `ApproximateAgeOfOldestMessage`: growing means the
+   Lambda is not consuming (its event source mapping disabled, or every invocation failing). The
+   dead-letter queue's `ApproximateNumberOfMessagesVisible` above 0 means messages failed three
+   receives (the function threw, timed out at 300 s, ran out of memory or could not deliver its
+   callback; each redelivery waits out the 600 s visibility timeout); read a message there
+   for its `run_id` and the function's logs (`/aws/lambda/<function>`) for the error. An empty
+   queue with runs `rendering`: the send never reached SQS (the server's logs, its
+   `AGENCY_REPORTS_SQS_QUEUE_URL`, its `sqs:SendMessage`), or the callback never reached the server
+   (`AGENCY_REPORTS_CALLBACK_BASE_URL` wrong or unreachable from the internet, or refused:
+   `agency_reports_callbacks_total{result="bad_signature"}`).
+
+The tick re-sends a run with no callback after `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (15 min; size it
+against the renderer's backlog, "Reports: sizing the render timeout" below) as a
+new attempt, after first checking S3 for its files, and fails it `render_timed_out` after
+`AGENCY_REPORTS_MAX_ATTEMPTS` (3). So a fixed cause clears on its own; runs already failed are
+re-run from the console ("Run again"). Nothing replays the dead-letter queue, and nothing needs to:
+an older attempt's callback is ignored once a newer one was sent (`stale` on the callbacks panel).
+Purge the DLQ once you have read what it holds.
+
+### Reports: sizing the render timeout
+
+**The invariant to keep** (with the queue `aws/terraform` creates):
+
+    function timeout (300 s) < queue visibility timeout (600 s)
+    visibility timeout + function timeout (900 s) <= AGENCY_REPORTS_RENDER_TIMEOUT_MS
+
+The first is AWS's. The second makes SQS's redelivery of a message the function failed (its
+callback undeliverable, a crash, a timeout) happen, and finish, while the server still waits for
+that attempt, so the redelivered render's callback is applied rather than acknowledged `stale`.
+Terraform holds both sides: `reports_render_timeout_seconds` (default 900) is printed into
+`reports_server_env` and the apply refuses a value below 900. Change the timeout there, never only
+in the server's env: the server cannot see the queue, so nothing at boot checks it. Breaking the
+second inequality costs latency, not renders: each message carries `superseded_after` (the send
+plus the server's timeout), and the function drops a message it receives after it in
+milliseconds, without rendering, so a redelivery or a backed-up message that outlasted the server's
+wait never takes one of the 3 render slots.
+
+`AGENCY_REPORTS_RENDER_TIMEOUT_MS` (default 15 minutes) counts from the send, so a run's time in
+the `report-jobs` queue counts against it, not only its render. The renderer takes at most 3
+messages at once (`maximum_concurrency` in `aws/terraform/reports.tf`, one message per invocation)
+and each render may run up to the function's 300 s timeout. Runs sent together queue behind each
+other: the `n`-th run of a burst starts after about `ceil(n / 3)` renders. Size the timeout so the
+last run of the largest burst still calls back in time:
+
+    AGENCY_REPORTS_RENDER_TIMEOUT_MS > ceil(burst / 3) × p95 render time + p95 render time + a margin
+
+`burst` is the runs sent within a few minutes of each other: every subscription sharing a send
+time (they all fall due on the same tick; the assembler sends them one after another, a few
+seconds apart, which spreads them only a little) plus the ad hoc runs in flight (at most
+`AGENCY_REPORTS_TENANT_PENDING_LIMIT` per tenant). Read the p95 render time from the dashboard's *Reports — Assembly and Render Duration (p95)*
+panel (`agency_reports_render_seconds`, send to applied callback, so it includes the queue wait:
+read it outside a burst) or the
+function's logs (`record.done … ms`). With renders of about a minute, 15 minutes covers a burst of
+about 40 runs; at the function's 300 s ceiling it covers 6.
+
+**When it is too short**, a queued message is not lost, only late, but the tick cannot tell the
+two apart: it re-sends the run as a new attempt (another message at the back of the same
+backlog), the first attempt's message is dropped unrendered when the function reaches it (past its
+`superseded_after`), and after `AGENCY_REPORTS_MAX_ATTEMPTS` sends the run fails
+`render_timed_out` although nothing was broken. A render that started before the timeout and
+finished after it is not wasted: every attempt writes the run's same output keys, and before
+re-sending or failing a run the tick looks for them in S3 and applies the run as rendered when
+they are all there. The signs: `record.superseded` lines in the function's logs, the queue's
+`ApproximateAgeOfOldestMessage` near or above the timeout, the DLQ empty, and runs failing
+`render_timed_out` right after a burst (a scheduled send time). The remedies, cheapest first:
+raise `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (through `reports_render_timeout_seconds`; a lost message
+is then retried that much later), spread
+subscriptions' send times, or raise the mapping's `maximum_concurrency` (each render holds a
+Chromium of 2 GB). The default stays at 15 minutes: it is ample for the bursts reports see today,
+and a longer one only delays the retry of a genuinely lost message.
+
 ## Alert runbooks
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page, and for the carrier credential rules. The insights rules first: a stale or holed Insights page costs no
+warn (Slack) and never page, for the carrier credential rules, and for the reports rules (warn
+only). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
 *Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
 (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
@@ -805,6 +917,51 @@ retention B20 promises.
 Postgres or its pool; a lock wait on a credential row being revoked or rotated clears on its own.
 
 **Do:** fix Postgres. The sweep is idempotent: the next hourly pass, or a restart, catches up.
+
+### `agy-reports-pending-too-long`
+
+**Means:** the oldest report run still queued, assembling or rendering has been older than
+900 s for 10 minutes (`agency_reports_oldest_pending_seconds`), so it is 25+ minutes old: past
+one render re-send. Its requester sees it spinning. Dialling is unaffected.
+
+**Check:** "Reports: when runs are stuck" above: the pending panel's status split, the run rows,
+then the queue, its DLQ and the Lambda's logs.
+
+**Do:** fix the stage that holds the runs (Postgres for assembly; the renderer, its deploy or the
+callback settings for rendering). The tick re-sends and finally fails silent runs, so the gauge
+comes down by itself; users re-run the failed ones.
+
+### `agy-reports-failing`
+
+**Means:** 4+ report runs ended `failed` in an hour (`agency_reports_runs_total{status="failed"}`).
+
+**Check:** the failed runs' `error.code`. `assembly_failed`, `subject_unavailable`: the server's
+assembly. `subject_changed`: a campaign's zone was edited while its run waited; nothing to fix.
+`dataset_unreadable`, `render_failed`, `upload_failed`: the renderer (its logs; an S3 error is
+its role or the bucket; a missing `dataset.json`, for a message replayed after the 7-day dataset
+lifecycle, reads as `AccessDenied` because the renderer's role has no `ListBucket`).
+`render_failed` with renderer version `inline-unavailable`: the server is on
+`AGENCY_REPORTS_RENDERER=inline` without the renderer (the production image); its boot log says
+so; set `sqs`. `dataset_version_unsupported`: the server was deployed
+before the renderer; apply the renderer (aws/README.md, "Deploy order"). `render_timed_out`: no
+callback, as in `agy-reports-pending-too-long`. A renderer that started failing after an apply:
+roll `live` back (aws/README.md, "Rollback").
+
+**Do:** fix the cause; users then use "Run again", and subscriptions send the next period as
+usual.
+
+### `agy-reports-callback-bad-signature`
+
+**Means:** the server refused at least one render callback in 15 minutes because its HMAC did not
+verify or its timestamp was more than 300 s off (`agency_reports_callbacks_total{result="bad_signature"}`).
+
+**Check:** whether reports are failing or pending too. If so, the Lambda's and the server's
+`AGENCY_REPORTS_CALLBACK_SECRET` differ (a rotation half done) or a clock is minutes off. If
+reports are otherwise fine, something else is posting to `/webhooks/reports/rendered`: look at the
+callers in the access logs.
+
+**Do:** make the two secrets equal (`reports_callback_secret` and apply; `docker/.env` and
+recreate the server), then let users re-run what failed meanwhile.
 
 ## Releases and versioning
 

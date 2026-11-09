@@ -8,6 +8,7 @@ import { startAgencyIngestReaper } from '../agency/agency-ingest.service.js';
 import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurrency-control.js';
 import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
 import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
+import { startReportPipeline, type ReportPipeline } from '../agency/reports/pipeline.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -30,7 +31,12 @@ import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
  * periodic `startAgencyIngestReaper()`, whose handle is kept and cleared on shutdown; and
  * the insights rollup job (`agency/insights-rollup-job.ts`, migration 0012), started after
  * the runtime (the startup reap settles attempts first, and those writes mark their buckets)
- * and stopped first.
+ * and stopped first; and the report pipeline (`agency/reports/pipeline.ts`: the assembler and the
+ * reports tick, docs/reports.md RP10), started last. Its stop is bounded as a whole (20 s) and
+ * overlaps the completion-notice drain wherever that runs: with media workers the shutdown plan
+ * runs it among the concurrent drains ({@link getReportPipeline}, `index.ts`); in one process this
+ * stop runs it beside the rollup job's and the runtime's (idempotent: the same promise). Both report loops start whatever the `agency_reports_enabled` flag says: the flag
+ * gates requests.
  */
 
 let runtime: AgencyRuntime | null = null;
@@ -47,6 +53,16 @@ export function configureAgencyRuntime(options: AgencyRuntimeOptions): void {
 }
 /** The stop {@link startAgency} returned while it has not yet run; null otherwise. */
 let activeStop: (() => Promise<void>) | null = null;
+/** The report pipeline {@link startAgency} started, until its stop has run. */
+let activeReports: ReportPipeline | null = null;
+
+/**
+ * The report pipeline, or null before `startAgency` and after its stop. The shutdown plan drains
+ * it with the other drains (`index.ts`), so its bounded wait overlaps theirs.
+ */
+export function getReportPipeline(): ReportPipeline | null {
+  return activeReports;
+}
 
 export function ensureAgencyRuntime(redis: Redis | null, keyPrefix: string): AgencyRuntime {
   if (runtime) return runtime;
@@ -105,15 +121,27 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
 
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
+  // Main process only, like the rollup job: one assembler and one tick per deployment.
+  const reports = startReportPipeline(ctx.config);
+  activeReports = reports;
 
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
-    // The batch in flight commits or rolls back; marks left over are the next boot's.
-    await insightsRollup.stop();
-    // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents
-    // are NOT returned to the pool: they rehydrate into `break`.
-    await agencyRuntime.stop();
+    // The report pipeline stops beside the rest (it needs none of it), so its bounded wait
+    // overlaps the runtime's completion-notice drain, which in one process runs in
+    // `agencyRuntime.stop()`. With media workers it already stopped as a shutdown drain
+    // (`index.ts`), and this is the same, settled promise.
+    const reportsStopped = reports.stop();
+    const rest = (async () => {
+      // The batch in flight commits or rolls back; marks left over are the next boot's.
+      await insightsRollup.stop();
+      // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents
+      // are NOT returned to the pool: they rehydrate into `break`.
+      await agencyRuntime.stop();
+    })();
+    await Promise.all([reportsStopped, rest]);
+    if (activeReports === reports) activeReports = null;
     if (getConcurrencyControl() === decorated) setConcurrencyControl(undecorated);
   };
   activeStop = stop;

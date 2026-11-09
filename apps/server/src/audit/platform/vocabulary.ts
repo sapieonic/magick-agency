@@ -52,7 +52,7 @@ import {
  * member of this tenant at all. A reader asking "who let this person in" and a
  * reader asking "who is on the queue this afternoon" are not the same reader.
  */
-export type AuditActionGroup = 'Campaign' | 'Calls' | 'Staffing' | 'Team';
+export type AuditActionGroup = 'Campaign' | 'Calls' | 'Staffing' | 'Reports' | 'Team';
 
 /**
  * WHICH ZONE an audited action belongs to: the agency dialer, or the shared
@@ -175,6 +175,13 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_customer_history.searched', label: 'Customer history searched', group: 'Calls', product: 'agency' },
   { value: 'agency_customer_history.exported', label: 'Customer history exported', group: 'Calls', product: 'agency' },
 
+  // Reports (docs/reports.md): who asked for which report, who downloaded it, and the schedules.
+  { value: 'agency_report.requested', label: 'Report requested', group: 'Reports', product: 'agency' },
+  { value: 'agency_report.downloaded', label: 'Report downloaded', group: 'Reports', product: 'agency' },
+  { value: 'agency_report_subscription.created', label: 'Scheduled report created', group: 'Reports', product: 'agency' },
+  { value: 'agency_report_subscription.updated', label: 'Scheduled report changed', group: 'Reports', product: 'agency' },
+  { value: 'agency_report_subscription.deleted', label: 'Scheduled report deleted', group: 'Reports', product: 'agency' },
+
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned from campaign', group: 'Staffing', product: 'agency' },
@@ -224,6 +231,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_manual_call', label: 'Soft-phone call' },
   { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
   { value: 'customer_history', label: 'Customer history search' },
+  { value: 'agency_report', label: 'Report' },
+  { value: 'agency_report_subscription', label: 'Scheduled report' },
   { value: 'dnc_entry', label: 'Do-not-call entry' },
   // "Invitation", not "Membership": the rows filed under it are about the token
   // and its life (sent, accepted), and on every refusal path there is no

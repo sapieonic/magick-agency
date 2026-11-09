@@ -120,15 +120,18 @@ export function isUsableTimezone(timezone: string | null | undefined): boolean {
   return formatterFor(trimmed) !== null;
 }
 
-interface LocalParts {
+export interface LocalParts {
   year: number; month: number; day: number;
   hour: number; minute: number; second: number;
   /** ISO-8601: 1=Mon…7=Sun. */
   isoDow: number;
 }
 
-/** The wall clock in `timezone` at `instant`, or null when the zone is unusable. */
-function localParts(timezone: string, instant: Date): LocalParts | null {
+/**
+ * The wall clock in `timezone` at `instant`, or null when the zone is unusable. Exported for the
+ * report schedule (`agency/reports/schedule.ts`), so the repo has one wall-clock reader.
+ */
+export function localParts(timezone: string, instant: Date): LocalParts | null {
   const fmt = formatterFor(timezone);
   if (!fmt || !Number.isFinite(instant.getTime())) return null;
   const out: Record<string, number> = {};

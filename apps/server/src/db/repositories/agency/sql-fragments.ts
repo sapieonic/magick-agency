@@ -157,7 +157,7 @@ export const AGENCY_RESOLVED_ZONE_JOIN_SQL =
  * `campaign`, serves the insights page: its selector is a campaign and it binds
  * four (no account); the shared part is the same text.
  *
- * Callers append their own outer SELECT over `intervals i` (columns `state`,
+ * Callers append their own outer SELECT over `intervals i` (columns `session_id`, `state`,
  * `break_reason`, `started`, `ended`, plus the variant's key).
  */
 const OCCUPANCY_VARIANTS = {
@@ -325,6 +325,9 @@ ${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
          -- recover, and the failure being fixed is a number that moves between
          -- reads, not a number that is wrong.
          SELECT ${v.intervalKey},
+                -- The session each interval belongs to, for the readers that group by it (the
+                -- report builders' per-session and per-day reads, agency/reports/datasets/).
+                ev.session_id,
                 ev.to_state AS state,
                 ev.break_reason,
                 GREATEST(ev.at, $2::timestamptz) AS started,
@@ -416,6 +419,26 @@ export const HUMAN_CONNECT_ATTEMPT_SQL = `${CONVERSATION_ATTEMPT_SQL}
 export const PLACED_FIRST_DIAL_SQL = `(a.dialed_at IS NOT NULL AND a.redial_number = 0)`;
 
 /**
+ * The attempts whose `ended_at - bridged_at` is the AGENT's talk time: bridged, ended, and not
+ * `orphaned` (the reaper stamps an orphan's `ended_at` at sweep time). The talk filter of
+ * {@link AGENCY_ATTEMPT_METRICS_SQL}, exported for the reads that show one row's talk time (the
+ * report detail sheets, `report-dataset-reads.ts`). Names the attempt `a`.
+ */
+export const AGENT_LEG_TALK_ATTEMPT_SQL = `a.bridged_at IS NOT NULL
+                  AND a.ended_at IS NOT NULL
+                  AND a.outcome IS DISTINCT FROM 'orphaned'`;
+
+/**
+ * The attempts whose `wrapup_ended_at - wrapup_started_at` is MEASURED wrap-up (both stamps, and
+ * one of {@link WRAPUP_MEASURED_RESOLUTIONS_SQL}). The wrap-up filter of
+ * {@link AGENCY_ATTEMPT_METRICS_SQL}, exported as {@link AGENT_LEG_TALK_ATTEMPT_SQL} is. Names the
+ * attempt `a`.
+ */
+export const MEASURED_WRAPUP_ATTEMPT_SQL = `a.wrapup_started_at IS NOT NULL
+                  AND a.wrapup_ended_at IS NOT NULL
+                  AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL.replace('wrapup_resolution', 'a.wrapup_resolution')}`;
+
+/**
  * The FIVE metric expressions every agency attempts aggregate selects, in ONE
  * spelling.
  *
@@ -463,18 +486,14 @@ export const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
               -- contribute its whole time-until-sweep to whichever group it lands
               -- in -- an agent's day, their roster line, or a grouped cell.
               COALESCE(SUM(EXTRACT(EPOCH FROM (a.ended_at - a.bridged_at))) FILTER (
-                WHERE a.bridged_at IS NOT NULL
-                  AND a.ended_at IS NOT NULL
-                  AND a.outcome IS DISTINCT FROM 'orphaned'), 0)::text AS talk_seconds,
+                WHERE ${AGENT_LEG_TALK_ATTEMPT_SQL}), 0)::text AS talk_seconds,
               -- MEASURED wrap-up, never the wrapup_seconds allotment copied from
               -- the campaign at wrap-up entry (averaging that hands
               -- the operator their own setting back as if it were evidence), and
               -- only the three resolutions that are evidence of how long wrap-up
               -- takes.
               COALESCE(SUM(EXTRACT(EPOCH FROM (a.wrapup_ended_at - a.wrapup_started_at))) FILTER (
-                WHERE a.wrapup_started_at IS NOT NULL
-                  AND a.wrapup_ended_at IS NOT NULL
-                  AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL.replace('wrapup_resolution', 'a.wrapup_resolution')}), 0)::text
+                WHERE ${MEASURED_WRAPUP_ATTEMPT_SQL}), 0)::text
                 AS wrapup_seconds,
               -- The connect rate's two counts (HUMAN_CONNECT_ATTEMPT_SQL): every
               -- connect_rate_pct the agent record serves is human_connects / first_dials.

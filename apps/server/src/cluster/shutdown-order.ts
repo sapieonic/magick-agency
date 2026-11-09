@@ -6,8 +6,10 @@
  *     campaign lease is given up, ticks in flight are waited for (≤ 5 s), and every media
  *     worker is told no dial may go out. Nothing below can be overtaken by a new dial.
  *  2. **The drains, together**: the media workers (each ends its calls and exits; 30 s,
- *     then SIGKILL and a slot reap) beside the completion-notice drain (≤ 30 s), and the
- *     analysis stop (its children requeue their jobs; 15 s). Run one after the other they
+ *     then SIGKILL and a slot reap) beside the completion-notice drain (≤ 30 s), the
+ *     analysis stop (its children requeue their jobs; 15 s) and the report pipeline's stop
+ *     (≤ 20 s for all of it, `agency/reports/pipeline.ts`; in one process it runs inside
+ *     agency's stop instead, beside the notice drain there). Run one after the other they
  *     would add up past the container's 45 s grace.
  *  3. **The rest, one at a time, in reverse start order**: agency (pacing is already
  *     halted and its notices drained), voice, platform (the audit buffers last).

@@ -108,13 +108,13 @@ unique.
    scoped to the Redis db because pub/sub is server-wide); `startVoice` (S3, clip cache and sweeper,
    decode scratch reap, guard host and bridge, startup self-heal); `startAgency` (ingest reaper, then
    `AgencyRuntime.start()`, which runs the startup reaper before the pacing supervisor, then the
-   insights rollup job);
+   insights rollup job, then the report pipeline: assembler and reports tick, `docs/reports.md`);
    `startAnalysis` (worker, retention purge). Voice starts before agency so the bridge's self-heal
    finishes before any pacing tick.
 6. `app.listen`, only after the bootstraps, so no request lands before the startup reap.
 
 Shutdown closes HTTP first (`app.close()`), then runs the stops in reverse: analysis; agency
-(the insights rollup job's batch in flight first; then pacing, waiting up to 5 s for ticks and owner sweeps in flight; then reaper, sweeps, dialer and wrap-up
+(the report pipeline first: the assembler's run in flight, the tick, the inline renderer's queue; then the insights rollup job's batch in flight; then pacing, waiting up to 5 s for ticks and owner sweeps in flight; then reaper, sweeps, dialer and wrap-up
 timers; completion notices drained up to 30 s); voice (the bridge ends live calls, then the guard host, then the PostHog flush); platform
 (both audit buffers flushed last). Then Redis and the pool close. Pinned by
 `apps/server/test/integration/agency/runtime-boot-order.test.ts`.

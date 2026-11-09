@@ -25,6 +25,8 @@ that day, and so do the server, db and console files the dedicated caller ID (DN
 and its review fixes added or changed. The files Plivo steps 3 and 4 (2026-11-07) added are counted
 statically and marked `~` (an `it.each` table or a loop counts as one, so they undercount); a file
 they changed shows its earlier count plus the cases the change added or removed, marked `~` too.
+The files the reports feature (RP1–RP16, 2026-11-08) added or changed show the counts Vitest
+printed that day for unit files and for the integration files of the final run.
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -246,7 +248,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
 | `apps/server/test/unit/agency/my-contacts-summary-caller-id.test.ts` | 2 |
 | `apps/server/test/unit/agency/insights-rollup-job.test.ts` | 4 |
-| `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 5 |
+| `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 6 |
 | `apps/server/test/unit/agency/our-fault-redial.test.ts` | 20 |
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-assignment.test.ts` | 25 |
@@ -357,7 +359,7 @@ Files: `operation.ts`, `unstaff.ts`
 
 ### `apps/server/src/agency/insights/`
 
-The campaign insights page's reads (docs/insights.md "API", "API (range reads)"), assembled from `db/repositories/agency/insights-reads.repository.ts`, the insights rollup and the pacing history, and served by `api/routes/proxy-agency-insights.routes.ts`. Over a range: `range.ts` (the range query: zoned ISO instants, rounded out to the rollup's 15-minute buckets, the lifetime default, the bucket default and limits, the 400 reasons, the cache suffix), `activity.ts` (calls, outcomes, callbacks, overrides, no-outcome, DNC marks and the per-agent table: the rollup's one-snapshot activity read joined to agent state time, callback timing, the pacing history's refused redials, soft-phone calls and the allocation's open callbacks through the cache), `trends.ts` (the zero-filled series with the online peak, best hours), `health.ts` (the guardrail's 24 h window and its auto-pauses, not the carrier-account pause's, the pacing history's pre-dial blocks, stalls and concurrency minutes, caller IDs, carrier failures, recording). As of now: `summary.ts` (header, settings, the status headline, the roster; the running headline reads the stats strip through the route's internal handler hop), `roster.ts` (the roster block and its three reconciliations), `readiness.ts` (the draft checklist, pure checks over gathered facts), `allocation.ts` (the per-agent table: the grouped contact counts, the progress read's presence and absence rule, the dial counters from the rollup by the dialling agent, imbalance, at risk, the assignment history), `uploads.ts` (the committed upload history), `transitions.ts` (lifecycle transitions out of the merged activity trail), `settings.ts` (the settings block, the calling-hours default of decision IN7, `max_attempts`), `cache.ts` (the single-flight cache in front of every cached section, keyed by the campaign's status and `updated_at`, and for a range read by the served range and bucket), `shared.ts` (success and override codes, user references, the reconciliation entry; the users' names come from `agentNamesOrNone` in `agency/agency-agent-identity.ts`).
+The campaign insights page's reads (docs/insights.md "API", "API (range reads)"), assembled from `db/repositories/agency/insights-reads.repository.ts`, the insights rollup and the pacing history, and served by `api/routes/proxy-agency-insights.routes.ts`. Over a range: `range.ts` (the range query: zoned ISO instants, rounded out to the rollup's 15-minute buckets, the lifetime default, the bucket default and limits, the 400 reasons, the cache suffix), `activity.ts` (calls, outcomes, callbacks, overrides, no-outcome, DNC marks and the per-agent table: the rollup's one-snapshot activity read joined to agent state time, callback timing, the pacing history's refused redials, soft-phone calls and the allocation's open callbacks through the cache), `trends.ts` (the zero-filled series with the online peak, best hours), `health.ts` (the guardrail's 24 h window and its auto-pauses, not the carrier-account pause's, the pacing history's pre-dial blocks, stalls and concurrency minutes, caller IDs, carrier failures, recording). As of now: `summary.ts` (header, settings, the status headline, the roster; the running headline reads the stats strip through `api/routes/helpers/live-stats.ts`, the internal handler hop the summary route and the campaign report share), `roster.ts` (the roster block and its three reconciliations), `readiness.ts` (the draft checklist, pure checks over gathered facts), `allocation.ts` (the per-agent table: the grouped contact counts, the progress read's presence and absence rule, the dial counters from the rollup by the dialling agent, imbalance, at risk, the assignment history), `uploads.ts` (the committed upload history), `transitions.ts` (lifecycle transitions out of the merged activity trail), `settings.ts` (the settings block, the calling-hours default of decision IN7, `max_attempts`), `cache.ts` (the single-flight cache in front of every cached section, keyed by the campaign's status and `updated_at`, and for a range read by the served range and bucket), `shared.ts` (success and override codes, user references, the reconciliation entry; the users' names come from `agentNamesOrNone` in `agency/agency-agent-identity.ts`).
 
 Files: `activity.ts`, `allocation.ts`, `cache.ts`, `health.ts`, `range.ts`, `readiness.ts`, `roster.ts`, `settings.ts`, `shared.ts`, `summary.ts`, `transitions.ts`, `trends.ts`, `uploads.ts`
 
@@ -383,6 +385,50 @@ Files: `assemble.ts`, `csv.ts`, `cursor.ts`, `requests.ts`, `search-store.ts`, `
 | `apps/server/test/unit/agency/customer-history/cursor-and-requests.test.ts` | 8 |
 | `apps/server/test/unit/agency/customer-history/search-number-agreement.test.ts` | 16 + 1 expected fail (the ingest keeps a bracketed trunk `(0)`, CH12 e) |
 | `apps/server/test/integration/api/customer-history.test.ts` | 53 |
+
+### `apps/server/src/agency/reports/`
+
+Reports (docs/reports.md, RP1–RP16), the foundation's pure parts. `schedule.ts` (the local-date windows and the subscription schedule in a named zone: `localDayBounds` (a local inclusive date window → the `[start, end)` instants a run reads), `periodFor` (daily the previous local day, weekly the seven days ending the day before, monthly the previous calendar month), `nextRunAt` / `previousRunAt` (sends at `send_local_time` on the cadence's day; the clock-change rule: a time in a gap runs as far past it as it was into it, a time that happens twice runs at the first), `localInstant`, `localDateOf`; reads the wall clock with `calling-hours.ts`'s `localParts`) and `report-keys.ts` (every S3 key of a run, `report-datasets/…` and `reports/…`, from the run row's UUIDs only, `isReportOutputKey` for the render callback). The rows are `db/repositories/agency/report-run.repository.ts` and `report-subscription.repository.ts`; the config `agency.reports` (`config/blocks/agency.ts`); the S3 helpers `uploadStream`, `uploadJson` and `getPresignedUrl`'s file name in `storage/s3.ts`.
+
+Files: `report-keys.ts`, `schedule.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/agency/reports/schedule.test.ts` | 30 |
+| `apps/server/test/unit/agency/reports/report-keys.test.ts` | 6 |
+| `apps/server/test/integration/agency/report-run-repository.test.ts` | 24 |
+| `apps/server/test/integration/agency/report-subscription-repository.test.ts` | 15 |
+
+The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/`, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, all three under one deadline (`REPORT_BUILD_TIMEOUT_MS`), an `AbortSignal` the builder, the cursor and the uploads honour, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable` (a subscription disabled only when `probeSubscriptionSubject` agrees the subject is gone), `ReportZoneChangedError` → `subject_changed`, anything else `assembly_failed`; the first pass after start reclaims runs orphaned by a restart, and `stop()` waits at most 20 s), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback; `checkInlineRenderer`, the boot-time load under `inline`), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` (a period skipped while `agency_reports_enabled` is off for the account; a campaign's zone by `campaignZone`) with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first; no email while the flag is off), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
+
+Also `failure-messages.ts` (one British-English sentence per `ReportFailureCode`: the run view and the run repository's failing writes read it, never the renderer's or assembler's own text), `subscription-subject.ts` (`probeSubscriptionSubject`: the tick's check that a subscription's subject is still reportable under the builders' own rule, and the campaign's current zone), `zone.ts` (the one `pg_timezone_names` lookup, matched as `AT TIME ZONE` matches, found zones cached in lower case: `postgresZoneName`, Postgres's name for a zone, which the dataset builders resolve the run's zone with; `postgresKnowsZone` on top of it, a request's zone must exist there).
+
+Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispatch.ts`, `failure-messages.ts`, `pipeline.ts`, `run-view.ts`, `subscription-subject.ts`, `tick.ts`, `zone.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/agency/reports/assembler.test.ts` | 28 |
+| `apps/server/test/unit/agency/reports/tick.test.ts` | 23 |
+| `apps/server/test/unit/agency/reports/dispatch.test.ts` | 13 |
+| `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 16 |
+| `apps/server/test/integration/api/agency-reports.test.ts` | 3 |
+| `apps/server/test/integration/api/agency-reports-routes.test.ts` (the per-user rate under a burst of requests, `X-Account-Id` in upper case, re-enabling a subscription) | 6 |
+| `apps/server/test/integration/api/agency-reports-e2e.test.ts` (the real pipeline from config: routes, assembler, real builders, the inline renderer, download and email; and SQS mode, the renderer as the Lambda runs it and the signed callback) | 8 |
+| `apps/server/test/integration/agency/report-subscription-subject.test.ts` (`probeSubscriptionSubject` on Postgres) | 3 |
+| `apps/server/test/integration/agency/report-zone.test.ts` (`postgresKnowsZone` and `postgresZoneName` against `pg_timezone_names`) | 4 |
+| `apps/server/test/integration/agency/report-assembler-deadline.test.ts` (the deadline over the real cursor: a stalled upload and a long statement end `assembly_failed` with the cursor's transaction ended; a real builder stops at its next stage) | 5 |
+
+### `apps/server/src/agency/reports/datasets/`
+
+The report dataset builders (docs/reports.md "Datasets", RP1): `index.ts` (`REPORT_DATASET_BUILDERS`, one per kind), `types.ts` (the seam with the assembler: `ReportBuildContext`, `ReportDetailSource`, `BuiltReport`, `ReportSubjectUnavailableError`, `ReportZoneChangedError`), `agent.ts` (`buildAgentReview`: the agent record and roster reads, presence, days, timeline, outcomes, follow-through, sentiment for supervisors; the `self` audience's stripped blocks and masked calls sheet), `campaign.ts` (`buildCampaignReport`: the Insights `compute*` reads verbatim and agent names; the attempts sheet shared with the account), `account.ts` (`buildAccountReport`: per-campaign Insights figures, totals summed with the rate recomputed, the roster, the rollup re-bucketed into the report's zone), `agent-presence.ts` (pure: state intervals into local days, sum-preserving rounding, the timeline), `definitions.ts` (each kind's definitions page), `shared.ts` (the window as `ReportRange` and local days, tenancy, `readAccountRoster` (the roster screen's chain), `insightsRangeFor` (the Insights routes' parser), `resolveReportZone`, labels (outcomes in the console's words, `attemptOutcomeLabel`), the shared notes (`commonNotes`), `withAgentNames` (the detail sheets' agent names, seeded with the builder's and batched per 500 rows), `maskPhone` (RP7), `roundPreservingSum`). Their own SQL is `db/repositories/agency/report-dataset-reads.ts` (from the barrel: the agent's intervals, attempt days, outcomes, callback classes, Do Not Call marks, soft-phone calls, sentiment, the account's covered campaigns, the detail statements, and `reportCursorRows`, the server-side cursor every detail source streams through and releases in `finally`).
+
+Files: `account.ts`, `agent-presence.ts`, `agent.ts`, `campaign.ts`, `definitions.ts`, `index.ts`, `shared.ts`, `types.ts`; `db/repositories/agency/report-dataset-reads.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/agency/report-datasets.test.ts` | 28 |
+| `apps/server/test/integration/api/report-datasets-oracle.test.ts` | 27 |
+| `apps/server/test/integration/load/report-datasets-scale.test.ts` | 1 (opt-in, `REPORT_DATASETS_SCALE=1`) |
 
 ### `apps/server/src/ai/`
 
@@ -458,7 +504,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/auth.routes.test.ts` | ~19 |
 | `apps/server/test/integration/api/invite-every-role.test.ts` | 12 |
 | `apps/server/test/integration/api/invite-security-audit.test.ts` | 47 |
-| `apps/server/test/integration/api/notification.routes.test.ts` | ~6 |
+| `apps/server/test/integration/api/notification.routes.test.ts` | 6 |
 | `apps/server/test/integration/api/phone-number.routes.test.ts` | ~4 |
 | `apps/server/test/integration/api/platform-onboarding.e2e.test.ts` | ~2 |
 | `apps/server/test/integration/api/super-admin.routes.test.ts` | 51 |
@@ -469,7 +515,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/unit/api/agency-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
-| `apps/server/test/unit/api/core-dispatch.test.ts` | 13 |
+| `apps/server/test/unit/api/core-dispatch.test.ts` | 14 |
 | `apps/server/test/unit/api/core-route-owners.test.ts` | 6 |
 | `apps/server/test/unit/api/platform-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/profile-route-auth.test.ts` | 13 |
@@ -510,13 +556,13 @@ Files: `agency-campaign.response.ts`, `call-error-message.ts`, `webrtc-call.resp
 
 ### `apps/server/src/api/routes/`
 
-Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`, `notification`, `feature-flags`, `super-admin*`, `proxy-agency-*`, `dnc`, `phone-number`, `call-analysis-profiles`. Internal handler instance: `agency.routes.ts`, `agency-campaigns.routes.ts`, `agency-agents.routes.ts`. Voice engine: `webhooks.routes.ts`, `webrtc-call.routes.ts`. Analysis: `webrtc-recordings.routes.ts`.
+Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`, `notification`, `feature-flags`, `super-admin*`, `proxy-agency-*`, `dnc`, `phone-number`, `call-analysis-profiles`. Internal handler instance: `agency.routes.ts`, `agency-campaigns.routes.ts`, `agency-agents.routes.ts`. Voice engine: `webhooks.routes.ts`, `webrtc-call.routes.ts`. The agency area's one session-less route: `webhooks/report-rendered.ts` (`POST /webhooks/reports/rendered`, the report renderer's HMAC-signed callback, registered by `agencyWebhooksPlugin` beside the agency plugin, in the limiter's `webhook` bucket). Reports: `proxy-agency-reports.routes.ts` with `proxy-agency-reports/` (`runs.ts`, `subscriptions.ts`, `shared.ts`: the injectable deps, the flag gate, `resolveReportTarget`). Analysis: `webrtc-recordings.routes.ts`.
 
 Route families: a large plugin keeps its exported function, hooks and module note in `<family>.routes.ts` and registers its routes from `<family>/` on the same instance, so the hooks apply to every one of them and the area plugins are unchanged: `agency/` (sessions, attempts, the soft phone's internal handlers and their refusal statuses and envelope, the agent's dial of one of their own contacts, `my-contact-call.ts`, shared helpers), `agency-campaigns/` (guards with the `ownedCampaign` preHandler, crud with the batched `GET /summaries`, stats, spine, retry, lifecycle), `proxy-agency-campaigns/` (ownership, crud, stats, activity, spine with the CSV export drain, lifecycle, retry, ingest), `proxy-agency-performance/` (the per-agent pairs, the whole-floor reads, shared), `proxy-agency-staffing/` (the `my-*` reads, campaign agents), `proxy-agency-softphone/` (the soft phone, docs/softphone.md §6: sessions and the switch, calls, reads, settings, shared actor / flag / envelope / enrichment), `proxy-agency-assignment/` (contact assignment, served without an internal handler hop: the supervisor's preview, commit, progress and history; the agents' dedicated caller IDs, `agent-caller-ids.ts`, DN5: list, set, release, only the set behind the flag (DN9); the agent's own contacts (`my-contacts.ts`; the summary's `caller_id` falls back to null when its read fails, `my-contacts-summary-caller-id.test.ts`) and their actions, retry and the per-contact call; the shared flag gate and refusals), `proxy-agency-insights/` (the campaign insights reads, docs/insights.md "API": summary, readiness, allocation, uploads in `as-of-now.ts`; activity, trends, health in `range.ts`, their query refused `400 invalid_insights_query` after the guards; the shared guard chain after `agency.supervise`: dialer flag, id shape, ownership probe), `proxy-agency-customers/` (customer history, docs/customer-history.md §2, served without an internal handler hop: `search.ts`, `timeline.ts`, `export.ts`, `options.ts` (`GET /customers/options`, the search box's default calling code); `shared.ts`, the guard chain after `agency.customer_history.read` (dialer flag, then the per-user search cap for search and export), the family's own JSON parser (`useFamilyJsonParser`: a body that is not JSON is `400 invalid_search_request`), the refusal bodies, the search lookup, `no-store` and the audit row), `super-admin/` (login, own account, tenants, admins, concurrency). Source-text guards read a whole family (`test/helpers/route-source.ts`).
 
-Shared helpers (`helpers/`): `create-account.ts` (`createTenantAccount`, the one account create both `POST /accounts` and the super-admin route make: one transaction under a lock on the tenant row, the name rule, the slug, and the zero-call settings row for a tenant admin's create), `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe; `ownedCoreCampaignOnce`, that probe read at most once per request; and `stringField`), `audit-bounds.ts` (`boundedSelector`, the bounded filters of an audit row: the retry routes and the customer-history export), `csv-attachment.ts` (the CSV `Content-Disposition` pair), `dialer-gate.ts` (`dialerEnabled`, the agency-dialer flag gate of the Insights and customer-history families), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `refusal.ts` (`sendRefusal`, the contact-assignment routes' `{ error, code, message, details? }` body), `settled.ts` (`settledValue`: independent reads started together, answered in order).
+Shared helpers (`helpers/`): `create-account.ts` (`createTenantAccount`, the one account create both `POST /accounts` and the super-admin route make: one transaction under a lock on the tenant row, the name rule, the slug, and the zero-call settings row for a tenant admin's create), `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe; `ownedCoreCampaignOnce`, that probe read at most once per request; and `stringField`), `audit-bounds.ts` (`boundedSelector`, the bounded filters of an audit row: the retry routes and the customer-history export), `live-stats.ts` (`liveStats`, the stats strip through the internal handler, shared by the Insights summary route and the campaign report's builder), `csv-attachment.ts` (the `Content-Disposition` pair: `attachmentHeader` for any extension, also the report downloads' presigned URLs; `csvAttachmentHeader`), `dialer-gate.ts` (`dialerEnabled`, the agency-dialer flag gate of the Insights and customer-history families), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `refusal.ts` (`sendRefusal`, the contact-assignment routes' `{ error, code, message, details? }` body), `settled.ts` (`settledValue`: independent reads started together, answered in order).
 
-Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/device-away.ts`, `agency/helpers.ts`, `agency/my-contact-call.ts`, `agency/redial.ts`, `agency/sessions.ts`, `agency/softphone-answer.ts`, `agency/softphone.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `client-config.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/audit-bounds.ts`, `helpers/core-campaign.ts`, `helpers/create-account.ts`, `helpers/csv-attachment.ts`, `helpers/dialer-gate.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/refusal.ts`, `helpers/settled.ts`, `helpers/softphone-list-query.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-assignment.routes.ts`, `proxy-agency-assignment/agent-caller-ids.ts`, `proxy-agency-assignment/my-contact-actions.ts`, `proxy-agency-assignment/my-contacts.ts`, `proxy-agency-assignment/shared.ts`, `proxy-agency-assignment/supervisor.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/carriers.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-customers.routes.ts`, `proxy-agency-customers/export.ts`, `proxy-agency-customers/options.ts`, `proxy-agency-customers/search.ts`, `proxy-agency-customers/shared.ts`, `proxy-agency-customers/timeline.ts`, `proxy-agency-insights.routes.ts`, `proxy-agency-insights/as-of-now.ts`, `proxy-agency-insights/range.ts`, `proxy-agency-insights/shared.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-softphone.routes.ts`, `proxy-agency-softphone/calls.ts`, `proxy-agency-softphone/reads.ts`, `proxy-agency-softphone/sessions.ts`, `proxy-agency-softphone/settings.ts`, `proxy-agency-softphone/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webhooks/plivo.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
+Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/device-away.ts`, `agency/helpers.ts`, `agency/my-contact-call.ts`, `agency/redial.ts`, `agency/sessions.ts`, `agency/softphone-answer.ts`, `agency/softphone.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `client-config.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/audit-bounds.ts`, `helpers/core-campaign.ts`, `helpers/create-account.ts`, `helpers/csv-attachment.ts`, `helpers/dialer-gate.ts`, `helpers/drain-pages.ts`, `helpers/live-stats.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/refusal.ts`, `helpers/settled.ts`, `helpers/softphone-list-query.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-assignment.routes.ts`, `proxy-agency-assignment/agent-caller-ids.ts`, `proxy-agency-assignment/my-contact-actions.ts`, `proxy-agency-assignment/my-contacts.ts`, `proxy-agency-assignment/shared.ts`, `proxy-agency-assignment/supervisor.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/carriers.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-customers.routes.ts`, `proxy-agency-customers/export.ts`, `proxy-agency-customers/options.ts`, `proxy-agency-customers/search.ts`, `proxy-agency-customers/shared.ts`, `proxy-agency-customers/timeline.ts`, `proxy-agency-insights.routes.ts`, `proxy-agency-insights/as-of-now.ts`, `proxy-agency-insights/range.ts`, `proxy-agency-insights/shared.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-softphone.routes.ts`, `proxy-agency-softphone/calls.ts`, `proxy-agency-softphone/reads.ts`, `proxy-agency-softphone/sessions.ts`, `proxy-agency-softphone/settings.ts`, `proxy-agency-softphone/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webhooks/plivo.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
 
 | Test file | Cases |
 |---|---|
@@ -557,6 +603,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 50 |
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 22 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
+| `apps/server/test/unit/api/routes/proxy-agency-reports.routes.test.ts` | 49 |
 
 ### `apps/server/src/api/validators/`
 
@@ -639,6 +686,7 @@ Files: `agency.ts`, `analysis.ts`, `platform.ts`, `voice.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/bootstrap/agency-reaper-wiring.test.ts` | 4 |
+| `apps/server/test/unit/bootstrap/agency-reports-wiring.test.ts` | 3 |
 | `apps/server/test/unit/bootstrap/platform.test.ts` | 4 |
 | `apps/server/test/unit/bootstrap/voice-credential-housekeeping.test.ts` | 6 |
 
@@ -715,7 +763,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 9 |
+| `apps/server/test/unit/config/config.test.ts` | 18 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
@@ -796,9 +844,9 @@ Files: `admission.ts`, `bridge-types.ts`, `browser-leg-media.ts`, `carrier-urls.
 
 The agency repository (`agency.repository.ts`, decision B12), membership invites, notification deliveries and preferences, the telephony provider repository (uncached, so a status change is seen on the next read), and their models.
 
-The agency repository is a folder, `repositories/agency/`, behind the `agency.repository.ts` barrel: every caller outside the folder imports the barrel and the unit suites `vi.mock` it, so a mock of the barrel replaces what callers use. One file per class: `campaign.repository.ts` (`AgencyCampaignRepository`; its retry and dashboard methods delegate to free functions in `campaign-retry.ts` and `campaign-stats.ts`), `contact.repository.ts` (its `parkForWriteUp` holds an ended call's contact, or a wrap-up redial's, in `connected` for the write-up only while the call still holds it), `attempt.repository.ts`, `agent-session.repository.ts`, `fleet-metrics.repository.ts` (`AgencyAbandonmentRepository`, `AgencyLiveConcurrencyRepository`), `manual-call.repository.ts` (`AgencyManualCallRepository`: the soft phone's `agency_manual_calls` spine, docs/softphone.md), `softphone-settings.repository.ts` (`AgencySoftphoneSettingsRepository` and the settings validator) and `agent-stats.repository.ts` (`AgencyAgentStatsRepository`; `roster` and `groupedStats` delegate to `agent-roster-stats.ts` and `agent-grouped-stats.ts`). Contact assignment adds `assignment.repository.ts` (`AgencyAssignmentRepository`: the supervisor's operations, previewed and committed from one plan, the unstaff return, the per-contact history), `assignment-reads.repository.ts` (`AgencyAssignmentReadRepository`: the progress per agent and the agent's own contacts, list and summary) and `agent-retry.repository.ts` (`AgencyAgentRetryRepository`: the agent's reopen of not-reached contacts, which marks each for the `agent_reopened` flag on its first paced dial, and the claim for their own dial, CA7), and `agent-caller-id.repository.ts` (`AgencyAgentCallerIdRepository`, DN1–DN7: `EFFECTIVE_DEDICATION_SQL`, the one definition of a dedication that counts (its agent staffed on the campaign, and set since), applied by every read; the dial paths' one-query map of a campaign's dedicated caller IDs, the supervisor's set (one transaction under an advisory lock, the campaign row and the staffing row `FOR SHARE`) with the `taken` mapping of a unique-violation race, list and release; the campaign PATCH's guard runs in `campaign.repository.ts`'s `updateLocked`; the unstaff release is a CTE of `assignment.repository.ts`'s `returnOnUnstaff`; `agent-caller-id-repository.test.ts`), and `assignment-sql.ts`, the one definition of a contact's bucket for its owner and of whether its agent may retry it, which all three read. `drilldown-sql.ts` is the one definition of each insights roster bucket (`waiting=due_now|retry|callback`, `attempted`) and attempt slice (placed, the half-open dialled window, redial, agent manual / reopened, agent by user, override applied), read by the Contacts and Call attempts lists, their opt-in totals (`countListed`) and the insights reads, and re-exported from the barrel (docs/insights.md, WS F). Three leaves hold what more than one file emits: `sql-fragments.ts` (the shared SQL spellings: phone digits, resolved zone, occupancy intervals (per agent, per roster and per campaign), the five attempt metrics, the connect rate's two counts (`HUMAN_CONNECT_ATTEMPT_SQL`, `PLACED_FIRST_DIAL_SQL`, read by `/stats`, the agent record and the rollup alike), the voicemail code, `CONVERSATION_ATTEMPT_SQL` (a wrap-up redial chain counted once, as one conversation), the campaign INSERT columns), `query-builders.ts` (parameter accumulator, filter and keyset builders) and `projections.ts` (row to wire shape, including the manual call's `AgencyManualCall`). The campaign insights page adds `insights-reads.repository.ts` (`AgencyInsightsReadRepository`: the roster buckets, the allocation per owner and its dial counters (from the rollup's per-agent rows, never the attempt table), the dial pace, the contacts on DNC, the upload history, and the range reads' small statements: soft-phone calls tagged to the campaign, campaign-scoped agent DNC marks, the guardrail's 24 h window for one campaign; each statement exported so its plan test EXPLAINs exactly what runs) and `insights-sql.ts`, the one definition of the roster buckets (due now, retry, callback, attempted, the suppressed split) that the summary counts and the contacts list's drill-down filters are to share. It also adds `insights-rollup.repository.ts` (`AgencyInsightsRollupRepository`, migration 0012, `docs/insights.md`: the job's batch, which claims dirty buckets with the `MATERIALIZED` + `SKIP LOCKED` pick, locks their headers and recomputes them from the attempts; and the range reads, delegated to `insights-rollup-reads.ts` (activity, trends, abandonment trend, caller IDs, recording, carrier failures, freshness, over the rollup) and `insights-range-reads.ts` (agent state seconds and the online peak over the campaign variant of the occupancy intervals, callback timing IN4)), with `insights-rollup-sql.ts`, the leaf that spells the measures, the claim and the recompute from the domain's definitions. The pacing history is `insights-pacing.repository.ts` (`AgencyInsightsPacingRepository`: the pacing history's additive minute upserts and the `health` read, stalled minutes and stall episodes by the rule in its header, IN2). Customer history adds `customer-history.repository.ts` (`AgencyCustomerHistoryRepository`, docs/customer-history.md: every read covering the number's newest `CUSTOMER_HISTORY_MAX_CONTACT_ROWS` roster rows, chosen by a per-account walk of `idx_agency_contacts_customer_history` that stops at the cap (CH14); the summary's roster rows and its SQL aggregates (`callStats`, `lastPlaced`, `liveCalls`, `latestBookings` with the booker's name, `dncForNumber`); one keyset statement per timeline source (`pageAttempts`, `pageManualCalls`, `pageCallbacks` for both channels, `pageDnc`, `pageContacts`), each with the cursor, the filters and `LIMIT n + 1`; the enrichment by primary key (`campaignsWithRoots` for the summary) and `callbackNext`; every statement bound to the visible accounts and exported as `CUSTOMER_HISTORY_SQL` so its plan test EXPLAINs exactly what runs); it reads `isOverrideUnspent` from `assignment-reads.repository.ts`. Files in the folder import only the leaves, the delegate files and external modules, never the barrel or another class.
+The agency repository is a folder, `repositories/agency/`, behind the `agency.repository.ts` barrel: every caller outside the folder imports the barrel and the unit suites `vi.mock` it, so a mock of the barrel replaces what callers use. One file per class: `campaign.repository.ts` (`AgencyCampaignRepository`; its retry and dashboard methods delegate to free functions in `campaign-retry.ts` and `campaign-stats.ts`), `contact.repository.ts` (its `parkForWriteUp` holds an ended call's contact, or a wrap-up redial's, in `connected` for the write-up only while the call still holds it), `attempt.repository.ts`, `agent-session.repository.ts`, `fleet-metrics.repository.ts` (`AgencyAbandonmentRepository`, `AgencyLiveConcurrencyRepository`), `manual-call.repository.ts` (`AgencyManualCallRepository`: the soft phone's `agency_manual_calls` spine, docs/softphone.md), `softphone-settings.repository.ts` (`AgencySoftphoneSettingsRepository` and the settings validator) and `agent-stats.repository.ts` (`AgencyAgentStatsRepository`; `roster` and `groupedStats` delegate to `agent-roster-stats.ts` and `agent-grouped-stats.ts`). Contact assignment adds `assignment.repository.ts` (`AgencyAssignmentRepository`: the supervisor's operations, previewed and committed from one plan, the unstaff return, the per-contact history), `assignment-reads.repository.ts` (`AgencyAssignmentReadRepository`: the progress per agent and the agent's own contacts, list and summary) and `agent-retry.repository.ts` (`AgencyAgentRetryRepository`: the agent's reopen of not-reached contacts, which marks each for the `agent_reopened` flag on its first paced dial, and the claim for their own dial, CA7), and `agent-caller-id.repository.ts` (`AgencyAgentCallerIdRepository`, DN1–DN7: `EFFECTIVE_DEDICATION_SQL`, the one definition of a dedication that counts (its agent staffed on the campaign, and set since), applied by every read; the dial paths' one-query map of a campaign's dedicated caller IDs, the supervisor's set (one transaction under an advisory lock, the campaign row and the staffing row `FOR SHARE`) with the `taken` mapping of a unique-violation race, list and release; the campaign PATCH's guard runs in `campaign.repository.ts`'s `updateLocked`; the unstaff release is a CTE of `assignment.repository.ts`'s `returnOnUnstaff`; `agent-caller-id-repository.test.ts`), and `assignment-sql.ts`, the one definition of a contact's bucket for its owner and of whether its agent may retry it, which all three read. `drilldown-sql.ts` is the one definition of each insights roster bucket (`waiting=due_now|retry|callback`, `attempted`) and attempt slice (placed, the half-open dialled window, redial, agent manual / reopened, agent by user, override applied), read by the Contacts and Call attempts lists, their opt-in totals (`countListed`) and the insights reads, and re-exported from the barrel (docs/insights.md, WS F). Three leaves hold what more than one file emits: `sql-fragments.ts` (the shared SQL spellings: phone digits, resolved zone, occupancy intervals (per agent, per roster and per campaign), the five attempt metrics, the connect rate's two counts (`HUMAN_CONNECT_ATTEMPT_SQL`, `PLACED_FIRST_DIAL_SQL`, read by `/stats`, the agent record and the rollup alike), the voicemail code, `CONVERSATION_ATTEMPT_SQL` (a wrap-up redial chain counted once, as one conversation), the campaign INSERT columns), `query-builders.ts` (parameter accumulator, filter and keyset builders) and `projections.ts` (row to wire shape, including the manual call's `AgencyManualCall`). The campaign insights page adds `insights-reads.repository.ts` (`AgencyInsightsReadRepository`: the roster buckets, the allocation per owner and its dial counters (from the rollup's per-agent rows, never the attempt table), the dial pace, the contacts on DNC, the upload history, and the range reads' small statements: soft-phone calls tagged to the campaign, campaign-scoped agent DNC marks, the guardrail's 24 h window for one campaign; each statement exported so its plan test EXPLAINs exactly what runs) and `insights-sql.ts`, the one definition of the roster buckets (due now, retry, callback, attempted, the suppressed split) that the summary counts and the contacts list's drill-down filters are to share. It also adds `insights-rollup.repository.ts` (`AgencyInsightsRollupRepository`, migration 0012, `docs/insights.md`: the job's batch, which claims dirty buckets with the `MATERIALIZED` + `SKIP LOCKED` pick, locks their headers and recomputes them from the attempts; and the range reads, delegated to `insights-rollup-reads.ts` (activity, trends, abandonment trend, caller IDs, recording, carrier failures, freshness, over the rollup) and `insights-range-reads.ts` (agent state seconds and the online peak over the campaign variant of the occupancy intervals, callback timing IN4)), with `insights-rollup-sql.ts`, the leaf that spells the measures, the claim and the recompute from the domain's definitions. The pacing history is `insights-pacing.repository.ts` (`AgencyInsightsPacingRepository`: the pacing history's additive minute upserts and the `health` read, stalled minutes and stall episodes by the rule in its header, IN2). Customer history adds `customer-history.repository.ts` (`AgencyCustomerHistoryRepository`, docs/customer-history.md: every read covering the number's newest `CUSTOMER_HISTORY_MAX_CONTACT_ROWS` roster rows, chosen by a per-account walk of `idx_agency_contacts_customer_history` that stops at the cap (CH14); the summary's roster rows and its SQL aggregates (`callStats`, `lastPlaced`, `liveCalls`, `latestBookings` with the booker's name, `dncForNumber`); one keyset statement per timeline source (`pageAttempts`, `pageManualCalls`, `pageCallbacks` for both channels, `pageDnc`, `pageContacts`), each with the cursor, the filters and `LIMIT n + 1`; the enrichment by primary key (`campaignsWithRoots` for the summary) and `callbackNext`; every statement bound to the visible accounts and exported as `CUSTOMER_HISTORY_SQL` so its plan test EXPLAINs exactly what runs); it reads `isOverrideUnspent` from `assignment-reads.repository.ts`. Reports add `report-run.repository.ts` (`ReportRunRepository`, `0023_reports.sql`, docs/reports.md: the ad hoc create under the per-tenant pending limit (a per-tenant advisory lock), the subscription run's insert on the unique period, the assembler's `MATERIALIZED` + `SKIP LOCKED` claim with its stale reclaim, every pipeline write fenced on `claim_generation` or `render_attempt` (RP13), the history's keyset list, notification, expiry and the pending stats) and `report-subscription.repository.ts` (`ReportSubscriptionRepository`: CRUD with each subscription's newest run, and `claimDue`, one transaction per due subscription holding its row lock, the caller's run insert and the `next_run_at` advance). Files in the folder import only the leaves, the delegate files and external modules, never the barrel or another class.
 
-Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-caller-id.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-retry.repository.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/assignment-reads.repository.ts`, `repositories/agency/assignment-sql.ts`, `repositories/agency/assignment.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/customer-history.repository.ts`, `repositories/agency/drilldown-sql.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/insights-pacing.repository.ts`, `repositories/agency/insights-range-reads.ts`, `repositories/agency/insights-reads.repository.ts`, `repositories/agency/insights-rollup-reads.ts`, `repositories/agency/insights-rollup-sql.ts`, `repositories/agency/insights-rollup.repository.ts`, `repositories/agency/insights-sql.ts`, `repositories/agency/manual-call.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/softphone-settings.repository.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`
+Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-caller-id.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-retry.repository.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/assignment-reads.repository.ts`, `repositories/agency/assignment-sql.ts`, `repositories/agency/assignment.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/customer-history.repository.ts`, `repositories/agency/drilldown-sql.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/insights-pacing.repository.ts`, `repositories/agency/insights-range-reads.ts`, `repositories/agency/insights-reads.repository.ts`, `repositories/agency/insights-rollup-reads.ts`, `repositories/agency/insights-rollup-sql.ts`, `repositories/agency/insights-rollup.repository.ts`, `repositories/agency/insights-sql.ts`, `repositories/agency/manual-call.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/report-run.repository.ts`, `repositories/agency/report-subscription.repository.ts`, `repositories/agency/softphone-settings.repository.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`
 
 | Test file | Cases |
 |---|---|
@@ -836,11 +884,11 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/feature-flags/feature-flag.service.test.ts` | ~5 |
+| `apps/server/test/integration/feature-flags/feature-flag.service.test.ts` | 5 |
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
 | `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
-| `apps/server/test/unit/feature-flags/registry.test.ts` | 15 |
+| `apps/server/test/unit/feature-flags/registry.test.ts` | 16 |
 
 ### `apps/server/src/invites/`
 
@@ -867,17 +915,18 @@ Files: `retention-purge.ts`
 
 ### `apps/server/src/notifications/`
 
-Mailjet client, notification engine (audience, catalog, delivery, period), invite mailer and token, campaign-completion mail, HTML escaping.
+Mailjet client, notification engine (audience, catalog, delivery, period), invite mailer and token, campaign-completion mail, the report-ready mail (`agency.report.ready`: the requester with `email_me`, or a subscription's recipients re-checked against RBAC at send time; per-user preference; one claim per run and recipient; a link to the run page), HTML escaping.
 
-Files: `agency-campaign-completion.ts`, `engine/audience.ts`, `engine/catalog.ts`, `engine/deliver.ts`, `engine/period.ts`, `escape-html.ts`, `invite-mailer.ts`, `invite-token.ts`, `mailjet.client.ts`, `templates/agent-invite.template.ts`, `templates/invite-email.layout.ts`, `templates/invite-email.ts`, `templates/workspace-invite.template.ts`
+Files: `agency-campaign-completion.ts`, `agency-report-ready.ts`, `engine/audience.ts`, `engine/catalog.ts`, `engine/deliver.ts`, `engine/period.ts`, `escape-html.ts`, `invite-mailer.ts`, `invite-token.ts`, `mailjet.client.ts`, `templates/agency-report-ready.template.ts`, `templates/agent-invite.template.ts`, `templates/invite-email.layout.ts`, `templates/invite-email.ts`, `templates/workspace-invite.template.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/notifications/agency-campaign-completion.test.ts` | 45 |
 | `apps/server/test/unit/notifications/agency-campaign-unsubscribe.test.ts` | 8 |
+| `apps/server/test/unit/notifications/agency-report-ready.test.ts` | 13 |
 | `apps/server/test/unit/notifications/agent-invite.template.test.ts` | 29 |
 | `apps/server/test/unit/notifications/engine/audience.test.ts` | 34 |
-| `apps/server/test/unit/notifications/engine/catalog.test.ts` | 28 |
+| `apps/server/test/unit/notifications/engine/catalog.test.ts` | 29 |
 | `apps/server/test/unit/notifications/engine/deliver.test.ts` | 6 |
 | `apps/server/test/unit/notifications/engine/period.test.ts` | 4 |
 | `apps/server/test/unit/notifications/invite-email.test.ts` | 25 |
@@ -940,13 +989,15 @@ Files: `agency-account-settings.ts`
 
 ### `apps/server/src/storage/`
 
-The one S3 module (decision B14).
+The one S3 module (decision B14). The reports pipeline adds `uploadStream` (a multipart `@aws-sdk/lib-storage` upload of a stream of unknown length, resolving to its bytes; an `AbortSignal` cancels its requests and aborts the multipart upload), `uploadJson`, and `getPresignedUrl`'s options (`filename` served as an RFC 6266 `Content-Disposition` through the CSV exports' `attachmentHeader`, `contentType`).
 
 Files: `s3.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/storage/s3-ingest-reads.test.ts` | 9 |
+| `apps/server/test/unit/storage/s3-report-helpers.test.ts` | 10 |
+| `apps/server/test/unit/storage/s3-upload-stream-abort.test.ts` (the real lib-storage `Upload` over a faked HTTP handler) | 4 |
 
 ### `apps/server/src/telephony/`
 
@@ -1016,9 +1067,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter (`audio-fir.ts`: the bridge's A-law 8k ⇄ PCM16 16k transcoder and Plivo's μ-law one, `MulawTranscoder`, allocation-free per frame and pinned byte for byte to a frozen pre-rewrite copy, `test/helpers/reference-audio-fir.ts`; `scripts/bench-transcoder.ts` times both), the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), the Redis client options (`redis-options.ts`: command, connect and retry bounds, used by `index.ts`), WebSocket send back-pressure (`ws-backpressure.ts`: stale media dropped past a soft limit, a station closed 4408 past the hard cap), abort errors.
+Shared helpers: audio and FIR filter (`audio-fir.ts`: the bridge's A-law 8k ⇄ PCM16 16k transcoder and Plivo's μ-law one, `MulawTranscoder`, allocation-free per frame and pinned byte for byte to a frozen pre-rewrite copy, `test/helpers/reference-audio-fir.ts`; `scripts/bench-transcoder.ts` times both), the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the shutdown bound, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), a promise bounded by wall clock (`with-timeout.ts`, import-free: the OTel shutdown flush and the report build), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), the Redis client options (`redis-options.ts`: command, connect and retry bounds, used by `index.ts`), WebSocket send back-pressure (`ws-backpressure.ts`: stale media dropped past a soft limit, a station closed 4408 past the hard cap), abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `redis-options.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-backpressure.ts`, `ws-limits.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `redis-options.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `with-timeout.ts`, `ws-backpressure.ts`, `ws-limits.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1184,10 +1235,11 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/assignment.test.ts` | 6 |
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
-| `packages/contracts/test/errors.test.ts` (the customer-history code lists: a hand-written snapshot and a two-way type guard) | 13 |
+| `packages/contracts/test/errors.test.ts` (the customer-history and report code lists: a hand-written snapshot and a two-way type guard) | 16 |
 | `packages/contracts/test/exports.test.ts` | 13 |
-| `packages/contracts/test/flags.test.ts` | 9 |
+| `packages/contracts/test/flags.test.ts` | 10 |
 | `packages/contracts/test/rbac.test.ts` | 66 |
+| `packages/contracts/test/reports.test.ts` (report vocabularies, constants, the RP2 window rule, `reportFileName`, the subpath export, and type-level pins that each dataset block is the screen's wire type) | 13 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
 `packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
@@ -1202,11 +1254,17 @@ _No dedicated test files._
 
 ### `packages/contracts/src/api/agency/`
 
-Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call, soft phone, contact assignment (`assignment.ts`: the supervisor's operations, progress and history, the agent's own contacts and agent-led retry; the public API layer serves those routes itself, so they have no dialer-contract twin), customer history (`customer-history.ts`: the search, timeline, export and options shapes, the filter caps `CUSTOMER_FILTER_LIST_MAX` and `CUSTOMER_FILTER_CODE_MAX`, the family's error codes; also served without a dialer twin), dedicated caller IDs (`agent-caller-id.ts`, DN1–DN10: the supervisor's list, set and release, their refusal codes, the PATCH's `caller_id_dedicated`, the audit actions; also served by the public API layer itself). Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
+Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call, soft phone, contact assignment (`assignment.ts`: the supervisor's operations, progress and history, the agent's own contacts and agent-led retry; the public API layer serves those routes itself, so they have no dialer-contract twin), customer history (`customer-history.ts`: the search, timeline, export and options shapes, the filter caps `CUSTOMER_FILTER_LIST_MAX` and `CUSTOMER_FILTER_CODE_MAX`, the family's error codes; also served without a dialer twin), reports (`reports.ts`, docs/reports.md: runs, the create request, the history page, downloads, subscriptions, their vocabularies and constants, the RP2 window rule `reportWindowProblem`; the error codes are `errors.ts` §5, re-exported), dedicated caller IDs (`agent-caller-id.ts`, DN1–DN10: the supervisor's list, set and release, their refusal codes, the PATCH's `caller_id_dedicated`, the audit actions; also served by the public API layer itself). Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
 
-Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `agent-caller-id.ts`, `assignment.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `customer-history.ts`, `dnc.ts`, `index.ts`, `shared.ts`, `softphone.ts`, `webrtc-call.ts`
+Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `agent-caller-id.ts`, `assignment.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `customer-history.ts`, `dnc.ts`, `index.ts`, `reports.ts`, `shared.ts`, `softphone.ts`, `webrtc-call.ts`
 
 _No dedicated test files._
+
+### `packages/contracts/src/reports/`
+
+The report dataset and render protocol (docs/reports.md), shared by the server and the report renderer, exported as `@magick-agency/contracts/reports` (`index.ts`; an explicit `exports` entry, not re-exported from the root): the dataset base, definitions and detail-file descriptors (`dataset.ts`, `REPORT_DATASET_VERSION`, `ReportRosterBenchmark`), the agent review (`agent.ts`), the campaign report (`campaign.ts`), the account report (`account.ts`), the SQS message, the signed callback and its header names (`render.ts`), and the download file name (`file-name.ts`, `reportFileName`). Each dataset block a screen already serves is that screen's wire type. Tested by `packages/contracts/test/reports.test.ts`.
+
+Files: `account.ts`, `agent.ts`, `campaign.ts`, `dataset.ts`, `file-name.ts`, `index.ts`, `render.ts`
 
 ### `packages/contracts/src/api/platform/`
 
@@ -1321,22 +1379,23 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 Scenario, flow, guard and setup tests that span several modules. The migrations themselves are SQL
 files in `packages/db/migrations/`, `0001_baseline.sql` to
-`0021_carrier_refusing_calls_pause.sql` (0009 and 0010 are contact assignment's; tested by
+`0023_reports.sql` (0009 and 0010 are contact assignment's; tested by
 `db/contact-assignment-migration.test.ts`; `0008_wrapup_redial.sql`, the wrap-up redial's, by
 `db/wrapup-redial-migration.test.ts`; 0011, the insights page's shared schema, by
 `db/insights-foundation-migration.test.ts`; 0012, the insights rollup and its dirty-marking
 triggers, by `db/insights-rollup-migration.test.ts`; 0013, the pacing history, by
 `db/insights-pacing-history-migration.test.ts`; 0014, the rollup's connect-rate measures and carrier
-errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`; 0016, the customer-history soft-phone destination index (CH9), by `db/customer-history-indexes-migration.test.ts`; 0017, the customer-history roster index that bounds every read to the newest 2,000 rows (CH14), by `db/customer-history-contacts-index-migration.test.ts`; 0018, the dedicated caller IDs per agent per campaign (DN1), by `db/agent-caller-ids-migration.test.ts`; 0019, Plivo numbers (the `plivo` provider row active, `phone_numbers.telephony_credential_id`) and the `carrier_auth` pause reason, by `db/plivo-numbers-migration.test.ts`; 0020, the `carrier_account_unavailable` pause reason, by `db/carrier-account-unavailable-migration.test.ts`; 0021, the `carrier_refusing_calls` pause reason, by `db/carrier-refusing-calls-migration.test.ts`; 0022, automatic outcomes for unanswered calls (OD4), by `db/outcome-dispositions-migration.test.ts`).
+errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running campaigns per account (MC6) and the account-wide live-number index (MC4), by `db/multiple-running-campaigns-migration.test.ts`; 0016, the customer-history soft-phone destination index (CH9), by `db/customer-history-indexes-migration.test.ts`; 0017, the customer-history roster index that bounds every read to the newest 2,000 rows (CH14), by `db/customer-history-contacts-index-migration.test.ts`; 0018, the dedicated caller IDs per agent per campaign (DN1), by `db/agent-caller-ids-migration.test.ts`; 0019, Plivo numbers (the `plivo` provider row active, `phone_numbers.telephony_credential_id`) and the `carrier_auth` pause reason, by `db/plivo-numbers-migration.test.ts`; 0020, the `carrier_account_unavailable` pause reason, by `db/carrier-account-unavailable-migration.test.ts`; 0021, the `carrier_refusing_calls` pause reason, by `db/carrier-refusing-calls-migration.test.ts`; 0022, automatic outcomes for unanswered calls (OD4), by `db/outcome-dispositions-migration.test.ts`; 0023, report runs and subscriptions and the agent-first sessions index (docs/reports.md), by `db/reports-migration.test.ts`).
 
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~14 |
 | `packages/db/test/integration/db/agent-caller-ids-migration.test.ts` | 5 |
 | `packages/db/test/integration/db/outcome-dispositions-migration.test.ts` | 7 |
+| `packages/db/test/integration/db/reports-migration.test.ts` | 11 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | 8 |
-| `packages/db/test/integration/baseline.test.ts` | ~55 |
+| `packages/db/test/integration/baseline.test.ts` | 56 |
 | `packages/db/test/integration/db/carrier-account-unavailable-migration.test.ts` | ~2 |
 | `packages/db/test/integration/db/contact-assignment-migration.test.ts` | 15 |
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
@@ -1462,18 +1521,18 @@ Files: `AppVersion.module.css`, `AppVersion.tsx`, `Breadcrumbs.module.css`, `Bre
 | `packages/web-ui/test/components/LiveDot.test.tsx` | 7 |
 | `packages/web-ui/test/components/Pagination.test.tsx` | 28 |
 | `packages/web-ui/test/components/StatusBadge.test.tsx` | 15 |
-| `packages/web-ui/test/components/Toast.test.tsx` | 2 |
+| `packages/web-ui/test/components/Toast.test.tsx` | 4 |
 | `packages/web-ui/test/components/dataTableAlignCss.test.ts` | 5 |
 
 ### `packages/web-ui/src/contexts/`
 
-`ToastProvider` / `useToast` (memoised context value).
+`ToastProvider` / `useToast` (memoised context value). `showToast` takes an optional action (`{ label, onClick }`), one button under the message that runs and dismisses.
 
 Files: `ToastContext.tsx`
 
 | Test file | Cases |
 |---|---|
-| `packages/web-ui/test/contexts/ToastContext.test.tsx` | 3 |
+| `packages/web-ui/test/contexts/ToastContext.test.tsx` | 4 |
 
 ### `packages/web-ui/src/hooks/`
 
@@ -1518,9 +1577,9 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 
 ### `apps/console/src/api/`
 
-API client (`client.ts`, auth headers) and one module per API family: accounts, agency, activity, campaigns, insights, spine, stats, auth, analysis profiles, calls, DNC, CSV export, feature flags, invites, notifications, phone numbers, soft phone, tenants, users. `agencyInsights.ts` is the campaign Insights tab's seven reads (`GET …/campaigns/:id/insights/*`, docs/insights.md), one function per section, ranges as half-open `[from, to)` instants. `softphone.ts` is the soft phone's routes (docs/softphone.md §6), all under `/proxy/agency/softphone` except the switch and return on a campaign session: bootstrap, session open, place / update / hang up / outcome / DNC for a manual call, the keyset call list (`manualCallQuery`) and detail, the recording blob, and settings. Refusals come back as typed results (`SoftphoneResult`, `parseSoftphoneRefusal`: the DNC, calling-hours, contact-in-flight, session-on-campaign and call-pending shapes, a generic one for the rest of the code union, and an unknown one) rather than exceptions; `agencySpine.ts` exports `recordingRefusal` for its recording fetch. Contact assignment (behind `agency_contact_assignment_enabled`): `agencyAssignment.ts` is the supervisor's operations, progress and history and the agent's reads of their own contacts, `agencyMyContacts.ts` the agent's two acts on them (retry the ones not reached, call one now). `customerHistory.ts` is customer history's four routes (docs/customer-history.md §2): search, timeline, export (the CSV's file name read from a plain, quoted or RFC 5987 `Content-Disposition`) and `getCustomerSearchOptions`.
+API client (`client.ts`, auth headers) and one module per API family: accounts, agency, activity, campaigns, insights, spine, stats, auth, analysis profiles, calls, DNC, CSV export, feature flags, invites, notifications, phone numbers, soft phone, tenants, users. `agencyInsights.ts` is the campaign Insights tab's seven reads (`GET …/campaigns/:id/insights/*`, docs/insights.md), one function per section, ranges as half-open `[from, to)` instants. `softphone.ts` is the soft phone's routes (docs/softphone.md §6), all under `/proxy/agency/softphone` except the switch and return on a campaign session: bootstrap, session open, place / update / hang up / outcome / DNC for a manual call, the keyset call list (`manualCallQuery`) and detail, the recording blob, and settings. Refusals come back as typed results (`SoftphoneResult`, `parseSoftphoneRefusal`: the DNC, calling-hours, contact-in-flight, session-on-campaign and call-pending shapes, a generic one for the rest of the code union, and an unknown one) rather than exceptions; `agencySpine.ts` exports `recordingRefusal` for its recording fetch. Contact assignment (behind `agency_contact_assignment_enabled`): `agencyAssignment.ts` is the supervisor's operations, progress and history and the agent's reads of their own contacts, `agencyMyContacts.ts` the agent's two acts on them (retry the ones not reached, call one now). `customerHistory.ts` is customer history's four routes (docs/customer-history.md §2): search, timeline, export (the CSV's file name read from a plain, quoted or RFC 5987 `Content-Disposition`) and `getCustomerSearchOptions`. `reports.ts` is the reports surface (docs/reports.md): runs (create, keyset list, get, the per-format download URL then `window.location.assign`, retry) and subscriptions (list, create, patch, delete, run now); `REPORT_ERROR_MESSAGES` / `reportErrorMessage` give every report refusal code and `feature_disabled` British-English words.
 
-Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `notifications.ts`, `phone-numbers.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
+Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `notifications.ts`, `phone-numbers.ts`, `reports.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1540,6 +1599,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `
 | `apps/console/src/__tests__/api/exportCsv.test.ts` | 3 |
 | `apps/console/src/__tests__/api/invites.test.ts` | 21 |
 | `apps/console/src/__tests__/api/originator-header.test.ts` | 4 |
+| `apps/console/src/__tests__/api/reports.test.ts` | 13 |
 | `apps/console/src/__tests__/api/softphone.test.ts` | 14 |
 | `apps/console/src/__tests__/api/tenants.test.ts` | 6 |
 
@@ -1661,6 +1721,22 @@ Files: `CustomerCallLink.tsx`, `CustomerHistory.module.css`, `CustomerHistorySum
 | `apps/console/src/__tests__/pages/CustomerHistoryPage.test.tsx` | 45 |
 | `apps/console/src/__tests__/utils/customerSearchRecent.test.ts` | 9 |
 
+### `apps/console/src/components/agency/reports/`
+
+Reports (docs/reports.md). `ExportReportDialog` is the one export dialog for every kind: the window (Last 7 days, Last 30 days, Previous week, Previous month or Custom, as local dates in the report's zone, `utils/reports/reportWindow.ts`, held to the contracts' `reportWindowProblem`), the zone (the browser's for agent and account reports; the campaign's, read-only, for a campaign report, RP3), PDF and Excel (at least one; `ReportFormatFields`, shared with the subscription form), "Email me when it's ready"; the 202 closes it with a toast whose "View report" opens the run; refusals stay inline. `ExportReportButton` is every entry point, gated by `mayExport` (the `agency_reports_enabled` flag, then `agency.supervise` for any subject, else the caller's own review only, RP5): Export agent review on the supervisor's agent record (`AgentAnalyticsSection`), Export my review on My performance, Export campaign report beside Print on the Insights toolbar, Export account report in the Analytics header and on the Reports page. `ReportStatusPill` (Preparing…, Ready, Failed, Expired), `ReportDownloads` (a fresh download URL per press), `ReportHistory` (keyset Load more, kind filter and "Only mine" for supervisors, pending rows polling themselves), `SubscriptionsPanel` and `SubscriptionFormDialog` (cadence daily / weekly on a day / monthly on the 1st–28th at a time, zone, formats, recipients from the account's supervisors up to `REPORT_SUBSCRIPTION_MAX_RECIPIENTS`; pause, resume, run now, delete behind an in-page confirmation). The pages are `pages/agency/ReportsPage.tsx` (`/agency/reports`, History and, for supervisors, Subscriptions) and `pages/agency/ReportRunPage.tsx` (`/agency/reports/:runId`, the "report ready" email's link), each also served to a dedicated agent at `/dialer/reports*` in `AgentSurfaceShell` (`AgentReportsPage`, `AgentReportRunPage`; the agency paths send them there). `hooks/useReportRun.ts` polls a run while it is pending (3 s after each new status, backing off to 30 s while the status stays put; nothing while the tab is hidden, one read when it comes back); `hooks/useReportsAccess.ts` is who may do what and where the pages live; copy in `utils/reports/reportCopy.ts`; the flag key in `utils/reports/reportsFlag.ts`. Navigation: Reports in `AgencySidebar` (viewer and up), My reports in `AgentNav`, both flag-gated.
+
+Files: `ExportReportButton.tsx`, `ExportReportDialog.tsx`, `ReportDownloads.tsx`, `ReportFormatFields.tsx`, `ReportHistory.tsx`, `ReportStatusPill.tsx`, `Reports.module.css`, `SubscriptionFormDialog.tsx`, `SubscriptionsPanel.tsx`
+
+| Test file | Cases |
+|---|---|
+| `apps/console/src/__tests__/components/ExportReportDialog.test.tsx` | 22 |
+| `apps/console/src/__tests__/components/reportEntryPoints.test.tsx` | 24 |
+| `apps/console/src/__tests__/components/SubscriptionsPanel.test.tsx` | 18 |
+| `apps/console/src/__tests__/hooks/useReportRun.test.tsx` | 14 |
+| `apps/console/src/__tests__/pages/ReportRunPage.test.tsx` | 10 |
+| `apps/console/src/__tests__/pages/ReportsPage.test.tsx` | 11 |
+| `apps/console/src/__tests__/utils/reportWindow.test.ts` | 17 |
+
 ### `apps/console/src/contexts/`
 
 React contexts: auth, tenant, theme and the rest (the toast context is in `packages/web-ui`). `AuthContext.tsx`'s invite-credential flow is in `authInvite.ts` (`useInviteJoin`, `useInviteCredentialFlow`) and its 6-hour cap check in `useSessionWatchdog.ts`; the context API is unchanged. `UrlScopeContext.tsx` owns the browser history and the tenant/account scope its URL carries, in two contexts: the scope (`useUrlScope`; `useUrlHistory` where the real history is required) changes only with the tenant or account, the location (`useUrlLocation`, for `ScopedRouter`) on every navigation. Its `go` is the one way between scopes. `TenantContext` requires that provider, adopts the URL's tenant and account, reloads the console at the new account's home on a switch (`utils/pageLoad.ts`; a tenant switch resolves the tenant's first account first and loads its scope), and falls back to the saved choice in `localStorage` only on an unscoped URL or one the viewer cannot open, which it never saves.
@@ -1772,7 +1848,7 @@ Files: `AppHomeRedirect.tsx`, `accounts/AccountsPage.module.css`, `accounts/Acco
 | `apps/console/src/__tests__/pages/TeamPage.resendInvite.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/TranscriptSection.test.tsx` | 7 |
 | `apps/console/src/__tests__/pages/VerifyEmailPage.returnPath.test.tsx` | 6 |
-| `apps/console/src/__tests__/pages/agencyRoutes.test.tsx` | 5 |
+| `apps/console/src/__tests__/pages/agencyRoutes.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/dialerEntryRoutes.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/joinRoutes.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/useAgencyConsole.cues.test.ts` | 12 |
@@ -2035,6 +2111,95 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/super-admin/src/__tests__/branding/brandAssets.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/branding/noParentBrand.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/saStatus.test.ts` | 21 |
+
+## `apps/report-renderer`
+
+Report PDFs and workbooks from a dataset (RP15, [`reports.md`](reports.md)); depends only on the
+contracts and rendering libraries, never on the database, the server or the clock. Runs as a
+Lambda (SQS, `index.handler`) or in the server's process under `AGENCY_REPORTS_RENDERER=inline`.
+Rules and gotchas: `apps/report-renderer/CLAUDE.md`.
+
+### `apps/report-renderer/src/`
+
+`index.ts` (the public entry, free of Lambda-only imports), `render-run.ts` (`renderRun`: reads and
+checks the dataset (`parseDataset`, `dataset_version`), renders each requested format, writes
+`report.pdf` / `report.xlsx` under the message's prefix and returns the callback; a failure is a
+`status: 'failed'` result with a `ReportRendererFailureCode`, never a throw), `io.ts` (`RendererIO`
+and the gzipped-NDJSON detail reader), `errors.ts` (`RenderFailure`), `signature.ts` (the callback's
+HMAC, as `packages/contracts` defines it), `rates.ts` (the rates and figures the PDF and the
+workbook both print: the agent's rates, `campaignFigures` / `accountFigures` (first dials, answered
+and abandoned, the three rates, handle time), `recordingShare`, `rosterSuccessReportable`, derived
+once so the files cannot disagree), `definitions.ts` (`DEFINITION_KEYS`: the definition keys each
+kind carries, mirroring the server's `datasets/definitions.ts`; the workbook's lookup is typed by
+kind, so a key the kind never carries fails `tsc`), `version.ts` (`RENDERER_VERSION`).
+
+Files: `definitions.ts`, `errors.ts`, `index.ts`, `io.ts`, `rates.ts`, `render-run.ts`, `signature.ts`, `version.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/render-run.test.ts` | 8 |
+| `apps/report-renderer/test/fixtures.test.ts` | 6 |
+| `apps/report-renderer/test/definitions.test.ts` | 3 |
+
+### `apps/report-renderer/src/format/`
+
+Numbers in `en-IN`, British dates and times, durations and percentages, all in the dataset's zone.
+
+Files: `index.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/format.test.ts` | 8 |
+
+### `apps/report-renderer/src/pdf/`
+
+The PDF path: `render-pdf.tsx` (`renderReportHtml`: the kind's template through
+`renderToStaticMarkup`; `renderPdf`: headless Chromium through `puppeteer-core`, A4 with the header
+and "Page X of Y" footer, every request but `data:` and `about:` blocked), `templates/` (`agent.tsx`,
+`campaign.tsx`, `account.tsx`), `components.tsx` and `charts.tsx` (tables, tiles, static SVG charts at
+the 688 px content width), `styles.ts`, `fonts.ts` (IBM Plex embedded as data URIs:
+`REPORT_RENDERER_FONTS_DIR`, a `fonts/` directory beside the module, then the `@fontsource`
+packages), `chrome.ts` (`findChrome`, `launchBrowser`).
+
+Files: `charts.tsx`, `chrome.ts`, `components.tsx`, `fonts.ts`, `render-pdf.tsx`, `styles.ts`, `templates/account.tsx`, `templates/agent.tsx`, `templates/campaign.tsx`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/templates.test.ts` | 22 |
+| `apps/report-renderer/test/pdf.test.ts` | 9 (8 need a Chrome; the ninth fails in CI without one) |
+| `apps/report-renderer/test/chrome.test.ts` | 2 |
+| `apps/report-renderer/test/preview.test.ts` | 1 (opt-in, `REPORT_PREVIEW_DIR`) |
+
+### `apps/report-renderer/src/xlsx/`
+
+The workbook: exceljs' streaming `WorkbookWriter` (`workbook.ts`: summary sheets, then each detail
+sheet streamed from its NDJSON file with the RP12 truncation note on its first row, sheet names made
+unique; `sheet.ts`: one typed table to a streaming worksheet, a frozen header, dataset units
+converted to Excel's, widths, Excel's sheet-name rules).
+
+Files: `sheet.ts`, `workbook.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/workbook.test.ts` | 18 |
+| `apps/report-renderer/test/workbook-memory.test.ts` | 1 |
+
+### `apps/report-renderer/src/lambda/` and the Lambda entry
+
+`src/lambda.ts` (the SQS handler: one record at a time, `renderRun` over S3, the signed callback; an
+undeliverable callback is a batch item failure, a final refusal is logged and not redelivered),
+`lambda/callback.ts` (three tries with backoff, each signed afresh and bounded by 15 s; a 4xx other
+than 408 and 429 is final), `lambda/s3-io.ts` (`RendererIO` over `@aws-sdk/client-s3`, one
+`PutObject` per file), `lambda/chromium.ts` (the `@sparticuz/chromium` layer, imported by file URL
+from `/opt/nodejs/node_modules`). `scripts/build-lambda.mjs` bundles `index.mjs` and `fonts/` into
+`dist/report-renderer-lambda.zip`.
+
+Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts`; `scripts/build-lambda.mjs`
+
+| Test file | Cases |
+|---|---|
+| `apps/report-renderer/test/lambda.test.ts` | 9 |
+| `apps/report-renderer/test/build-lambda.test.ts` | 1 |
 
 ## `apps/mobile`
 

@@ -12,6 +12,19 @@
   flex-wrap: wrap;
 }
 
+.headerTools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.exportButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .title {
   margin: 0;
   font-size: var(--text-2xl, 24px);

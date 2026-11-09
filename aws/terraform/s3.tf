@@ -1,5 +1,7 @@
 # The server's one bucket (decision B14): roster CSV uploads and rejected-row exports
-# under agency-ingest/, and the abandon clips. The server reads it as S3_AUDIO_BUCKET.
+# under agency-ingest/, and the abandon clips. With enable_reports, also the report datasets
+# under report-datasets/ and the rendered reports under reports/ (reports.tf). The server
+# reads it as S3_AUDIO_BUCKET.
 
 data "aws_caller_identity" "current" {}
 
@@ -33,8 +35,12 @@ resource "aws_s3_bucket_ownership_controls" "media" {
   }
 }
 
-# Contact lists are PII. Nothing in the product reads the bucket from a browser:
-# the server uploads and streams every object itself.
+# Contact lists are PII, and so are reports. The server uploads and streams every object
+# itself, with one deliberate exception (reports design review): a report download is a
+# presigned GET of one object under reports/, valid 5 minutes, that the console navigates
+# to after the server has checked the caller may read that run. A presigned GET is a signed
+# request by the server's own identity, so the bucket stays fully private: no public
+# access, no bucket-policy grant, and no CORS (the browser navigates, it does not fetch).
 resource "aws_s3_bucket_public_access_block" "media" {
   bucket = aws_s3_bucket.media.id
 
@@ -88,6 +94,39 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
 
       noncurrent_version_expiration {
         noncurrent_days = var.noncurrent_version_expiration_days
+      }
+    }
+  }
+
+  # Reports (RP8): datasets 7 days, rendered files report_retention_days (the run turns
+  # `expired` at the same age on the server). S3 removes an object at the first midnight UTC
+  # after it reaches that age, so a file lasts as long as its run, up to a day longer.
+  # With versioning on, an expired object becomes a noncurrent version; these rules drop it
+  # after 1 day instead of the bucket-wide noncurrent_version_expiration_days (S3 honours
+  # the shorter of two overlapping expirations): a report or dataset is derived data that
+  # the retention promise covers, not an upload worth keeping to undo an overwrite.
+  dynamic "rule" {
+    for_each = var.enable_reports ? {
+      "expire-report-datasets" = { prefix = "report-datasets/", days = local.report_dataset_retention_days }
+      "expire-reports"         = { prefix = "reports/", days = var.report_retention_days }
+    } : {}
+    content {
+      id     = rule.key
+      status = "Enabled"
+
+      filter {
+        prefix = rule.value.prefix
+      }
+
+      expiration {
+        days = rule.value.days
+      }
+
+      dynamic "noncurrent_version_expiration" {
+        for_each = var.noncurrent_version_expiration_days > 0 ? [1] : []
+        content {
+          noncurrent_days = 1
+        }
       }
     }
   }

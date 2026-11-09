@@ -36,13 +36,14 @@ import type { DigestFrequency } from './period.js';
  * is ever added.
  */
 
-// One event today (see the note at the end of
+// Two events today (see the note at the end of
 // `packages/contracts/src/api/platform/notifications.ts`). A stored preference
 // row naming any other key is inert by `isLiveEventKey`'s rule below — never
 // served, never validated against, never deleted.
 /** Stable dotted ids. Adding one is additive; renaming one orphans stored rows. */
 export const NOTIFICATION_EVENT_KEYS = [
   'agency.campaign.completed',
+  'agency.report.ready',
 ] as const;
 
 export type NotificationEventKey = (typeof NOTIFICATION_EVENT_KEYS)[number];
@@ -115,6 +116,19 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDefinition[] = [
     // computes the same floor the same way; this entry is the second reader of
     // one decision rather than a second decision.
     audience: { kind: 'role_floor', minimumRole: PERMISSION_MATRIX['agency.supervise'] },
+    defaultEnabled: true,
+  },
+  {
+    key: 'agency.report.ready',
+    label: 'Report ready',
+    description: 'Sent when a report you asked to be emailed about, or a scheduled report you receive, is ready or could not be prepared.',
+    category: 'agency',
+    cadence: 'immediate',
+    // Explicit: the recipients travel on the run (the requester who ticked "email me") or on its
+    // subscription (the recipients a supervisor named), never derived from a role. Any role can
+    // request a report (an agent their own review), so every role sees the toggle.
+    // `notifications/agency-report-ready.ts` applies the preference per user.
+    audience: { kind: 'explicit' },
     defaultEnabled: true,
   },
   // No digest event exists today. The `digest` cadence, `defaultFrequency` and

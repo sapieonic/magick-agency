@@ -4,7 +4,8 @@ The server's one S3 bucket (decision B14) and the IAM user it reads and writes i
 with, as a Terraform root module. Each environment gets its own bucket and IAM user,
 named from the `environment` variable, and its own state. With `create_server = true`
 it also creates the VM that runs the production compose stack, with a security group
-and an Elastic IP (see "The server VM").
+and an Elastic IP (see "The server VM"). With `enable_reports = true` it creates the
+report renderer: an SQS queue and a Lambda (see "Reports").
 
 | Path | What it is |
 |---|---|
@@ -12,13 +13,18 @@ and an Elastic IP (see "The server VM").
 | [`terraform/iam.tf`](terraform/iam.tf) | The server's IAM user, its inline policy, and its access key |
 | [`terraform/ec2.tf`](terraform/ec2.tf) | Optional (`create_server`): the EC2 instance, its security group, an Elastic IP, a Session Manager role and an optional key pair |
 | [`terraform/cloud-init.yaml.tftpl`](terraform/cloud-init.yaml.tftpl) | The VM's first-boot setup: Docker with the compose and buildx plugins, Caddy, git, a swap file |
-| [`terraform/outputs.tf`](terraform/outputs.tf) | Bucket name, region, the key pair, `server_env` (the four `.env` lines), and the VM's Elastic IP, instance id and security group |
+| [`terraform/reports.tf`](terraform/reports.tf) | Optional (`enable_reports`): the `report-jobs` queue and its dead-letter queue, the `report-renderer` Lambda, its `live` alias, role, log group and the queue's event source mapping |
+| [`terraform/outputs.tf`](terraform/outputs.tf) | Bucket name, region, the key pair, `server_env` (the four `.env` lines), the VM's Elastic IP, instance id and security group, and the reports queue, function and `reports_server_env` |
+| [`terraform/tests/`](terraform/tests/) | `terraform test` against a mocked provider (no AWS): reports off plans nothing new, reports on plans the settings below |
 | [`terraform/variables.tf`](terraform/variables.tf) | `environment` (required) and the optional overrides; `terraform.tfvars.example` lists them |
 
 What lives in the bucket: roster CSV uploads and rejected-row exports under
-`agency-ingest/<tenant>/` (contact lists, so PII), and the abandon clips. The server
-uploads and streams every object itself, so the bucket needs no CORS and no public
-access.
+`agency-ingest/<tenant>/` (contact lists, so PII), the abandon clips and, with reports,
+`report-datasets/` and `reports/` (figures and detail rows about calls and agents, so
+PII too). The server uploads and streams every object itself, with one exception: a
+report download is a presigned GET of one `reports/` object, valid 5 minutes, that the
+console navigates to. A presigned GET is a request signed with the server's own key, so
+the bucket still needs no CORS and no public access.
 
 ## Names
 
@@ -79,6 +85,11 @@ The inline policy allows exactly what `apps/server/src/storage/s3.ts` calls:
 | `s3:PutObject` | `<bucket>/*` | `uploadFile`: CSV uploads, rejected-row exports |
 | `s3:GetObject` | `<bucket>/*` | `getFile`, `getFileStream`, presigned GETs, and `headFile` (HeadObject is authorised by GetObject) |
 | `s3:ListBucket` | `<bucket>` | A missing object answers 404 instead of 403 |
+| `sqs:SendMessage` | the `report-jobs` queue (only with `enable_reports`) | Sending render jobs |
+
+Reports add no S3 grant: `PutObject` covers the datasets the server writes under
+`report-datasets/`, and `GetObject` covers the presigned downloads of `reports/` and the
+check for rendered files before a re-send.
 
 There is no delete permission, because nothing calls `deleteFile` or
 `deleteByPrefix` today. The first caller adds `s3:DeleteObject` in
@@ -162,3 +173,144 @@ associated separately, so a new instance keeps the same address.
 **Turning it off.** `create_server = false` destroys the instance, its disk (with the
 Redis volume and anything else on it) and releases the Elastic IP. A released address
 cannot be got back, so update DNS and any vendor allow-list first.
+
+## Reports
+
+Off by default. `enable_reports = true` creates the out-of-process renderer that
+[`docs/reports.md`](../docs/reports.md) describes. The server assembles a run's dataset,
+writes it under `report-datasets/`, and sends one message per render attempt to the queue;
+the Lambda reads the dataset, writes `report.pdf` / `report.xlsx` under `reports/`, and
+POSTs a signed callback to the server's public URL. The Lambda never touches the database
+(RP1), so it runs outside any VPC.
+
+| Resource | What it is |
+|---|---|
+| `report-jobs` queue | `<name_prefix>-<environment>-report-jobs`. Visibility timeout 600 s (twice the function's 300 s; "Timeouts" below), retention 1 day, SQS-managed encryption, redrive to the DLQ after 3 receives |
+| `report-jobs-dlq` | Messages the function failed three times (threw, timed out, out of memory, callback undeliverable), kept 14 days. Nothing replays it: the server re-sends a run with no callback as a new attempt (RP13) |
+| `report-renderer` function | `<name_prefix>-<environment>-report-renderer`. Node.js 22, x86_64, 2048 MB, 300 s, 1024 MB of `/tmp`, the Chromium layer, `AGENCY_REPORTS_CALLBACK_SECRET` in its environment. `publish = true`: every apply that changes the code or configuration publishes a version |
+| `live` alias | What the queue invokes; it follows the latest published version unless `report_renderer_live_version` pins one |
+| Event source mapping | Queue → `live`, one message per invocation, `ReportBatchItemFailures`, at most 3 renders at once |
+| Role | Its own log stream writes, `s3:GetObject` on `report-datasets/*`, `s3:PutObject` on `reports/*`, receive, delete and read attributes on its queue. Nothing else: no ListBucket, no delete, nothing under `agency-ingest/` |
+| Log group | `/aws/lambda/<function>`, `report_renderer_log_retention_days` (30) |
+| Lifecycle rules (s3.tf) | `report-datasets/` expires after 7 days, `reports/` after `report_retention_days` (90; keep it equal to the server's `AGENCY_REPORTS_RETENTION_DAYS`). With versioning on, their noncurrent versions go after 1 day |
+
+The identity applying also needs to create SQS queues, Lambda functions, aliases, event
+source mappings, CloudWatch log groups and IAM roles.
+
+### Enabling it
+
+The whole first-time setup, with the server's side and the checks: [`REPORTS_SETUP.md`](../REPORTS_SETUP.md), Path B.
+
+1. **Build the zip** at the release you are deploying:
+
+   ```bash
+   pnpm install
+   pnpm --filter @magick-agency/report-renderer build:lambda
+   # → apps/report-renderer/dist/report-renderer-lambda.zip (dist/lambda/index.mjs at its root)
+   ```
+
+2. **The Chromium layer.** Headless Chromium is not in the zip; it comes from a layer
+   carrying `@sparticuz/chromium` for x86_64, at the Chromium the renderer's
+   `puppeteer-core` expects (the renderer's `package.json` pins both). Publish
+   `@sparticuz/chromium`'s x64 layer zip for that version (from its releases) in the
+   same region:
+
+   ```bash
+   aws lambda publish-layer-version --layer-name chromium \
+     --zip-file fileb://chromium-v<version>-layer.x64.zip \
+     --compatible-runtimes nodejs22.x --compatible-architectures x86_64
+   # → LayerVersionArn: arn:aws:lambda:<region>:<account>:layer:chromium:<n>
+   ```
+
+   or use a public layer's versioned ARN in the same region. A layer version never
+   changes once published, so a Chromium upgrade is a new layer version and a new ARN.
+
+3. **Set the variables** in the environment's tfvars:
+
+   ```hcl
+   enable_reports                     = true
+   report_renderer_zip                = "../../apps/report-renderer/dist/report-renderer-lambda.zip"
+   report_renderer_chromium_layer_arn = "arn:aws:lambda:ap-south-1:123456789012:layer:chromium:1"
+   reports_callback_secret            = "<openssl rand -base64 48>"
+   ```
+
+   The secret ends up in this module's state and in the function's configuration (like
+   the access key, which is why state and tfvars are gitignored).
+
+4. **Apply**, then give the server its settings and restart it:
+
+   ```bash
+   terraform apply -var-file=production.tfvars
+   terraform output -raw reports_server_env; echo
+   ```
+
+   Add those lines and `AGENCY_REPORTS_CALLBACK_BASE_URL=https://agency.example.com` to the
+   server's env (`docker/.env` on the VM, `apps/server/.env` for a dev box), then recreate
+   the server. `reports_server_env` prints `AGENCY_REPORTS_RENDERER=sqs`,
+   `AGENCY_REPORTS_SQS_QUEUE_URL`, `AGENCY_REPORTS_CALLBACK_SECRET` (the same value
+   the function holds) and `AGENCY_REPORTS_RENDER_TIMEOUT_MS` (from
+   `reports_render_timeout_seconds`, "Timeouts" below). `AGENCY_REPORTS_CALLBACK_BASE_URL` is the server's public base URL,
+   which the Lambda reaches over the internet; Terraform does not know it. Then turn the
+   `agency_reports_enabled` flag on for the tenants that should see reports.
+
+`terraform test` (in `aws/terraform`, after `terraform init -backend=false`) checks the
+module against a mocked provider without touching AWS.
+
+### Timeouts
+
+A render attempt has three timeouts, and they must keep this order:
+
+    function timeout (300 s) < queue visibility timeout (600 s)
+    visibility timeout + function timeout (900 s) <= server render timeout (AGENCY_REPORTS_RENDER_TIMEOUT_MS)
+
+The first is AWS's: the event source mapping refuses a queue whose visibility timeout is below the
+function's. The second puts SQS's redelivery of a message the function failed (an undeliverable
+callback, a crash, a timeout) inside the server's wait for that attempt, so the redelivered render
+is applied, not acknowledged `stale` after the server re-sent the run (RP13). The server's side is
+`reports_render_timeout_seconds` (default 900), printed into `reports_server_env`; the queue's
+precondition refuses a value below the sum. Keep the server's env equal to the printed line: the
+server cannot see the queue, so only this module checks the relationship. The visibility timeout
+is twice the function's rather than AWS's suggested six times (the margin for invocations
+throttled at the account's concurrency limit): a message that outlasts its receives is re-sent by
+the server anyway. And when a message does arrive after the server stopped waiting (a third
+receive, a backed-up queue), the function reads its `superseded_after` and drops it in
+milliseconds instead of rendering it.
+
+### Deploy order
+
+**The Lambda first, then the server.** The `live` alias must be able to render both the
+datasets the running server writes and the ones the next server release will write: a
+release that raises `dataset_version` ships a renderer that reads the current and the next
+version, and that renderer goes live before the server that writes the next one. In order:
+
+1. build the zip from the new release and `terraform apply` (a new version is published
+   and `live` moves to it; messages in flight finish on the version that received them);
+2. deploy the server release (DEPLOYMENT.md, "Deploying a new version").
+
+A server that writes a version the live renderer does not know gets every run failed
+`dataset_version_unsupported`; nothing is lost, and "Run again" works once the renderer
+catches up.
+
+**No CI deploys to AWS.** Nothing in CI builds the Lambda zip or applies this module:
+both are by hand, at the release's tag, from the machine that holds the environment's
+state.
+
+### Rollback
+
+Point `live` back at the previous published version. Its number is in the console (the
+function's *Versions* tab) or `aws lambda list-versions-by-function --function-name
+"$(terraform output -raw report_renderer_function_name)"`. Then either:
+
+- set `report_renderer_live_version = "<n>"` in the tfvars and apply (this sticks); or
+- faster, `aws lambda update-alias --function-name <function> --name live
+  --function-version <n>`, and set the variable too before the next apply, which would
+  otherwise move `live` forward again.
+
+Clear the variable when a fixed zip is applied. Roll the renderer back no further than the
+`dataset_version` the running server writes.
+
+**Turning reports off.** Switch the `agency_reports_enabled` flag off (or move the server
+to `AGENCY_REPORTS_RENDERER=inline`, which needs Chromium on the server) first, then
+`enable_reports = false`. That destroys the queues (with any message
+in them), the function and its logs, and removes the two lifecycle rules: report files
+already in the bucket then stay until something deletes them.

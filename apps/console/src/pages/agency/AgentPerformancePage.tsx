@@ -8,6 +8,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { AgentSurfaceShell } from '../../components/agency/AgentSurfaceShell';
 import { AgentPerformancePanel } from '../../components/agency/AgentPerformancePanel';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { ExportReportButton } from '../../components/agency/reports/ExportReportButton';
 import { agencyPersona } from '../../utils/agencyPersona';
 import { assignmentEntry } from '../../utils/agencyAssignmentEntry';
 import { trackAgentSurfaceViewed } from '../../analytics/events';
@@ -223,6 +224,8 @@ function AgentPerformanceWorkspace() {
       subtitle="Your own calls — what you dialled, who you spoke to, and how the time went."
       /* The way back. Safe here and necessary here — see the header. */
       current="performance"
+      /* "Export my review" (`docs/reports.md`, RP5): nothing while reports are off. */
+      actions={<ExportReportButton entry="my_performance" target={{ self: true }} />}
       note={
         /*
           Served, not bounced — but told which screen answers the other question,
