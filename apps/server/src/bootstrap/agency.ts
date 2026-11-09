@@ -9,7 +9,7 @@ import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurren
 import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
 import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
 import { startReportPipeline, type ReportPipeline } from '../agency/reports/pipeline.js';
-import { startInboundCalls } from '../agency/inbound/inbound-call-router.js';
+import { startInboundCalls } from '../agency/inbound/start.js';
 import { DncRegistry } from '../agency/dnc-registry.js';
 import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
 

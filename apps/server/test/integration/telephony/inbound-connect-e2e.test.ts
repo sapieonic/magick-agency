@@ -32,7 +32,7 @@ import { randomUUID } from 'node:crypto';
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { callCore } from '../../../src/api/core-dispatch.js';
 import { DncRegistry } from '../../../src/agency/dnc-registry.js';
-import { startInboundCalls } from '../../../src/agency/inbound/inbound-call-router.js';
+import { startInboundCalls } from '../../../src/agency/inbound/start.js';
 import { getInboundCallRouter, setInboundCallRouter } from '../../../src/seams/inbound-call-router.js';
 import { getConcurrencyControl } from '../../../src/seams/concurrency-control.js';
 import { agencyInboundCallRepository } from '../../../src/db/repositories/agency.repository.js';

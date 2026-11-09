@@ -41,7 +41,7 @@ import {
 } from '../../../src/telephony/plivo/inbound-urls.js';
 import { writeTtsFile } from '../../../src/tts/tts-file-cache.js';
 import { parseInboundRouteCreate } from '../../../src/agency/inbound/route-config.js';
-import { startInboundCalls } from '../../../src/agency/inbound/inbound-call-router.js';
+import { startInboundCalls } from '../../../src/agency/inbound/start.js';
 import { DncRegistry } from '../../../src/agency/dnc-registry.js';
 import {
   agencyContactRepository,

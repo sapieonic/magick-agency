@@ -8,10 +8,10 @@ import { DEFAULTS, insertTenant } from '../setup/factories.js';
 import {
   AgencyInboundCallRouter,
   INBOUND_MAX_PARKED_SECONDS,
-  INBOUND_SWEEP_STALE_AFTER_MS,
   INBOUND_VOICEMAIL_BUDGET_SECONDS,
   parkedSecondsFor,
 } from '../../../src/agency/inbound/inbound-call-router.js';
+import { INBOUND_SWEEP_STALE_AFTER_MS } from '../../../src/agency/inbound/start.js';
 import { WEBRTC_MAX_DURATION_SECONDS } from '../../../src/config/call-duration-limits.js';
 import { agencyInboundCallRepository as repo, type AgencyInboundCallRecord } from '../../../src/db/repositories/agency.repository.js';
 
