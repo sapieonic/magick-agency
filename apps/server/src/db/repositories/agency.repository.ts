@@ -238,3 +238,32 @@ export type {
   ReportStateLogRow,
   ReportStatement,
 } from './agency/report-dataset-reads.js';
+export {
+  AgencyInboundRouteRepository,
+  agencyInboundRouteRepository,
+  INBOUND_ROUTE_NAME_UNIQUE,
+  inboundRouteToWire,
+} from './agency/inbound-route.repository.js';
+export type {
+  AgencyInboundAttachRefusal,
+  AgencyInboundDetachReason,
+  AgencyInboundNumberRoute,
+  AgencyInboundRouteNumberRow,
+  AgencyInboundRoutePatch,
+  AgencyInboundRouteRecord,
+  AgencyInboundRouteWithNumbers,
+} from './agency/inbound-route.repository.js';
+export {
+  AgencyInboundCallRepository,
+  agencyInboundCallRepository,
+  INBOUND_CALL_TRANSITIONS,
+} from './agency/inbound-call.repository.js';
+export type {
+  AgencyInboundArrivalInput,
+  AgencyInboundCallRecord,
+  AgencyInboundEndInput,
+  AgencyInboundIdentification,
+  AgencyInboundMissedListInput,
+  AgencyInboundMissedRow,
+  AgencyInboundTransitionTarget,
+} from './agency/inbound-call.repository.js';

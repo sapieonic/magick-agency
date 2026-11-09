@@ -459,13 +459,17 @@ export function attemptFilterConditions(
  *
  * The cursor's timestamp is passed as text and cast, not as a `Date`: a `Date`
  * holds milliseconds and this column holds microseconds. See `keyset-cursor.ts`.
+ *
+ * `column` is the timestamp the list is ordered by: `created_at` for every list but the Missed
+ * inbound list, which pages on the call's `arrived_at` (its index's key).
  */
 export function keysetCondition(
   position: AgencyKeysetPosition,
   alias: string,
   bind: ReturnType<typeof params>,
+  column: 'created_at' | 'arrived_at' = 'created_at',
 ): string {
-  return `(${alias}.created_at, ${alias}.id) < (${bind.add(position.at)}::timestamptz, ${bind.add(position.id)}::uuid)`;
+  return `(${alias}.${column}, ${alias}.id) < (${bind.add(position.at)}::timestamptz, ${bind.add(position.id)}::uuid)`;
 }
 
 /**

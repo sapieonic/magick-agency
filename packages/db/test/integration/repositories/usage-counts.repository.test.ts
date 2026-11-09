@@ -131,6 +131,57 @@ async function manualCall(opts: {
   );
 }
 
+/**
+ * One inbound call (`agency_inbound_calls`, 0024) to the account, ended, with an optional media
+ * leg and analysis job: the third arm, windowed on `arrived_at`. `accountId` null: the tenant
+ * default (no route, no leg).
+ */
+async function inboundCall(opts: {
+  tenantId: string;
+  accountId: string | null;
+  arrivedAt: Date;
+  answered?: boolean;
+  bridged?: boolean;
+  talkSeconds?: number | null;
+  analysisSeconds?: number | null;
+}) {
+  const pool = getTestPool();
+  const inboundCallId = randomUUID();
+  let callId: string | null = null;
+  if (opts.analysisSeconds !== undefined && opts.accountId) {
+    const call = await insertWebrtcCall({
+      tenant_id: opts.tenantId, account_id: opts.accountId, campaign_id: null,
+      origin: 'inbound', inbound_call_id: inboundCallId,
+    });
+    callId = call.id;
+    await pool.query(
+      `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, analysis_audio_seconds)
+       VALUES ($1, $2, $3, 'completed', $4)`,
+      [callId, opts.tenantId, opts.accountId, opts.analysisSeconds],
+    );
+  }
+  // Bridged: answered by an agent. Answered only: the closed message played, a Missed row. Neither:
+  // refused with a hangup at the answer (`rejected`, no follow-up).
+  const outcome = opts.bridged ? 'answered' : opts.answered ? 'closed' : 'rejected';
+  const missed = outcome === 'closed';
+  await pool.query(
+    `INSERT INTO agency_inbound_calls
+       (id, tenant_id, account_id, provider_call_id, to_e164, from_e164, state, outcome,
+        arrived_at, answered_at, bridged_at, answered_by_user_id, ended_at, talk_seconds, webrtc_call_id,
+        follow_up_status, follow_up_reason)
+     VALUES ($1, $2, $3, $4, '+14155550100', '+14155550199', 'ended', $5, $6, $7, $8, $9, $6, $10, $11, $12, $13)`,
+    [
+      inboundCallId, opts.tenantId, opts.accountId, `CA-${inboundCallId}`,
+      outcome, opts.arrivedAt,
+      opts.answered ? opts.arrivedAt : null,
+      opts.bridged ? opts.arrivedAt : null,
+      opts.bridged ? randomUUID() : null,
+      opts.talkSeconds ?? null, callId,
+      missed ? 'open' : null, missed ? 'closed' : null,
+    ],
+  );
+}
+
 async function workspace(name: string) {
   const tenant = await insertTenant({ name });
   const accountA = await insertAccount({ tenant_id: tenant.id, name: `${name} A` });
@@ -207,6 +258,35 @@ describe('usageCountsRepository.countByAccount (integration)', () => {
     expect(narrowed.map((r) => [r.account_id, r.dials])).toEqual([[w.accountB.id, 1]]);
     // An account with ONLY soft-phone dials still gets a row.
     expect(rows.map((r) => r.account_id)).toContain(w.accountB.id);
+  });
+
+  it('inbound calls are the third arm: counted with the dials, windowed on arrival, only with an account', async () => {
+    const w = await workspace('Inbound');
+    const base = { tenantId: w.tenant.id, accountId: w.accountA.id, campaignId: w.campaignA };
+    await attempt({ ...base, dialedAt: IN, answered: true, bridged: true, talkSeconds: 60, analysisSeconds: 55 });
+    const inbound = { tenantId: w.tenant.id, accountId: w.accountA.id };
+    await inboundCall({ ...inbound, arrivedAt: IN, answered: true, bridged: true, talkSeconds: 90, analysisSeconds: 80 });
+    await inboundCall({ ...inbound, arrivedAt: IN, answered: true });               // answered, played closed, nobody bridged
+    await inboundCall({ ...inbound, arrivedAt: IN });                              // refused with a hangup: never answered
+    await inboundCall({ ...inbound, arrivedAt: TO, answered: true, talkSeconds: 1000 }); // outside [from, to)
+    await inboundCall({ tenantId: w.tenant.id, accountId: null, arrivedAt: IN, answered: true }); // the tenant default
+    await inboundCall({ tenantId: w.tenant.id, accountId: w.accountB.id, arrivedAt: FROM, answered: true });
+
+    const rows = await usageCountsRepository.countByAccount({ from: FROM, to: TO });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        account_id: w.accountA.id, dials: 4, answered_calls: 3, connected_calls: 2,
+        talk_seconds: 150, analysis_audio_seconds: 135,
+      }),
+      // An account with ONLY inbound calls still gets a row.
+      expect.objectContaining({ account_id: w.accountB.id, dials: 1, answered_calls: 1, connected_calls: 0, talk_seconds: 0 }),
+    ]);
+
+    // The tenant / account narrowing applies to the inbound arm too.
+    const narrowed = await usageCountsRepository.countByAccount({
+      from: FROM, to: TO, tenantId: w.tenant.id, accountId: w.accountB.id,
+    });
+    expect(narrowed.map((r) => [r.account_id, r.dials])).toEqual([[w.accountB.id, 1]]);
   });
 
   it('the window is half-open [from, to) on dialed_at; undialed attempts never count', async () => {

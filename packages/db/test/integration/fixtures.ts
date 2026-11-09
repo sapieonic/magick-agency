@@ -185,6 +185,12 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
   const analysis = await insertRow('dialer_analysis_jobs', { call_id: call.id, tenant_id: TENANT, account_id: ACCOUNT, ...backdated });
   const manualCall = await insertManualCall(session.id, backdated);
   const softphoneSettings = await insertRow('agency_softphone_settings', { tenant_id: TENANT, account_id: ACCOUNT, ...backdated });
+  const inboundRoute = await insertRow('agency_inbound_routes', {
+    tenant_id: tenant.id, account_id: account.id, name: 'Main line', timezone: 'Europe/London', ...backdated,
+  });
+  const inboundCall = await insertRow('agency_inbound_calls', {
+    tenant_id: TENANT, provider_call_id: `CA-${randomUUID()}`, to_e164: '+14155550199', ...backdated,
+  });
 
   return [
     { trigger: 'tenants_updated_at', table: 'tenants', id: tenant.id, touch: "name = 'renamed'" },
@@ -210,5 +216,7 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
     { trigger: 'trg_dialer_analysis_jobs_updated_at', table: 'dialer_analysis_jobs', id: analysis.id, touch: "error_code = 'X'" },
     { trigger: 'trg_agency_manual_calls_updated_at', table: 'agency_manual_calls', id: manualCall.id, touch: "notes = 'n'" },
     { trigger: 'trg_agency_softphone_settings_updated_at', table: 'agency_softphone_settings', id: softphoneSettings.id, touch: 'record_calls = true' },
+    { trigger: 'trg_agency_inbound_routes_updated_at', table: 'agency_inbound_routes', id: inboundRoute.id, touch: 'record_calls = true' },
+    { trigger: 'trg_agency_inbound_calls_updated_at', table: 'agency_inbound_calls', id: inboundCall.id, touch: "state = 'greeting'" },
   ];
 }

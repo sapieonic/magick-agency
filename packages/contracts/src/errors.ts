@@ -523,3 +523,47 @@ const _allReportCodesListed: AllListed<
   typeof AGENCY_REPORT_ERROR_CODES
 > = true;
 void _allReportCodesListed;
+
+// ─── 6. Inbound refusals ────────────────────────────────────────────────────
+//
+// The codes of the account's inbound routes (`/proxy/agency/inbound/*`, docs/inbound.md §7, §8;
+// shapes in `./api/agency/inbound`). The body is `{ error, message, details? }`. HTTP status
+// beside each code. The route repository's refusal reasons map onto them one to one
+// (`apps/server/src/db/repositories/agency/inbound-route.repository.ts`).
+
+/** Why an inbound route refused. */
+export type AgencyInboundErrorCode =
+  /** 403. `agency_inbound_enabled` is off for the tenant or account. */
+  | 'inbound_disabled'
+  /** 400. The route body is invalid; `details` lists `{ path, message }` per problem (`weekly_hours[2].end`, `clips.greeting`, …). */
+  | 'inbound_route_invalid'
+  /** 404. No such live route in this account. */
+  | 'inbound_route_not_found'
+  /** 409. Another live route of the account has this name (case-insensitive). */
+  | 'inbound_route_name_taken'
+  /** 409. A number is not one of the tenant's active numbers this account may use. `details.phone_number_id`. */
+  | 'inbound_number_not_found'
+  /** 409. A number is not linked to inbound: only the service's operators link numbers (IB6, PL15, "contact support"). `details.phone_number_id`. */
+  | 'inbound_number_not_linked'
+  /** 409. A number already answers another live route. `details.phone_number_id`, `details.route_id`. */
+  | 'inbound_number_in_use'
+  /** 404. No such Missed inbound row the caller may see. */
+  | 'inbound_missed_call_not_found';
+
+/** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
+export const AGENCY_INBOUND_ERROR_CODES = [
+  'inbound_disabled',
+  'inbound_route_invalid',
+  'inbound_route_not_found',
+  'inbound_route_name_taken',
+  'inbound_number_not_found',
+  'inbound_number_not_linked',
+  'inbound_number_in_use',
+  'inbound_missed_call_not_found',
+] as const satisfies readonly AgencyInboundErrorCode[];
+
+const _allInboundCodesListed: AllListed<
+  AgencyInboundErrorCode,
+  typeof AGENCY_INBOUND_ERROR_CODES
+> = true;
+void _allInboundCodesListed;

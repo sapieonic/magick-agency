@@ -90,10 +90,12 @@ describe('FeatureFlagService against Postgres + Redis (integration)', () => {
     expect(await svc.resolveAll(ctx)).toEqual({
       agency_call_analysis: true, agency_dialer_enabled: false, agency_late_binding: false, agency_softphone_enabled: false,
       agency_console_alaw8: true, agency_contact_assignment_enabled: false, agency_reports_enabled: false,
+      agency_inbound_enabled: false,
     });
     expect(await svc.resolveClientExposed(ctx)).toEqual({
       agency_call_analysis: true, agency_dialer_enabled: false, agency_softphone_enabled: false,
       agency_console_alaw8: true, agency_contact_assignment_enabled: false, agency_reports_enabled: false,
+      agency_inbound_enabled: false,
     });
     expect((await svc.resolveAllWithSource(ctx))['agency_call_analysis']).toEqual({ value: true, source: 'tenant' });
   });

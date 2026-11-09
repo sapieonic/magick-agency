@@ -81,6 +81,11 @@ type CampaignScopedAuditAction = Exclude<
   | 'agency_report_subscription.created'
   | 'agency_report_subscription.updated'
   | 'agency_report_subscription.deleted'
+  // Inbound routes and Missed inbound rows are account-wide (docs/inbound.md): no row carries a campaign.
+  | 'agency_inbound_route.created'
+  | 'agency_inbound_route.updated'
+  | 'agency_inbound_route.deleted'
+  | 'agency_inbound_call.handled'
 >;
 
 /**

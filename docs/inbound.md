@@ -4,7 +4,8 @@ Customers ring back the numbers agency dials them from. This is the design for a
 calls on Plivo numbers (tenants' own accounts, B18–B22), putting the caller through to the agent who
 spoke to them where possible, and turning every call nobody takes into a follow-up. VoiceLink
 follows later behind the same router. Designed and reviewed 2026-11-09; Manas locked IB1–IB8 the
-same day. **Nothing is built yet**: §12 is the build plan and its status.
+same day. **P1's foundation is built** (§9: schema, contracts, the schedule rule, repositories);
+no route, webhook or screen is yet. §12 is the build plan and its status.
 
 It replaces launch decision 3 ("inbound calls play a message and hang up") for Plivo numbers that a
 super-admin links to inbound. Unlinked numbers, and every VoiceLink number, keep today's behaviour.
@@ -254,29 +255,72 @@ Plivo numbers sync to the tenant untagged, so several accounts may share one:
 matched contact's account (if it may use the number) → the number's route → tenant default
 (closed message + Missed row, no account).
 
-## 9. Data model (sketch; one new migration per phase, never edit an applied one)
+## 9. Data model (built: `0024_inbound.sql`, `0025_inbound_checks_validate.sql`)
 
-- `agency_inbound_routes`: tenant, account, name, timezone, weekly hours JSONB, holidays JSONB, clip
-  ids (`audio_files`), sticky mode/wait/lookback, pool JSONB, `queue_max_wait_s`, `max_waiting`,
-  `max_concurrent`, `after_hours_action`, `overflow_action`, `record_calls`, `analysis_profile_id`,
-  `disposition_catalog`, status.
-- `agency_inbound_route_numbers`: route ↔ `phone_number_id` UNIQUE, active.
-- `agency_inbound_calls` (spine): tenant, account (nullable for the tenant default), route,
-  credential, `provider_call_id`, from/to E.164, matched contact/campaign, sticky user + reason,
-  state `arrived → greeting → queued → offered → connected → ended`, outcome (`answered`,
-  `abandoned_in_queue`, `overflow`, `overflow_no_capacity`, `closed`, `voicemail`, `rejected`,
-  `failed`), `arrived_at`, `bridged_at`, `ended_at`, answered by, follow-up assignee/status/handled
-  by+at, voicemail key, `webrtc_call_id`.
-- `agency_calls.origin` += `inbound` with `inbound_call_id`; the origin and manual-correlation
-  CHECKs (0005) rewritten in the new migration; an index on `provider_call_id`.
-- `agency_contacts`: callback source (`inbound`) and its due time, read by `isCallbackSql`.
-- `telephony_credentials`: `inbound_app_id`, `inbound_answer_url`, inbound token.
-  `phone_numbers`: inbound linked flag, `inbound_previous_app_id`.
-- Usage counts: a third arm for inbound (`usage-counts.repository.ts`), from P1.
+What P1 and the spine need; P2 adds what connecting agents needs (a later migration, never an edit).
+The inventory with every CHECK is `packages/db/BASELINE.md` ("0024"); the contract lists each CHECK
+holds are `packages/contracts/src/agency/inbound.ts`, pinned by
+`packages/db/test/integration/db/inbound-migration.test.ts`.
 
-Audit actions: `telephony_credential.inbound_enabled` / `inbound_disabled` / `inbound_repointed`,
-`phone_number.inbound_linked` / `inbound_unlinked`, `agency_inbound_route.created` / `updated` /
-`deleted`, `agency_inbound_call.handled`. Ids and numbers only.
+- **`agency_inbound_routes`**: tenant (FK, cascade), account, name (one live name per account,
+  case-insensitive), timezone, `weekly_hours` (`[{day, start, end}]`, ISO day, `HH:MM`, `end` may be
+  `24:00`, `end < start` runs overnight and belongs to the day it opens on), `holidays`
+  (`[{from, to, label}]`, local dates inclusive, at most 31 days each), six clip ids
+  (`greeting`, `hold`, `closed`, `busy`, `recording_notice`, `callback`; FK `audio_files` ON DELETE
+  SET NULL: NULL is the built-in clip), `sticky_mode` / `sticky_wait_seconds` /
+  `sticky_lookback_days` (IB2: `loose`, 30 s, 30 days), `pool_campaign_ids` (empty: the whole
+  account), `queue_max_wait_seconds` (120), `max_waiting` (10), `max_concurrent` (20; this build's
+  default), `after_hours_action` / `overflow_action` (`callback | voicemail`, default `callback`,
+  IB3), `record_calls`, `recording_notice` (IB7, default on), `analysis_profile_id`,
+  `disposition_catalog` (`[]`: the built-in catalog), soft delete (`deleted_at`). Bounds:
+  `AGENCY_INBOUND_ROUTE_LIMITS`, CHECKed too; `sticky_wait_seconds ≤ queue_max_wait_seconds`,
+  `max_waiting ≤ max_concurrent`.
+- **`agency_inbound_route_numbers`**: route ↔ `phone_number_id`, one ACTIVE row per number
+  (`uq_agency_inbound_route_numbers_active`); a detached row keeps when, by whom and why
+  (`detached`, `route_deleted`, `number_unlinked`: the §8.2 cascade).
+- **`agency_inbound_calls`** (the spine, and the Missed row): tenant, account (NULL: the tenant
+  default, which has no route, match or media leg), route, number rung, provider and credential
+  (composite FK, as `agency_calls`'), `provider_call_id` (unique per provider: a retried answer
+  webhook finds its row), from (NULL: withheld) / to E.164, matched contact and campaign,
+  `caller_dnc`, sticky user + reason (`owner`, `last_from_number`, `last_connected`,
+  `last_dialled`), state `arrived → greeting → queued ⇄ offered → connected → ended`, outcome
+  (`answered`, `abandoned_in_queue`, `overflow`, `overflow_no_capacity`, `closed`, `voicemail`,
+  `rejected`, `failed`), `arrived_at`, `answered_at` (our answer), `bridged_at` + answered by,
+  `ended_at`, `talk_seconds`, `webrtc_call_id`, `voicemail_key`, `callback_due_at` (the callback this
+  call booked), and the follow-up: `follow_up_status` (`open | handled`), `follow_up_reason`
+  (`closed`, `abandoned_in_queue`, `overflow`, `overflow_no_capacity`, `failed`), assignee (the
+  sticky agent, else NULL for the account), handled by + at. A Missed row exists only on an ended
+  call that is neither `answered` nor `rejected`. Indexes: the Missed list by account and status,
+  and by assignee, newest first; open rows by age for the sweep.
+- **`agency_calls.origin`** += `inbound` with `inbound_call_id`; the origin CHECK is rewritten; the
+  manual-correlation CHECK (0005) needed no change, since its arms already keep an inbound leg's
+  campaign, attempt and manual call NULL; `ck_agency_calls_inbound_correlation` is new. An inbound
+  leg's `caller_id` is the number rung and `destination_phone` the caller's (`''` when withheld).
+  The baseline's `idx_agency_calls_provider_call_id` already serves the status webhook. The
+  `'agency'` call scope takes inbound legs.
+- **`agency_contacts`**: `callback_source` (`inbound`) and `callback_due_at`, together. Read by
+  nothing yet: the inbound follow-up widens `isCallbackSql` (`callback_source IS NOT NULL OR` the
+  disposition rule) and the claim, and clears both when the contact's next call settles.
+- **`agency_campaigns.inbound_sticky_enabled`** (default true).
+- **`telephony_credentials`**: `inbound_app_id`, the three URLs the Application was given (answer,
+  hangup, fallback answer; stored without the token query, the signatures' subject), the token as
+  sha256 hex only (`inbound_token_hash`; the raw token exists only in the URLs given to Plivo), the
+  previous token's hash and expiry (a Re-point's grace), `inbound_enabled_at`. All or nothing; a
+  revoked credential cannot hold an Application.
+  **`phone_numbers`**: `inbound_linked_at` (the link flag, only on a synced number) and
+  `inbound_previous_app_id`.
+- **Usage counts**: the third arm (`usage-counts.repository.ts`): inbound calls with an account
+  count as `dials` (every agency call that began in the window), windowed on `arrived_at`.
+
+The two big tables' CHECKs are added `NOT VALID` by 0024 and validated by 0025 (0009 / 0010's split).
+
+Audit actions: in `super_admin_audit_log`, `telephony_credential.inbound_enabled` /
+`inbound_disabled` / `inbound_repointed`, `phone_number.inbound_linked` / `inbound_unlinked`
+(`INBOUND_SUPER_ADMIN_AUDIT_ACTIONS`); in `platform_audit_log`, `agency_inbound_route.created` /
+`updated` / `deleted`, `agency_inbound_call.handled`. Ids and numbers only. Flag
+`agency_inbound_enabled` (default off, client-exposed: the console surfaces only); permissions
+`agency.inbound.read` (floored at `agent`: an agent's own Missed rows) and `agency.inbound.write`
+(`account_admin`).
 
 ## 10. Restart and failure
 
@@ -298,7 +342,7 @@ inbound section in account reports.
 | Phase | Scope | Status |
 |---|---|---|
 | P0 | Live Plivo checks, alongside the planned real Plivo call (step 5): create an Application and link/unlink a number; answer-URL params, timeout and inbound `CallStatus`; hangup URL params; fallback answer URL; moving a live streamed call to new XML (voicemail, worker handover); DTMF over the stream. Results into `plivo-carrier.fixture.json` | not started (needs a Plivo account) |
-| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | not started |
+| P1 | Answer every call, connect nobody: credential Enable inbound + Application, per-number link/unlink + cascade (pilot tenant first), answer and status webhooks, spine + `origin = inbound`, routes with hours/holidays/clips (closed, "we'll call you back", recording notice), follow-ups (Missed list, inbound callback on contacts), startup sweep, usage, audit, flag, RBAC, super-admin and console screens | in progress: foundation done (`feat(db,contracts,domain,server): inbound calls foundation`: `0024_inbound.sql` and `0025_inbound_checks_validate.sql`, contracts, flag, permissions, audit names, the schedule and number rules, the route and spine repositories, usage). Next, in parallel: the super-admin slice (Application, link/unlink, cascade, screens), the webhook slice (answer and status, route resolution, clips, spine writes, follow-ups, sweep, metrics) and the console slice (routes and Missed list API and screens) |
 | P2 | Connect agents (console, single process, IB8): parked mode with looped hold, inbound reservation + panel + outcome + wrap-up, sticky loose/strict, team queue, `inbound_waiting` on the pacing bus, take-from-wrap-up CAS, in-flight clash (§5.4), concurrency answers (§5.3), voicemail, supervisor queue tile | not started |
 | P3 | Mobile app frames (Dart wire), pickups from break and soft phone, media-worker handover, reports/Insights, "press 1 for a callback" if DTMF works | not started |
 | P4 | VoiceLink behind a carrier-module `inbound` capability | not started |

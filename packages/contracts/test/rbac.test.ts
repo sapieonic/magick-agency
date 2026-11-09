@@ -72,6 +72,9 @@ const FLOORS: ReadonlyArray<{
   { permission: 'agency.contacts.own', floor: 'agent', masterName: null, masterLine: null },
   // Customer history: everyone can search one number (CH1).
   { permission: 'agency.customer_history.read', floor: 'agent', masterName: null, masterLine: null },
+  // Inbound calls (docs/inbound.md §8.1): an agent's own Missed rows; routes at account_admin.
+  { permission: 'agency.inbound.read', floor: 'agent', masterName: null, masterLine: null },
+  { permission: 'agency.inbound.write', floor: 'account_admin', masterName: null, masterLine: null },
 ];
 
 describe('permission floors', () => {
@@ -100,7 +103,7 @@ describe('permission floors', () => {
 });
 
 describe('the agent role', () => {
-  it('reaches exactly the six action permissions, the flag map and the customer history', () => {
+  it('reaches exactly the six action permissions, the flag map, the customer history and their own Missed inbound rows', () => {
     expect(PERMISSIONS.filter((p) => hasPermission('agent', p)).sort()).toEqual([
       'agency.attempts.dispose',
       'agency.attempts.handle',
@@ -108,6 +111,7 @@ describe('the agent role', () => {
       'agency.customer_history.read',
       'agency.dnc.write',
       'agency.flags.read',
+      'agency.inbound.read',
       'agency.softphone.dial',
       'agency.station.connect',
     ]);
@@ -118,6 +122,13 @@ describe('the agent role', () => {
     expect(hasPermission('agent', 'agency.campaigns.read')).toBe(false);
     expect(hasPermission('agent', 'agency.dnc.read')).toBe(false);
     expect(hasPermission('agent', 'agency.softphone.manage')).toBe(false);
+  });
+
+  it('reads their Missed inbound rows but cannot configure inbound routes', () => {
+    expect(hasPermission('agent', 'agency.inbound.read')).toBe(true);
+    expect(hasPermission('agent', 'agency.inbound.write')).toBe(false);
+    expect(hasPermission('operator', 'agency.inbound.write')).toBe(false);
+    expect(hasPermission('account_admin', 'agency.inbound.write')).toBe(true);
   });
 });
 

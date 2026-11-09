@@ -75,6 +75,8 @@ const EXPECTED_TABLES = [
   'agency_campaign_agent_caller_ids',
   // report runs and subscriptions (0023, docs/reports.md)
   'report_runs', 'report_subscriptions',
+  // inbound routes, their numbers and the inbound spine (0024, docs/inbound.md)
+  'agency_inbound_routes', 'agency_inbound_route_numbers', 'agency_inbound_calls',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
@@ -101,6 +103,8 @@ const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
   ['trg_dialer_analysis_jobs_updated_at', 'dialer_analysis_jobs'],
   ['trg_agency_manual_calls_updated_at', 'agency_manual_calls'],
   ['trg_agency_softphone_settings_updated_at', 'agency_softphone_settings'],
+  ['trg_agency_inbound_routes_updated_at', 'agency_inbound_routes'],
+  ['trg_agency_inbound_calls_updated_at', 'agency_inbound_calls'],
 ];
 
 const ALL_TRIGGERS: Array<[trigger: string, table: string]> = [

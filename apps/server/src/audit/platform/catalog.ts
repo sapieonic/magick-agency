@@ -127,6 +127,17 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_report_subscription.created',
   'agency_report_subscription.updated',
   'agency_report_subscription.deleted',
+  // ── Inbound calls (docs/inbound.md §9) ───────────────────────────────────────
+  // An account's inbound route created, changed (`details.fields`; `details.numbers_added` /
+  // `numbers_removed` with the phone number ids) or deleted (its numbers detached), filed under
+  // the route. A Missed inbound row marked handled, filed under the inbound call
+  // (`agency_inbound_calls.id`; `details.reason`). Ids and numbers only. Account-wide, never
+  // campaign-scoped. What the super-admin does (enable inbound, link numbers) is in
+  // `super_admin_audit_log` (`INBOUND_SUPER_ADMIN_AUDIT_ACTIONS`).
+  'agency_inbound_route.created',
+  'agency_inbound_route.updated',
+  'agency_inbound_route.deleted',
+  'agency_inbound_call.handled',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -172,6 +183,9 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   // One report run (`report_runs.id`) and one report subscription (`report_subscriptions.id`).
   'agency_report',
   'agency_report_subscription',
+  // One inbound route (`agency_inbound_routes.id`) and one inbound call (`agency_inbound_calls.id`).
+  'agency_inbound_route',
+  'agency_inbound_call',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

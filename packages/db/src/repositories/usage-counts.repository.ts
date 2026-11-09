@@ -26,6 +26,18 @@ import { getPool } from '../connection.js';
  * soft phone's volume is a small fraction of pacing's, and a usage report is not on
  * a hot path; add one when a plan on real volume says so.
  *
+ * ── Inbound calls are the third arm (docs/inbound.md §9) ────────────────────
+ * A customer's call to an inbound route (`agency_inbound_calls`, 0024) is an agency call too:
+ * it is UNION ALLed in with the same four columns, its `arrived_at` standing for `dialed_at`
+ * (the instant the call began, under the same window rule). So `dials` counts every agency call
+ * that began in the window, placed or received; `answered_calls` the ones answered (an inbound
+ * call by our answer, `answered_at`; never one refused with a hangup); `connected_calls` the ones
+ * an agent was bridged to. The spine is disjoint from the other two by construction (an inbound
+ * call writes no attempt and no manual call). A call that reached no account (the tenant
+ * default, §8.3: `account_id` NULL) has no row to land in and is left out; it never has a media
+ * leg, so it carries no talk time or analysis to lose. No `arrived_at` index, for the soft
+ * phone's reason.
+ *
  * ── One window rule for every column ───────────────────────────────────────
  * Half-open `[from, to)` on the ATTEMPT's `dialed_at`. Analysis seconds are
  * attributed to the dial they analysed, not to when the job ran, so every
@@ -117,6 +129,15 @@ export class UsageCountsRepository {
             AND m.dialed_at <  $2::timestamptz
             AND ($3::uuid IS NULL OR m.tenant_id  = $3::uuid)
             AND ($4::uuid IS NULL OR m.account_id = $4::uuid)
+         UNION ALL
+         -- Inbound calls, under the same window rule (arrival) and filters; only with an account.
+         SELECT i.tenant_id, i.account_id, i.answered_at, i.bridged_at, i.talk_seconds, i.webrtc_call_id
+           FROM agency_inbound_calls i
+          WHERE i.arrived_at >= $1::timestamptz
+            AND i.arrived_at <  $2::timestamptz
+            AND i.account_id IS NOT NULL
+            AND ($3::uuid IS NULL OR i.tenant_id  = $3::uuid)
+            AND ($4::uuid IS NULL OR i.account_id = $4::uuid)
        ), per_account AS (
          SELECT d.tenant_id,
                 d.account_id,

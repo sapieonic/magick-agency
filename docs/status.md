@@ -1072,6 +1072,25 @@ module's `terraform validate` (its provider download timed out; `fmt` passed). C
 this branch: every count below is a local run, so the renderer's PDF suite on GitHub's runner,
 `build-lambda.mjs` in CI and the `mobile.yml` job are unproven until the branch is pushed.
 
+### Inbound calls 2026-11-09 (IB1–IB8, [`inbound.md`](inbound.md))
+
+Customers ringing back the Plivo numbers agency dials from, answered on our stream and turned into
+follow-ups when nobody takes them. Designed and locked the same day (IB1–IB8). **P1's foundation is
+built**; the three P1 slices that build on it (the super-admin's Application and number links, the
+webhooks and follow-ups, the console's routes and Missed list) are not.
+
+| Area | What was built |
+|---|---|
+| Database | `0024_inbound.sql`: `agency_inbound_routes`, `agency_inbound_route_numbers` (one live route per number), the spine `agency_inbound_calls` (also the Missed row), `agency_calls.origin = 'inbound'` with `inbound_call_id`, contact `callback_source` / `callback_due_at`, `agency_campaigns.inbound_sticky_enabled`, the credential's inbound Application, URLs and token hash, numbers' `inbound_linked_at`; `0025_inbound_checks_validate.sql` validates the big tables' CHECKs (`packages/db/BASELINE.md`) |
+| Contracts | `src/agency/inbound.ts` (vocabularies, route config, defaults, limits), `src/api/agency/inbound.ts` (route DTOs, the Missed list), `src/api/platform/super-admin-inbound.ts` (credential inbound state and health, number link, super-admin audit actions), error codes `errors.ts` §6, flag `agency_inbound_enabled` (default off), permissions `agency.inbound.read` (agent) and `agency.inbound.write` (account admin) |
+| Domain | `inbound-schedule.ts` (open at an instant; the exact next opening across DST and holidays), `plivo-number.ts` (moved from the credential specs: one number rule for sync and webhooks), `zone-clock.ts` (the wall-clock primitives moved out of `calling-hours.ts`) |
+| Server | `agency/inbound/route-config.ts` (the route body's zod schemas; a PATCH judged as the route it makes), `db/repositories/agency/inbound-route.repository.ts` and `inbound-call.repository.ts`, `telephony/plivo/inbound-token.ts`; the credential's inbound storage in `packages/db`; usage counts' third arm; the `'agency'` call scope takes inbound legs; audit vocabulary |
+
+**Not verified here:** the mobile `agency_wire` Dart tests (no Dart or Flutter in this environment;
+the contract change the app sees is one new flag key in `platform.json`, which `FeatureFlags`
+decodes as an open map). No inbound call has been placed: P0 (the live Plivo checks) needs an
+account.
+
 ## Test counts
 
 Latest run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
@@ -1428,6 +1447,11 @@ files are listed in [`modules.md`](modules.md).
 **Reports, not yet run for real:** the SQS renderer and its Lambda have not run on AWS (the
 Chromium layer, S3 lifecycle and the signed callback over the internet are tested only with
 mocks and the in-process renderer); see "Reports 2026-11-08" above.
+
+**Inbound calls** ([`inbound.md`](inbound.md) §12): P1's three slices on the foundation (the
+super-admin's Application and number links with the §8.2 cascade, the answer and status webhooks
+with follow-ups and the sweep, the console's routes and Missed list), then P2 (connecting agents),
+P3 and P4. P0 needs a Plivo account.
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.

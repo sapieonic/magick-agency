@@ -18,6 +18,13 @@ export interface PhoneNumberRecord {
    * by `syncForCredential`.
    */
   telephony_credential_id: string | null;
+  /**
+   * When a super-admin linked the number to its credential's inbound Application (IB6; 0024).
+   * NULL: not linked. Only a synced number (`telephony_credential_id` set) can be linked.
+   */
+  inbound_linked_at: Date | null;
+  /** The carrier app the number pointed at before linking, restored by Unlink. NULL: none, or not linked. */
+  inbound_previous_app_id: string | null;
   notes: string | null;
   created_by: string | null;
   created_at: Date;

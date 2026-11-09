@@ -1,4 +1,18 @@
+import {
+  instantForLocalTime,
+  isoDowOf,
+  isUsableTimezone,
+  localParts,
+} from '@magick-agency/domain/zone-clock';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
+
+/**
+ * The wall-clock primitives live in `@magick-agency/domain/zone-clock` (the repo's one reader,
+ * shared with the inbound route schedule); re-exported here for the campaign validator and the
+ * report schedule, which judge zones by the same rule the dial-time gate does.
+ */
+export { isUsableTimezone, localParts };
+export type { LocalParts } from '@magick-agency/domain/zone-clock';
 
 /**
  * ─── AGENCY DIALER — CALLING HOURS, IN THE CUSTOMER'S TIMEZONE ────
@@ -65,98 +79,6 @@ export interface ResolvedCallingWindow extends CallingWindow {
    * for one slice of a roster.
    */
   contactTimezoneRejected: boolean;
-}
-
-/**
- * `Intl.DateTimeFormat` construction is not free and the tick asks per contact,
- * so formatters are cached per zone — including the **negative** result, so a
- * roster with a thousand rows carrying the same junk zone pays one `RangeError`
- * rather than a thousand.
- */
-const FORMATTERS = new Map<string, Intl.DateTimeFormat | null>();
-
-function formatterFor(timezone: string): Intl.DateTimeFormat | null {
-  if (FORMATTERS.has(timezone)) return FORMATTERS.get(timezone) ?? null;
-  let fmt: Intl.DateTimeFormat | null = null;
-  try {
-    fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      // `hourCycle` rather than `hour12: false`, which yields hour '24' at
-      // midnight in some ICU builds and would put midnight on the wrong day.
-      hourCycle: 'h23',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    });
-  } catch {
-    fmt = null;
-  }
-  FORMATTERS.set(timezone, fmt);
-  return fmt;
-}
-
-/**
- * Is this string a zone we are willing to evaluate a calling window in?
- *
- * **Stricter than `Intl` accepts, and the extra rule is load-bearing.** ICU
- * resolves bare abbreviations to fixed-offset zones, measured on this runtime:
- * `'EST'` → **America/Panama**, which is EST all year and observes no DST, so a
- * CSV column saying `EST` would place every call an hour off for half the year —
- * on the daylight side, i.e. an hour earlier in the customer's morning than the
- * operator configured. `'IST'` → Asia/Calcutta (harmlessly right) and `'GMT'` →
- * UTC (right by luck); the rule cannot tell those from the dangerous one, and the
- * timezone rule above already settled which way to fail: *"an inferred timezone that puts a call
- * outside legal hours is worse than an honest default."*
- *
- * So we require the `Area/Location` form, or exactly `UTC`. Everything else falls
- * back to the campaign default and is flagged. A handful of legitimate legacy
- * IANA links (`Japan`, `Cuba`, `EST5EDT`) are refused by this rule too; they fall
- * back to an honest default rather than a wrong offset, which is the trade.
- */
-export function isUsableTimezone(timezone: string | null | undefined): boolean {
-  if (typeof timezone !== 'string') return false;
-  const trimmed = timezone.trim();
-  if (trimmed === '') return false;
-  if (!trimmed.includes('/') && trimmed.toUpperCase() !== 'UTC') return false;
-  return formatterFor(trimmed) !== null;
-}
-
-export interface LocalParts {
-  year: number; month: number; day: number;
-  hour: number; minute: number; second: number;
-  /** ISO-8601: 1=Mon…7=Sun. */
-  isoDow: number;
-}
-
-/**
- * The wall clock in `timezone` at `instant`, or null when the zone is unusable. Exported for the
- * report schedule (`agency/reports/schedule.ts`), so the repo has one wall-clock reader.
- */
-export function localParts(timezone: string, instant: Date): LocalParts | null {
-  const fmt = formatterFor(timezone);
-  if (!fmt || !Number.isFinite(instant.getTime())) return null;
-  const out: Record<string, number> = {};
-  for (const part of fmt.formatToParts(instant)) {
-    if (part.type === 'literal') continue;
-    const n = Number(part.value);
-    if (!Number.isFinite(n)) return null;
-    out[part.type] = n;
-  }
-  const { year, month, day, hour, minute, second } = out;
-  if ([year, month, day, hour, minute, second].some((v) => v === undefined)) return null;
-  return {
-    year: year!, month: month!, day: day!, hour: hour!, minute: minute!, second: second!,
-    isoDow: isoDowOf(year!, month!, day!),
-  };
-}
-
-/**
- * Day of week for a calendar date, from UTC arithmetic rather than from a
- * localized weekday string — `formatToParts` weekday names are locale data and
- * comparing them would make the predicate depend on the ICU bundle.
- */
-function isoDowOf(year: number, month: number, day: number): number {
-  const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay(); // 0=Sun
-  return dow === 0 ? 7 : dow;
 }
 
 /**
@@ -274,33 +196,6 @@ export function callingWindowState(window: CallingWindow, now: Date): CallingWin
   const yesterday = p.isoDow === 1 ? 7 : p.isoDow - 1;
   if (w.days.includes(yesterday) && t < w.end) return 'open';
   return 'closed';
-}
-
-/** UTC offset of `timezone` at `instant`, in ms. Positive east of UTC. */
-function zoneOffsetMs(timezone: string, instant: Date): number | null {
-  const p = localParts(timezone, instant);
-  if (!p) return null;
-  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - instant.getTime();
-}
-
-/**
- * The instant at which a given local wall clock occurs, or null.
- *
- * Two passes, because the offset depends on the answer: the first pass converts
- * using the offset near the guess, the second using the offset at the result.
- * That converges everywhere except across a DST transition, which is why every
- * caller **verifies the result against the predicate** rather than trusting it —
- * see `nextWindowOpen`.
- */
-function instantForLocalTime(
-  timezone: string, year: number, month: number, day: number, secondsOfDay: number,
-): Date | null {
-  const wall = Date.UTC(year, month - 1, day) + secondsOfDay * 1000;
-  const first = zoneOffsetMs(timezone, new Date(wall));
-  if (first === null) return null;
-  const second = zoneOffsetMs(timezone, new Date(wall - first));
-  if (second === null) return null;
-  return new Date(wall - second);
 }
 
 /** How far past a computed opening we will hunt for the real one across a DST gap. */

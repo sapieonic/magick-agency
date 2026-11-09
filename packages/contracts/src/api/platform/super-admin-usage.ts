@@ -7,7 +7,7 @@
  *
  * | Field | Source row |
  * |---|---|
- * | `dials` | `agency_call_attempts` with `dialed_at` in the window (served by the `(dialed_at, campaign_id)` index) |
+ * | `dials` | `agency_call_attempts` with `dialed_at` in the window (served by the `(dialed_at, campaign_id)` index), plus soft-phone dials (`agency_manual_calls.dialed_at`, SP5) and inbound calls with an account (`agency_inbound_calls.arrived_at`, docs/inbound.md §9): every agency call that began in the window |
  * | `answered_calls` | the same attempts with `answered_at IS NOT NULL` (the carrier answered) |
  * | `connected_calls` | the same attempts with `bridged_at IS NOT NULL` (an agent was joined) |
  * | `talk_seconds` | Σ `agency_call_attempts.talk_seconds` over those attempts |

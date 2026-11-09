@@ -5,7 +5,7 @@ under [Later migrations](#later-migrations). This file is their inventory: the r
 they follow, every table with its purpose and columns, the unique indexes that carry invariants, the
 triggers and functions, how it is tested, and the schema questions still open. Read it before
 writing a repository, a migration or an import script. Column lists are generated from the SQL;
-the SQL is the authority. As of 2026-11-08.
+the SQL is the authority. As of 2026-11-09.
 
 ## Rules
 
@@ -22,7 +22,7 @@ the SQL is the authority. As of 2026-11-08.
 
 ## Tables
 
-33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012, 44 with 0013, 45 with 0018, 47 with 0023), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
+33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012, 44 with 0013, 45 with 0018, 47 with 0023, 50 with 0024), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
 
 | Group | Tables |
 |---|---|
@@ -37,6 +37,7 @@ the SQL is the authority. As of 2026-11-08.
 | Dialer | `agency_campaigns`, `agency_contacts`, `agency_agent_sessions`, `agency_agent_session_events`, `agency_call_attempts`, `agency_ingest_chunks`, `agency_dnc_outbox`, `agency_calls` |
 | Insights rollup (0012) | `agency_insights_rollup_dirty`, `agency_insights_rollup_buckets`, `agency_insights_rollup_agents`, `agency_insights_rollup_codes`, `agency_insights_rollup_facets` |
 | Pacing history (0013) | `agency_campaign_pacing_minutes` |
+| Inbound calls (0024) | `agency_inbound_routes`, `agency_inbound_route_numbers`, `agency_inbound_calls` |
 
 ### Identity
 
@@ -996,6 +997,92 @@ definitions, the planner using the agent-first index, down then up), the server'
 `test/integration/agency/report-run-repository.test.ts` and
 `report-subscription-repository.test.ts`, the table set in `baseline.test.ts` and the down → up
 suite.
+
+### 0024 — `migrations/0024_inbound.sql`
+
+Inbound calls on Plivo numbers (`docs/inbound.md` §9, IB1–IB8): everything P1 and the spine need.
+
+- **`agency_inbound_routes`**: an account's route. `id`, `tenant_id` (FK `tenants`, CASCADE),
+  `account_id` (no FK, as campaigns'), `name` (trimmed, 1–100), `timezone` (trimmed; a usable IANA
+  zone is the server's check), `weekly_hours` / `holidays` (JSONB arrays, at most 50 / 100; elements
+  are the server's to validate), six clip ids `greeting_audio_id`, `hold_audio_id`,
+  `closed_audio_id`, `busy_audio_id`, `recording_notice_audio_id`, `callback_audio_id` (FK
+  `audio_files` ON DELETE SET NULL: a deleted clip puts the slot back on the built-in clip),
+  `sticky_mode` (`off | loose | strict`, default `loose`), `sticky_wait_seconds` (5–300, default 30,
+  at most `queue_max_wait_seconds`), `sticky_lookback_days` (1–365, default 30), `pool_campaign_ids`
+  (UUID[], at most 50, empty = the whole account), `queue_max_wait_seconds` (10–1800, default 120),
+  `max_waiting` (0–100, default 10, at most `max_concurrent`), `max_concurrent` (1–500, default
+  20), `after_hours_action` / `overflow_action` (`callback | voicemail`, default `callback`),
+  `record_calls` (false), `recording_notice` (true, IB7), `analysis_profile_id` (no FK),
+  `disposition_catalog` (JSONB array, `[]` = built-in), `created_by`, `updated_by`, `created_at`,
+  `updated_at`, `deleted_at` (soft delete), `deleted_by`. **`uq_agency_inbound_routes_name`**
+  `(tenant_id, account_id, lower(name)) WHERE deleted_at IS NULL`; `idx_agency_inbound_routes_account`
+  `(tenant_id, account_id, created_at) WHERE deleted_at IS NULL`; trigger
+  `trg_agency_inbound_routes_updated_at`.
+- **`agency_inbound_route_numbers`**: `id`, `route_id` (FK, CASCADE), `phone_number_id` (FK
+  `phone_numbers`, RESTRICT), `attached_by`, `attached_at`, `detached_at`, `detached_by`,
+  `detached_reason` (`detached | route_deleted | number_unlinked`, set exactly with `detached_at`).
+  **`uq_agency_inbound_route_numbers_active`** `(phone_number_id) WHERE detached_at IS NULL`: one
+  route answers a number. `idx_agency_inbound_route_numbers_route (route_id) WHERE detached_at IS
+  NULL`.
+- **`agency_inbound_calls`**, the spine and the Missed inbound row: `id`, `tenant_id`, `account_id`
+  (NULL = the tenant default), `route_id`, `phone_number_id`, `provider` (default `plivo`),
+  `telephony_credential_id` (composite FK `(credential, tenant, provider)`, RESTRICT, as
+  `agency_calls`'), `provider_call_id`, `from_e164` (NULL = withheld), `to_e164`,
+  `matched_contact_id`, `matched_campaign_id`, `caller_dnc`, `sticky_user_id`, `sticky_reason`,
+  `state` (`arrived | greeting | queued | offered | connected | ended`), `outcome` (`answered |
+  abandoned_in_queue | overflow | overflow_no_capacity | closed | voicemail | rejected | failed`),
+  `arrived_at`, `answered_at`, `bridged_at`, `answered_by_user_id`, `ended_at`, `talk_seconds`,
+  `webrtc_call_id`, `voicemail_key`, `callback_due_at`, `follow_up_status` (`open | handled`),
+  `follow_up_reason` (`closed | abandoned_in_queue | overflow | overflow_no_capacity | failed`),
+  `follow_up_assignee_user_id`, `handled_by_user_id`, `handled_at`, `created_at`, `updated_at`. No
+  FK but the credential's (an audit spine). CHECKs: each vocabulary (the contract's lists in
+  `packages/contracts/src/agency/inbound.ts`); E.164 numbers; a route, a match or a leg only with an
+  account; a match is contact and campaign together, a callback only on a match; ended exactly with
+  an outcome and `ended_at`; bridged exactly with its agent, `connected` and `answered` only once
+  bridged; the sticky pair together; the follow-up only on an ended call that is not `answered` or
+  `rejected`, status and reason together, an assignee only with one, `handled_at` exactly when
+  handled. **`uq_agency_inbound_calls_provider_call`** `(provider, provider_call_id)` (a retried
+  answer webhook finds its row); `idx_agency_inbound_calls_missed` `(tenant_id, account_id,
+  follow_up_status, arrived_at DESC, id DESC)` and `idx_agency_inbound_calls_missed_assignee` (with
+  the assignee after the account), both `WHERE follow_up_status IS NOT NULL`;
+  `idx_agency_inbound_calls_open (arrived_at) WHERE state <> 'ended'` (the sweep). Trigger
+  `trg_agency_inbound_calls_updated_at`.
+- **`agency_calls`**: `inbound_call_id` (no FK); `ck_agency_calls_origin` rewritten to `campaign |
+  manual | inbound`; `ck_agency_calls_inbound_correlation` (`inbound_call_id` exactly on an inbound
+  leg). `ck_agency_calls_manual_correlation` is unchanged: its arms already keep an inbound leg's
+  `campaign_id`, `agency_attempt_id` and `manual_call_id` NULL. No new index: the baseline's
+  `idx_agency_calls_provider_call_id` serves the status webhook.
+- **`agency_contacts`**: `callback_source` (`inbound`) and `callback_due_at`, together
+  (`ck_agency_contact_callback_source`).
+- **`agency_campaigns`**: `inbound_sticky_enabled BOOLEAN NOT NULL DEFAULT true`.
+- **`telephony_credentials`**: `inbound_app_id`, `inbound_answer_url`, `inbound_hangup_url`,
+  `inbound_fallback_answer_url` (without the token query), `inbound_token_hash` (sha256 hex),
+  `inbound_previous_token_hash` with `inbound_previous_token_expires_at` (the Re-point grace),
+  `inbound_enabled_at`. CHECKs: all of the enabled set or none; hashes are 64 lower-case hex; the
+  previous pair together and only beside a current token; a revoked credential has no Application.
+- **`phone_numbers`**: `inbound_linked_at` (only on a synced number) and `inbound_previous_app_id`
+  (only while linked); `idx_phone_numbers_inbound_linked (telephony_credential_id) WHERE
+  inbound_linked_at IS NOT NULL`.
+- **Locking**: the `agency_calls` and `agency_contacts` CHECKs are added `NOT VALID` (no scan under
+  ACCESS EXCLUSIVE; 0025 validates them). The small tables' CHECKs are validated here.
+- **Down** raises, before changing anything, while any inbound call or `origin = 'inbound'` leg
+  exists, or while a number is linked or a credential has inbound enabled; otherwise it drops the
+  columns and tables and restores the two-value origin CHECK.
+
+### 0025 — `migrations/0025_inbound_checks_validate.sql`
+
+Validates 0024's three `NOT VALID` CHECKs (`ck_agency_calls_origin`,
+`ck_agency_calls_inbound_correlation`, `ck_agency_contact_callback_source`) in its own transaction
+under SHARE UPDATE EXCLUSIVE (0010's pattern). Down is a no-op.
+
+**Tests** for both: `test/integration/db/inbound-migration.test.ts` (columns and defaults against
+`AGENCY_INBOUND_ROUTE_DEFAULTS`, every CHECK from both sides, each vocabulary against the contract's
+list, every limit, the unique indexes, the FKs and their ON DELETE, the indexes and that the planner
+uses them, NOT VALID then validated, the Down's refusals, down then up), the server's
+`test/integration/agency/inbound-route-repository.test.ts` and `inbound-call-repository.test.ts`,
+`test/integration/repositories/telephony-credential.repository.test.ts` (the inbound storage), the
+table set and triggers in `baseline.test.ts` and the down → up suite.
 
 ## Tests
 

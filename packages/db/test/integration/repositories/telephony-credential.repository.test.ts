@@ -399,6 +399,105 @@ describe('telephony credentials (integration)', () => {
     });
   });
 
+  describe('inbound (0024; docs/inbound.md §3.1, §8.1): the Application, its URLs and the token\'s hash', () => {
+    const H1 = '1'.repeat(64);
+    const H2 = '2'.repeat(64);
+    const H3 = '3'.repeat(64);
+    const urls = (v: string) => ({
+      answerUrl: `https://hooks.example.test/inbound-answer/${v}`,
+      hangupUrl: `https://hooks.example.test/inbound-status/${v}`,
+      fallbackAnswerUrl: `https://hooks.example.test/inbound-fallback/${v}`,
+    });
+
+    async function linkNumber(credentialId: string, at: Date | null = new Date()) {
+      const provider = (await getTestPool().query<{ id: string }>(`SELECT id FROM telephony_providers WHERE name = 'plivo'`)).rows[0]!.id;
+      await getTestPool().query(
+        `INSERT INTO phone_numbers (phone_number, provider_id, telephony_credential_id, inbound_linked_at) VALUES ($1, $2, $3, $4)`,
+        [`+1415555${String(Math.floor(Math.random() * 10_000)).padStart(4, '0')}`, provider, credentialId, at]);
+    }
+
+    it('starts disabled; enable stores it all, once, only on an active credential', async () => {
+      const c = await create();
+      expect(await repo.findInbound(c.id)).toMatchObject({
+        credential_id: c.id, tenant_id: tenantA, provider: 'plivo', status: 'active', app_id: null, answer_url: null,
+        enabled_at: null, previous_token_expires_at: null, linked_numbers: 0,
+      });
+      const on = await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      expect(on).toMatchObject({ app_id: 'app-1', ...{ answer_url: urls('a').answerUrl, hangup_url: urls('a').hangupUrl, fallback_answer_url: urls('a').fallbackAnswerUrl } });
+      expect(on!.enabled_at).toBeInstanceOf(Date);
+      // Never the hash: the record has no such field.
+      expect(Object.keys(on!).some((k) => k.includes('token_hash'))).toBe(false);
+      // Twice: the second is a no-op (the caller deletes the Application it made for nothing).
+      expect(await repo.enableInbound(c.id, { appId: 'app-2', tokenHash: H2, ...urls('b') }, admin)).toBeNull();
+      expect((await repo.findInbound(c.id))!.app_id).toBe('app-1');
+
+      const disabled = await create();
+      await repo.setStatus(disabled.id, 'disabled', ['active'], { updatedBy: admin });
+      expect(await repo.enableInbound(disabled.id, { appId: 'app-3', tokenHash: H1, ...urls('c') }, admin)).toBeNull();
+      expect(await repo.findInbound(randomUUID())).toBeNull();
+    });
+
+    it('the token matches by its hash only while inbound is enabled', async () => {
+      const c = await create();
+      expect(await repo.inboundTokenMatches(c.id, H1)).toBe(false);
+      await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      expect(await repo.inboundTokenMatches(c.id, H1)).toBe(true);
+      expect(await repo.inboundTokenMatches(c.id, H2)).toBe(false);
+      // Another credential's token is not this one's.
+      const other = await create();
+      await repo.enableInbound(other.id, { appId: 'app-9', tokenHash: H2, ...urls('o') }, admin);
+      expect(await repo.inboundTokenMatches(c.id, H2)).toBe(false);
+    });
+
+    it('a Re-point replaces the URLs and the token, and keeps the old token for its grace only', async () => {
+      const c = await create();
+      await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      const enabledAt = (await repo.findInbound(c.id))!.enabled_at;
+      const moved = await repo.repointInbound(c.id, { tokenHash: H2, previousTokenGraceSeconds: 3600, ...urls('b') }, admin);
+      expect(moved).toMatchObject({ app_id: 'app-1', answer_url: urls('b').answerUrl, enabled_at: enabledAt });
+      expect(moved!.previous_token_expires_at!.getTime()).toBeGreaterThan(Date.now() + 3_500_000);
+      expect(await repo.inboundTokenMatches(c.id, H2)).toBe(true);
+      expect(await repo.inboundTokenMatches(c.id, H1)).toBe(true); // the grace
+      // A second Re-point drops the oldest token at once.
+      await repo.repointInbound(c.id, { appId: 'app-2', tokenHash: H3, previousTokenGraceSeconds: 3600, ...urls('c') }, admin);
+      expect((await repo.findInbound(c.id))!.app_id).toBe('app-2');
+      expect(await repo.inboundTokenMatches(c.id, H1)).toBe(false);
+      expect(await repo.inboundTokenMatches(c.id, H2)).toBe(true);
+      // Past its expiry the previous token is refused.
+      await getTestPool().query(
+        `UPDATE telephony_credentials SET inbound_previous_token_expires_at = now() - interval '1 second' WHERE id = $1`, [c.id]);
+      expect(await repo.inboundTokenMatches(c.id, H2)).toBe(false);
+      expect(await repo.inboundTokenMatches(c.id, H3)).toBe(true);
+      // Not enabled: nothing to re-point.
+      expect(await repo.repointInbound((await create()).id, { tokenHash: H1, previousTokenGraceSeconds: 60, ...urls('d') }, admin)).toBeNull();
+    });
+
+    it('disable is refused while a number is linked, and clears every inbound column once none is', async () => {
+      const c = await create();
+      expect(await repo.disableInbound(c.id, admin)).toEqual({ ok: false, reason: 'not_enabled' });
+      await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      await repo.repointInbound(c.id, { tokenHash: H2, previousTokenGraceSeconds: 3600, ...urls('b') }, admin);
+      await linkNumber(c.id);
+      await linkNumber(c.id, null); // a synced number not linked does not count
+      expect((await repo.findInbound(c.id))!.linked_numbers).toBe(1);
+      expect(await repo.disableInbound(c.id, admin)).toEqual({ ok: false, reason: 'numbers_linked' });
+      await getTestPool().query('UPDATE phone_numbers SET inbound_linked_at = NULL WHERE telephony_credential_id = $1', [c.id]);
+      const off = await repo.disableInbound(c.id, admin);
+      expect(off).toMatchObject({ ok: true, inbound: { app_id: null, answer_url: null, hangup_url: null, enabled_at: null, previous_token_expires_at: null } });
+      const { rows } = await getTestPool().query(
+        'SELECT inbound_token_hash, inbound_previous_token_hash FROM telephony_credentials WHERE id = $1', [c.id]);
+      expect(rows[0]).toEqual({ inbound_token_hash: null, inbound_previous_token_hash: null });
+      expect(await repo.inboundTokenMatches(c.id, H2)).toBe(false);
+      expect(await repo.disableInbound(randomUUID(), admin)).toEqual({ ok: false, reason: 'not_enabled' });
+    });
+
+    it('a revoke of an inbound-enabled credential is refused by the schema (disable inbound first)', async () => {
+      const c = await create();
+      await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      expect(await pgError(repo.revoke(c.id, admin))).toMatchObject({ code: '23514', constraint: 'ck_telephony_credentials_inbound_revoked' });
+    });
+  });
+
   describe('shred hold: a pinned call keeps the secret alive until the post-call webhook window has passed', () => {
     async function revokedWithCall(call: Record<string, unknown>) {
       const cred = await create();

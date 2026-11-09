@@ -4,7 +4,10 @@ import { WEBRTC_NON_TERMINAL_STATUSES } from '../models/agency-call.model.js';
 import { LIVE_CAMPAIGN } from './live-campaign.js';
 import type {
   CreateTelephonyCredentialInput,
+  EnableTelephonyCredentialInboundInput,
+  RepointTelephonyCredentialInboundInput,
   SealedSecretInput,
+  TelephonyCredentialInboundRecord,
   TelephonyCredentialRecord,
   TelephonyCredentialSecretRecord,
   TelephonyCredentialStatus,
@@ -37,6 +40,15 @@ const COLUMNS = `
   id, tenant_id, provider, label, status, account_ref, public_config,
   secret_version, secret_hint, verified_at, last_error,
   created_by, updated_by, created_at, updated_at, revoked_at, shredded_at`;
+
+/** The inbound state's columns (`TelephonyCredentialInboundRecord`); `c` is the credential. */
+const INBOUND_COLUMNS = `
+  c.id AS credential_id, c.tenant_id, c.provider, c.status,
+  c.inbound_app_id AS app_id, c.inbound_answer_url AS answer_url, c.inbound_hangup_url AS hangup_url,
+  c.inbound_fallback_answer_url AS fallback_answer_url, c.inbound_enabled_at AS enabled_at,
+  c.inbound_previous_token_expires_at AS previous_token_expires_at,
+  (SELECT count(*)::int FROM phone_numbers pn
+    WHERE pn.telephony_credential_id = c.id AND pn.inbound_linked_at IS NOT NULL) AS linked_numbers`;
 
 /**
  * Call statuses that are still live (hangup, cancel, webhook checks need the
@@ -383,6 +395,126 @@ export class TelephonyCredentialRepository {
       [id, limit],
     );
     return result.rows;
+  }
+
+  // ── Inbound (0024; docs/inbound.md §3.1, §8.1) ──────────────────────────────
+  // The Application, its URLs and the purpose token's hash. Enabled is all of it or none of it
+  // (ck_telephony_credentials_inbound). The token hashes are never selected: a write stores one,
+  // `inboundTokenMatches` compares one, and nothing reads one back.
+
+  /** The credential's inbound state, or null when there is no such credential. */
+  async findInbound(id: string): Promise<TelephonyCredentialInboundRecord | null> {
+    const result = await getPool().query<TelephonyCredentialInboundRecord>(
+      `SELECT ${INBOUND_COLUMNS} FROM telephony_credentials c WHERE c.id = $1`,
+      [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Store an enabled inbound Application. Only on an `active` credential with inbound not yet
+   * enabled (decided in the UPDATE, so two concurrent enables store one); null otherwise: the
+   * caller re-reads to tell a missing, inactive or already-enabled credential apart, and deletes
+   * the Application it created for nothing.
+   */
+  async enableInbound(
+    id: string,
+    input: EnableTelephonyCredentialInboundInput,
+    updatedBy: string,
+  ): Promise<TelephonyCredentialInboundRecord | null> {
+    const result = await getPool().query<TelephonyCredentialInboundRecord>(
+      `UPDATE telephony_credentials c
+          SET inbound_app_id = $2, inbound_answer_url = $3, inbound_hangup_url = $4,
+              inbound_fallback_answer_url = $5, inbound_token_hash = $6, inbound_enabled_at = NOW(),
+              inbound_previous_token_hash = NULL, inbound_previous_token_expires_at = NULL,
+              updated_by = $7
+        WHERE c.id = $1 AND c.status = 'active' AND c.inbound_app_id IS NULL
+        RETURNING ${INBOUND_COLUMNS}`,
+      [id, input.appId, input.answerUrl, input.hangupUrl, input.fallbackAnswerUrl, input.tokenHash, updatedBy],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Re-point: new URLs and a new token (and a new Application id when the old one had to be
+   * recreated). The replaced token's hash moves to `inbound_previous_token_hash`, accepted for
+   * `previousTokenGraceSeconds` more, so a call answered before the Re-point still has its hangup
+   * accepted. Any older previous token is dropped. Only while inbound is enabled and the
+   * credential is not revoked; null otherwise. `enabled_at` is kept.
+   */
+  async repointInbound(
+    id: string,
+    input: RepointTelephonyCredentialInboundInput,
+    updatedBy: string,
+  ): Promise<TelephonyCredentialInboundRecord | null> {
+    const result = await getPool().query<TelephonyCredentialInboundRecord>(
+      `UPDATE telephony_credentials c
+          SET inbound_app_id = COALESCE($2::varchar, c.inbound_app_id),
+              inbound_answer_url = $3, inbound_hangup_url = $4, inbound_fallback_answer_url = $5,
+              inbound_previous_token_hash = c.inbound_token_hash,
+              inbound_previous_token_expires_at = NOW() + make_interval(secs => $7::int),
+              inbound_token_hash = $6,
+              updated_by = $8
+        WHERE c.id = $1 AND c.inbound_app_id IS NOT NULL AND c.status <> 'revoked'
+        RETURNING ${INBOUND_COLUMNS}`,
+      [id, input.appId ?? null, input.answerUrl, input.hangupUrl, input.fallbackAnswerUrl, input.tokenHash,
+        input.previousTokenGraceSeconds, updatedBy],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Forget the inbound Application (the caller has deleted it on the carrier, or it is gone).
+   * Refused while any of the credential's numbers is still linked (`numbers_linked`): the §8.2
+   * cascade unlinks them first, so no number is left pointing at an Application nothing
+   * remembers. The row lock orders it against a concurrent link. `not_enabled` covers a missing
+   * credential too.
+   */
+  async disableInbound(
+    id: string,
+    updatedBy: string,
+  ): Promise<{ ok: true; inbound: TelephonyCredentialInboundRecord } | { ok: false; reason: 'not_enabled' | 'numbers_linked' }> {
+    const out = await inTransaction(async (client) => {
+      const locked = await client.query<{ enabled: boolean }>(
+        `SELECT inbound_app_id IS NOT NULL AS enabled FROM telephony_credentials WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!locked.rows[0]?.enabled) return { ok: false as const, reason: 'not_enabled' as const };
+      const linked = await client.query(
+        `SELECT 1 FROM phone_numbers WHERE telephony_credential_id = $1 AND inbound_linked_at IS NOT NULL LIMIT 1`,
+        [id],
+      );
+      if (linked.rowCount) return { ok: false as const, reason: 'numbers_linked' as const };
+      const result = await client.query<TelephonyCredentialInboundRecord>(
+        `UPDATE telephony_credentials c
+            SET inbound_app_id = NULL, inbound_answer_url = NULL, inbound_hangup_url = NULL,
+                inbound_fallback_answer_url = NULL, inbound_token_hash = NULL, inbound_enabled_at = NULL,
+                inbound_previous_token_hash = NULL, inbound_previous_token_expires_at = NULL,
+                updated_by = $2
+          WHERE c.id = $1
+          RETURNING ${INBOUND_COLUMNS}`,
+        [id, updatedBy],
+      );
+      return { ok: true as const, inbound: result.rows[0]! };
+    });
+    return out ?? { ok: false, reason: 'not_enabled' };
+  }
+
+  /**
+   * Whether `tokenHash` (sha256 hex of the `token` query parameter of an inbound webhook) is the
+   * credential's current inbound token, or its previous one before that one's expiry. False when
+   * inbound is not enabled. The comparison is an equality in SQL on a value the caller would have
+   * to guess in full (the membership-invite rule): there is no per-byte oracle to walk.
+   */
+  async inboundTokenMatches(id: string, tokenHash: string): Promise<boolean> {
+    const result = await getPool().query(
+      `SELECT 1 FROM telephony_credentials
+        WHERE id = $1 AND inbound_app_id IS NOT NULL
+          AND (inbound_token_hash = $2
+               OR (inbound_previous_token_hash = $2 AND inbound_previous_token_expires_at > NOW()))`,
+      [id, tokenHash],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   /** How many campaigns that can still dial pin it, and how many calls are in flight on it. */
