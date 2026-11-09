@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, Search } from 'lucide-react';
+import { useKeepInViewport } from '../../hooks/useKeepInViewport';
 import { filterSwitcherItems, type SwitcherSearchItem } from '../../utils/switcherSearch';
 import styles from './SwitcherDropdown.module.css';
 
@@ -25,6 +26,14 @@ interface SwitcherDropdownProps {
  * item — wheel and trackpad motion only scroll. Options are `tabIndex={-1}`
  * so Tab leaves the composite instead of walking every row; ArrowUp/ArrowDown
  * still move programmatic focus.
+ *
+ * The panel is kept on screen by `useKeepInViewport`: the account switcher is
+ * the last control in the top bar, so a panel opened from its left edge would
+ * run past the viewport. The search box is focused with `preventScroll`, after
+ * the panel has been placed. Focusing an input that sits off-screen otherwise
+ * asks the browser to scroll an ancestor to reveal it, which slid the whole
+ * page under the fixed sidebar (the shells are `overflow: clip` for the same
+ * reason).
  */
 export function SwitcherDropdown({
   label,
@@ -40,11 +49,14 @@ export function SwitcherDropdown({
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const visible = useMemo(() => filterSwitcherItems(items, query), [items, query]);
 
-  useEffect(() => {
-    searchRef.current?.focus();
+  // Layout effects run in order: place the panel first, then focus into it.
+  useKeepInViewport(panelRef, true);
+  useLayoutEffect(() => {
+    searchRef.current?.focus({ preventScroll: true });
   }, []);
 
   function focusItem(index: number) {
@@ -83,7 +95,12 @@ export function SwitcherDropdown({
   }
 
   return (
-    <div className={styles.dropdown} role="presentation">
+    <div
+      ref={panelRef}
+      className={styles.dropdown}
+      role="presentation"
+      data-testid="switcher-panel"
+    >
       <div className={styles.header}>
         <div className={styles.dropdownLabel}>{label}</div>
         <div className={styles.search}>

@@ -1679,12 +1679,13 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/Sidebar.activeState.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/StateRail.test.tsx` | 26 |
 | `apps/console/src/__tests__/components/StationIdentity.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/SwitcherDropdown.test.tsx` | 8 |
+| `apps/console/src/__tests__/components/SwitcherDropdown.test.tsx` | 12 |
 | `apps/console/src/__tests__/components/TenantSwitcher.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/TopBar.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 25 |
 | `apps/console/src/__tests__/components/agentSurfacesVersion.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/joinDoor.test.ts` | 12 |
+| `apps/console/src/__tests__/components/layoutOverflowClipCss.test.ts` | 3 |
 | `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/sidebarVersion.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/softphoneVisibility.test.tsx` | 11 |
@@ -1717,7 +1718,7 @@ Files: `CustomerCallLink.tsx`, `CustomerHistory.module.css`, `CustomerHistorySum
 |---|---|
 | `apps/console/src/__tests__/api/customerHistory.test.ts` | 12 |
 | `apps/console/src/__tests__/components/CustomerSearchBox.test.tsx` | 29 |
-| `apps/console/src/__tests__/components/CustomerSearchPopover.test.tsx` | 12 |
+| `apps/console/src/__tests__/components/CustomerSearchPopover.test.tsx` | 13 |
 | `apps/console/src/__tests__/pages/CustomerHistoryPage.test.tsx` | 45 |
 | `apps/console/src/__tests__/utils/customerSearchRecent.test.ts` | 9 |
 
@@ -1759,7 +1760,7 @@ The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a
 
 Call audio (`media=alaw8` by default, `pcm16` the fallback; `utils/agencyMedia.ts`): `useAgencyStation` names the format on every upgrade (`mediaFormat` option and result), reads binary as `ArrayBuffer`, sends A-law as binary and refuses a frame in the other format, and turns to `pcm16` for good on 1008 `invalid_media` or JSON `media` on an `alaw8` socket. `useAudioCapture` builds the one capture worklet in the socket's format and switches it in place (`setFormat`); `useAudioPlayback.playAlaw` decodes through `utils/alaw8/g711.js` into the same 16 kHz scheduler as `play`; `useAgencyAudio.sync` takes the station's `format`.
 
-Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
+Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useKeepInViewport.ts` (nudges a top-bar popover back on screen before paint and on resize: the switchers, Search a number), `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1774,6 +1775,7 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/useAudioPlayback.alaw.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/useCampaignInsights.test.tsx` | 13 |
+| `apps/console/src/__tests__/hooks/useKeepInViewport.test.tsx` | 6 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
 | `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
