@@ -199,18 +199,7 @@ export class InboundQueue {
    * would keep idle agents from dialling for callers they cannot take.
    */
   waitingSummary(accountKey: string, notTheTeams: (entry: InboundQueueEntry) => boolean = () => false): InboundWaitingSummary {
-    const waiting = this.waiting(accountKey);
-    const sticky = new Set<string>();
-    let pool: Set<string> | null = new Set<string>();
-    let n = 0;
-    for (const e of waiting) {
-      if (e.stickyMode !== 'off' && e.stickyUserId) sticky.add(e.stickyUserId);
-      if (!notTheTeams(e)) n++;
-      const scoped = e.accountId === e.routeAccountId && e.poolCampaignIds.length > 0;
-      if (!scoped) pool = null;
-      else if (pool) for (const id of e.poolCampaignIds) pool.add(id);
-    }
-    return { n, stickyUserIds: [...sticky], poolCampaignIds: waiting.length === 0 ? [] : pool ? [...pool] : null };
+    return summarizeWaiting(this.waiting(accountKey), notTheTeams);
   }
 
   /** Every route with a caller held, for the supervisor's queue tile. */
@@ -242,4 +231,25 @@ export class InboundQueue {
   size(): number {
     return this.held.size;
   }
+}
+
+/**
+ * {@link InboundQueue.waitingSummary} over `waiting`, an account's waiting callers as
+ * {@link InboundQueue.waiting} answers them (the connector reads them once per publish).
+ */
+export function summarizeWaiting(
+  waiting: readonly InboundQueueEntry[],
+  notTheTeams: (entry: InboundQueueEntry) => boolean = () => false,
+): InboundWaitingSummary {
+  const sticky = new Set<string>();
+  let pool: Set<string> | null = new Set<string>();
+  let n = 0;
+  for (const e of waiting) {
+    if (e.stickyMode !== 'off' && e.stickyUserId) sticky.add(e.stickyUserId);
+    if (!notTheTeams(e)) n++;
+    const scoped = e.accountId === e.routeAccountId && e.poolCampaignIds.length > 0;
+    if (!scoped) pool = null;
+    else if (pool) for (const id of e.poolCampaignIds) pool.add(id);
+  }
+  return { n, stickyUserIds: [...sticky], poolCampaignIds: waiting.length === 0 ? [] : pool ? [...pool] : null };
 }

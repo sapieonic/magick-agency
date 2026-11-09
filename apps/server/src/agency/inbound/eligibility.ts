@@ -18,6 +18,11 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  *    apply to a caller whose match put them in another account (Q21);
  *  - a console station (`client_kind = 'mobile'` is treated as offline: the app has no inbound
  *    frame yet, Q20), held by this process and OPEN;
+ *  - an active user with an active membership that can see the call's account
+ *    (`InboundAgentView.member`, read by the connector at each search, so an agent removed from the
+ *    account or deactivated while the caller waits is never offered the call: QA-F10);
+ *  - not a session that already turned this caller down (`InboundCallerView.declinedSessionIds`:
+ *    the agent hung up the offer, or the bridge refused to bind their socket to it);
  *  - Redis `available`, holding no soft-phone call, not a soft-phone session, no inbound call.
  *    The release hook asks the same question of an agent it is about to return to the pool, who
  *    is still `reserved`, `on_call` or `wrapup` ({@link RELEASE_STATES}).
@@ -36,6 +41,13 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  * `sticky_wait_seconds` after the caller queued; `strict` until the queue's maximum wait (whose
  * timer overflows the call); `off`, or no sticky agent, or an `away` one: none. After a `loose`
  * phase the sticky agent is still preferred when they are free (§4.2).
+ *
+ * ── Could anyone take them at all (PM-M6) ────────────────────────────────────────
+ * {@link couldTakeLater}: an agent who may take the caller now OR once the work they are doing
+ * ends (`reserved`, `on_call`, `wrapup`; another call held counts, it ends too). A caller for whom
+ * no session of the pool qualifies is overflowed at once rather than held to the maximum wait:
+ * nobody on a break, offline, on the phone app, outside the pool or out of the account will ever
+ * be offered them.
  *
  * ── Order ───────────────────────────────────────────────────────────────────────
  * Callers are served FIFO by when they queued, a requeued caller (its station lost before audio
@@ -61,6 +73,11 @@ export interface InboundAgentView {
   clientKind: AgencyClientKind;
   /** Held by this process with its socket OPEN. */
   stationOpen: boolean;
+  /**
+   * The agent is an active user with an active membership that can see the account (tenant-wide
+   * or this account), as of the connector's last read: false for one removed or deactivated.
+   */
+  member: boolean;
   /** The Redis hash; null when the lease has lapsed. */
   live: {
     state: AgencyAgentState;
@@ -87,6 +104,8 @@ export interface InboundCallerView {
   stickyWaitMs: number;
   /** Epoch ms of the first queueing (`queued_at`). */
   queuedAt: number;
+  /** Sessions this caller is never offered to again: they turned the offer down (QA-F3, SWE-m4). */
+  declinedSessionIds?: ReadonlySet<string>;
 }
 
 /** Why an agent may not take a caller (null: they may). */
@@ -96,6 +115,8 @@ export type InboundIneligibility =
   | 'not_in_pool'
   | 'mobile'
   | 'no_station'
+  | 'not_member'
+  | 'declined'
   | 'wrong_state'
   | 'holds_call';
 
@@ -118,10 +139,30 @@ export function inboundIneligibility(
   if (poolApplies(caller) && !caller.poolCampaignIds.includes(agent.campaignId)) return 'not_in_pool';
   if (agent.clientKind === 'mobile') return 'mobile';
   if (!agent.stationOpen) return 'no_station';
+  if (!agent.member) return 'not_member';
+  if (caller.declinedSessionIds?.has(agent.sessionId)) return 'declined';
   const live = agent.live;
   if (!live || !states.includes(live.state)) return 'wrong_state';
   if (live.manualCallId || live.softphone || live.inboundCallId) return 'holds_call';
   return null;
+}
+
+/** The states of an agent who may take a caller now or once their current work ends (PM-M6). */
+export const COULD_TAKE_STATES = ['available', ...RELEASE_STATES] as const satisfies readonly AgencyAgentState[];
+
+/**
+ * Whether `agent` could take `caller` now or once the work they are doing ends (see the header):
+ * every rule but the state, which may be any of {@link COULD_TAKE_STATES}, and a call or a
+ * soft-phone call already held (it ends). A session in soft-phone mode does not qualify.
+ */
+export function couldTakeLater(agent: InboundAgentView, caller: InboundCallerView): boolean {
+  const why = inboundIneligibility(agent, caller, COULD_TAKE_STATES);
+  return why === null || (why === 'holds_call' && agent.live !== null && !agent.live.softphone);
+}
+
+/** Whether any of `agents` could take `caller` now or later ({@link couldTakeLater}). False: nobody ever will. */
+export function anyoneCouldTake(caller: InboundCallerView, agents: readonly InboundAgentView[]): boolean {
+  return agents.some((a) => couldTakeLater(a, caller));
 }
 
 /** Where the caller's sticky agent is (see the header). */

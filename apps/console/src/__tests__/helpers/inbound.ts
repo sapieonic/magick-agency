@@ -94,6 +94,7 @@ export function queueTile(over: Partial<AgencyInboundQueueTile> = {}): AgencyInb
     longest_wait_seconds: 75,
     connected: 3,
     eligible_agents: 1,
+    no_agents_available: false,
     ...over,
   };
 }

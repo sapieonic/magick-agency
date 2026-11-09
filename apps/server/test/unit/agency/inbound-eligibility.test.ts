@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import {
   RELEASE_STATES,
+  anyoneCouldTake,
   callerForReleasedAgent,
+  couldTakeLater,
   candidatesFor,
   inStickyPhase,
   inboundIneligibility,
@@ -31,6 +33,7 @@ function agent(id: string, over: Partial<InboundAgentView> & { state?: AgencyAge
     campaignId: 'camp-1',
     clientKind: 'web',
     stationOpen: true,
+    member: true,
     live: { state, since, manualCallId: null, softphone: false, inboundCallId: null },
     ...rest,
   };
@@ -188,5 +191,55 @@ describe('callerForReleasedAgent: the release hook`s choice', () => {
     expect(callerForReleasedAgent(me, [caller('1', { poolCampaignIds: ['camp-9'] })], [me], NOW)).toBeNull();
     const phone = agent('me', { state: 'wrapup', clientKind: 'mobile' });
     expect(callerForReleasedAgent(phone, [caller('1')], [phone], NOW)).toBeNull();
+  });
+});
+
+describe('the review fix pass: membership, a declined offer, and whether anyone could take the caller at all', () => {
+  it('an agent no longer a member of the account (removed, deactivated) takes nothing, and their callers are the team`s (QA-F10)', () => {
+    const gone = agent('a', { member: false });
+    expect(inboundIneligibility(gone, caller('1'))).toBe('not_member');
+    expect(candidatesFor(caller('1'), [gone, agent('b')], NOW)).toEqual(['s-b']);
+    expect(stickyAgentStatus(gone, caller('1', { stickyUserId: 'u-a' }))).toBe('away');
+    expect(callerForReleasedAgent(agent('a', { member: false, state: 'wrapup' }), [caller('1')], [], NOW)).toBeNull();
+  });
+
+  it('a session that turned the caller down is never offered them again: not by the search, not by the release hook (QA-F3, SWE-m4)', () => {
+    const c = caller('1', { declinedSessionIds: new Set(['s-a']) });
+    expect(inboundIneligibility(agent('a'), c)).toBe('declined');
+    expect(inboundIneligibility(agent('b'), c)).toBeNull();
+    expect(candidatesFor(c, [agent('a'), agent('b')], NOW)).toEqual(['s-b']);
+    expect(callerForReleasedAgent(agent('a', { state: 'wrapup' }), [c], [], NOW)).toBeNull();
+    // Their sticky caller goes to the team at once.
+    expect(stickyAgentStatus(agent('a'), { ...c, stickyUserId: 'u-a' })).toBe('away');
+  });
+
+  it('couldTakeLater (PM-M6): free now, or busy with work that ends (reserved, on a call, in wrap-up, holding another call)', () => {
+    const c = caller('1');
+    for (const state of ['available', 'reserved', 'on_call', 'wrapup'] as const) expect(couldTakeLater(agent('a', { state }), c), state).toBe(true);
+    const busy = agent('a', { state: 'on_call' });
+    expect(couldTakeLater({ ...busy, live: { ...busy.live!, inboundCallId: 'other' } }, c)).toBe(true);
+    expect(couldTakeLater({ ...busy, live: { ...busy.live!, manualCallId: 'm' } }, c)).toBe(true);
+  });
+
+  it.each([
+    ['on a break', agent('a', { state: 'break' })],
+    ['offline', agent('a', { state: 'offline' })],
+    ['no lease', { ...agent('a'), live: null }],
+    ['the soft phone (a session in soft-phone mode)', { ...agent('a'), live: { ...agent('a').live!, softphone: true } }],
+    ['a soft-phone session', agent('a', { campaignId: null })],
+    ['the phone app', agent('a', { clientKind: 'mobile' })],
+    ['a station not open', agent('a', { stationOpen: false })],
+    ['outside the pool', agent('a', { campaignId: 'camp-2' })],
+    ['another account', agent('a', { accountId: 'account-2' })],
+    ['no longer a member', agent('a', { member: false })],
+  ] as const)('couldTakeLater is false for an agent %s', (_what, a) => {
+    expect(couldTakeLater(a, caller('1', { poolCampaignIds: ['camp-1'] }))).toBe(false);
+  });
+
+  it('anyoneCouldTake: one qualifying agent is enough; none (or only one who declined) is nobody', () => {
+    const c = caller('1');
+    expect(anyoneCouldTake(c, [])).toBe(false);
+    expect(anyoneCouldTake(c, [agent('a', { state: 'break' }), agent('b', { state: 'wrapup' })])).toBe(true);
+    expect(anyoneCouldTake({ ...c, declinedSessionIds: new Set(['s-b']) }, [agent('a', { state: 'break' }), agent('b')])).toBe(false);
   });
 });

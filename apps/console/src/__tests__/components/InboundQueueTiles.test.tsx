@@ -10,7 +10,7 @@ vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../hooks/useFeatureFlagEnabled', () => ({ useFeatureFlagEnabled: () => mocks.flagOn }));
 vi.mock('../../api/inbound', () => ({ getInboundQueue: mocks.getInboundQueue }));
 
-import { InboundQueueTiles, tileNeedsAttention } from '../../components/agency/inbound/InboundQueueTiles';
+import { InboundQueueTiles, tileNeedsAttention, tileOpenWithNobody } from '../../components/agency/inbound/InboundQueueTiles';
 import { INBOUND_QUEUE_POLL_MS } from '../../hooks/useInboundQueue';
 import { queueTile } from '../helpers/inbound';
 
@@ -87,6 +87,28 @@ describe('InboundQueueTiles', () => {
     await mount();
     expect(screen.getByTestId('tile-attention').textContent).toMatch(/no agent is free/);
     expect(tileNeedsAttention(queueTile({ waiting: 0, eligible_agents: 0 }))).toBe(false);
+  });
+
+  it('says when an open route has nobody who could take a call, ahead of anything else (PM-M6)', async () => {
+    mocks.getInboundQueue.mockResolvedValue({
+      tiles: [
+        queueTile({ waiting: 0, eligible_agents: 0, no_agents_available: true }),
+        queueTile({ route_id: 'r-2', route_name: 'Sales', open_now: false, waiting: 0, eligible_agents: 0, no_agents_available: true }),
+      ],
+    });
+    await mount();
+    const care = within(screen.getByTestId('inbound-queue-tile-r-1'));
+    expect(care.getByTestId('tile-no-agents').textContent).toBe(
+      'Open, but no one can take calls: callers go straight to Missed calls instead of waiting.',
+    );
+    expect(care.queryByTestId('tile-attention')).toBeNull();
+    expect(screen.getByTestId('inbound-queue-tile-r-1').getAttribute('data-attention')).toBe('true');
+    // Closed: nobody to take calls is expected, and says nothing.
+    const sales = within(screen.getByTestId('inbound-queue-tile-r-2'));
+    expect(sales.queryByTestId('tile-no-agents')).toBeNull();
+    expect(screen.getByTestId('inbound-queue-tile-r-2').getAttribute('data-attention')).toBeNull();
+    expect(tileOpenWithNobody(queueTile({ no_agents_available: true }))).toBe(true);
+    expect(tileOpenWithNobody(queueTile({ no_agents_available: false }))).toBe(false);
   });
 
   it('says when no route is answering', async () => {

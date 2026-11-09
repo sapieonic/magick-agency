@@ -232,8 +232,18 @@ export interface AgencyInboundQueueTile {
   longest_wait_seconds: number;
   /** Calls offered to or connected with an agent now. */
   connected: number;
-  /** Agents who could take this route's next caller now. */
+  /**
+   * Agents free now who could take this route's waiting callers, each caller judged by its own
+   * account (a caller matched into another account is that account's agents' alone), or, with
+   * nobody waiting, this route's next caller.
+   */
   eligible_agents: number;
+  /**
+   * Nobody could take this route's next caller, now or once their current call or wrap-up ends
+   * (everyone on a break, offline, on the phone app or outside the route's pool): such a caller
+   * hears the overflow message at once instead of waiting. Says nothing of the route's hours.
+   */
+  no_agents_available: boolean;
 }
 
 export interface AgencyInboundQueueResponse {

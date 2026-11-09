@@ -142,6 +142,8 @@ describe('the wrap-up lease outlives the write-up (the heartbeat renews it while
     expect(await getAgencyRuntime()!.wrapup.noteDisposition(a.sessionId, attemptId)).toBe(true);
     const taken = await spineWhen(call, 'connected to the owner', (r) => r.state === 'connected');
     expect(taken.session_id).toBe(a.sessionId);
+    // The row is written `connected` before the agent's `on_call` transition and its frame (QA-F2).
+    await waitFor('the on_call frame', () => stateFrames(a).slice(statesBefore).includes('on_call'));
     expect(stateFrames(a).slice(statesBefore)).toEqual(['reserved', 'on_call']);
     a.leg!.stopHeartbeat();
     hangUp = true;
@@ -169,6 +171,8 @@ describe('the wrap-up lease outlives the write-up (the heartbeat renews it while
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     const taken = await spineWhen(call, 'connected to the owner', (r) => r.state === 'connected');
     expect(taken.session_id).toBe(a.sessionId);
+    // The row is written `connected` before the agent's `on_call` transition and its frame (QA-F2).
+    await waitFor('the on_call frame', () => stateFrames(a).slice(statesBefore).includes('on_call'));
     expect(stateFrames(a).slice(statesBefore)).toEqual(['reserved', 'on_call']);
     hangUp = true;
   }, 60_000);

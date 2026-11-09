@@ -4,6 +4,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { DEFAULTS, insertTenant } from '../setup/factories.js';
 import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js';
 import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test-redis.js';
+import { FakeBridge, FakeStations, gate, sleep, until } from './inbound-connector-fakes.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -21,7 +22,6 @@ const { InboundCallService } = await import('../../../src/agency/inbound/inbound
 type Connector = InstanceType<typeof InboundConnector>;
 type CallRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundCallRecord;
 type RouteRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundRouteRecord;
-type Lifecycle = import('../../../src/core/webrtc-bridge-manager.js').WebRtcLifecycleEvent;
 
 /**
  * The inbound connector's races on real Redis (the agent hash's compare-and-swaps) and real
@@ -37,90 +37,6 @@ const T = DEFAULTS.tenantId;
 const A = DEFAULTS.accountId;
 const pool = () => getTestPool();
 const PREFIX = 'ibrace:';
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// ─── Fakes: the bridge and the station sockets ──────────────────────────────
-
-class FakeWs {
-  readyState = 1;
-  sent: Array<Record<string, unknown>> = [];
-  send(s: string) { this.sent.push(JSON.parse(s) as Record<string, unknown>); }
-}
-
-interface StationEntry {
-  sessionId: string; campaignId: string | null; tenantId: string; accountId: string; agentUserId: string;
-  ws: FakeWs; clientKind: 'web' | 'mobile';
-}
-
-class FakeStations {
-  readonly entries = new Map<string, StationEntry>();
-  add(e: Omit<StationEntry, 'ws' | 'clientKind'> & { clientKind?: 'web' | 'mobile' }): StationEntry {
-    const entry = { clientKind: 'web' as const, ...e, ws: new FakeWs() };
-    this.entries.set(e.sessionId, entry);
-    return entry;
-  }
-  all() { return [...this.entries.values()]; }
-  get(id: string) { return this.entries.get(id); }
-  socketFor(id: string) { return this.entries.get(id)?.ws; }
-  isLocallyOwned(id: string) { return this.entries.has(id); }
-  send(id: string, frame: unknown) {
-    const ws = this.entries.get(id)?.ws;
-    if (!ws || ws.readyState !== 1) return false;
-    ws.send(JSON.stringify(frame));
-    return true;
-  }
-  broadcast() { return 0; }
-}
-
-class FakeBridge {
-  readonly listeners = new Set<(ev: Lifecycle) => void>();
-  readonly live = new Map<string, { bound: boolean; hold?: (r: 'released' | 'aborted') => void }>();
-  binds: string[] = [];
-  /** While set, the preamble (greeting, notice) is still playing: `onPreambleDone` waits for it. */
-  preambleGate: Promise<void> | null = null;
-  /** While set, the overflow message is still playing (`playClipSequenceThenHangUp` waits for it). */
-  clipGate: Promise<void> | null = null;
-  onLifecycle(l: (ev: Lifecycle) => void) { this.listeners.add(l); return () => { this.listeners.delete(l); }; }
-  take(id: string) { this.live.set(id, { bound: false }); }
-  playInboundHold(id: string, opts: { onPreambleDone?: () => void }) {
-    const c = this.live.get(id);
-    if (!c) return Promise.resolve('not_found' as const);
-    const preamble = this.preambleGate ?? Promise.resolve();
-    return new Promise<'released' | 'aborted'>((resolve) => {
-      c.hold = resolve;
-      void preamble.then(() => setImmediate(() => { if (this.live.has(id)) opts.onPreambleDone?.(); }));
-    });
-  }
-  stopInboundHold(id: string) { this.live.get(id)?.hold?.('released'); }
-  bindBorrowedBrowserLeg(id: string, ws: FakeWs) {
-    const c = this.live.get(id);
-    if (!c || c.bound || ws.readyState !== 1) return false;
-    c.bound = true;
-    this.binds.push(id);
-    c.hold?.('released');
-    this.emit({ phase: 'bridged', correlationId: id });
-    return true;
-  }
-  reattachBorrowedBrowserLeg() { return true; }
-  async forceEndWithOutcome(id: string, outcome: string) { return this.end(id, outcome); }
-  async playClipSequenceThenHangUp(id: string) {
-    if (this.clipGate) await this.clipGate;
-    this.end(id, 'inbound_overflow');
-    return 'completed' as const;
-  }
-  async acceptInboundCall() { throw new Error('not used'); }
-  end(id: string, outcome = 'pstn_stream_closed', talkTimeSeconds = 0): boolean {
-    const c = this.live.get(id);
-    if (!c) return false;
-    this.live.delete(id);
-    c.hold?.('aborted');
-    this.emit({ phase: 'ended', correlationId: id, outcome, status: 'completed', talkTimeSeconds });
-    return true;
-  }
-  emit(ev: Partial<Lifecycle> & { phase: Lifecycle['phase'] }) {
-    for (const l of this.listeners) l({ callId: 'leg', answered: true, ...ev } as Lifecycle);
-  }
-}
 
 // ─── The world ──────────────────────────────────────────────────────────────
 
@@ -162,9 +78,17 @@ function connector(opts: {
   return c;
 }
 
-/** A live campaign session with a station on this "process", `available` in Redis unless told. */
+/** An active user with a tenant-wide membership, so one who sees the account (whom the connector may offer calls to). */
+async function member(): Promise<string> {
+  const id = randomUUID();
+  await pool().query('INSERT INTO users (id, firebase_uid, email) VALUES ($1, $2, $3)', [id, `fb-race-${id}`, `race-${id}@example.test`]);
+  await pool().query(`INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, 'agent')`, [id, T]);
+  return id;
+}
+
+/** A live campaign session of a member with a station on this "process", `available` in Redis unless told. */
 async function agent(state: 'available' | 'wrapup' | 'on_call' | 'reserved' | 'break' = 'available', st = stations): Promise<string> {
-  const session = await insertAgentSession(campaignId);
+  const session = await insertAgentSession(campaignId, { agent_user_id: await member() });
   st.add({ sessionId: session.id as string, campaignId, tenantId: T, accountId: A, agentUserId: session.agent_user_id as string });
   await agents.set(session.id as string, state, { leaseMs: 60_000 });
   return session.id as string;
@@ -185,15 +109,6 @@ async function caller(c: Connector, over: Partial<Parameters<typeof calls.insert
 }
 
 const row = async (id: string) => (await calls.findByIdAnyTenant(id))!;
-const until = async <V>(what: string, probe: () => Promise<V | null | false> | V | null | false, ms = 5000): Promise<V> => {
-  const end = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v) return v as V;
-    if (Date.now() > end) throw new Error(`timed out: ${what}`);
-    await sleep(10);
-  }
-};
 const drain = async () => { for (const c of connectors) await c.drain(); };
 const inboundFrames = (sessionId: string) => (stations.get(sessionId)?.ws.sent ?? []).filter((f) => f['event'] === 'inbound_call').map((f) => f['call'] as Record<string, unknown>);
 
@@ -359,6 +274,7 @@ describe('the inbound connector`s races (real Redis and Postgres)', () => {
   it('the socket found closed at the bind (a close the handler has not seen): the same requeue', async () => {
     const c = connector();
     const s1 = await agent();
+    await agent('on_call'); // someone who could take the caller later, so they keep waiting (PM-M6)
     const { call } = await caller(c);
     await until('offered', async () => (await row(call.id)).state === 'offered');
     stations.get(s1)!.ws.readyState = 3;
@@ -369,6 +285,7 @@ describe('the inbound connector`s races (real Redis and Postgres)', () => {
   it('the lease lost on offer: the offer cancelled, the caller back in the queue (and not re-offered to the lost agent)', async () => {
     const c = connector({ connectDelayMs: 20_000 }); // the renewal (every 5 s) acts before the bind
     const s1 = await agent();
+    await agent('on_call'); // someone who could take the caller later, so they keep waiting (PM-M6)
     const { call } = await caller(c);
     await until('offered', async () => (await row(call.id)).state === 'offered');
     await agents.clear(s1); // the lease lapsed (a Redis eviction, a stalled renewer)
@@ -417,6 +334,7 @@ describe('the inbound connector`s races (real Redis and Postgres)', () => {
     const dialer = new AgencyDialer(bridge as never, stations as never, agents, {} as never, breaks);
     dialer.registerInboundTake((id) => c.takeOnRelease(id));
     const s1 = await agent('break');
+    await agent('on_call'); // someone who could take the caller later, so they keep waiting (PM-M6)
     const { call } = await caller(c);
     await until('queued', async () => (await row(call.id)).state === 'queued');
     // A queued break: the release applies it and the caller keeps waiting.
@@ -429,7 +347,9 @@ describe('the inbound connector`s races (real Redis and Postgres)', () => {
     await agents.set(s1, 'wrapup', { leaseMs: 60_000 });
     expect(await dialer.releaseAgent(s1)).toEqual({ state: 'reserved', result: 'ok' });
     await until('connected', async () => (await row(call.id)).state === 'connected');
-    expect(stations.get(s1)!.ws.sent.filter((f) => f['event'] === 'agent_state').map((f) => f['state'])).toEqual(['break', 'reserved', 'on_call']);
+    // The row is written `connected` before the agent's `on_call` transition and its frame (QA-F2).
+    await until('the on_call frame', () => stateFrames(s1).includes('on_call'));
+    expect(stateFrames(s1)).toEqual(['break', 'reserved', 'on_call']);
   });
 
   it('the outcome lapse: an answered call owed past 30 minutes is closed no_disposition, its field cleared, its agent returned and told', async () => {
@@ -475,13 +395,6 @@ describe('the inbound connector`s races (real Redis and Postgres)', () => {
     expect(bridge.listeners.size).toBe(0); // no call held: the stopped connector unsubscribed
   });
 });
-
-/** A gate a test opens when it wants: `{ wait, open }`. */
-function gate(): { wait: Promise<void>; open: () => void } {
-  let open!: () => void;
-  const wait = new Promise<void>((r) => { open = r; });
-  return { wait, open };
-}
 
 const stateFrames = (sessionId: string) => (stations.get(sessionId)?.ws.sent ?? [])
   .filter((f) => f['event'] === 'agent_state').map((f) => f['state']);

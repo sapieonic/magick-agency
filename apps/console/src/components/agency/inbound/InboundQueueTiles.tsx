@@ -9,17 +9,26 @@ import type { AgencyInboundQueueTile } from '../../../types/inbound';
 import styles from './InboundQueueTiles.module.css';
 
 /**
- * Whether a tile needs the supervisor: callers wait and nobody can take them.
- * Waiting with agents free is a queue moving; waiting with none is a queue that will overflow.
+ * Whether a route is open but nobody can take its calls at all (everyone on a break, offline, on
+ * the phone app or outside its pool): a caller now goes straight to Missed calls (PM-M6).
+ */
+export function tileOpenWithNobody(tile: AgencyInboundQueueTile): boolean {
+  return tile.open_now && tile.no_agents_available;
+}
+
+/**
+ * Whether a tile needs the supervisor: callers wait and nobody is free to take them, or the route
+ * is open with nobody who could take a call at all. Waiting with agents free is a queue moving.
  */
 export function tileNeedsAttention(tile: AgencyInboundQueueTile): boolean {
-  return tile.waiting > 0 && tile.eligible_agents === 0;
+  return (tile.waiting > 0 && tile.eligible_agents === 0) || tileOpenWithNobody(tile);
 }
 
 /**
  * The supervisor's inbound queue (P2, `docs/inbound.md` §6): one tile per live route — open or
- * closed, callers waiting and the longest wait, calls offered or connected, agents who could
- * take the next caller — read every 5 s (Q23). On the agency home and the Missed calls page.
+ * closed, callers waiting and the longest wait, calls offered or connected, agents free who could
+ * take its callers, and whether an open route has nobody at all who could take a call — read
+ * every 5 s (Q23). On the agency home and the Missed calls page.
  *
  * Renders nothing without `agency_inbound_enabled` or `agency.supervise` (the route's own
  * permission), or before the first answer. Not a live region: numbers that change every five
@@ -94,7 +103,11 @@ export function InboundQueueTiles() {
                   <dd data-testid="tile-eligible">{tile.eligible_agents}</dd>
                 </div>
               </dl>
-              {tileNeedsAttention(tile) ? (
+              {tileOpenWithNobody(tile) ? (
+                <p className={styles.attention} data-testid="tile-no-agents">
+                  Open, but no one can take calls: callers go straight to Missed calls instead of waiting.
+                </p>
+              ) : tileNeedsAttention(tile) ? (
                 <p className={styles.attention} data-testid="tile-attention">
                   Callers are waiting and no agent is free to take them.
                 </p>

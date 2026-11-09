@@ -193,6 +193,8 @@ describe('inbound P2: sticky routing (§4.2, §4.3)', () => {
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     const taken = await spineWhen(call, 'connected to the owner', (r) => r.state === 'connected');
     expect(taken.session_id).toBe(a.sessionId);
+    // The row is written `connected` before the agent's `on_call` transition and its frame (QA-F2).
+    await waitFor('the on_call frame', () => stateFrames(a).slice(statesBefore).includes('on_call'));
     expect(stateFrames(a).slice(statesBefore)).toEqual(['reserved', 'on_call']); // never `available` between
     const offer = inboundCalls(a).find((c) => c['id'] === queued.id && c['state'] === 'offered')!;
     expect(offer['sticky']).toEqual({ reason: 'owner', is_you: true });

@@ -201,9 +201,17 @@
   {
     "name": "agency_inbound_offers_total",
     "kind": "Counter",
-    "description": "Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost or refused (the call or the session was no longer free)",
+    "description": "Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent's socket)",
     "attributes": [
       "result"
+    ]
+  },
+  {
+    "name": "agency_inbound_overflows_total",
+    "kind": "Counter",
+    "description": "Inbound callers overflowed from the queue (the route's overflow action), by why: max_wait (waited the route's maximum), over_cap (over max_waiting with nobody free) or no_agents (nobody in the pool could take them)",
+    "attributes": [
+      "reason"
     ]
   },
   {

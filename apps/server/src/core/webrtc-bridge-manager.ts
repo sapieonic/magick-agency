@@ -1037,6 +1037,18 @@ export class WebRtcBridgeManager {
   }
 
   /**
+   * Whether the call keyed on `correlationId` is over or on its way out: no session by that id, or
+   * one tearing down (its `ended` is emitted, or about to be). What a refused
+   * {@link bindBorrowedBrowserLeg} is asked next: an ending call needs nothing more, while one
+   * refused for any other reason (the socket closed between the caller's check and the bind's, a
+   * leg already bound) is still the caller's to act on (the inbound connector cancels its offer).
+   */
+  isCallEnding(correlationId: string): boolean {
+    const session = this.findByCorrelationId(correlationId);
+    return !session || session.isTearingDown;
+  }
+
+  /**
    * Bind the caller's media socket to a call dialled by
    * {@link createUnboundBridgedCall} — the answer-time half of late binding.
    * Returns false when the call cannot take it, in which case the customer is on

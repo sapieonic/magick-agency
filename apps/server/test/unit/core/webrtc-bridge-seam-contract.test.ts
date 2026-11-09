@@ -41,6 +41,8 @@ interface BridgeSeam {
   createBridgedCall(params: WebRtcBridgedCallParams): Promise<WebRtcCallRecord>;
   createUnboundBridgedCall(params: Omit<WebRtcBridgedCallParams, 'browserSocket'>): Promise<WebRtcCallRecord>;
   bindBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
+  /** Whether a call is over or tearing down: asked after a refused bind (inbound, SWE-m4). */
+  isCallEnding(correlationId: string): boolean;
   reattachBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
   forceEndWithOutcome(correlationId: string, outcome: string): Promise<boolean>;
   playClipToCarrierThenHangUp(correlationId: string,
@@ -149,6 +151,7 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcBridgeManager['createBridgedCall']>().toEqualTypeOf<BridgeSeam['createBridgedCall']>();
     expectTypeOf<WebRtcBridgeManager['createUnboundBridgedCall']>().toEqualTypeOf<BridgeSeam['createUnboundBridgedCall']>();
     expectTypeOf<WebRtcBridgeManager['bindBorrowedBrowserLeg']>().toEqualTypeOf<BridgeSeam['bindBorrowedBrowserLeg']>();
+    expectTypeOf<WebRtcBridgeManager['isCallEnding']>().toEqualTypeOf<BridgeSeam['isCallEnding']>();
     expectTypeOf<WebRtcBridgeManager['reattachBorrowedBrowserLeg']>().toEqualTypeOf<BridgeSeam['reattachBorrowedBrowserLeg']>();
     expectTypeOf<WebRtcBridgeManager['forceEndWithOutcome']>().toEqualTypeOf<BridgeSeam['forceEndWithOutcome']>();
     expectTypeOf<WebRtcBridgeManager['playClipToCarrierThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipToCarrierThenHangUp']>();

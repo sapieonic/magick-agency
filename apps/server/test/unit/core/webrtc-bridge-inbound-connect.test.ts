@@ -349,12 +349,32 @@ describe('playInboundHold', () => {
     const carrier = connectStream(mgr);
     const hold = mgr.playInboundHold(INBOUND, { preambleClipHashes: [], holdClipHash: 'hold' });
     await vi.waitFor(() => expect(frames(carrier).length).toBeGreaterThan(2));
-    // Bind while a frame's pacing sleep is in progress, and count in the same synchronous turn.
-    mgr.bindBorrowedBrowserLeg(INBOUND, fakeWs() as any);
+    const session = mgr.getSession(LEG)!;
+    const playback = session.carrierPlayback as { readonly stopped: boolean } | null;
+    expect(playback?.stopped).toBe(false);
+    // Bind while a frame's pacing sleep is in progress, and look in the same synchronous turn: the
+    // hold's playback is already stopped when the bind returns (a stop deferred by even one tick,
+    // QA-F13, would still be playing here), and talk time has started.
+    expect(mgr.bindBorrowedBrowserLeg(INBOUND, fakeWs() as any)).toBe(true);
+    expect(playback!.stopped).toBe(true);
+    expect(session.carrierPlayback).toBeNull();
+    expect(session.talkFrom).not.toBeNull();
     const atBind = carrier.sent.length;
     await hold;
     await tick(60);
     expect(carrier.sent.length).toBe(atBind);
+  });
+
+  it('isCallEnding: false while the call is live, true once it tears down or for an unknown id (a refused bind`s next question, SWE-m4)', async () => {
+    const { mgr } = bridge();
+    expect(mgr.isCallEnding(INBOUND)).toBe(true);
+    await mgr.acceptInboundCall(PARAMS);
+    connectStream(mgr);
+    expect(mgr.isCallEnding(INBOUND)).toBe(false);
+    const ending = mgr.forceEndWithOutcome(INBOUND, 'test_over');
+    expect(mgr.isCallEnding(INBOUND)).toBe(true);
+    await ending;
+    expect(mgr.isCallEnding(INBOUND)).toBe(true);
   });
 
   it('with no hold clip (or one not on this replica) the caller hears the built-in hold tone', async () => {

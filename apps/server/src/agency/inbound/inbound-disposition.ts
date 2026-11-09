@@ -92,9 +92,12 @@ export interface InboundCallServiceDeps {
   agents: Pick<AgentStateMachine, 'releaseInbound' | 'get'>;
   stations: Pick<StationRegistry, 'send' | 'isLocallyOwned'>;
   releaseAgent: (sessionId: string) => Promise<unknown>;
-  /** The connector, when this process runs one (the hang-up waits for the call's end; the queue tiles). */
-  connector: () => Pick<InboundConnector, 'holds' | 'settled' | 'queueSnapshot' | 'eligibleAgents'> | null;
+  /** The connector, when this process runs one (the hang-up asks it and waits for the call's end; the queue tiles). */
+  connector: () => Pick<InboundConnector, 'holds' | 'hangUp' | 'whenLeft' | 'queueSnapshot' | 'routeAgents'> | null;
 }
+
+/** How long a hang-up waits for the connector to have ended and settled the call before answering. */
+export const INBOUND_HANGUP_SETTLE_MS = 5_000;
 
 const refuse = (refusal: InboundCallRefusal): { ok: false; refusal: InboundCallRefusal } => ({ ok: false, refusal });
 
@@ -160,26 +163,35 @@ export class InboundCallService {
   // ─── Hang up ─────────────────────────────────────────────────────────────
 
   /**
-   * End the call (`agent_hangup`). Idempotent: a call that already ended answers its row with
-   * `hungUp: false` (not audited). Answers the row once this process has written the end.
+   * Hang up. Whether the call is still live here is the connector's to say, not the row's: a row
+   * the stale sweep ended while its bridge call goes on still gets that call ended (SWE-m1).
+   *  - A call on OFFER whose audio has not bound: the agent turned it down (QA-F3). The connector
+   *    puts the caller back at the head of the queue for the next agent (never this one again) and
+   *    returns the agent to the pool; nothing is recorded as abandoned, no Missed row, no callback.
+   *    Answers the requeued row, as the connector's last frame to the agent shows it (theirs no more).
+   *  - A connected call: ended `agent_hangup`; answers the ended row once the connector has written
+   *    the end (its completion promise, bounded by {@link INBOUND_HANGUP_SETTLE_MS}).
+   * Idempotent: a call this process no longer holds answers its row with `hungUp: false`.
    */
   async hangup(actor: InboundCallActor, callId: string): Promise<InboundCallResult<{ call: AgencyInboundCall; onBehalf: boolean; hungUp: boolean }>> {
     const found = await this.visible(callId, actor);
     if (!found) return refuse({ code: 'inbound_call_not_found' });
-    let hungUp = false;
     const connector = this.deps.connector();
-    if (found.call.state !== 'ended' && connector?.holds(found.call.id)) {
-      hungUp = await this.deps.bridge.forceEndWithOutcome(found.call.id, 'agent_hangup');
-      if (hungUp) {
-        // The end is the connector's (its `ended` arm); wait for it so the answer is the ended row.
-        for (let i = 0; i < 100 && connector.holds(found.call.id); i++) {
-          await connector.settled(found.call.id);
-          if (connector.holds(found.call.id)) await new Promise((r) => setTimeout(r, 20));
-        }
+    if (connector?.holds(found.call.id)) {
+      const step = await connector.hangUp(found.call.id);
+      if (step.kind === 'declined') {
+        const wire = await this.wire(step.call, null);
+        return { ok: true, call: { ...wire, session_id: found.call.session_id ?? wire.session_id }, onBehalf: found.onBehalf, hungUp: true };
+      }
+      if (step.kind === 'end') {
+        const hungUp = await this.deps.bridge.forceEndWithOutcome(found.call.id, 'agent_hangup');
+        if (hungUp) await settleWithin(connector.whenLeft(found.call.id), INBOUND_HANGUP_SETTLE_MS);
+        const fresh = await agencyInboundCallRepository.findById(actor.tenantId, found.call.id);
+        return { ok: true, call: await this.wire(fresh ?? found.call, found.takerUserId), onBehalf: found.onBehalf, hungUp };
       }
     }
     const fresh = await agencyInboundCallRepository.findById(actor.tenantId, found.call.id);
-    return { ok: true, call: await this.wire(fresh ?? found.call, found.takerUserId), onBehalf: found.onBehalf, hungUp };
+    return { ok: true, call: await this.wire(fresh ?? found.call, found.takerUserId), onBehalf: found.onBehalf, hungUp: false };
   }
 
   // ─── The outcome ─────────────────────────────────────────────────────────
@@ -374,8 +386,12 @@ export class InboundCallService {
   /**
    * One tile per live route of the account, by route name (docs/inbound.md §6): open now by its
    * hours, the callers waiting and the longest wait, the calls with an agent (on offer or
-   * connected) and the agents who could take the next caller now. The queue is the connector's,
-   * in memory (one process, IB8): with no connector every count is 0.
+   * connected), the agents free who could take the route's waiting callers (each judged by the
+   * caller's own account, as the connector judges them: QA-F5) or, with nobody waiting, its next
+   * caller, and whether nobody at all could take its next caller (`no_agents_available`, PM-M6:
+   * such a caller is overflowed at once). The queue is the connector's, in memory (one process,
+   * IB8): with no connector every count is 0 and `no_agents_available` false (nothing is put
+   * through on this deployment at all; the route editor and super-admin say so).
    */
   async queueTiles(tenantId: string, accountId: string, now: Date = new Date()): Promise<AgencyInboundQueueTile[]> {
     const connector = this.deps.connector();
@@ -383,6 +399,7 @@ export class InboundCallService {
     const routes = await agencyInboundRouteRepository.listForAccount(tenantId, accountId);
     const tiles = await Promise.all(routes.map(async (route): Promise<AgencyInboundQueueTile> => {
       const s = snapshot.get(route.id);
+      const agents = connector ? await connector.routeAgents(route) : null;
       return {
         route_id: route.id,
         route_name: route.name,
@@ -390,7 +407,8 @@ export class InboundCallService {
         waiting: s?.waiting ?? 0,
         longest_wait_seconds: s?.longestWaitSeconds ?? 0,
         connected: (s?.offered ?? 0) + (s?.connected ?? 0),
-        eligible_agents: connector ? await connector.eligibleAgents(tenantId, accountId, route.pool_campaign_ids) : 0,
+        eligible_agents: agents?.eligible ?? 0,
+        no_agents_available: agents?.noneCouldTake ?? false,
       };
     }));
     return tiles.sort((a, b) => a.route_name.localeCompare(b.route_name));
@@ -448,6 +466,20 @@ export class InboundCallService {
       log.warn({ err, inboundCallId: closed.id }, 'Could not tell the session its inbound call was closed'));
     log.info({ sessionId, inboundCallId: closed.id }, 'Inbound outcome closed by a supervisor (force-available)');
     return { kind: 'closed', call: closed };
+  }
+}
+
+/** `p`, or give up waiting after `ms` (the hang-up answers the row as it stands then). Never rejects. */
+async function settleWithin(p: Promise<void>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([p.catch(() => undefined), bound]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

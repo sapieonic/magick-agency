@@ -909,7 +909,16 @@ export function trackInboundCallEnded(outcome: string): void {
 export type InboundWaitResult = 'connected' | 'abandoned' | 'overflow' | 'failed';
 
 /** How one offer of an inbound caller to an agent ended (`agency_inbound_offers_total`). */
-export type InboundOfferResult = 'connected' | 'caller_left' | 'station_lost' | 'lease_lost' | 'refused';
+export type InboundOfferResult = 'connected' | 'caller_left' | 'station_lost' | 'lease_lost' | 'refused' | 'declined' | 'bind_refused';
+
+/**
+ * Why a waiting inbound caller was overflowed from the queue (`agency_inbound_overflows_total`):
+ * `max_wait` (waited the route's maximum), `over_cap` (over `max_waiting` with nobody free at
+ * once), `no_agents` (nobody in the pool could take them, now or once their current work ended:
+ * everyone on a break, offline, on the phone app or outside the pool). Each is written `overflow`
+ * on the spine.
+ */
+export type InboundOverflowReason = 'max_wait' | 'over_cap' | 'no_agents';
 
 export const agencyInboundQueueWaiting = gauge<'route_id'>(meter, 'agency_inbound_queue_waiting', {
   description: 'Inbound callers waiting for an agent on a route right now (on offer excluded), set as the queue changes',
@@ -922,12 +931,25 @@ export const agencyInboundWaitSeconds = histogram<'result'>(meter, 'agency_inbou
 });
 
 export const agencyInboundOffersTotal = counter<'result'>(meter, 'agency_inbound_offers_total', {
-  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost or refused (the call or the session was no longer free)',
+  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent\'s socket)',
 });
 
-/** One inbound route's waiting callers now (0 once nobody waits on it). */
+export const agencyInboundOverflowsTotal = counter<'reason'>(meter, 'agency_inbound_overflows_total', {
+  description: 'Inbound callers overflowed from the queue (the route\'s overflow action), by why: max_wait (waited the route\'s maximum), over_cap (over max_waiting with nobody free) or no_agents (nobody in the pool could take them)',
+});
+
+/**
+ * One inbound route's waiting callers now. A route nobody waits on any more reports 0 at the next
+ * export and its series then goes (a deleted route keeps no series for the process's life).
+ */
 export function trackInboundQueueWaiting(routeId: string, waiting: number): void {
-  agencyInboundQueueWaiting.set({ route_id: routeId }, waiting);
+  if (waiting === 0) agencyInboundQueueWaiting.retire({ route_id: routeId }, 0);
+  else agencyInboundQueueWaiting.set({ route_id: routeId }, waiting);
+}
+
+/** One waiting caller overflowed from the queue. */
+export function trackInboundOverflow(reason: InboundOverflowReason): void {
+  agencyInboundOverflowsTotal.inc({ reason });
 }
 
 /** One inbound caller's wait ended (once per call that queued). */
