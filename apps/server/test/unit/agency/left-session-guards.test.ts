@@ -184,6 +184,8 @@ async function harness(): Promise<Harness> {
     },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
+    // A supervisor's force-available closes an owed inbound outcome (`closeOwedForSupervisor`).
+    inboundCalls: { closeOwedForSupervisor: vi.fn().mockResolvedValue({ kind: 'none' }) },
     dialer: {
       reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),
@@ -944,22 +946,32 @@ describe('/force-available answers what it did', () => {
     expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
   });
 
-  it('409 inbound_call_live while the agent holds an inbound call; nothing released', async () => {
-    repos.inboundCall.findUnsettledForSession.mockResolvedValue({ id: 'ib-1', state: 'ended', bridged_at: new Date() });
+  it('409 inbound_call_live while the agent is on an inbound call (offered or connected); nothing released', async () => {
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'live', inboundCallId: 'ib-1' });
     const res = await asSupervisor();
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-1' });
+    expect(res.json()).not.toHaveProperty('inbound_closed');
     expect(h.runtime.dialer.releaseAgent).not.toHaveBeenCalled();
   });
 
-  it('409 inbound_call_live when the release\'s own guard refused', async () => {
+  it('an owed inbound outcome is closed and the agent released; the answer carries the close for the audit', async () => {
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'closed', call: { id: 'ib-2', matched_campaign_id: 'c-9' } });
+    h.runtime.dialer.releaseAgent.mockResolvedValue({ state: 'available', result: 'ok' });
+    const res = await asSupervisor();
+    expect(res.statusCode).toBe(200);
+    expect(h.runtime.inboundCalls.closeOwedForSupervisor).toHaveBeenCalledWith('sess-1');
+    expect(h.runtime.dialer.releaseAgent).toHaveBeenCalledWith('sess-1');
+    expect(res.json()).toMatchObject({ state: 'available', inbound_closed: { inbound_call_id: 'ib-2', campaign_id: 'c-9' } });
+  });
+
+  it('409 inbound_call_live when the release\'s own guard refused (a new offer landed after the close), the close still reported', async () => {
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'closed', call: { id: 'ib-2', matched_campaign_id: null } });
     h.runtime.dialer.releaseAgent.mockResolvedValue({ state: 'available', result: 'inbound_call_owed' });
-    repos.inboundCall.findUnsettledForSession
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue({ id: 'ib-3', state: 'offered', bridged_at: null });
+    repos.inboundCall.findUnsettledForSession.mockResolvedValue({ id: 'ib-3', state: 'offered', bridged_at: null });
     const res = await asSupervisor();
     expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-3' });
+    expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-3', inbound_closed: { inbound_call_id: 'ib-2' } });
   });
 
   it('the state actually written: a queued break, or offline for a station that is gone', async () => {
