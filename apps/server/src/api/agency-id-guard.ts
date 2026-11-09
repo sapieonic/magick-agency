@@ -34,16 +34,38 @@ export function rejectMalformedIdParams(
 ): preHandlerHookHandler {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (opts.onlyUnder && !(request.routeOptions.url ?? '').startsWith(opts.onlyUnder)) return undefined;
-    const params = (request.params ?? {}) as Record<string, unknown>;
-    for (const [name, answer] of Object.entries(answers)) {
-      const value = params[name];
-      if (value === undefined) continue;
-      if (typeof value !== 'string' || !UUID_RE.test(value)) {
-        return reply.code(answer.status).send(answer.body);
-      }
-    }
-    return undefined;
+    return refuseMalformed(answers, request, reply);
   };
+}
+
+/**
+ * {@link rejectMalformedIdParams} for a scope whose path families answer an unknown id
+ * differently: ONE hook, keyed by the registered URL's prefix (the longest that matches wins),
+ * each prefix with its own answers. A route under none of the prefixes is left alone. The one
+ * place a scope's next family (an `/inbound/queue/:id`, …) is added.
+ */
+export function rejectMalformedIdParamsByPrefix(
+  byPrefix: Readonly<Record<string, Readonly<Record<string, MalformedIdAnswer>>>>,
+): preHandlerHookHandler {
+  const prefixes = Object.keys(byPrefix).sort((a, b) => b.length - a.length);
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const url = request.routeOptions.url ?? '';
+    const prefix = prefixes.find((p) => url.startsWith(p));
+    return prefix === undefined ? undefined : refuseMalformed(byPrefix[prefix]!, request, reply);
+  };
+}
+
+/** The first malformed param named in `answers` gets its answer; none: undefined (the request goes on). */
+function refuseMalformed(answers: Readonly<Record<string, MalformedIdAnswer>>, request: FastifyRequest, reply: FastifyReply) {
+  const params = (request.params ?? {}) as Record<string, unknown>;
+  for (const [name, answer] of Object.entries(answers)) {
+    const value = params[name];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !UUID_RE.test(value)) {
+      return reply.code(answer.status).send(answer.body);
+    }
+  }
+  return undefined;
 }
 
 /**

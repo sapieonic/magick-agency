@@ -8,7 +8,7 @@ import { proxyAgencyStationRoutes } from './routes/proxy-agency-station.routes.j
 import { dncAvailabilityProbe } from '../agency/dnc-availability.js';
 import { buildCoreHandlers } from './core-handlers.js';
 import { getCoreHandlers, setCoreHandlers } from './core-dispatch.js';
-import { rejectMalformedIdParams, rejectMalformedTenantHeader } from './agency-id-guard.js';
+import { rejectMalformedIdParams, rejectMalformedIdParamsByPrefix, rejectMalformedTenantHeader } from './agency-id-guard.js';
 import { dncRoutes } from './routes/dnc.routes.js';
 import { phoneNumberRoutes } from './routes/phone-number.routes.js';
 import { proxyAgencyCampaignsRoutes } from './routes/proxy-agency-campaigns.routes.js';
@@ -180,21 +180,14 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
 
   // ── Inbound calls (`proxy-agency-inbound.routes.ts`, docs/inbound.md §7, §8.1) ──────
   await app.register(async (scope) => {
-    // A malformed id is the not-found answer an unknown one gets (never a `22P02`): a route's
-    // `inbound_route_not_found`, a Missed row's `inbound_missed_call_not_found`, an answered
-    // call's `inbound_call_not_found`.
-    scope.addHook('preHandler', rejectMalformedIdParams(
-      { id: inboundRefusalBody({ code: 'inbound_route_not_found' }) },
-      { onlyUnder: `${P.proxyAgency}/inbound/routes/` },
-    ));
-    scope.addHook('preHandler', rejectMalformedIdParams(
-      { id: inboundRefusalBody({ code: 'inbound_missed_call_not_found' }) },
-      { onlyUnder: `${P.proxyAgency}/inbound/missed/` },
-    ));
-    scope.addHook('preHandler', rejectMalformedIdParams(
-      { id: inboundRefusalBody({ code: 'inbound_call_not_found' }) },
-      { onlyUnder: `${P.proxyAgency}/inbound/calls/` },
-    ));
+    // A malformed id is the not-found answer an unknown one gets (never a `22P02`), one hook for
+    // the scope, by path family: a route's `inbound_route_not_found`, a Missed row's
+    // `inbound_missed_call_not_found`, an answered call's `inbound_call_not_found`.
+    scope.addHook('preHandler', rejectMalformedIdParamsByPrefix({
+      [`${P.proxyAgency}/inbound/routes/`]: { id: inboundRefusalBody({ code: 'inbound_route_not_found' }) },
+      [`${P.proxyAgency}/inbound/missed/`]: { id: inboundRefusalBody({ code: 'inbound_missed_call_not_found' }) },
+      [`${P.proxyAgency}/inbound/calls/`]: { id: inboundRefusalBody({ code: 'inbound_call_not_found' }) },
+    }));
     await scope.register(proxyAgencyInboundRoutes, { prefix: P.proxyAgency });
   });
 
