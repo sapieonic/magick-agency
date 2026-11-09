@@ -45,11 +45,70 @@ async function indexDef(name: string): Promise<string | undefined> {
   return rows[0]?.indexdef;
 }
 
-/** The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts). */
+/**
+ * Twenty accounts' calls in this tenant (this file's ACCOUNT the first), inside the caller's
+ * rolled-back transaction and ANALYZEd there, as `insertPlanRoster` is: per account a campaign of
+ * 400 contacts with one attempt each, and 400 manual calls (a fifth on a roster contact), each on
+ * a soft-phone session of its own (one unsettled call per session), one in ten of each live. Every partial index on `state <> 'ended'` then holds
+ * the live rows of all twenty accounts and only the account-keyed one narrows them to one, and the
+ * account's page is 400 rows the keyset index hands over in order. On the near-empty tables a full
+ * run leaves, these indexes tie and the pick followed the statistics and dead index entries earlier
+ * files or autovacuum left (a perturbed run planned the attempts count from another live index and
+ * the page from a sort).
+ */
+async function insertAccountsCalls(client: PoolClient): Promise<void> {
+  await client.query(
+    `CREATE TEMP TABLE plan_accounts ON COMMIT DROP AS
+     SELECT CASE WHEN a = 1 THEN $1::uuid ELSE gen_random_uuid() END AS account_id,
+            gen_random_uuid() AS campaign_id
+       FROM generate_series(1, 20) a`,
+    [ACCOUNT]);
+  await client.query(
+    `INSERT INTO agency_campaigns (id, tenant_id, account_id, name, caller_ids)
+     SELECT campaign_id, $1, account_id, 'Accounts plan', ARRAY['+14155550100'] FROM plan_accounts`,
+    [TENANT]);
+  await client.query(
+    `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164)
+     SELECT p.campaign_id, $1, p.account_id, '+1415555' || lpad(g::text, 4, '0')
+       FROM plan_accounts p CROSS JOIN generate_series(1, 400) g`,
+    [TENANT]);
+  await client.query(
+    `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, outcome, ended_at)
+     SELECT ct.campaign_id, ct.id, $1, ct.account_id, 1, '+14155550100',
+            CASE WHEN right(ct.phone_e164, 1) = '0' THEN 'dialing' ELSE 'ended' END,
+            CASE WHEN right(ct.phone_e164, 1) = '0' THEN NULL ELSE 'no_answer' END,
+            CASE WHEN right(ct.phone_e164, 1) = '0' THEN NULL ELSE now() END
+       FROM agency_contacts ct JOIN plan_accounts p ON p.campaign_id = ct.campaign_id`,
+    [TENANT]);
+  await client.query(
+    `INSERT INTO agency_agent_sessions (id, kind, campaign_id, tenant_id, account_id, agent_user_id, state, break_reason)
+     SELECT ct.id, 'softphone', NULL, $1, ct.account_id, gen_random_uuid(), 'break', 'soft_phone'
+       FROM agency_contacts ct JOIN plan_accounts p ON p.campaign_id = ct.campaign_id`,
+    [TENANT]);
+  await client.query(
+    `INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id,
+                                      campaign_id, contact_id, state, ended_at, created_at)
+     SELECT $1, ct.account_id, ct.id, gen_random_uuid(), ct.phone_e164, '+14155550100',
+            CASE WHEN right(ct.phone_e164, 1) IN ('1', '2') THEN ct.campaign_id END,
+            CASE WHEN right(ct.phone_e164, 1) IN ('1', '2') THEN ct.id END,
+            CASE WHEN right(ct.phone_e164, 1) = '0' THEN 'dialing' ELSE 'ended' END,
+            CASE WHEN right(ct.phone_e164, 1) = '0' THEN NULL ELSE now() END,
+            now() - (right(ct.phone_e164, 3)::int || ' minutes')::interval
+       FROM agency_contacts ct JOIN plan_accounts p ON p.campaign_id = ct.campaign_id`,
+    [TENANT]);
+  await client.query('ANALYZE agency_call_attempts');
+  await client.query('ANALYZE agency_manual_calls');
+}
+
+/**
+ * The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts), over
+ * {@link insertAccountsCalls}' rows.
+ */
 async function planOf(sql: string): Promise<string> {
   const client: PoolClient = await pool().connect();
   try {
     await client.query('BEGIN');
+    await insertAccountsCalls(client);
     await client.query('SET LOCAL enable_seqscan = off');
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
     return rows.map((r) => r['QUERY PLAN']).join('\n');

@@ -237,8 +237,11 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
  * ANALYZE in the rolled-back transaction: the column statistics leave with the rows, but the
  * table's and its indexes' `reltuples` / `relpages` are written in place and stay, as do the
  * index entries of the rolled-back rows (until a vacuum). A later file must not lean on either.
+ *
+ * Returns the roster's campaign id, for a plan over that campaign's rows: a plan for a campaign
+ * with no rows is priced on an estimate of one row, where every index ties again.
  */
-export async function insertPlanRoster(client: pg.PoolClient): Promise<void> {
+export async function insertPlanRoster(client: pg.PoolClient): Promise<string> {
   const campaign = randomUUID();
   await client.query(
     `INSERT INTO agency_campaigns (id, tenant_id, account_id, name, caller_ids) VALUES ($1, $2, $3, 'Roster', ARRAY['+14155550100'])`,
@@ -267,4 +270,5 @@ export async function insertPlanRoster(client: pg.PoolClient): Promise<void> {
     [campaign]);
   await client.query('ANALYZE agency_contacts');
   await client.query('ANALYZE agency_call_attempts');
+  return campaign;
 }

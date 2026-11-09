@@ -3,11 +3,14 @@
 // the query it exists for — a partial index whose predicate the query does not imply is never
 // chosen, and that is invisible in the definition alone (the baseline's live-attempt index was
 // exactly that).
-import { afterAll, describe, expect, it } from 'vitest';
-import type { PoolClient } from 'pg';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { closeTestPool, getTestPool } from '../setup/test-utils.js';
 import { insertPlanRoster } from '../fixtures.js';
+import { PLAN_ROSTER_TIMEOUT_MS, endPlanTransactions, inPlanTransaction } from '../plan-transaction.js';
 
+// A test that timed out with its roster transaction still running must not hold the tables for
+// the next test or file (plan-transaction.ts).
+afterEach(endPlanTransactions);
 afterAll(closeTestPool);
 
 async function indexDef(name: string): Promise<string | undefined> {
@@ -24,24 +27,25 @@ async function indexDef(name: string): Promise<string | undefined> {
  * predicate — the property a partial index can silently lack. With `roster`, over a campaign's
  * roster and attempts of the test's own, ANALYZEd in the rolled-back transaction
  * ({@link insertPlanRoster}: without it the contacts' plan followed the statistics and index
- * sizes earlier files left).
+ * sizes earlier files left). `sql` may name the roster's campaign (a function of its id): a plan
+ * for a campaign with no rows is priced on a one-row estimate, where the indexes tie again.
  */
-async function planOf(sql: string, without: string[] = [], opts: { roster?: boolean } = {}): Promise<string> {
-  const client: PoolClient = await getTestPool().connect();
-  try {
-    await client.query('BEGIN');
-    if (opts.roster) await insertPlanRoster(client);
+async function planOf(
+  sql: string | ((rosterCampaign: string) => string),
+  without: string[] = [],
+  opts: { roster?: boolean } = {},
+): Promise<string> {
+  return inPlanTransaction(async (client) => {
+    const roster = opts.roster ? `'${await insertPlanRoster(client)}'::uuid` : CAMPAIGN;
     await client.query('SET LOCAL enable_seqscan = off');
     // An equally usable index the test does not ask about, dropped inside the rolled-back
     // transaction: on a near-empty table the two tie, and the planner's pick follows whatever
     // rows earlier files left.
     for (const index of without) await client.query(`DROP INDEX ${index}`);
-    const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
+    const text = typeof sql === 'function' ? sql(roster) : sql;
+    const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${text}`);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
-  } finally {
-    await client.query('ROLLBACK');
-    client.release();
-  }
+  });
 }
 
 const CAMPAIGN = "'00000000-0000-0000-0000-000000000001'::uuid";
@@ -52,19 +56,24 @@ describe('0003 — agency attempt and contact indexes', () => {
       /ON public\.agency_call_attempts USING btree \(campaign_id\) WHERE \(\(state\)::text <> 'ended'::text\)/,
     );
     // countLive's own text (AgencyAttemptRepository.countLive). 0005's account-wide live index
-    // carries the same predicate and ties with this one on the test's near-empty table.
+    // carries the same predicate and holds the same few rows here (one account): dropped, so the
+    // question stays this index's usability. Over the roster's campaign (40,200 attempts, 200
+    // live), not an empty one: on near-empty tables the pick followed whatever statistics autovacuum
+    // or earlier files left, and once went to a full scan of `uq_agency_attempt_number`.
     const tie = ['idx_agency_attempts_account_live'];
     expect(await planOf(
-      `SELECT COUNT(*)::text AS n FROM agency_call_attempts WHERE campaign_id = ${CAMPAIGN} AND state <> 'ended'`,
+      (campaign) => `SELECT COUNT(*)::text AS n FROM agency_call_attempts WHERE campaign_id = ${campaign} AND state <> 'ended'`,
       tie,
+      { roster: true },
     )).toContain('idx_agency_attempts_live');
     // The reaper's `state = ANY(<live states>)` implies the new predicate too.
     expect(await planOf(
-      `SELECT * FROM agency_call_attempts WHERE campaign_id = ${CAMPAIGN}
+      (campaign) => `SELECT * FROM agency_call_attempts WHERE campaign_id = ${campaign}
           AND state = ANY('{queued,dialing,ringing,answered,bridged}'::varchar[])`,
       tie,
+      { roster: true },
     )).toContain('idx_agency_attempts_live');
-  });
+  }, PLAN_ROSTER_TIMEOUT_MS);
 
   it('idx_agency_attempts_answered serves the abandonment window', async () => {
     expect(await indexDef('idx_agency_attempts_answered')).toMatch(
@@ -93,7 +102,7 @@ describe('0003 — agency attempt and contact indexes', () => {
       [],
       { roster: true },
     )).toContain('idx_agency_contacts_connected');
-  });
+  }, PLAN_ROSTER_TIMEOUT_MS);
 
   it('drops idx_agency_attempts_reporting; the keyset index serves campaign + created_at', async () => {
     expect(await indexDef('idx_agency_attempts_reporting')).toBeUndefined();
