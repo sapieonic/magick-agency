@@ -26,13 +26,13 @@ server's public IP. Replace both.
  │          ▼                                                    │
  │  server :3021 (never published) ◄──► redis (AOF, noeviction)  │
  └──────────┼────────────────────────────────────────────────────┘
-            ├──► managed Postgres 16 (TLS, verified)
+            ├──► Supabase Postgres (TLS, verified)
             └──► S3, Firebase, VoiceLink API, Mailjet, AI APIs
 ```
 
 `docker/docker-compose.prod.yml` runs three containers: `server`, `web` (nginx with both UIs) and
-`redis`. Postgres is not in the stack: production turns on verified Postgres TLS, so use a managed
-database. You add two pieces in front: a TLS terminator and a DNS record.
+`redis`. Postgres is not in the stack: the database is a Supabase project, reached over verified
+TLS. You add two pieces in front: a TLS terminator and a DNS record.
 
 Rules that hold whatever cloud you pick (details in `docs/operations.md`, "Deployment invariants"):
 
@@ -55,7 +55,8 @@ Collect these first. Some of them take days to arrive.
 | What | Why | Where it goes |
 |---|---|---|
 | A domain you control, and access to its DNS | The console's public origin, the carrier's webhook base, TLS | DNS record, Caddyfile, `docker/.env` |
-| An AWS account (or another cloud, see section 11) | VM, Postgres, S3 | |
+| An AWS account (or another cloud for the VM, see section 11) | VM, S3, the optional reports renderer | |
+| A Supabase project, on a paid plan for production | Postgres: all business data | `DATABASE_URL`, `DB_SSL_CA` |
 | A Firebase project with a web app, and Email/Password and Google sign-in enabled | Console sign-in | `FIREBASE_PROJECT_ID`, `VITE_FIREBASE_*` |
 | A VoiceLink account: API base URL, username, password, numbers | Real calls (required in production; boot refuses without it) | `VOICELINK_*` |
 | A Mailjet account and a sender domain you can add DNS records to | Invite and campaign-completion mail | `MAILJET_*` |
@@ -63,31 +64,32 @@ Collect these first. Some of them take days to arrive.
 | Optional: Grafana Cloud OTLP endpoint and token | Metrics, traces, alerts | `OTEL_*`, [`grafana/README.md`](grafana/README.md) |
 
 Tools on your laptop: `git`, `ssh`, the AWS CLI or console access, and Terraform 1.x (for the S3
-bucket and, optionally, the VM). You do not need Node or pnpm on the server; Docker builds everything.
+bucket and, optionally, the VM and the reports renderer; with reports, also Node 22 and pnpm 10,
+because the plan builds the renderer). You do not need Node or pnpm on the server; Docker builds
+everything.
 
 ## 3. Provision the cloud resources (AWS reference)
 
-Use one region for everything. `ap-south-1` (Mumbai) is the S3 default in the config and sits
-close to the carrier.
+Use one region for everything, the Supabase project included. `ap-south-1` (Mumbai) is the S3
+default in the config and sits close to the carrier; Supabase offers the same region.
 
 **Terraform shortcut for 3.1 (the app group) and 3.2.** `aws/terraform` can create the VM, its
 security group and the Elastic IP for you: set `create_server = true` in the environment's tfvars
 (see [`aws/README.md`](aws/README.md), "The server VM"). It also installs Docker (with the compose
 and buildx plugins), Caddy and git at first boot and makes a swap file, so step 5 shrinks to a
-check and a clone. You still create the `agency-db` group and RDS yourself; allow 5432 from
-`terraform output server_security_group_id`.
+check and a clone. The database is Supabase (3.3), outside your VPC: no security group allows it,
+and you restrict it on Supabase's side to the VM's Elastic IP instead.
 
 ### 3.1 Network and security groups
 
-The default VPC works. Create two security groups:
+The default VPC works. Create one security group:
 
 | Group | Inbound | Notes |
 |---|---|---|
 | `agency-app` (the VM) | TCP 443 and 80 from `0.0.0.0/0`; TCP 22 from your own IP only, or not at all (see below) | 80 is needed for Let's Encrypt and the http→https redirect. Do not open 8080, 8081 or 3021 |
-| `agency-db` (Postgres) | TCP 5432 from the `agency-app` group only | |
 
-Outbound: allow all (the server calls VoiceLink, Firebase's key endpoint, Mailjet, S3 and the AI
-APIs).
+Outbound: allow all (the server calls Supabase on 5432, VoiceLink, Firebase's key endpoint,
+Mailjet, S3 and the AI APIs).
 
 **Shell access without an open SSH port.** Two AWS console options work from the browser, under
 the instance's *Connect* button:
@@ -118,19 +120,50 @@ the instance's *Connect* button:
   record points at, and the address VoiceLink and other vendors see your server's requests come
   from. If your VoiceLink account allow-lists API callers, give them this IP.
 
-### 3.3 Postgres (Amazon RDS)
+### 3.3 Postgres (Supabase)
 
-- **Engine:** PostgreSQL 16 (CI runs against 16). The only extension the schema needs is
-  `uuid-ossp`, which RDS provides.
-- **Size:** `db.t4g.medium` with 50 GB gp3 is a reasonable start. Turn on Multi-AZ for
-  production.
-- **Initial database name:** `magick_agency`.
-- **Public access:** no. Security group: `agency-db`.
-- **Backups:** automated backups on, 7 days or more.
-- Note the endpoint (`<name>.<id>.ap-south-1.rds.amazonaws.com`), the master user and the password.
+The database is a Supabase project. Only its Postgres is used: the app has its own sign-in
+(Firebase), storage (S3) and API, so Supabase Auth, Storage and the Data API stay unused.
 
-RDS certificates are signed by Amazon's own CA, which is not in Node's trust store, so the server
-needs that CA as `DB_SSL_CA`. You set it up in step 5.
+- **Project:** a new project in the VM's region (*South Asia (Mumbai)* for `ap-south-1`), on a paid
+  plan for production: free projects pause when idle and come without backups. Keep
+  the database password it asks for; it goes into `DATABASE_URL`.
+- **Postgres version:** Supabase picks the major version (shown under *Settings → Infrastructure*).
+  CI runs 16; when a project is on another major, run a release's migrations on a staging project
+  before production.
+- **Database:** `postgres`, the one the project comes with. The server's tables go in `public`.
+- **Extensions:** the schema needs `uuid-ossp`. Supabase has it on in every project, in the
+  `extensions` schema, so the first migration's `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`
+  changes nothing, and `uuid_generate_v4()` resolves because the `postgres` role's `search_path`
+  includes `extensions`. Step 5.1 checks it. If it reports `function uuid_generate_v4() does not
+  exist`, run `alter role postgres set search_path = "$user", public, extensions;` in the SQL
+  editor and check again. A role setting applies to new connections only, and the pooler keeps
+  its connections open: if the check still fails, restart the project (*Settings → General →
+  Restart project*) and run it once more.
+- **Network:** *Database settings → Network Restrictions*: allow only the VM's Elastic IP
+  (`<ip>/32`). *SSL Configuration*: turn on *Enforce SSL on incoming connections*.
+- **Size:** the compute size sets `max_connections`. The server's pools must fit it (and, through
+  the pooler, the pool size: see "Which connection string" below and
+  [`docs/operations.md`](docs/operations.md), "Postgres connections").
+- **Backups:** paid plans take daily backups; point-in-time recovery is an add-on. Take your own
+  dump before a release that adds a migration (section 12).
+
+**Which connection string.** The *Connect* panel in the dashboard offers three. The server keeps a
+pool of long-lived connections, and runs the migrations at start with node-pg-migrate, which holds
+a session-level advisory lock for the whole run:
+
+| Option | Host and user | Use it |
+|---|---|---|
+| Direct connection | `db.<project ref>.supabase.co:5432`, user `postgres` | When the VM can reach it: it resolves to IPv6 only unless the project has the IPv4 add-on, and the default VPC (and the `aws/terraform` VM) is IPv4 only. One hop fewer |
+| Shared pooler, session mode | `aws-…-<region>.pooler.supabase.com:5432` (as the panel shows it), user `postgres.<project ref>` | **The default** on an IPv4 VM. Each of the server's connections keeps one Postgres connection for its life, so it behaves like the direct connection, advisory locks and all. Its *pool size* (*Database settings → Connection pooling*) caps the connections, so set it to at least the server's planned sum |
+| Transaction mode | port `6543` | **Never.** It hands each transaction to any backend, so session state (the migration lock among it) does not hold |
+
+Do not add the panel's `?sslmode=…` or any other parameter to the URL; boot refuses them (6.1).
+
+**TLS.** Supabase's server certificates are signed by Supabase's own root CA, which is not in
+Node's trust store, so the server needs it as `DB_SSL_CA`. Download it from *Database settings →
+SSL Configuration → Download certificate* (`prod-ca-2021.crt`); you check it in step 5.1 and set
+it in step 6.1.
 
 ### 3.4 S3 bucket and keys
 
@@ -150,17 +183,20 @@ even if you run the rest on another cloud.
 
 Agent, campaign and account reports ([`docs/reports.md`](docs/reports.md)) render PDF and Excel
 files with headless Chromium. In production that runs outside the server: an SQS queue and a
-Lambda, created by the same `aws/terraform` with `enable_reports = true`. It needs the Lambda zip
-built from the release, a Chromium layer and a callback secret; [`aws/README.md`](aws/README.md)
-("Reports") has the steps, and [`REPORTS_SETUP.md`](REPORTS_SETUP.md) walks through the whole
-first-time setup, Path B. Skip this section if reports stay off. Nothing here deploys it from
-CI: you build the zip and apply by hand, and on every release that changes the renderer you apply
-it **before** you deploy the server (aws/README.md, "Deploy order").
+Lambda, created by the same `aws/terraform` with `enable_reports = true`, the only setting it
+needs. Its plan builds the Lambda zip from your checkout and fetches the Chromium layer (checksum
+pinned), and the apply publishes both and generates the callback secret in SSM.
+[`aws/README.md`](aws/README.md) ("Reports") has the detail, and
+[`REPORTS_SETUP.md`](REPORTS_SETUP.md) walks through the whole first-time setup, Path B. Skip this
+section if reports stay off. Nothing here deploys it from CI: you apply by hand, from the
+release's tag, and on every release you apply it **before** you deploy the server (aws/README.md,
+"Deploy order").
 
-At the end, print the reports lines for step 6.4:
+At the end, print the reports lines for step 6.4 (the second reads the secret from SSM):
 
 ```bash
-terraform output -raw reports_server_env
+terraform output -raw reports_server_env; echo
+sh -c "$(terraform output -raw reports_callback_secret_env_command)"
 ```
 
 ## 4. Map your domain
@@ -262,16 +298,19 @@ security group is your real firewall.
 
 ### 5.1 Check the database connection first
 
-Fetch the RDS CA bundle for your region and check that a fully verified TLS connection works from
-this host. If this fails, the server's migration step will fail the same way.
+Copy the CA certificate from step 3.3 to the VM as `~/supabase-ca.pem` (paste it over the shell,
+or `scp`). Then check, from this host, that a fully verified TLS connection works to the host and
+user you will put in `DATABASE_URL`, and that `uuid-ossp` resolves. If this fails, the server's
+migration step will fail the same way.
 
 ```bash
-curl -fsSLo ~/rds-ca.pem https://truststore.pki.rds.amazonaws.com/ap-south-1/ap-south-1-bundle.pem
+docker run --rm -it -v ~/supabase-ca.pem:/ca.pem:ro postgres:17-alpine psql "host=<host> port=5432 dbname=postgres user=<user> sslmode=verify-full sslrootcert=/ca.pem" -c 'select version(), uuid_generate_v4()'
 ```
 
-```bash
-docker run --rm -it -v ~/rds-ca.pem:/ca.pem:ro postgres:16-alpine psql "host=<rds endpoint> port=5432 dbname=magick_agency user=<master user> sslmode=verify-full sslrootcert=/ca.pem" -c 'select version()'
-```
+`<host>` and `<user>` are the pooler's (`aws-…-<region>.pooler.supabase.com`,
+`postgres.<project ref>`) or the direct connection's (3.3). A timeout or `Network is unreachable`
+on `db.<project ref>.supabase.co` is the IPv6-only direct host: use the session pooler. A timeout
+on the pooler is usually *Network Restrictions* not yet allowing the Elastic IP.
 
 ## 6. Configure `docker/.env`
 
@@ -288,8 +327,11 @@ on your cloud and your domain.
 ### 6.1 Database
 
 ```ini
-DATABASE_URL='postgresql://<user>:<password>@<rds endpoint>:5432/magick_agency'
+DATABASE_URL='postgresql://<user>:<password>@<host>:5432/postgres'
 ```
+
+The same host and user as step 5.1: on the session pooler, `postgres.<project ref>` at
+`aws-…-<region>.pooler.supabase.com`.
 
 Percent-encode `@`, `:`, `/`, `?` and `#` inside the password (`@` is `%40`). Do not add
 `sslmode` or any other TLS parameter; boot refuses them.
@@ -298,7 +340,7 @@ Append the CA bundle as one line with `\n` escapes (this keeps the literal backs
 expects):
 
 ```bash
-printf "DB_SSL_CA='%s'\n" "$(awk 'NF {printf "%s\\n", $0}' ~/rds-ca.pem)" >> docker/.env
+printf "DB_SSL_CA='%s'\n" "$(awk 'NF {printf "%s\\n", $0}' ~/supabase-ca.pem)" >> docker/.env
 ```
 
 ### 6.2 Domain-dependent values
@@ -341,11 +383,11 @@ TRUST_PROXY_HOPS=2
 |---|---|
 | `AGENCY_REPORTS_RENDERER` | `sqs` (the default, `inline`, renders in the server process and needs the renderer and Chromium there, neither of which the production image carries; it is for development) |
 | `AGENCY_REPORTS_SQS_QUEUE_URL` | The `report-jobs` queue URL from step 3.5 |
-| `AGENCY_REPORTS_CALLBACK_SECRET` | The same value as the Lambda's (`reports_callback_secret` in the tfvars), at least 32 characters. Quote it |
+| `AGENCY_REPORTS_CALLBACK_SECRET` | The line `reports_callback_secret_env_command` prints, quoted, from SSM: the value the Lambda signs with. Never make one up; Terraform generates it |
 | `AGENCY_REPORTS_RENDER_TIMEOUT_MS` | `900000` (the default). At least the `report-jobs` queue's visibility timeout plus the function's timeout (600 + 300 s), so an SQS redelivery finishes while the server still waits for it; set it through `reports_render_timeout_seconds` in the tfvars, which refuses a smaller value |
 | `AGENCY_REPORTS_CALLBACK_BASE_URL` | The server's public base URL, e.g. `https://agency.example.com` (with the API on its own host, that host). The Lambda posts the rendered result to it over the internet |
 
-All but the base URL come from `terraform output -raw reports_server_env`. The server's S3 key needs no
+All but the base URL come from the two commands in step 3.5. The server's S3 key needs no
 change; Terraform has added `sqs:SendMessage` on the queue to its policy. The other reports
 settings have defaults ([`docs/reports.md`](docs/reports.md), "Config"). Reports stay hidden until
 the `agency_reports_enabled` flag is on for a tenant. The first-time walkthrough, with the checks
@@ -742,19 +784,23 @@ super-admin still goes over the SSH tunnel.
 
 ## 11. Other clouds
 
-The shape is the same everywhere: one VM running the compose file, a managed Postgres 16 with TLS,
-a static public IP, a DNS record and a TLS terminator. The S3 bucket stays on AWS (section 3.4).
+The shape is the same everywhere: one VM running the compose file, Supabase Postgres over verified
+TLS, a static public IP, a DNS record and a TLS terminator. The S3 bucket and the reports renderer
+stay on AWS (section 3.4), and the database stays on Supabase: create the project in the region
+nearest the VM.
 
-| Cloud | VM | Postgres | `DB_SSL_CA` | Static IP |
-|---|---|---|---|---|
-| GCP | Compute Engine | Cloud SQL for PostgreSQL | The instance's server CA, from *Connections → Security* | Reserved static external IP |
-| Azure | Virtual Machine | Azure Database for PostgreSQL, Flexible Server | Its certificates chain to public roots; try unset first | Static public IP |
-| DigitalOcean | Droplet | Managed PostgreSQL | The cluster's CA certificate, from its *Connection details* | Reserved IP |
+| Cloud | VM | Static IP |
+|---|---|---|
+| GCP | Compute Engine | Reserved static external IP |
+| Azure | Virtual Machine | Static public IP |
+| DigitalOcean | Droplet | Reserved IP |
 
-Whatever the provider, the check in step 5.1 (`psql` with `sslmode=verify-full`, against the
-hostname you will put in `DATABASE_URL`) tells you before first boot whether the server will
-verify the certificate. A certificate issued for a name other than the one you connect with fails
-the same way in both. Keep TLS verification on; `DB_SSL_REJECT_UNAUTHORIZED=false` is a last resort.
+Section 3.3 applies unchanged: `DB_SSL_CA` is Supabase's CA, *Network Restrictions* allow the static
+IP, and a VM without outbound IPv6 uses the session pooler.
+
+The check in step 5.1 (`psql` with `sslmode=verify-full`, against the hostname you will put in
+`DATABASE_URL`) tells you before first boot whether the server will verify the certificate. A
+certificate issued for a name other than the one you connect with fails the same way in both. Keep TLS verification on; `DB_SSL_REJECT_UNAUTHORIZED=false` is a last resort.
 
 **Container platforms** (ECS, Cloud Run, Kubernetes, App Service) are possible but not packaged.
 They must keep every invariant in section 1: exactly one task or pod and never two during a
@@ -775,8 +821,8 @@ cd ~/magick-agency && git fetch && git checkout <new tag or commit>
 docker compose -f docker/docker-compose.prod.yml up -d --build
 ```
 
-With reports on (step 3.5), apply the renderer from the same release first, then deploy the
-server: the live renderer must read the datasets both the old and the new server write
+With reports on (step 3.5), apply `aws/terraform` at the same release first (its plan builds
+the renderer from the checkout), then deploy the server: the live renderer must read the datasets both the old and the new server write
 ([`aws/README.md`](aws/README.md), "Deploy order").
 
 Migrations run on start. There is one server, so a deploy is a short outage: shutdown hangs up
@@ -814,8 +860,13 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 - Metrics, traces and alerts: set the three `OTEL_*` values (`OTEL_SERVICE_NAME=magick-agency` for
   production) and apply [`grafana/`](grafana/README.md).
 - Uptime: point an external check at `https://agency.example.com/readyz`.
-- Postgres holds all business data: rely on RDS automated backups and take a manual snapshot
-  before every release that adds a migration.
+- Postgres holds all business data: rely on Supabase's daily backups (paid plans; add
+  point-in-time recovery for finer restores), and before every release that adds a migration take
+  your own dump, with a `pg_dump` at least as new as the project's Postgres:
+
+  ```bash
+  docker run --rm -v ~/supabase-ca.pem:/ca.pem:ro -v ~/backups:/out postgres:17-alpine pg_dump "host=<host> port=5432 dbname=postgres user=<user> sslmode=verify-full sslrootcert=/ca.pem" -Fc -f /out/pre-<tag>.dump
+  ```
 - Redis holds leases and call tokens, not business data. Its volume (`redisdata`) matters across
   restarts during live calls; it does not need backups.
 - Disk: after each deploy, clear old images and build cache, which otherwise fill a 20 GB disk in a
@@ -830,11 +881,12 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 - S3 key: `aws/README.md` ("The state holds the server's secret access key").
 - `SUPER_ADMIN_JWT_SECRET`: changing it signs every super-admin out.
 - `RECORDING_URL_SIGNING_SECRET`: changing it breaks recording links already handed out.
-- Database password: change it in RDS, update `DATABASE_URL`, recreate the server.
-- `AGENCY_REPORTS_CALLBACK_SECRET`: set the new value as `reports_callback_secret` and apply (the
-  Lambda publishes a version with it), then update `docker/.env` and recreate the server. Callbacks
-  signed with the other secret in between are refused (`agy-reports-callback-bad-signature`); the
-  server re-sends those runs, so do both steps together.
+- Database password: reset it in Supabase (*Database settings → Reset database password*), update
+  `DATABASE_URL`, recreate the server. The old password stops working at once, so do both
+  together, outside calling hours.
+- `AGENCY_REPORTS_CALLBACK_SECRET`: `aws/README.md`, "Rotating the callback secret". Two applies
+  with the server switched in between (it accepts the old secret as
+  `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS` meanwhile), so no callback is refused.
 
 ## 13. Troubleshooting
 
@@ -848,6 +900,9 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 | Console loads, but every API call fails and the browser console says `blocked by CORS policy` | The console's origin is not in `CORS_ALLOWED_ORIGINS` (a typo, a trailing slash, an old name), or the `web` image was built with `CONSOLE_API_BASE_URL` and the server was not restarted with the allow-list | Fix `CORS_ALLOWED_ORIGINS`, restart `server`; check with the `curl` in step 7.3 |
 | Super-admin domain answers 403 | Your IP is not in the Caddyfile's allow-list (it changed, or you are on another network) | Update `remote_ip`, `sudo systemctl reload caddy`; the tunnel still works meanwhile |
 | Server exits with `unable to verify the first certificate` | `DB_SSL_CA` missing or wrong | Redo step 6.1; test with step 5.1 |
+| Server (or step 5.1) times out or says `ENETUNREACH` / `Network is unreachable` on `db.<ref>.supabase.co` | The direct host is IPv6 only, and the VM has no IPv6 | The session pooler's host and user (3.3), or Supabase's IPv4 add-on |
+| Migrations fail with `function uuid_generate_v4() does not exist` | `extensions` is not on the database role's `search_path` | The `alter role` in 3.3 ("Extensions"), restart the Supabase project so the pooler reconnects, then restart the server |
+| Under load, queries fail with `Max client connections reached` or `53300` | The pooler's pool size or `max_connections` is below what the server's pools can open | Raise the pool size, or lower `DB_POOL_MAX` and the workers' pools (`docs/operations.md`, "Postgres connections") |
 | Server exits listing missing keys (`FIREBASE_PROJECT_ID`, `VOICELINK_*`) | Production requires them | Fill them in `docker/.env` |
 | Server exits on TLS parameters in `DATABASE_URL` | `sslmode=...` or similar in the URL | Remove it; TLS comes from `DB_SSL_CA` |
 | Database auth fails but the password is right | An unquoted `$` or ` #` in `docker/.env`, or an unencoded `@` in the URL | Single-quote the value; percent-encode the password |

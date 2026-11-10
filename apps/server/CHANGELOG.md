@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.18.0](https://github.com/sapieonic/magick-agency/compare/server-v0.17.0...server-v0.18.0) (2026-11-09)
+
+
+### Features
+
+* **server,report-renderer:** Terraform builds the report renderer, publishes its Chromium layer and keeps the callback secret in SSM ([#62](https://github.com/sapieonic/magick-agency/issues/62)) ([9790275](https://github.com/sapieonic/magick-agency/commit/9790275a273c8b7f5536c7801810dbb0918dcb50))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @magick-agency/report-renderer bumped to 0.3.0
+
 ## [0.17.0](https://github.com/sapieonic/magick-agency/compare/server-v0.16.0...server-v0.17.0) (2026-11-09)
 
 

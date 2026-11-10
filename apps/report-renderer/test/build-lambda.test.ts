@@ -4,7 +4,9 @@
  * (it is the layer's).
  */
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
@@ -49,4 +51,15 @@ describe('build:lambda', () => {
     const mod = (await import(join(root, 'dist', 'lambda', 'index.mjs'))) as { handler: unknown };
     expect(typeof mod.handler).toBe('function');
   }, 120_000);
+
+  // aws/terraform builds the zip at every plan and deploys it when its hash changes, so an
+  // unchanged checkout must give the same bytes, from any working directory (pnpm runs the build
+  // from here, a hand run may not), or every apply would publish a new version.
+  it('is reproducible: a second build, from another directory, writes the same bytes', () => {
+    const build = (cwd: string) => {
+      execFileSync(process.execPath, [join(root, 'scripts', 'build-lambda.mjs')], { cwd, stdio: 'pipe' });
+      return createHash('sha256').update(readFileSync(join(root, 'dist', 'report-renderer-lambda.zip'))).digest('hex');
+    };
+    expect(build(root)).toBe(build(tmpdir()));
+  }, 240_000);
 });

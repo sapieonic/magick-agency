@@ -268,6 +268,7 @@ export const agencyWebhooksPlugin: FastifyPluginAsync<{ ctx: AppContext | null }
   await app.register(reportRenderedWebhookRoutes, {
     prefix: AGENCY_WEBHOOK_PREFIX,
     callbackSecret: reports.callbackSecret,
+    previousCallbackSecret: reports.callbackSecretPrevious,
     retentionDays: reports.retentionDays,
   });
 };

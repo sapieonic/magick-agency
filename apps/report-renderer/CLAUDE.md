@@ -34,7 +34,12 @@ database, the server or the clock (it prints `generated_at`).
 - **Chromium versions go together.** The Lambda layer is `@sparticuz/chromium` **153.0.0**
   (Chromium 153), mounted at `/opt/nodejs/node_modules` and resolved there by
   `src/lambda/chromium.ts` (ES modules ignore NODE_PATH); it is not bundled. `puppeteer-core` is
-  pinned to **25.11.0**, the release built for Chrome 153. Bump both together.
+  pinned to **25.11.0**, the release built for Chrome 153. Bump both together, with
+  `chromium-layer.json` (the version and its x64 layer zip's SHA-256, the GitHub release asset's
+  `digest`): `aws/terraform` publishes that layer and refuses a zip with another hash, and
+  `test/chromium-layer.test.ts` fails a bump of the dependency without the file.
+- **The build is reproducible** (fixed zip timestamps, `test/build-lambda.test.ts`): Terraform
+  builds the zip at every plan and redeploys only when its hash changes.
 - **Chrome for local runs and tests**: `findChrome()` tries `AGENCY_REPORTS_CHROME_PATH`,
   `CHROME_PATH`, Playwright's `/opt/pw-browsers/chromium-*/chrome-linux*/chrome`, then
   `/usr/bin/google-chrome` (GitHub's Ubuntu runners), `/usr/bin/google-chrome-stable`, `/usr/bin/chromium`,

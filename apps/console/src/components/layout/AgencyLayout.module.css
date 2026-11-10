@@ -1,7 +1,11 @@
 .layout {
   display: flex;
   height: 100vh;
+  /* clip, not just hidden: an overflow: hidden box can still be scrolled by
+     focus() or scrollIntoView, so a popover poking past the right edge would
+     slide the whole page under the fixed sidebar. clip cannot be scrolled. */
   overflow: hidden;
+  overflow: clip;
   background: var(--bg-primary);
 }
 

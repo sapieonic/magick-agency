@@ -400,7 +400,7 @@ Files: `report-keys.ts`, `schedule.ts`
 | `apps/server/test/integration/agency/report-run-repository.test.ts` | 24 |
 | `apps/server/test/integration/agency/report-subscription-repository.test.ts` | 15 |
 
-The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/`, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, all three under one deadline (`REPORT_BUILD_TIMEOUT_MS`), an `AbortSignal` the builder, the cursor and the uploads honour, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable` (a subscription disabled only when `probeSubscriptionSubject` agrees the subject is gone), `ReportZoneChangedError` → `subject_changed`, anything else `assembly_failed`; the first pass after start reclaims runs orphaned by a restart, and `stop()` waits at most 20 s), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback; `checkInlineRenderer`, the boot-time load under `inline`), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` (a period skipped while `agency_reports_enabled` is off for the account; a campaign's zone by `campaignZone`) with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first; no email while the flag is off), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
+The report pipeline (docs/reports.md "Pipeline"): `assembler.ts` (the loop every `assemblerIntervalMs`, one run at a time, no overlapping passes: claim, the claim ceiling (`claim_generation` past `maxAttempts` fails `assembly_failed`), the kind's builder from `datasets/`, each detail source streamed as gzipped NDJSON through `uploadStream` and cut at `maxDetailRows` with the iterator's `return()` called (`streamDetailFile`), `dataset.json`, all three under one deadline (`REPORT_BUILD_TIMEOUT_MS`), an `AbortSignal` the builder, the cursor and the uploads honour, `markAssembled` then `markSent` fenced on the claim, the dispatch; `ReportSubjectUnavailableError` → `subject_unavailable` (a subscription disabled only when `probeSubscriptionSubject` agrees the subject is gone), `ReportZoneChangedError` → `subject_changed`, anything else `assembly_failed`; the first pass after start reclaims runs orphaned by a restart, and `stop()` waits at most 20 s), `dispatch.ts` (`ReportRenderDispatcher`; `buildRenderMessage`; the SQS dispatcher (`@aws-sdk/client-sqs` `SendMessage`, callback `${callbackBaseUrl}/webhooks/reports/rendered`); the inline dispatcher: the renderer package loaded by a non-literal dynamic `import()` behind the local `ReportRendererModule` type (`loadReportRenderer`, injectable), an S3-backed `ReportRendererIO`, one render at a time, a renderer that cannot load or throws becoming a failed `render_failed` callback; `checkInlineRenderer`, the boot-time load under `inline`), `apply.ts` (`applyRenderOutcome`, the ONE path every render result takes: the callback names the run and attempt, every file key is the run's own output key (`isReportOutputKey`), a rendered result carries every format, then the fenced `applyRenderResult`; `agency_reports_runs_total` and `_render_seconds` on applied), `callback-signature.ts` (`signReportCallback`, `verifyReportCallback`: hex HMAC-SHA256 over `reportSignaturePayload`, ±300 s, constant-time; during a rotation it also accepts `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS` and says which secret matched), `tick.ts` (every `tickIntervalMs`: subscriptions → runs through `claimDue` (a period skipped while `agency_reports_enabled` is off for the account; a campaign's zone by `campaignZone`) with catch-up to the latest missed period (`dueSendAt`), the unsent and timed-out reconcile (S3 HEAD of the expected keys first), notify once (`markNotified` first; no email while the flag is off), `expireDue`, the pending gauges; per-item and per-step isolation), `pipeline.ts` (`createReportDispatcher` from config, `startReportPipeline`: the dispatcher, the assembler and the tick, started by `bootstrap/agency.ts`; `headReportObject`), `access.ts` (a person's role on an account from their active memberships; `usersWithPermissionOnAccount`, `isMemberOfAccountEver`), `run-view.ts` (`AgencyReportRun` / `AgencyReportSubscription` on the wire with names resolved, degrading to null).
 
 Also `failure-messages.ts` (one British-English sentence per `ReportFailureCode`: the run view and the run repository's failing writes read it, never the renderer's or assembler's own text), `subscription-subject.ts` (`probeSubscriptionSubject`: the tick's check that a subscription's subject is still reportable under the builders' own rule, and the campaign's current zone), `zone.ts` (the one `pg_timezone_names` lookup, matched as `AT TIME ZONE` matches, found zones cached in lower case: `postgresZoneName`, Postgres's name for a zone, which the dataset builders resolve the run's zone with; `postgresKnowsZone` on top of it, a request's zone must exist there).
 
@@ -411,7 +411,7 @@ Files: `access.ts`, `apply.ts`, `assembler.ts`, `callback-signature.ts`, `dispat
 | `apps/server/test/unit/agency/reports/assembler.test.ts` | 29 |
 | `apps/server/test/unit/agency/reports/tick.test.ts` | 23 |
 | `apps/server/test/unit/agency/reports/dispatch.test.ts` | 13 |
-| `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 16 |
+| `apps/server/test/unit/agency/reports/report-rendered-webhook.test.ts` | 18 |
 | `apps/server/test/integration/api/agency-reports.test.ts` | 3 |
 | `apps/server/test/integration/api/agency-reports-routes.test.ts` (the per-user rate under a burst of requests, `X-Account-Id` in upper case, re-enabling a subscription) | 6 |
 | `apps/server/test/integration/api/agency-reports-e2e.test.ts` (the real pipeline from config: routes, assembler, real builders, the inline renderer, download and email; and SQS mode, the renderer as the Lambda runs it and the signed callback) | 8 |
@@ -871,7 +871,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 18 |
+| `apps/server/test/unit/config/config.test.ts` | 19 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
@@ -1811,12 +1811,13 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/Sidebar.activeState.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/StateRail.test.tsx` | 26 |
 | `apps/console/src/__tests__/components/StationIdentity.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/SwitcherDropdown.test.tsx` | 8 |
+| `apps/console/src/__tests__/components/SwitcherDropdown.test.tsx` | 12 |
 | `apps/console/src/__tests__/components/TenantSwitcher.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/TopBar.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 25 |
 | `apps/console/src/__tests__/components/agentSurfacesVersion.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/joinDoor.test.ts` | 12 |
+| `apps/console/src/__tests__/components/layoutOverflowClipCss.test.ts` | 3 |
 | `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/sidebarVersion.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/softphoneVisibility.test.tsx` | 11 |
@@ -1849,7 +1850,7 @@ Files: `CustomerCallLink.tsx`, `CustomerHistory.module.css`, `CustomerHistorySum
 |---|---|
 | `apps/console/src/__tests__/api/customerHistory.test.ts` | 12 |
 | `apps/console/src/__tests__/components/CustomerSearchBox.test.tsx` | 29 |
-| `apps/console/src/__tests__/components/CustomerSearchPopover.test.tsx` | 12 |
+| `apps/console/src/__tests__/components/CustomerSearchPopover.test.tsx` | 13 |
 | `apps/console/src/__tests__/pages/CustomerHistoryPage.test.tsx` | 45 |
 | `apps/console/src/__tests__/utils/customerSearchRecent.test.ts` | 9 |
 
@@ -1967,7 +1968,7 @@ The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a
 
 Call audio (`media=alaw8` by default, `pcm16` the fallback; `utils/agencyMedia.ts`): `useAgencyStation` names the format on every upgrade (`mediaFormat` option and result), reads binary as `ArrayBuffer`, sends A-law as binary and refuses a frame in the other format, and turns to `pcm16` for good on 1008 `invalid_media` or JSON `media` on an `alaw8` socket. `useAudioCapture` builds the one capture worklet in the socket's format and switches it in place (`setFormat`); `useAudioPlayback.playAlaw` decodes through `utils/alaw8/g711.js` into the same 16 kHz scheduler as `play`; `useAgencyAudio.sync` takes the station's `format`.
 
-Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCallNotesAutosave.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useInboundCall.ts`, `useInboundQueue.ts`, `useLatestRef.ts`, `useLazyBlobAudio.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
+Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCallNotesAutosave.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useInboundCall.ts`, `useInboundQueue.ts`, `useKeepInViewport.ts` (nudges a top-bar popover back on screen before paint and on resize: the switchers, Search a number), `useLatestRef.ts`, `useLazyBlobAudio.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1982,6 +1983,7 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/useAudioPlayback.alaw.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/useCampaignInsights.test.tsx` | 13 |
+| `apps/console/src/__tests__/hooks/useKeepInViewport.test.tsx` | 6 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
 | `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
@@ -2402,14 +2404,16 @@ undeliverable callback is a batch item failure, a final refusal is logged and no
 than 408 and 429 is final), `lambda/s3-io.ts` (`RendererIO` over `@aws-sdk/client-s3`, one
 `PutObject` per file), `lambda/chromium.ts` (the `@sparticuz/chromium` layer, imported by file URL
 from `/opt/nodejs/node_modules`). `scripts/build-lambda.mjs` bundles `index.mjs` and `fonts/` into
-`dist/report-renderer-lambda.zip`.
+`dist/report-renderer-lambda.zip`. `chromium-layer.json` is the layer `aws/terraform` publishes: the
+`@sparticuz/chromium` version and its x64 layer zip's SHA-256.
 
-Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts`; `scripts/build-lambda.mjs`
+Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts`; `scripts/build-lambda.mjs`; `chromium-layer.json`
 
 | Test file | Cases |
 |---|---|
 | `apps/report-renderer/test/lambda.test.ts` | 9 |
-| `apps/report-renderer/test/build-lambda.test.ts` | 1 |
+| `apps/report-renderer/test/build-lambda.test.ts` | 2 |
+| `apps/report-renderer/test/chromium-layer.test.ts` | 1 |
 
 ## `apps/mobile`
 

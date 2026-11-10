@@ -25,6 +25,9 @@ rmSync(outDir, { recursive: true, force: true });
 mkdirSync(join(outDir, 'fonts'), { recursive: true });
 
 const result = await build({
+  // Paths in the bundle (module comments, the source map) are relative to this, so the bytes do
+  // not depend on where the script is run from (aws/terraform hashes the zip).
+  absWorkingDir: root,
   entryPoints: { index: join(root, 'src', 'lambda.ts') },
   outdir: outDir,
   outExtension: { '.js': '.mjs' },

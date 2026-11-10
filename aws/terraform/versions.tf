@@ -6,6 +6,16 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    # reports.tf: the plan-time renderer build and Chromium layer fetch (scripts/), and the
+    # generated callback secret. Neither talks to AWS; both run on the machine that applies.
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 

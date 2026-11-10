@@ -1127,6 +1127,30 @@ account. Still to build: P3 (the mobile app's frames, pickups from break and the
 media-worker handover, reports and Insights) and P4 (VoiceLink inbound); what else remains is
 under "Not built".
 
+### Reports infrastructure 2026-11-09
+
+`aws/terraform` now owns everything reports need except the database (Supabase) and Redis
+(compose): `enable_reports = true` is the only input.
+
+| Area | What it does |
+|---|---|
+| Chromium layer | The plan reads the renderer's pin (`apps/report-renderer/chromium-layer.json`: the `@sparticuz/chromium` version and its x64 layer zip's SHA-256, kept equal to the dependency by `test/chromium-layer.test.ts`), fetches that zip from its GitHub release and refuses it unless the hash matches; the apply uploads it to `lambda-artifacts/` and publishes the layer. `report_renderer_chromium_layer_arn` still overrides |
+| Renderer zip | Built at every plan (`scripts/build-report-renderer.mjs`); `source_code_hash` is the build output's, and the build is reproducible (`apps/report-renderer/test/build-lambda.test.ts`), so an unchanged checkout publishes no version. `report_renderer_zip` still overrides |
+| Callback secret | `random_password` per generation (the current one and the one before), in SSM as SecureStrings; the apply puts the same value in the Lambda's env, `reports_callback_secret_env_command` prints a command that reads the server's line from SSM (and fails on an empty read), and `reports_callback_secret_signing_sha256` the hash of the signing secret, never the secret. Rotation is two applies with no refused callbacks: the server accepts `AGENCY_REPORTS_CALLBACK_SECRET_PREVIOUS` meanwhile (`aws/README.md`, "Rotating the callback secret") |
+| Docs | The production database is Supabase everywhere (`DEPLOYMENT.md` 3.3: the session pooler on an IPv4 VM, never transaction mode; its CA as `DB_SSL_CA`; `uuid-ossp` in `extensions`) |
+
+Evidence, local, 2026-11-09: `terraform test` 11 passed (the layer the renderer pins, zip hash,
+secret, two rotations, overrides), each guard mutation-checked; the real build and layer fetch run
+through Terraform with AWS mocked (paths relative, the checksum refusal included), and run again
+directly after the cleanup (the hashes they answer match `sha256sum`); the secret
+command against a stub AWS CLI (a failed or empty read exits 1 and prints nothing). Server unit
+9,154 passed, 1 failed: the branding guard on an untracked local `.slacker.json`, not in the
+repository. Renderer 81 passed, 11 skipped (no local Chrome). `pnpm test:grafana` 33,
+`pnpm test:release` 10, `pnpm lint` clean.
+**Not verified:** a real `terraform apply` on AWS, a real Supabase project (the pooler's
+certificate chain and the `uuid_generate_v4()` search path are from Supabase's documentation),
+and the server's integration lanes (no Postgres on this machine at the time).
+
 ## Test counts
 
 Latest run, 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`

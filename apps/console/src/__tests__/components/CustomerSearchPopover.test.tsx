@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -34,6 +34,10 @@ function renderLayout() {
     </MemoryRouter>,
   );
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 beforeEach(() => {
   mocks.useTenant.mockReturnValue({ tenantId: 't', accountId: 'a', accounts: [], role: 'account_admin' });
@@ -119,5 +123,25 @@ describe('the top bar search', () => {
     mocks.useTenant.mockReturnValue({ tenantId: 't', accountId: null, accounts: [], role: 'account_admin' });
     renderLayout();
     expect(screen.queryByTestId('customer-search-trigger')).toBeNull();
+  });
+
+  it('keeps the panel on screen between the phone breakpoint and a wide window', () => {
+    // At 800px the 560px panel opens from a trigger near x 391 and would run to
+    // 951; it is pulled back to 16px clear of the right edge.
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(800);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 391,
+      right: 951,
+      top: 64,
+      bottom: 400,
+      width: 560,
+      height: 336,
+      x: 391,
+      y: 64,
+      toJSON: () => ({}),
+    } as DOMRect);
+    renderLayout();
+    fireEvent.click(screen.getByTestId('customer-search-trigger'));
+    expect(screen.getByTestId('customer-search-panel').style.marginLeft).toBe('-167px');
   });
 });
