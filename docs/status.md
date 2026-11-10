@@ -1229,7 +1229,22 @@ parked, not started: a phone that leaves the app while available is paused and o
 Latest run, 2026-11-10, inbound calls on the mobile app (IQ46, IQ47; `inbound.md` §12, P3 row),
 after both review rounds:
 
-<!-- COUNTS: filled in by the coordinator -->
+Run on commit `cd6be77` (the docs commits after it change no code), one after another from inside
+each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green
+on its first run. `pnpm lint` clean in 9 packages; `pnpm test:tooling` 16 and `pnpm test:release`
+10 pass; `contracts-literals --check` up to date (62 vocabularies). `apps/mobile`: `flutter analyze`
+no issues, `flutter test` 1637 passed; `agency_wire` `dart test` 595 passed; `agent_audio`
+`flutter test` 136 passed (Dart; the Kotlin tests were not run). Not run (untouched by this
+change): `packages/db`, `apps/super-admin`, `packages/web-ui`, `apps/report-renderer`,
+`packages/observability`, `pnpm test:grafana`.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9641 passed + 1 expected fail (488 files) | rest lane 2648 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 21 (5 files) |
+| `apps/console` | 6114 (325 files) | — |
+| `packages/contracts` | 463 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `apps/mobile` | 1637 (`flutter test`); `agency_wire` 595 (`dart test`); `agent_audio` 136 (`flutter test`) | — |
 
 Previous run, 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
 §12), on the merged branch:
