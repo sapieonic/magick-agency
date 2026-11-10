@@ -377,6 +377,8 @@ export class WebRtcBridgeManager {
   }
 
   private readonly lifecycleListeners = new Set<WebRtcLifecycleListener>();
+  /** The hold tone encoded per carrier media module ({@link holdToneForCarrier}); null: that carrier cannot encode it. */
+  private readonly encodedHoldTone = new WeakMap<object, { buffer: Buffer; byteRate: number } | null>();
 
   /**
    * Observe bridge lifecycle moments. Returns an unsubscribe function.
@@ -1411,7 +1413,11 @@ export class WebRtcBridgeManager {
     }
     if (!urls.answerStreamUrl) return { accepted: false, reason: 'stream_unavailable' };
 
-    const maxDuration = await this.resolveMaxDuration(params.tenantId, params.accountId);
+    // One read of the account's settings row for both the max duration and the recording ceiling.
+    // A read that fails is the default duration, and records nothing.
+    const settings = await accountSettingsRepository.findByTenantAndAccount(params.tenantId, params.accountId)
+      .then((row) => ({ ok: true as const, row }), (err: unknown) => ({ ok: false as const, err }));
+    const maxDuration = (settings.ok ? settings.row?.webrtc_max_duration_seconds : null) ?? DEFAULT_WEBRTC_MAX_DURATION_SECONDS;
     // Never shorter than the media deadline: a call is not even playable before then.
     const parkedSeconds = params.connectable
       ? Math.max(INBOUND_MEDIA_DEADLINE_SECONDS, Math.ceil(Number.isFinite(params.parkedSeconds) ? params.parkedSeconds : 0))
@@ -1421,11 +1427,11 @@ export class WebRtcBridgeManager {
     const floorSeconds = !params.connectable && Number.isFinite(params.parkedSeconds) ? Math.max(0, Math.ceil(params.parkedSeconds)) : 0;
     const budgetSeconds = params.connectable ? parkedSeconds + maxDuration : Math.max(maxDuration, floorSeconds);
     // Recording is decided once, under the account's ceiling (NULL ⇒ not allowed, as for a dial).
-    const recordEnabled = params.connectable && params.record
-      && ((await accountSettingsRepository.getAllowRecording(params.tenantId, params.accountId).catch((err: unknown) => {
-        log.warn({ err, callId: params.callId }, 'Could not read the account`s recording ceiling — not recording the inbound call');
-        return null;
-      })) ?? false);
+    let recordEnabled = false;
+    if (params.connectable && params.record) {
+      if (settings.ok) recordEnabled = settings.row?.allow_recording ?? false;
+      else log.warn({ err: settings.err, callId: params.callId }, 'Could not read the account`s recording ceiling — not recording the inbound call');
+    }
     const slotTtlSeconds = budgetSeconds + SLOT_TTL_GRACE_SECONDS;
     const concurrencyKey = crypto.randomUUID();
     let capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' = 'not_requested';
@@ -1596,7 +1602,7 @@ export class WebRtcBridgeManager {
       if (opts.holdClipHash && !hold) {
         log.warn({ callId: session.callId, clipHash: opts.holdClipHash }, 'Inbound hold clip unavailable on this replica — playing the hold tone');
       }
-      hold ??= this.encodeToneForCarrier(session, holdTonePcm16());
+      hold ??= this.holdToneForCarrier(session);
       if (!hold) {
         log.error({ callId: session.callId }, 'Inbound hold: the carrier cannot encode the hold tone — nothing to play');
         return 'no_media';
@@ -1784,6 +1790,18 @@ export class WebRtcBridgeManager {
   private endCarrierPlayback(session: WebRtcBridgeSession, playback: CarrierPlayback): void {
     playback.stop();
     if (session.carrierPlayback === playback) session.carrierPlayback = null;
+  }
+
+  /**
+   * The built-in hold tone in this session's carrier wire format ({@link encodeToneForCarrier}),
+   * encoded once per carrier media module and kept: the tone never changes, and the encoded
+   * buffer is only read (sliced into frames) by the playback.
+   */
+  private holdToneForCarrier(session: WebRtcBridgeSession): { buffer: Buffer; byteRate: number } | null {
+    const media = session.carrier?.media;
+    if (!media) return null;
+    if (!this.encodedHoldTone.has(media)) this.encodedHoldTone.set(media, this.encodeToneForCarrier(session, holdTonePcm16()));
+    return this.encodedHoldTone.get(media) ?? null;
   }
 
   /** A generated tone in this session's carrier wire format (`encodeClip`), or null when it has none. */

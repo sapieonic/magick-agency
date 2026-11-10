@@ -34,7 +34,7 @@ vi.mock('../../../src/config/index.js', () => ({
 
 const { mockRepo, mockSettings } = vi.hoisted(() => ({
   mockRepo: { create: vi.fn(), findById: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue(null) },
-  mockSettings: { getAllowRecording: vi.fn().mockResolvedValue(true), getWebrtcMaxDurationSeconds: vi.fn().mockResolvedValue(600) },
+  mockSettings: { findByTenantAndAccount: vi.fn().mockResolvedValue({ allow_recording: true, webrtc_max_duration_seconds: 600 }) },
 }));
 vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({ webrtcCallRepository: mockRepo }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({ accountSettingsRepository: mockSettings }));
@@ -169,8 +169,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   lifecycle = [];
   registry.getForCredentialId.mockImplementation(async () => plivoAdapter);
-  mockSettings.getAllowRecording.mockResolvedValue(true);
-  mockSettings.getWebrtcMaxDurationSeconds.mockResolvedValue(MAX);
+  mockSettings.findByTenantAndAccount.mockResolvedValue({ allow_recording: true, webrtc_max_duration_seconds: MAX });
   plivoAdapter.capabilities = { cancelRinging: true, queuesOutboundDials: false, ringTimeoutSeconds: 45, recordsOnDemand: true };
   plivoAdapter.startRecording.mockResolvedValue({ recordingId: 'rec-1' });
 });
@@ -567,8 +566,8 @@ describe('recording at the bind', () => {
   it('never for a call that did not ask, nor over the account`s ceiling, nor on a carrier that cannot record on demand', async () => {
     const cases: Array<() => Promise<WebRtcBridgeManager>> = [
       () => boundCall({ record: false }),
-      async () => { mockSettings.getAllowRecording.mockResolvedValueOnce(false); return boundCall(); },
-      async () => { mockSettings.getAllowRecording.mockResolvedValueOnce(null); return boundCall(); },
+      async () => { mockSettings.findByTenantAndAccount.mockResolvedValueOnce({ allow_recording: false, webrtc_max_duration_seconds: MAX }); return boundCall(); },
+      async () => { mockSettings.findByTenantAndAccount.mockResolvedValueOnce({ allow_recording: null, webrtc_max_duration_seconds: MAX }); return boundCall(); },
       async () => { plivoAdapter.capabilities = { cancelRinging: true }; return boundCall(); },
     ];
     for (const make of cases) {

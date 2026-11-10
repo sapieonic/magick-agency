@@ -36,7 +36,7 @@ const { mockRepo } = vi.hoisted(() => ({
 }));
 vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({ webrtcCallRepository: mockRepo }));
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
-  accountSettingsRepository: { getAllowRecording: vi.fn().mockResolvedValue(true), getWebrtcMaxDurationSeconds: vi.fn().mockResolvedValue(600) },
+  accountSettingsRepository: { findByTenantAndAccount: vi.fn().mockResolvedValue({ allow_recording: true, webrtc_max_duration_seconds: 600 }) },
 }));
 
 const { plivoAdapter, registry } = vi.hoisted(() => {
