@@ -1187,7 +1187,39 @@ and the server's integration lanes (no Postgres on this machine at the time).
 
 ## Test counts
 
-Latest run, 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
+Latest run, 2026-11-10, the combined duplicate key and its review fixes (`29f66d7`), one after
+another from inside each package on `magick_agency_test` and Redis db 1, nothing else sharing them.
+`pnpm lint` clean; `pnpm build` green; `test:grafana`, `test:release` 10 and `test:tooling` 16 pass.
+`agency_wire`'s `dart test` was not run (no Dart SDK on that machine); the change reaches no type it
+models and no literal the extractor reads.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9636 passed + 2 expected fail (488 files) | rest lane: 1 failure, `load/voicelink-media-ws-load.test.ts` "start negotiation failures and garbage frames" (below); every other file passed. Wall-clock lane 19 (4 files) |
+| `packages/db` | 428 (25 files) | 737 (74 files) |
+| `apps/console` | 6136 (325 files) | — |
+| `apps/super-admin` | 506 (37 files) | — |
+| `packages/contracts` | 372 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `packages/web-ui` | 240 (20 files) | — |
+| `apps/report-renderer` | 90 passed + 2 skipped (12 files + 1 skipped) | — |
+| `packages/observability` | 18 (4 files) | — |
+
+The console's first full run in this sequence failed `AgencyCampaignRosterAssignment.test.tsx`
+("Escape closes the dialog, but not while a preview is in flight"), which passed alone three times
+and in the full rerun counted above.
+
+**Open defect, found in this run: a carrier `start` lost behind early media.** The VoiceLink load
+case `media_before_bad_start` failed in both full rest-lane runs of this branch (plans 24 and 17,
+seed 24301: `provider_start_timeout` where `unsupported_media_format` is expected) and passes alone
+(3 of 3); the parent commit `cc40c1d`'s rest lane passed once. This branch does not touch the voice
+path. Cause: `PSTN_EARLY_FRAME_CAP` (16, `src/core/webrtc-bridge-manager.ts`) bounds the frames held
+while the provider token is checked, and this case sends a burst of media before its `start`; under
+a full lane's load the check outlasts the burst, the `start` lands past the cap and is dropped, and
+the call times out. A fix holds a `start` frame whatever the cap (dropping only media past it).
+Not changed here; it needs a ruling on the seam.
+
+Run of 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
 §12), on the merged branch:
 
 Run one after another from inside each package on the default test database
