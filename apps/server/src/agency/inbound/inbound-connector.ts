@@ -725,9 +725,11 @@ export class InboundConnector {
 
   /**
    * A station socket that cannot take inbound calls (an app build that did not declare
-   * `caps=inbound`) attached to this session after `ready`: a reattach from another device or an
-   * older build (the prior socket closed 4409). The capability belongs to the socket (IQ46), so what
-   * this session held on the prior one is handled as if that station were lost:
+   * `caps=inbound`) attached to this session: a reattach from another device or an older build
+   * (the prior socket closed 4409). The station socket asks right after the attach, before it
+   * reads the agent's state for `ready`, and waits (bounded) for the answer, so the older build's
+   * `ready` never says `reserved` for an offer it cannot show. The capability belongs to the socket
+   * (IQ46), so what this session held on the prior one is handled as if that station were lost:
    *  - an offer whose audio has not bound: cancelled as a lost station's (`station_lost`: back at
    *    the head of the queue, `queued_at` kept, the next agent searched), and the agent, whose
    *    station is still open, returned to the pool (`releaseAgent`: a queued break applies first);
@@ -736,24 +738,36 @@ export class InboundConnector {
    *    cannot show the call). The prior socket's close armed the bridge's 8 s deferred hangup, so
    *    the call ends `answered` with its outcome owed (IQ17), as for any station lost after the
    *    bind; the agent then owes it in `wrapup` on this station, which the outcome's lapse (or a
-   *    supervisor's close, IQ33) returns.
-   * Synchronous: each step runs on the call's chain. The bind re-checks the capability anyway
-   * ({@link bind}), so an offer whose `connects_at` falls before this runs is cancelled the same way.
+   *    supervisor's close, IQ33) returns. Until then the agent is still `on_call`.
+   * Each step runs on the call's chain; the promise settles once the step and the agent's return
+   * have run, and never rejects. The bind re-checks the capability anyway ({@link bind}), so an
+   * offer whose `connects_at` falls before this runs is cancelled the same way.
    */
-  onStationCannotTakeInbound(sessionId: string): void {
+  async onStationCannotTakeInbound(sessionId: string): Promise<void> {
     const held = this.forSession(sessionId);
     if (!held) return;
+    let returnAgent = false;
     if (held.phase === 'offered' && !held.bound) {
       log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls attached during an offer — cancelling it');
-      void this.serial(held.id, async () => {
+      returnAgent = await this.serial(held.id, async () => {
         const row = await this.cancelOffer(held, sessionId, 'station_lost');
-        if (row && this.deps.stations.get(sessionId)) this.releaseInBackground(sessionId);
-      });
+        return row !== null;
+      }) ?? false;
     } else if (this.handovers.isHeldFor(held.id, sessionId)) {
-      void this.serial(held.id, () => this.handovers.release(held.id, { returnAgent: true }));
+      returnAgent = await this.serial(held.id, async () => {
+        if (!this.handovers.isHeldFor(held.id, sessionId)) return false;
+        await this.handovers.release(held.id, { returnAgent: false });
+        return true;
+      }) ?? false;
     } else if (held.phase === 'connected' || held.bound) {
       log.warn({ inboundCallId: held.id, sessionId },
         'A station that cannot take inbound calls attached during an inbound call — not re-adopted; the deferred hangup ends it');
+    }
+    // Off the call's chain (the release hook may search the account, which offers on chains),
+    // and awaited, so the caller's `ready` reads the agent back in the pool.
+    if (returnAgent && this.deps.stations.get(sessionId)) {
+      await this.trackBackground(this.deps.releaseAgent(sessionId).catch((err: unknown) =>
+        log.error({ err, sessionId }, 'Could not return an agent after an inbound offer')));
     }
   }
 
@@ -1213,8 +1227,9 @@ export class InboundConnector {
 
   /**
    * PM-M6: a waiting caller nobody in their pool could take, now or once their current work ends
-   * ({@link anyoneCouldTake}: everyone on a break, offline, on the phone app, outside the pool or
-   * gone from the account), is overflowed at once instead of being held to the maximum wait. Asked
+   * ({@link anyoneCouldTake}: everyone on a break, offline, on a station that cannot take inbound
+   * calls (an app build without `caps=inbound`, IQ46), outside the pool or gone from the account),
+   * is overflowed at once instead of being held to the maximum wait. Asked
    * at every search: when the caller queues, and while they wait at every presence change the
    * connector hears of (a station closing, an agent available) and at the 2 s republish (a break,
    * which no event reports). Marked leaving synchronously (the header), so this search and every
@@ -1392,6 +1407,8 @@ export class InboundConnector {
    * `loose` sticky phase lapses ({@link notTheTeams}): a `strict` caller whose sticky agent is not
    * away is that agent's alone (held back as a preferred session), and one promised by a hand-over
    * is its superseded dial's agent's; holding a team agent for either would idle them for nothing.
+   * A preferred session is a sticky agent's station that can take inbound calls (IQ46); pacing
+   * also never holds back one that cannot (`pacing/inbound-hold-back.ts`).
    */
   private publishWaiting(accountKey: string): void {
     // One read of the account's waiting callers (sorted once) serves the summary and the test below.
@@ -1405,8 +1422,10 @@ export class InboundConnector {
     this.holding.add(accountKey);
     const summary = summarizeWaiting(waiting, (e) => this.notTheTeams(e));
     const sticky = new Set(summary.stickyUserIds);
+    // Only a station that can take the caller (IQ46): an older app build's is never offered one, so
+    // holding it back from pacing would idle it for nothing.
     const preferred = this.deps.stations.all()
-      .filter((s) => sticky.has(s.agentUserId) && s.tenantId === tenantId && s.accountId === accountId)
+      .filter((s) => s.canTakeInbound && sticky.has(s.agentUserId) && s.tenantId === tenantId && s.accountId === accountId)
       .map((s) => s.sessionId);
     this.publish({
       type: 'inbound_waiting', tenantId, accountId, n: summary.n,

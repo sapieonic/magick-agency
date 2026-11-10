@@ -616,7 +616,9 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     const second = await agent('available');
     Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
     const at = Date.now();
-    c.onStationCannotTakeInbound(first);
+    // Settles once the offer is cancelled and the agent returned (the station socket's `ready` waits on it).
+    await c.onStationCannotTakeInbound(first);
+    expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
     await until('re-offered to the second', async () => (await row(call.id)).session_id === second, 2000);
     expect(Date.now() - at).toBeLessThan(5_000);
     expect((await row(call.id)).offer_count).toBe(2);
@@ -630,8 +632,8 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     expect(c.expectHandover(ringingAgent, held.call.id)).toBe(true);
     expect(await c.takeOnRelease(ringingAgent)).toBe(true);
     Object.assign(stations.get(ringingAgent)!, { clientKind: 'mobile', canTakeInbound: false });
-    c.onStationCannotTakeInbound(ringingAgent);
-    await until('let go', async () => (await agents.get(ringingAgent))?.inboundCallId === null);
+    await c.onStationCannotTakeInbound(ringingAgent);
+    expect(await agents.get(ringingAgent)).toMatchObject({ state: 'available', inboundCallId: null });
     await drain();
     expect(await agents.get(ringingAgent)).toMatchObject({ state: 'available', inboundCallId: null });
     expect(c.findCallForSession(ringingAgent)).toBeNull();
@@ -672,6 +674,25 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     await agents.set(owner, 'break', { leaseMs: 60_000 });
     await until('connected to the team', async () => (await row(call.id)).state === 'connected', 3000);
     expect((await row(call.id)).session_id).toBe(team);
+  });
+
+  it('`inbound_waiting` never prefers a sticky agent`s station that cannot take inbound calls (IQ46): their caller is the team`s, counted in n', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const c = connector({ publish: (e) => events.push(e as unknown as Record<string, unknown>), republishMs: 100 });
+    // The owner on an older app build (no caps=inbound), busy; a team agent on a call, so the caller waits.
+    const owner = await agent('wrapup');
+    Object.assign(stations.get(owner)!, { clientKind: 'mobile', canTakeInbound: false });
+    await agent('on_call');
+    const strict = { ...route, sticky_mode: 'strict' as const };
+    const { call } = await caller(c, {
+      identification: { match: null, callerDnc: false, sticky: { userId: stations.get(owner)!.agentUserId, reason: 'owner' } },
+    }, strict);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    // Two republishes after the first search, so the sticky status is the one the search saw.
+    await until('republished', () => events.filter((e) => e['type'] === 'inbound_waiting' && e['n'] === 1).length >= 2);
+    const last = events.filter((e) => e['type'] === 'inbound_waiting').at(-1)!;
+    expect(last).toMatchObject({ n: 1, preferredSessionIds: [] });
+    expect((await row(call.id)).state).toBe('queued');
   });
 
   it('a bridged call whose `connected` write fails is still an answered call at its end, owing its outcome (never a caller who "hung up on offer")', async () => {

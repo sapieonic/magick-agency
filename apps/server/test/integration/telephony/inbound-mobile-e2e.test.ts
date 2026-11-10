@@ -7,8 +7,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * (`client=mobile&media=alaw8&caps=inbound`) is offered callers exactly as a console is, and its
  * audio is A-law binary frames; an older app build (no `caps`) is never offered one and never sent
  * the inbound frames. The phone's own paths: dropped (or silent past its grace) during an offer or
- * a call, reattached by an older build, and the device-away break during an inbound reservation,
- * call or wrap-up. The cases that wait out the 8 s deferred hangup are in the wall-clock lane
+ * a call, reattached by an older build (during an offer, its `ready` never `reserved`; during an
+ * inbound wrap-up), and the device-away break during an inbound reservation, a hand-over held
+ * through the caller's greeting, a call or a wrap-up. The cases that wait out the 8 s deferred hangup are in the wall-clock lane
  * (`inbound-mobile-wall-clock.test.ts`).
  *
  * Real: Postgres, this lane's Redis, the app on loopback, the voice and agency bootstraps (the
@@ -34,10 +35,10 @@ import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js'
 import { callCore } from '../../../src/api/core-dispatch.js';
 import { getAgencyRuntime } from '../../../src/bootstrap/agency.js';
 import { AGENCY_INBOUND_CONNECT_DELAY_MS, AGENCY_STATION_ALAW8_FRAME_BYTES } from '@magick-agency/contracts/agency';
-import { ACCOUNT, PLIVO_E2E_ENV, TENANT, closePlivoDb, initPlivoDb, startPlivoRig, waitFor, type PlivoRig } from './plivo-rig.js';
+import { ACCOUNT, PLIVO_E2E_ENV, TENANT, callRow, closePlivoDb, initPlivoDb, startPlivoRig, waitFor, type PlivoRig } from './plivo-rig.js';
 import {
-  CAPABLE_PHONE, CALLER_E164, OLD_PHONE, busyAgent, callerScript, callers, campaign, finish, framesOf, inboundCalls, joinAgent,
-  liveOf, ring, spineOf, spineWhen, startInboundWorld, stateFrames, type InboundWorld,
+  CALLER, CAPABLE_PHONE, CALLER_E164, OLD_PHONE, agentUser, busyAgent, callerScript, callers, campaign, clip, contact, finish,
+  framesOf, inboundCalls, joinAgent, liveOf, ring, setRoute, spineOf, spineWhen, startInboundWorld, stateFrames, type InboundWorld,
 } from './inbound-connect-rig.js';
 import type { FleetAgent, StationLeg } from '../../mocks/station-fleet.js';
 
@@ -144,8 +145,13 @@ describe('a phone that declares caps=inbound is put through as a console is (IQ4
   });
 
   it('beside a capable phone and a console, the older phone is skipped even as the longest idle; a sticky caller of its agent goes to the team', async () => {
+    // `strict`: were the older phone taken for its agent's caller, the caller would be offered to it
+    // (or wait for it) and never reach the team.
+    await setRoute(world, { sticky_mode: 'strict' });
+    const owner = await agentUser();
     const campaignId = await campaign(world);
-    const old = await joinAgent(world, campaignId, { station: OLD_PHONE });
+    await contact(campaignId, { assigned_user_id: owner, assigned_at: new Date(), next_attempt_at: new Date(Date.now() + 86_400_000) });
+    const old = await joinAgent(world, campaignId, { userId: owner, station: OLD_PHONE });
     await sleep(50);
     const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
     await busyAgent(world, campaignId); // a console agent on a call: also someone who could take a caller later
@@ -154,8 +160,11 @@ describe('a phone that declares caps=inbound is put through as a console is (IQ4
     let hangUp = false;
     const call = ring(world, callerScript(() => hangUp));
     const taken = await spineWhen(call, 'connected to the capable phone', (r) => r.state === 'connected');
-    expect(taken.session_id).toBe(phone.sessionId);
+    expect(taken).toMatchObject({ session_id: phone.sessionId, sticky_user_id: owner, sticky_reason: 'owner', offer_count: 1 });
+    await waitFor('the offer to the capable phone', () => inboundCalls(phone).length > 0);
+    expect(inboundCalls(phone)[0]).toMatchObject({ id: taken.id, sticky: { reason: 'owner', is_you: false } });
     expect(inboundFrames(old)).toEqual([]);
+    expect((await liveOf(old.sessionId))?.state).toBe('available');
     hangUp = true;
     await spineWhen(call, 'ended', (r) => r.state === 'ended');
   });
@@ -196,6 +205,9 @@ describe('a phone lost during an offer: the caller back at the head of the queue
     await waitFor('the capable leg superseded', () => capableLeg.closed !== null);
     expect(capableLeg.closed!.code).toBe(4409);
     expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ canTakeInbound: false });
+    // The offer was let go before `ready`: the older build is never told `reserved` for a call it cannot show.
+    expect(oldLeg.ready).toMatchObject({ state: 'available' });
+    expect(oldLeg.ofEvent('agent_state').map((f) => f['state'])).not.toContain('reserved');
     const taken = await spineWhen(call, 'connected to the desk', (r) => r.state === 'connected');
     expect(taken).toMatchObject({ session_id: desk.sessionId, offer_count: 2 });
     // Cancelled by the attach itself (`onStationCannotTakeInbound`), before the first offer's bind was due.
@@ -206,6 +218,38 @@ describe('a phone lost during an offer: the caller back at the head of the queue
     await waitFor('the phone`s agent back in the pool', async () => (await liveOf(phone.sessionId))?.state === 'available');
     expect(await liveOf(phone.sessionId)).toMatchObject({ inboundCallId: null });
     hangUp = true;
+  });
+});
+
+describe('an older build reattaching during an inbound wrap-up (IQ46)', () => {
+  it('comes back in wrap-up with the outcome still owed (no inbound frame: it cannot show the pad); the saved outcome returns the agent, and no caller is offered to it', async () => {
+    const campaignId = await campaign(world);
+    const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
+    let hangUp = false;
+    const call = ring(world, callerScript(() => hangUp));
+    await spineWhen(call, 'connected', (r) => r.state === 'connected');
+    hangUp = true;
+    const ended = await spineWhen(call, 'ended', (r) => r.state === 'ended');
+    await waitFor('wrap-up', async () => (await liveOf(phone.sessionId))?.state === 'wrapup');
+
+    const capableLeg = phone.leg!;
+    phone.caps = null;
+    const oldLeg = await phone.connectReady();
+    await waitFor('the capable leg superseded', () => capableLeg.closed !== null);
+    expect(oldLeg.ready).toMatchObject({ state: 'wrapup' });
+    expect(await liveOf(phone.sessionId)).toMatchObject({ state: 'wrapup', inboundCallId: ended.id });
+    await sleep(300);
+    expect(oldLeg.frames.filter((f) => f.frame?.['event'] === 'inbound_call' || f.frame?.['event'] === 'customer_waiting')).toEqual([]);
+    expect((await spineOf(call))!.settled_at).toBeNull();
+
+    const saved = await finish('POST', `${ended.id}/disposition`, phone.agentUserId, { code: 'voicemail' });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    await waitFor('available again', async () => (await liveOf(phone.sessionId))?.state === 'available');
+    expect(await liveOf(phone.sessionId)).toMatchObject({ inboundCallId: null });
+    // Alone and unable to take inbound calls: the next caller is overflowed, never offered to it.
+    const next = ring(world, callerScript(() => false), '447700900779');
+    expect(await spineWhen(next, 'overflowed', (r) => r.state === 'ended')).toMatchObject({ outcome: 'overflow', offer_count: 0 });
+    expect(oldLeg.frames.filter((f) => f.frame?.['event'] === 'inbound_call' || f.frame?.['event'] === 'customer_waiting')).toEqual([]);
   });
 });
 
@@ -272,6 +316,54 @@ describe('the device-away break and inbound calls: queued behind the call, never
     expect(stateFrames(phone)).not.toContain('available');
     const waiting = await spineOf(second);
     expect(waiting!.session_id).toBeNull();
+  });
+
+  it('during a hand-over held through the caller`s greeting (§5.4): queued (the hold is a reservation); the same phone is still put through; the outcome save applies the break', async () => {
+    // The clash: pacing dials the customer, the carrier keeps it ringing, and the customer rings in.
+    rig!.carrier.setScript(() => ({
+      name: 'ringing until cancelled',
+      steps: [{ do: 'ring' }, { do: 'waitFor', until: (c) => c.canceledByApi, what: 'our cancel', timeoutMs: 30_000 }],
+    }));
+    const greetingClip = await clip(2500, 330); // a long greeting keeps the caller in the preamble
+    const c = world.clips;
+    await setRoute(world, {
+      clips: { greeting: greetingClip.id, hold: c.hold.id, callback: c.callback.id, recording_notice: c.notice.id, closed: c.closed.id, busy: c.busy.id },
+    });
+    const campaignId = await campaign(world);
+    const contactId = await contact(campaignId, { next_attempt_at: new Date(Date.now() - 1000) });
+    const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
+    await waitFor('the dial to the customer ringing', async () => {
+      const { rows } = await getTestPool().query<{ webrtc_call_id: string | null }>(
+        'SELECT webrtc_call_id FROM agency_call_attempts WHERE contact_id = $1', [contactId]);
+      const id = rows[0]?.webrtc_call_id;
+      return id ? (await callRow(id))?.status === 'ringing' : false;
+    });
+    expect(rig!.carrier.callOrder.some((x) => x.request.to === CALLER)).toBe(true);
+
+    let hangUp = false;
+    const call = ring(world, callerScript(() => hangUp));
+    const greeting = await spineWhen(call, 'answered, greeting', (r) => r.state === 'greeting');
+    await waitFor('held for the call', async () => (await liveOf(phone.sessionId))?.inboundCallId === greeting.id);
+
+    // The app is backgrounded while the caller still hears the greeting.
+    const away = await deviceAway(phone);
+    expect(away.status, JSON.stringify(away.body)).toBe(200);
+    expect(away.body).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'device_away' });
+    expect(await liveOf(phone.sessionId)).toMatchObject({ state: 'reserved', inboundCallId: greeting.id });
+    expect((await spineOf(call))!.state).toBe('greeting');
+
+    // Put through once the greeting has played, to the same phone: the queued break waits behind the call.
+    const connected = await spineWhen(call, 'connected to the phone', (r) => r.state === 'connected', 20_000);
+    expect(connected.session_id).toBe(phone.sessionId);
+    hangUp = true;
+    const ended = await spineWhen(call, 'ended', (r) => r.state === 'ended');
+    await waitFor('wrap-up', async () => (await liveOf(phone.sessionId))?.state === 'wrapup');
+    const saved = await finish('POST', `${ended.id}/disposition`, phone.agentUserId, { code: 'voicemail' });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    await waitFor('on the device-away break', async () => (await liveOf(phone.sessionId))?.state === 'break');
+    const row = await pool().query('SELECT state, break_reason FROM agency_agent_sessions WHERE id = $1', [phone.sessionId]);
+    expect(row.rows[0]).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    expect(stateFrames(phone)).not.toContain('available');
   });
 
   it('during an inbound wrap-up: queued; the outcome save applies it (break, not available); an available phone`s device-away applies at once and it is offered nothing', async () => {

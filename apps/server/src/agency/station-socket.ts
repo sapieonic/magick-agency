@@ -16,6 +16,7 @@ import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
 import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, stationCanTakeInbound, type StationUpgradeQuery } from './station-upgrade.js';
 import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
+import { withTimeoutOr } from '../utils/with-timeout.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -33,6 +34,13 @@ import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
  */
 
 const log = createChildLogger({ component: 'agency-routes' });
+
+/**
+ * How long the attach of a station that cannot take inbound calls waits for what its session held
+ * of an inbound call to be let go (`InboundConnector.onStationCannotTakeInbound`) before it reads
+ * the agent's state for `ready`. A bound: past it, `ready` goes out with whatever Redis says then.
+ */
+export const STATION_INBOUND_LET_GO_WAIT_MS = 3_000;
 
 /**
  * The break's code to tell a client beside `state` (`ready.break_reason`, the bootstrap's
@@ -123,14 +131,16 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
  * `upgrade.media` is the agent leg's audio format (the route parsed and validated it). It
  * is recorded on the socket for the bridge, which reads it at every attach of this socket
  * to a call (`core/bridge/browser-leg-media.ts`). `upgrade.client` tunes liveness and is
- * written to the session at attach.
+ * written to the session at attach. `upgrade.caps` decides, with the client kind, whether this
+ * socket can take inbound calls (`stationCanTakeInbound`, IQ46): kept on the registry entry, never
+ * the session row.
  */
 export async function handleStationSocket(
   socket: WebSocket,
   sessionId: string,
   token: string | undefined,
   runtime: AgencyRuntime,
-  /** The upgrade's `client=` / `media=`, already validated (`parseStationUpgradeQuery`). */
+  /** The upgrade's `client=` / `media=` / `caps=`, already parsed (`parseStationUpgradeQuery`). */
   upgrade: StationUpgradeQuery = DEFAULT_STATION_UPGRADE,
 ): Promise<void> {
   const mediaFormat: AgencyStationMediaFormat = upgrade.media;
@@ -522,6 +532,19 @@ export async function handleStationSocket(
   // that can create something for it to watch.
   runtime.wakeStationSweep();
 
+  // ── A station that cannot take inbound calls (IQ46) ───────────────────────
+  // An older app build (no `caps=inbound`) taking over a session that holds an inbound offer, or
+  // is held for one through a caller's preamble: let go as a lost station's, the agent returned to
+  // the pool, BEFORE the rehydrate below reads the state `ready` reports, so that build is never
+  // told `reserved` for a call it cannot show. Bounded: a step stuck on the call's chain delays
+  // nobody's `ready` past {@link STATION_INBOUND_LET_GO_WAIT_MS}. A bound call is not re-adopted
+  // (below) and stays `on_call` until the bridge's deferred hangup ends it.
+  const inbound = runtime.inbound;
+  const canTakeInbound = stationCanTakeInbound(upgrade);
+  if (inbound && !canTakeInbound) {
+    await withTimeoutOr(inbound.onStationCannotTakeInbound(sessionId), STATION_INBOUND_LET_GO_WAIT_MS, undefined);
+  }
+
   // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, so a
   // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
   // change, so a reconnecting station cannot wait for one). Read here, before the fence
@@ -639,15 +662,9 @@ export async function handleStationSocket(
   // session's unsettled inbound call (connected, or owing its outcome) with an `inbound_call` frame,
   // and re-send "Your customer is waiting" for every caller still waiting for this agent. Only on
   // a station that can take inbound calls (a console, or a phone that declared `caps=inbound`:
-  // IQ46). One that cannot (an older app build taking the session over) has what the session held
-  // handled as a lost station's: an offer back to the queue, a bound call not re-adopted
-  // (`InboundConnector.onStationCannotTakeInbound`).
-  const inbound = runtime.inbound;
-  if (!inbound || !stillOurs()) return;
-  if (!stationCanTakeInbound(upgrade)) {
-    inbound.onStationCannotTakeInbound(sessionId);
-    return;
-  }
+  // IQ46). One that cannot (an older app build taking the session over) had what the session held
+  // let go before `ready` (above): an offer back to the queue, a bound call not re-adopted.
+  if (!inbound || !canTakeInbound || !stillOurs()) return;
   const restored = await inbound.reattachStation(sessionId, socket).catch((err: unknown) => {
     log.warn({ err, sessionId }, 'Could not restore the inbound call on reconnect');
     return null;
