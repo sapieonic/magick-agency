@@ -1711,7 +1711,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 
 API client (`client.ts`, auth headers) and one module per API family: accounts, agency, activity, campaigns, insights, spine, stats, auth, analysis profiles, calls, DNC, CSV export, feature flags, invites, notifications, phone numbers, soft phone, tenants, users. `agencyInsights.ts` is the campaign Insights tab's seven reads (`GET …/campaigns/:id/insights/*`, docs/insights.md), one function per section, ranges as half-open `[from, to)` instants. `softphone.ts` is the soft phone's routes (docs/softphone.md §6), all under `/proxy/agency/softphone` except the switch and return on a campaign session: bootstrap, session open, place / update / hang up / outcome / DNC for a manual call, the keyset call list (`manualCallQuery`) and detail, the recording blob, and settings. Refusals come back as typed results (`SoftphoneResult`, `parseSoftphoneRefusal`: the DNC, calling-hours, contact-in-flight, session-on-campaign and call-pending shapes, a generic one for the rest of the code union, and an unknown one) rather than exceptions; `agencySpine.ts` exports `recordingRefusal` for its recording fetch. Contact assignment (behind `agency_contact_assignment_enabled`): `agencyAssignment.ts` is the supervisor's operations, progress and history and the agent's reads of their own contacts, `agencyMyContacts.ts` the agent's two acts on them (retry the ones not reached, call one now). `customerHistory.ts` is customer history's four routes (docs/customer-history.md §2): search, timeline, export (the CSV's file name read from a plain, quoted or RFC 5987 `Content-Disposition`) and `getCustomerSearchOptions`. `reports.ts` is the reports surface (docs/reports.md): runs (create, keyset list, get, the per-format download URL then `window.location.assign`, retry) and subscriptions (list, create, patch, delete, run now); `REPORT_ERROR_MESSAGES` / `reportErrorMessage` give every report refusal code and `feature_disabled` British-English words.
 
-Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `inboundRecordings.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `notifications.ts`, `phone-numbers.ts`, `reports.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
+Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `agencyCampaigns.ts`, `agencyCarriers.ts`, `agencyInsights.ts`, `agencyMyContacts.ts`, `agencySpine.ts`, `agencyStats.ts`, `auth.ts`, `authHeaders.ts`, `blobAudio.ts`, `call-analysis-profiles.ts`, `calls.ts`, `client.ts`, `customerHistory.ts`, `inboundRecordings.ts`, `dnc.ts`, `error-analytics.ts`, `exportCsv.ts`, `feature-flags.ts`, `invites.ts`, `notifications.ts`, `phone-numbers.ts`, `reports.ts`, `softphone.ts`, `tenants.ts`, `users.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1903,7 +1903,10 @@ routes' answers, the reconnect's reconciliation, notes autosave, the outcome, ha
 its pure rules `utils/inbound/inboundCall.ts` (phase, `newerInboundCall`, the rail, the copy).
 `CustomerWaitingPill.tsx` (the station's action bar), `InboundQueueTiles.tsx` (the supervisor's
 queue, `hooks/useInboundQueue.ts`, on the campaigns home and Missed calls), `VoicemailPlayer.tsx`
-(a Missed row's `voicemail_url`, fetched only from its own route).
+(a Missed row's `voicemail_url`, fetched only from its own route). The notes autosave is
+`hooks/useCallNotesAutosave.ts`, shared with the soft phone; the voicemail player and the route
+editor's `RecordingPreview.tsx` share `hooks/useLazyBlobAudio.ts` over `api/blobAudio.ts`
+(`fetchAudioBlobUrl`).
 
 The final fix pass (docs/inbound.md §7, §8.4, §11): `MissedCallsList.tsx` gains a supervisor's
 Reassign and "Former member" (copy in `utils/inbound/missedCopy.ts`, styles in
@@ -1925,7 +1928,7 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 |---|---|
 | `apps/console/src/__tests__/pages/MissedCallsPage.test.tsx` (with the queue tiles and the voicemail player; the flag off with and without rows and what its notice says; reassign, a departed assignee, reached rows, Reopen, a closed row's cause, the guide's words, the badge re-read) | 29 |
 | `apps/console/src/__tests__/pages/InboundSummaryPage.test.tsx` (the ranges, the tiles and agents, nobody free and lines busy apart, switched off and no route apart, no calls, a dash for no rate, the gates) | 10 |
-| `apps/console/src/__tests__/hooks/useMissedCallsCount.test.tsx` (one shared read, the poll only with inbound on, the re-read, a failed read, another account, the badge text) | 6 |
+| `apps/console/src/__tests__/hooks/useMissedCallsCount.test.tsx` (one shared read, the poll only with inbound on, one poll a minute for the tab, the re-read, a failed read, another account, the badge text) | 7 |
 | `apps/console/src/__tests__/components/missedNavBadge.test.tsx` (the badge in the sidebar and the agent's nav, the entries with the flag off) | 6 |
 | `apps/console/src/__tests__/components/AgentFloorInboundWrapup.test.tsx` (the inbound wrap-up's label, Close and make available, its confirm and refusal; an agent on a break owing the outcome; the row's control) | 7 |
 | `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
@@ -1940,7 +1943,7 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 | `apps/console/src/__tests__/utils/inboundCall.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/agencyStationReducer.inbound.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/inboundRouteForm.test.ts` | 12 |
-| `apps/console/src/__tests__/utils/inboundCopy.test.ts` | 6 |
+| `apps/console/src/__tests__/utils/inboundCopy.test.ts` | 5 |
 
 ### `apps/console/src/contexts/`
 
@@ -1964,7 +1967,7 @@ The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a
 
 Call audio (`media=alaw8` by default, `pcm16` the fallback; `utils/agencyMedia.ts`): `useAgencyStation` names the format on every upgrade (`mediaFormat` option and result), reads binary as `ArrayBuffer`, sends A-law as binary and refuses a frame in the other format, and turns to `pcm16` for good on 1008 `invalid_media` or JSON `media` on an `alaw8` socket. `useAudioCapture` builds the one capture worklet in the socket's format and switches it in place (`setFormat`); `useAudioPlayback.playAlaw` decodes through `utils/alaw8/g711.js` into the same 16 kHz scheduler as `play`; `useAgencyAudio.sync` takes the station's `format`.
 
-Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useInboundCall.ts`, `useInboundQueue.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
+Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCarriers.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentCallerIds.ts` (one campaign's dedicated caller IDs, read behind `agency.supervise` whatever the contact-assignment flag, with set and clear), `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCallNotesAutosave.ts`, `useCampaignContribution.ts`, `useCampaignInsights.ts`, `useCustomerSearchDefaultCallingCode.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useInboundCall.ts`, `useInboundQueue.ts`, `useLatestRef.ts`, `useLazyBlobAudio.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRedialCarry.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`, `useWrapupRedial.ts`
 
 | Test file | Cases |
 |---|---|
@@ -2299,9 +2302,9 @@ Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `s
 
 ### `apps/super-admin/src/utils/`
 
-Helpers (error and format helpers are in `packages/web-ui`). `inviteEmailNotice.ts` turns the `invite_email` that tenant create and add-user answer into the note or warning the pages show.
+Helpers (error and format helpers are in `packages/web-ui`). `inviteEmailNotice.ts` turns the `invite_email` that tenant create and add-user answer into the note or warning the pages show. `operatorCopy.ts` is the credential and number pages' refusal lookup (`refusalCopy`, `CARRIER_REFUSAL`) and their `formatDateTime`.
 
-Files: `inviteEmailNotice.ts`, `localDayBounds.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
+Files: `inviteEmailNotice.ts`, `localDayBounds.ts`, `operatorCopy.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
 
 | Test file | Cases |
 |---|---|
