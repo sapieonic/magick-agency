@@ -8,6 +8,12 @@ import type { AgencyInboundMissedCountResponse } from '../types/inbound';
 export const MISSED_COUNT_POLL_MS = 60_000;
 /** Two readers inside this window share one read (the sidebar and the page mount together). */
 export const MISSED_COUNT_FRESH_MS = 10_000;
+/**
+ * A reader's poll tick is skipped while another reader's poll read of the same count started inside
+ * this window, so the tab polls once a minute however many readers are mounted. Under the poll
+ * period, so a reader's own next tick always reads.
+ */
+const MISSED_COUNT_POLL_FRESH_MS = MISSED_COUNT_POLL_MS - 5_000;
 
 /**
  * The open Missed calls of the caller's scope (`GET /inbound/missed/count`), shared by every
@@ -25,6 +31,8 @@ interface Snapshot {
 
 let snapshot: Snapshot = { key: null, value: null, failed: false };
 let readAt = 0;
+/** When the last poll read that answered started, and for which count. */
+let lastPoll: { key: string; at: number } | null = null;
 let inFlight: { key: string; promise: Promise<void> } | null = null;
 const listeners = new Set<() => void>();
 
@@ -38,13 +46,17 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-function read(tenantId: string, accountId: string, force: boolean): Promise<void> {
+/** `mount`: shares a read under {@link MISSED_COUNT_FRESH_MS}; `poll`: one per minute for the tab; `force`: always reads. */
+function read(tenantId: string, accountId: string, mode: 'mount' | 'poll' | 'force'): Promise<void> {
   const key = `${tenantId}/${accountId}`;
   if (inFlight?.key === key) return inFlight.promise;
-  if (!force && snapshot.key === key && snapshot.value && Date.now() - readAt < MISSED_COUNT_FRESH_MS) return Promise.resolve();
+  if (mode === 'mount' && snapshot.key === key && snapshot.value && Date.now() - readAt < MISSED_COUNT_FRESH_MS) return Promise.resolve();
+  if (mode === 'poll' && lastPoll?.key === key && Date.now() - lastPoll.at < MISSED_COUNT_POLL_FRESH_MS) return Promise.resolve();
+  const startedAt = Date.now();
   const promise = getMissedInboundCount(tenantId, accountId)
     .then((value) => {
       readAt = Date.now();
+      if (mode === 'poll') lastPoll = { key, at: startedAt };
       publish({ key, value, failed: false });
     })
     // A failed read keeps the last answer: a badge that vanishes on a blip says nothing true.
@@ -61,13 +73,14 @@ export function refreshMissedCallsCount(): void {
   const key = snapshot.key;
   if (!key) return;
   const [tenantId, accountId] = key.split('/') as [string, string];
-  void read(tenantId, accountId, true);
+  void read(tenantId, accountId, 'force');
 }
 
 /** Tests only: forget the shared answer. */
 export function resetMissedCallsCountForTests(): void {
   snapshot = { key: null, value: null, failed: false };
   readAt = 0;
+  lastPoll = null;
   inFlight = null;
 }
 
@@ -101,13 +114,13 @@ export function useMissedCallsCount({
 
   const load = useCallback(() => {
     if (!active || !tenantId || !accountId) return undefined;
-    return read(tenantId, accountId, false);
+    return read(tenantId, accountId, 'mount');
   }, [active, tenantId, accountId]);
 
   useEffect(() => {
     void load();
   }, [load]);
-  useVisibleInterval(() => (active && tenantId && accountId ? read(tenantId, accountId, true) : undefined), MISSED_COUNT_POLL_MS, active && poll);
+  useVisibleInterval(() => (active && tenantId && accountId ? read(tenantId, accountId, 'poll') : undefined), MISSED_COUNT_POLL_MS, active && poll);
   useRefetchOnReturn(() => load());
 
   if (!active || current.key !== key) return { count: null, settled: !active };

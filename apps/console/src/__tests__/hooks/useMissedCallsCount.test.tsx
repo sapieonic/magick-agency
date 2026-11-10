@@ -65,6 +65,20 @@ describe('the shared count', () => {
     expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(1);
   });
 
+  it('polls once a minute for the tab, however many readers poll', async () => {
+    render(<Reader id="a" />);
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(20_000); });
+    render(<Reader id="b" />);
+    await act(async () => {});
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(2);
+    // a ticks at 60 s and 120 s and reads; b ticks at 80 s and 140 s, inside a's minute, and does not.
+    await act(async () => { await vi.advanceTimersByTimeAsync(130_000); });
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(4);
+    expect(text('a')).toBe('3/true:true');
+    expect(text('b')).toBe('3/true:true');
+  });
+
   it('re-reads on demand, and every reader follows', async () => {
     render(<><Reader id="a" /><Reader id="b" poll={false} /></>);
     await act(async () => {});
