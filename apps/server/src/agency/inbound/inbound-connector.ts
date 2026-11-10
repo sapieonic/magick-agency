@@ -922,6 +922,10 @@ export class InboundConnector {
     if (handover && handover.sessionId !== sessionId) return 'call_gone';
     // Its maximum wait passed while this offer waited on the chain: it overflows instead.
     if (held.leaving) return 'call_gone';
+    // The session's station can no longer take inbound calls (an older app build took it over
+    // since the search: IQ46): never offered, so it is never told `reserved` for a call it
+    // cannot see.
+    if (this.deps.stations.get(sessionId)?.canTakeInbound === false) return 'session_busy';
     const at = new Date(this.now());
     const res = await agencyInboundCallRepository.offer(held.id, sessionId, { at });
     if (!res.ok) {
@@ -930,6 +934,14 @@ export class InboundConnector {
     }
     const ctx = await held.panel;
     const station = this.deps.stations.get(sessionId);
+    if (station?.canTakeInbound === false) {
+      // Taken over by such a station during the two awaits above: the spine goes back to
+      // queued before any frame is sent ({@link onStationCannotTakeInbound} found nothing held
+      // for the session yet), and the caller gives the reservation back.
+      await agencyInboundCallRepository.requeue(held.id, sessionId, { at: new Date(this.now()) });
+      log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls took the session during the offer — not offered');
+      return 'session_busy';
+    }
     // ── From here to the frames, no await (IB1) ─────────────────────────────
     held.record = res.call;
     held.phase = 'offered';

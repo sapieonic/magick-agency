@@ -120,8 +120,9 @@ export class InboundHandovers {
    */
   expect(sessionId: string, callId: string): boolean {
     if (this.host.stopped() || this.bySession.has(sessionId)) return false;
-    // Only a session the release hook can take: a phone (IQ20), a soft-phone session or a station
-    // not OPEN never takes an inbound call, so its dial is left to ring (cancelled, the agent
+    // Only a session the release hook can take: a phone without `caps=inbound` (IQ46), a
+    // soft-phone session or a station not OPEN never takes an inbound call, so its dial is left
+    // to ring (cancelled, the agent
     // would lose it for nothing and the caller would queue for someone else all the same).
     if (!this.host.releasable(sessionId)) return false;
     const call = this.host.call(callId);

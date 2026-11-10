@@ -579,6 +579,34 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
   });
 
+  it('a station that cannot take inbound calls takes the session over while the offer is written (IQ46): never told `reserved`, the spine requeued, the next agent offered, the agent returned', async () => {
+    const c = connector({ connectDelayMs: 300 });
+    const first = await agent('available');
+    await sleep(5);
+    const second = await agent('available');
+    // The takeover lands during the offer's awaits: after the spine's write, before any frame.
+    const realOffer = calls.offer.bind(calls);
+    const spy = vi.spyOn(calls, 'offer').mockImplementation(async (...args: Parameters<typeof calls.offer>) => {
+      const res = await realOffer(...args);
+      if (args[1] === first) Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+      return res;
+    });
+    try {
+      const { call } = await caller(c);
+      await until('connected to the second agent', async () => (await row(call.id)).state === 'connected', 5000);
+      expect(await row(call.id)).toMatchObject({ session_id: second });
+      const told = (stations.get(first)?.ws.sent ?? []).filter((f) => f['event'] === 'agent_state' && f['state'] === 'reserved');
+      expect(told).toEqual([]);
+      expect(inboundFrames(first)).toEqual([]);
+      expect(bridge.binds).toEqual([call.id]);
+      await drain();
+      expect(await agents.get(first)).toMatchObject({ inboundCallId: null });
+      expect((await agents.get(first))?.state).not.toBe('reserved');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('onStationCannotTakeInbound: an unbound offer cancelled at once (requeued, the next agent offered before connects_at), a hand-over held through the preamble let go; each agent returned', async () => {
     const c = connector({ connectDelayMs: 5_000 });
     const first = await agent('available');
