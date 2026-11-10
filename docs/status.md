@@ -1132,7 +1132,34 @@ under "Not built".
 Latest run, 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
 §12), on the merged branch:
 
-<!-- COUNTS -->
+Run one after another from inside each package on the default test database
+(`magick_agency_test`) and Redis db 1 with no other run sharing them. The integration lanes, `pnpm
+build`, `test:grafana` and `test:release` ran on `d6cb6b5` (every fix merged); lint and every unit
+suite ran again on `3fbc446`, which adds only docs, code comments, test titles, one log string and
+the usage-page test fix below. `pnpm lint` clean in 9 packages; `pnpm test:grafana` 33 and `pnpm
+test:release` 10 pass; `pnpm build` green. `apps/mobile/packages/agency_wire` `dart test` 510 passed
+and `dart analyze` clean (Dart 3.13.7 only, the package run outside the Flutter workspace with the
+contract fixtures linked; `agent_audio` and the app need Flutter and were not run).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9614 passed + 1 expected fail (488 files) | rest lane 2633 passed + 9 expected fail + 2 skipped (249 files + 2 skipped, the opt-in scale suites); wall-clock lane 19 (4 files) |
+| `packages/db` | 428 (25 files) | 730 (73 files) |
+| `apps/console` | 6100 (323 files) | — |
+| `apps/super-admin` | 506 (37 files) | — |
+| `packages/contracts` | 372 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `packages/web-ui` | 240 (20 files) | — |
+| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped) | — |
+| `packages/observability` | 18 (4 files) | — |
+
+One failure on the first unit run, fixed and not a product fault: `apps/super-admin`
+`SAUsagePage` read a stat card's text while its count-up animation (`useCountUp`) was mid-frame
+("0:02:02" for "2:02:02"), about one run in three; the cards' settled `aria-label` is read instead
+(`044aab9`), green 10 runs in a row. Known flakes the fix pass removed: the `packages/db` plan tests
+that flipped with autovacuum's statistics (0003, 0004, 0005, 0011, 0015, 0017 and the usage read now
+plan over rows of their own), `report-assembler-deadline`'s unhandled timer, and the audit drain's
+threshold at `LOAD_SCALE=3`.
 
 Previous run, 2026-11-09, inbound calls P1 and P2 complete (`inbound.md` §12, after the P2 review
 fix pass and the verification pass's two test fixes), on commit `6840f9b`, run one after another
