@@ -60,10 +60,11 @@ import {
 import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
 import type { AgentLiveState, AgentStateMachine } from '../agent-state-machine.js';
 import type { StationRegistry } from '../station-registry.js';
-import { markDnc } from '../dnc-mark.js';
+import { markDnc, type DncMarkResult } from '../dnc-mark.js';
 import { manualDispositionDecision, prepareManualDisposition } from '../softphone/manual-disposition.js';
 import type { SoftphoneActor } from '../softphone/types.js';
 import { UUID_RE } from '../../utils/uuid.js';
+import { withTimeoutOr } from '../../utils/with-timeout.js';
 import { inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog } from './inbound-call-wire.js';
 import { INBOUND_LAPSE_SETTLEMENT, inboundContactSettlement } from './inbound-settlement.js';
 import type { InboundAgentViewsMemo, InboundConnector } from './inbound-connector.js';
@@ -182,6 +183,7 @@ export class InboundCallService {
     const found = await this.visible(callId, actor);
     if (!found) return refuse({ code: 'inbound_call_not_found' });
     const connector = this.deps.connector();
+    let hungUp = false;
     if (connector?.holds(found.call.id)) {
       const step = await connector.hangUp(found.call.id);
       if (step.kind === 'declined') {
@@ -189,14 +191,13 @@ export class InboundCallService {
         return { ok: true, call: { ...wire, session_id: found.call.session_id ?? wire.session_id }, onBehalf: found.onBehalf, hungUp: true };
       }
       if (step.kind === 'end') {
-        const hungUp = await this.deps.bridge.forceEndWithOutcome(found.call.id, 'agent_hangup');
-        if (hungUp) await settleWithin(connector.whenLeft(found.call.id), INBOUND_HANGUP_SETTLE_MS);
-        const fresh = await agencyInboundCallRepository.findById(actor.tenantId, found.call.id);
-        return { ok: true, call: await this.wire(fresh ?? found.call, found.takerUserId), onBehalf: found.onBehalf, hungUp };
+        hungUp = await this.deps.bridge.forceEndWithOutcome(found.call.id, 'agent_hangup');
+        // The connector's end, or give up waiting (the row as it stands then is answered). Never rejects.
+        if (hungUp) await withTimeoutOr(connector.whenLeft(found.call.id).catch(() => undefined), INBOUND_HANGUP_SETTLE_MS, undefined);
       }
     }
     const fresh = await agencyInboundCallRepository.findById(actor.tenantId, found.call.id);
-    return { ok: true, call: await this.wire(fresh ?? found.call, found.takerUserId), onBehalf: found.onBehalf, hungUp: false };
+    return { ok: true, call: await this.wire(fresh ?? found.call, found.takerUserId), onBehalf: found.onBehalf, hungUp };
   }
 
   // ─── The outcome ─────────────────────────────────────────────────────────
@@ -240,33 +241,24 @@ export class InboundCallService {
     const { decision, nextAttemptAt } = manualDispositionDecision({ entry, now, callbackAt, placed: false, contact, tag });
     const settlement = inboundContactSettlement(entry, decision, nextAttemptAt);
 
-    const client = await getPool().connect();
-    let saved: { call: AgencyInboundCallRecord; replay: boolean };
-    let dncEntry: InboundDncEntryWritten | null = null;
+    // Written inside the transaction below (typed wide: TS does not follow writes in a callback).
+    let dncEntry = null as InboundDncEntryWritten | null;
     let contactState: AgencyContactState | null = contact?.state ?? null;
-    let nextAt: Date | null = null;
-    try {
-      await client.query('BEGIN');
+    let nextAt = null as Date | null;
+    const saved = await withTransaction(async (client, tx): Promise<{ call: AgencyInboundCallRecord; replay: boolean } | { refusal: InboundCallRefusal }> => {
       const result = await agencyInboundCallRepository.saveDisposition({
         id: row.id, code: entry.code, source: stored, notes, callbackAt,
         actorUserId: actor.userId, onBehalf: found.onBehalf,
       }, { client });
       if (!result.ok) {
-        await client.query('ROLLBACK');
-        if (result.reason === 'not_found') return refuse({ code: 'inbound_call_not_found' });
-        if (result.reason === 'live' || result.reason === 'not_bridged') return refuse({ code: 'inbound_call_not_dispositionable' });
-        return refuse({ code: 'inbound_outcome_already_saved' });
+        await tx.rollback();
+        if (result.reason === 'not_found') return { refusal: { code: 'inbound_call_not_found' } };
+        if (result.reason === 'live' || result.reason === 'not_bridged') return { refusal: { code: 'inbound_call_not_dispositionable' } };
+        return { refusal: { code: 'inbound_outcome_already_saved' } };
       }
       if (!result.replay) {
         if (entry.suppress === true && row.from_e164) {
-          const marked = await markDnc({
-            tenantId: row.tenant_id,
-            ...(row.matched_campaign_id ? { campaignId: row.matched_campaign_id } : { accountScope: row.account_id! }),
-            phoneE164: row.from_e164,
-            reason: `disposition:${entry.code}`,
-            addedBy: actor.userId,
-          }, { client });
-          if (marked.written) dncEntry = { id: marked.written.id, created: !marked.alreadyPresent };
+          dncEntry = (await markCallerDnc(row, row.from_e164, actor.userId, `disposition:${entry.code}`, client)).entry;
         }
         const settled = await agencyContactRepository.settleFromInbound({
           inboundCallId: row.id, settlement, lastDisposition: entry.code,
@@ -282,14 +274,9 @@ export class InboundCallService {
           );
         }
       }
-      await client.query('COMMIT');
-      saved = { call: result.call, replay: result.replay };
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
+      return { call: result.call, replay: result.replay };
+    }, { pool: getPool() });
+    if ('refusal' in saved) return refuse(saved.refusal);
 
     if (!saved.replay) await this.returnAgent(saved.call);
     const call = await this.sendFrame(saved.call, found.takerUserId);
@@ -344,43 +331,27 @@ export class InboundCallService {
     if (!found) return refuse({ code: 'inbound_call_not_found' });
     const row = found.call;
     const scope = row.matched_campaign_id ? 'campaign' as const : 'account' as const;
-    let recorded: Awaited<ReturnType<typeof markDnc>> | null = null;
-    if (row.from_e164) {
-      const client = await getPool().connect();
-      try {
-        await client.query('BEGIN');
-        if (row.matched_campaign_id) {
-          await agencyContactRepository.suppressByPhone(
-            row.matched_campaign_id, row.from_e164, 'dnc',
-            row.matched_contact_id ? { alwaysContactId: row.matched_contact_id } : {},
-            { client },
-          );
-        }
-        recorded = await markDnc({
-          tenantId: row.tenant_id,
-          ...(row.matched_campaign_id ? { campaignId: row.matched_campaign_id } : { accountScope: row.account_id! }),
-          phoneE164: row.from_e164,
-          ...(req.reason !== undefined ? { reason: req.reason } : {}),
-          addedBy: actor.userId,
-        }, { client });
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => undefined);
-        throw err;
-      } finally {
-        client.release();
+    const fromE164 = row.from_e164;
+    const recorded = fromE164 === null ? null : await withTransaction(async (client) => {
+      if (row.matched_campaign_id) {
+        await agencyContactRepository.suppressByPhone(
+          row.matched_campaign_id, fromE164, 'dnc',
+          row.matched_contact_id ? { alwaysContactId: row.matched_contact_id } : {},
+          { client },
+        );
       }
-    }
+      return markCallerDnc(row, fromE164, actor.userId, req.reason, client);
+    }, { pool: getPool() });
     const contact = row.matched_contact_id ? await agencyContactRepository.findById(row.matched_contact_id).catch(() => null) : null;
     return {
       ok: true,
       onBehalf: found.onBehalf,
-      dncEntry: recorded?.written ? { id: recorded.written.id, created: !recorded.alreadyPresent } : null,
+      dncEntry: recorded?.entry ?? null,
       response: {
         call_id: row.id,
-        phone_e164: recorded?.phoneE164 ?? row.from_e164 ?? '',
+        phone_e164: recorded?.result.phoneE164 ?? row.from_e164 ?? '',
         scope,
-        dnc_recorded: recorded?.recorded ?? false,
+        dnc_recorded: recorded?.result.recorded ?? false,
         contact_state: contact?.state ?? null,
       },
     };
@@ -497,18 +468,26 @@ async function settleLapsedContact(call: AgencyInboundCallRecord, client: Pick<P
   await agencyContactRepository.settleFromInbound({ inboundCallId: call.id, settlement: INBOUND_LAPSE_SETTLEMENT, lastDisposition: null }, { client });
 }
 
-/** `p`, or give up waiting after `ms` (the hang-up answers the row as it stands then). Never rejects. */
-async function settleWithin(p: Promise<void>, ms: number): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  const bound = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-  try {
-    await Promise.race([p.catch(() => undefined), bound]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+/**
+ * Mark the caller's number (`fromE164`, the call's own) Do Not Call on the call's scope: the
+ * matched campaign's, else the call's account; never tenant-wide. In the caller's transaction.
+ * `entry`: the DNC row it landed on, for the audit (null when nothing was written).
+ */
+async function markCallerDnc(
+  row: AgencyInboundCallRecord,
+  fromE164: string,
+  addedBy: string,
+  reason: string | undefined,
+  client: PoolClient,
+): Promise<{ result: DncMarkResult; entry: InboundDncEntryWritten | null }> {
+  const result = await markDnc({
+    tenantId: row.tenant_id,
+    ...(row.matched_campaign_id ? { campaignId: row.matched_campaign_id } : { accountScope: row.account_id! }),
+    phoneE164: fromE164,
+    ...(reason !== undefined ? { reason } : {}),
+    addedBy,
+  }, { client });
+  return { result, entry: result.written ? { id: result.written.id, created: !result.alreadyPresent } : null };
 }
 
 /**

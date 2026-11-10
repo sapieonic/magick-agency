@@ -9,6 +9,7 @@ import {
 } from './inbound-call-router.js';
 import { InboundConnector, type InboundConnectorDeps } from './inbound-connector.js';
 import { INBOUND_LAPSE_SWEEP_INTERVAL_MS } from './inbound-disposition.js';
+import { withTimeoutOr } from '../../utils/with-timeout.js';
 
 const log = createChildLogger({ component: 'agency-inbound-router' });
 
@@ -153,17 +154,11 @@ export async function startInboundCalls(deps: Omit<AgencyInboundCallRouterDeps, 
       const held = router.liveCallIds();
       if (held.length === 0) return;
       log.info({ calls: held.length }, 'Ending inbound calls for shutdown');
-      let timeout: NodeJS.Timeout | undefined;
       const settled = (async () => {
         await Promise.allSettled(held.map((id) => deps.bridge.forceEndWithOutcome(id, 'service_shutdown')));
         await Promise.all([router.drain(), connector?.drain()]);
       })().catch((err: unknown) => log.error({ err }, 'Ending inbound calls for shutdown failed'));
-      const bound = new Promise<'timeout'>((resolve) => {
-        timeout = setTimeout(() => resolve('timeout'), deps.shutdownDrainMs ?? INBOUND_SHUTDOWN_DRAIN_MS);
-        timeout.unref?.();
-      });
-      const result = await Promise.race([settled, bound]);
-      if (timeout) clearTimeout(timeout);
+      const result = await withTimeoutOr(settled, deps.shutdownDrainMs ?? INBOUND_SHUTDOWN_DRAIN_MS, 'timeout' as const);
       if (result === 'timeout') {
         log.warn({ calls: router.liveCallIds().length }, 'Inbound calls still settling at shutdown — the next start\'s sweep ends them');
       }
