@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.16.0...contracts-v0.17.0) (2026-11-10)
+
+
+### Features
+
+* **server,console,super-admin,contracts,db,domain,observability,mobile:** inbound calls on Plivo numbers, with sticky agents, a team queue and Missed calls ([#66](https://github.com/sapieonic/magick-agency/issues/66)) ([851a9a8](https://github.com/sapieonic/magick-agency/commit/851a9a88dade52ce09cc020ff0f048dd1ac1ab4c))
+
 ## [0.16.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.15.0...contracts-v0.16.0) (2026-11-09)
 
 

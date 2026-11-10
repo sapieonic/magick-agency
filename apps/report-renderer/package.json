@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/report-renderer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Renders report datasets to PDF (React → HTML → headless Chromium) and Excel (exceljs streaming writer); runs as a Lambda or in the server process (RP15).",
   "main": "./src/index.ts",
