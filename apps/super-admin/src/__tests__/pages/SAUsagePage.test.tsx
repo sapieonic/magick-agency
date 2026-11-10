@@ -77,9 +77,10 @@ describe('SAUsagePage', () => {
   it('shows the exact totals, with the second count in the subtitle', async () => {
     renderPage();
     await screen.findByText('Talk time');
-    // The cards count up from 0 (useCountUp): their labels carry the settled value.
+    expect(screen.getByText('1:01:01')).toBeTruthy();
     expect(screen.getByLabelText('Talk time: 1:01:01')).toBeTruthy();
     expect(screen.getByText('3,661 s')).toBeTruthy();
+    expect(screen.getByText('30')).toBeTruthy();
     expect(screen.getByLabelText('Dials: 30')).toBeTruthy();
   });
 
@@ -127,10 +128,10 @@ describe('SAUsagePage', () => {
     expect(within(totals).getByText('11 picked up by the service')).toBeTruthy();
     expect(within(totals).getByText('Inbound put through to an agent')).toBeTruthy();
     expect(within(totals).queryByText(/\banswered\b/)).toBeNull();
-    // The cards count their value up from 0 (useCountUp), so the shown text is mid-animation for a
-    // moment: the card's label carries the value it settles on.
-    expect(within(totals).getByLabelText('Inbound carrier time: 2:02:02')).toBeTruthy(); // 7322 s
-    expect(within(totals).getByLabelText('Inbound hold time: 0:02:05')).toBeTruthy(); // 125 s
+    expect(within(totals).getByText('2:02:02')).toBeTruthy(); // carrier time, 7322 s
+    expect(within(totals).getByText('0:02:05')).toBeTruthy(); // hold, 125 s
+    expect(within(totals).getByLabelText('Inbound carrier time: 2:02:02')).toBeTruthy();
+    expect(within(totals).getByLabelText('Inbound hold time: 0:02:05')).toBeTruthy();
     // The dials are what they are: the table shows them by default.
     expect(screen.getByRole('columnheader', { name: 'Dials' })).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: 'Carrier time' })).toBeNull();
