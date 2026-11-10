@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:magick_agency_agent/core/softphone/call_fields.dart' show fieldRequiredCopy;
 import 'package:magick_agency_agent/core/softphone/refusal_copy.dart';
-import 'package:magick_agency_agent/core/softphone/softphone_controller.dart' show resumeRereadAfter;
+import 'package:magick_agency_agent/core/softphone/softphone_controller.dart' show callBackWaitsFor, resumeRereadAfter;
 import 'package:magick_agency_agent/core/softphone/softphone_copy.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
@@ -80,6 +80,13 @@ void main() {
   };
 
   const bootstrapPath = 'GET /proxy/agency/softphone/bootstrap';
+  // A second campaign the agent may log to.
+  final camp2 = {
+    ...campaignJson,
+    'campaign_id': 'camp-2',
+    'campaign_name': 'Gold Loan Top-ups',
+    'caller_ids': ['+912248902220'],
+  };
   final dncRefusal = {
     'error': 'Conflict',
     'code': 'dnc_listed',
@@ -210,6 +217,25 @@ void main() {
       expect(h.view.focusCallToken, 2);
     });
 
+    softphoneTest('an open override prompt goes: "Call anyway" never dials the refused number under the redial’s setup',
+        (h) {
+      h.reply('GET $callsPath', {
+        'rows': [listRow('mc-7', {'tag': tag, 'destination_e164': '+919822001144'})],
+        'next_cursor': null,
+        'limit': 8,
+      });
+      h.openWith();
+      h.run(h.actions.reloadRecent());
+      h.reply('POST $callsPath', dncRefusal, status: 409);
+      h.run(h.actions.dial());
+      expect(h.view.overridePrompt, isNotNull);
+      h.actions.redial('mc-7');
+      expect(h.view.overridePrompt, isNull);
+      expect(h.view.number, '+919822001144');
+      h.run(h.actions.confirmOverride('Customer asked us to call back'));
+      expect(h.dials, hasLength(1));
+    });
+
     softphoneTest('does nothing while a call is on screen', (h) {
       h.reply('GET $callsPath', {
         'rows': [listRow('mc-7', {})],
@@ -276,13 +302,135 @@ void main() {
       expect(h.view.focusCallToken, 0);
     });
 
-    softphoneTest('a campaign station on the soft phone (SP7) takes it, over the station’s own tag', (h) {
-      h.host.view = hostView(sessionId: 'sess-c', kind: SessionKind.campaign, campaignId: 'camp-1', onSoftphone: true);
+    softphoneTest(
+      'a campaign station on the soft phone (SP7) takes it, its matched campaign over the station’s own tag',
+      (h) {
+        h.host.view = campaignHost();
+        h.pump();
+        expect(h.view.tagCampaignId, 'camp-1', reason: 'the station’s preset');
+        h.actions.callBack('+918765432109', campaignId: 'camp-2');
+        expect(h.view.number, '+918765432109');
+        expect(h.view.tagCampaignId, 'camp-2');
+        expect(h.view.callerId, '+912248902220', reason: 'the caller IDs follow the tag');
+        expect(h.view.focusCallToken, 1);
+
+        // No matched campaign: the station's tag is not touched.
+        h.actions.setTag('camp-1');
+        h.actions.callBack('+919822001144');
+        expect(h.view.number, '+919822001144');
+        expect(h.view.tagCampaignId, 'camp-1');
+        h.pump();
+        expect(h.dials, isEmpty);
+      },
+      before: (h) => h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'taggable_campaigns': [campaignJson, camp2]})),
+    );
+
+    softphoneTest('a number waiting behind a call fills the pad once that call settles', (h) {
+      h.openWith(call: ringing({'id': 'mc-9', 'destination_e164': '+919000000001'}));
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.number, '+919000000001');
+      // A long call: time behind it does not count against the wait.
+      h.async.elapse(const Duration(minutes: 7));
+      h.host.frame(owed({'id': 'mc-9', 'destination_e164': '+919000000001'}));
       h.pump();
-      h.actions.callBack('+918765432109');
+      expect(h.view.number, '+919000000001', reason: 'owing its outcome still holds the screen');
+      h.host.view = copyHost(h.host.view!, clearCall: true);
+      h.pump();
       expect(h.view.number, '+918765432109');
+      expect(h.view.tagCampaignId, 'camp-1');
       expect(h.view.focusCallToken, 1);
       expect(h.dials, isEmpty);
+    });
+
+    softphoneTest('a workspace switch drops the waiting number', (h) {
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      h.run(h.gate.switchAccount(pune));
+      h.pump();
+      h.host.view = hostView(accountId: 'a2');
+      h.pump();
+      expect(h.view.number, '');
+      expect(h.view.focusCallToken, 0);
+    });
+
+    softphoneTest('waiting for the soft phone, it lapses after five minutes', (h) {
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      h.async.elapse(callBackWaitsFor - const Duration(seconds: 1));
+      h.host.view = hostView();
+      h.pump();
+      expect(h.view.number, '+918765432109', reason: 'just inside the wait');
+      h.actions.clearNumber();
+
+      h.host.view = null;
+      h.pump();
+      h.actions.callBack('+919822001144');
+      h.async.elapse(callBackWaitsFor);
+      h.host.view = hostView(sessionId: 'sess-sp-2');
+      h.pump();
+      expect(h.view.number, '', reason: 'a much later session’s pad is not filled');
+      expect(h.view.focusCallToken, 1);
+    });
+
+    softphoneTest('it is for the first session to open after it: a later one never gets it', (h) {
+      // Asked with no session: the first to open is the one it waits for.
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      h.host.view = hostView(call: ringing({'id': 'mc-9', 'destination_e164': '+919000000001'}));
+      h.pump();
+      expect(h.view.number, '+919000000001');
+      h.host.view = null; // that session closes (another device took it, a restart) with the number still waiting
+      h.pump();
+      h.host.view = hostView(sessionId: 'sess-sp-2');
+      h.pump();
+      expect(h.view.number, '');
+      expect(h.view.tagCampaignId, isNull, reason: '"Log to" is not set out of nowhere either');
+
+      // Asked on a station not yet switched to the soft phone: that station's.
+      h.host.view = null;
+      h.pump();
+      h.host.view = campaignHost(onSoftphone: false);
+      h.pump();
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      h.host.view = null;
+      h.pump();
+      h.host.view = hostView(sessionId: 'sess-sp-3');
+      h.pump();
+      expect(h.view.number, '');
+      expect(h.view.focusCallToken, 0);
+    });
+
+    softphoneTest('a session another device takes drops it', (h) {
+      h.host.view = campaignHost(onSoftphone: false);
+      h.pump();
+      h.actions.callBack('+918765432109');
+      h.host.view = copyHost(h.host.view!, link: StationLink.superseded);
+      h.pump();
+      h.host.view = campaignHost();
+      h.pump();
+      expect(h.view.number, '');
+    });
+
+    softphoneTest(
+      'with the soft phone open on another device it is not kept',
+      (h) {
+        expect(h.view.screen, const SoftphoneScreenOtherDevice(canClose: true));
+        h.actions.callBack('+918765432109', campaignId: 'camp-1');
+        h.run(h.actions.open()); // "Use it on this phone"
+        expect(h.view.screen, const SoftphoneScreenActive());
+        expect(h.view.number, '');
+        expect(h.view.focusCallToken, 0);
+      },
+      before: (h) => h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'session': sessionSummary()})),
+    );
+
+    softphoneTest('an open override prompt goes: "Call anyway" never dials the old number under the new tag', (h) {
+      h.openWith();
+      h.reply('POST $callsPath', dncRefusal, status: 409);
+      h.run(h.actions.dial());
+      expect(h.view.overridePrompt, isNotNull);
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.overridePrompt, isNull);
+      expect(h.view.number, '+918765432109');
+      h.run(h.actions.confirmOverride('Customer asked us to call back'));
+      expect(h.dials, hasLength(1));
     });
   });
 

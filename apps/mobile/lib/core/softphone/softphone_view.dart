@@ -1166,7 +1166,8 @@ abstract interface class SoftphoneActions {
   Future<void> dial();
 
   /// Fills the pad from a recent call (number, its tag while still taggable,
-  /// its caller ID) and bumps [SoftphoneView.focusCallToken]. Never dials.
+  /// its caller ID) and bumps [SoftphoneView.focusCallToken]. Never dials,
+  /// and closes any open override prompt (it was for another number).
   void redial(String recentCallId);
 
   /// A Missed inbound call's **Call back** (`docs/inbound.md` §7): puts
@@ -1176,7 +1177,11 @@ abstract interface class SoftphoneActions {
   /// every soft-phone rule (the DNC check and its note) applies as to a typed
   /// number. Held until the soft phone can take it (a session open here whose
   /// bootstrap has been read, no call on screen, not in finish mode), so it
-  /// can be asked before the soft phone is open; a later one replaces it.
+  /// can be asked before the soft phone is open; a later one replaces it. A
+  /// held one lapses after five minutes (time behind a call on screen does
+  /// not count), on any session change but the first session to open after
+  /// it, and when the soft phone is open on another device or account. Either
+  /// way any open override prompt goes: it was for another number.
   void callBack(String number, {String? campaignId});
 
   // ── Setup ──

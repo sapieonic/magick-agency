@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:agency_wire/agency_wire.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -149,6 +150,12 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
   }
 
   int count(String name) => log.where((l) => l == name).length;
+
+  /// Publishes into [container]'s host slot (from [softphoneCoreOverrides]).
+  void bind(ProviderContainer container) {
+    _publish = (v) => container.read(_hostSlotProvider.notifier).set(v);
+    _read = () => container.read(_hostSlotProvider);
+  }
 
   @override
   Future<SoftphoneOpenResult> openSoftphone() async {
@@ -337,6 +344,47 @@ class Sent {
 
 typedef Reply = FutureOr<http.Response> Function(Sent request);
 
+/// The soft-phone core's outside world as overrides: the real controller
+/// plugged into its seams over [host] (bind it to the container with
+/// [FakeSoftphoneHost.bind]), HTTP answered by [handle]. The harness's own,
+/// and a screen test's that drives the real controller.
+List<Override> softphoneCoreOverrides({
+  required FakeSoftphoneHost host,
+  required Future<http.Response> Function(http.Request) handle,
+  required DateTime Function() now,
+  RequestScope? scope,
+  GateReady? gate,
+  FakeLifecycle? lifecycle,
+  FakeTokens? tokens,
+  MemoryNotesStore? store,
+  FakeLauncher? launcher,
+  FakeMicChecks? mic,
+  MemoryStore? kv,
+  void Function(Object)? unauthorized,
+}) => [
+  envProvider.overrideWithValue(testEnv),
+  idTokenSourceProvider.overrideWithValue(tokens ?? FakeTokens()),
+  httpClientProvider.overrideWithValue(MockClient(handle)),
+  requestScopeProvider.overrideWithValue(
+    scope ??
+        (RequestScope()
+          ..tenantId = 't1'
+          ..accountId = (gate ?? readyIn(chennai)).accountId),
+  ),
+  stationUnauthorizedSinkProvider.overrideWithValue(unauthorized ?? (_) {}),
+  notesStoreProvider.overrideWithValue(store ?? MemoryNotesStore()),
+  stationNowProvider.overrideWithValue(now),
+  softphoneLifecycleSourceProvider.overrideWithValue(lifecycle ?? FakeLifecycle()),
+  softphoneCalendarProvider.overrideWithValue(ist),
+  softphoneHostViewProvider.overrideWith((ref) => ref.watch(_hostSlotProvider)),
+  softphoneHostActionsProvider.overrideWithValue(host),
+  stationLauncherProvider.overrideWithValue(launcher ?? FakeLauncher()),
+  preflightChecksProvider.overrideWithValue(mic ?? FakeMicChecks()),
+  keyValueStoreProvider.overrideWithValue(kv ?? MemoryStore()),
+  appGateProvider.overrideWith(() => FakeGate(gate ?? readyIn(chennai))),
+  ...softphoneOverrides,
+];
+
 /// The soft-phone core with its outside world faked, on a fake clock.
 class SoftphoneHarness {
   SoftphoneHarness(this.async, {GateReady? gate, SoftphoneHostView? host, bool foreground = true}) {
@@ -347,27 +395,22 @@ class SoftphoneHarness {
       ..tenantId = 't1'
       ..accountId = (gate ?? readyIn(chennai)).accountId;
     container = ProviderContainer(
-      overrides: [
-        envProvider.overrideWithValue(testEnv),
-        idTokenSourceProvider.overrideWithValue(tokens),
-        httpClientProvider.overrideWithValue(MockClient(_handle)),
-        requestScopeProvider.overrideWithValue(scope),
-        stationUnauthorizedSinkProvider.overrideWithValue(unauthorized.add),
-        notesStoreProvider.overrideWithValue(store),
-        stationNowProvider.overrideWithValue(clock.now),
-        softphoneLifecycleSourceProvider.overrideWithValue(lifecycle),
-        softphoneCalendarProvider.overrideWithValue(ist),
-        softphoneHostViewProvider.overrideWith((ref) => ref.watch(_hostSlotProvider)),
-        softphoneHostActionsProvider.overrideWithValue(this.host),
-        stationLauncherProvider.overrideWithValue(launcher),
-        preflightChecksProvider.overrideWithValue(mic),
-        keyValueStoreProvider.overrideWithValue(kv),
-        appGateProvider.overrideWith(() => FakeGate(gate ?? readyIn(chennai))),
-        ...softphoneOverrides,
-      ],
+      overrides: softphoneCoreOverrides(
+        host: this.host,
+        handle: _handle,
+        now: clock.now,
+        scope: scope,
+        gate: gate ?? readyIn(chennai),
+        lifecycle: lifecycle,
+        tokens: tokens,
+        store: store,
+        launcher: launcher,
+        mic: mic,
+        kv: kv,
+        unauthorized: unauthorized.add,
+      ),
     );
-    this.host._publish = (v) => container.read(_hostSlotProvider.notifier).set(v);
-    this.host._read = () => container.read(_hostSlotProvider);
+    this.host.bind(container);
     if (host != null) this.host.view = host;
     routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson());
     routes['GET /proxy/agency/softphone/calls'] = (_) => json(200, {'rows': <Object?>[], 'next_cursor': null, 'limit': 8});

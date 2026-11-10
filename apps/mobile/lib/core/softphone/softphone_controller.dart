@@ -144,6 +144,28 @@ final class _Override {
   final String to;
 }
 
+/// How long a Missed call's Call back waits for the soft phone to take it
+/// ([SoftphoneController.callBack]). Time spent behind a call on screen does
+/// not count: the clock starts again when that call settles.
+const callBackWaitsFor = Duration(minutes: 5);
+
+/// A Missed call's Call back waiting for the pad.
+final class _CallBack {
+  _CallBack(this.number, this.campaignId, this.askedAt, this.sessionId);
+  final String number;
+  final String? campaignId;
+
+  /// When it was asked for, or when the call it waited behind settled.
+  DateTime askedAt;
+
+  /// The session it is for: the one hosted when it was asked for, else the
+  /// first one to open after. Any other session change drops it.
+  String? sessionId;
+
+  /// A call on screen held it at the last look.
+  bool behindCall = false;
+}
+
 class SoftphoneController extends Notifier<SoftphoneCoreState> implements SoftphoneActions {
   static final _log = Log('softphone');
 
@@ -204,7 +226,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   String? _presetFor;
 
   /// A Missed call's Call back waiting for the soft phone ([callBack]).
-  ({String number, String? campaignId})? _pendingCallBack;
+  _CallBack? _pendingCallBack;
 
   /// How the number got onto the pad, for `agency_softphone_call_placed`
   /// (the console's `entry`): `typed`, `pasted`, `redial` or `inbound_callback`.
@@ -488,6 +510,17 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _host = next;
     _trackHostedHere(next);
     if (prev?.sessionId != next?.sessionId) {
+      // A waiting Call back is for the session hosted when it was asked for,
+      // else the first to open after it: never a later one, whose pad (and
+      // "Log to") it would otherwise fill out of nowhere.
+      final pending = _pendingCallBack;
+      if (pending != null) {
+        if (pending.sessionId == null && prev == null && next != null) {
+          pending.sessionId = next.sessionId;
+        } else {
+          _pendingCallBack = null;
+        }
+      }
       if (next == null) {
         // The station (or the soft-phone session) closed: where things stand now is the bootstrap's.
         _screen = const SoftphoneScreenClosed();
@@ -1440,13 +1473,17 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _callerDraft = from.callerId;
     _entry = 'redial';
     _dialError = null;
+    // An override prompt names the number it was for: "Call anyway" must never
+    // dial that one under this setup.
+    _override = null;
+    _overrideError = null;
     _focusCallToken++;
     _emit();
   }
 
   @override
   void callBack(String number, {String? campaignId}) {
-    _pendingCallBack = (number: number, campaignId: campaignId);
+    _pendingCallBack = _CallBack(number, campaignId, _now(), _host?.sessionId);
     _emit();
   }
 
@@ -1455,13 +1492,47 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   /// whose bootstrap was read for it, nothing on screen, not in finish mode.
   /// A call live or owing its outcome keeps the screen: the number waits until
   /// it settles (the console's `presetNumber`). Run before every emit.
+  ///
+  /// It lapses: [callBackWaitsFor] after it was asked for (or after the call
+  /// it waited behind settled), on a session change ([_onHost]), when the
+  /// session is taken by another device, and when the soft phone turns out to
+  /// be open elsewhere (another device or account), where nothing here can
+  /// take it.
   void _applyCallBack() {
     final pending = _pendingCallBack;
+    if (pending == null) return;
+    if (_call != null || _placing) {
+      pending.behindCall = true;
+      return;
+    }
+    final now = _now();
+    if (pending.behindCall) {
+      pending.behindCall = false;
+      pending.askedAt = now;
+    }
+    if (now.difference(pending.askedAt) >= callBackWaitsFor) {
+      _pendingCallBack = null;
+      return;
+    }
     final host = _host;
+    if (host == null) {
+      final screen = _screen;
+      if (screen is SoftphoneScreenOtherDevice ||
+          screen is SoftphoneScreenElsewhere ||
+          screen is SoftphoneScreenOffStranded ||
+          screen is SoftphoneScreenOff) {
+        _pendingCallBack = null;
+      }
+      return;
+    }
+    if (host.link == StationLink.superseded) {
+      _pendingCallBack = null;
+      return;
+    }
     final b = _bootstrap;
-    if (pending == null || host == null || b == null || _bootstrapFor != host.sessionId) return;
+    if (b == null || _bootstrapFor != host.sessionId) return;
     if (host.kind == SessionKind.campaign && !host.onSoftphone) return;
-    if (_call != null || _placing || _finishOnly) return;
+    if (_finishOnly) return;
     _pendingCallBack = null;
     _number = sanitiseDialInput(pending.number);
     final tag = pending.campaignId;
@@ -1473,6 +1544,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     }
     _entry = 'inbound_callback';
     _dialError = null;
+    // An open override prompt was for another number: "Call anyway" must never
+    // dial it under the tag just set.
+    _override = null;
+    _overrideError = null;
     _focusCallToken++;
   }
 
