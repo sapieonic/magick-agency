@@ -529,6 +529,13 @@ can redial the same customer and is connected back to themselves, at most twice 
   file passes 4/4 alone and in its CI lane (`INTEGRATION_LANE=wall-clock`, 3 files, 15 passed),
   so the rest lane is 1602 + 9 expected fail. It had also timed out once in the run before the
   fixes; the cause of the failure when it runs after the whole rest lane is not found.
+  *Found 2026-11-10* (it also failed once in its own CI lane): the first case read the agent's
+  state once after going available, and in `pool` mode each pacing tick briefly reserves every
+  available agent before finding nothing due (about 0.7% of reads locally, more on a loaded
+  box); that failure skipped its `leave()`, and the phone left available took the next case's
+  calls, failing all four. The case now waits for `available`, and every case's phones leave
+  (and its contacts still due are deferred) in an `afterEach`; with the first case forced to
+  fail, the other three now pass.
   `packages/db` 427 / 519; console 5015; contracts 252; super-admin 436; web-ui 235; domain 61;
   observability 14; app `flutter test` 1316, `agency_wire` 341, `flutter analyze` clean,
   `contracts-literals --check` up to date. The new route shifted the seeded sample of
