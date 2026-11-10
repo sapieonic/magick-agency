@@ -131,12 +131,16 @@ void main() {
       expect([c.isLive, c.isUnsettled, c.owesOutcome], [true, true, false]);
     });
 
-    test('ended owing an outcome: due 30 minutes after it ended', () {
+    // How long the outcome waits is the server's (the matched campaign's wrap-up window, an
+    // unmatched call's own default, at most the 30-minute backstop): the app reads
+    // `outcome_due_at` and never works it out.
+    test('ended owing an outcome: due when outcome_due_at says', () {
       final c = call('inbound_call_outcome_owed');
       expect(c.state, InboundCallState.ended);
       expect(c.outcome, InboundCallOutcome.answered);
       expect([c.isLive, c.isUnsettled, c.owesOutcome], [false, true, true]);
-      expect(c.outcomeDueAt!.difference(c.endedAt!), inboundOutcomeLapse);
+      expect(c.outcomeDueAt, DateTime.utc(2026, 11, 2, 6, 4, 2, 500));
+      expect(c.outcomeDueAt!.isAfter(c.endedAt!), isTrue);
       expect(c.talkSeconds, 227);
       expect(c.notes, 'Wants the renewal quote by email.');
     });

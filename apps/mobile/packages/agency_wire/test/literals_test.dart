@@ -71,17 +71,9 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'customer_callback_statuses': CustomerCallbackStatus.values,
   'customer_search_number_errors': CustomerSearchNumberError.values,
   'customer_history_error_codes': CustomerHistoryErrorCode.values,
-};
-
-/// Vocabularies the Dart enums mirror but `tooling/contracts-literals.mjs`
-/// does not extract yet: inbound calls and the station's `caps=`. Each is
-/// checked exactly like [dartVocabularies] (and [appSends]) once literals.json
-/// carries it under this name, and skipped until then. When the extractor
-/// gains one, move its entry up into [dartVocabularies].
-final Map<String, List<WireEnum>> awaitingExtraction = {
-  // `agency/station.ts#AGENCY_STATION_CAPABILITIES`: the app sends `caps=inbound`.
+  // The station upgrade's `caps=` (`agency/station.ts#AGENCY_STATION_CAPABILITIES`).
   'station_capabilities': StationCapability.values,
-  // `agency/inbound.ts`, `errors.ts` and `api/agency/inbound.ts`.
+  // Inbound calls (`agency/inbound.ts`, `errors.ts` and `api/agency/inbound.ts`).
   'inbound_call_states': InboundCallState.values,
   'inbound_call_outcomes': InboundCallOutcome.values,
   'inbound_sticky_reasons': InboundStickyReason.values,
@@ -143,8 +135,8 @@ final Map<String, List<WireEnum>> appSends = {
     for (final c in CustomerTimelineChannel.values)
       if (!c.isUnknown) c,
   ],
-  // Awaiting extraction (see [awaitingExtraction]): the station upgrade's
-  // `caps=`, and the Missed list's `status=` and `reason=` filters.
+  // The station upgrade's `caps=`, and the Missed list's `status=` and
+  // `reason=` filters.
   'station_capabilities': [StationCapability.inbound],
   'inbound_follow_up_statuses': [
     for (final v in InboundFollowUpStatus.values)
@@ -170,7 +162,7 @@ void main() {
 
   test('literals.json has the vocabularies this suite expects', () {
     expect(vocabularies.keys, containsAll(dartVocabularies.keys));
-    expect(vocabularies.keys.toSet().difference(awaitingExtraction.keys.toSet()), {
+    expect(vocabularies.keys.toSet(), {
       ...dartVocabularies.keys,
       'station_close_codes',
     }, reason: 'a vocabulary was added to tooling/contracts-literals.mjs: map it to a Dart enum here');
@@ -178,12 +170,7 @@ void main() {
 
   List<String> ts(String name) => (vocabularies[name]!['values']! as List<Object?>).cast<String>();
 
-  // The mapped vocabularies, plus each awaited one literals.json already carries.
-  final checked = <String, List<WireEnum>>{
-    ...dartVocabularies,
-    for (final e in awaitingExtraction.entries)
-      if (vocabularies.containsKey(e.key)) e.key: e.value,
-  };
+  final checked = dartVocabularies;
 
   for (final MapEntry(key: name, value: dartValues) in checked.entries) {
     test('$name: every TypeScript literal is a known Dart value', () {
@@ -218,8 +205,7 @@ void main() {
   }
 
   for (final MapEntry(key: name, value: sent) in appSends.entries) {
-    final awaited = awaitingExtraction.containsKey(name) && !vocabularies.containsKey(name);
-    test('$name: every value the app sends is still declared', skip: awaited ? 'not extracted yet' : false, () {
+    test('$name: every value the app sends is still declared', () {
       expect(sent, isNotEmpty);
       final declared = ts(name).toSet();
       for (final v in sent) {

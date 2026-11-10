@@ -44,10 +44,6 @@ import 'station.dart';
 /// played, before any audio. Server-timed; the call's `connects_at` says when.
 const inboundConnectDelay = Duration(milliseconds: 1500);
 
-/// How long an answered call waits for its outcome before it lapses
-/// (`AGENCY_INBOUND_OUTCOME_LAPSE_MS`). The call's `outcome_due_at` already says when.
-const inboundOutcomeLapse = Duration(minutes: 30);
-
 /// The disposition code of a campaign dial cancelled because its customer
 /// rang in (`AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`). Reserved: never in a
 /// catalog. The station's `released` frame says [ReleaseReason.inboundCall].
