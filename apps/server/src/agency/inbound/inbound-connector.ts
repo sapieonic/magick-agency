@@ -724,6 +724,40 @@ export class InboundConnector {
   }
 
   /**
+   * A station socket that cannot take inbound calls (an app build that did not declare
+   * `caps=inbound`) attached to this session after `ready`: a reattach from another device or an
+   * older build (the prior socket closed 4409). The capability belongs to the socket (IQ46), so what
+   * this session held on the prior one is handled as if that station were lost:
+   *  - an offer whose audio has not bound: cancelled as a lost station's (`station_lost`: back at
+   *    the head of the queue, `queued_at` kept, the next agent searched), and the agent, whose
+   *    station is still open, returned to the pool (`releaseAgent`: a queued break applies first);
+   *  - held for a superseding call through its preamble (§5.4): let go, the agent returned;
+   *  - a bound call: NOT re-adopted onto this socket (the caller's audio never goes to an app that
+   *    cannot show the call). The prior socket's close armed the bridge's 8 s deferred hangup, so
+   *    the call ends `answered` with its outcome owed (IQ17), as for any station lost after the
+   *    bind; the agent then owes it in `wrapup` on this station, which the outcome's lapse (or a
+   *    supervisor's close, IQ33) returns.
+   * Synchronous: each step runs on the call's chain. The bind re-checks the capability anyway
+   * ({@link bind}), so an offer whose `connects_at` falls before this runs is cancelled the same way.
+   */
+  onStationCannotTakeInbound(sessionId: string): void {
+    const held = this.forSession(sessionId);
+    if (!held) return;
+    if (held.phase === 'offered' && !held.bound) {
+      log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls attached during an offer — cancelling it');
+      void this.serial(held.id, async () => {
+        const row = await this.cancelOffer(held, sessionId, 'station_lost');
+        if (row && this.deps.stations.get(sessionId)) this.releaseInBackground(sessionId);
+      });
+    } else if (this.handovers.isHeldFor(held.id, sessionId)) {
+      void this.serial(held.id, () => this.handovers.release(held.id, { returnAgent: true }));
+    } else if (held.phase === 'connected' || held.bound) {
+      log.warn({ inboundCallId: held.id, sessionId },
+        'A station that cannot take inbound calls attached during an inbound call — not re-adopted; the deferred hangup ends it');
+    }
+  }
+
+  /**
    * A station left the registry (its socket closed, or the silent-station sweep detached it): the
    * rejoin grace starts (see the header). The agent's state is read now, synchronously issued, so
    * it is the state before the close handler's `offline` write (one Redis connection, in order);
@@ -926,9 +960,19 @@ export class InboundConnector {
   private async bind(held: HeldCall): Promise<void> {
     if (held.phase !== 'offered' || held.bound || !held.sessionId) return;
     const sessionId = held.sessionId;
-    const ws = this.deps.stations.socketFor(sessionId);
-    if (!ws || ws.readyState !== 1 /* OPEN */) {
+    const station = this.deps.stations.get(sessionId);
+    const ws = station?.ws;
+    if (!station || !ws || ws.readyState !== 1 /* OPEN */) {
       await this.cancelOffer(held, sessionId, 'station_lost');
+      return;
+    }
+    if (!station.canTakeInbound) {
+      // The session's station was replaced, during the offer, by one that cannot take inbound calls
+      // (an older app build: IQ46). Never bound: cancelled as a lost station's, and the agent, whose
+      // station is still open, returned to the pool ({@link onStationCannotTakeInbound}).
+      log.warn({ inboundCallId: held.id, sessionId }, 'Inbound bind found a station that cannot take inbound calls — the offer is cancelled');
+      const row = await this.cancelOffer(held, sessionId, 'station_lost');
+      if (row) this.releaseInBackground(sessionId);
       return;
     }
     if (!this.deps.bridge.bindBorrowedBrowserLeg(held.id, ws)) {
@@ -1251,7 +1295,7 @@ export class InboundConnector {
       tenantId: s.tenantId,
       accountId: s.accountId,
       campaignId: s.campaignId,
-      clientKind: s.clientKind,
+      canTakeInbound: s.canTakeInbound,
       stationOpen,
       ...(rejoins ? { rejoining: true } : {}),
       member: members.has(s.agentUserId),
@@ -1448,13 +1492,14 @@ export class InboundConnector {
   }
 
   /**
-   * The session's station if the release hook may take it for an inbound call: held here, OPEN, a
-   * console (a phone has no inbound frame yet, IQ20) on a campaign (not the soft phone). The one
+   * The session's station if the release hook may take it for an inbound call: held here, OPEN,
+   * able to take inbound calls (a console, or a phone that declared `caps=inbound`; an older app
+   * build has no inbound frame, IQ20 as amended by IQ46) on a campaign (not the soft phone). The one
    * predicate {@link takeOnRelease} and {@link expectHandover} share.
    */
   private releasableStation(sessionId: string) {
     const station = this.deps.stations.get(sessionId);
-    if (!station || station.campaignId === null || station.clientKind === 'mobile' || station.ws.readyState !== 1) return null;
+    if (!station || station.campaignId === null || !station.canTakeInbound || station.ws.readyState !== 1) return null;
     return station;
   }
 

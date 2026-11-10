@@ -34,6 +34,8 @@ export class FakeWs {
 export interface FakeStationEntry {
   sessionId: string; campaignId: string | null; tenantId: string; accountId: string; agentUserId: string;
   ws: FakeWs; clientKind: 'web' | 'mobile';
+  /** The registry's `canTakeInbound`: a console, or a phone that declared `caps=inbound`. */
+  canTakeInbound: boolean;
 }
 
 export class FakeStations {
@@ -63,8 +65,10 @@ export class FakeStations {
     this.entries.set(station.sessionId, entry);
     return entry;
   }
-  add(e: Omit<FakeStationEntry, 'ws' | 'clientKind'> & { clientKind?: 'web' | 'mobile' }): FakeStationEntry {
-    const entry = { clientKind: 'web' as const, ...e, ws: new FakeWs() };
+  add(e: Omit<FakeStationEntry, 'ws' | 'clientKind' | 'canTakeInbound'> & { clientKind?: 'web' | 'mobile'; canTakeInbound?: boolean }): FakeStationEntry {
+    const clientKind = e.clientKind ?? 'web';
+    // The registry's default: a console can take inbound calls, a phone only when it says so.
+    const entry = { ...e, clientKind, canTakeInbound: e.canTakeInbound ?? clientKind !== 'mobile', ws: new FakeWs() };
     this.entries.set(e.sessionId, entry);
     return entry;
   }
@@ -73,8 +77,13 @@ export class FakeStations {
   socketFor(id: string) { return this.entries.get(id)?.ws; }
   isLocallyOwned(id: string) { return this.entries.has(id); }
   send(id: string, frame: unknown) {
-    const ws = this.entries.get(id)?.ws;
+    const entry = this.entries.get(id);
+    const ws = entry?.ws;
     if (!ws || ws.readyState !== 1) return false;
+    // The registry's one send-path rule (`StationRegistry.send`): no inbound frame to a station
+    // that cannot take inbound calls.
+    const event = (frame as { event?: string }).event;
+    if (!entry.canTakeInbound && (event === 'inbound_call' || event === 'customer_waiting')) return false;
     ws.send(JSON.stringify(frame));
     return true;
   }

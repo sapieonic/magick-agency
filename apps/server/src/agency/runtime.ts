@@ -584,6 +584,12 @@ export class AgencyRuntime {
    * re-adopts the leg. A web console on a live soft-phone call is never closed, as on a
    * campaign call.
    *
+   * And on a live inbound call (`inbound.hasLiveCall`: the caller's audio bound to this
+   * socket), which only a phone that declared `caps=inbound` can hold (IQ46): dropped the
+   * same way, and the bridge's 8 s deferred hangup decides as for a campaign call (IQ17). An
+   * inbound offer not yet bound is not a call: the idle arm drops the phone and the close
+   * cancels the offer (the caller back at the head of the queue, §5.1).
+   *
    * ── A silent phone is always dropped with `terminate`, never `close` ──────────
    *
    * On a call and off one alike ({@link dropSilentPhone}). A phone silent past 10 s is
@@ -656,9 +662,19 @@ export class AgencyRuntime {
         }
         continue;
       }
-      // A live inbound call bound to this socket (docs/inbound.md §2): rule 1 as written. Only a
-      // console takes inbound calls (IQ20), so there is no phone arm.
-      if (this.inbound?.hasLiveCall(entry.sessionId)) continue;
+      // A live inbound call bound to this socket (docs/inbound.md §2): rule 1 as written for the
+      // web. A phone that took it (`caps=inbound`, IQ46) gets the campaign call's M1 exception:
+      // dropped with `terminate`, so the bridge's 8 s deferred hangup starts now (a phone back in
+      // time re-adopts the leg; else the call ends `answered`, its outcome owed, IQ17) instead of the
+      // caller waiting on silence until TCP gives up. An offer not yet bound is not a live call: it
+      // falls through to the idle arm below, whose close cancels it (back to the head of the queue).
+      if (this.inbound?.hasLiveCall(entry.sessionId)) {
+        if (entry.clientKind === 'mobile' && entry.ws.readyState !== 3 /* CLOSED */) {
+          this.dropSilentPhone(entry, now, 'on_inbound_call');
+          acted++;
+        }
+        continue;
+      }
 
       if (entry.ws.readyState === 3 /* CLOSED */) {
         log.warn({
@@ -705,13 +721,13 @@ export class AgencyRuntime {
    * transport, so `ws` emits `close` at once and the station's close handler detaches
    * the entry and resolves presence (or, on a call, the bridge's close rule decides it).
    * Never `close()`: on a dead transport its `close` event waits out ws's 30 s closing
-   * timeout. One place for every arm (on a campaign call or a soft-phone call, decision
+   * timeout. One place for every arm (on a campaign, soft-phone or inbound call, decision
    * M1; and idle), so they cannot drift apart.
    */
   private dropSilentPhone(
     entry: StationEntry,
     now: number,
-    during: 'on_call' | 'on_manual_call' | 'idle',
+    during: 'on_call' | 'on_manual_call' | 'on_inbound_call' | 'idle',
   ): void {
     log.warn({
       sessionId: entry.sessionId,
@@ -723,7 +739,9 @@ export class AgencyRuntime {
       ? 'Mobile station silent past its grace on a live call — terminating it; the deferred hangup now decides the call'
       : during === 'on_manual_call'
         ? 'Mobile station silent past its grace on a live soft-phone call — terminating it; the bridge now ends the call, or after the answer its deferred hangup decides'
-        : 'Mobile station silent past its grace — terminating it');
+        : during === 'on_inbound_call'
+          ? 'Mobile station silent past its grace on a live inbound call — terminating it; the deferred hangup now decides the call'
+          : 'Mobile station silent past its grace — terminating it');
     try { entry.ws.terminate(); } catch { /* already gone */ }
   }
 

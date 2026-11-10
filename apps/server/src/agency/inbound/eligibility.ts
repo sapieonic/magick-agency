@@ -1,4 +1,4 @@
-import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from '@magick-agency/contracts/agency';
+import type { AgencyAgentState, AgencyInboundStickyMode } from '@magick-agency/contracts/agency';
 
 /**
  * ─── WHO MAY TAKE A WAITING INBOUND CALLER (docs/inbound.md §4.3, §5.1; P2) ────────────────────
@@ -16,8 +16,9 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  *  - when the call's account is the route's, on one of the route's pool campaigns (an empty pool:
  *    every campaign of the account). The pool is the route's account's notion, so it does not
  *    apply to a caller whose match put them in another account (IQ21);
- *  - a console station (`client_kind = 'mobile'` is treated as offline: the app has no inbound
- *    frame yet, IQ20), held by this process and OPEN;
+ *  - a station that can take inbound calls (`canTakeInbound`: every console, and a phone that
+ *    declared `caps=inbound` on its upgrade; an older app build is treated as offline, IQ20 as
+ *    amended by IQ46), held by this process and OPEN;
  *  - an active user with an active membership that can see the call's account
  *    (`InboundAgentView.member`, read by the connector at each search, so an agent removed from the
  *    account or deactivated while the caller waits is never offered the call: QA-F10);
@@ -33,8 +34,8 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  *  - `reserved` / `on_call` / `wrapup` (eligible but for the state) → `busy`: the caller waits for
  *    them ("Your customer is waiting"), and the release hook gives them the caller when that work
  *    ends (taken from wrap-up with no `available` instant);
- *  - anything else (offline, on a break or the soft phone, a phone, another account, outside the
- *    pool, no session) → `away`: the team at once, under `strict` too (IQ6). The follow-up, if
+ *  - anything else (offline, on a break or the soft phone, a phone that cannot take inbound calls,
+ *    another account, outside the pool, no session) → `away`: the team at once, under `strict` too (IQ6). The follow-up, if
  *    nobody answers, is still assigned to them (the router's settle).
  *
  * The STICKY PHASE is the time only the sticky agent may take the caller: `loose` until
@@ -46,8 +47,8 @@ import type { AgencyAgentState, AgencyClientKind, AgencyInboundStickyMode } from
  * {@link couldTakeLater}: an agent who may take the caller now OR once the work they are doing
  * ends (`reserved`, `on_call`, `wrapup`; another call held counts, it ends too). A caller for whom
  * no session of the pool qualifies is overflowed at once rather than held to the maximum wait:
- * nobody on a break, offline, on the phone app, outside the pool or out of the account will ever
- * be offered them.
+ * nobody on a break, offline, on an app build that cannot take inbound calls, outside the pool or
+ * out of the account will ever be offered them.
  *
  * A station that closed moments ago still counts (SWE-F1): a session whose socket closed less than
  * the rejoin grace ago (`INBOUND_STATION_REJOIN_GRACE_MS`, the console's reconnect and the
@@ -78,7 +79,11 @@ export interface InboundAgentView {
   accountId: string;
   /** NULL: a soft-phone session. */
   campaignId: string | null;
-  clientKind: AgencyClientKind;
+  /**
+   * The station can take inbound calls (the registry's `canTakeInbound`: a console, or a phone that
+   * declared `caps=inbound`). For a station within the rejoin grace: the capability its socket had.
+   */
+  canTakeInbound: boolean;
   /** Held by this process with its socket OPEN. */
   stationOpen: boolean;
   /**
@@ -127,7 +132,7 @@ export type InboundIneligibility =
   | 'other_account'
   | 'not_campaign_session'
   | 'not_in_pool'
-  | 'mobile'
+  | 'no_inbound_capability'
   | 'no_station'
   | 'not_member'
   | 'declined'
@@ -151,7 +156,7 @@ export function inboundIneligibility(
   if (agent.tenantId !== caller.tenantId || agent.accountId !== caller.accountId) return 'other_account';
   if (agent.campaignId === null) return 'not_campaign_session';
   if (poolApplies(caller) && !caller.poolCampaignIds.includes(agent.campaignId)) return 'not_in_pool';
-  if (agent.clientKind === 'mobile') return 'mobile';
+  if (!agent.canTakeInbound) return 'no_inbound_capability';
   if (!agent.stationOpen) return 'no_station';
   if (!agent.member) return 'not_member';
   if (caller.declinedSessionIds?.has(agent.sessionId)) return 'declined';

@@ -13,7 +13,7 @@ import type {
 import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
-import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
+import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, stationCanTakeInbound, type StationUpgradeQuery } from './station-upgrade.js';
 import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 
@@ -497,6 +497,9 @@ export async function handleStationSocket(
     ws: socket,
     // Picks the heartbeat grace and, for `mobile`, arms the protocol-ping probe.
     clientKind: upgrade.client,
+    // This socket's own answer, never the session's (IQ46): a console always, a phone only with
+    // `caps=inbound`. Decides whether it is sent the inbound frames and offered inbound callers.
+    canTakeInbound: stationCanTakeInbound(upgrade),
   });
 
   // And the same question again, because `attach` has its own await (the ownership
@@ -634,10 +637,17 @@ export async function handleStationSocket(
   // ── Inbound calls (docs/inbound.md §2, P2) ───────────────────────────────
   // The same for an inbound call: re-adopt a bound call's leg onto this socket, restore the
   // session's unsettled inbound call (connected, or owing its outcome) with an `inbound_call` frame,
-  // and re-send "Your customer is waiting" for every caller still waiting for this agent. A
-  // console only: the app has no inbound frame (IQ20), and a phone is never offered a call.
+  // and re-send "Your customer is waiting" for every caller still waiting for this agent. Only on
+  // a station that can take inbound calls (a console, or a phone that declared `caps=inbound`:
+  // IQ46). One that cannot (an older app build taking the session over) has what the session held
+  // handled as a lost station's: an offer back to the queue, a bound call not re-adopted
+  // (`InboundConnector.onStationCannotTakeInbound`).
   const inbound = runtime.inbound;
-  if (!inbound || upgrade.client === 'mobile' || !stillOurs()) return;
+  if (!inbound || !stillOurs()) return;
+  if (!stationCanTakeInbound(upgrade)) {
+    inbound.onStationCannotTakeInbound(sessionId);
+    return;
+  }
   const restored = await inbound.reattachStation(sessionId, socket).catch((err: unknown) => {
     log.warn({ err, sessionId }, 'Could not restore the inbound call on reconnect');
     return null;

@@ -544,10 +544,11 @@ describe('a caller past their maximum wait is marked leaving at once (M4): no lo
 });
 
 describe('the P2 review fix pass: hand-overs only to a session that can take one, the waiting count, a failed connect write', () => {
-  it('no hand-over to a session the release hook can never take (a phone, a station not OPEN, the soft phone): nothing is promised, so the router cancels no dial', async () => {
+  it('no hand-over to a session the release hook can never take (a phone that cannot take inbound calls, a station not OPEN, the soft phone): nothing is promised, so the router cancels no dial', async () => {
     const c = connector();
     const phone = await agent('reserved');
-    stations.get(phone)!.clientKind = 'mobile';
+    // An older app build: `client=mobile` with no `caps=inbound`.
+    Object.assign(stations.get(phone)!, { clientKind: 'mobile', canTakeInbound: false });
     const closed = await agent('reserved');
     stations.get(closed)!.ws.readyState = 3;
     const softphone = await agent('reserved');
@@ -560,6 +561,64 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     // A console agent on a campaign still gets one.
     const desk = await agent('reserved');
     expect(c.expectHandover(desk, call.id)).toBe(true);
+  });
+
+  it('a station that cannot take inbound calls replaced the offered one before the bind (IQ46): the bind refuses it, the caller back at the head and the next agent offered, the agent returned', async () => {
+    const c = connector({ connectDelayMs: 300 });
+    const first = await agent('available');
+    await sleep(5);
+    const { call } = await caller(c);
+    await until('offered to the first', async () => (await row(call.id)).state === 'offered');
+    const second = await agent('available');
+    // An older build took the session over (its attach handler not yet run): only the bind sees it.
+    Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+    await until('connected to the second agent', async () => (await row(call.id)).state === 'connected', 5000);
+    expect(await row(call.id)).toMatchObject({ session_id: second, offer_count: 2 });
+    expect(bridge.binds).toEqual([call.id]); // bound once: to the second agent, never to the replaced station
+    await drain();
+    expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
+  });
+
+  it('onStationCannotTakeInbound: an unbound offer cancelled at once (requeued, the next agent offered before connects_at), a hand-over held through the preamble let go; each agent returned', async () => {
+    const c = connector({ connectDelayMs: 5_000 });
+    const first = await agent('available');
+    await sleep(5);
+    const { call } = await caller(c);
+    await until('offered to the first', async () => (await row(call.id)).state === 'offered');
+    const second = await agent('available');
+    Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+    const at = Date.now();
+    c.onStationCannotTakeInbound(first);
+    await until('re-offered to the second', async () => (await row(call.id)).session_id === second, 2000);
+    expect(Date.now() - at).toBeLessThan(5_000);
+    expect((await row(call.id)).offer_count).toBe(2);
+    await drain();
+    expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
+
+    // A hand-over held through a caller's preamble.
+    const ringingAgent = await agent('reserved');
+    bridge.preambleGate = gate().wait; // never opens
+    const held = await caller(c);
+    expect(c.expectHandover(ringingAgent, held.call.id)).toBe(true);
+    expect(await c.takeOnRelease(ringingAgent)).toBe(true);
+    Object.assign(stations.get(ringingAgent)!, { clientKind: 'mobile', canTakeInbound: false });
+    c.onStationCannotTakeInbound(ringingAgent);
+    await until('let go', async () => (await agents.get(ringingAgent))?.inboundCallId === null);
+    await drain();
+    expect(await agents.get(ringingAgent)).toMatchObject({ state: 'available', inboundCallId: null });
+    expect(c.findCallForSession(ringingAgent)).toBeNull();
+  });
+
+  it('a phone that declared caps=inbound can take the hand-over as a console can (IQ20 amended by IQ46)', async () => {
+    const c = connector();
+    const phone = await agent('reserved');
+    Object.assign(stations.get(phone)!, { clientKind: 'mobile', canTakeInbound: true });
+    bridge.preambleGate = gate().wait;
+    const { call } = await caller(c);
+    expect(c.expectHandover(phone, call.id)).toBe(true);
+    // Its dial's end releases it: taken for the call (held through the preamble), never `available`.
+    expect(await c.takeOnRelease(phone)).toBe(true);
+    expect((await agents.get(phone))).toMatchObject({ state: 'reserved', inboundCallId: call.id });
   });
 
   it('`inbound_waiting` holds no team agent for a caller only their busy sticky agent may take; the sticky agent going away (no release ran) hands the caller to the team at the next search', async () => {

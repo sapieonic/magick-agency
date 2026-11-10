@@ -370,7 +370,8 @@ export interface AgencyInboundCall {
 /**
  * Every change of an inbound call offered to or connected with this session, and once more after
  * a station reconnect (right after `ready`). The console plays the inbound chime once per call id,
- * on `offered` (IB1). Never sent to a mobile station (P3).
+ * on `offered` (IB1). Sent only to a station that can take inbound calls
+ * (`AGENCY_STATION_INBOUND_EVENTS`: a console, or a phone that declared `caps=inbound`).
  */
 export interface AgencyStationInboundCallFrame {
   event: 'inbound_call';
@@ -380,7 +381,8 @@ export interface AgencyStationInboundCallFrame {
 /**
  * "Your customer is waiting": a caller sticky to this agent is queued while the agent is reserved,
  * on a call or in wrap-up (§4.3). They are offered the call when they free, ahead of the team.
- * Re-sent after a reconnect while the caller still waits. Never sent to a mobile station (P3).
+ * Re-sent after a reconnect while the caller still waits. Sent only to a station that can take
+ * inbound calls (`AGENCY_STATION_INBOUND_EVENTS`).
  */
 export interface AgencyStationCustomerWaitingFrame {
   event: 'customer_waiting';

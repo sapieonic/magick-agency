@@ -88,7 +88,7 @@ async function member(): Promise<string> {
   return id;
 }
 
-type AgentOpts = { campaign?: string | null; accountId?: string; clientKind?: 'web' | 'mobile'; member?: boolean };
+type AgentOpts = { campaign?: string | null; accountId?: string; clientKind?: 'web' | 'mobile'; canTakeInbound?: boolean; member?: boolean };
 
 /** A live campaign session with a station on this "process", in `state` in Redis. */
 async function agent(state: 'available' | 'wrapup' | 'on_call' | 'reserved' | 'break' | 'offline' = 'available', opts: AgentOpts = {}): Promise<string> {
@@ -98,6 +98,7 @@ async function agent(state: 'available' | 'wrapup' | 'on_call' | 'reserved' | 'b
   stations.add({
     sessionId: session.id as string, campaignId: sessionCampaign, tenantId: T, accountId: opts.accountId ?? A, agentUserId: userId,
     ...(opts.clientKind ? { clientKind: opts.clientKind } : {}),
+    ...(opts.canTakeInbound !== undefined ? { canTakeInbound: opts.canTakeInbound } : {}),
   });
   await agents.set(session.id as string, state, { leaseMs: 60_000 });
   return session.id as string;
@@ -170,7 +171,7 @@ describe('PM-M6: a caller nobody in the pool could take is not held to the maxim
     await overflowedAtOnce(call.id, started);
   });
 
-  it('only agents who will never take them (a break, offline, the phone app, outside the pool, the soft phone, no longer a member): overflowed at once, nobody offered', async () => {
+  it('only agents who will never take them (a break, offline, an app build without caps=inbound, outside the pool, the soft phone, no longer a member): overflowed at once, nobody offered', async () => {
     const pooled = { ...route, pool_campaign_ids: [campaignId] };
     const other = (await insertAgencyCampaign({ tenant_id: T, account_id: A, status: 'running' })).id as string;
     const c = connector();
@@ -186,6 +187,28 @@ describe('PM-M6: a caller nobody in the pool could take is not held to the maxim
     const { call } = await caller(c, {}, pooled);
     await overflowedAtOnce(call.id, started);
     for (const s of sessions) expect(inboundFrames(s), s).toEqual([]);
+  });
+
+  it('a phone that declared caps=inbound is one who could take them: offered the caller as a console is (IQ46)', async () => {
+    const c = connector();
+    const old = await agent('available', { clientKind: 'mobile' });
+    const phone = await agent('available', { clientKind: 'mobile', canTakeInbound: true });
+    // The supervisor's tile counts the capable phone, never the older one.
+    expect(await c.routeAgents(route)).toEqual({ eligible: 1, noneCouldTake: false });
+    const { call } = await caller(c);
+    await until('offered to the capable phone', async () => offersTo(phone) === 1);
+    expect((await row(call.id))).toMatchObject({ state: 'offered', session_id: phone });
+    expect(inboundFrames(old)).toEqual([]);
+    expect(await c.routeAgents(route)).toEqual({ eligible: 0, noneCouldTake: false }); // the phone holds the caller now
+  });
+
+  it('the queue tile: phones without caps=inbound are nobody who could take a caller (no_agents_available), a capable one on a call is (IQ46)', async () => {
+    const c = connector();
+    await agent('available', { clientKind: 'mobile' });
+    await agent('on_call', { clientKind: 'mobile' });
+    expect(await c.routeAgents(route)).toEqual({ eligible: 0, noneCouldTake: true });
+    await agent('on_call', { clientKind: 'mobile', canTakeInbound: true });
+    expect(await c.routeAgents(route)).toEqual({ eligible: 0, noneCouldTake: false });
   });
 
   it('an agent busy with work that ends (on a call, in wrap-up) keeps them waiting; that agent going on a break (no event: the republish) overflows them', async () => {

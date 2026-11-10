@@ -1158,6 +1158,28 @@ repository. Renderer 81 passed, 11 skipped (no local Chrome). `pnpm test:grafana
 certificate chain and the `uuid_generate_v4()` search path are from Supabase's documentation),
 and the server's integration lanes (no Postgres on this machine at the time).
 
+### Inbound calls on the mobile station 2026-11-10 (IQ46, [`inbound.md`](inbound.md) §6 "Mobile stations")
+
+P3's server side: a mobile station that declares `caps=inbound` on its upgrade
+(`client=mobile&media=alaw8&caps=inbound`) is offered inbound callers exactly as a console is, and
+every older app build stays excluded and is never sent the inbound frames. The capability is the
+live socket's (`StationRegistry`'s `canTakeInbound`), and replaces every mobile exclusion
+(eligibility, the release hook, the in-flight clash's hand-over, the could-take count and the
+queue tile, the send filter: `AGENCY_STATION_INBOUND_EVENTS`, renamed from the console-only list).
+A phone silent on a live inbound call is dropped as on a campaign call (M1); an older build
+reattaching to a session holding an offer or a call is handled as a lost station; the device-away
+break queues behind an inbound offer, call and wrap-up. `literals.json` gains
+`station_capabilities` and the ten inbound vocabularies the Dart wire types check (62 in all). No
+migration. The app's screens are pending (the Dart wire types are done).
+Tests: `pnpm lint` clean; server unit 488 files, 9637 passed + 1 expected fail; server integration
+`INTEGRATION_LANE=rest` 250 files (+2 skipped), 2644 passed + 9 expected fail + 2 skipped, `wall-clock` 5 files, 21; contracts 13 files, 463; `agency_wire` `dart test` 595;
+`contracts-literals --check` 62 vocabularies; `pnpm test:tooling` 16. New suites
+`inbound-mobile-e2e` 8 and `inbound-mobile-wall-clock` 2 (wall-clock lane); the connector races +3
+(25), the review fixes +2 (23), eligibility +1 (49), the registry +1 (31), the upgrade +17 (30).
+Eleven guards mutation-checked (each red, then restored). Run on a UTF8 test database: the
+machine's local databases were `SQL_ASCII`, on which `softphone-policy-routes`' emoji case fails
+(`char_length` counts bytes there), whatever the branch.
+
 ## Test counts
 
 Latest run, 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
@@ -1636,9 +1658,11 @@ rounds, IQ25–IQ45). Remaining:
 - **P0**, the live Plivo checks, with a Plivo account: until then the Application, number, Record
   API, hangup and answer-URL shapes (and the 4 s answer budget against Plivo's timeout) are the
   mock carrier's.
-- **P3**: the mobile app's frames (a mobile agent is never offered a call; an all-mobile team sends
-  every caller to Missed calls), pickups from break and the soft phone, the media-worker handover,
-  "press 1 for a callback"; inbound in Insights, agent reports and customer history.
+- **P3**: the mobile app's inbound screens (the server offers a phone callers once its station
+  declares `caps=inbound`, IQ46, and the Dart wire types are done; until the app sends it, a mobile
+  agent is never offered a call and an all-mobile team sends every caller to Missed calls), pickups
+  from break and the soft phone, the media-worker handover, "press 1 for a callback"; inbound in
+  Insights, agent reports and customer history.
 - **P4**: VoiceLink inbound.
 - **Sign-offs**: listening to the seven standard recordings in a call, and their licence (CC BY-SA
   4.0); the voicemail and spine retention for a UK pilot (`AGENCY_RETENTION_DAYS`, deletion on

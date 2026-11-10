@@ -3,7 +3,7 @@ import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   AGENCY_STATION_CLOSE,
-  AGENCY_STATION_CONSOLE_ONLY_EVENTS,
+  AGENCY_STATION_INBOUND_EVENTS,
   type AgencyClientKind,
   type AgencyStationServerFrame,
 } from '@magick-agency/contracts/agency';
@@ -35,6 +35,14 @@ interface StationEntry {
    */
   clientKind: AgencyClientKind;
   /**
+   * Whether this SOCKET can take inbound calls (docs/inbound.md §4.3): every console, and a phone
+   * that declared `caps=inbound` on its upgrade (`stationCanTakeInbound`). Set at every attach, so
+   * a reattach from another device or an older build states its own; never read from the session
+   * row. Decides whether the inbound frames are sent ({@link StationRegistry.send}) and whether the
+   * inbound connector offers the station a caller.
+   */
+  canTakeInbound: boolean;
+  /**
    * Last sign of life: attach, every client `ping`, and — for a `mobile` station only —
    * every protocol pong or ping. Liveness is derived from this.
    */
@@ -42,10 +50,17 @@ interface StationEntry {
 }
 
 /** A station as it was when it detached (`onDetached`): who it was, with no socket. */
-export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind'>>;
+export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind' | 'canTakeInbound'>>;
 
-/** What `attach` takes: the entry, with the client kind defaulting to `web`. */
-export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind'> & { clientKind?: AgencyClientKind };
+/**
+ * What `attach` takes: the entry, with the client kind defaulting to `web` and the inbound
+ * capability to "a console can, a phone cannot" (a phone that declared `caps=inbound` is attached
+ * with it true).
+ */
+export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'canTakeInbound'> & {
+  clientKind?: AgencyClientKind;
+  canTakeInbound?: boolean;
+};
 
 /** The heartbeat grace this station is held to: `heartbeat_grace_ms` for its client kind. */
 export function stationGraceFor(entry: Pick<StationEntry, 'clientKind'>): number {
@@ -110,7 +125,10 @@ export class StationRegistry {
 
   /** Register a newly-opened station socket and claim ownership of the agent. */
   async attach(input: StationAttachInput): Promise<void> {
-    const entry: Omit<StationEntry, 'lastSeen'> = { ...input, clientKind: input.clientKind ?? 'web' };
+    const clientKind = input.clientKind ?? 'web';
+    const entry: Omit<StationEntry, 'lastSeen'> = {
+      ...input, clientKind, canTakeInbound: input.canTakeInbound ?? clientKind !== 'mobile',
+    };
     // Supersede any prior socket for this session (a reconnect that raced the old
     // socket's close). The prior socket is closed so it cannot go on relaying.
     //
@@ -138,7 +156,7 @@ export class StationRegistry {
     this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now() });
     if (entry.clientKind === 'mobile') this.startProbe(entry.sessionId, entry.ws);
     await this.claimOwnership(entry.sessionId);
-    log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind },
+    log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind, canTakeInbound: entry.canTakeInbound },
       'Station socket attached');
     for (const listener of this.attachListeners) {
       try {
@@ -215,7 +233,7 @@ export class StationRegistry {
     this.stopProbe(sessionId);
     const station: StationDetached = {
       sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId,
-      agentUserId: entry.agentUserId, clientKind: entry.clientKind,
+      agentUserId: entry.agentUserId, clientKind: entry.clientKind, canTakeInbound: entry.canTakeInbound,
     };
     for (const listener of this.detachListeners) {
       try { listener(sessionId, station); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
@@ -547,18 +565,21 @@ export class StationRegistry {
    * re-mints and reconnects, and `ready` carries the state again) and this returns false,
    * so a dial tick treats the agent as not there, as for a socket that is gone.
    *
-   * ── Console-only events ─────────────────────────────────────────────────
-   * An event in `AGENCY_STATION_CONSOLE_ONLY_EVENTS` (the inbound call frames) is never sent to a
-   * MOBILE station, whoever asks: the app has no wire type for it yet (docs/inbound.md §4.3, IQ20).
-   * Enforced here, the one send path, so the rule does not rest on every inbound caller of `send`
-   * having already ruled a phone out. Dropped, logged, and answered false (not delivered).
+   * ── The inbound events ──────────────────────────────────────────────────
+   * An event in `AGENCY_STATION_INBOUND_EVENTS` (the inbound call frames) is sent only to a station
+   * that can take inbound calls (`canTakeInbound`: every console, and a phone that declared
+   * `caps=inbound`), whoever asks: an app build that did not declare it has no wire type for them
+   * (docs/inbound.md §4.3, §6; IQ43, IQ46). Enforced here, the one send path, so the rule does not
+   * rest on every inbound caller of `send` having already ruled such a station out. Dropped,
+   * logged, and answered false (not delivered).
    */
   send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
     const entry = this.stations.get(sessionId);
     const ws = entry?.ws;
     if (!ws || ws.readyState !== 1 /* OPEN */) return false;
-    if (entry.clientKind === 'mobile' && isConsoleOnly(frame.event)) {
-      log.warn({ sessionId, event: frame.event }, 'Console-only station frame not sent to a mobile station');
+    if (!entry.canTakeInbound && isInboundEvent(frame.event)) {
+      log.warn({ sessionId, event: frame.event, clientKind: entry.clientKind },
+        'Inbound station frame not sent to a station that cannot take inbound calls');
       return false;
     }
     // "Answer this socket, or answer nobody" — never "answer whoever is here now".
@@ -611,9 +632,9 @@ export class StationRegistry {
   }
 }
 
-const CONSOLE_ONLY: ReadonlySet<string> = new Set(AGENCY_STATION_CONSOLE_ONLY_EVENTS);
+const INBOUND_EVENTS: ReadonlySet<string> = new Set(AGENCY_STATION_INBOUND_EVENTS);
 
-/** Whether `event` is one a mobile station is never sent (`AGENCY_STATION_CONSOLE_ONLY_EVENTS`). */
-function isConsoleOnly(event: AgencyStationServerFrame['event']): boolean {
-  return CONSOLE_ONLY.has(event);
+/** Whether `event` is sent only to a station that can take inbound calls (`AGENCY_STATION_INBOUND_EVENTS`). */
+function isInboundEvent(event: AgencyStationServerFrame['event']): boolean {
+  return INBOUND_EVENTS.has(event);
 }
