@@ -1,10 +1,11 @@
 /// Error bodies: the generic `{error, code?, message, ...}` shape, the agency
-/// action codes, the two structured join refusals, and the soft phone's
-/// refusals (typed accessors over the same body).
+/// action codes, the two structured join refusals, the soft phone's refusals
+/// and the inbound ones (typed accessors over the same body).
 ///
 /// Contract: `packages/contracts/src/errors.ts`, `AgencyActionErrorResponse`
-/// and `AgencySessionCampaignConflict` (`agency/`), and
-/// `AgencySoftphoneErrorResponse` with its narrowed refusals (`agency/softphone.ts`).
+/// and `AgencySessionCampaignConflict` (`agency/`),
+/// `AgencySoftphoneErrorResponse` with its narrowed refusals (`agency/softphone.ts`),
+/// and `AgencyInboundErrorResponse` (`api/agency/inbound.ts`).
 library;
 
 import 'package:meta/meta.dart';
@@ -12,6 +13,7 @@ import 'package:meta/meta.dart';
 import 'assignment.dart';
 import 'enums.dart';
 import 'equality.dart';
+import 'inbound.dart';
 import 'json.dart';
 import 'softphone.dart';
 
@@ -127,6 +129,7 @@ final class ErrorBody {
   }) : code = AgencyErrorCode.fromWire(codeRaw),
        softphoneCode = SoftphoneErrorCode.fromWire(codeRaw),
        agentRetryCode = AgentRetryErrorCode.fromWire(codeRaw),
+       inboundCode = InboundErrorCode.fromWire(codeRaw),
        allowedCodes = allowedCodes == null ? null : List.unmodifiable(allowedCodes),
        details = details == null ? null : List.unmodifiable(details),
        raw = frozenMap(raw);
@@ -175,6 +178,11 @@ final class ErrorBody {
   /// retry, the per-contact call); [AgentRetryErrorCode.unknown] when absent
   /// or not one of those codes. Read this on those routes only.
   final AgentRetryErrorCode agentRetryCode;
+
+  /// [codeRaw] as an inbound refusal code; [InboundErrorCode.unknown] when
+  /// absent or not an inbound code. Read this on the inbound call and Missed
+  /// routes, and on the campaign session routes for `inbound_call_live`.
+  final InboundErrorCode inboundCode;
 
   /// The values that ARE accepted; read against [code], never generically.
   final List<String>? allowedCodes;
@@ -246,6 +254,29 @@ final class ErrorBody {
     }
     final call = ManualCall.tryFromJson(raw['call']);
     return call == null ? null : SoftphoneCallPendingRefusal(code: softphoneCode, call: call, message: message);
+  }
+
+  /// `inbound_disposition_invalid`, with the rule that refused and (for an
+  /// unknown code) the codes the call's catalog takes. Null for any other code.
+  InboundDispositionRefusal? get inboundDispositionInvalid {
+    if (inboundCode != InboundErrorCode.inboundDispositionInvalid) return null;
+    final rule = raw['reason'] is String ? raw['reason']! as String : null;
+    final callId = raw['inbound_call_id'];
+    return InboundDispositionRefusal(
+      rule: InboundDispositionRule.fromWire(rule),
+      ruleRaw: rule,
+      allowedCodes: allowedCodes,
+      inboundCallId: callId is String ? callId : null,
+      message: message,
+    );
+  }
+
+  /// `inbound_call_live`, when this is one and it names the call. A body
+  /// without `inbound_call_id` is null here; [inboundCode] still says what happened.
+  InboundCallLiveRefusal? get inboundCallLive {
+    if (inboundCode != InboundErrorCode.inboundCallLive) return null;
+    final callId = raw['inbound_call_id'];
+    return callId is String ? InboundCallLiveRefusal(inboundCallId: callId, message: message) : null;
   }
 
   @override

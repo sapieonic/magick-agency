@@ -12,6 +12,7 @@ export 'src/customer_history.dart';
 export 'src/customer_search_number.dart';
 export 'src/enums.dart' hide wireIndex;
 export 'src/errors.dart';
+export 'src/inbound.dart';
 export 'src/json.dart' show WireFormatException;
 export 'src/platform.dart';
 export 'src/reads.dart';

@@ -6,9 +6,9 @@
 /// (`stateRaw`, `reasonRaw`, ...) for logs and fallback copy.
 ///
 /// `test/literals_test.dart` checks every wire enum of this package (these, plus
-/// `StationEvent`, `AgencyErrorCode`, `SoftphoneErrorCode`, `SessionRefusalCode`
-/// and the station close codes) against `packages/contracts/fixtures/agent/literals.json`, which is
-/// extracted from the TypeScript sources: each TypeScript literal must be a
+/// `StationEvent`, `AgencyErrorCode`, `SoftphoneErrorCode`, `InboundErrorCode`,
+/// `SessionRefusalCode` and the station close codes) against
+/// `packages/contracts/fixtures/agent/literals.json`, which is extracted from the TypeScript sources: each TypeScript literal must be a
 /// value here, and, where the enum mirrors its vocabulary one to one or the app
 /// sends the value, each value here must still be a TypeScript literal.
 library;
@@ -888,4 +888,250 @@ enum CustomerHistoryErrorCode implements WireEnum {
 
   static final _byWire = wireIndex(values);
   static CustomerHistoryErrorCode fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+// ─── Inbound calls (`agency/inbound.ts`, `api/agency/inbound.ts`) ──────────
+
+/// Where an inbound call is. A station only ever sees `offered`, `connected`
+/// and `ended` (a call reaches it once offered to it); the earlier states are
+/// listed so the vocabulary mirrors the contract.
+///
+/// Contract: `AgencyInboundCallState` / `AGENCY_INBOUND_CALL_STATES`.
+enum InboundCallState implements WireEnum {
+  arrived('arrived'),
+  greeting('greeting'),
+  queued('queued'),
+
+  /// The panel is up; audio binds at the call's `connects_at`.
+  offered('offered'),
+
+  /// Bridged: audio both ways.
+  connected('connected'),
+
+  /// Terminal.
+  ended('ended'),
+  unknown('');
+
+  const InboundCallState(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundCallState fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// How an inbound call ended (set exactly when `ended`). A call a station
+/// held ends `answered`; the others are what a Missed row's call ended as.
+///
+/// Contract: `AgencyInboundCallOutcome` / `AGENCY_INBOUND_CALL_OUTCOMES`.
+enum InboundCallOutcome implements WireEnum {
+  answered('answered'),
+  abandonedInQueue('abandoned_in_queue'),
+  overflow('overflow'),
+  overflowNoCapacity('overflow_no_capacity'),
+  closed('closed'),
+  voicemail('voicemail'),
+  rejected('rejected'),
+  failed('failed'),
+  unknown('');
+
+  const InboundCallOutcome(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundCallOutcome fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Which signal named the caller's sticky agent.
+///
+/// Contract: `AgencyInboundStickyReason` / `AGENCY_INBOUND_STICKY_REASONS`.
+enum InboundStickyReason implements WireEnum {
+  /// The matched contact is this agent's (contact assignment).
+  owner('owner'),
+
+  /// The agent's latest call to the number went out from the number rung.
+  lastFromNumber('last_from_number'),
+
+  /// The last agent who spoke to the customer.
+  lastConnected('last_connected'),
+
+  /// The last agent who dialled them, unanswered.
+  lastDialled('last_dialled'),
+  unknown('');
+
+  const InboundStickyReason(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundStickyReason fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Which catalog an inbound call's outcome panel offers: the matched
+/// campaign's, the route's own, or the built-in one (a route with none).
+///
+/// Contract: `AgencyInboundCatalogSource` / `AGENCY_INBOUND_CATALOG_SOURCES`.
+enum InboundCatalogSource implements WireEnum {
+  campaign('campaign'),
+  route('route'),
+  builtin('builtin'),
+  unknown('');
+
+  const InboundCatalogSource(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundCatalogSource fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Why a call on the Missed list reached nobody. The app also SENDS these as
+/// the list's `reason=` filter.
+///
+/// Contract: `AgencyInboundMissedReason` / `AGENCY_INBOUND_MISSED_REASONS`.
+enum InboundMissedReason implements WireEnum {
+  /// Answered as closed: [InboundClosedCause] says why.
+  closed('closed'),
+
+  /// The caller hung up while waiting.
+  abandonedInQueue('abandoned_in_queue'),
+
+  /// Nobody free to answer (the wait or queue limit, or nobody in the pool).
+  overflow('overflow'),
+
+  /// All lines busy (over the route's or the account's call limits).
+  overflowNoCapacity('overflow_no_capacity'),
+
+  /// Our side could not serve the call.
+  failed('failed'),
+  unknown('');
+
+  const InboundMissedReason(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundMissedReason fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// A Missed row's status. The app also SENDS these as the list's `status=`
+/// filter (the server's default is `open`).
+///
+/// Contract: `AgencyInboundFollowUpStatus` / `AGENCY_INBOUND_FOLLOW_UP_STATUSES`.
+enum InboundFollowUpStatus implements WireEnum {
+  open('open'),
+  handled('handled'),
+  unknown('');
+
+  const InboundFollowUpStatus(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundFollowUpStatus fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// How a Missed row was handled: `marked` by a person, or `reached` (the
+/// customer was put through to an agent of the account afterwards).
+///
+/// Contract: `AgencyInboundHandledReason` / `AGENCY_INBOUND_HANDLED_REASONS`.
+enum InboundHandledReason implements WireEnum {
+  marked('marked'),
+  reached('reached'),
+  unknown('');
+
+  const InboundHandledReason(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundHandledReason fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Why a `closed` Missed row's caller was answered as closed.
+///
+/// Contract: `AgencyInboundClosedCause` / `AGENCY_INBOUND_CLOSED_CAUSES`.
+enum InboundClosedCause implements WireEnum {
+  /// Outside the route's opening hours, or on a holiday.
+  hours('hours'),
+
+  /// The account's inbound flag is off.
+  switchedOff('switched_off'),
+
+  /// The number rung reaches no route.
+  noRoute('no_route'),
+
+  /// The carrier credential the call arrived on is not active.
+  credentialInactive('credential_inactive'),
+  unknown('');
+
+  const InboundClosedCause(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundClosedCause fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Which rule refused an inbound call's outcome (`inbound_disposition_invalid`'s
+/// `reason`): the soft phone's four.
+///
+/// Contract: `AgencyInboundErrorResponse['reason']` (`api/agency/inbound.ts`).
+enum InboundDispositionRule implements WireEnum {
+  /// The code is not in the call's catalog; `allowed_codes` lists the ones that are.
+  unknownCode('unknown_code'),
+  noteRequired('note_required'),
+  datetimeRequired('datetime_required'),
+  invalidCallbackAt('invalid_callback_at'),
+  unknown('');
+
+  const InboundDispositionRule(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundDispositionRule fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// What a station takes beyond its session's own work, declared on the
+/// station upgrade as `caps=` (comma-separated). The app sends `caps=inbound`
+/// so the server offers it inbound calls (`inbound_call`, `customer_waiting`).
+///
+/// Contract: `AGENCY_STATION_CAPABILITIES` (`agency/station.ts`).
+enum StationCapability implements WireEnum {
+  /// Inbound calls are offered to this station.
+  inbound('inbound'),
+  unknown('');
+
+  const StationCapability(this.wire);
+  @override
+  final String wire;
+
+  /// The station upgrade's query parameter.
+  static const queryKey = 'caps';
+
+  static final _byWire = wireIndex(values);
+  static StationCapability fromWire(String? raw) => _byWire[raw] ?? unknown;
+
+  /// The `caps=` value for [caps]: known members only, each once, in
+  /// declaration order, comma-separated. Empty when none is left.
+  static String queryValue(Iterable<StationCapability> caps) {
+    final want = caps.toSet();
+    return [
+      for (final c in values)
+        if (!c.isUnknown && want.contains(c)) c.wire,
+    ].join(',');
+  }
+
+  /// [query] with `caps=` set for [caps], replacing any already there; left
+  /// off (never sent empty) when [queryValue] is empty.
+  static Map<String, String> withQuery(Map<String, String> query, Iterable<StationCapability> caps) {
+    final value = queryValue(caps);
+    return <String, String>{
+      for (final e in query.entries)
+        if (e.key != queryKey) e.key: e.value,
+      if (value.isNotEmpty) queryKey: value,
+    };
+  }
 }

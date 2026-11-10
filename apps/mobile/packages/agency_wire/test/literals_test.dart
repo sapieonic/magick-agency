@@ -73,6 +73,27 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'customer_history_error_codes': CustomerHistoryErrorCode.values,
 };
 
+/// Vocabularies the Dart enums mirror but `tooling/contracts-literals.mjs`
+/// does not extract yet: inbound calls and the station's `caps=`. Each is
+/// checked exactly like [dartVocabularies] (and [appSends]) once literals.json
+/// carries it under this name, and skipped until then. When the extractor
+/// gains one, move its entry up into [dartVocabularies].
+final Map<String, List<WireEnum>> awaitingExtraction = {
+  // `agency/station.ts#AGENCY_STATION_CAPABILITIES`: the app sends `caps=inbound`.
+  'station_capabilities': StationCapability.values,
+  // `agency/inbound.ts`, `errors.ts` and `api/agency/inbound.ts`.
+  'inbound_call_states': InboundCallState.values,
+  'inbound_call_outcomes': InboundCallOutcome.values,
+  'inbound_sticky_reasons': InboundStickyReason.values,
+  'inbound_catalog_sources': InboundCatalogSource.values,
+  'inbound_missed_reasons': InboundMissedReason.values,
+  'inbound_follow_up_statuses': InboundFollowUpStatus.values,
+  'inbound_handled_reasons': InboundHandledReason.values,
+  'inbound_closed_causes': InboundClosedCause.values,
+  'inbound_error_codes': InboundErrorCode.values,
+  'inbound_disposition_rules': InboundDispositionRule.values,
+};
+
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
 /// Dart → TypeScript direction is checked by its own test below instead.
 const notOneToOne = {
@@ -122,6 +143,17 @@ final Map<String, List<WireEnum>> appSends = {
     for (final c in CustomerTimelineChannel.values)
       if (!c.isUnknown) c,
   ],
+  // Awaiting extraction (see [awaitingExtraction]): the station upgrade's
+  // `caps=`, and the Missed list's `status=` and `reason=` filters.
+  'station_capabilities': [StationCapability.inbound],
+  'inbound_follow_up_statuses': [
+    for (final v in InboundFollowUpStatus.values)
+      if (!v.isUnknown) v,
+  ],
+  'inbound_missed_reasons': [
+    for (final v in InboundMissedReason.values)
+      if (!v.isUnknown) v,
+  ],
 };
 
 String _camel(String screaming) {
@@ -138,7 +170,7 @@ void main() {
 
   test('literals.json has the vocabularies this suite expects', () {
     expect(vocabularies.keys, containsAll(dartVocabularies.keys));
-    expect(vocabularies.keys.toSet(), {
+    expect(vocabularies.keys.toSet().difference(awaitingExtraction.keys.toSet()), {
       ...dartVocabularies.keys,
       'station_close_codes',
     }, reason: 'a vocabulary was added to tooling/contracts-literals.mjs: map it to a Dart enum here');
@@ -146,7 +178,14 @@ void main() {
 
   List<String> ts(String name) => (vocabularies[name]!['values']! as List<Object?>).cast<String>();
 
-  for (final MapEntry(key: name, value: dartValues) in dartVocabularies.entries) {
+  // The mapped vocabularies, plus each awaited one literals.json already carries.
+  final checked = <String, List<WireEnum>>{
+    ...dartVocabularies,
+    for (final e in awaitingExtraction.entries)
+      if (vocabularies.containsKey(e.key)) e.key: e.value,
+  };
+
+  for (final MapEntry(key: name, value: dartValues) in checked.entries) {
     test('$name: every TypeScript literal is a known Dart value', () {
       final ts = (vocabularies[name]!['values']! as List<Object?>).cast<String>();
       expect(ts, isNotEmpty);
@@ -162,7 +201,7 @@ void main() {
     });
   }
 
-  for (final MapEntry(key: name, value: dartValues) in dartVocabularies.entries) {
+  for (final MapEntry(key: name, value: dartValues) in checked.entries) {
     if (notOneToOne.contains(name)) continue;
     test('$name: every Dart value is still a TypeScript literal', () {
       final declared = ts(name).toSet();
@@ -179,7 +218,8 @@ void main() {
   }
 
   for (final MapEntry(key: name, value: sent) in appSends.entries) {
-    test('$name: every value the app sends is still declared', () {
+    final awaited = awaitingExtraction.containsKey(name) && !vocabularies.containsKey(name);
+    test('$name: every value the app sends is still declared', skip: awaited ? 'not extracted yet' : false, () {
       expect(sent, isNotEmpty);
       final declared = ts(name).toSet();
       for (final v in sent) {

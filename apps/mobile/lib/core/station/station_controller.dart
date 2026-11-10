@@ -618,6 +618,10 @@ class StationController extends Notifier<StationView?>
         _log.debug('bridge status', {'status': statusRaw});
       case BridgeEndedFrame():
         _log.debug('bridge ended');
+      case InboundCallFrame() || CustomerWaitingFrame():
+        // Inbound calls: sent only to a station that declares `caps=inbound`, which this build
+        // does not yet; never logged whole (they can hold caller and contact data).
+        _log.debug('inbound frame not handled', {'event': frame.event.wire});
       case UnknownFrame(:final eventRaw, :final reason):
         // Expected after a server deploy; never logged whole (it can hold contact data).
         _log.debug('unknown frame', {'event': eventRaw ?? '', 'reason': reason});
