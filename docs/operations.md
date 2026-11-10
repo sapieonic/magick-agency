@@ -1081,6 +1081,47 @@ callers in the access logs.
 (SSM is the source; mid-rotation it prints both) and recreate the server, then let users re-run
 what failed meanwhile.
 
+## What CI runs
+
+A pull request runs what its diff reaches, not everything: the full server unit suite alone is
+about 100 s, and the integration lanes are the longest jobs. `tooling/ci-scope.mjs` reads the
+diff against the merge base and picks:
+
+| Change | Runs |
+|---|---|
+| Files of a workspace package (prose `*.md` aside) | `lint`, `test` and `build` of that package and of every workspace package that depends on it |
+| A file outside a package that its suites read (`READ_BY`: `tooling/test-env.ts` and `tooling/vitest-decorator-transform.ts` for db and server, `tooling/contracts-literals.*` for contracts, `apps/server/test/fixtures/` for the console, `apps/server/src/api/routes/` and `apps/console/brands/` for the super-admin console) | as a change to that package |
+| `packages/db` in scope (itself or a dependency changed) | the `db` integration lane |
+| `apps/server` in scope (itself or any dependency, contracts and domain included) | the `server` and `server wall-clock` lanes |
+| Anything, while the server's suite is not in scope | the server's repository guards on their own (`SERVER_REPO_GUARDS`: branding over the whole tree, the route tables and CORS over the web UIs, the docker/ packaging; about 7 s) |
+| `grafana/`, `apps/server/src/`, any `packages/<name>/src/` (the stray-instrument scan) | `pnpm test:grafana` |
+| The release-please config, the manifest, a `package.json` or `pubspec.yaml` | `pnpm test:release` |
+| `apps/mobile/`, `packages/contracts/`, the literal extractor, `customer-search-number.ts`, `mobile.yml` | the Mobile workflow |
+| A shared root file (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `.npmrc`, `.nvmrc`), `ci.yml` or `tooling/ci-scope.mjs` | everything in CI (not the Mobile workflow) |
+| Anything else (`docs/`, `aws/`, the other workflows) | the repository guards only |
+
+So a console change runs the console's suites and the server's guards, and no integration; a
+contracts change runs nearly everything. A docs-only change runs the guards only.
+
+**Everything** runs on every push to `main`, on a manual run of CI (Actions, CI, "Run workflow";
+the Mobile workflow has no manual run) and on a pull request labelled **`full-ci`**, which also
+runs the Mobile workflow. Adding the label starts the run. Adding any other label starts a new
+run of the same scope: skipping that run would report its checks as skipped, which reads as
+passing over an earlier failure. "Re-run jobs" replays the original event, so it keeps the labels
+the run started with. The run's summary page shows the scope it picked and why.
+
+The jobs after the scope job fail when it fails (a skipped job counts as passing for a required
+check), and a lane out of scope passes without starting its Postgres and Redis containers.
+
+`pnpm test:tooling` (`tooling/ci-scope.test.mjs`, also run in the scope job) holds the rules, and
+finds every path a package's code, tests and config name outside the package: `../` literals
+(TypeScript `.js` specifiers read as their `.ts` sources) and `join` / `resolve` calls with `'..'`
+segments, from the file's folder or the package (`process.cwd()`). Each must land in a
+dependency, a shared root file, a `READ_BY` rule for that package or a server repository guard,
+or the suite fails, so a new test that reads another package's files adds its rule in the same
+change. A path built some other way (the branding guards walk up with `dirname`) is not seen; a
+server test that reads that way belongs in `SERVER_REPO_GUARDS`.
+
 ## Releases and versioning
 
 Every workspace package has its own semantic version, tag, GitHub Release and `CHANGELOG.md`,
@@ -1200,7 +1241,10 @@ Set once in the repository settings, not in code:
   as one more commit, so a PR description can add changelog entries nobody meant to write.
 - **Branch protection on `main`**: require the "Conventional Commit title" check (and CI). Without
   it the title check is advice, and a PR with a non-conventional title still merges and releases
-  nothing.
+  nothing. CI's job names do not change with its scope ("What CI runs"), and a job or lane out of
+  scope reports skipped or passes, so the same required checks hold on every pull request. If the
+  scope jobs are required too, they are "CI scope" and "Mobile scope".
+- **A `full-ci` label** in the repository's labels, so a pull request can ask for every check.
 - **Actions → General → Workflow permissions**: allow GitHub Actions to create and approve pull
   requests, or the workflow cannot open the release PR.
 - **Optional `RELEASE_PLEASE_TOKEN` secret** (a fine-grained token or GitHub App token with

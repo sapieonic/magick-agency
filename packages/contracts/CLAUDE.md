@@ -35,5 +35,5 @@ the test.
   ```
 
   `test/agent-fixtures.test.ts` fails `pnpm test` on a stale file, and the mobile CI job
-  (path-filtered on this package) runs the Dart side. The extractor only reads plain literal
+  (which every change to this package runs) runs the Dart side. The extractor only reads plain literal
   unions, `as const` lists and objects: keep those declarations plain.

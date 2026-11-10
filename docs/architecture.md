@@ -963,13 +963,18 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
 
 ## CI
 
-`.github/workflows/ci.yml`, on pull requests and pushes to `main`: job 1 installs `mpg123` and
-`sndfile-programs`, then runs `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm test` and
-`pnpm build`; the integration job runs as three parallel jobs, each against its own Postgres 16
-and Redis 7 service containers mapped to 5436 and 6383: `packages/db`, the server suite, and the
-server's wall-clock lane (the files that wait on real timers, listed in
-`apps/server/vitest.config.integration.ts` and selected by `INTEGRATION_LANE`). Job 1 also runs
-`pnpm test:grafana` and `pnpm test:release`.
+`.github/workflows/ci.yml`, on pull requests and pushes to `main`. A scope job runs
+`tooling/ci-scope.mjs` over the pull request's diff and picks what the rest run
+([`operations.md`](operations.md), "What CI runs"); on `main`, on a manual run and on a pull
+request labelled `full-ci` it picks everything. Job 1 installs `mpg123` and `sndfile-programs`
+(when the server's suite is in scope), then runs `pnpm install --frozen-lockfile`, and `lint`,
+`test` and `build` filtered to the packages in scope; `pnpm test:grafana` and `pnpm test:release`
+when their inputs change; and the server's repository guards on their own when the server's
+suite is not in scope. The integration job runs as three parallel jobs, each against its own
+Postgres 16 and Redis 7 service containers mapped to 5436 and 6383: `packages/db`, the server
+suite, and the server's wall-clock lane (the files that wait on real timers, listed in
+`apps/server/vitest.config.integration.ts` and selected by `INTEGRATION_LANE`); a lane whose
+package is not in scope skips its steps.
 
 `.github/workflows/pr-title.yml` fails a PR whose title is not a Conventional Commit, and
 `.github/workflows/release-please.yml` runs release-please on every push to `main`: one release PR

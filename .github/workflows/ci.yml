@@ -1,15 +1,80 @@
 name: CI
 
+# What runs is picked from the files a pull request changes (tooling/ci-scope.mjs,
+# docs/operations.md "What CI runs"): lint, unit tests and build for the changed packages and
+# their dependents, and the integration lanes only when a backend package is among them.
+# The `full-ci` label, a manual run and every push to main run everything.
+#
+# Job names never change with the scope, and the integration matrix is never skipped as a
+# whole: a skipped matrix job reports one check under its unexpanded name, which leaves a
+# required "Integration (db)" check waiting forever. Its steps are skipped instead. Every job
+# after the scope fails when the scope job failed: a skipped job counts as passing for a
+# required check, so a broken scope must not skip its way to green.
+#
+# Adding any label starts a new run (only `full-ci` widens it): skipping the run for other
+# labels would report the checks as skipped, which reads as passing over an earlier failure.
+
 on:
   pull_request:
+    # `labeled`: adding `full-ci` starts the full run straight away.
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
+  workflow_dispatch:
+
+# A newer push (or label) to the same pull request replaces the run in progress. Pushes to
+# main are grouped by commit, so none of them is cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: CI scope
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      any: ${{ steps.scope.outputs.any }}
+      filters: ${{ steps.scope.outputs.filters }}
+      server: ${{ steps.scope.outputs.server }}
+      integration: ${{ steps.scope.outputs.integration }}
+      server_guards: ${{ steps.scope.outputs.server_guards }}
+      server_guard_files: ${{ steps.scope.outputs.server_guard_files }}
+      grafana: ${{ steps.scope.outputs.grafana }}
+      release: ${{ steps.scope.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the diff is against the merge base with the target branch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pick the scope
+        id: scope
+        env:
+          FULL: >-
+            ${{ github.event_name != 'pull_request'
+            || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$FULL" = "true" ]; then
+            node tooling/ci-scope.mjs --full
+          else
+            node tooling/ci-scope.mjs --base "$BASE" --head HEAD
+          fi
+      # The scope script's own guard: milliseconds, no install.
+      - run: node --test tooling/ci-scope.test.mjs
+
   lint-test:
     name: Lint, unit tests, build
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    env:
+      FILTERS: ${{ needs.changes.outputs.filters }}
     steps:
+      - if: needs.changes.result != 'success'
+        run: echo "::error::The CI scope job did not succeed, so nothing here can be trusted to pass." && exit 1
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -18,39 +83,60 @@ jobs:
           cache: pnpm
       # Real decoders for apps/server/test/unit/audio/decode.test.ts, which fails
       # (rather than skips) under CI when they are missing.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
+      - if: needs.changes.outputs.server == 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
       - run: pnpm install --frozen-lockfile
-      # lint = tsc --noEmit over src AND test in every package (tests are typechecked).
-      - run: pnpm lint
-      - run: pnpm test
+      # lint = tsc --noEmit over src AND test in every package in scope (tests are typechecked).
+      - if: needs.changes.outputs.any == 'true'
+        run: pnpm --workspace-concurrency=4 $FILTERS run lint
+      - if: needs.changes.outputs.any == 'true'
+        run: pnpm --workspace-concurrency=4 $FILTERS run test
+      # The server tests that read the web UIs, docker/ and the whole repository (docs/
+      # included), when the server's own suite is not in scope.
+      - name: Server repository guards
+        if: needs.changes.outputs.server_guards == 'true'
+        working-directory: apps/server
+        run: pnpm exec vitest run ${{ needs.changes.outputs.server_guard_files }}
       # Alert rules and dashboard vs the metric declarations (grafana/README.md).
-      - run: pnpm test:grafana
+      - if: needs.changes.outputs.grafana == 'true'
+        run: pnpm test:grafana
       # release-please config vs the workspace packages and their versions (docs/operations.md).
-      - run: pnpm test:release
-      - run: pnpm build
+      - if: needs.changes.outputs.release == 'true'
+        run: pnpm test:release
+      - if: needs.changes.outputs.any == 'true'
+        # --if-present: only the apps have a build script, and the scope may hold none of them.
+        run: pnpm $FILTERS run --if-present build
 
   # One job per section, in parallel. Each job has its own Postgres and Redis, so the
   # sections cannot truncate each other. The wall-clock lane is the files that wait on
   # real timers (apps/server/vitest.config.integration.ts).
   integration:
     name: Integration (${{ matrix.section }})
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - section: db
+            scope: db
             dir: packages/db
             lane: ''
           - section: server
+            scope: server
             dir: apps/server
             lane: rest
           - section: server wall-clock
+            scope: server
             dir: apps/server
             lane: wall-clock
+    env:
+      IN_SCOPE: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] }}
+    # An empty image starts no service container: a lane out of scope does not pay for them.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] && 'postgres:16-alpine' || '' }}
         env:
           POSTGRES_DB: magick_agency_test
           POSTGRES_USER: magick_agency
@@ -61,24 +147,33 @@ jobs:
           --health-cmd "pg_isready -U magick_agency -d magick_agency_test"
           --health-interval 2s --health-timeout 5s --health-retries 20
       redis:
-        image: redis:7-alpine
+        image: ${{ fromJSON(needs.changes.outputs.integration || '{}')[matrix.scope] && 'redis:7-alpine' || '' }}
         ports: ['6383:6379']
         options: >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - if: needs.changes.result != 'success'
+        run: echo "::error::The CI scope job did not succeed, so this lane cannot be skipped as out of scope." && exit 1
+      - if: needs.changes.result == 'success' && env.IN_SCOPE != 'true'
+        run: echo "No backend change in scope; add the full-ci label to run this lane."
+      - if: env.IN_SCOPE == 'true'
+        uses: actions/checkout@v4
+      - if: env.IN_SCOPE == 'true'
+        uses: pnpm/action-setup@v4
+      - if: env.IN_SCOPE == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       # Real decoders for the server's recording uploads
       # (test/integration/api/inbound-clips-routes.test.ts decodes a real WAV).
-      - if: matrix.dir == 'apps/server'
+      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
-      - run: pnpm install --frozen-lockfile
+      - if: env.IN_SCOPE == 'true'
+        run: pnpm install --frozen-lockfile
       # From inside the package directory: dotenv resolves from cwd.
-      - run: pnpm test:integration
+      - if: env.IN_SCOPE == 'true'
+        run: pnpm test:integration
         working-directory: ${{ matrix.dir }}
         env:
           INTEGRATION_LANE: ${{ matrix.lane }}

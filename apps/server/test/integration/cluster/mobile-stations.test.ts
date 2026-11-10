@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import Redis from 'ioredis';
 import { closePool, initDbPool } from '@magick-agency/db';
 import { MOBILE_STATION_HEARTBEAT_GRACE_MS, MOBILE_STATION_PROBE_MS, STATION_HEARTBEAT_SWEEP_MS, DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
@@ -60,6 +60,8 @@ interface Rig {
 
 let rig: Rig;
 let contactSeq = 0;
+/** Every agent a test joins, so `afterEach` takes them out of the pool even when the test fails. */
+const joined: MobileAgent[] = [];
 const rng = createRng(7171);
 
 async function startRig(): Promise<Rig> {
@@ -124,9 +126,11 @@ async function newAgent(): Promise<MobileAgent> {
     'INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)',
     [rig.tenantId, rig.accountId, rig.campaignId, user.id],
   );
-  return new MobileAgent(rig.server.origin, rig.emulator, {
+  const agent = new MobileAgent(rig.server.origin, rig.emulator, {
     userId: user.id as string, firebaseUid: user.firebase_uid as string, tenantId: rig.tenantId, accountId: rig.accountId,
   });
+  joined.push(agent);
+  return agent;
 }
 
 /** An agent joined, whose session hashes to `slot`, with its station open (`ready`). */
@@ -196,13 +200,25 @@ function carrierCallFor(attempt: AttemptRow): CarrierCall {
 }
 
 describe('mobile stations in multi-process mode: the real server as a primary and two workers', () => {
-  const retired: MobileAgent[] = [];
   beforeAll(async () => {
     initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 8 });
     rig = await startRig();
   }, 120_000);
+  // The tests share one campaign, and pacing hands a call to whoever has waited longest. A
+  // test that fails before its own `leave()` would leave an available phone (and contacts
+  // still due) that take the next test's calls, failing every test after it. So each test's
+  // phones leave, and any contact still due is pushed a day out, whatever the outcome.
+  // (`leave` is idempotent: a test that already left its phones costs nothing here.)
+  afterEach(async () => {
+    await Promise.all(joined.splice(0).map((a) => a.leave()));
+    if (rig) {
+      await getTestPool().query(
+        `UPDATE agency_contacts SET next_attempt_at = now() + INTERVAL '1 day' WHERE campaign_id = $1 AND state = 'pending'`,
+        [rig.campaignId],
+      );
+    }
+  }, 60_000);
   afterAll(async () => {
-    await Promise.all(retired.map((a) => a.leave()));
     if (rig) {
       const stopped = rig.server.child.exitCode === null ? await rig.server.stop() : null;
       await rig.carrier.stop?.();
@@ -225,7 +241,10 @@ describe('mobile stations in multi-process mode: the real server as a primary an
       expect((await sessionRow(a.sessionId)).client_kind).toBe('mobile');
     }
     await dark.available();
-    expect((await rig.states.get(dark.sessionId))?.state).toBe('available');
+    // In the pool. Waited for, not read once: in `pool` mode every pacing tick reserves each
+    // available agent before it finds no contact due and hands them back, so a single read
+    // can land in that brief `reserved` (about 0.7% of reads here, more on a loaded box).
+    await until('the dark phone available', 5_000, async () => (await rig.states.get(dark.sessionId))?.state === 'available');
     const attachedAt = Date.now();
 
     // The dark phone answers its first probe ping, then goes silent.
@@ -272,13 +291,11 @@ describe('mobile stations in multi-process mode: the real server as a primary an
     await until('the returned phone heard the customer', 10_000, () => back.heard > 50);
     await until('the call over', 20_000, async () => (await attemptsForContact(contact))[0]!.state === 'ended');
     back.stopTalking();
-    retired.push(dark, ...steady);
     await Promise.all([...steady, dark].map((a) => a.leave()));
   }, 120_000);
 
   it('media=alaw8 with client=mobile: 20 ms, 160-byte binary frames both ways through each worker', async () => {
     const phones = [await joinedOn(0), await joinedOn(1)];
-    retired.push(...phones);
     for (const p of phones) { p.leg.startAppPings(); p.leg.startTalking(); }
     await addContact(300);
     await addContact(300);
@@ -323,7 +340,6 @@ describe('mobile stations in multi-process mode: the real server as a primary an
   it('M1 inside a worker: a phone silent mid-call is terminated; back within 8 s it resumes the call on the same worker, otherwise the call ends', async () => {
     const back = await joinedOn(0);
     const gone = await joinedOn(1);
-    retired.push(back, gone);
     for (const p of [back, gone]) { p.leg.startAppPings(); p.leg.startTalking(); }
     await addContact(3_000);
     await addContact(3_000);
@@ -393,7 +409,6 @@ describe('mobile stations in multi-process mode: the real server as a primary an
   it("device_away reaches the owning worker: an available phone is paused at once and not reserved; one on a call is paused when the call ends", async () => {
     const idle = await joinedOn(0);
     const busy = await joinedOn(1);
-    retired.push(idle, busy);
     for (const p of [idle, busy]) p.leg.startAppPings();
     await idle.available();
 

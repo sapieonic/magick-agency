@@ -1,18 +1,17 @@
 name: Mobile
 
-# The agent app (apps/mobile, Flutter). Path-filtered: a server-only change does not pay for it.
-# packages/contracts is in the filter because the app's wire types are checked against its
-# fixtures and literal unions (packages/contracts/fixtures/agent, tooling/contracts-literals.mjs).
-# packages/domain/src/customer-search-number.ts is in it because agency_wire's
-# customer_search_number.dart is a hand port of it, held to the same table (docs/customer-history.md).
+# The agent app (apps/mobile, Flutter). Scoped: a server-only change does not pay for it.
+# A pull request runs it when it touches the app or what the app's wire types are checked
+# against (MOBILE_PREFIXES in tooling/ci-scope.mjs: packages/contracts and its fixtures, the
+# literal extractor tooling/contracts-literals.mjs, and packages/domain/src/customer-search-number.ts,
+# which agency_wire's customer_search_number.dart ports, held to the same table,
+# docs/customer-history.md), or when it carries the `full-ci` label. The pull request trigger
+# has no path filter because a path filter cannot be lifted by a label; the scope job decides,
+# and the jobs it skips report as skipped under their own names. Pushes to main keep the
+# path filter. Adding any label starts a new run (only `full-ci` widens it); see ci.yml.
 on:
   pull_request:
-    paths:
-      - apps/mobile/**
-      - packages/contracts/**
-      - tooling/contracts-literals.mjs
-      - packages/domain/src/customer-search-number.ts
-      - .github/workflows/mobile.yml
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
     paths:
@@ -22,18 +21,54 @@ on:
       - packages/domain/src/customer-search-number.ts
       - .github/workflows/mobile.yml
 
+concurrency:
+  group: mobile-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # One pinned SDK for CI and every developer (apps/mobile/README.md).
   FLUTTER_VERSION: 3.47.7
 
 jobs:
+  changes:
+    name: Mobile scope
+    runs-on: ubuntu-latest
+    outputs:
+      mobile: ${{ steps.scope.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pick the scope
+        id: scope
+        env:
+          # A push to main got here through the path filter above.
+          FULL: >-
+            ${{ github.event_name != 'pull_request'
+            || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$FULL" = "true" ]; then
+            node tooling/ci-scope.mjs --full
+          else
+            node tooling/ci-scope.mjs --base "$BASE" --head HEAD
+          fi
+
   analyze-test:
     name: Analyze, test, contract drift
+    needs: changes
+    # Runs (and fails) when the scope job failed: a skipped job would read as passing.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mobile == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/mobile
     steps:
+      - if: needs.changes.result != 'success'
+        run: echo "::error::The Mobile scope job did not succeed." && exit 1
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
