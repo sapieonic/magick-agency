@@ -71,10 +71,6 @@ export function getTelephonyInboundService(): TelephonyInboundService {
   return inboundService;
 }
 
-export function setTelephonyInboundServiceForTests(s: TelephonyInboundService | null): void {
-  inboundService = s;
-}
-
 export { TelephonyCredentialService, CredentialUnavailableError, ROTATION_GRACE_SECONDS } from './credential-service.js';
 export { TelephonyInboundService } from './inbound-service.js';
 export type { ResolvedCredential, ResolvePurpose } from './credential-service.js';

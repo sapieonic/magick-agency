@@ -245,7 +245,7 @@ describe('TelephonyInboundService', () => {
       numberRecord({ phone_number_id: 'unassigned', inbound_linked_at: new Date(), assigned: false }),
     ];
     numbers = fresh();
-    expect(await svc.reconcileCredential(CRED, 'retired_by_sync', ACTOR)).toBe(2);
+    expect(await svc.reconcileCredential(CRED, ACTOR)).toBe(2);
     expect(audit.mock.calls.map(([e]) => [e.resource_id, e.details!.cause])).toEqual([['gone', 'retired_by_sync'], ['unassigned', 'unassigned']]);
     expect(numbers.find((n) => n.phone_number_id === 'kept')!.inbound_linked_at).not.toBeNull();
   });
@@ -257,7 +257,7 @@ describe('TelephonyInboundService', () => {
       numbers: { findInboundLink: vi.fn().mockRejectedValue(new Error('db down')), listInboundForCredential: vi.fn().mockRejectedValue(new Error('db down')) } as never,
     });
     await expect(failing.reconcileNumber('pn-1', 'unassigned', ACTOR)).resolves.toBe(false);
-    await expect(failing.reconcileCredential(CRED, 'retired_by_sync', ACTOR)).resolves.toBe(0);
+    await expect(failing.reconcileCredential(CRED, ACTOR)).resolves.toBe(0);
   });
 
   it('the token given to the carrier is the one whose hash is stored, and never audited', async () => {

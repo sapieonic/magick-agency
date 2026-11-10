@@ -248,7 +248,7 @@ export async function superAdminTelephonyCredentialRoutes(
     invalidateDialableCallerIds();
     const { credential, sync } = r.value;
     // A linked number the sync retired is no longer the account's: out of inbound (§8.2).
-    await inbound().reconcileCredential(credential.id, 'retired_by_sync', actor(request));
+    await inbound().reconcileCredential(credential.id, actor(request));
     log.info({
       credentialId: credential.id, listed: sync.listed, added: sync.added.length, reactivated: sync.reactivated.length,
       takenOver: sync.taken_over.length, retired: sync.retired.length, conflicts: sync.conflicts.length, active: sync.active_numbers,

@@ -110,6 +110,14 @@ export type InboundReleaseCause = 'unlinked' | 'unassigned' | 'retired_by_sync' 
  */
 export type InboundCarrierRestore = 'restored' | 'number_missing' | 'skipped_not_active' | 'failed';
 
+/** A released number put back on its previous app at the carrier; `number_missing`: the carrier no longer has it. */
+async function restorePreviousApp(
+  carrier: InboundCarrierApi,
+  cleared: { phone_number: string; inbound_previous_app_id: string | null },
+): Promise<InboundCarrierRestore> {
+  return await carrier.setNumberApp(cleared.phone_number, cleared.inbound_previous_app_id) === 'not_found' ? 'number_missing' : 'restored';
+}
+
 /** The Application's fixed name on the tenant's account: how an Application we lost track of is found again. */
 export function inboundApplicationName(credentialId: string): string {
   return `inbound-${credentialId}`;
@@ -256,21 +264,22 @@ export class TelephonyInboundService {
     if (!inbound.app_id) return fail('inbound_not_enabled', 'Inbound is not enabled on this credential');
     return answer(async () => {
       const carrier = await this.carrier(credentialId, 'call_control');
-      let health: TelephonyCredentialInboundHealthCheck;
+      let found: Pick<TelephonyCredentialInboundHealthCheck, 'health' | 'mismatched'>;
       const checkedAt = new Date().toISOString();
       const current = this.storedUrlsCurrent(inbound);
       try {
         const app = await carrier.getInboundApplication(inbound.app_id!);
         if (!app) {
-          health = { health: 'app_missing', mismatched: [], stored_urls_current: current, checked_at: checkedAt };
+          found = { health: 'app_missing', mismatched: [] };
         } else {
           const mismatched = await this.mismatches(inbound, app);
-          health = { health: mismatched.length ? 'url_mismatch' : 'ok', mismatched, stored_urls_current: current, checked_at: checkedAt };
+          found = { health: mismatched.length ? 'url_mismatch' : 'ok', mismatched };
         }
       } catch (err) {
         if (!(err instanceof PlivoApiError) || err.kind !== 'unreachable') throw err;
-        health = { health: 'unreachable', mismatched: [], stored_urls_current: current, checked_at: checkedAt };
+        found = { health: 'unreachable', mismatched: [] };
       }
+      const health: TelephonyCredentialInboundHealthCheck = { ...found, stored_urls_current: current, checked_at: checkedAt };
       return { inbound: inboundOf(inbound), health };
     });
   }
@@ -483,11 +492,9 @@ export class TelephonyInboundService {
       return withTransaction(async (client) => {
         const released = await this.clearInTransaction(phoneNumberId, client);
         if (!released) throw new Refusal(fail('phone_number_not_linked', 'The number is not linked to inbound'));
-        let restore: InboundCarrierRestore = 'skipped_not_active';
-        if (released.cleared.status === 'active') {
-          restore = await carrier.setNumberApp(released.cleared.phone_number, released.cleared.inbound_previous_app_id) === 'not_found'
-            ? 'number_missing' : 'restored';
-        }
+        const restore: InboundCarrierRestore = released.cleared.status === 'active'
+          ? await restorePreviousApp(carrier, released.cleared)
+          : 'skipped_not_active';
         return { ...released, restore };
       }, { pool: this.deps.pool });
     });
@@ -521,7 +528,8 @@ export class TelephonyInboundService {
    * `unassigned`). Returns how many were released. Never throws (as above). Disabling the
    * credential releases nothing (the header).
    */
-  async reconcileCredential(credentialId: string, cause: 'retired_by_sync', actor: InboundActor): Promise<number> {
+  async reconcileCredential(credentialId: string, actor: InboundActor): Promise<number> {
+    const cause = 'retired_by_sync';
     let released = 0;
     try {
       const rows = await this.deps.numbers.listInboundForCredential(credentialId);
@@ -555,9 +563,7 @@ export class TelephonyInboundService {
     let restore: InboundCarrierRestore = 'skipped_not_active';
     if (released.cleared.status === 'active') {
       try {
-        const carrier = await this.carrier(released.cleared.telephony_credential_id, 'call_control');
-        restore = await carrier.setNumberApp(released.cleared.phone_number, released.cleared.inbound_previous_app_id) === 'not_found'
-          ? 'number_missing' : 'restored';
+        restore = await restorePreviousApp(await this.carrier(released.cleared.telephony_credential_id, 'call_control'), released.cleared);
       } catch (err) {
         restore = 'failed';
         log.error(

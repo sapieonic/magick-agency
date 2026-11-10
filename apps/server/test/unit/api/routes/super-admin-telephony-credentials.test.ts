@@ -245,7 +245,7 @@ describe('POST /super-admin/telephony-credentials/:id/sync-numbers', () => {
     expect(res.statusCode).toBe(200);
     expect(svc.syncNumbers).toHaveBeenCalledWith(ID, 'super-1');
     // The numbers it retired leave inbound (docs/inbound.md §8.2).
-    expect(inb.reconcileCredential).toHaveBeenCalledWith(ID, 'retired_by_sync', { adminId: 'super-1', adminEmail: 'admin@example.com' });
+    expect(inb.reconcileCredential).toHaveBeenCalledWith(ID, { adminId: 'super-1', adminEmail: 'admin@example.com' });
     expect(res.json()).toEqual({ credential: expect.objectContaining({ id: ID, status: 'active' }), sync: SYNC });
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'sync_telephony_credential_numbers', resource_type: 'telephony_credential', resource_id: ID,
