@@ -24,7 +24,9 @@ import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { agencyInboundAnswerRepository } from '../../../db/repositories/agency.repository.js';
 import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
-import { inboundMissedQuerySchema, inboundMissedQueryString } from '../helpers/inbound-missed-query.js';
+import { sendRefusal } from '../helpers/refusal.js';
+import { inboundMissedQuerySchema } from '../helpers/inbound-missed-query.js';
+import { definedQueryString } from '../helpers/query-string.js';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   inboundRefusalBody,
@@ -32,12 +34,12 @@ import {
   type InboundCallReopenedAudit,
   type InboundVoicemailLocation,
 } from '../agency/inbound-answer.js';
-import { getFileStream, isStorageConfigured } from '../../../storage/s3.js';
+import { getFileStream, isS3NotFound, isStorageConfigured } from '../../../storage/s3.js';
 import {
   actorQuery,
   inboundActorOrRefuse,
   inboundAuditTenancy,
-  unwrapInboundAnswer,
+  sendAudited,
 } from './shared.js';
 
 const log = createChildLogger({ component: 'proxy-agency-inbound' });
@@ -92,7 +94,7 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
     const result = await callCore({
       method: 'GET',
       path: '/agency/inbound/missed',
-      query: { ...inboundMissedQueryString(parsed.data), ...actorQuery(actor) },
+      query: { ...definedQueryString(parsed.data), ...actorQuery(actor) },
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
@@ -132,7 +134,7 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
     const where = result.body as Partial<InboundVoicemailLocation> | null;
     if (!where || typeof where.voicemail_key !== 'string') {
       log.error({ route: 'GET /inbound/missed/:id/voicemail' }, 'inbound: the internal handler answered without the voicemail\'s location');
-      return reply.code(502).send({ error: 'Bad Gateway', code: 'core_response_unrecognised', message: 'The voicemail could not be read.' });
+      return sendRefusal(reply, 502, 'core_response_unrecognised', 'The voicemail could not be read.');
     }
     if (!isStorageConfigured()) {
       log.error({ callId: where.call_id }, 'A voicemail was asked for with no object storage configured');
@@ -145,7 +147,7 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
     } catch (err) {
       const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
       const name = (err as { name?: string }).name;
-      if (status === 404 || name === 'NoSuchKey' || name === 'NotFound') {
+      if (isS3NotFound(err)) {
         const refusal = inboundRefusalBody({ code: 'inbound_missed_call_not_found' });
         return reply.code(refusal.status).send(refusal.body);
       }
@@ -177,23 +179,22 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
-    if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const unwrapped = unwrapInboundAnswer<InboundCallHandledAudit>(reply, result, 'POST /inbound/missed/:id/handled');
-    if (!unwrapped) return reply;
-    if (unwrapped.audit.changed) {
+    return sendAudited<InboundCallHandledAudit>(reply, result, 'POST /inbound/missed/:id/handled', (audit) => {
+      if (!audit.changed) return;
       platformAuditLogger.log({
         ...inboundAuditTenancy(request),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_call.handled',
         resource_type: 'agency_inbound_call',
-        resource_id: unwrapped.audit.call_id,
-        details: { reason: unwrapped.audit.reason },
+        resource_id: audit.call_id,
+        details: { reason: audit.reason },
       });
-    }
-    const call = (unwrapped.answer as { call?: unknown } | null)?.call;
-    if (!isMissedRow(call)) return reply.send(unwrapped.answer);
-    const [named] = await withNames([call], request.tenantId!, request.accountId);
-    return reply.send({ call: named });
+    }, async (answer) => {
+      const call = (answer as { call?: unknown } | null)?.call;
+      if (!isMissedRow(call)) return reply.send(answer);
+      const [named] = await withNames([call], request.tenantId!, request.accountId);
+      return reply.send({ call: named });
+    });
   });
 
   /** POST /proxy/agency/inbound/missed/:id/reopen — `{ call }`; idempotent. */
@@ -207,22 +208,21 @@ export async function registerInboundMissedRoutes(app: FastifyInstance): Promise
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
-    if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const unwrapped = unwrapInboundAnswer<InboundCallReopenedAudit>(reply, result, 'POST /inbound/missed/:id/reopen');
-    if (!unwrapped) return reply;
-    if (unwrapped.audit.changed) {
+    return sendAudited<InboundCallReopenedAudit>(reply, result, 'POST /inbound/missed/:id/reopen', (audit) => {
+      if (!audit.changed) return;
       platformAuditLogger.log({
         ...inboundAuditTenancy(request),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_call.reopened',
         resource_type: 'agency_inbound_call',
-        resource_id: unwrapped.audit.call_id,
-        details: { handled_reason: unwrapped.audit.handled_reason, handled_by_user_id: unwrapped.audit.handled_by_user_id },
+        resource_id: audit.call_id,
+        details: { handled_reason: audit.handled_reason, handled_by_user_id: audit.handled_by_user_id },
       });
-    }
-    const call = (unwrapped.answer as { call?: unknown } | null)?.call;
-    if (!isMissedRow(call)) return reply.send(unwrapped.answer);
-    const [named] = await withNames([call], request.tenantId!, request.accountId);
-    return reply.send({ call: named });
+    }, async (answer) => {
+      const call = (answer as { call?: unknown } | null)?.call;
+      if (!isMissedRow(call)) return reply.send(answer);
+      const [named] = await withNames([call], request.tenantId!, request.accountId);
+      return reply.send({ call: named });
+    });
   });
 }

@@ -8,7 +8,8 @@ import {
 } from '../../../../src/api/routes/agency/inbound-answer.js';
 import { unavailableActionIssues } from '../../../../src/api/routes/agency/inbound.js';
 import { inboundMissedAssignSchema, inboundSummaryQuerySchema, pct } from '../../../../src/api/routes/agency/inbound-missed-work.js';
-import { inboundMissedQuerySchema, inboundMissedQueryString } from '../../../../src/api/routes/helpers/inbound-missed-query.js';
+import { inboundMissedQuerySchema } from '../../../../src/api/routes/helpers/inbound-missed-query.js';
+import { definedQueryString } from '../../../../src/api/routes/helpers/query-string.js';
 import type { AgencyInboundMissedRow } from '../../../../src/db/repositories/agency.repository.js';
 
 /**
@@ -140,7 +141,7 @@ describe('the Missed query', () => {
       status: 'handled', assignee: '00000000-0000-4000-8000-000000000001', reason: 'closed',
       from: '2026-11-01T00:00:00Z', limit: '20', other: 'x',
     });
-    expect(inboundMissedQueryString(ok)).toEqual({
+    expect(definedQueryString(ok)).toEqual({
       status: 'handled', assignee: '00000000-0000-4000-8000-000000000001', reason: 'closed', from: '2026-11-01T00:00:00Z', limit: '20',
     });
     for (const bad of [{ status: 'nope' }, { assignee: 'someone' }, { reason: 'voicemail' }, { from: 'yesterday' }, { limit: '0' }, { limit: '101' }]) {

@@ -312,6 +312,12 @@ export async function getFileStream(
   });
 }
 
+/** Whether a read or HEAD of an object failed because there is no such object (S3's 404). */
+export function isS3NotFound(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } } | null | undefined;
+  return e?.name === 'NotFound' || e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
+}
+
 /**
  * Prove an object exists and is readable, WITHOUT opening its body.
  *

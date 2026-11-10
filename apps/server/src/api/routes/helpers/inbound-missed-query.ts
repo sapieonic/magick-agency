@@ -25,12 +25,3 @@ export const inboundMissedQuerySchema = z.object({
 });
 
 export type InboundMissedQuery = z.infer<typeof inboundMissedQuerySchema>;
-
-/** The validated query as `callCore`'s string map (only the keys that are set). */
-export function inboundMissedQueryString(query: InboundMissedQuery): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined) out[key] = String(value);
-  }
-  return out;
-}

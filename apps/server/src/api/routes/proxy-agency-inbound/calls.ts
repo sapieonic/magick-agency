@@ -15,7 +15,7 @@
  * matched campaign as `campaign_id`; and `dnc_entry.created` when a mark or a suppress outcome
  * listed the number anew. Notes and numbers never go in `details`.
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
@@ -28,8 +28,9 @@ import type {
   InboundCallHangupAudit,
   InboundDncEntryAudit,
 } from '../agency/inbound-answer.js';
+import type { SoftphoneRequestActor } from '../proxy-agency-softphone/shared.js';
 import {
-  actorQuery, inboundActorOrRefuse, inboundAuditTenancy, requireInboundEnabled, unwrapInboundAnswer, type InboundRequestActor,
+  actorBody, actorQuery, inboundActorOrRefuse, inboundAuditTenancy, requireInboundEnabled, sendAudited,
 } from './shared.js';
 
 /** `notes: ''` clears them. */
@@ -44,15 +45,10 @@ const dispositionSchema = z.object({
 const dncSchema = z.object({ reason: z.string().max(1000).optional() }).strip();
 const emptyBody = z.object({}).strip();
 
-/** The actor on an internal body: `agent_user_id`, and `on_behalf` only when supervising. */
-function actorBody(actor: InboundRequestActor): { agent_user_id: string; on_behalf?: true } {
-  return actor.supervise ? { agent_user_id: actor.userId, on_behalf: true } : { agent_user_id: actor.userId };
-}
-
 /** Forward a call action with the actor; each route passes its own literal path. */
 function forward(
   request: FastifyRequest,
-  actor: InboundRequestActor,
+  actor: SoftphoneRequestActor,
   call: { method: 'POST' | 'PATCH'; path: string; body: Record<string, unknown> },
 ): Promise<CoreCallResult> {
   return callCore({
@@ -78,13 +74,13 @@ function onBehalf(flag: boolean): { on_behalf: true } | Record<string, never> {
 /** `dnc_entry.created` for a mark or a suppress outcome that listed the number anew (the DNC trail's own row). */
 function logDncEntryCreated(
   request: FastifyRequest,
-  actor: InboundRequestActor,
+  actor: SoftphoneRequestActor,
   facts: { entry: InboundDncEntryAudit | null; callId: string; campaignId: string | null; onBehalf: boolean; dispositionCode?: string },
 ): void {
   if (!facts.entry?.created) return;
   platformAuditLogger.log({
     ...inboundAuditTenancy(request),
-    ...resolvedUserAuditActor(request, actor.userId),
+    ...resolvedUserAuditActor(request, actor.agent_user_id),
     action: 'dnc_entry.created',
     resource_type: 'dnc_entry',
     resource_id: facts.entry.id,
@@ -97,21 +93,6 @@ function logDncEntryCreated(
       ...onBehalf(facts.onBehalf),
     },
   });
-}
-
-/** An audited route's answer: the refusal as it came, or the envelope's answer after `audit` ran. */
-function sendAudited<TAudit>(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  result: CoreCallResult,
-  route: string,
-  audit: (audit: TAudit) => void,
-): FastifyReply {
-  if (result.status >= 400) return reply.code(result.status).send(result.body);
-  const unwrapped = unwrapInboundAnswer<TAudit>(reply, result, route);
-  if (!unwrapped) return reply;
-  audit(unwrapped.audit);
-  return reply.code(200).send(unwrapped.answer);
 }
 
 export async function registerInboundCallRoutes(app: FastifyInstance): Promise<void> {
@@ -158,11 +139,11 @@ export async function registerInboundCallRoutes(app: FastifyInstance): Promise<v
     const actor = inboundActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await forward(request, actor, { method: 'POST', path: `/agency/inbound/calls/${request.params.id}/hangup`, body: {} });
-    return sendAudited<InboundCallHangupAudit>(request, reply, result, 'POST /inbound/calls/:id/hangup', (audit) => {
+    return sendAudited<InboundCallHangupAudit>(reply, result, 'POST /inbound/calls/:id/hangup', (audit) => {
       if (!audit.hung_up) return;
       platformAuditLogger.log({
         ...auditBase(request, audit.call_id, audit.campaign_id),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_call.hung_up',
         details: { ...onBehalf(audit.on_behalf) },
       });
@@ -176,10 +157,10 @@ export async function registerInboundCallRoutes(app: FastifyInstance): Promise<v
     const actor = inboundActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await forward(request, actor, { method: 'POST', path: `/agency/inbound/calls/${request.params.id}/disposition`, body: parsed.data });
-    return sendAudited<InboundCallDispositionAudit>(request, reply, result, 'POST /inbound/calls/:id/disposition', (audit) => {
+    return sendAudited<InboundCallDispositionAudit>(reply, result, 'POST /inbound/calls/:id/disposition', (audit) => {
       platformAuditLogger.log({
         ...auditBase(request, audit.call_id, audit.campaign_id),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_call.dispositioned',
         details: {
           disposition_code: audit.disposition_code,
@@ -201,10 +182,10 @@ export async function registerInboundCallRoutes(app: FastifyInstance): Promise<v
     const actor = inboundActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await forward(request, actor, { method: 'POST', path: `/agency/inbound/calls/${request.params.id}/dnc`, body: parsed.data });
-    return sendAudited<InboundCallDncAudit>(request, reply, result, 'POST /inbound/calls/:id/dnc', (audit) => {
+    return sendAudited<InboundCallDncAudit>(reply, result, 'POST /inbound/calls/:id/dnc', (audit) => {
       platformAuditLogger.log({
         ...auditBase(request, audit.call_id, audit.campaign_id),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_call.dnc_marked',
         details: { scope: audit.scope, dnc_recorded: audit.dnc_recorded, ...onBehalf(audit.on_behalf) },
       });

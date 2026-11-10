@@ -49,8 +49,9 @@ import { createChildLogger } from '@magick-agency/observability';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { resolvedUserAuditActor } from '../../../audit/platform/audit-actor.js';
-import { deleteFile, getFileStream, isStorageConfigured, uploadFile } from '../../../storage/s3.js';
+import { deleteFile, getFileStream, isS3NotFound, isStorageConfigured, uploadFile } from '../../../storage/s3.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { sendRefusal } from '../helpers/refusal.js';
 import {
   inboundRecordingKey,
   inboundRecordingRefusalMessage,
@@ -67,6 +68,7 @@ import {
   inboundActorOrRefuse,
   inboundAuditTenancy,
   requireInboundEnabled,
+  sendAudited,
   unwrapInboundAnswer,
 } from './shared.js';
 
@@ -176,7 +178,7 @@ export async function registerInboundClipRoutes(app: FastifyInstance): Promise<v
       }
       platformAuditLogger.log({
         ...inboundAuditTenancy(request),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_clip.uploaded',
         resource_type: 'agency_inbound_clip',
         resource_id: unwrapped.audit.clip_id,
@@ -198,7 +200,7 @@ export async function registerInboundClipRoutes(app: FastifyInstance): Promise<v
     const where = result.body as Partial<InboundClipAudioLocation> | null;
     if (!where || typeof where.s3_key !== 'string' || typeof where.content_type !== 'string') {
       log.error({ route: 'GET /inbound/clips/:id/audio' }, 'inbound: the internal handler answered without the recording\'s location');
-      return reply.code(502).send({ error: 'Bad Gateway', code: 'core_response_unrecognised', message: 'The recording could not be read.' });
+      return sendRefusal(reply, 502, 'core_response_unrecognised', 'The recording could not be read.');
     }
     if (!isStorageConfigured()) {
       log.error({ clipId: where.clip_id }, 'An inbound recording was asked for with no object storage configured');
@@ -208,9 +210,7 @@ export async function registerInboundClipRoutes(app: FastifyInstance): Promise<v
     try {
       object = await getFileStream(where.s3_key);
     } catch (err) {
-      const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
-      const name = (err as { name?: string }).name;
-      if (status === 404 || name === 'NoSuchKey' || name === 'NotFound') return clipNotFound(reply);
+      if (isS3NotFound(err)) return clipNotFound(reply);
       log.error({ err, clipId: where.clip_id }, 'Could not read an inbound recording from storage');
       return reply.code(502).send({ error: 'Bad Gateway', message: 'The recording could not be read.' });
     }
@@ -251,18 +251,16 @@ export async function registerInboundClipRoutes(app: FastifyInstance): Promise<v
       method: 'DELETE', path: `/agency/inbound/clips/${request.params.id}`, query: actorQuery(actor),
       tenantId: request.tenantId!, accountId: request.accountId,
     });
-    if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const unwrapped = unwrapInboundAnswer<InboundClipDeletedAudit>(reply, result, 'DELETE /inbound/clips/:id');
-    if (!unwrapped) return reply;
-    await discardObject(unwrapped.audit.s3_key, 'deleted');
-    platformAuditLogger.log({
-      ...inboundAuditTenancy(request),
-      ...resolvedUserAuditActor(request, actor.userId),
-      action: 'agency_inbound_clip.deleted',
-      resource_type: 'agency_inbound_clip',
-      resource_id: unwrapped.audit.clip_id,
-      details: {},
-    });
-    return reply.code(204).send();
+    return sendAudited<InboundClipDeletedAudit>(reply, result, 'DELETE /inbound/clips/:id', async (audit) => {
+      await discardObject(audit.s3_key, 'deleted');
+      platformAuditLogger.log({
+        ...inboundAuditTenancy(request),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
+        action: 'agency_inbound_clip.deleted',
+        resource_type: 'agency_inbound_clip',
+        resource_id: audit.clip_id,
+        details: {},
+      });
+    }, () => reply.code(204).send());
   });
 }

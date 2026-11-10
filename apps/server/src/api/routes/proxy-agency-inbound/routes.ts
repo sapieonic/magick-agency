@@ -23,7 +23,7 @@ import {
   inboundActorOrRefuse,
   inboundAuditTenancy,
   requireInboundEnabled,
-  unwrapInboundAnswer,
+  sendAudited,
 } from './shared.js';
 
 export async function registerInboundRouteRoutes(app: FastifyInstance): Promise<void> {
@@ -51,18 +51,16 @@ export async function registerInboundRouteRoutes(app: FastifyInstance): Promise<
       method: 'POST', path: '/agency/inbound/routes', query: actorQuery(actor), body: request.body ?? {},
       tenantId: request.tenantId!, accountId: request.accountId,
     });
-    if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const unwrapped = unwrapInboundAnswer<InboundRouteCreatedAudit>(reply, result, 'POST /inbound/routes');
-    if (!unwrapped) return reply;
-    platformAuditLogger.log({
-      ...inboundAuditTenancy(request),
-      ...resolvedUserAuditActor(request, actor.userId),
-      action: 'agency_inbound_route.created',
-      resource_type: 'agency_inbound_route',
-      resource_id: unwrapped.audit.route_id,
-      details: { numbers_added: unwrapped.audit.numbers_added },
-    });
-    return reply.code(201).send(unwrapped.answer);
+    return sendAudited<InboundRouteCreatedAudit>(reply, result, 'POST /inbound/routes', (audit) => {
+      platformAuditLogger.log({
+        ...inboundAuditTenancy(request),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
+        action: 'agency_inbound_route.created',
+        resource_type: 'agency_inbound_route',
+        resource_id: audit.route_id,
+        details: { numbers_added: audit.numbers_added },
+      });
+    }, (answer) => reply.code(201).send(answer));
   });
 
   /** PATCH /proxy/agency/inbound/routes/:id — `{ route }`; audited only when something changed. */
@@ -73,21 +71,18 @@ export async function registerInboundRouteRoutes(app: FastifyInstance): Promise<
       method: 'PATCH', path: `/agency/inbound/routes/${request.params.id}`, query: actorQuery(actor), body: request.body ?? {},
       tenantId: request.tenantId!, accountId: request.accountId,
     });
-    if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const unwrapped = unwrapInboundAnswer<InboundRouteUpdatedAudit>(reply, result, 'PATCH /inbound/routes/:id');
-    if (!unwrapped) return reply;
-    const { fields, numbers_added, numbers_removed } = unwrapped.audit;
-    if (fields.length > 0 || numbers_added.length > 0 || numbers_removed.length > 0) {
+    return sendAudited<InboundRouteUpdatedAudit>(reply, result, 'PATCH /inbound/routes/:id', (audit) => {
+      const { fields, numbers_added, numbers_removed } = audit;
+      if (fields.length === 0 && numbers_added.length === 0 && numbers_removed.length === 0) return;
       platformAuditLogger.log({
         ...inboundAuditTenancy(request),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_route.updated',
         resource_type: 'agency_inbound_route',
-        resource_id: unwrapped.audit.route_id,
+        resource_id: audit.route_id,
         details: { fields, numbers_added, numbers_removed },
       });
-    }
-    return reply.send(unwrapped.answer);
+    });
   });
 
   /** DELETE /proxy/agency/inbound/routes/:id — 204; the route's numbers are detached. */
@@ -98,18 +93,16 @@ export async function registerInboundRouteRoutes(app: FastifyInstance): Promise<
       method: 'DELETE', path: `/agency/inbound/routes/${request.params.id}`, query: actorQuery(actor),
       tenantId: request.tenantId!, accountId: request.accountId,
     });
-    if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const unwrapped = unwrapInboundAnswer<InboundRouteDeletedAudit>(reply, result, 'DELETE /inbound/routes/:id');
-    if (!unwrapped) return reply;
-    platformAuditLogger.log({
-      ...inboundAuditTenancy(request),
-      ...resolvedUserAuditActor(request, actor.userId),
-      action: 'agency_inbound_route.deleted',
-      resource_type: 'agency_inbound_route',
-      resource_id: unwrapped.audit.route_id,
-      details: { numbers_removed: unwrapped.audit.numbers_removed },
-    });
-    return reply.code(204).send();
+    return sendAudited<InboundRouteDeletedAudit>(reply, result, 'DELETE /inbound/routes/:id', (audit) => {
+      platformAuditLogger.log({
+        ...inboundAuditTenancy(request),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
+        action: 'agency_inbound_route.deleted',
+        resource_type: 'agency_inbound_route',
+        resource_id: audit.route_id,
+        details: { numbers_removed: audit.numbers_removed },
+      });
+    }, () => reply.code(204).send());
   });
 
   /** GET /proxy/agency/inbound/numbers — the numbers a route may answer, with why one cannot. */

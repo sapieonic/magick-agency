@@ -16,7 +16,8 @@ import type { AgencyManualCall } from '@magick-agency/contracts/agency';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
-import { softphoneListQuerySchema, softphoneListQueryString } from '../helpers/softphone-list-query.js';
+import { softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
+import { definedQueryString } from '../helpers/query-string.js';
 import { decodeRawErrorBody, shapeMediaCall } from '../proxy-agency-calls.routes.js';
 import { createChildLogger } from '@magick-agency/observability';
 import {
@@ -117,7 +118,7 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
     const result = await callCore({
       method: 'GET',
       path: '/agency/softphone/calls',
-      query: { ...softphoneListQueryString(parsed.data), ...actorQuery(actor) },
+      query: { ...definedQueryString(parsed.data), ...actorQuery(actor) },
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });

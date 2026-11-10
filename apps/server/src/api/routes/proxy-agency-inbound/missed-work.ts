@@ -21,7 +21,7 @@ import { resolvedUserAuditActor } from '../../../audit/platform/audit-actor.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { callCore } from '../../core-dispatch.js';
 import type { InboundCallReassignedAudit } from '../agency/inbound-answer.js';
-import { actorQuery, inboundActorOrRefuse, inboundAuditTenancy, unwrapInboundAnswer } from './shared.js';
+import { actorQuery, inboundActorOrRefuse, inboundAuditTenancy, sendAudited } from './shared.js';
 import { withNames } from './missed.js';
 
 function isMissedRow(value: unknown): value is AgencyInboundMissedCall {
@@ -65,23 +65,22 @@ export async function registerInboundMissedWorkRoutes(app: FastifyInstance): Pro
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
-    if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const unwrapped = unwrapInboundAnswer<InboundCallReassignedAudit>(reply, result, 'POST /inbound/missed/:id/assign');
-    if (!unwrapped) return reply;
-    if (unwrapped.audit.changed) {
+    return sendAudited<InboundCallReassignedAudit>(reply, result, 'POST /inbound/missed/:id/assign', (audit) => {
+      if (!audit.changed) return;
       platformAuditLogger.log({
         ...inboundAuditTenancy(request),
-        ...resolvedUserAuditActor(request, actor.userId),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
         action: 'agency_inbound_call.reassigned',
         resource_type: 'agency_inbound_call',
-        resource_id: unwrapped.audit.call_id,
-        details: { from: unwrapped.audit.from, to: unwrapped.audit.to },
+        resource_id: audit.call_id,
+        details: { from: audit.from, to: audit.to },
       });
-    }
-    const call = (unwrapped.answer as { call?: unknown } | null)?.call;
-    if (!isMissedRow(call)) return reply.send(unwrapped.answer);
-    const [named] = await withNames([call], request.tenantId!, request.accountId);
-    return reply.send({ call: named });
+    }, async (answer) => {
+      const call = (answer as { call?: unknown } | null)?.call;
+      if (!isMissedRow(call)) return reply.send(answer);
+      const [named] = await withNames([call], request.tenantId!, request.accountId);
+      return reply.send({ call: named });
+    });
   });
 
   /** GET /proxy/agency/inbound/summary?from&to — `AgencyInboundSummary`, agents named. */

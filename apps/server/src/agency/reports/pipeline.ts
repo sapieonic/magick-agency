@@ -18,7 +18,7 @@
 import { createChildLogger } from '@magick-agency/observability';
 import type { ReportRenderCallback } from '@magick-agency/contracts/reports';
 import type { AppConfig } from '../../config/index.js';
-import { headFile } from '../../storage/s3.js';
+import { headFile, isS3NotFound } from '../../storage/s3.js';
 import { sendAgencyReportReadyEmails } from '../../notifications/agency-report-ready.js';
 import { applyRenderOutcome, defaultApplyDeps, type RenderOutcomeResult } from './apply.js';
 import {
@@ -83,8 +83,7 @@ export async function headReportObject(key: string): Promise<{ bytes: number } |
     const head = await headFile(key);
     return { bytes: head.contentLength ?? 0 };
   } catch (err) {
-    const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-    if (e?.name === 'NotFound' || e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null;
+    if (isS3NotFound(err)) return null;
     throw err;
   }
 }
