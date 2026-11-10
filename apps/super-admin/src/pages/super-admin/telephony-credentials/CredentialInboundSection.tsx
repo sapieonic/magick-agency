@@ -16,6 +16,7 @@ import {
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { operatorCarrierName } from '../../../utils/carrierName';
+import { CARRIER_REFUSAL, formatDateTime as fmt, refusalCopy } from '../../../utils/operatorCopy';
 import styles from '../SATelephonyCredentialsPage.module.css';
 
 /**
@@ -72,18 +73,8 @@ const REFUSAL: Record<string, string> = {
   inbound_numbers_linked: 'Numbers are still linked to inbound on this credential. Unlink them on the Phone Numbers page first.',
   inbound_previous_token_in_use: 'A call answered before the last re-point is still in progress, and its hangup still needs the address that re-point replaced. Try again once it has ended (within about four hours of that re-point).',
   credential_not_active: 'Only an active credential can enable inbound. Enable or verify it first.',
-  carrier_rejected: 'The carrier refused the stored credentials. Nothing was changed. Verify or rotate the secret, then try again.',
-  carrier_unreachable: 'The carrier could not be reached. Nothing was changed. Try again shortly.',
+  ...CARRIER_REFUSAL,
 };
-
-export function inboundRefusal(err: unknown, fallback: string): string {
-  const details = (err as { details?: unknown } | null)?.details;
-  const code = details && typeof details === 'object' ? (details as { error?: unknown }).error : undefined;
-  if (typeof code === 'string' && Object.hasOwn(REFUSAL, code)) return REFUSAL[code]!;
-  return err instanceof Error && err.message ? err.message : fallback;
-}
-
-const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-IN') : '—');
 
 function healthText(h: TelephonyCredentialInboundHealthCheck, carrier: string): string {
   const main = (() => {
@@ -130,7 +121,7 @@ export function CredentialInboundSection({ credential }: { credential: Telephony
       setState(await RUN[action](credential.id));
       setHealth(null);
     } catch (err) {
-      setError(inboundRefusal(err, `Failed to ${action === 'repoint' ? 're-point' : action} inbound`));
+      setError(refusalCopy(err, REFUSAL, `Failed to ${action === 'repoint' ? 're-point' : action} inbound`));
     } finally {
       setBusy(null);
       setConfirm(null);
@@ -143,7 +134,7 @@ export function CredentialInboundSection({ credential }: { credential: Telephony
     try {
       setHealth((await checkCredentialInboundHealth(credential.id)).health);
     } catch (err) {
-      setError(inboundRefusal(err, 'Failed to check the Application'));
+      setError(refusalCopy(err, REFUSAL, 'Failed to check the Application'));
     } finally {
       setBusy(null);
     }

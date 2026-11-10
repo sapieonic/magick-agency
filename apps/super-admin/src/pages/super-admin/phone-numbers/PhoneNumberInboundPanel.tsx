@@ -8,6 +8,7 @@ import { getPhoneNumberInbound, linkPhoneNumberInbound, unlinkPhoneNumberInbound
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { operatorCarrierName } from '../../../utils/carrierName';
+import { CARRIER_REFUSAL, refusalCopy } from '../../../utils/operatorCopy';
 import styles from '../SAPhoneNumbersPage.module.css';
 
 /**
@@ -30,16 +31,8 @@ const BLOCKER: Record<PhoneNumberInboundBlocker, string> = {
 /** The refusals an operator can act on, by code; anything else shows the server's message. */
 const REFUSAL: Record<string, string> = {
   carrier_number_missing: 'The carrier no longer has this number on the tenant’s account. Nothing was changed. Sync the credential’s numbers.',
-  carrier_rejected: 'The carrier refused the stored credentials. Nothing was changed. Verify or rotate the secret, then try again.',
-  carrier_unreachable: 'The carrier could not be reached. Nothing was changed. Try again shortly.',
+  ...CARRIER_REFUSAL,
 };
-
-function refusal(err: unknown, fallback: string): string {
-  const details = (err as { details?: unknown } | null)?.details;
-  const code = details && typeof details === 'object' ? (details as { error?: unknown }).error : undefined;
-  if (typeof code === 'string' && Object.hasOwn(REFUSAL, code)) return REFUSAL[code]!;
-  return err instanceof Error && err.message ? err.message : fallback;
-}
 
 export function PhoneNumberInboundPanel({ phoneNumberId, provider, onChanged }: {
   phoneNumberId: string;
@@ -75,7 +68,7 @@ export function PhoneNumberInboundPanel({ phoneNumberId, provider, onChanged }: 
       setState(await (action === 'link' ? linkPhoneNumberInbound : unlinkPhoneNumberInbound)(phoneNumberId));
       onChanged();
     } catch (err) {
-      setError(refusal(err, `Failed to ${action} the number`));
+      setError(refusalCopy(err, REFUSAL, `Failed to ${action} the number`));
     } finally {
       setBusy(false);
       setConfirm(null);

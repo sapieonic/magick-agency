@@ -34,6 +34,7 @@ import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { operatorCarrierName } from '../../utils/carrierName';
 import { CredentialInboundSection } from './telephony-credentials/CredentialInboundSection';
+import { formatDateTime as fmt, refusalCopy } from '../../utils/operatorCopy';
 import styles from './SATelephonyCredentialsPage.module.css';
 
 /**
@@ -53,8 +54,6 @@ const ACTIONS: Record<CredentialAction, (id: string) => Promise<TelephonyCredent
   enable: enableTelephonyCredential,
   revoke: revokeTelephonyCredential,
 };
-
-const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-IN') : '—');
 
 /** Why a number the carrier listed was not taken at all. */
 const SKIP_REASON: Record<TelephonyNumberSyncSkipReason, string> = {
@@ -81,10 +80,7 @@ const SYNC_REFUSAL: Record<string, string> = {
 };
 
 function syncRefusal(err: unknown): string {
-  const details = (err as { details?: unknown } | null)?.details;
-  const code = details && typeof details === 'object' ? (details as { error?: unknown }).error : undefined;
-  if (typeof code === 'string' && Object.hasOwn(SYNC_REFUSAL, code)) return SYNC_REFUSAL[code]!;
-  return err instanceof Error && err.message ? err.message : 'Failed to sync numbers';
+  return refusalCopy(err, SYNC_REFUSAL, 'Failed to sync numbers');
 }
 
 /** One sync's outcome, under the credential it ran for. */
