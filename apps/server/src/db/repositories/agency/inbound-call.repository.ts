@@ -362,35 +362,6 @@ export class AgencyInboundCallRepository {
   }
 
   /**
-   * Record who the caller is (§4.1), on a call that has not ended. Fields left out are kept.
-   * Null when the call is ended or missing: the identification arrived too late to matter.
-   */
-  async setIdentification(
-    id: string,
-    identification: Partial<AgencyInboundIdentification>,
-    deps: { client?: Db } = {},
-  ): Promise<AgencyInboundCallRecord | null> {
-    const has = (k: keyof AgencyInboundIdentification) => identification[k] !== undefined;
-    const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
-      `UPDATE agency_inbound_calls c
-          SET matched_contact_id = CASE WHEN $2::boolean THEN $3::uuid ELSE c.matched_contact_id END,
-              matched_campaign_id = CASE WHEN $2::boolean THEN $4::uuid ELSE c.matched_campaign_id END,
-              caller_dnc = CASE WHEN $5::boolean THEN $6::boolean ELSE c.caller_dnc END,
-              sticky_user_id = CASE WHEN $7::boolean THEN $8::uuid ELSE c.sticky_user_id END,
-              sticky_reason = CASE WHEN $7::boolean THEN $9::varchar ELSE c.sticky_reason END
-        WHERE c.id = $1::uuid AND c.state <> 'ended'
-        RETURNING ${CALL_COLUMNS}`,
-      [
-        id,
-        has('match'), identification.match?.contactId ?? null, identification.match?.campaignId ?? null,
-        has('callerDnc'), identification.callerDnc ?? false,
-        has('sticky'), identification.sticky?.userId ?? null, identification.sticky?.reason ?? null,
-      ],
-    );
-    return rows[0] ?? null;
-  }
-
-  /**
    * An arrival-side move: to `greeting` (from `arrived`), or to `queued` from `arrived` or
    * `greeting`, stamping `queued_at` the first time. The move back to `queued` from `offered` is
    * {@link requeue} (it carries the session). Null when the call is missing or in a state the move

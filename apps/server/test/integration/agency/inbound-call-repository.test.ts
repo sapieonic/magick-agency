@@ -194,18 +194,6 @@ describe('the lifecycle', () => {
     expect(await repo.transition(randomUUID(), 'greeting')).toBeNull();
   });
 
-  it('identification updates only the parts given, and only before the end', async () => {
-    const call = await arrived();
-    const sticky = randomUUID();
-    expect(await repo.setIdentification(call.id, { sticky: { userId: sticky, reason: 'last_connected' } }))
-      .toMatchObject({ sticky_user_id: sticky, sticky_reason: 'last_connected', caller_dnc: false, matched_contact_id: null });
-    expect(await repo.setIdentification(call.id, { callerDnc: true }))
-      .toMatchObject({ sticky_user_id: sticky, caller_dnc: true });
-    expect(await repo.setIdentification(call.id, { sticky: null })).toMatchObject({ sticky_user_id: null, sticky_reason: null });
-    await repo.end(call.id, { outcome: 'rejected', talkSeconds: null, followUp: null, callbackDueAt: null, voicemailKey: null });
-    expect(await repo.setIdentification(call.id, { callerDnc: false })).toBeNull();
-  });
-
   it('end: once. A terminal row never moves, whatever comes after', async () => {
     const call = await arrived();
     await repo.transition(call.id, 'greeting');

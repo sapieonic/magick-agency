@@ -367,7 +367,7 @@ describe('an inbound call on a linked Plivo number, P1 (nobody is connected)', (
   });
 
   it('the tenant default (no route, no matched contact): the closed message spoken by the carrier, a Missed row with no account', async () => {
-    await agencyInboundRouteRepository.detachNumber({ tenantId: TENANT, accountId: ACCOUNT, routeId, phoneNumberId, detachedBy: null });
+    await agencyInboundRouteRepository.setNumbers({ tenantId: TENANT, accountId: ACCOUNT, routeId, phoneNumberIds: [], userId: null });
     const call = ring(rig!, { steps: [{ do: 'answer' }] });
     await call.done;
     expect(call.answerXml).toBe(PLIVO_INBOUND_CLOSED_XML);

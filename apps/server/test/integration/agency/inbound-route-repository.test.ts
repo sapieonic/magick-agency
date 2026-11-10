@@ -218,18 +218,6 @@ describe('numbers', () => {
     expect(await activeLinks(n.id)).toHaveLength(1);
   });
 
-  it('detach takes a number off its route only (the account\'s live route)', async () => {
-    const r = await route();
-    const n = await number();
-    await repo.attachNumber({ tenantId: T, accountId: A, routeId: r.id, phoneNumberId: n.id, attachedBy: null });
-    expect(await repo.detachNumber({ tenantId: T, accountId: B, routeId: r.id, phoneNumberId: n.id, detachedBy: null })).toBe(false);
-    const by = randomUUID();
-    expect(await repo.detachNumber({ tenantId: T, accountId: A, routeId: r.id, phoneNumberId: n.id, detachedBy: by })).toBe(true);
-    expect(await repo.detachNumber({ tenantId: T, accountId: A, routeId: r.id, phoneNumberId: n.id, detachedBy: by })).toBe(false);
-    const { rows } = await pool().query('SELECT detached_reason, detached_by FROM agency_inbound_route_numbers WHERE phone_number_id = $1', [n.id]);
-    expect(rows).toEqual([{ detached_reason: 'detached', detached_by: by }]);
-  });
-
   it('setNumbers replaces the whole set, all or nothing', async () => {
     const r = await route();
     const [n1, n2, n3] = [await number(), await number(), await number()];

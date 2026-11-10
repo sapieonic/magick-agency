@@ -413,25 +413,6 @@ export class AgencyInboundRouteRepository {
   }
 
   /**
-   * Take one number off a live route of the account (`detached`). False when it was not
-   * attached there (or the route is not this account's live route).
-   */
-  async detachNumber(
-    input: { tenantId: string; accountId: string; routeId: string; phoneNumberId: string; detachedBy: string | null },
-    deps: { client?: Db } = {},
-  ): Promise<boolean> {
-    const { rowCount } = await (deps.client ?? getPool()).query(
-      `UPDATE agency_inbound_route_numbers rn
-          SET detached_at = now(), detached_by = $5::uuid, detached_reason = 'detached'
-         FROM agency_inbound_routes r
-        WHERE rn.route_id = r.id AND rn.route_id = $3::uuid AND rn.phone_number_id = $4::uuid AND rn.detached_at IS NULL
-          AND r.tenant_id = $1::uuid AND r.account_id = $2::uuid AND r.deleted_at IS NULL`,
-      [input.tenantId, input.accountId, input.routeId, input.phoneNumberId, input.detachedBy],
-    );
-    return (rowCount ?? 0) > 0;
-  }
-
-  /**
    * Make `phoneNumberIds` the route's whole set of numbers, all or nothing: the numbers not in
    * it are detached (`detached`), the new ones attached with every check. The first refusal
    * rolls the whole change back and is answered (with the number it is about). One transaction
