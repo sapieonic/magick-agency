@@ -3,17 +3,6 @@ import type * as Core from '../src/agency';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
 import { buildLiterals } from '../../../tooling/contracts-literals.mjs';
-import {
-  AGENCY_INBOUND_CALL_OUTCOMES,
-  AGENCY_INBOUND_CALL_STATES,
-  AGENCY_INBOUND_CATALOG_SOURCES,
-  AGENCY_INBOUND_CLOSED_CAUSES,
-  AGENCY_INBOUND_FOLLOW_UP_STATUSES,
-  AGENCY_INBOUND_HANDLED_REASONS,
-  AGENCY_INBOUND_MISSED_REASONS,
-  AGENCY_INBOUND_STICKY_REASONS,
-} from '../src/agency/inbound';
-import { AGENCY_INBOUND_ERROR_CODES } from '../src/errors';
 import actions from '../fixtures/agent/actions.json';
 import customerHistory from '../fixtures/agent/customer-history.json';
 import inbound from '../fixtures/agent/inbound.json';
@@ -505,7 +494,7 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['customer-history', 'error_invalid_number', 'code', 'customer_history_error_codes'],
   ['customer-history', 'error_invalid_number', 'number_error', 'customer_search_number_errors'],
   ['customer-history', 'error_search_expired', 'code', 'customer_history_error_codes'],
-  // Inbound calls: the vocabularies literals.json carries (the inbound ones: INBOUND_LITERAL_FIELDS).
+  // Inbound calls: the vocabularies they share with outbound (the inbound ones: INBOUND_LITERAL_FIELDS).
   ...['inbound_call_offered', 'inbound_call_connected', 'inbound_call_outcome_owed', 'inbound_call_settled']
     .flatMap((s): Array<[string, string, string, string]> => [
       ['station', s, 'call.match.contact_state', 'contact_states'],
@@ -521,9 +510,8 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
 ];
 
 /**
- * The inbound literal fields, checked against the contract's own `as const` lists, as
- * `literals.json` does not extract the inbound vocabularies. Same path rules as
- * {@link LITERAL_FIELDS}.
+ * The inbound literal fields, checked against the inbound vocabularies `literals.json` extracts
+ * (the ones the app switches on). Same path and vocabulary rules as {@link LITERAL_FIELDS}.
  */
 const INBOUND_CALL_SAMPLES = [
   'inbound_call_offered', 'inbound_call_connected', 'inbound_call_outcome_owed', 'inbound_call_settled',
@@ -533,30 +521,30 @@ const MISSED_ROWS: Array<[string, string]> = [
   ['missed_page', 'rows.0'], ['missed_page', 'rows.1'], ['missed_page', 'rows.2'], ['missed_page_last', 'rows.0'],
   ['missed_handled_response', 'call'], ['missed_reopen_response', 'call'],
 ];
-type InboundField = [file: string, sample: string, path: string, values: readonly string[]];
+type InboundField = [file: string, sample: string, path: string, vocabulary: string];
 const INBOUND_LITERAL_FIELDS: InboundField[] = [
   ...INBOUND_CALL_SAMPLES.flatMap((s): InboundField[] => [
-    ['station', s, 'call.state', AGENCY_INBOUND_CALL_STATES],
-    ['station', s, 'call.outcome', AGENCY_INBOUND_CALL_OUTCOMES],
-    ['station', s, 'call.catalog_source', AGENCY_INBOUND_CATALOG_SOURCES],
-    ['station', s, 'call.sticky.reason', AGENCY_INBOUND_STICKY_REASONS],
+    ['station', s, 'call.state', 'inbound_call_states'],
+    ['station', s, 'call.outcome', 'inbound_call_outcomes'],
+    ['station', s, 'call.catalog_source', 'inbound_catalog_sources'],
+    ['station', s, 'call.sticky.reason', 'inbound_sticky_reasons'],
   ]),
   ...['call_response', 'call_hangup_response', 'call_disposition_response'].flatMap((s): InboundField[] => [
-    ['inbound', s, 'call.state', AGENCY_INBOUND_CALL_STATES],
-    ['inbound', s, 'call.outcome', AGENCY_INBOUND_CALL_OUTCOMES],
-    ['inbound', s, 'call.catalog_source', AGENCY_INBOUND_CATALOG_SOURCES],
-    ['inbound', s, 'call.sticky.reason', AGENCY_INBOUND_STICKY_REASONS],
+    ['inbound', s, 'call.state', 'inbound_call_states'],
+    ['inbound', s, 'call.outcome', 'inbound_call_outcomes'],
+    ['inbound', s, 'call.catalog_source', 'inbound_catalog_sources'],
+    ['inbound', s, 'call.sticky.reason', 'inbound_sticky_reasons'],
   ]),
   ...MISSED_ROWS.flatMap(([s, row]): InboundField[] => [
-    ['inbound', s, `${row}.reason`, AGENCY_INBOUND_MISSED_REASONS],
-    ['inbound', s, `${row}.closed_cause`, AGENCY_INBOUND_CLOSED_CAUSES],
-    ['inbound', s, `${row}.outcome`, AGENCY_INBOUND_CALL_OUTCOMES],
-    ['inbound', s, `${row}.status`, AGENCY_INBOUND_FOLLOW_UP_STATUSES],
-    ['inbound', s, `${row}.handled_reason`, AGENCY_INBOUND_HANDLED_REASONS],
+    ['inbound', s, `${row}.reason`, 'inbound_missed_reasons'],
+    ['inbound', s, `${row}.closed_cause`, 'inbound_closed_causes'],
+    ['inbound', s, `${row}.outcome`, 'inbound_call_outcomes'],
+    ['inbound', s, `${row}.status`, 'inbound_follow_up_statuses'],
+    ['inbound', s, `${row}.handled_reason`, 'inbound_handled_reasons'],
   ]),
   ...Object.keys(inbound)
     .filter((s) => s.startsWith('refusal_'))
-    .map((s): InboundField => ['inbound', s, 'code', AGENCY_INBOUND_ERROR_CODES]),
+    .map((s): InboundField => ['inbound', s, 'code', 'inbound_error_codes']),
 ];
 
 const FILES: Record<string, Record<string, unknown>> = {
@@ -598,10 +586,10 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
     if (value !== null) expect(vocab(vocabulary)).toContain(value);
   });
 
-  it.each(INBOUND_LITERAL_FIELDS)('%s.%s: `%s` is one of the contract\'s values', (file, sample, path, values) => {
+  it.each(INBOUND_LITERAL_FIELDS)('%s.%s: `%s` is a member of %s', (file, sample, path, vocabulary) => {
     const value = at(FILES[file]?.[sample], path);
     expect(value, `${file}.${sample} has no ${path}`).not.toBeUndefined();
-    if (value !== null) expect(values).toContain(value);
+    if (value !== null) expect(vocab(vocabulary)).toContain(value);
   });
 
   it('inbound: one call through offered, connected, owed and settled, as the frames send it', () => {

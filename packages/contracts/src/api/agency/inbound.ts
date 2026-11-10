@@ -3,8 +3,13 @@
  * and its Missed inbound list. The vocabularies and the route configuration are the dialer
  * contract's (`../../agency/inbound.ts`), re-exported here so a console file needs one import.
  *
- * Routes (under `/proxy/agency`, Firebase session, tenant and account headers; every one also
- * needs the `agency_inbound_enabled` flag, else `403 inbound_disabled`):
+ * Routes (under `/proxy/agency`, Firebase session, tenant and account headers). The
+ * `agency_inbound_enabled` flag (else `403 inbound_disabled`) gates the route editor's routes
+ * only: `/inbound/routes*`, `/inbound/numbers` and `/inbound/clips*` (the standard recordings'
+ * preview included), and the supervisor's `GET /inbound/queue`. The Missed routes below (the
+ * list, the voicemail, Mark handled, reopen, the count, the reassign), `GET /inbound/summary` and
+ * the answered call's finish routes (`/inbound/calls/:id*`) are never gated, so the follow-ups of
+ * calls taken before the switch stay workable (the kill switch, docs/inbound.md §8.1):
  *  - `GET    /inbound/routes`                 `agency.inbound.write` → {@link AgencyInboundRoutesResponse}
  *  - `GET    /inbound/routes/:id`             `agency.inbound.write` → {@link AgencyInboundRouteResponse}
  *  - `POST   /inbound/routes`                 `agency.inbound.write`, {@link AgencyInboundRouteCreateRequest} → 201 {@link AgencyInboundRouteResponse}

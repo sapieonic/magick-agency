@@ -9,7 +9,8 @@ const log = createChildLogger({ component: 'agency-inbound-handover' });
  * The router, at the answer, cancels an outbound dial still ringing the caller's number on a
  * carrier that can (the dialer's `supersedeForInbound`), after {@link InboundHandovers.expect}
  * promised the call to that dial's session; it promises it only to a session the release hook can
- * take (a console station on a campaign, OPEN), so a phone's or a soft-phone session's dial is
+ * take (a station that can take inbound calls, on a campaign, OPEN: a console, or a phone that
+ * declared `caps=inbound`, IQ46), so the dial of an older app build or of a soft-phone session is
  * never cancelled for nothing. No other agent is offered the call meanwhile. The cancelled dial's
  * end releases the session, and the release hook (`InboundConnector.takeOnRelease` →
  * {@link InboundHandovers.take}) takes it for the call first, CAS from `reserved`, so the agent
@@ -58,7 +59,10 @@ export interface HandoverHost {
   call(callId: string): HandoverCall | undefined;
   /** The call is on offer to an agent now. */
   offeredNow(callId: string): boolean;
-  /** The release hook may take this session for an inbound call (a console station on a campaign, OPEN). */
+  /**
+   * The release hook may take this session for an inbound call: a station that can take inbound
+   * calls (a console, or a phone that declared `caps=inbound`, IQ46), on a campaign, OPEN.
+   */
   releasable(sessionId: string): boolean;
   /** The connector has stopped taking work. */
   stopped(): boolean;
@@ -122,8 +126,8 @@ export class InboundHandovers {
     if (this.host.stopped() || this.bySession.has(sessionId)) return false;
     // Only a session the release hook can take: a phone without `caps=inbound` (IQ46), a
     // soft-phone session or a station not OPEN never takes an inbound call, so its dial is left
-    // to ring (cancelled, the agent
-    // would lose it for nothing and the caller would queue for someone else all the same).
+    // to ring (cancelled, the agent would lose it for nothing and the caller would queue for
+    // someone else all the same).
     if (!this.host.releasable(sessionId)) return false;
     const call = this.host.call(callId);
     if (!call || this.byCall.has(callId) || call.leaving || (call.phase !== 'preamble' && call.phase !== 'queued')) return false;

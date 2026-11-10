@@ -584,11 +584,14 @@ export class AgencyRuntime {
    * re-adopts the leg. A web console on a live soft-phone call is never closed, as on a
    * campaign call.
    *
-   * And on a live inbound call (`inbound.hasLiveCall`: the caller's audio bound to this
-   * socket), which only a phone that declared `caps=inbound` can hold (IQ46): dropped the
-   * same way, and the bridge's 8 s deferred hangup decides as for a campaign call (IQ17). An
-   * inbound offer not yet bound is not a call: the idle arm drops the phone and the close
-   * cancels the offer (the caller back at the head of the queue, §5.1).
+   * And on a live inbound call (`inbound.hasLiveCall`: the session holds a call whose
+   * caller's audio is bound): dropped the same way, and the bridge's 8 s deferred hangup
+   * decides as for a campaign call (IQ17). The audio is bound to this socket when a phone that
+   * declared `caps=inbound` took the call (IQ46); an older build that took the session over
+   * mid-call holds it only until that hangup ends it, its socket never bound (the call is not
+   * re-adopted onto it), so dropping it changes nothing for the call. An inbound offer not yet
+   * bound is not a call: the idle arm drops the phone and the close cancels the offer (the
+   * caller back at the head of the queue, §5.1).
    *
    * ── A silent phone is always dropped with `terminate`, never `close` ──────────
    *
@@ -662,8 +665,9 @@ export class AgencyRuntime {
         }
         continue;
       }
-      // A live inbound call bound to this socket (docs/inbound.md §2): rule 1 as written for the
-      // web. A phone that took it (`caps=inbound`, IQ46) gets the campaign call's M1 exception:
+      // A live inbound call (docs/inbound.md §2): rule 1 as written for the web. A phone gets the
+      // campaign call's M1 exception (one that took it declared `caps=inbound`, IQ46; an older
+      // build that took the session over mid-call is never bound to it, see the doc comment):
       // dropped with `terminate`, so the bridge's 8 s deferred hangup starts now (a phone back in
       // time re-adopts the leg; else the call ends `answered`, its outcome owed, IQ17) instead of the
       // caller waiting on silence until TCP gives up. An offer not yet bound is not a live call: it

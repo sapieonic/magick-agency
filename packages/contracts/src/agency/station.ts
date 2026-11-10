@@ -18,8 +18,10 @@ import type { AllListed } from '../primitives';
  * mobile app (`mobile`).
  *
  * Declared by the client, never verified, so it is NEVER an auth input or a
- * rate-limit key. It tunes liveness only (a mobile station is probed with protocol
- * pings and given `MOBILE_STATION_HEARTBEAT_GRACE_MS`), labels logs and marks the
+ * rate-limit key. It tunes liveness (a mobile station is probed with protocol
+ * pings and given `MOBILE_STATION_HEARTBEAT_GRACE_MS`), sets the station's inbound
+ * default (a `web` station can always take inbound calls, a `mobile` one only when it
+ * declares `caps=inbound`: {@link AgencyStationCapability}), labels logs and marks the
  * supervisor's floor. Over HTTP it is read from `X-Client`
  * (`magick-agency-mobile/<semver>+<build> (<ios|android> <osver>; <model>)`; anything
  * else, or no header, is `web`); on the station socket from the upgrade query

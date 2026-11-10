@@ -5,9 +5,11 @@ import { AGENCY_CLIENT_KINDS, AGENCY_STATION_CAPABILITIES, AGENCY_STATION_MEDIA_
  * The station socket's upgrade query, beyond the token: which app is attaching, which
  * media encoding it speaks and what else it can do.
  *
- *  - `client=web|mobile` (absent: `web`). Tunes liveness only: a `mobile` station is
- *    probed with protocol pings and held to `MOBILE_STATION_HEARTBEAT_GRACE_MS`
+ *  - `client=web|mobile` (absent: `web`). Tunes liveness: a `mobile` station is probed
+ *    with protocol pings and held to `MOBILE_STATION_HEARTBEAT_GRACE_MS`
  *    (`StationRegistry`), and the attach writes it to `agency_agent_sessions.client_kind`.
+ *    It also sets the inbound default: a `web` station can always take inbound calls, a
+ *    `mobile` one only with `caps=inbound` ({@link stationCanTakeInbound}, IQ46).
  *  - `media=pcm16|alaw8` (absent: `pcm16`, contracts `AgencyStationMediaFormat`). Parsed
  *    and validated here so an unknown value is refused before attach like an unknown
  *    client; the station handler tags the socket with it for the bridge
