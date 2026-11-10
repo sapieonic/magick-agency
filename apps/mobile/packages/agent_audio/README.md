@@ -302,7 +302,8 @@ lock-screen call controls.
 ```bash
 cd apps/mobile/packages/agent_audio
 flutter test                      # API layer (mocked channels), events, phases, A-law, resampler,
-                                  # jitter buffer + trace fixture, ringback vectors, loopback analysis
+                                  # jitter buffer + trace fixture, ringback and chime vectors,
+                                  # loopback analysis
 flutter analyze .
 ```
 
@@ -311,7 +312,8 @@ jitter buffer (replaying the Dart trace), the ringback tone (the Dart vectors, c
 mixing, the request kept across arm and cleared by stop), the inbound chime (the Dart vectors,
 played once frame by frame, a request before the engine runs, dropped by stop), framing, the uplink encoder, the
 level meter and the interruption tracker; they need no Android or Flutter classes. They run with the app's Gradle
-build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`).
+build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`), by hand: CI builds the
+Android app but does not run them.
 
 The Swift sources cannot be compiled on Linux. `ALaw.swift` documents the same checksums;
 the trace format is documented in `test/support/jitter_trace.dart` for a Swift replay test,

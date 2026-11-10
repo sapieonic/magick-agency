@@ -575,16 +575,21 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
 - **Parity with the console.** Everything above that an agent uses: the rail, the pad, paste
   cleaning, one dial in flight, redial that fills, "Log to" and "Call from" locked once placed,
   call details (never sent before the field set has loaded; 700 ms autosave), notes `''` versus
-  omitted, the outcome pad with the catalog rules and the countdown, finish mode, the DNC and
+  omitted (a refused outcome carried nothing, so the notes typed since the last save are sent by
+  their own route again), the outcome pad with the catalog rules and the countdown, finish mode, the DNC and
   hours overrides that keep the first note, every refusal's copy, Mark DNC, recent calls,
   hold-to-confirm hang-up with the SP3 warning, Mute ring versus the microphone's mute, the
   station in place (SP7) with the queued switch, its pill and Return to campaign, "Close the soft
   phone and join" (`closeSoftphoneSession`, read in the session's own account first), and My
   calls' "Soft-phone calls" (the agent's own; `media` never rendered).
 - **Call back from a Missed row** ([`mobile.md`](mobile.md) "Missed calls"): the console's prefill
-  (the number, the matched campaign as "Log to" where taggable, Call focused, never dialled), and
-  the dial's `agency_softphone_call_placed` carries `entry: 'inbound_callback'`. The app holds the
-  number for a soft phone not open yet for five minutes, and drops it on a session change.
+  (`SoftphoneActions.callBack`: the number, the matched campaign as "Log to" where taggable, Call
+  focused, never dialled; an open override prompt closed, as on a redial), and the dial's
+  `agency_softphone_call_placed` carries `entry: 'inbound_callback'`. While the soft phone cannot
+  take it (not open here yet, a call on screen, finish mode) the app holds the number for at most
+  five minutes (time behind a call on screen does not count) and drops it on any session change
+  but the first session to open after it, when another device takes the session, or on a workspace
+  change; with the soft phone open on another device or account it keeps nothing.
 - **Ringback** is made in the app's voice engine (`packages/agent_audio`, `setRingback`), to the
   console's tone and cadence, mixed into the playout frames so any early media is still heard.
 - **What differs.** No keyboard shortcuts. The calling-hours prompt shows the window as the server

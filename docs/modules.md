@@ -2426,8 +2426,9 @@ The agent app (Flutter, Android and iOS); how it works is in [`mobile.md`](mobil
 tests run with `flutter test` from `apps/mobile` (each package's from its own folder). Counts are
 static counts of `test(` / `testWidgets(` calls on 2026-11-01, marked `~`: a loop of cases counts
 as one, so they undercount. The files the soft phone added or changed were re-counted the same way
-after it (`softphone_controller_test.dart` counts its `softphoneTest(` helper). The Kotlin tests of
-`agent_audio` run from `apps/mobile/android` (`./gradlew :agent_audio:testDebugUnitTest`).
+after it (`softphone_controller_test.dart` counts its `softphoneTest(` helper), and the files inbound
+calls added or changed on 2026-11-10. The Kotlin tests of `agent_audio` run from
+`apps/mobile/android` (`./gradlew :agent_audio:testDebugUnitTest`), by hand: CI does not run them.
 
 ### `apps/mobile/lib/` (`main.dart`, `app/`, `ui/`)
 
@@ -2440,8 +2441,8 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/app/shell_test.dart` | ~22 |
-| `apps/mobile/test/app/softphone_navigation_test.dart` | ~27 |
+| `apps/mobile/test/app/shell_test.dart` (with the Missed badge on My calls) | ~24 |
+| `apps/mobile/test/app/softphone_navigation_test.dart` | ~28 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
 | `apps/mobile/test/core/foundation_test.dart` | ~20 |
 
@@ -2471,7 +2472,7 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 | `apps/mobile/test/core/telemetry/call_telemetry_test.dart` | ~10 |
 | `apps/mobile/test/core/telemetry/gate_telemetry_test.dart` | ~3 |
 | `apps/mobile/test/core/telemetry/posthog_sink_test.dart` | ~4 |
-| `apps/mobile/test/core/telemetry/softphone_dial_events_test.dart` | ~5 |
+| `apps/mobile/test/core/telemetry/softphone_dial_events_test.dart` (with `entry` and `surface`) | ~7 |
 | `apps/mobile/test/core/telemetry/station_call_events_test.dart` | ~3 |
 | `apps/mobile/test/core/telemetry/telemetry_test.dart` | ~13 |
 
@@ -2486,22 +2487,48 @@ phone's host actions, and closes a soft-phone session without closing over its c
 (`close_softphone.dart`, a port of the console's `closeSoftphoneSession`). After a reconnect it
 checks a soft-phone call it still holds against the server itself (the bootstrap, with backoff), so
 a call that ended while the socket was down lets go of ringback, CallKit and the hold, and it
-carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`).
+carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`). It holds an
+inbound call beside the campaign's (`StationState.inbound`, `newerInboundCall`, the let-go copies
+remembered, `inboundOnScreen`; the phase follows it, `effectiveState`), declares `caps=inbound` on
+the socket, chimes once per offer, checks a held inbound call after a reconnect
+(`GET /inbound/calls/:id`, with backoff) and routes the station's actions to it
+([`mobile.md`](mobile.md), "Inbound calls"). `call_autosave.dart` (`CallAutosave`) is the debounced
+notes save of a soft-phone or inbound call (`manual:<id>`, `inbound:<id>`): kept on the phone until
+sent, re-armed by a refused outcome (`outcomeRefused`), flushed on leave (`flushNow`). Test
+helper: `controller_harness.dart`.
 
-Files: `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
+Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
 
 | Test file | Cases |
 |---|---|
 | `apps/mobile/test/core/audio/audio_orchestration_test.dart` | ~29 |
 | `apps/mobile/test/core/lifecycle/lifecycle_test.dart` | ~23 |
+| `apps/mobile/test/core/station/call_autosave_test.dart` (restored text kept over the server's older copy, `outcomeRefused`, `flushNow`) | ~6 |
 | `apps/mobile/test/core/station/clock_and_liveness_test.dart` | ~18 |
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
 | `apps/mobile/test/core/station/station_controller_test.dart` | ~67 |
 | `apps/mobile/test/core/station/softphone_host_test.dart` | ~41 |
+| `apps/mobile/test/core/station/station_inbound_test.dart` (an inbound call through the core from the contract's frames, in the server's frame order: offer to settled, the chime once per offer, why a call left, the reconnect check and its refusals, "Your customer is waiting", `device_away` queued, the actions and their refusals, a let-go copy kept gone, the notes on a refused outcome and on leaving) | ~31 |
 | `apps/mobile/test/core/station/station_queue_test.dart` | ~11 |
-| `apps/mobile/test/core/station/station_reducer_test.dart` | ~28 |
+| `apps/mobile/test/core/station/station_reducer_test.dart` (with the inbound phase) | ~32 |
 | `apps/mobile/test/core/station/station_redial_test.dart` | ~27 |
-| `apps/mobile/test/core/station/station_socket_test.dart` | ~27 |
+| `apps/mobile/test/core/station/station_socket_test.dart` (with `caps=inbound`) | ~31 |
+
+### `apps/mobile/lib/core/inbound/`
+
+The inbound call's domain ([`mobile.md`](mobile.md), "Inbound calls"): the API client for the
+call routes under `/proxy/agency/inbound/calls/:id` (`GET`, notes `PATCH`, hangup, disposition,
+DNC; every refusal a typed `InboundRefusal`), the call's rules (`newerInboundCall`, a port of the
+console's, and the predicates the station reads) and every sentence it says in the console's
+British English. Test helper: `inbound_fixtures.dart` (calls built from `fixtures/agent/inbound.json`
+and `station.json`).
+
+Files: `inbound_call_api.dart`, `inbound_call_rules.dart`, `inbound_copy.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/core/inbound/inbound_call_api_test.dart` | ~8 |
+| `apps/mobile/test/core/inbound/inbound_call_rules_test.dart` | ~19 |
 
 ### `apps/mobile/lib/core/softphone/`
 
@@ -2511,7 +2538,10 @@ every soft-phone route (scoped to the session's account; the dial never retried)
 UI seam (`softphone_view.dart`: `SoftphoneView`, `SoftphoneActions`, the Phone tab's screen states
 and availability), and `SoftphoneController`, a port of the console's `useSoftphone`, per
 workspace (`softphoneOverrides`). Pure helpers with the console's tables: call state and labels,
-phone input, call fields, overrides, refusal copy, and the debounced autosave (`manual:<id>`).
+phone input, call fields, overrides, refusal copy, and the debounced autosave (`manual:<id>`, on
+the station's `CallAutosave`). `SoftphoneController.callBack` takes a Missed call's Call back: it
+fills the pad and focuses Call, never dials, and waits at most 5 minutes for a soft phone that can
+take it.
 `hosted_here.dart` remembers, per workspace, the session this phone hosts, so only that one resumes
 on its own.
 Test helpers: `manual_calls.dart` (rows shared with the console's tests), `fake_softphone_host.dart`.
@@ -2528,7 +2558,7 @@ Files: `call_fields.dart`, `call_labels.dart`, `call_state.dart`, `hosted_here.d
 | `apps/mobile/test/core/softphone/phone_input_test.dart` | ~20 |
 | `apps/mobile/test/core/softphone/refusal_copy_test.dart` | ~8 |
 | `apps/mobile/test/core/softphone/softphone_api_test.dart` | ~15 |
-| `apps/mobile/test/core/softphone/softphone_controller_test.dart` | ~100 |
+| `apps/mobile/test/core/softphone/softphone_controller_test.dart` (with Call back and a refused outcome's notes) | ~116 |
 | `apps/mobile/test/core/softphone/softphone_seams_test.dart` | ~14 |
 
 ### `apps/mobile/lib/features/` (`auth/`, `join/`, `accounts/`, `campaigns/`, `settings/`)
@@ -2553,8 +2583,8 @@ Files: `auth/auth_widgets.dart`, `auth/no_membership_screen.dart`, `auth/sign_in
 
 My performance (windows, readouts, the bucket chart, stale-while-revalidate) and My calls (keyset
 pages, filters, the debounced number search, the attempt sheet; and the "Soft-phone calls" segment
-with its own list, filters and detail sheet, `calls/softphone/`); all keyed by
-`agentWorkspaceProvider`. Test helper: `softphone_support.dart`.
+with its own list, filters and detail sheet, `calls/softphone/`; and the "Missed calls" segment,
+`features/missed/` below); all keyed by `agentWorkspaceProvider`. Test helper: `softphone_support.dart`.
 
 Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `performance/logic/bucket_series.dart`, `performance/logic/en_in_format.dart`, `performance/logic/performance_view.dart`, `performance/logic/readouts.dart`, `performance/logic/stats_windows.dart`, `performance/performance_api.dart`, `performance/performance_controller.dart`, `performance/performance_screen.dart`, `performance/widgets/bucket_chart.dart`, `calls/calls_controller.dart`, `calls/calls_screen.dart`, `calls/logic/attempt_copy.dart`, `calls/logic/attempt_filters.dart`, `calls/logic/debouncer.dart`, `calls/softphone/softphone_call_detail_sheet.dart`, `calls/softphone/softphone_call_tile.dart`, `calls/softphone/softphone_calls_controller.dart`, `calls/softphone/softphone_calls_list.dart`, `calls/widgets/attempt_detail_sheet.dart`, `calls/widgets/attempt_tile.dart`, `calls/widgets/filter_bar.dart`
 
@@ -2604,11 +2634,37 @@ Files: `customer_history_api.dart`, `customer_history_controller.dart`, `custome
 | `apps/mobile/test/features/customers/customer_history_controller_test.dart` | ~21 |
 | `apps/mobile/test/features/customers/customer_history_screens_test.dart` | ~31 |
 
+### `apps/mobile/lib/features/missed/`
+
+Missed calls, a segment of My calls ([`mobile.md`](mobile.md), "Missed calls"; inbound.md §7,
+§8.4): the routes (`missed_calls_api.dart`: the list with `assignee=me`, the count, Mark handled,
+Reopen), the count's controller (polled every 60 s in the foreground while inbound is on, read
+again when a call settles on this phone, `missedCallsSettledProvider`; the badge, "100+" past the
+cap) and the access seam the shell and My calls read (`missed_access.dart`, hidden by default,
+plugged in by `main.dart`), the list's controller (To follow up / Handled, the reason filter,
+keyset pages of 50, Mark handled and Reopen, re-read on entering with rows a minute old or a
+settle since; a generation per workspace), every sentence in the console's British English
+(`missed_calls_copy.dart`), the rows and the list, and Call back (`call_back.dart`: the number and
+the matched campaign handed to `SoftphoneActions.callBack`, then the pad). Test helper:
+`support.dart`.
+
+Files: `call_back.dart`, `missed_access.dart`, `missed_call_tile.dart`, `missed_calls_api.dart`, `missed_calls_controller.dart`, `missed_calls_copy.dart`, `missed_calls_list.dart`, `missed_count_controller.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/features/missed/missed_calls_api_test.dart` | ~8 |
+| `apps/mobile/test/features/missed/missed_calls_controller_test.dart` | ~19 |
+| `apps/mobile/test/features/missed/missed_calls_copy_test.dart` | ~3 |
+| `apps/mobile/test/features/missed/missed_calls_screen_test.dart` (the rows, Call back through the real soft phone, the segment and its badge on My calls, the flag-off notice, Mark handled and Reopen, kept fresh mid-shift) | ~20 |
+| `apps/mobile/test/features/missed/missed_count_controller_test.dart` (the visibility rule, when the count is read, the poll, a settle, a workspace change) | ~16 |
+
 ### `apps/mobile/lib/features/` (`preflight/`, `station/`)
 
 Pre-flight (pure grading apart from the device measurements) and the station screens: one
 screen per phase, the call band, contact details, notes, wrap-up and dispositions, sheets and
-link-state screens.
+link-state screens; the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading
+only `StationView.inbound`), the neutral "Incoming call · Connecting…" screen, and the banners
+above every layout ("Your customer is waiting", why the last inbound call left).
 
 Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_copy.dart`, `logic/*`, `parts/*`, `widgets/*`)
 
@@ -2621,6 +2677,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
 | `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
+| `apps/mobile/test/features/station/station_inbound_test.dart` (the inbound screens: the server's `reserved` before the offer, the offer, on the call, the outcome, the banners, 360×640 at 200% text) | ~15 |
 | `apps/mobile/test/features/station/station_nothing_due_test.dart` | ~9 |
 | `apps/mobile/test/features/station/station_phases_test.dart` | ~38 |
 | `apps/mobile/test/features/station/station_redial_test.dart` | ~12 |
@@ -2650,11 +2707,15 @@ Hand-written Dart types for the API and the station frames, the soft phone's inc
 (`assignment.dart`: their own contacts, agent retry, the per-contact call and their refusals),
 customer history (`customer_history.dart`: the search, timeline and options shapes, an unknown
 timeline kind kept as `CustomerTimelineUnknownEntry`, `CustomerHistoryOpenOverride.followUpAt`,
-`CustomerHistorySummary.contactsTruncated`, `CustomerSearchOptionsResponse`) and the search box's
+`CustomerHistorySummary.contactsTruncated`, `CustomerSearchOptionsResponse`), the search box's
 number rule (`customer_search_number.dart`, a port of `packages/domain/src/customer-search-number.ts`
-held to the same table), checked against `packages/contracts` fixtures and literal unions.
+held to the same table) and inbound calls (`inbound.dart`: `InboundCall` with its route, sticky,
+match and catalog, the call routes' bodies and answers, the Missed list's row, query, page and
+count, the inbound refusals; the `inbound_call` and `customer_waiting` frames in `station.dart`,
+the inbound vocabularies and `StationCapability` in `enums.dart`), checked against
+`packages/contracts` fixtures and literal unions.
 
-Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_history.dart`, `lib/src/customer_search_number.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/softphone.dart`, `lib/src/station.dart`
+Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_history.dart`, `lib/src/customer_search_number.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/inbound.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/softphone.dart`, `lib/src/station.dart`
 
 | Test file | Cases |
 |---|---|
@@ -2664,6 +2725,7 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 | `apps/mobile/packages/agency_wire/test/customer_search_number_test.dart` | ~8 (one runs every row of the shared table) |
 | `apps/mobile/packages/agency_wire/test/decode_budget_test.dart` | ~2 |
 | `apps/mobile/packages/agency_wire/test/fixtures_test.dart` | ~5 |
+| `apps/mobile/packages/agency_wire/test/inbound_test.dart` (`inbound.json` and the inbound frames of `station.json` decoded, the predicates, the refusals, the Missed shapes) | ~33 |
 | `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~10 |
 | `apps/mobile/packages/agency_wire/test/platform_test.dart` | ~14 |
 | `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
@@ -2674,18 +2736,24 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 ### `apps/mobile/packages/agent_audio/`
 
 The native voice engine as a Flutter plugin: the Dart API and reference models (A-law codec,
-half-band filter, jitter buffer, loopback, the soft phone's ringback tone), with the Kotlin
-(`android/`) and Swift (`ios/`) engines, the Android on-duty service and iOS CallKit. Kotlin tests
-on 2026-11-01, as Gradle printed them: 33, `RingbackTest.kt` 11 of them (the shared golden vectors
-in `test/support/ringback_vectors.dart`, and the plugin's `EngineSlot`: the ringback request is
-applied when an engine starts, never to a loopback, kept across a restart and cleared on stop).
+half-band filter, jitter buffer, loopback, the soft phone's ringback tone, the inbound chime), with
+the Kotlin (`android/`) and Swift (`ios/`) engines, the Android on-duty service and iOS CallKit.
+Kotlin tests on 2026-11-01, as Gradle printed them: 33, `RingbackTest.kt` 11 of them (the shared
+golden vectors in `test/support/ringback_vectors.dart`, and the plugin's `EngineSlot`: the ringback
+request is applied when an engine starts, never to a loopback, kept across a restart and cleared on
+stop). `ChimeTest.kt` (2026-11-10, 8 `@Test` methods: the vectors in
+`test/support/chime_vectors.dart`, played once frame by frame, mixed into playout saturating, a
+restart while playing, and through `EngineSlot` a chime asked for before the engine runs, played
+once, dropped by stop, never on a loopback) passed offline on a JVM during review; no Gradle print
+of the whole suite since. CI runs none of the Kotlin tests.
 
-Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/tone/ringback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
+Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/tone/chime.dart`, `lib/src/tone/ringback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/packages/agent_audio/test/agent_audio_test.dart` | ~26 |
+| `apps/mobile/packages/agent_audio/test/agent_audio_test.dart` (with `playChime`) | ~28 |
 | `apps/mobile/packages/agent_audio/test/alaw_test.dart` | ~6 |
+| `apps/mobile/packages/agent_audio/test/chime_test.dart` (the console's `inbound_ring` against the shared vectors, at 8 and 16 kHz) | ~6 |
 | `apps/mobile/packages/agent_audio/test/events_test.dart` | ~9 |
 | `apps/mobile/packages/agent_audio/test/half_band_test.dart` | ~10 |
 | `apps/mobile/packages/agent_audio/test/jitter_buffer_test.dart` | ~16 |

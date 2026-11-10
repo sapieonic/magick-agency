@@ -1,11 +1,11 @@
 # The agent mobile app
 
 The agent-only app in `apps/mobile`: one Flutter project that builds the Android and the iOS app.
-Agents sign in, go on duty on a campaign, take power-dialled calls, dial numbers themselves on the
-soft phone, write up each call and see their own numbers. Supervisors and admins stay on the web
+Agents sign in, go on duty on a campaign, take power-dialled calls and customers who ring in, dial
+numbers themselves on the soft phone, write up each call and see their own numbers. Supervisors and admins stay on the web
 consoles. This doc covers what V1 does and leaves out, how it talks to the server, the rules that
 keep a customer from reaching an absent phone, and how it is built and tested. Running it
-locally: `apps/mobile/README.md`. As of 2026-11-01.
+locally: `apps/mobile/README.md`. As of 2026-11-10.
 
 ## Scope
 
@@ -15,6 +15,9 @@ locally: `apps/mobile/README.md`. As of 2026-11-01.
 - account choice and the campaign list;
 - the pre-flight checks;
 - the station: go on duty, take calls, notes, dispositions, DNC, breaks and leave;
+- inbound calls on the station (customers who ring one of the account's numbers, put through to
+  an agent on duty with the app on screen): the offer with its chime, the call and its outcome, as
+  on the console (IQ46, IQ47). See "Inbound calls" below;
 - the soft phone (manual dialling, decision M2): the Phone tab, and in place on the station after
   "Switch to soft phone" (SP7). See "The soft phone" below;
 - My performance and My calls (campaign calls and soft-phone calls);
@@ -269,6 +272,8 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   - call fields are never sent before the field set has loaded, and autosave 700 ms after the
     last edit; unsent notes are kept on the phone under `manual:<id>`;
   - notes the agent cleared go with the outcome as `''`, notes never touched are left out;
+  - a refused outcome carried nothing, so the notes' save is armed again and text typed since the
+    last save goes by the notes' own route (the status never sits at saving);
   - the DNC and calling-hours overrides (SP1, SP2) need a note of 10–500 characters, and a
     second refusal of the other kind keeps the first note;
   - "Without one, it closes in m:ss" counts down to `outcome_due_at`, on the server's clock.
@@ -441,9 +446,12 @@ Code: `lib/features/missed/`.
 
 The console's inbound flow ([`inbound.md`](inbound.md) §6, "The console (built, WP-D)") on the
 phone, with the app on screen: an agent on duty on a campaign is offered a caller who rang one of
-the account's numbers, sees and hears them, talks, and saves the outcome. Ringing a phone whose app
+the account's numbers, sees and hears them, talks, and saves the outcome. The server's side is
+IQ46, the app's defaults IQ47 (both decided, `decisions.md` §4, "Inbound calls on the mobile app");
+the server's paths for a phone are `inbound.md` §6 "Mobile stations". Ringing a phone whose app
 is in the background (push) is not built: the foreground rule above stands, so a phone that leaves
-the app while `available` is paused and offered nothing.
+the app while `available` is paused and offered nothing. The calls that reach nobody are the
+agent's Missed calls (above).
 
 - **The gate.** The station socket declares `caps=inbound` on every upgrade
   (`StationSocket.capabilities`, `StationCapability.withQuery`). Only a station that declares it is
@@ -460,16 +468,15 @@ the app while `available` is paused and offered nothing.
   A live campaign attempt is always the call on screen (`StationState.inboundOnScreen`): the
   phase, the screen and where notes, the outcome, Mark DNC and Hang up go read the same call.
 - **The phase follows the call** (`StationState.effectiveState`), as for a campaign call: offered
-  reads `reserved`, connected `on_call`, ended owing its outcome `wrapup`. Everything that reads the
-  phase treats a live inbound call as a call. The server sends `agent_state` around the call's
-  frames (`reserved` just before the offer, `on_call` before the connected call, `wrapup` before
-  the ended one, `available` before the settled one); the call still decides. Reserved with no
-  call on the station (before the offer lands, or for the moment between an offer leaving and the
-  agent being returned) shows a neutral "Incoming call · Connecting…" screen (not the campaign's
-  ringing pop, no Hang up) and says nothing; the offer is announced
-  ("Incoming call from …") when it lands, though the phase did not change. Everything that reads
-  the phase treats a live inbound call as a call: the shell's `callActive` (the call takes the screen,
-  the bar hides), the away rules (leaving the app during an offer, the call or an owed outcome
+  reads `reserved`, connected `on_call`, ended owing its outcome `wrapup`. The server sends
+  `agent_state` around the call's frames (`reserved` just before the offer, `on_call` before the
+  connected call, `wrapup` before the ended one, `available` before the settled one); the call
+  still decides. Reserved with no call on the station (before the offer lands, or for the moment
+  between an offer leaving and the agent being returned) shows a neutral "Incoming call ·
+  Connecting…" screen (not the campaign's ringing pop, no Hang up) and says nothing; the offer is
+  announced ("Incoming call from …") when it lands, though the phase did not change. Everything
+  that reads the phase treats a live inbound call as a call: the shell's `callActive` (the call
+  takes the screen, the bar hides), the away rules (leaving the app during an offer, the call or an owed outcome
   QUEUES `device_away`, never closes the socket, and the pause is cancelled on return; while the
   outcome is owed the notification carries its save-by time, `outcome_due_at`), the wake lock, the
   heartbeat's hold on a stalled socket, the mid-call reconnect countdown (8 s, for a connected call
@@ -478,7 +485,9 @@ the app while `available` is paused and offered nothing.
   never while only offered). A new offer clears what a campaign call left on screen; a campaign
   `reserved` drops an inbound copy still held.
 - **Audio.** The microphone arms on the offer (CallKit `startCall` on iOS, named by the matched
-  contact, else the number, else "Number withheld") and the uplink opens only at `bridged_at`. The
+  contact, else the number, else "Number withheld") and the uplink opens only at `bridged_at`.
+  CallKit is told of an outgoing call, as for a campaign call; its own incoming-call screen is not
+  used (IQ47: the offer is the station's, with the app on screen). The
   call's end reaches CallKit as `local` when this phone hung it up, else as ended by the other
   side, also when the copy is retired (never an earlier campaign call's release reason).
 - **The chime** is the console's `inbound_ring` cue, made in the engine
@@ -547,8 +556,11 @@ lib/
     auth/       the app gate: client-config → Firebase user → session → accounts → ready
     session/    account choice and local preferences
     station/    reducer (a port of the console's), server clock, socket, controller, view mapper;
-                the hosted session (campaign or soft phone) and the soft phone's close
+                the hosted session (campaign or soft phone) and the soft phone's close; the
+                inbound call held beside a campaign call; CallAutosave (notes of a soft-phone or
+                inbound call)
     softphone/  the soft phone's API client, controller, call rules and its UI seam
+    inbound/    the inbound call's API client (typed refusals), its rules (newerInboundCall) and copy
     audio/      orchestration of packages/agent_audio by phase
     lifecycle/  foreground rules (device_away), wake lock, local notifications
   features/   auth, join, accounts, campaigns, preflight, station, softphone (the Phone tab and
@@ -556,7 +568,7 @@ lib/
               segment), settings
 packages/
   agency_wire/  hand-written Dart types for the API and station frames
-  agent_audio/  the native voice engine (Kotlin, Swift)
+  agent_audio/  the native voice engine (Kotlin, Swift), the soft phone's ringback, the inbound chime
 ```
 
 - **The station seam.** `lib/core/station/station_view.dart` is the only thing the station
@@ -633,13 +645,16 @@ packages/
     each 20 ms playout frame after the jitter buffer, so any early media is still heard. A Dart
     reference and shared golden vectors pin the Kotlin and Swift copies
     (`packages/agent_audio/README.md`, "Ringback").
+  - The inbound chime is made the same way (`AgentAudio.playChime`, the console's `inbound_ring`
+    cue), once per offer ("Inbound calls" above; `packages/agent_audio/README.md`, "Inbound
+    chime").
 - **Pre-flight**:
   - Checks the microphone permission, a loopback sound check ("Say hello"), the audio route, the network (round trip and measured upload), the battery and Android battery optimisation.
   - Only the microphone and the network block "Go on duty"; the rest is advice.
   - Grading lives in pure functions (`preflight_checks.dart`), separate from the measurements (`device_preflight_checks.dart`).
 - **Wire types.** `agency_wire` is written by hand against `packages/contracts`. Drift is caught from both sides:
   - `packages/contracts/fixtures/agent/*.json` samples are type-checked against the TS contract (`agent-fixtures.test.ts`) and decoded by the Dart tests.
-  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (38, the soft phone's included). `--check` fails when it is stale, and so does `pnpm test` in contracts.
+  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (62: the soft phone's, customer history's and inbound calls' included, with `station_capabilities`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
   - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
 
@@ -659,7 +674,7 @@ packages/
 
 - **Toolchain:** Flutter 3.47.7, pinned in `.github/workflows/mobile.yml`.
 - **CI:**
-  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests.
+  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart only: the Kotlin unit tests, `./gradlew :agent_audio:testDebugUnitTest`, are not run).
   - A debug Android build on every pull request touching the app or the contracts.
   - An unsigned iOS build on `main`.
 - **Android:**
@@ -677,15 +692,17 @@ packages/
 - **iOS has not compiled yet.** CI's first iOS build (on `main`, 2026-11-01) stopped at package resolution: `firebase_core` 5.1.0 needs `gtm-session-fetcher` 4–6 and `google_sign_in_ios` 6.3.8 needs 3.x. The Firebase pin ("Builds and releases", iOS) fixes the resolution: SwiftPM reproduced the conflict with the plugins' constraints and resolved them with the pin. That check ran on Linux, so no Swift or Objective-C was compiled. The next `main` build is the first compile, and the Swift engine and CallKit code (the Swift ringback written to the shared vectors and CallKit for soft-phone calls included) is reviewed against the SDK headers only until it passes.
 - **Customer history (2026-11-06) has not run under Dart or Flutter.** The wire types, the number-rule port, the controller and the two screens were written, reviewed and then fixed (the filters sheet, the copy button, the options read, the three wire additions) in an environment without the SDK; no `dart test`, `flutter test` or `flutter analyze` ran. A Python transcription of the port passed every row of the shared table. The mobile CI job (run on changes to `apps/mobile`, `packages/contracts` and `packages/domain/src/customer-search-number.ts`) is the first run.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
-- **Inbound calls (2026-11-10) have run only against the fixtures.** The flow is tested with the
-  contract's sample frames and answers, not with a server offering a real call to a station that
-  declares `caps=inbound` (that server change was built alongside), nor on a phone or a carrier.
-  The chime's Dart reference and vectors ran; its Kotlin (`Chime.kt`, `ChimeTest.kt`, the
-  `EngineSlot` and `VoiceEngine` changes) has not been compiled here (no Android SDK, and Maven
-  Central refused the Kotlin toolchain), so the mobile CI's debug Android build is its first
-  compile, and `ChimeTest.kt` runs only where someone runs
-  `./gradlew :agent_audio:testDebugUnitTest` (CI does not); its Swift (`Chime.swift`, the `Playout` and `VoiceEngine` changes) has never been
-  compiled, like the rest of the iOS engine. Whether CallKit's own incoming-call UI should be used
-  for an offer (the app reports it as an outgoing call, as it does a campaign call) is not decided.
+- **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
+  with the contract's sample frames and answers, played in the server's own frame order, not
+  against a running server offering a real call to a station that declares `caps=inbound` (the
+  server's side is tested on its own, with a simulated phone station: `inbound-mobile-e2e` and
+  `inbound-mobile-wall-clock`), nor on a phone or a carrier. Of the chime, the Dart reference and
+  its vectors run in CI (`flutter test` in `agent_audio`). Its Kotlin (`Chime.kt`, the `EngineSlot`
+  and `VoiceEngine` changes) was compiled and `ChimeTest.kt` passed offline on a JVM during review;
+  CI compiles it again in the debug Android build but never runs the Android unit tests
+  (`ChimeTest.kt`, `RingbackTest.kt`: only `./gradlew :agent_audio:testDebugUnitTest` from
+  `apps/mobile/android`, run by hand). Its Swift (`Chime.swift`, the `Playout` and `VoiceEngine`
+  changes) has never been compiled, like the rest of the iOS engine (iOS does not compile yet,
+  above). Ringing a phone whose app is in the background (push) is parked, not started.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.
