@@ -385,6 +385,17 @@ abstract final class InboundCopy {
   static String dncMessage(String number, String? campaignName) =>
       '$number won’t be called again ${campaignName != null ? 'for $campaignName' : 'from this account'}. Do this when the customer asks not to be called.';
   static const dncWithheld = 'The caller withheld their number.';
+
+  /// Saving an outcome that stops calling the number: the server adds it to the matched
+  /// campaign's Do Not Call list, or with no match the account's (never "this campaign").
+  /// [campaignName] null: no campaign matched. Not asked for a withheld number, where nothing
+  /// is added.
+  static String suppressConfirmBody(String label, {required String number, String? campaignName}) {
+    final list = campaignName == null
+        ? 'this account’s Do Not Call list'
+        : 'the Do Not Call list for ${campaignName.trim().isEmpty ? 'this campaign' : campaignName}';
+    return '“$label” adds $number to $list. You can’t undo this from the app — an admin has to remove it.';
+  }
   static const dncNotMarked = 'The call moved on before Do Not Call was marked, so nothing was recorded.';
 
   // ── Details ──

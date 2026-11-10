@@ -89,6 +89,13 @@ InboundCall? newerInboundCall(InboundCall? a, InboundCall? b) {
 String inboundSnapshotKey(InboundCall call) =>
     '${call.id}@${call.offeredAt.toUtc().toIso8601String()}@${call.stateRaw}@${call.settledAt?.toUtc().toIso8601String() ?? ''}';
 
+/// An HTTP answer the station must not adopt: a copy of a call the station let go of
+/// ([retired]: retired or dropped copies) that is no further along than the copy let go of (the
+/// same snapshot, an earlier offer, or the same offer no further on). A later offer of the call,
+/// or a copy further on (settled, say), is news and is adopted.
+bool isInboundStale(InboundCall answer, Iterable<InboundCall> retired) =>
+    retired.any((r) => r.id == answer.id && identical(newerInboundCall(r, answer), r));
+
 /// One offer of a call: the chime rings once per key (a restatement is silent, a re-offer
 /// after a requeue rings again).
 String inboundOfferKey(InboundCall call) => '${call.id}@${call.offeredAt.toUtc().toIso8601String()}';

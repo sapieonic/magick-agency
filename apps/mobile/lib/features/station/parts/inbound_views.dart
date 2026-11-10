@@ -158,15 +158,18 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
       return;
     }
     final option = findDisposition(view.dispositions, submit.code)!;
-    if (option.suppresses) {
+    // A withheld caller has no number to add: the outcome is saved and nothing else happens,
+    // so there is nothing irreversible to confirm.
+    final from = call.fromE164;
+    if (option.suppresses && from != null) {
       final scope = sameCall(call.callId, const {AgentPhase.wrapup});
       final ok = await confirmDialog(
         context,
         title: StationCopy.suppressConfirmTitle,
-        message: StationCopy.suppressConfirmBody(
+        message: InboundCopy.suppressConfirmBody(
           option.label,
-          call.fromE164 == null ? InboundCopy.numberWithheld : formatPhone(call.fromE164!),
-          call.campaignName ?? '',
+          number: formatPhone(from),
+          campaignName: call.matched ? call.campaignName : null,
         ),
         confirm: StationCopy.suppressConfirmAction,
         danger: true,

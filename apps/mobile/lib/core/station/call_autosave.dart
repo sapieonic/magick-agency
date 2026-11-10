@@ -23,7 +23,9 @@ import 'station_view.dart' show NotesStatus, NotesView;
 /// * A refusal that cannot get better ([_hopeless]) is not retried; anything else is, every
 ///   [retryDelay], while the call is on screen (the console's 4× debounce).
 /// * Saving the outcome cancels the pending save ([cancelPending]): the outcome carries the same
-///   notes, and the PATCH would race it.
+///   notes, and the PATCH would race it. A refused outcome carried nothing, so [outcomeRefused]
+///   arms the save again for text the server does not have yet.
+/// * Closing the station sends what is unsent at once ([flushNow], bounded).
 class CallAutosave<C, R extends Object> {
   CallAutosave({
     required this._save,
@@ -181,6 +183,37 @@ class CallAutosave<C, R extends Object> {
   void cancelPending() {
     _timer?.cancel();
     _timer = null;
+  }
+
+  /// The outcome request that [cancelPending] made way for was refused: it saved nothing, so
+  /// notes typed since the last confirmed save are sent by their own route again, after the
+  /// usual [debounce]. Without this the status would sit at saving with the last keystrokes on
+  /// this phone only. Nothing is armed when nothing is unsent, or when a save is already armed.
+  void outcomeRefused(String callId) {
+    if (_disposed || callId != _callId || _timer != null || !_unsent) return;
+    _arm(debounce);
+  }
+
+  /// The agent typed something no confirmed save has carried yet.
+  bool get _unsent {
+    if (!_touched) return false;
+    final keystroke = _lastKeystrokeAt;
+    final saved = _lastSaveSucceededAt;
+    return keystroke != null && (saved == null || keystroke.isAfter(saved));
+  }
+
+  /// The station is closing: send what is unsent now rather than after the debounce, waiting
+  /// at most [timeout] (the store already holds it whatever happens).
+  Future<void> flushNow({required Duration timeout}) async {
+    final id = _callId;
+    if (_disposed || id == null || (!_unsent && _timer == null)) return;
+    _timer?.cancel();
+    _timer = null;
+    try {
+      await _send(id).timeout(timeout);
+    } on TimeoutException {
+      _log.warn('notes flush timed out');
+    }
   }
 
   /// The outcome carrying [notes] was saved: the server has them.

@@ -143,8 +143,13 @@ class StationController extends Notifier<StationView?>
   int _heldCallCheck = 0;
 
   /// The call the audio was last told about, so the end reason handed to
-  /// CallKit is that call's: a campaign release's, or a soft-phone call's.
+  /// CallKit is that call's: a campaign release's, a soft-phone call's or an
+  /// inbound call's.
   String? _lastTargetId;
+
+  /// [_lastTargetId] was an inbound call: its end is told in its own terms even once the copy
+  /// is retired, never as an earlier campaign call's release.
+  bool _lastTargetInbound = false;
 
   // The inbound call's local facts (the call itself is in the reducer).
   /// The inbound call on the station as of the last change, to see it arrive and leave.
@@ -479,8 +484,12 @@ class StationController extends Notifier<StationView?>
     s.stopListening();
     await s.notes.persistNow();
     await s.inboundNotes.persistNow();
-    // The last seconds of typing are sent, not dropped with the debounce.
-    final notesSent = s.notes.flushNow(timeout: notesFlushTimeout);
+    // The last seconds of typing are sent, not dropped with the debounce: the campaign call's
+    // and the inbound call's.
+    final notesSent = Future.wait([
+      s.notes.flushNow(timeout: notesFlushTimeout),
+      s.inboundNotes.flushNow(timeout: notesFlushTimeout),
+    ]);
     _resetSessionState();
     if (!disposing && ref.mounted) {
       state = null;
@@ -571,6 +580,7 @@ class StationController extends Notifier<StationView?>
     _manualHangupFailure = null;
     _cancelHeldCallCheck();
     _lastTargetId = null;
+    _lastTargetInbound = false;
     _everOpened = false;
     _inboundShown = null;
     _setInboundNotice(null);
@@ -620,7 +630,7 @@ class StationController extends Notifier<StationView?>
         // The same for an inbound call: `ready` keeps it, and the server restates one it still
         // holds for this session right after. One requeued or settled while the socket was away
         // sends nothing, so the station asks (`GET /inbound/calls/:id`).
-        if (!first && _station.inboundOnStation != null) _startInboundCheck();
+        if (!first && _station.inboundOnScreen != null) _startInboundCheck();
       case AgentStateFrame():
         // The authority: an HTTP answer held for reconciliation is now stale.
         _lastStateResponse = null;
@@ -794,6 +804,7 @@ class StationController extends Notifier<StationView?>
     s.socket.dispose(reason: 'over');
     s.stopListening();
     unawaited(s.notes.persistNow().then((_) => s.notes.flushNow(timeout: notesFlushTimeout)));
+    unawaited(s.inboundNotes.persistNow().then((_) => s.inboundNotes.flushNow(timeout: notesFlushTimeout)));
   }
 
   void _sendUplink(Uint8List frame) {
@@ -813,8 +824,13 @@ class StationController extends Notifier<StationView?>
     final next = stationReducer(_station, action);
     if (identical(next, _station)) return;
     final manualBefore = _station.manualCall;
+    final liveBefore = _station.live?.attemptId;
     _station = next;
     if (!identical(next.manualCall, manualBefore)) _calls.manualChanged(next.manualCall);
+    // The next call of any kind ends the "why it left" notice: a campaign call here, an inbound
+    // one in [_inboundChanged].
+    final liveNow = next.live?.attemptId;
+    if (liveNow != null && liveNow != liveBefore) _setInboundNotice(null);
     _afterChange();
   }
 
@@ -854,13 +870,14 @@ class StationController extends Notifier<StationView?>
     }
 
     final target = _audioTarget();
+    _lastTargetInbound = target.attemptId != null && _station.live == null && target.attemptId == _station.inboundCall?.id;
     _lastTargetId = target.attemptId;
     s.audio.sync(target);
     s.notes.attemptChanged(
       _station.currentAttemptId,
       accepting: _station.currentAttemptId != null && isCallPhase(_station.effectiveState),
     );
-    final inbound = _station.inboundOnStation;
+    final inbound = _station.inboundOnScreen;
     s.inboundNotes.callChanged(inbound?.id, serverNotes: inbound?.notes, accepting: inbound != null);
     _applyLifecycle(s);
     _emit();
@@ -887,7 +904,7 @@ class StationController extends Notifier<StationView?>
     final redial = _redialOverride;
     // An inbound call on the station brings its own notes, outcome list, saved outcome and
     // DNC line into the slots the campaign call's use (no campaign attempt is held with it).
-    final inbound = _station.inboundOnStation;
+    final inbound = _station.inboundOnScreen;
     final view = _mapper.map(
       campaignId: s.hosted.campaignId!,
       campaignName: s.hosted.campaignName ?? '',
@@ -980,7 +997,7 @@ class StationController extends Notifier<StationView?>
   }
 
   /// The call on the station, campaign or inbound: what a pause queued behind it is keyed by.
-  String? get _callOnStationId => _station.currentAttemptId ?? _station.inboundOnStation?.id;
+  String? get _callOnStationId => _station.currentAttemptId ?? _station.inboundOnScreen?.id;
 
   /// A redial was placed from the wrap-up on screen and its call has not
   /// reached the station yet: that wrap-up's clock is stopped.
@@ -1010,9 +1027,11 @@ class StationController extends Notifier<StationView?>
     final inbound = _station.inboundCall;
     // How the call the audio last held ended, in that call's own terms.
     final previous = _lastTargetId;
+    // An inbound call's end is its own whether its copy ended or was retired (gone from the
+    // station altogether): never an earlier campaign call's release.
     final endReason = previous != null && manual != null && previous == manual.id && !manual.isLive
         ? _manualEndReasonFor(manual.endReason)
-        : previous != null && previous == inbound?.id && !isInboundLive(inbound)
+        : previous != null && _lastTargetInbound
             ? (_inboundHungUpHere == previous ? audio.CallEndReason.local : audio.CallEndReason.remoteEnded)
             : _endReasonFor(_lastRelease);
     // Superseded: the call moved with the session to the other device.
@@ -1113,7 +1132,7 @@ class StationController extends Notifier<StationView?>
     final s = _s;
     if (s != null && (s.hosted.isSoftphone || _onSoftphoneBreak)) return _softphoneNotification(s);
     final state = _station.effectiveState;
-    final inbound = _terminal ? null : _station.inboundOnStation;
+    final inbound = _terminal ? null : _station.inboundOnScreen;
     final inboundPhaseNow = inboundPhase(inbound);
     final away = state == AgentState.onBreak &&
         (_station.breakReasonCode ?? (_awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null)) ==
@@ -1270,7 +1289,7 @@ class StationController extends Notifier<StationView?>
         ? correctedInstant(manual.outcomeDueAt, _mapper.appliedOffsetMs)
         : null;
     // An inbound call owing its outcome is a wrap-up: its save-by time is `outcome_due_at`.
-    final inbound = _terminal ? null : _station.inboundOnStation;
+    final inbound = _terminal ? null : _station.inboundOnScreen;
     final inboundDue = inboundPhase(inbound) == InboundPhase.outcome
         ? correctedInstant(inbound!.outcomeDueAt, _mapper.appliedOffsetMs)
         : null;
@@ -1545,7 +1564,7 @@ class StationController extends Notifier<StationView?>
     if (_terminal) return;
     final attemptId = _station.live?.attemptId;
     if (attemptId == null) {
-      final inbound = _station.inboundOnStation;
+      final inbound = _station.inboundOnScreen;
       if (isInboundLive(inbound)) {
         await _hangUpInbound(inbound!);
         return;
@@ -1572,7 +1591,7 @@ class StationController extends Notifier<StationView?>
   void updateNotes(String text) {
     final s = _s;
     if (s == null) return;
-    if (_station.inboundOnStation != null) {
+    if (_station.inboundOnScreen != null) {
       s.inboundNotes.editNotes(text);
     } else {
       s.notes.edit(text);
@@ -1583,7 +1602,7 @@ class StationController extends Notifier<StationView?>
   Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt}) async {
     final s = _s;
     if (s == null) return;
-    final inbound = _station.inboundOnStation;
+    final inbound = _station.inboundOnScreen;
     if (inbound != null) return _saveInboundOutcome(inbound, code, notes: notes, callbackAt: callbackAt);
     final attemptId = _station.currentAttemptId;
     if (attemptId == null) {
@@ -1746,7 +1765,7 @@ class StationController extends Notifier<StationView?>
   @override
   Future<void> markDnc({String? reason, String? attemptId}) async {
     if (_s == null) return;
-    final inbound = _terminal ? null : _station.inboundOnStation;
+    final inbound = _terminal ? null : _station.inboundOnScreen;
     if (inbound != null) return _markInboundDnc(inbound, reason: reason, callId: attemptId);
     final live = _terminal ? null : _station.live?.attemptId;
     if (live == null || (attemptId != null && attemptId != live)) {
@@ -1843,7 +1862,7 @@ class StationController extends Notifier<StationView?>
   /// After every change: an inbound call arriving on the station, or leaving it.
   void _inboundChanged(_Session s) {
     final prev = _inboundShown;
-    final now = _station.inboundOnStation;
+    final now = _station.inboundOnScreen;
     if (prev?.id == now?.id) {
       _inboundShown = now;
       if (now != null) _calls.inboundChanged(now);
@@ -1890,8 +1909,10 @@ class StationController extends Notifier<StationView?>
     final s = _s;
     if (s == null || inboundPhase(call) != InboundPhase.offered) return;
     final held = _station.inboundCall;
-    // Only the copy the station holds: an older frame of another offer is not news.
-    if (held == null || inboundOfferKey(held) != inboundOfferKey(call)) return;
+    // Only the copy the station holds, and only while it is still on offer: an older frame of
+    // another offer, or a late `offered` frame of an offer the station already holds as
+    // settled or connected, is not news.
+    if (held == null || inboundOfferKey(held) != inboundOfferKey(call) || inboundPhase(held) != InboundPhase.offered) return;
     final key = inboundOfferKey(call);
     if (!_chimed.add(key)) return;
     if (_chimed.length > 64) _chimed.remove(_chimed.first);
@@ -1948,7 +1969,7 @@ class StationController extends Notifier<StationView?>
             _startInboundCheck(now: true);
             return;
           }
-          if (_station.inboundOnStation?.id != call.id || !isInboundLive(_station.inboundOnStation)) return;
+          if (_station.inboundOnScreen?.id != call.id || !isInboundLive(_station.inboundOnScreen)) return;
           _inboundHangupFailure = (callId: call.id, text: inboundHangupFailedCopy(refusal));
           // CallKit ended the call on its side already: the call goes on, so its controls and
           // audio session must come back.
@@ -1989,11 +2010,14 @@ class StationController extends Notifier<StationView?>
         case InboundOk(:final value):
           s.inboundNotes.savedWithOutcome(call.id, notesField);
           _calls.inboundOutcomeSaved(call, code: code, callback: request.callbackAt != null);
-          if (_station.inboundOnStation?.id == call.id) _inboundSaved = (callId: call.id, code: code);
+          if (_station.inboundOnScreen?.id == call.id) _inboundSaved = (callId: call.id, code: code);
           adoptInboundCall(value.call);
         case InboundRefused(:final refusal):
           _calls.inboundOutcomeRefused(call, code: refusal.code == InboundErrorCode.unknown ? null : refusal.code.wire);
-          if (_station.inboundOnStation?.id != call.id) {
+          // The outcome did not carry the notes after all: text typed since the last save goes
+          // by the notes' own route again (the save the outcome request cancelled).
+          s.inboundNotes.outcomeRefused(call.id);
+          if (_station.inboundOnScreen?.id != call.id) {
             _actionError = dispositionLostCopy;
             return;
           }
@@ -2028,7 +2052,7 @@ class StationController extends Notifier<StationView?>
     _inboundDnc = null;
     await _run(StationBusy.markingDnc, (s) async {
       final result = await _inboundApi.markDnc(call.id, reason: reason);
-      if (!_live(s) || _station.inboundOnStation?.id != call.id) return;
+      if (!_live(s) || _station.inboundOnScreen?.id != call.id) return;
       switch (result) {
         case InboundOk(:final value):
           _log.info('marked do not call', {'recorded': value.dncRecorded});
@@ -2079,11 +2103,17 @@ class StationController extends Notifier<StationView?>
   /// `inbound_call_not_found`, retires the copy held when the question was asked (a newer frame
   /// arriving meanwhile has another snapshot and stays). A call still on offer that the server
   /// no longer holds for this station went back to the queue while the socket was away: the
-  /// agent is told so. Any other failure is no evidence either way: kept, and asked again.
+  /// agent is told so. Any other failure is no evidence either way: kept, and asked again on
+  /// the same backoff while the socket is open (a newer frame ends the asking). That includes a
+  /// 401 or a 403: the API client has already forced one token refresh and told the app gate,
+  /// and each retry refreshes again. Retiring instead would be the unsafe guess: a copy the
+  /// server still holds (connected, or owing its outcome) would leave the screen with the
+  /// caller on the line or the outcome unsaved, and nothing would bring it back until the
+  /// server restates it after the next reconnect.
   Future<void> _checkInboundCall(_Session s) async {
     _inboundCheckTimer = null;
     if (!_live(s) || !ref.mounted || _terminal || _station.connection != StationConnection.open) return;
-    final held = _station.inboundOnStation;
+    final held = _station.inboundOnScreen;
     if (held == null) return;
     final check = _inboundCheck;
     final result = await _inboundApi.getCall(held.id);
@@ -2109,8 +2139,11 @@ class StationController extends Notifier<StationView?>
           leave();
           return;
         }
-        _log.warn('checking the inbound call after a reconnect failed', {'code': refusal.code.wire});
-        if (!refusal.transient) return;
+        _log.warn('checking the inbound call after a reconnect failed', {
+          'code': refusal.code.wire,
+          'status': refusal.status,
+          'transient': refusal.transient,
+        });
         _inboundCheckFailures++;
         final wait = inboundCheckDelays[_inboundCheckFailures.clamp(0, inboundCheckDelays.length - 1)];
         _inboundCheckTimer = Timer(wait, () => unawaited(_checkInboundCall(s)));

@@ -454,9 +454,21 @@ the app while `available` is paused and offered nothing.
   `lib/core/inbound/inbound_call_rules.dart`, a port of the console's: a later offer wins, then
   settled over unsettled, then progress within one offer; the frame wins a tie). HTTP answers are
   adopted into the same copy. A frame for another session, or one that does not read, is ignored.
+  A copy the station let go of (retired by the reconnect check, or dropped by a campaign
+  `reserved`) is remembered, as the console's `staleKeys`: a frame of that snapshot is ignored,
+  and an HTTP answer no further along (a late hang-up, `PATCH` or `GET` answer) is never adopted.
+  A live campaign attempt is always the call on screen (`StationState.inboundOnScreen`): the
+  phase, the screen and where notes, the outcome, Mark DNC and Hang up go read the same call.
 - **The phase follows the call** (`StationState.effectiveState`), as for a campaign call: offered
   reads `reserved`, connected `on_call`, ended owing its outcome `wrapup`. Everything that reads the
-  phase treats a live inbound call as a call: the shell's `callActive` (the call takes the screen,
+  phase treats a live inbound call as a call. The server sends `agent_state` around the call's
+  frames (`reserved` just before the offer, `on_call` before the connected call, `wrapup` before
+  the ended one, `available` before the settled one); the call still decides. Reserved with no
+  call on the station (before the offer lands, or for the moment between an offer leaving and the
+  agent being returned) shows a neutral "Incoming call · Connecting…" screen (not the campaign's
+  ringing pop, no Hang up) and says nothing; the offer is announced
+  ("Incoming call from …") when it lands, though the phase did not change. Everything that reads
+  the phase treats a live inbound call as a call: the shell's `callActive` (the call takes the screen,
   the bar hides), the away rules (leaving the app during an offer, the call or an owed outcome
   QUEUES `device_away`, never closes the socket, and the pause is cancelled on return; while the
   outcome is owed the notification carries its save-by time, `outcome_due_at`), the wake lock, the
@@ -467,13 +479,14 @@ the app while `available` is paused and offered nothing.
   `reserved` drops an inbound copy still held.
 - **Audio.** The microphone arms on the offer (CallKit `startCall` on iOS, named by the matched
   contact, else the number, else "Number withheld") and the uplink opens only at `bridged_at`. The
-  call's end reaches CallKit as `local` when this phone hung it up.
+  call's end reaches CallKit as `local` when this phone hung it up, else as ended by the other
+  side, also when the copy is retired (never an earlier campaign call's release reason).
 - **The chime** is the console's `inbound_ring` cue, made in the engine
   (`AgentAudio.playChime`, `packages/agent_audio/README.md` "Inbound chime"): mixed into playout,
   never sent to the caller, played once per offer (the call id and `offered_at`), from the frame
   handler right after the arm, so it sounds before the caller's audio binds at `connects_at`. A
   restatement after a reconnect is silent, a re-offer after a requeue rings again, and a call
-  already connected never chimes. Me → Sounds off silences it (the screen and the haptic still
+  already connected (or a held copy already past its offer) never chimes. Me → Sounds off silences it (the screen and the haptic still
   say a call arrived).
 - **The screens** (`lib/features/station/parts/inbound_views.dart`, reading only
   `StationView.inbound`): the offer (the caller's name, else number, else "Number withheld"; "Your
@@ -493,17 +506,26 @@ the app while `available` is paused and offered nothing.
   ignored and the call reported to CallKit again); a refused hang-up says so and keeps the call.
   Notes autosave 700 ms after the last keystroke (the soft phone's `CallAutosave`), are kept on the
   phone under `inbound:<id>` until the server has them, reach a field the agent has not typed in
-  when the server comes to hold others, and go with the outcome: cleared notes as `''`, untouched
-  ones left out. An `inbound_disposition_invalid` refusal with `allowed_codes` rebuilds the pad;
-  each refusal is said in the console's words. Mark DNC confirms the number and its scope (the
-  matched campaign, else the account), and is not offered for a withheld number.
+  when the server comes to hold others (text restored from the phone after a restart, which no
+  save has carried yet, is never replaced by the server's older copy), and go with the outcome:
+  cleared notes as `''`, untouched ones left out. A refused outcome carried nothing, so text typed
+  since the last save goes by the notes' own route again. Leaving the station, 4404 and signing
+  out send unsent notes at once (bounded at 2 s), not only store them. An
+  `inbound_disposition_invalid` refusal with `allowed_codes` rebuilds the pad; each refusal is
+  said in the console's words. Mark DNC confirms the number and its scope (the matched campaign,
+  else the account), and is not offered for a withheld number. An outcome that stops calling the
+  number confirms first, naming the list the server writes: the matched campaign's, else the
+  account's; for a withheld caller nothing is added, so it saves without asking.
 - **Reconnect.** `ready` keeps the call (it does not carry it). The server restates a call it still
   holds for this session right after; when no `inbound_call` frame comes within 2 s the station
-  asks `GET /inbound/calls/:id` (retrying 2, 4, 8, 16, then every 30 s on a failure that says
-  nothing about the call). An answer for this session is adopted; one for another session, or
-  `inbound_call_not_found`, retires the copy held when it asked (a newer frame survives).
+  asks `GET /inbound/calls/:id`, and on any other failure asks again after 4, 8, 16, then every
+  30 s while the socket is open, until a frame or an answer settles it. That includes a 401 (the
+  API client has forced one token refresh, and each retry refreshes again) and a 403: retiring on
+  a guess could take a connected call or an owed outcome off the screen. An answer for this
+  session is adopted; one for another session, or `inbound_call_not_found`, retires the copy held
+  when it asked (a newer frame survives).
 - **Why a call left.** When a call leaves the station without the agent's outcome the station
-  says why for 30 s, or until the next call: the caller hung up before they were connected; it
+  says why for 30 s, or until the next call of any kind (campaign or inbound): the caller hung up before they were connected; it
   went back to the queue (also when a reconnect finds an offer no longer this station's); the time
   to save the outcome ran out; a supervisor closed it.
 - **"Your customer is waiting"** (`customer_waiting`): a banner first in every station layout's

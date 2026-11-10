@@ -1,9 +1,30 @@
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/station_copy.dart';
 
+import '../../core/inbound/inbound_fixtures.dart' as fx;
+import '../../core/station/controller_harness.dart' as core;
 import 'station_harness.dart';
+
+/// The views the station core makes of one whole inbound call played in the server's own order
+/// (`fx.realInboundCallFrames`: `agent_state` around the contract's call frames), each named by
+/// the frame that made it, from the waiting screen to the settled call.
+List<(String, StationView)> serverOrderViews() {
+  final out = <(String, StationView)>[];
+  fakeAsync((async) {
+    final app = core.App(async)..start();
+    app.readyFrame('available');
+    out.add(('ready', app.view!));
+    for (final (:step, :frame) in fx.realInboundCallFrames()) {
+      app.frame(frame);
+      out.add((step, app.view!));
+    }
+    app.dispose();
+  });
+  return out;
+}
 
 /// The station's inbound screens (`docs/inbound.md` §6), rendered from the view seam: the
 /// offer, the call, the outcome, "Your customer is waiting" and why a call left.
@@ -93,6 +114,49 @@ StationView inboundStation({
     );
 
 void main() {
+  group('the server\'s own order', () {
+    late List<(String, StationView)> views;
+    setUpAll(() => views = serverOrderViews());
+
+    testWidgets('reserved before the offer: no campaign ringing screen or Hang up, then the caller, said aloud',
+        (tester) async {
+      final semantics = tester.ensureSemantics();
+      final h = await pumpStation(tester, views.first.$2, campaignId: 'camp-1', supportsAnnounce: true);
+      String said() => tester.getSemantics(find.byKey(const Key('phase-live-region'))).label;
+      expect(find.text(StationCopy.waitingHeadline), findsOneWidget);
+      final saidAt = <String, String>{};
+      for (final (step, v) in views.skip(1)) {
+        await h.setView(v);
+        saidAt[step] = said();
+        switch (step) {
+          case 'reserved':
+            expect(find.byKey(const Key('station-incoming')), findsOneWidget);
+            expect(find.text(InboundCopy.incomingCall), findsOneWidget);
+            expect(find.byKey(const Key('hang-up')), findsNothing, reason: 'no call to hang up yet');
+            expect(find.byKey(const Key('call-headline')), findsNothing, reason: 'not the campaign\'s ringing pop');
+            expect(h.announcements, isEmpty, reason: '"Ringing" for nobody would be the wrong word');
+          case 'offered' || 'on_call':
+            expect(find.byKey(const Key('band-inbound-offered')), findsOneWidget, reason: step);
+            expect(find.byKey(const Key('station-incoming')), findsNothing);
+          case 'connected' || 'wrapup':
+            expect(find.text('Rahul Deshpande · Inbound'), findsOneWidget, reason: step);
+          case 'owed' || 'available':
+            expect(find.byKey(const Key('band-inbound-outcome')), findsOneWidget, reason: step);
+          case 'settled':
+            expect(find.text(StationCopy.waitingHeadline), findsOneWidget);
+        }
+      }
+      expect(saidAt['offered'], 'Incoming call from Rahul Deshpande');
+      expect(h.announcements, hasLength(1), reason: 'the offer, assertively, once');
+      expect((h.announcements.single! as Map)['data'], containsPair('message', 'Incoming call from Rahul Deshpande'));
+      expect(saidAt['on_call'], 'Incoming call from Rahul Deshpande', reason: 'nothing new to say');
+      expect(saidAt['connected'], 'On call');
+      expect(saidAt['owed'], InboundCopy.outcomeAnnouncement);
+      expect(saidAt['settled'], 'Available. Waiting for a call');
+      semantics.dispose();
+    });
+  });
+
   group('the offer', () {
     testWidgets('who is ringing, "Your customer", the route, the wait, the match; Hang up waits for the connect',
         (tester) async {
@@ -221,11 +285,45 @@ void main() {
       await tester.tap(find.byKey(const Key('save-outcome')));
       await settle(tester);
       expect(find.text(StationCopy.suppressConfirmTitle), findsOneWidget);
+      expect(
+        find.text('“Do not call” adds +91 87654 32109 to the Do Not Call list for Q4 Renewals — Pune. '
+            'You can’t undo this from the app — an admin has to remove it.'),
+        findsOneWidget,
+        reason: 'a matched caller: the matched campaign\'s list',
+      );
       await tester.tap(find.text(StationCopy.suppressConfirmAction));
       await settle(tester);
       expect(h.actions.args['submitDisposition'], ['do_not_call', null, null]);
       await h.setView(inboundStation(inbound: caller(stage: InboundStage.outcome), dispositionSaved: 'do_not_call'));
       expect(find.byKey(const Key('outcome-saved')), findsOneWidget);
+    });
+
+    testWidgets('an unmatched caller: the account\'s Do Not Call list, never "this campaign"', (tester) async {
+      final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome, matched: false)));
+      await tester.tap(find.byKey(const Key('outcome-do_not_call')));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('save-outcome')));
+      await settle(tester);
+      expect(
+        find.text('“Do not call” adds +91 87654 32109 to this account’s Do Not Call list. '
+            'You can’t undo this from the app — an admin has to remove it.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('this campaign'), findsNothing);
+      await tester.tap(find.text(StationCopy.suppressConfirmAction));
+      await settle(tester);
+      expect(h.actions.args['submitDisposition'], ['do_not_call', null, null]);
+    });
+
+    testWidgets('a withheld caller: nothing is added to Do Not Call, so nothing to confirm', (tester) async {
+      final h = await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.outcome, from: null, matched: false)));
+      await tester.tap(find.byKey(const Key('outcome-do_not_call')));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('save-outcome')));
+      await settle(tester);
+      expect(find.text(StationCopy.suppressConfirmTitle), findsNothing);
+      expect(find.textContaining('Do Not Call list'), findsNothing);
+      expect(h.actions.args['submitDisposition'], ['do_not_call', null, null]);
     });
   });
 

@@ -186,6 +186,7 @@ final class StationState {
     this.queue,
     this.inboundCall,
     this.customerWaiting,
+    this.retiredInbound = const [],
   });
 
   static const initial = StationState();
@@ -237,9 +238,25 @@ final class StationState {
   /// wait) and the station leaving reserved / on a call / wrap-up.
   final CustomerWaitingFrame? customerWaiting;
 
+  /// The inbound copies the station let go of without a newer copy replacing them: retired
+  /// (the server said this station no longer holds it) or dropped (a campaign `reserved`
+  /// arrived over it). The console's `staleKeys`: a frame of one of these snapshots is ignored,
+  /// and an HTTP answer no further along than one (`isInboundStale`) is never adopted, so a
+  /// late PATCH, hang-up or GET answer cannot bring a call back that the station let go of.
+  /// Newest last, at most [retiredInboundLimit].
+  final List<InboundCall> retiredInbound;
+
+  /// How many let-go copies [retiredInbound] keeps.
+  static const retiredInboundLimit = 8;
+
   /// The inbound call when it holds the station (offered, connected, owing its
   /// outcome), else null.
   InboundCall? get inboundOnStation => isInboundOnStation(inboundCall) ? inboundCall : null;
+
+  /// The inbound call when it is the call on screen: on the station and no campaign attempt
+  /// live beside it. [effectiveState] reads the same precedence (a live attempt first), so the
+  /// phase, the screen and where notes, the outcome, DNC and hang-up go always agree.
+  InboundCall? get inboundOnScreen => live == null ? inboundOnStation : null;
 
   /// The attempt the station holds now (live, retained for wrap-up, or the
   /// wrap-up's own). What notes and the disposition are keyed by.
@@ -295,6 +312,7 @@ final class StationState {
     Object? queue = _keep,
     Object? inboundCall = _keep,
     Object? customerWaiting = _keep,
+    List<InboundCall>? retiredInbound,
   }) =>
       StationState(
         connection: connection ?? this.connection,
@@ -319,7 +337,19 @@ final class StationState {
         inboundCall: identical(inboundCall, _keep) ? this.inboundCall : inboundCall as InboundCall?,
         customerWaiting:
             identical(customerWaiting, _keep) ? this.customerWaiting : customerWaiting as CustomerWaitingFrame?,
+        retiredInbound: retiredInbound ?? this.retiredInbound,
       );
+
+  /// [call] let go of: kept in [retiredInbound] (bounded), and no longer held.
+  StationState _letGoInbound(InboundCall call) {
+    final kept = [...retiredInbound, call];
+    return _with(
+      inboundCall: null,
+      retiredInbound: List.unmodifiable(
+        kept.length > retiredInboundLimit ? kept.sublist(kept.length - retiredInboundLimit) : kept,
+      ),
+    );
+  }
 
   @override
   String toString() => 'StationState($connection, $agentState, live: ${live?.attemptId}, '
@@ -463,7 +493,9 @@ final class InboundCallAdoptAction extends StationAction {
 /// The server no longer holds the call for this station (`inbound_call_not_found`,
 /// or answered as another session's): drops the held copy, but only if it is
 /// still the snapshot named by [snapshotKey] (`inboundSnapshotKey`), so a
-/// newer frame that arrived meanwhile is kept (the console's `staleKeys`).
+/// newer frame that arrived meanwhile is kept. The copy dropped is remembered
+/// ([StationState.retiredInbound], the console's `staleKeys`), so no late answer
+/// about it is adopted.
 final class InboundCallRetireAction extends StationAction {
   const InboundCallRetireAction(this.snapshotKey);
   final String snapshotKey;
@@ -607,9 +639,10 @@ StationState _reduce(StationState state, StationAction action) {
 
     case ReservedAction(:final attempt):
       // A new reservation always wins: whatever is on screen belongs to a call
-      // that is over (an inbound copy still held included).
-      return state._with(
-        inboundCall: null,
+      // that is over (an inbound copy still held included, and let go of for good: a late
+      // answer about it must not put it back beside this call).
+      final heldInbound = state.inboundCall;
+      return (heldInbound == null ? state : state._letGoInbound(heldInbound))._with(
         release: null,
         releasedAt: null,
         retainedAttempt: null,
@@ -661,16 +694,21 @@ StationState _reduce(StationState state, StationAction action) {
       return held == null || held.versionKey != versionKey ? state : state._with(manualCall: null);
 
     case InboundCallAction(:final call):
+      // A snapshot the station let go of stays gone (the console's `staleKeys`).
+      final key = inboundSnapshotKey(call);
+      if (state.retiredInbound.any((r) => inboundSnapshotKey(r) == key)) return state;
       // The frame's copy goes first so it wins a tie: the frame is the authority.
       return _inboundCall(state, newerInboundCall(call, state.inboundCall));
 
     case InboundCallAdoptAction(:final call):
+      // An answer read before the station let the call go is never news.
+      if (isInboundStale(call, state.retiredInbound)) return state;
       // The held copy goes first: an HTTP answer never displaces an equal frame.
       return _inboundCall(state, newerInboundCall(state.inboundCall, call));
 
     case InboundCallRetireAction(:final snapshotKey):
       final held = state.inboundCall;
-      return held == null || inboundSnapshotKey(held) != snapshotKey ? state : state._with(inboundCall: null);
+      return held == null || inboundSnapshotKey(held) != snapshotKey ? state : state._letGoInbound(held);
 
     case CustomerWaitingAction(:final frame):
       if (frame.cleared) {

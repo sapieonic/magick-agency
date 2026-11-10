@@ -34,6 +34,12 @@ enum StationStage {
   onBreak,
   away,
   softphone,
+
+  /// Reserved with no call on the station yet: the server reserves the agent for an inbound
+  /// caller (`agent_state: reserved`) just before the `inbound_call` frame that names them, and
+  /// a reconnect's `ready` can say `reserved` before the call is restated. A neutral screen,
+  /// not the campaign's ringing pop: there is no contact to show and no call to hang up.
+  incoming,
   reserved,
   onCall,
   wrapup,
@@ -81,6 +87,8 @@ StationStage stationStageOf(StationView? v, String campaignId) {
     AgentPhase.available => StationStage.available,
     AgentPhase.onBreak when onSoftphoneBreak(v) => StationStage.softphone,
     AgentPhase.onBreak => (v.onBreak?.isDeviceAway ?? false) ? StationStage.away : StationStage.onBreak,
+    // The campaign's ringing pop needs its call; reserved without one is a call on its way.
+    AgentPhase.reserved when v.call == null => StationStage.incoming,
     AgentPhase.reserved => StationStage.reserved,
     AgentPhase.onCall => StationStage.onCall,
     AgentPhase.wrapup => StationStage.wrapup,
@@ -158,6 +166,7 @@ class _StationScreenState extends ConsumerState<StationScreen> {
       // Its own header (Return to campaign), rail, announcer and pinned action;
       // it needs the bounded height the stage gives it.
       StationStage.softphone => const SoftphonePanel(surface: SoftphoneSurface.station),
+      StationStage.incoming => const IncomingView(),
       StationStage.reserved => const RingingView(),
       StationStage.onCall => OnCallView(notes: notes),
       StationStage.wrapup => WrapupPhaseView(key: ValueKey('wrapup-$attemptId'), notes: notes),
@@ -167,7 +176,8 @@ class _StationScreenState extends ConsumerState<StationScreen> {
     };
 
     final softphoneCall = ref.watch(softphoneViewProvider.select((v) => v.callOnScreen));
-    final onCall = stage == StationStage.reserved ||
+    final onCall = stage == StationStage.incoming ||
+        stage == StationStage.reserved ||
         stage == StationStage.onCall ||
         stage == StationStage.wrapup ||
         stage == StationStage.inboundOffered ||
@@ -233,6 +243,11 @@ class _StageTransition extends StatelessWidget {
 /// TalkBack and VoiceOver say "Ringing", "On call", "Wrap-up" as they happen
 /// (polite). Ringing is also sent as an assertive announcement where the
 /// platform supports one, because it is time-critical.
+///
+/// An inbound offer is said when it lands, whatever the phase did before it: the server sends
+/// `agent_state: reserved` just before the `inbound_call` frame, so the phase is already
+/// reserved when the caller becomes known. Reserved with no call yet says nothing: the caller's
+/// name follows at once, and "Ringing" for a call with nobody on it would be the wrong word.
 class PhaseAnnouncer extends ConsumerStatefulWidget {
   const PhaseAnnouncer({super.key});
 
@@ -262,12 +277,19 @@ class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
           softphone: onSoftphoneBreak(v),
           label: v?.onBreak?.label,
           inbound: v?.inbound == null ? null : InboundCopy.who(v!.inbound!),
+          callless: v?.phase == AgentPhase.reserved && v?.call == null && v?.inbound == null,
         ),
       ),
       (prev, next) {
         final phase = next.phase;
-        // A break switched to the soft phone (or back) stays on break: still said.
-        if (phase == null || (prev?.phase == phase && prev?.away == next.away && prev?.softphone == next.softphone)) return;
+        if (phase == null || next.callless) return;
+        // A break switched to the soft phone (or back) stays on break: still said. Coming out of
+        // reserved-with-no-call is news even when the phase stays reserved: the caller is known.
+        final samePhase = prev?.phase == phase &&
+            prev?.away == next.away &&
+            prev?.softphone == next.softphone &&
+            !(prev?.callless ?? false);
+        if (samePhase) return;
         final inbound = next.inbound;
         _announce(
           inbound != null && phase == AgentPhase.reserved

@@ -155,7 +155,7 @@ class StationViewMapper {
       fatal: fatal,
       queue: _queueFor(s.queue),
       myContactsOffered: myContactsOfferedBy(bootstrap),
-      inbound: _inboundFor(s.inboundOnStation, inboundHangupFailure),
+      inbound: _inboundFor(s.inboundOnScreen, inboundHangupFailure),
       customerWaiting: _waitingFor(s.customerWaiting),
       inboundNotice: inboundNotice,
     );
