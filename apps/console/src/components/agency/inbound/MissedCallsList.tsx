@@ -13,6 +13,8 @@ import {
   listMissedInboundCalls,
   markMissedInboundCallHandled,
   reopenMissedInboundCall,
+  type InboundRefusal,
+  type InboundResult,
 } from '../../../api/inbound';
 import { refreshMissedCallsCount } from '../../../hooks/useMissedCallsCount';
 import { listTenantMembers } from '../../../api/tenants';
@@ -157,70 +159,77 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
     }
   };
 
-  const markHandled = async (call: AgencyInboundMissedCall) => {
-    if (marking) return;
-    setMarking(call.id);
+  /**
+   * One row action: refused while the same kind of action is running on any row (each kind keeps
+   * its own busy id), the refusal shown on the row, and on success the row replaced, or removed
+   * from a view it no longer matches, with the announcement and every badge following.
+   */
+  const runRowAction = async (
+    call: AgencyInboundMissedCall,
+    [busy, setBusy]: [string | null, (id: string | null) => void],
+    run: () => Promise<InboundResult<AgencyInboundMissedCall>>,
+    on: {
+      refusalCopy: (refusal: InboundRefusal) => string;
+      stillMatches: (updated: AgencyInboundMissedCall) => boolean;
+      announce: (updated: AgencyInboundMissedCall) => string;
+      done?: () => void;
+    },
+  ) => {
+    if (busy) return;
+    setBusy(call.id);
     setRowError(null);
-    const result = await markMissedInboundCallHandled(call.id, tenantId ?? undefined, accountId ?? undefined);
-    setMarking(null);
+    const result = await run();
+    setBusy(null);
     if (!result.ok) {
-      setRowError({ id: call.id, message: inboundRefusalCopy(result.refusal) });
+      setRowError({ id: call.id, message: on.refusalCopy(result.refusal) });
       return;
     }
-    // Off the Open list, onto the Handled one: the row leaves the view it no longer matches.
-    setRows((current) =>
-      applied.status === 'open'
-        ? current.filter((r) => r.id !== call.id)
-        : current.map((r) => (r.id === call.id ? result.value : r)),
-    );
-    setAnnouncement(`Marked the call from ${callerLabel(call)} as handled.`);
+    on.done?.();
+    const updated = result.value;
+    const keep = on.stillMatches(updated);
+    setRows((current) => (keep ? current.map((r) => (r.id === call.id ? updated : r)) : current.filter((r) => r.id !== call.id)));
+    setAnnouncement(on.announce(updated));
     refreshMissedCallsCount();
   };
 
-  const reopen = async (call: AgencyInboundMissedCall) => {
-    if (reopening) return;
-    setReopening(call.id);
-    setRowError(null);
-    const result = await reopenMissedInboundCall(call.id, tenantId ?? undefined, accountId ?? undefined);
-    setReopening(null);
-    if (!result.ok) {
-      setRowError({ id: call.id, message: reopenRefusalCopy(result.refusal) });
-      return;
-    }
-    // Off the Handled list, back onto the Open one.
-    setRows((current) =>
-      applied.status === 'handled'
-        ? current.filter((r) => r.id !== call.id)
-        : current.map((r) => (r.id === call.id ? result.value : r)),
-    );
-    setAnnouncement(`Reopened the call from ${callerLabel(call)}. It is back on the list to follow up.`);
-    refreshMissedCallsCount();
-  };
+  const markHandled = (call: AgencyInboundMissedCall) =>
+    runRowAction(call, [marking, setMarking], () => markMissedInboundCallHandled(call.id, tenantId ?? undefined, accountId ?? undefined), {
+      refusalCopy: (refusal) => inboundRefusalCopy(refusal),
+      // Off the Open list, onto the Handled one: the row leaves the view it no longer matches.
+      stillMatches: () => applied.status !== 'open',
+      announce: () => `Marked the call from ${callerLabel(call)} as handled.`,
+    });
 
-  const reassign = async (call: AgencyInboundMissedCall, to: string) => {
-    if (assigning) return;
-    setAssigning(call.id);
-    setRowError(null);
-    const result = await assignMissedInboundCall(call.id, to === '' ? null : to, tenantId ?? undefined, accountId ?? undefined);
-    setAssigning(null);
-    if (!result.ok) {
-      setRowError({ id: call.id, message: reassignRefusalCopy(result.refusal) });
-      return;
-    }
-    setReassigning(null);
-    // A filter on the assignee no longer matches a row given to someone else: it leaves the view.
-    const filter = applied.assignee;
-    const stillMatches = !filter
-      || (filter === 'unassigned' ? result.value.assignee_user_id === null
-        : filter === 'me' ? result.value.assignee_user_id === userId
-          : result.value.assignee_user_id === filter);
-    setRows((current) => (stillMatches
-      ? current.map((r) => (r.id === call.id ? result.value : r))
-      : current.filter((r) => r.id !== call.id)));
-    const assignee = missedAssigneeLabel(result.value, userId);
-    setAnnouncement(`Assigned the call from ${callerLabel(call)} to ${assignee === 'You' || assignee === 'The account' ? assignee.toLowerCase() : assignee}.`);
-    refreshMissedCallsCount();
-  };
+  const reopen = (call: AgencyInboundMissedCall) =>
+    runRowAction(call, [reopening, setReopening], () => reopenMissedInboundCall(call.id, tenantId ?? undefined, accountId ?? undefined), {
+      refusalCopy: reopenRefusalCopy,
+      // Off the Handled list, back onto the Open one.
+      stillMatches: () => applied.status !== 'handled',
+      announce: () => `Reopened the call from ${callerLabel(call)}. It is back on the list to follow up.`,
+    });
+
+  const reassign = (call: AgencyInboundMissedCall, to: string) =>
+    runRowAction(
+      call,
+      [assigning, setAssigning],
+      () => assignMissedInboundCall(call.id, to === '' ? null : to, tenantId ?? undefined, accountId ?? undefined),
+      {
+        refusalCopy: reassignRefusalCopy,
+        // A filter on the assignee no longer matches a row given to someone else: it leaves the view.
+        stillMatches: (updated) => {
+          const filter = applied.assignee;
+          return !filter
+            || (filter === 'unassigned' ? updated.assignee_user_id === null
+              : filter === 'me' ? updated.assignee_user_id === userId
+                : updated.assignee_user_id === filter);
+        },
+        announce: (updated) => {
+          const assignee = missedAssigneeLabel(updated, userId);
+          return `Assigned the call from ${callerLabel(call)} to ${assignee === 'You' || assignee === 'The account' ? assignee.toLowerCase() : assignee}.`;
+        },
+        done: () => setReassigning(null),
+      },
+    );
 
   const callBack = (call: AgencyInboundMissedCall) => {
     if (!call.from_e164) return;
