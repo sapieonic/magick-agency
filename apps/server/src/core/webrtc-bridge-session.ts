@@ -6,6 +6,14 @@ import { findCarrierModule } from '../telephony/carrier-modules.js';
 import { VoicelinkTranscoder } from '../utils/audio-fir.js';
 import { AlawFramer, browserLegMediaFormatOf, type BrowserLegMediaFormat } from './bridge/browser-leg-media.js';
 
+/** A consumer of the caller's media frames (`WebRtcBridgeSession.installCarrierTap`). */
+export interface CarrierTap {
+  /** One frame of the carrier's wire audio, as it arrived. Must not throw. */
+  feed(wire: Buffer): void;
+  /** The session is gone: no more frames will come. Called once. */
+  close(): void;
+}
+
 /**
  * In-memory state for a single WebRTC human-bridge call. Holds the two media
  * WebSockets (browser leg + the carrier's PSTN leg) and the lifecycle flags/timers,
@@ -62,6 +70,38 @@ export class WebRtcBridgeSession {
   /** The recording-ready callback URL our answer response names (with its webhook token). */
   recordingCallbackUrl: string | null = null;
   status: WebRtcCallStatus = 'initiating';
+  /** An inbound call's admission (`WebRtcBridgeManager.acceptInboundCall`); null for a leg we placed. */
+  inboundCapacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' | null = null;
+  /**
+   * An inbound call that may be put through to an agent (`WebRtcInboundCallParams.connectable`):
+   * held parked until `bindBorrowedBrowserLeg`, which stops what plays to the caller, re-arms the
+   * max duration with {@link inboundBoundMaxSeconds} and starts talk time ({@link talkFrom}).
+   */
+  inboundConnectable: boolean = false;
+  /** A connectable inbound call's max duration once an agent is put through (the account's). */
+  inboundBoundMaxSeconds: number | null = null;
+  /**
+   * When talk time starts, for a call whose talk does not start at the answer: a connectable
+   * inbound call is answered by us and then held, so its talk is from the bind. Null while it is
+   * unset; see {@link getTalkTimeSeconds}.
+   */
+  talkFrom: Date | null = null;
+  /** Talk time counts from {@link talkFrom} only (0 until it is set), never from the answer. */
+  talkCountsFromBind: boolean = false;
+  /** Whether the recording at the bind has been asked for (`WebRtcBridgeManager.startInboundRecording`): once per call. */
+  inboundRecordingStarted: boolean = false;
+  /**
+   * What the bridge itself is playing to the carrier leg of an inbound call (a hold, a recording's
+   * prompt), at most one at a time: whoever plays next, binds an agent or stops the hold calls
+   * `stop()` first, synchronously, so no frame of it follows. Null when nothing plays.
+   */
+  carrierPlayback: { stop(): void } | null = null;
+  /**
+   * The carrier tap: while installed (an inbound recording, `WebRtcBridgeManager.recordInboundAudio`)
+   * it is fed every negotiated media frame from the caller, whether or not a browser leg is bound.
+   * {@link destroy} closes it. Null otherwise, so nothing is copied when nobody records.
+   */
+  private tap: CarrierTap | null = null;
 
   /**
    * For providers that negotiate the media stream via a `start` frame (VoiceLink):
@@ -70,6 +110,13 @@ export class WebRtcBridgeSession {
    * for VoiceLink in the manager.
    */
   providerMediaReady: boolean = true;
+
+  /**
+   * Who waits for the carrier's media to be ready to play into ({@link whenCarrierMediaReady}):
+   * told `true` by {@link noteCarrierMediaReady}, `false` by {@link destroy}. Each is told once.
+   */
+  private mediaReadyWaiters: Array<(ready: boolean) => void> = [];
+  private destroyed = false;
 
   /**
    * Idempotent teardown lifecycle:
@@ -442,10 +489,73 @@ export class WebRtcBridgeSession {
     return true;
   }
 
-  /** Connected talk time in whole seconds (0 if never answered). */
+  /**
+   * Resolves `true` once the carrier's media is negotiated on an open PSTN socket (so audio sent
+   * now is heard), `false` if the session is torn down first. Already true, or already torn down,
+   * resolves at once. Never rejects; teardown always settles it, so nothing waits past the call.
+   */
+  whenCarrierMediaReady(): Promise<boolean> {
+    if (this.destroyed || this.endHandled) return Promise.resolve(false);
+    if (this.providerMediaReady && this.pstnWs?.readyState === 1) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => { this.mediaReadyWaiters.push(resolve); });
+  }
+
+  /** The carrier's media is ready on an open PSTN socket: tell every {@link whenCarrierMediaReady} waiter. */
+  noteCarrierMediaReady(): void {
+    if (!this.providerMediaReady || this.pstnWs?.readyState !== 1) return;
+    this.flushMediaReadyWaiters(true);
+  }
+
+  private flushMediaReadyWaiters(ready: boolean): void {
+    const waiters = this.mediaReadyWaiters;
+    this.mediaReadyWaiters = [];
+    for (const resolve of waiters) resolve(ready);
+  }
+
+  /**
+   * Connected talk time in whole seconds (0 if never answered), from the answer; for a call whose
+   * talk starts at the bind ({@link talkCountsFromBind}: a connectable inbound call, held after our
+   * answer) from {@link talkFrom}, and 0 while no agent was put through.
+   */
   getTalkTimeSeconds(): number {
-    if (this.answeredAt === null) return 0;
-    return Math.round((Date.now() - this.answeredAt.getTime()) / 1000);
+    const from = this.talkCountsFromBind ? this.talkFrom : this.answeredAt;
+    if (from === null) return 0;
+    return Math.round((Date.now() - from.getTime()) / 1000);
+  }
+
+  /** The tap installed now, if any. */
+  get carrierTap(): CarrierTap | null {
+    return this.tap;
+  }
+
+  /**
+   * Install `tap`: it is fed the caller's media from now on, until {@link removeCarrierTap} or
+   * {@link destroy} (which closes it). A tap already installed is closed first: one at a time.
+   * On a session already destroyed it is closed at once.
+   */
+  installCarrierTap(tap: CarrierTap): void {
+    this.closeCarrierTap();
+    if (this.destroyed) {
+      tap.close();
+      return;
+    }
+    this.tap = tap;
+  }
+
+  /** Remove `tap` if it is the one installed (without closing it: its owner is done with it). */
+  removeCarrierTap(tap: CarrierTap): void {
+    if (this.tap === tap) this.tap = null;
+  }
+
+  private closeCarrierTap(): void {
+    const tap = this.tap;
+    this.tap = null;
+    if (!tap) return;
+    try {
+      tap.close();
+    } catch (err) {
+      this.log.error({ err }, 'Error closing a carrier tap');
+    }
   }
 
   /** Total call duration (create → now) in whole seconds. */
@@ -628,6 +738,12 @@ export class WebRtcBridgeSession {
    * to the caller, outlives this call, and closing it would end the agent's shift.
    */
   destroy(): void {
+    this.destroyed = true;
+    this.flushMediaReadyWaiters(false);
+    // Whatever the bridge plays to the caller stops, and a recording learns the caller is gone.
+    this.carrierPlayback?.stop();
+    this.carrierPlayback = null;
+    this.closeCarrierTap();
     this.clearMaxDurationTimer();
     this.clearRingDeadlineTimer();
     this.clearEndConfirmationTimer();

@@ -2,11 +2,13 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
+  AGENCY_INBOUND_ERROR_CODES,
   AGENCY_REPORT_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
   AGENCY_SOFTPHONE_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
+  type AgencyInboundErrorCode,
   type AgencyReportErrorCode,
   type AgencyRosterRefusalCode,
   type AgencySoftphoneErrorCode,
@@ -175,6 +177,7 @@ describe('soft-phone codes', () => {
       'settings_invalid',
       'contact_assigned_elsewhere',
       'carrier_account_unavailable',
+      'customer_on_inbound_call',
     ]);
     expectUnique(AGENCY_SOFTPHONE_ERROR_CODES);
   });
@@ -269,5 +272,47 @@ describe('report codes', () => {
   it('do not overlap the action or soft-phone unions', () => {
     const others = new Set<string>([...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES]);
     for (const code of AGENCY_REPORT_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+});
+
+// ── Inbound (src/errors.ts §6, re-exported by src/api/agency/inbound.ts; docs/inbound.md).
+const _inboundExact: Equals<(typeof AGENCY_INBOUND_ERROR_CODES)[number], AgencyInboundErrorCode> = true;
+const _consoleInboundAgrees: Equals<AgencyApi.AgencyInboundErrorCode, AgencyInboundErrorCode> = true;
+void [_inboundExact, _consoleInboundAgrees];
+
+describe('inbound codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_INBOUND_ERROR_CODES]).toEqual([
+      'inbound_disabled',
+      'inbound_route_invalid',
+      'inbound_route_not_found',
+      'inbound_route_name_taken',
+      'inbound_number_not_found',
+      'inbound_number_not_linked',
+      'inbound_number_in_use',
+      'inbound_missed_call_not_found',
+      'inbound_call_live',
+      'inbound_call_not_found',
+      'inbound_call_not_dispositionable',
+      'inbound_disposition_invalid',
+      'inbound_outcome_already_saved',
+      'inbound_clip_not_found',
+      'inbound_clip_in_use',
+      'inbound_clip_invalid',
+      'inbound_clip_name_taken',
+      'inbound_clip_storage_unavailable',
+      'inbound_missed_call_handled',
+      'inbound_assignee_invalid',
+    ]);
+    expectUnique(AGENCY_INBOUND_ERROR_CODES);
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_INBOUND_ERROR_CODES).toBe(AGENCY_INBOUND_ERROR_CODES);
+  });
+
+  it('do not overlap the action, soft-phone or report unions', () => {
+    const others = new Set<string>([...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES]);
+    for (const code of AGENCY_INBOUND_ERROR_CODES) expect(others.has(code), code).toBe(false);
   });
 });

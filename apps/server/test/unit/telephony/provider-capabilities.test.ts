@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { canCancelRinging, queuesOutboundDials, type TelephonyProvider } from '../../../src/telephony/types.js';
+import { canCancelRinging, queuesOutboundDials, recordsOnDemand, type TelephonyProvider } from '../../../src/telephony/types.js';
 import { VoicelinkAdapter } from '../../../src/telephony/voicelink/voicelink.adapter.js';
 import { byocProviderNames } from '../../../src/telephony/factory.js';
 import { PlivoAdapter, DEFAULT_PLIVO_SETTINGS } from '../../../src/telephony/plivo/plivo.adapter.js';
@@ -117,6 +117,14 @@ describe('TelephonyProvider capabilities — every adapter in the registry decla
     expect(ADAPTERS.filter((a) => queuesOutboundDials(a.provider)).map((a) => a.name)).toEqual(['voicelink']);
     expect(queuesOutboundDials({})).toBe(false);
     expect(queuesOutboundDials({ capabilities: undefined })).toBe(false);
+  });
+
+  it('only plivo records a live call on demand, and that needs the method as well as the flag', () => {
+    // The bridge records a connected inbound call from its bind through this (docs/inbound.md §5):
+    // a carrier outside the set records no inbound call, so a flip is a product change.
+    expect(ADAPTERS.filter((a) => recordsOnDemand(a.provider)).map((a) => a.name)).toEqual(['plivo']);
+    expect(recordsOnDemand({})).toBe(false);
+    expect(recordsOnDemand({ capabilities: { cancelRinging: true, recordsOnDemand: true } })).toBe(false);
   });
 
   it('only plivo can cancel a ringing leg', () => {

@@ -79,6 +79,10 @@
   margin-bottom: 20px;
 }
 
+.tableGap {
+  height: 10px;
+}
+
 .nameCell { display: flex; align-items: center; gap: 10px; }
 .nameIcon { color: var(--text-muted); flex-shrink: 0; }
 .nameTitle { font-weight: 600; color: var(--text-primary); }

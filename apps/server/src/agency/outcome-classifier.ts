@@ -375,6 +375,7 @@ export function releaseMessageFor(reason: AgencyReleaseReason): string {
     case 'campaign_stopped': return 'The campaign was stopped.';
     case 'supervisor_released': return 'A supervisor released this call.';
     case 'orphaned': return 'The call was interrupted by a service restart.';
+    case 'inbound_call': return 'The customer rang us while we were ringing them, so this call was cancelled.';
     default: return 'The call ended.';
   }
 }

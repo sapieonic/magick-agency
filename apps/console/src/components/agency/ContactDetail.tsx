@@ -1,8 +1,8 @@
 import { useMemo, useState, type RefObject } from 'react';
 import { fieldMatchesFilter, highlightSegments } from '../../utils/agencyFieldFilter';
 import type { ResolvedContext } from '../../utils/agencyContext';
-import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
-import { PriorAttemptsList } from './PriorAttemptsList';
+import type { AgencyDisposition } from '../../types/agency';
+import { PriorAttemptsList, type PriorAttemptsSource } from './PriorAttemptsList';
 import styles from './AgentStation.module.css';
 
 /**
@@ -16,12 +16,15 @@ export function ContactDetail({
   resolved,
   currentCatalog,
   filterInputRef,
+  nameCurrentCampaign = false,
 }: {
-  attempt: AgencyReservedAttempt;
+  attempt: PriorAttemptsSource;
   resolved: ResolvedContext;
   currentCatalog: AgencyDisposition[] | undefined;
   /** The page's `/` shortcut focuses the filter through this. */
   filterInputRef: RefObject<HTMLInputElement>;
+  /** See `PriorAttemptsList`: an inbound caller's campaign is named, not "This campaign". */
+  nameCurrentCampaign?: boolean;
 }) {
   /**
    * The filter clears on the next `reserved` event, not on every render
@@ -185,7 +188,7 @@ export function ContactDetail({
           ) : null}
         </>
       )}
-      <PriorAttemptsList attempt={attempt} currentCatalog={currentCatalog} />
+      <PriorAttemptsList attempt={attempt} currentCatalog={currentCatalog} nameCurrentCampaign={nameCurrentCampaign} />
     </>
   );
 }

@@ -9,7 +9,8 @@ import { createChildLogger } from '@magick-agency/observability';
 import { agencyAgentSessionRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
-import { onSoftphoneBreak, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
+import { onSoftphoneBreak, owedInboundCallId, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
+import type { AgencyInboundCallLiveRefusal } from '@magick-agency/contracts/api/agency/inbound';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
 import { DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
@@ -29,6 +30,7 @@ import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { accountNameInTenant, mintStationTokenOr503, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
+import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
 import { runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
 import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
@@ -77,6 +79,15 @@ async function mayStartOrResume(tenantId: string, campaignId: string, agentUserI
  * Registered by `agencyRoutes` inside its authenticated scope (`sub`, the one carrying
  * `authMiddleware`), so every route here runs behind it.
  */
+
+/** The force-available refusal's sentence while the agent is on an inbound call (offered or connected: an owed outcome is closed instead). */
+const FORCE_INBOUND_MESSAGE = 'The agent is on an inbound call: they can be made available once it has ended.';
+
+/** 409 `inbound_call_live` (docs/inbound.md §6): the session holds an inbound call. */
+function inboundCallLive(inboundCallId: string, message: string): AgencyInboundCallLiveRefusal {
+  return { error: 'Conflict', code: 'inbound_call_live', inbound_call_id: inboundCallId, message };
+}
+
 export async function registerSessionRoutes(sub: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // ── POST /sessions — join a campaign, get everything the console needs ──
   sub.post('/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -466,6 +477,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       return reply.code(503).send(err);
     }
     if (!set.ok && set.refusal.code !== 'unavailable') {
+      if (set.refusal.code === 'inbound_call_live') {
+        return reply.code(409).send(inboundCallLive(
+          set.refusal.inboundCallId, 'Save the outcome of your inbound call before going available.'));
+      }
       if (set.refusal.code === 'manual_call_live') {
         const err: AgencySoftphoneCallPendingRefusal = {
           error: 'Conflict', code: 'manual_call_live', call: set.refusal.call,
@@ -532,16 +547,37 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     const forced = await runtime.wrapup.force(session.id);
     let state: AgencyAgentState;
     let endedSoftphone = false;
+    // The inbound call this force closed, for the public layer's audit row (`inbound-close-audit.ts`).
+    let inboundClosed: Record<string, InboundCloseAudit> = {};
     if (forced) {
       // The forced wrap-up already released the agent (a queued break applies there).
       state = (await runtime.agents.get(session.id))?.state ?? 'offline';
     } else {
       const owed = await owedSoftphoneCall(runtime.agents, session.id);
       if (owed) return manualCallLive(owed);
+      // An inbound call whose outcome the agent owes is closed here as its lapse would close it
+      // (`no_disposition`; the public layer audits `agency_inbound_call.closed`, closed by a
+      // supervisor) and the agent is returned below like any wrap-up (docs/inbound.md §6). A call
+      // still offered or connected is not forced: the supervisor waits for it to end. Read from
+      // the database first, as the soft phone's is.
+      const closing = await runtime.inboundCalls.closeOwedForSupervisor(session.id);
+      if (closing.kind === 'live') return reply.code(409).send(inboundCallLive(closing.inboundCallId, FORCE_INBOUND_MESSAGE));
+      if (closing.kind === 'closed') {
+        inboundClosed = { [INBOUND_CLOSE_AUDIT_KEY]: { inbound_call_id: closing.call.id, campaign_id: closing.call.matched_campaign_id } };
+      }
       // Not in wrap-up — fall through to a plain return rather than 409ing. A
       // supervisor pressing this on an agent who just finished should not get an
       // error for winning a race by half a second.
       const released = await runtime.dialer.releaseAgent(session.id);
+      if (released.result === 'inbound_call_owed') {
+        const held = await owedInboundCallId(runtime.agents, session.id) ?? await runtime.agents.inboundCallOf(session.id);
+        if (held) return reply.code(409).send({ ...inboundCallLive(held, FORCE_INBOUND_MESSAGE), ...inboundClosed });
+        const err: AgencySoftphoneErrorResponse = {
+          error: 'Service Unavailable', code: 'dial_failed',
+          message: 'Could not change the agent\'s status just now; nothing changed. Try again.',
+        };
+        return reply.code(503).send({ ...err, ...inboundClosed });
+      }
       if (released.result === 'manual_call_live' || released.result === 'softphone_session') {
         const call = await owedSoftphoneCall(runtime.agents, session.id);
         if (call) return manualCallLive(call);
@@ -558,6 +594,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     return reply.send({
       session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString(),
       ...exitAudit(endedSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'force_available', withdrawn: false }),
+      ...inboundClosed,
     });
   });
 
@@ -846,6 +883,16 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       const err: AgencyActionErrorResponse = {
         error: 'Conflict', code: 'agent_on_live_call',
         message: 'Hang up your soft-phone call before leaving the station.',
+      };
+      return reply.code(409).send(err);
+    }
+    // An inbound call offered to or connected with the session holds the station the same way
+    // (docs/inbound.md §2): leaving would drop a customer the agent was about to hear, or is
+    // talking to. One owing its outcome does not: the lapse sweep closes a call whose session left.
+    if (runtime.inbound?.findCallForSession(session.id)) {
+      const err: AgencyActionErrorResponse = {
+        error: 'Conflict', code: 'agent_on_live_call',
+        message: 'Finish or hang up your inbound call before leaving the station.',
       };
       return reply.code(409).send(err);
     }

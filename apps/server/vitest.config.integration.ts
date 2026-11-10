@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 import { decoratorTransform } from '../../tooling/vitest-decorator-transform.js';
 
 /**
- * Files whose run time is real wall-clock waiting, about four and a half minutes between
+ * Files whose run time is real wall-clock waiting, about five minutes between
  * them: on Redis TTLs (fake timers cannot move a server-side PTTL), or on a forked
  * server's own liveness timers (the mobile stations file: the 10 s grace and the 8 s
  * deferred hangup, which have no overrides). CI runs them as their own job beside the
@@ -13,6 +13,7 @@ const WALL_CLOCK_FILES = [
   'test/integration/agency/agency-lease-ring-duration.test.ts',
   'test/integration/agency/chaos/lease-renewer-killed.test.ts',
   'test/integration/cluster/mobile-stations.test.ts',
+  'test/integration/telephony/inbound-wrapup-lease.test.ts',
 ];
 
 const lane = process.env['INTEGRATION_LANE'] || undefined;

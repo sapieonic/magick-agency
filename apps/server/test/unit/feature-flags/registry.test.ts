@@ -41,7 +41,7 @@ describe('feature-flag registry', () => {
       }
     });
 
-    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled, agency_reports_enabled', () => {
+    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled, agency_reports_enabled, agency_inbound_enabled', () => {
       expect(getFlag('agency_call_analysis')).toBeDefined();
       expect(getFlag('agency_dialer_enabled')).toBeDefined();
       expect(getFlag('agency_late_binding')).toBeDefined();
@@ -49,9 +49,10 @@ describe('feature-flag registry', () => {
       expect(getFlag('agency_console_alaw8')).toBeDefined();
       expect(getFlag('agency_contact_assignment_enabled')).toBeDefined();
       expect(getFlag('agency_reports_enabled')).toBeDefined();
+      expect(getFlag('agency_inbound_enabled')).toBeDefined();
       expect(allFlags().map((f) => f.key)).toEqual([
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
-        'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled',
+        'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled', 'agency_inbound_enabled',
       ]);
     });
 
@@ -121,6 +122,16 @@ describe('feature-flag registry', () => {
       // The console shows/hides Reports and the export entry points.
       expect(f.clientExposed).toBe(true);
       expect(f.envVar).toBe('FF_AGENCY_REPORTS');
+    });
+
+    it('agency_inbound_enabled is boolean, default off, tri-scoped, client-exposed', () => {
+      const f = getFlag('agency_inbound_enabled')!;
+      expect(f.type).toBe('boolean');
+      expect(f.default).toBe(false);
+      expect(f.scopes).toEqual(expect.arrayContaining(['global', 'tenant', 'account']));
+      // The console shows/hides Inbound routes and Missed calls; calls on linked numbers are answered whatever it says.
+      expect(f.clientExposed).toBe(true);
+      expect(f.envVar).toBe('FF_AGENCY_INBOUND');
     });
   });
 
@@ -200,6 +211,7 @@ describe('feature-flag registry', () => {
       expect(keys).toContain('agency_softphone_enabled');
       expect(keys).toContain('agency_console_alaw8');
       expect(keys).toContain('agency_reports_enabled');
+      expect(keys).toContain('agency_inbound_enabled');
       expect(keys).not.toContain('agency_late_binding');
     });
   });

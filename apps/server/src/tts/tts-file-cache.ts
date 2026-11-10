@@ -748,7 +748,8 @@ let sweepStartedAt = 0;
 
 // ── WAV header construction ──────────────────────────────────────────
 
-function createWavBuffer(pcm16: Buffer, sampleRate: number, channels: number): Buffer {
+/** A PCM16 little-endian buffer as a canonical 44-byte-header WAV file (also the inbound voicemail's encoder). */
+export function createWavBuffer(pcm16: Buffer, sampleRate: number, channels: number): Buffer {
   const bitsPerSample = 16;
   const byteRate = sampleRate * channels * (bitsPerSample / 8);
   const blockAlign = channels * (bitsPerSample / 8);

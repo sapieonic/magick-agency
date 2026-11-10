@@ -30,6 +30,7 @@ import { createAgencyCampaign, updateAgencyCampaign } from '../../../api/agencyC
 import { buildContextDisplay, mappingBlockReason } from '../../../utils/agencyColumnMapping';
 import { useRosterIngest } from '../../../hooks/useRosterIngest';
 import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../../utils/inbound/inboundFlag';
 import { ASSIGNMENT_MODE_COPY, CONTACT_ASSIGNMENT_FLAG } from '../../../utils/agencyAssignmentCopy';
 import {
   trackAgencyCampaignBuilderStepViewed,
@@ -87,6 +88,7 @@ export default function CampaignBuilderPage() {
   // Contact assignment: the Assignment group and outcome overrides, flag-gated.
   // The builder's campaign is always a draft, so the mode is never locked here.
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
+  const inboundEnabled = useFeatureFlagEnabled(INBOUND_FLAG);
 
   const [step, setStep] = useState<BuilderStepId>('basics');
   const [name, setName] = useState('');
@@ -676,6 +678,7 @@ export default function CampaignBuilderPage() {
                     layout="plain"
                     include={['behaviour']}
                     assignment={assignmentEnabled ? { modeLocked: false } : undefined}
+                    inbound={inboundEnabled}
                   />
                   <CampaignRecordingField
                     checked={recordCalls}

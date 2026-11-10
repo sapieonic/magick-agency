@@ -41,6 +41,7 @@ import type {
   UseAgencyStationResult,
 } from './agencyStation/types';
 import { isCallLive } from '../utils/softphone/callState';
+import type { AgencyInboundCall } from '../types/inbound';
 import { useLatestRef } from './useLatestRef';
 
 /**
@@ -206,6 +207,8 @@ export function useAgencyStation(
     missedPings,
     manualCall,
     queue,
+    inboundCall,
+    customerWaiting,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
   if (diagnosticsRef.current === null) {
@@ -1014,6 +1017,42 @@ export function useAgencyStation(
           return;
         }
 
+        case 'inbound_call': {
+          /**
+           * **An inbound call's every change** (P2, `docs/inbound.md` §6), and its restatement
+           * right after `ready`. The whole row; the reducer keeps it unless it is older than the
+           * copy held. The chime is scheduled here, inside the handler and before React commits,
+           * as `reserved`'s get-ready is; the panel renders from the same dispatch, and the
+           * caller's audio binds only at `connects_at`, so the panel is up before the audio.
+           *
+           * Guarded like `manual_call`: a malformed frame must cost one frame.
+           */
+          const call = (frame as { call?: unknown }).call as Partial<AgencyInboundCall> | undefined;
+          if (
+            !call || typeof call !== 'object' || typeof call.id !== 'string'
+            || typeof call.state !== 'string' || typeof call.offered_at !== 'string'
+          ) {
+            logDiagnostic('inbound_call_malformed', JSON.stringify(frame).slice(0, 200));
+            return;
+          }
+          const typed = frame.call;
+          cues?.onInboundCall(typed, receivedAt);
+          dispatch({ type: 'inbound_call', call: typed });
+          logDiagnostic('inbound_call', `${typed.id} ${typed.state}${typed.settled_at ? ' settled' : ''}`);
+          return;
+        }
+
+        case 'customer_waiting': {
+          // "Your customer is waiting" (P2): a pill, no state, no panel, no cue.
+          if (typeof frame.inbound_call_id !== 'string' || typeof frame.waiting_since !== 'string') {
+            logDiagnostic('customer_waiting_malformed', JSON.stringify(frame).slice(0, 200));
+            return;
+          }
+          dispatch({ type: 'customer_waiting', frame });
+          logDiagnostic('customer_waiting', frame.inbound_call_id);
+          return;
+        }
+
         case 'error': {
           // Non-fatal by contract; the socket stays open.
           dispatch({ type: 'error', frame });
@@ -1555,6 +1594,8 @@ export function useAgencyStation(
      * has; the console falls back to the bootstrap's `queue` then).
      */
     queue,
+    inboundCall,
+    customerWaiting,
     reconnect,
     sendMedia,
     mediaFormat: socketFormat,

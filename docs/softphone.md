@@ -305,6 +305,7 @@ Only when the call is tagged and the number matched a contact of that campaign.
 | `pending` | claimed → `in_flight` | the disposition decision applies as on the station: suppress → `suppressed` (+ DNC), terminal / success → `completed`, callback → `pending` at the callback time (inside the window), retry → `pending` after the delay (or `exhausted` past max attempts), none → back to `pending` unchanged. `attempt_count` + 1 when the call was placed. With **no outcome** (below) the tag's retry policy decides |
 | `in_flight` (live campaign attempt) | refused `contact_in_flight` | — |
 | any state, while the number is `in_flight` on another campaign of the account (MC4) | refused `contact_in_flight`, naming that campaign's contact | — |
+| any state (or no match, or untagged), while the number's customer is on an inbound call to the account (live, or bridged and owing its outcome; inbound.md §5.4) | refused `customer_on_inbound_call`, naming the inbound call | — |
 | `connected` (campaign call awaiting its own disposition) | linked only | only suppress applies |
 | `completed`, `exhausted`, `suppressed` | linked only | only suppress applies; a terminal contact is never reopened |
 
@@ -477,6 +478,14 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   campaigns". A second refusal of the other kind keeps the first note.
   `dnc_unavailable` and `dial_failed` are plain errors with no override; `contact_in_flight` says
   the campaign is calling that customer right now.
+- **Opened with a number (a Missed inbound call's Call back, `docs/inbound.md` §8.4).**
+  `/dialer/phone` reads a prefill from history state, never the URL (`utils/softphone/prefill.ts`):
+  the number goes on the pad as Redial puts it (Call takes focus, nothing is dialled) and the
+  campaign is preselected as "Log to" when the agent may log to it (`presetCampaignId`, the
+  station's mechanism), else the call is untagged. A call that is live or owes its outcome keeps
+  the screen; the number is filled once it settles. Every rule of a typed number applies, the DNC
+  check and its override note included (SP1). Live on a campaign, the page shows its
+  `session_on_campaign` screen and the prefill is not carried through the switch.
 - **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
   agent is reserved, on a call or in wrap-up the switch is queued: the button stays in place,
   disabled, reading "Switching after this call", and a pill with ✕ cancels it. When `agent_state`

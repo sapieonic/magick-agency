@@ -295,6 +295,18 @@ describe('POST /plivo/webrtc-recording/:callId', () => {
     expect(bridge.handleCarrierRecording).toHaveBeenCalledWith(CALL_ID, 'plivo', { recordingUrl: REC.RecordUrl, carrierCallId: 'uuid-1' });
   });
 
+  it('takes the Record API`s callback shape too (a recording started at an inbound call`s bind; snake_case)', async () => {
+    const app = await buildApp(bridge);
+    const res = await post(app, recPath, {
+      api_id: 'api-1', call_uuid: 'uuid-2', record_url: 'https://media.plivo.com/v1/Account/MAXX/Recording/rec-2.mp3',
+      recording_id: 'rec-2', recording_duration: '17', recording_duration_ms: '17020',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(bridge.handleCarrierRecording).toHaveBeenCalledWith(CALL_ID, 'plivo', {
+      recordingUrl: 'https://media.plivo.com/v1/Account/MAXX/Recording/rec-2.mp3', carrierCallId: 'uuid-2',
+    });
+  });
+
   it('a bad signature is a 403 and nothing is persisted', async () => {
     const app = await buildApp(bridge);
     expect((await post(app, recPath, REC, { unsigned: true })).statusCode).toBe(403);

@@ -72,6 +72,9 @@ COPY --from=api-builder /out/dist ./dist
 COPY --from=api-builder /out/node_modules ./node_modules
 COPY --from=api-builder /out/package.json ./
 COPY packages/db/migrations ./migrations
+# The inbound calls' standard recordings (apps/server/assets/inbound/README.md): read from beside
+# dist/ on first use (src/agency/inbound/inbound-standard-clip-files.ts walks up from dist/).
+COPY apps/server/assets ./assets
 COPY docker/entrypoint.sh ./entrypoint.sh
 ENV NODE_ENV=production
 EXPOSE 3021

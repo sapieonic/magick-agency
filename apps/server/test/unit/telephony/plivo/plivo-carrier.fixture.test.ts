@@ -9,7 +9,21 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readPlivoCallDetailRecord } from '../../../../src/telephony/plivo/plivo.adapter.js';
+import { DEFAULT_PLIVO_SETTINGS, PlivoAdapter, readPlivoCallDetailRecord, type PlivoFetch } from '../../../../src/telephony/plivo/plivo.adapter.js';
+import { PLIVO_API_BASE } from '../../../../src/telephony/credentials/credential-specs.js';
+import { Secret } from '../../../../src/telephony/credentials/secret.js';
+import { plivoInboundUrls, withInboundToken, type PlivoInboundUrls } from '../../../../src/telephony/plivo/inbound-urls.js';
+import {
+  plivoCreateApplicationBody,
+  plivoNumberAppBody,
+  plivoStartRecordingBody,
+  plivoUpdateApplicationBody,
+  readPlivoApplication,
+  readPlivoApplicationPage,
+  readPlivoCreatedApplication,
+  readPlivoNumberApp,
+  readPlivoRecordingStarted,
+} from '../../../../src/telephony/plivo/plivo-inbound.wire.js';
 import {
   classifyPlivoOutcome,
   normalizePlivoCallback,
@@ -127,5 +141,121 @@ describe('Plivo carrier fixture: the call detail record (`GET …/Call/{call_uui
 
   it.each(fixture.cdr.map((e) => [e.name, e] as const))('%s', (_name, e) => {
     expect(readPlivoCallDetailRecord(e.httpStatus, JSON.stringify(e.body)).status).toBe(e.status);
+  });
+});
+
+// ── Inbound: the Application and numbers' apps (docs/inbound.md §8.1; unverified until P0) ──
+
+interface InboundOp {
+  source: string;
+  verified: boolean;
+  method: string;
+  path: string;
+  request?: Record<string, unknown>;
+  response: { status: number; body: unknown };
+  read?: unknown;
+  appId?: string | null;
+}
+interface RecordOp extends InboundOp {
+  callUuid: string;
+  callbackUrl: string;
+  timeLimitSeconds: number;
+}
+const inbound = (JSON.parse(readFileSync(resolve(SRC_DIR, 'plivo-carrier.fixture.json'), 'utf8')) as {
+  inbound: {
+    urls: PlivoInboundUrls; token: string; appName: string;
+    createApplication: InboundOp; getApplication: InboundOp; updateApplication: InboundOp; deleteApplication: InboundOp;
+    listApplications: InboundOp; getNumber: InboundOp; getNumberWithoutApp: InboundOp; setNumberApp: InboundOp; clearNumberApp: InboundOp;
+    startRecording: RecordOp;
+  };
+}).inbound;
+const OPS = ['createApplication', 'getApplication', 'updateApplication', 'deleteApplication', 'listApplications',
+  'getNumber', 'getNumberWithoutApp', 'setNumberApp', 'clearNumberApp', 'startRecording'] as const;
+
+/** An adapter on the fixture's account whose one request is answered with `op`'s response, recording what it sent. */
+function fixtureAdapter(op: InboundOp) {
+  const sent: Array<{ url: string; method: string; body: unknown }> = [];
+  const fetchImpl: PlivoFetch = async (url, init) => {
+    sent.push({ url, method: String(init.method), body: init.body === undefined ? undefined : JSON.parse(String(init.body)) });
+    return { status: op.response.status, text: async () => (op.response.body === null ? '' : JSON.stringify(op.response.body)) };
+  };
+  const adapter = new PlivoAdapter({
+    ...DEFAULT_PLIVO_SETTINGS, authId: 'MAABCDEFGHIJKLMNOPQR', authToken: new Secret('fixtureAuthToken-0001'), fetchImpl,
+    webhookBaseUrl: 'https://agency.example.com/api/v1/webhooks/plivo',
+  });
+  return { adapter, sent };
+}
+
+describe('Plivo carrier fixture: inbound Applications and number apps (unverified until P0)', () => {
+  it('marks every entry unverified with a source, until the P0 capture replaces it', () => {
+    for (const name of OPS) {
+      expect(inbound[name].verified, name).toBe(false);
+      expect(inbound[name].source, name).toMatch(/UNVERIFIED until the P0 live check/);
+    }
+  });
+
+  it('the request builders produce the recorded bodies', () => {
+    expect(plivoCreateApplicationBody(inbound.appName, inbound.urls, inbound.token)).toStrictEqual(inbound.createApplication.request);
+    expect(plivoUpdateApplicationBody(inbound.urls, inbound.token)).toStrictEqual(inbound.updateApplication.request);
+    expect(plivoNumberAppBody(inbound.setNumberApp.appId!)).toStrictEqual(inbound.setNumberApp.request);
+    expect(plivoNumberAppBody(null)).toStrictEqual(inbound.clearNumberApp.request);
+    const rec = inbound.startRecording;
+    expect(plivoStartRecordingBody(rec.callbackUrl, rec.timeLimitSeconds)).toStrictEqual(rec.request);
+  });
+
+  it('the readers read the recorded responses', () => {
+    const text = (op: InboundOp) => JSON.stringify(op.response.body);
+    expect(readPlivoCreatedApplication(text(inbound.createApplication))).toBe(inbound.createApplication.read);
+    expect(readPlivoApplication(text(inbound.getApplication))).toStrictEqual(inbound.getApplication.read);
+    expect(readPlivoApplicationPage(text(inbound.listApplications))).toStrictEqual(inbound.listApplications.read);
+    expect(readPlivoNumberApp(text(inbound.getNumber))).toStrictEqual(inbound.getNumber.read);
+    expect(readPlivoNumberApp(text(inbound.getNumberWithoutApp))).toStrictEqual(inbound.getNumberWithoutApp.read);
+    expect(readPlivoRecordingStarted(text(inbound.startRecording))).toStrictEqual(inbound.startRecording.read);
+  });
+
+  it('the adapter sends each request to the recorded path and method, and answers what the reader read', async () => {
+    const run = async (op: InboundOp, call: (a: PlivoAdapter) => Promise<unknown>) => {
+      const { adapter, sent } = fixtureAdapter(op);
+      const out = await call(adapter);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.url).toBe(`${PLIVO_API_BASE}${op.path}`);
+      expect(sent[0]!.method).toBe(op.method);
+      expect(sent[0]!.body).toStrictEqual(op.request);
+      return out;
+    };
+    const app = inbound.createApplication.read as string;
+    expect(await run(inbound.createApplication, (a) => a.createInboundApplication(inbound.appName, inbound.urls, inbound.token))).toBe(app);
+    expect(await run(inbound.getApplication, (a) => a.getInboundApplication(app))).toStrictEqual(inbound.getApplication.read);
+    expect(await run(inbound.updateApplication, (a) => a.updateInboundApplication(app, inbound.urls, inbound.token))).toBe('updated');
+    expect(await run(inbound.deleteApplication, (a) => a.deleteInboundApplication(app))).toBe('deleted');
+    expect(await run(inbound.listApplications, (a) => a.findInboundApplications(inbound.appName))).toEqual([app]);
+    expect(await run(inbound.getNumber, (a) => a.getNumberApp('+14155550101'))).toStrictEqual(inbound.getNumber.read);
+    expect(await run(inbound.getNumberWithoutApp, (a) => a.getNumberApp('+14155550102'))).toStrictEqual({ appId: null });
+    expect(await run(inbound.setNumberApp, (a) => a.setNumberApp('+14155550101', inbound.setNumberApp.appId!))).toBe('updated');
+    expect(await run(inbound.clearNumberApp, (a) => a.setNumberApp('+14155550102', null))).toBe('updated');
+    const rec = inbound.startRecording;
+    expect(await run(rec, (a) => a.startRecording(rec.callUuid, { callbackUrl: rec.callbackUrl, timeLimitSeconds: rec.timeLimitSeconds })))
+      .toStrictEqual({ recordingId: (rec.read as { recordingId: string }).recordingId });
+  });
+
+  it('the Record API`s callback is read like the `<Record>` element`s: the same recording fields from either shape', () => {
+    const xml = entries.find((e) => e.name === 'recording')!;
+    const api = entries.find((e) => e.name === 'recording-record-api')!;
+    const fields = (e: FixtureEntry) => {
+      const n = normalizePlivoCallback(e.kind, e.params);
+      return Object.keys(n).filter((k) => n[k as keyof typeof n] !== undefined).sort();
+    };
+    expect(fields(api)).toEqual(fields(xml));
+    // Only a recording callback reads the snake_case names: a status callback carrying them is not a recording.
+    expect(normalizePlivoCallback('status', api.params).recordingUrl).toBeUndefined();
+    expect(normalizePlivoCallback('status', api.params).callUuid).toBe('');
+  });
+
+  it('the stored URLs are the inbound URL builders` (the answer and hangup given with the token, the fallback without)', () => {
+    const cred = /inbound-answer\/([0-9a-f-]{36})$/.exec(inbound.urls.answerUrl)![1]!;
+    expect(plivoInboundUrls({ webhookBaseUrl: 'https://agency.example.com/api/v1/webhooks/plivo', inboundFallbackAnswerUrl: '' }, cred))
+      .toStrictEqual(inbound.urls);
+    expect(inbound.createApplication.request!['answer_url']).toBe(withInboundToken(inbound.urls.answerUrl, inbound.token));
+    expect(inbound.createApplication.request!['fallback_answer_url']).toBe(inbound.urls.fallbackAnswerUrl);
   });
 });

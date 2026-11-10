@@ -10,6 +10,7 @@ import {
 import { audioTarget } from '../../utils/softphone/audioTarget';
 import { stationReducer, INITIAL_STATION_STATE } from '../../utils/agencyStationReducer';
 import { manualCall, step } from '../helpers/softphone';
+import { connected, inboundCall, owing } from '../helpers/inbound';
 
 describe('softphonePhase — the rail’s five states from one row', () => {
   it('reads every state', () => {
@@ -99,6 +100,20 @@ describe('audioTarget — the mic gates for a soft-phone call', () => {
     expect(audioTarget({ stationIsGone: false, live: null, manualCall: ended })).toEqual({ id: null, bridged: false });
     const live = manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' });
     expect(audioTarget({ stationIsGone: true, live: null, manualCall: live })).toEqual({ id: null, bridged: false });
+  });
+});
+
+describe('audioTarget — an inbound call on a campaign session (P2)', () => {
+  it('arms on the offer and opens the uplink only once connected', () => {
+    const base = { stationIsGone: false, live: null, manualCall: null };
+    expect(audioTarget({ ...base, inboundCall: inboundCall() })).toEqual({ id: 'ib-1', bridged: false });
+    expect(audioTarget({ ...base, inboundCall: connected() })).toEqual({ id: 'ib-1', bridged: true });
+  });
+
+  it('releases the mic when the call ends (an outcome owed is not a call), and when the station is gone', () => {
+    const base = { stationIsGone: false, live: null, manualCall: null };
+    expect(audioTarget({ ...base, inboundCall: owing() })).toEqual({ id: null, bridged: false });
+    expect(audioTarget({ ...base, stationIsGone: true, inboundCall: connected() })).toEqual({ id: null, bridged: false });
   });
 });
 

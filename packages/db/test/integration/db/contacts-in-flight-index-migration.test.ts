@@ -1,24 +1,30 @@
 // Real Postgres: migrations/0004_agency_contacts_in_flight_index.sql. globalSetup has applied
 // every migration. Asserted by definition AND by the planner being able to use it for the
 // stranded-contact sweep (AgencyContactRepository.findStrandedInFlight), as the 0003 suite does.
-import { afterAll, describe, expect, it } from 'vitest';
-import type { PoolClient } from 'pg';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { closeTestPool, getTestPool } from '../setup/test-utils.js';
+import { insertPlanRoster } from '../fixtures.js';
+import { PLAN_ROSTER_TIMEOUT_MS, endPlanTransactions, inPlanTransaction } from '../plan-transaction.js';
 
+// A test that timed out with its roster transaction still running must not hold the tables for
+// the next test or file (plan-transaction.ts).
+afterEach(endPlanTransactions);
 afterAll(closeTestPool);
 
-/** The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts). */
+/**
+ * The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts), over
+ * a roster and attempts of the test's own, ANALYZEd in the rolled-back transaction
+ * ({@link insertPlanRoster}). Without them the plan followed what earlier files left: in a full
+ * run the sweep was served from idx_agency_contacts_insights (rebuilt small by a down → up) with
+ * `state` as a condition on its second column, over this index bloated by dead rows.
+ */
 async function planOf(sql: string): Promise<string> {
-  const client: PoolClient = await getTestPool().connect();
-  try {
-    await client.query('BEGIN');
+  return inPlanTransaction(async (client) => {
+    await insertPlanRoster(client);
     await client.query('SET LOCAL enable_seqscan = off');
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
-  } finally {
-    await client.query('ROLLBACK');
-    client.release();
-  }
+  });
 }
 
 describe('0004 — in_flight contacts index', () => {
@@ -44,5 +50,5 @@ describe('0004 — in_flight contacts index', () => {
     );
     expect(plan).toContain('idx_agency_contacts_in_flight');
     expect(plan).toContain('uq_agency_attempt_number');
-  });
+  }, PLAN_ROSTER_TIMEOUT_MS);
 });

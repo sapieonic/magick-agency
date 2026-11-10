@@ -6,6 +6,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import {
   agencyAgentSessionRepository,
+  agencyInboundCallRepository,
   agencyManualCallRepository,
 } from '../db/repositories/agency.repository.js';
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
@@ -38,6 +39,8 @@ import { SoftphoneService } from './softphone/softphone-service.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 import { DedicatedCallerIdCache } from './pacing/dedicated-caller-ids.js';
 import { queuedBreakReleaseOf } from './reserved-agent.js';
+import type { InboundConnector } from './inbound/inbound-connector.js';
+import { InboundCallService } from './inbound/inbound-disposition.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
@@ -131,6 +134,14 @@ export class AgencyRuntime {
    * campaign), read through otherwise: always, in a media worker, whose bus delivers nothing.
    */
   readonly dedications: DedicatedCallerIdCache;
+  /**
+   * The inbound connector (docs/inbound.md §2, P2): who is put through to which waiting inbound
+   * caller. Attached by `startInboundCalls` ({@link attachInbound}) in the process that answers
+   * inbound calls; null before, after its stop, and in a media worker.
+   */
+  inbound: InboundConnector | null = null;
+  /** The answered inbound call's finish (read, notes, hang up, outcome, DNC) and the outcome lapse. */
+  readonly inboundCalls: InboundCallService;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string, options: AgencyRuntimeOptions = {}) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -215,10 +226,32 @@ export class AgencyRuntime {
       type: 'agent_available', sessionId,
       campaignId: this.stations.get(sessionId)?.campaignId ?? stationsForCampaign.get(sessionId)?.campaignId ?? null,
     }));
+    // An agent entering `available` is offered a waiting inbound caller at once (synchronously
+    // here, where pacing waits for its next tick): docs/inbound.md §2, "Pacing and inbound".
+    this.agents.onAvailable((sessionId) => this.inbound?.onAgentAvailable(sessionId));
+    this.inboundCalls = new InboundCallService({
+      bridge,
+      agents: this.agents,
+      stations: this.stations,
+      releaseAgent: (sessionId) => this.dialer.releaseAgent(sessionId),
+      connector: () => this.inbound,
+    });
     this.stations.onAttached(({ sessionId, campaignId }) => {
       // A soft-phone session (no campaign) is never `available`; nothing to wake.
       if (campaignId) publishPacingInvalidation({ type: 'agent_available', sessionId, campaignId });
     });
+  }
+
+  // ─── Inbound calls (docs/inbound.md §2, P2) ───────────────────────────────
+
+  /**
+   * Put the inbound connector in the runtime: the release hook in `releaseAgent` (a waiting
+   * caller before `available`), the `available` listener, the station close and the sweeps.
+   * `startInboundCalls` calls it once the connector exists; null detaches it (its stop).
+   */
+  attachInbound(connector: InboundConnector | null): void {
+    this.inbound = connector;
+    this.dialer.registerInboundTake(connector ? (sessionId) => connector.takeOnRelease(sessionId) : null);
   }
 
   // ─── Presence resilience ──────────────────────────────────────────────────
@@ -276,6 +309,14 @@ export class AgencyRuntime {
     session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'> | null,
   ): Promise<AgencyAgentState> {
     const row = session ?? null;
+    // ── An inbound call's outcome owed (docs/inbound.md §2, "Server restart") ─────────
+    // The session's unsettled inbound call is the authority: one that ended after it bridged
+    // owes its outcome, so the session lands in `break` (or keeps a live state) with the
+    // `inbound` field re-claimed, and `available` stays refused until the outcome is saved or
+    // lapses. A call still offered or connected in this process is the connector's (a station
+    // blip): Redis is left as it is. A field naming no unsettled call is stale and cleared.
+    const inboundState = await this.rehydrateInboundOf(sessionId);
+    if (inboundState) return inboundState;
     const unsettled = await Promise.resolve()
       .then(() => agencyManualCallRepository.findUnsettledForSession(sessionId)).catch((err) => {
         log.warn({ err, sessionId }, 'Could not read the session\'s soft-phone call to rehydrate');
@@ -319,7 +360,12 @@ export class AgencyRuntime {
         .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
       return 'wrapup';
     }
-    if (live) return live.state;
+    // A `wrapup` lease nothing here holds (no wrap-up in this process, no inbound outcome owed:
+    // the inbound arm above answered for that) was left by a previous process. Nothing would
+    // ever end it, and the heartbeat does not renew it (`heartbeatLeaseMs`), so it is a lapsed
+    // lease that has not lapsed yet: `break`, as below.
+    const orphanedWrapup = live?.state === 'wrapup' && !wrapup && !live.inboundCallId;
+    if (live && !orphanedWrapup) return live.state;
 
     await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
     // Best-effort mirror. Redis is the authority; a failed write here costs a
@@ -331,6 +377,35 @@ export class AgencyRuntime {
       : agencyAgentSessionRepository.setState(sessionId, 'break', row?.break_reason ?? null))
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
     return 'break';
+  }
+
+  /**
+   * {@link rehydrateAgent}'s inbound arm: the state to come back in when the session owes an
+   * inbound call's outcome, else null (and a stale `inbound` field cleared).
+   */
+  private async rehydrateInboundOf(sessionId: string): Promise<AgencyAgentState | null> {
+    const owed = await Promise.resolve()
+      .then(() => agencyInboundCallRepository.findUnsettledForSession(sessionId)).catch((err) => {
+        log.warn({ err, sessionId }, 'Could not read the session\'s inbound call to rehydrate');
+        return undefined;
+      });
+    if (owed === undefined) return null;
+    if (owed && owed.state === 'ended' && owed.bridged_at !== null) {
+      const rehydrated = await this.agents.rehydrateInbound(sessionId, owed.id);
+      if (!rehydrated) return null;
+      if (rehydrated.changed) {
+        await agencyAgentSessionRepository.setState(sessionId, 'break')
+          .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
+      }
+      return rehydrated.state;
+    }
+    if (owed) return null; // offered or connected: the connector's
+    const held = await this.agents.get(sessionId);
+    if (held?.inboundCallId && !this.inbound?.findCallForSession(sessionId)) {
+      log.warn({ sessionId, inboundCallId: held.inboundCallId }, 'Stale inbound claim on a reconnecting session — clearing it');
+      await this.agents.releaseInbound(sessionId, held.inboundCallId);
+    }
+    return null;
   }
 
   /**
@@ -360,6 +435,9 @@ export class AgencyRuntime {
     // and the bridge's grace (after the answer) or its immediate hangup (before)
     // owns the outcome.
     if (this.manualDialer.hasLiveCall(sessionId)) return false;
+    // And for an inbound call whose audio is bound to this socket (docs/inbound.md §2, "The
+    // station drops after the bind"): the bridge's deferred hangup decides, as for a campaign call.
+    if (this.inbound?.hasLiveCall(sessionId)) return false;
     // ── BELT AND BRACES: THE SUPERSEDE GATE, RE-ASKED AT THE WRITE ──────────
     //
     // The close handler's own `socketFor` check might look as though it races this
@@ -394,6 +472,10 @@ export class AgencyRuntime {
     // holding only a session id keeps the old behaviour.
     const holder = this.stations.socketFor(sessionId);
     if (ws !== undefined && holder !== undefined && holder !== ws) return false;
+    // An inbound call on offer whose audio has not bound goes back to the head of the queue
+    // (docs/inbound.md §5.1). Synchronous: the cancel runs on the call's own chain, so nothing
+    // is awaited between the supersede read above and the write below.
+    this.inbound?.onStationClosed(sessionId);
     await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
     await agencyAgentSessionRepository.setState(sessionId, 'offline')
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror offline agent state'));
@@ -574,6 +656,9 @@ export class AgencyRuntime {
         }
         continue;
       }
+      // A live inbound call bound to this socket (docs/inbound.md §2): rule 1 as written. Only a
+      // console takes inbound calls (IQ20), so there is no phone arm.
+      if (this.inbound?.hasLiveCall(entry.sessionId)) continue;
 
       if (entry.ws.readyState === 3 /* CLOSED */) {
         log.warn({

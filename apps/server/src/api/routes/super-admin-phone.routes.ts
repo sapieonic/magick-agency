@@ -15,6 +15,8 @@ import {
 import { parseOr400 } from './helpers/parse-or-400.js';
 import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
 import { findCredentialSpec } from '../../telephony/credentials/credential-specs.js';
+import { getTelephonyInboundService } from '../../telephony/credentials/index.js';
+import type { InboundReleaseCause, TelephonyInboundService } from '../../telephony/credentials/inbound-service.js';
 
 const log = createChildLogger({ component: 'super-admin-phone-routes' });
 
@@ -34,8 +36,12 @@ const log = createChildLogger({ component: 'super-admin-phone-routes' });
  *    field, every response row): it marked numbers for a signup pool, and there
  *    is no pooled number. The column stays in the schema at its default.
  *  - Phone-resolution and metadata cache invalidation: there is no such cache.
- *  - An inbound-routing cascade on unassign: there are no inbound configs
- *    (inbound calls to agency numbers play a message and hang up).
+ *
+ * Inbound (docs/inbound.md §8.2): a number linked to its credential's inbound Application stops
+ * being answered here once it is unassigned from the tenant, retired or deleted (the status set
+ * by `PUT` included): each of those writes runs the cascade for the number after it lands
+ * (`TelephonyInboundService.reconcileNumber`, a no-op for a number that is not linked). Linking
+ * and unlinking themselves are the credential routes' (`/phone-numbers/:id/inbound/*`).
  */
 
 /**
@@ -47,7 +53,14 @@ function toWirePhoneNumber<T extends Partial<Pick<PhoneNumberRecord, 'pool_eligi
   return wire;
 }
 
-export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void> {
+export async function superAdminPhoneRoutes(
+  app: FastifyInstance,
+  opts: { inbound?: () => TelephonyInboundService } = {},
+): Promise<void> {
+  const inbound = opts.inbound ?? getTelephonyInboundService;
+  /** The §8.2 cascade for one number after a write to it; never throws. */
+  const cascade = (request: FastifyRequest, phoneNumberId: string, cause: Exclude<InboundReleaseCause, 'unlinked' | 'retired_by_sync'>) =>
+    inbound().reconcileNumber(phoneNumberId, cause, { adminId: request.superAdmin!.id, adminEmail: request.superAdmin!.email });
   app.addHook('preHandler', superAdminMiddleware);
 
   // ── Phone Numbers ───────────────────────────────────────
@@ -183,6 +196,7 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     if (!phoneNumber) {
       return reply.code(404).send({ error: 'Not Found', message: 'Phone number not found' });
     }
+    if (phoneNumber.status === 'retired' || phoneNumber.status === 'deleted') await cascade(request, id, phoneNumber.status);
 
     log.info({ phoneNumberId: id }, 'Phone number updated');
     void recordSuperAdminAudit({
@@ -230,6 +244,7 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
 
     // Campaigns naming it stop dialling from it now, not when the cached read lapses (PL13).
     invalidateDialableCallerIds();
+    await cascade(request, id, 'retired');
     log.info({ phoneNumberId: id }, 'Phone number retired');
     void recordSuperAdminAudit({
       admin_id: request.superAdmin!.id,
@@ -297,6 +312,7 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     }
 
     invalidateDialableCallerIds();
+    await cascade(request, id, 'deleted');
     log.info({ phoneNumberId: id }, 'Phone number soft-deleted');
     void recordSuperAdminAudit({
       admin_id: request.superAdmin!.id,
@@ -375,9 +391,8 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
 
   /**
    * DELETE /super-admin/phone-numbers/:id/assign/:tenantId
-   * Unassign a phone number from a tenant.
-   *
-   * No inbound-config cascade and no cache invalidation (module note).
+   * Unassign a phone number from a tenant. A number linked to inbound on its credential's tenant
+   * is unlinked (the §8.2 cascade, module note).
    */
   app.delete<{ Params: { id: string; tenantId: string } }>('/phone-numbers/:id/assign/:tenantId', async (
     request,
@@ -391,6 +406,7 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     }
 
     invalidateDialableCallerIds();
+    await cascade(request, id, 'unassigned');
     log.info({ phoneNumberId: id, tenantId }, 'Phone number unassigned from tenant');
     void recordSuperAdminAudit({
       admin_id: request.superAdmin!.id,

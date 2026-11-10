@@ -261,14 +261,34 @@ describe('webrtc_calls dialer/agency scope isolation (integration)', () => {
       await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, campaign_id: CAMPAIGN });
       await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, ...NO_CAMPAIGN });
       const { rows: inScope } = await getTestPool().query(
-        `SELECT id FROM agency_calls WHERE tenant_id = $1 AND (campaign_id IS NOT NULL OR origin = 'manual')`, [TENANT],
+        `SELECT id FROM agency_calls WHERE tenant_id = $1 AND (campaign_id IS NOT NULL OR origin IN ('manual', 'inbound'))`, [TENANT],
       );
       const { rows: complement } = await getTestPool().query(
-        `SELECT id FROM agency_calls WHERE tenant_id = $1 AND (campaign_id IS NULL AND origin <> 'manual')`, [TENANT],
+        `SELECT id FROM agency_calls WHERE tenant_id = $1 AND (campaign_id IS NULL AND origin NOT IN ('manual', 'inbound'))`, [TENANT],
       );
       const page = await webrtcCallRepository.listByTenant(TENANT, ACCOUNT, 'agency', 50, 0);
       expect(page.total).toBe(inScope.length);
       expect(inScope.length + complement.length).toBe(3);
+    });
+  });
+
+  // ── inbound legs (docs/inbound.md §2) ─────────────────────────────────────
+  describe('inbound legs (origin = inbound) are agency calls', () => {
+    const inbound = () => ({
+      tenant_id: TENANT, account_id: ACCOUNT, campaign_id: null, origin: 'inbound', inbound_call_id: randomUUID(),
+    });
+
+    it('findByIdScoped and listByTenant take an inbound leg although its campaign_id is NULL', async () => {
+      const leg = await insertWebrtcCall(inbound());
+      expect(await webrtcCallRepository.findByIdScoped(leg.id, TENANT, ACCOUNT, 'agency'))
+        .toMatchObject({ id: leg.id, origin: 'inbound', campaign_id: null });
+      expect(await webrtcCallRepository.findByIdScoped(leg.id, OTHER_TENANT, ACCOUNT, 'agency')).toBeNull();
+      await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, ...NO_CAMPAIGN });
+      const { rows, total } = await webrtcCallRepository.listByTenant(TENANT, ACCOUNT, 'agency');
+      expect(rows.map((r) => r.id)).toEqual([leg.id]);
+      expect(total).toBe(1);
+      // The list projects the correlation, so an inbound row names its spine row.
+      expect(rows[0]).toMatchObject({ origin: 'inbound', inbound_call_id: leg.inbound_call_id });
     });
   });
 

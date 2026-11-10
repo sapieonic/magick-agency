@@ -118,6 +118,8 @@ export interface AgencyCampaignRecord {
   agent_retry_rounds: number;
   /** Agent-led retry (0009): minutes since a contact's last attempt before it may be retried. */
   agent_retry_cooldown_minutes: number;
+  /** Inbound calls (0024, docs/inbound.md §4.1): this campaign's customers who ring in are put through to their own agent. */
+  inbound_sticky_enabled: boolean;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /**
@@ -306,6 +308,7 @@ export type AgencyCampaignConfigColumns = Pick<
   | 'allow_agent_retry'
   | 'agent_retry_rounds'
   | 'agent_retry_cooldown_minutes'
+  | 'inbound_sticky_enabled'
   | 'retry_policy'
   | 'disposition_catalog'
   | 'outcome_dispositions'

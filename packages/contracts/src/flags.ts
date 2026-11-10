@@ -220,9 +220,29 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency reports: agent, campaign and account performance reports as PDF and Excel, ad hoc or on a schedule',
   },
+
+  // ── Inbound calls on Plivo numbers ───────────────────────────────────────────
+  //
+  // `docs/inbound.md` §8.1. Gates the CONSOLE surfaces only: the account's inbound routes, the
+  // Missed inbound list, and their nav items (every `/proxy/agency/inbound/*` route answers
+  // `403 inbound_disabled` when off). It does NOT gate the calls: a number a super-admin linked
+  // to inbound (IB6) is answered whatever this says, and its calls still get their Missed rows
+  // and callbacks, so turning the flag off never drops a caller into silence. Unlinking the
+  // number is how a call stops being answered. Off by default: routes play clips and record
+  // follow-ups on the tenant's own carrier account, so a tenant gets it by an override row.
+  agency_inbound_enabled: {
+    key: 'agency_inbound_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_INBOUND', // staging: FF_AGENCY_INBOUND=true
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console shows/hides Inbound routes and Missed calls
+    owner: 'voice',
+    description: 'Agency inbound calls: inbound routes (hours, clips, queue) and the Missed inbound list for calls to linked Plivo numbers',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The seven agency flag keys. */
+/** The eight agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -233,6 +253,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_console_alaw8',
   'agency_contact_assignment_enabled',
   'agency_reports_enabled',
+  'agency_inbound_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

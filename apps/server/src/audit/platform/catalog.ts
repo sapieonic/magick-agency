@@ -127,6 +127,35 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_report_subscription.created',
   'agency_report_subscription.updated',
   'agency_report_subscription.deleted',
+  // ── Inbound calls (docs/inbound.md §9) ───────────────────────────────────────
+  // An account's inbound route created, changed (`details.fields`; `details.numbers_added` /
+  // `numbers_removed` with the phone number ids) or deleted (its numbers detached), filed under
+  // the route. A Missed inbound row marked handled, filed under the inbound call
+  // (`agency_inbound_calls.id`; `details.reason`), or reassigned by a supervisor (`details.from`,
+  // `details.to`: user ids, null for the account). Ids and numbers only. Account-wide, never
+  // campaign-scoped. What the super-admin does (enable inbound, link numbers) is in
+  // `super_admin_audit_log` (`INBOUND_SUPER_ADMIN_AUDIT_ACTIONS`).
+  'agency_inbound_route.created',
+  'agency_inbound_route.updated',
+  'agency_inbound_route.deleted',
+  'agency_inbound_call.handled',
+  'agency_inbound_call.reassigned',
+  // A handled Missed inbound row put back on the list (`details.handled_reason`,
+  // `details.handled_by_user_id`: how and by whom it had been handled).
+  'agency_inbound_call.reopened',
+  // An answered inbound call (P2, docs/inbound.md §6): hung up, its outcome saved, its caller marked
+  // DNC, by the agent who took it or a supervisor (`details.on_behalf`), filed under the inbound
+  // call; `campaign_id` the matched campaign, when the caller matched one. Ids and codes only.
+  'agency_inbound_call.hung_up',
+  'agency_inbound_call.dispositioned',
+  'agency_inbound_call.dnc_marked',
+  // A supervisor's force-available closed an outcome the agent owed (`no_disposition`, as the
+  // lapse would): filed under the call, the supervisor the actor (`details.via`, the session).
+  'agency_inbound_call.closed',
+  // A recording uploaded for inbound routes (`details.size_bytes`, `duration_seconds`) or deleted,
+  // filed under the recording (`audio_files.id`). Account-wide.
+  'agency_inbound_clip.uploaded',
+  'agency_inbound_clip.deleted',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -172,6 +201,11 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   // One report run (`report_runs.id`) and one report subscription (`report_subscriptions.id`).
   'agency_report',
   'agency_report_subscription',
+  // One inbound route (`agency_inbound_routes.id`) and one inbound call (`agency_inbound_calls.id`).
+  'agency_inbound_route',
+  'agency_inbound_call',
+  // One recording (`audio_files.id`) uploaded for inbound routes.
+  'agency_inbound_clip',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //

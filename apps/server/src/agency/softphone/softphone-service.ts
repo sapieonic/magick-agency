@@ -36,6 +36,7 @@ import {
   agencyAgentSessionRepository,
   agencyCampaignRepository,
   agencyContactRepository,
+  agencyInboundCallRepository,
   agencyManualCallRepository,
   agencySoftphoneSettingsRepository,
 } from '../../db/repositories/agency.repository.js';
@@ -301,6 +302,7 @@ export class SoftphoneService {
       dnc: this.deps.dnc,
       findRosterMatches: (campaignId, phone) => agencyContactRepository.findForManualMatch(campaignId, phone),
       findInFlightInAccount: (phone) => agencyContactRepository.findInFlightForAccount(actor.tenantId, actor.accountId, phone),
+      findBusyInboundInAccount: (phone) => agencyInboundCallRepository.findBusyForNumber(actor.tenantId, actor.accountId, phone),
       // The cached map, fed to the pure `selectCallerId`: it applies `resolveCallerId` with the
       // requested number as the sticky and refuses one outside the tag's set, which the
       // one-contact helper (`callerIdForContact`) does not.
@@ -807,6 +809,9 @@ export class SoftphoneService {
       // sees them. Nothing changed; retry.
       // So did a `manual` claim that would not clear (`claim_not_released`).
       if (set.refusal.code === 'unavailable' || set.refusal.code === 'claim_not_released') return refuse({ code: 'dial_failed' });
+      if (set.refusal.code === 'inbound_call_live') {
+        return refuse({ code: 'inbound_call_live', inbound_call_id: set.refusal.inboundCallId });
+      }
       return refuse(set.refusal);
     }
     await agencyAgentSessionRepository.setState(session.id, 'available');

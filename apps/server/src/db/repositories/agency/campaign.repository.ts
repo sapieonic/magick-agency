@@ -57,6 +57,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // Wrap-up redial (0008). An operator setting like `wrapup_auto_return`, so it is
   // patchable at any status; a session reads it at join (the bootstrap).
   'allow_wrapup_redial',
+  // Inbound calls (0024, docs/inbound.md §4.1): an operator setting, patchable at any status;
+  // the answer webhook reads it from the campaign row when it identifies a caller.
+  'inbound_sticky_enabled',
   // Contact assignment and agent-led retry (0009). Operator settings, patchable at any
   // status like `allow_wrapup_redial` — except `assignment_mode`, whose status rule
   // (draft or paused only) is the PATCH route's, not this allow-list's.
@@ -129,6 +132,8 @@ export class AgencyCampaignRepository {
     callback_owner_grace_minutes?: number; callback_fallback?: AgencyCallbackFallback;
     allow_agent_retry?: boolean; agent_retry_rounds?: number; agent_retry_cooldown_minutes?: number;
     outcome_dispositions?: unknown;
+    /** Omitted ⇒ `true`, the column DEFAULT (0024). */
+    inbound_sticky_enabled?: boolean;
   }): Promise<AgencyCampaignRecord> {
     // ── Every placeholder inside a COALESCE must carry its column's type ───────
     //
@@ -171,7 +176,7 @@ export class AgencyCampaignRepository {
                $19, $20, COALESCE($21,false),
                COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
                COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
-               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb))
+               COALESCE($28::integer,30),$29::uuid,COALESCE($30::jsonb,'{}'::jsonb),COALESCE($31::boolean,true))
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -202,6 +207,8 @@ export class AgencyCampaignRepository {
         input.telephony_credential_id ?? null,
         // Automatic outcomes (0022). Omitted ⇒ `{}`, the column DEFAULT: nothing mapped.
         input.outcome_dispositions ? JSON.stringify(input.outcome_dispositions) : null,
+        // Inbound sticky routing (0024). Omitted ⇒ `true`, the column DEFAULT.
+        input.inbound_sticky_enabled ?? null,
       ],
     );
     return rows[0]!;

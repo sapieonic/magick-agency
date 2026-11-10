@@ -25,9 +25,17 @@ import {
  * touch only Redis and Postgres through it, never the per-session in-process state
  * (dialer, wrap-up, breaks, soft phone's live call, the station map).
  */
+const INBOUND_SINGLE_PROCESS = 'inbound callers are connected only in one process (IB8, docs/inbound.md §2): the connector, its calls and the agents it took live in the process that answers every inbound call, where a `none` handler runs; with media workers nobody is connected, so no call has an agent to finish';
+
 const NONE_WITH_RUNTIME: Record<string, string> = {
   'POST /sessions': 'the join: rehydrates the Redis lease, writes the row and mints a Redis token; no station is attached to any process yet',
   'POST /softphone/sessions': 'the soft-phone join: the same rehydrate and Redis token mint as the campaign join',
+  'GET /inbound/calls/:id': INBOUND_SINGLE_PROCESS,
+  'PATCH /inbound/calls/:id': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/hangup': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/disposition': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/dnc': INBOUND_SINGLE_PROCESS,
+  'GET /inbound/queue': INBOUND_SINGLE_PROCESS,
 };
 
 let core: FastifyInstance;

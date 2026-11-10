@@ -25,6 +25,7 @@ import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor, resolvedUserAuditActor, type AuditActorFields } from '../../audit/platform/audit-actor.js';
 import { auditSoftphoneEnded } from '../../agency/softphone/softphone-audit.js';
 import { takeSoftphoneSessionAudit } from './agency/softphone-answer.js';
+import { takeInboundCloseAudit } from './agency/inbound-close-audit.js';
 import { takeBreakUnchanged } from './agency/device-away.js';
 import { sendCoreRefusal } from './proxy-agency-softphone/shared.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
@@ -515,6 +516,24 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     // The supervisor's release from the soft phone's break ends it (SP7); the actor is
     // the supervisor, as on the force_available row.
     auditSoftphoneExit(request, result, requestAuditActor(request));
+    // An inbound call whose outcome the agent owed, closed by this force (docs/inbound.md §6):
+    // filed under the call, whatever the release that followed answered (the close happened).
+    const inboundClosed = takeInboundCloseAudit(result.body);
+    if (inboundClosed) {
+      platformAuditLogger.log({
+        ...accountAudit(request),
+        ...requestAuditActor(request),
+        action: 'agency_inbound_call.closed',
+        resource_type: 'agency_inbound_call',
+        resource_id: inboundClosed.inbound_call_id,
+        ...(inboundClosed.campaign_id ? { campaign_id: inboundClosed.campaign_id } : {}),
+        details: {
+          via: 'force_available',
+          session_id: request.params.id,
+          ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+        },
+      });
+    }
 
     if (result.status < 400) {
       log.info(

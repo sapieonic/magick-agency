@@ -117,6 +117,17 @@ export function contactName(
 ): string | null {
   const context = call?.contact?.context;
   if (!context) return null;
+  return contextName(context, display);
+}
+
+/**
+ * A contact's name off its uploaded context: the first hero (then field) whose label reads
+ * like a name. Shared by the soft phone's call and an inbound caller's matched contact.
+ */
+export function contextName(
+  context: Record<string, unknown>,
+  display: AgencyContextDisplay | undefined,
+): string | null {
   const resolved = resolveContextFields(context, display);
   const named = [...resolved.hero, ...resolved.fields].find(
     (field) => !field.isEmpty && /(^|[\s_-])(full[\s_-]?)?name$|^name$|customer|contact[\s_-]?name/i.test(field.label),

@@ -18,6 +18,7 @@ export * from './console-urls';
 export * from './super-admin';
 export * from './super-admin-usage';
 export * from './super-admin-telephony-credentials';
+export * from './super-admin-inbound';
 
 // `auth.ts` (the console `types/auth.ts`) and `team.ts` (the console `types/team.ts`) both
 // declare `TenantMember`; the console's team page uses the `team.ts` one, which adds

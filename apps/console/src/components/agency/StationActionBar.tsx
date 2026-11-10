@@ -3,6 +3,7 @@ import { Phone } from 'lucide-react';
 import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { BreakMenu, type BreakMenuHandle } from './BreakMenu';
 import { QueuedBreakPill } from './QueuedBreakPill';
+import { CustomerWaitingPill } from './inbound/CustomerWaitingPill';
 import { DncControl, type DncControlHandle } from './DncControl';
 import { HoldToConfirmButton } from './HoldToConfirmButton';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
@@ -140,6 +141,9 @@ export function StationActionBar({
           softphone={cons.pendingSoftphone}
         />
       ) : null}
+
+      {/* A caller sticky to this agent waits for them (P2): the same slot's rules. */}
+      {cons.station.customerWaiting ? <CustomerWaitingPill waiting={cons.station.customerWaiting} /> : null}
 
       {softphoneAvailable && cons.softphoneRejection ? (
         <span className={styles.breakAlreadyStarted} role="status" data-testid="switch-to-softphone-refused">

@@ -1,6 +1,8 @@
 /**
  * The soft phone's guard on `available` (docs/softphone.md §4.1 step 1, §6), as the
- * routes and the soft-phone service call it.
+ * routes and the soft-phone service call it, and the inbound call's beside it
+ * (docs/inbound.md §6, P2: the Redis `inbound` field and the session's unsettled inbound
+ * call, read the same two ways).
  *
  * `AgentStateMachine.set(…, 'available')` refuses, inside its Lua write, while the
  * session holds a soft-phone call (`manual`) or is a soft-phone session. This turns
@@ -24,7 +26,7 @@
  */
 import { createChildLogger } from '@magick-agency/observability';
 import { SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencyManualCall } from '@magick-agency/contracts/agency';
-import { agencyManualCallRepository } from '../../db/repositories/agency.repository.js';
+import { agencyInboundCallRepository, agencyManualCallRepository } from '../../db/repositories/agency.repository.js';
 import { AGENT_LEASE_MS, type AgentStateMachine } from '../agent-state-machine.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
@@ -45,6 +47,11 @@ export function onSoftphoneBreak(
 export type SetAvailableResult =
   | { ok: true }
   | { ok: false; refusal: { code: 'manual_call_live'; call: AgencyManualCall } | { code: 'wrong_session_kind' } }
+  /**
+   * The session holds an inbound call: offered, connected, or ended with its outcome owed
+   * (docs/inbound.md §6). The routes answer `409 inbound_call_live` naming it.
+   */
+  | { ok: false; refusal: { code: 'inbound_call_live'; inboundCallId: string } }
   /** Redis could not answer; nothing was written. */
   | { ok: false; refusal: { code: 'unavailable' } }
   /**
@@ -76,17 +83,49 @@ export async function owedSoftphoneCall(
   );
 }
 
+/**
+ * The id of the session's unsettled inbound call (offered, connected, or ended with its outcome
+ * owed), or null: the inbound twin of {@link owedSoftphoneCall}. Read from the database, the
+ * authority on what is owed; when the call is ended and owes its outcome, the session's Redis
+ * `inbound` field is re-claimed for it (`rehydrateInbound`: a lapsed or `available` lease becomes
+ * `break`), so every later `available` write refuses in Lua as well. An offered or connected
+ * call's field is the connector's, written with its reservation, and is left to it. Throws when
+ * the read fails.
+ */
+export async function owedInboundCallId(agents: AgentStateMachine, sessionId: string): Promise<string | null> {
+  const owed = await agencyInboundCallRepository.findUnsettledForSession(sessionId);
+  if (!owed) return null;
+  if (owed.state === 'ended' && owed.bridged_at !== null && !(await agents.rehydrateInbound(sessionId, owed.id))) {
+    log.warn({ sessionId, inboundCallId: owed.id }, 'Could not re-claim the session\'s owed inbound call');
+  }
+  return owed.id;
+}
+
 export async function setAvailableGuarded(
   agents: AgentStateMachine,
   sessionId: string,
 ): Promise<SetAvailableResult> {
   const owed = await owedSoftphoneCall(agents, sessionId);
   if (owed) return { ok: false, refusal: { code: 'manual_call_live', call: owed } };
+  const owedInbound = await owedInboundCallId(agents, sessionId);
+  if (owedInbound) return { ok: false, refusal: { code: 'inbound_call_live', inboundCallId: owedInbound } };
   for (let pass = 0; pass < 2; pass++) {
     const set = await agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
     if (set === 'ok') return { ok: true };
     if (set === 'softphone_session') return { ok: false, refusal: { code: 'wrong_session_kind' } };
     if (set === 'unavailable') return { ok: false, refusal: { code: 'unavailable' } };
+    if (set === 'inbound_call_owed') {
+      // An inbound call reserved the session between the read above and the write, or the
+      // field is stale (the release after a settle failed). The database decides which; a
+      // stale field is cleared by the id it holds, never another, and the write retried.
+      const unsettled = await agencyInboundCallRepository.findUnsettledForSession(sessionId);
+      if (unsettled) return { ok: false, refusal: { code: 'inbound_call_live', inboundCallId: unsettled.id } };
+      const heldInbound = await agents.inboundCallOf(sessionId);
+      if (!heldInbound) continue;
+      log.warn({ sessionId, heldBy: heldInbound }, 'Stale inbound claim on a session with no unsettled inbound call — clearing it');
+      await agents.releaseInbound(sessionId, heldInbound);
+      continue;
+    }
 
     const unsettled = await agencyManualCallRepository.findUnsettledForSession(sessionId);
     if (unsettled) {
@@ -104,6 +143,8 @@ export async function setAvailableGuarded(
   // session holds. Unreachable unless the release itself keeps failing — and then it is
   // its own refusal, never `unavailable`, which a caller may treat as "Redis was down,
   // carry on" while the claim still keeps the agent out of the pool.
+  const unsettledInbound = await agencyInboundCallRepository.findUnsettledForSession(sessionId);
+  if (unsettledInbound) return { ok: false, refusal: { code: 'inbound_call_live', inboundCallId: unsettledInbound.id } };
   const unsettled = await agencyManualCallRepository.findUnsettledForSession(sessionId);
   const call = unsettled
     ? await agencyManualCallRepository.findWireById(unsettled.id, { tenantId: unsettled.tenant_id, accountId: unsettled.account_id })

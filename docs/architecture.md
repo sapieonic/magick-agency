@@ -205,8 +205,11 @@ every account the caller belongs to (CH2) where every internal handler is single
   `reserved`, `on_call`, `wrapup`, `break` (`packages/contracts/src/agency.ts`). **Redis is the
   authority**; the `agency_agent_sessions.state` row is a best-effort mirror. Each state is a Redis
   key with a lease written by Lua compare-and-set scripts: `reserved_predial` 10 s,
-  `reserved_dialing` 15 s, `on_call` 15 s, `wrapup` 15 s, `available` / `break` 45 s; the owning
-  replica renews every 5 s. Leases detect liveness; they are never business timers. A lapsed lease
+  `reserved_dialing` 15 s, `on_call` 15 s, `wrapup` / `available` / `break` 45 s; the owning
+  replica renews `reserved` and `on_call` every 5 s, and the station heartbeat renews `available`,
+  `break`, and a `wrapup` the process vouches for (a wrap-up `WrapupManager` holds, or an inbound
+  outcome owed: `heartbeatLeaseMs`, `station-socket.ts`). Leases detect liveness; they are never
+  business timers. A lapsed lease
   on reconnect puts the agent in `break` (`rehydrateAgent`). Two break codes are **reserved**
   (`RESERVED_BREAK_REASONS`, `packages/contracts/src/agency/breaks.ts`): no campaign catalog may
   list them (the campaign-config write refuses them, `resolveBreakReasons` drops them).

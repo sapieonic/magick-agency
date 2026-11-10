@@ -60,9 +60,19 @@ export interface PacedAudioStreamerOptions {
    * `'aborted'` at the next frame boundary regardless of backpressure — a
    * belt-and-suspenders guard so a carrier holding the socket open with a
    * perpetually-full send buffer can't loop forever and strand the call. Omit for
-   * no deadline.
+   * no deadline. With {@link loop} it is the budget of ONE pass over the buffer,
+   * restarted at every pass, so it still catches a stalled pass without ending a
+   * healthy loop.
    */
   maxDurationMs?: number;
+  /**
+   * Play the buffer over and over: at its end the next pass starts on the very next
+   * frame slot (the schedule keeps running, so there is no gap and no burst at the
+   * seam), until {@link PacedAudioStreamer.abort} or a closed sink. `stream` then
+   * only ever resolves `'aborted'`. The inbound hold loop (an on-hold caller hears
+   * the hold clip until an agent is put through) is what it exists for.
+   */
+  loop?: boolean;
   /** Correlation id for logs only. */
   callId?: string;
 }
@@ -95,6 +105,7 @@ export class PacedAudioStreamer {
   private readonly frameMs: number;
   private readonly maxBufferedBytes: number;
   private readonly maxDurationMs?: number;
+  private readonly loop: boolean;
   private readonly nowMs: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onUnderrun?: () => void;
@@ -107,6 +118,7 @@ export class PacedAudioStreamer {
     this.frameMs = opts.frameMs;
     this.maxBufferedBytes = opts.maxBufferedBytes ?? 64000;
     if (opts.maxDurationMs !== undefined && opts.maxDurationMs > 0) this.maxDurationMs = opts.maxDurationMs;
+    this.loop = opts.loop === true;
     this.nowMs = opts.nowMs ?? Date.now;
     this.sleep = opts.sleep ?? defaultSleep;
     if (opts.onUnderrun) this.onUnderrun = opts.onUnderrun;
@@ -126,7 +138,8 @@ export class PacedAudioStreamer {
   /**
    * Stream `audio` frame-by-frame to `sink`. Resolves `'completed'` when the whole
    * buffer drained, or `'aborted'` if `abort()` was called or the sink closed
-   * mid-stream. Never throws — a send error aborts.
+   * mid-stream. Never throws — a send error aborts. With `loop`, the buffer is
+   * replayed until aborted, so the answer is always `'aborted'`.
    */
   async stream(audio: Buffer, sink: PacedStreamSink): Promise<'completed' | 'aborted'> {
     if (audio.length === 0) return 'completed';
@@ -136,7 +149,7 @@ export class PacedAudioStreamer {
     // so a drained buffer doesn't trigger a catch-up burst.
     const schedule = new PaceSchedule(this.frameMs);
     schedule.start(startWall);
-    const deadline = this.maxDurationMs !== undefined ? startWall + this.maxDurationMs : undefined;
+    let deadline = this.maxDurationMs !== undefined ? startWall + this.maxDurationMs : undefined;
     let offset = 0;
 
     while (offset < audio.length) {
@@ -180,9 +193,17 @@ export class PacedAudioStreamer {
       const delay = schedule.delayUntilNext(this.nowMs());
       if (delay > 0) {
         await this.sleep(delay);
-      } else if (-delay > this.frameMs * 1.5 && offset < audio.length) {
+      } else if (-delay > this.frameMs * 1.5 && (this.loop || offset < audio.length)) {
         // We shipped this frame more than ~1.5 frames late — a pacing underrun.
         this.onUnderrun?.();
+      }
+
+      // Looping: the next pass starts on the next frame slot of the SAME schedule
+      // (no re-anchor, so the seam is neither a gap nor a burst), and gets its own
+      // pass budget.
+      if (this.loop && offset >= audio.length) {
+        offset = 0;
+        if (this.maxDurationMs !== undefined) deadline = this.nowMs() + this.maxDurationMs;
       }
     }
 

@@ -97,6 +97,13 @@ const COPY: Record<AgencyReleaseReason, ReleaseCopy> = {
     subtext: 'Something went wrong on our side and the call was cleaned up. Nothing you did.',
     tone: 'neutral',
   },
+  inbound_call: {
+    headline: 'The customer rang us',
+    // What happened, not "nothing to do": the dial was stopped and the agent is handed their call
+    // (docs/inbound.md §5.4), offered here the moment their greeting ends. Two lines at phone width.
+    subtext: 'We stopped this call because they rang us. Their call comes to you next.',
+    tone: 'neutral',
+  },
 };
 
 /**

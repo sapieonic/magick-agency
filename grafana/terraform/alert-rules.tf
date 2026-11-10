@@ -269,6 +269,157 @@ locals {
       },
     ]
 
+    # ── Inbound calls (docs/inbound.md; runbooks in docs/operations.md, "Alert runbooks") ──
+    #
+    # Thresholds are for a pilot: a handful of tenants, tens of calls an hour. Each is stated in
+    # its rule; re-read them against the pilot's first weeks, as agy-error-log-volume. The
+    # answer webhook's results (agency_inbound_answer_seconds, by result), the calls' outcomes
+    # (agency_inbound_calls_total), the queue (agency_inbound_queue_waiting,
+    # agency_inbound_offers_total) and the two operations gauges the monitor sets
+    # (telephony/credentials/inbound-monitor.ts): agency_inbound_connect_available at boot and
+    # agency_inbound_applications every 15 minutes.
+    "inbound" = [
+      {
+        uid  = "agy-inbound-answer-fallback"
+        name = "Inbound callers are being told to try again"
+        # The answer webhook answered with the fallback message (it failed) or ran past its 4s
+        # budget (timed_out): each is a caller told "we cannot take your call, try again shortly",
+        # with no Missed row and no callback. One is a blip; 2+ in an hour (threshold 1.5, N-0.5)
+        # is a pattern. Histogram _count: sparse, so the new-series guard.
+        expr          = "sum by (service_name) (((agency_inbound_answer_seconds_count{result=~\"fallback|timed_out\",${local.agency}} unless agency_inbound_answer_seconds_count{result=~\"fallback|timed_out\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(agency_inbound_answer_seconds_count{result=~\"fallback|timed_out\",${local.agency}}[1h]))"
+        op            = "gt"
+        threshold     = 1.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Inbound calls are being answered with the fallback message"
+        description   = "agency_inbound_answer_seconds_count{result=~\"fallback|timed_out\"} advanced by 2+ in the last hour on {{ $labels.service_name }}. Each one is a customer who rang a linked number and was told to try again shortly: no queue, no Missed row, no callback. timed_out: the answer took longer than its 4s budget (INBOUND_ANSWER_BUDGET_MS), almost always agency's Postgres (the answer reads the route, the caller's contact and writes the call in one transaction) or Redis (the stream slot); read the 'Inbound answer over its budget' error logs and agency_inbound_answer_seconds p95 (agy-inbound-answer-slow). fallback: the answer threw; the 'Inbound Plivo callback failed' error log carries the cause. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-answer-refused"
+        name = "Inbound answer callbacks are being refused"
+        # A refused answer is a hangup: a signature, token or nonce that did not verify, or a
+        # callback that is not an arriving call. A misconfigured Application (a Re-point whose
+        # commit failed, URLs edited in Plivo's console) refuses every call; a probe refuses a few.
+        # 5+ in 15m (threshold 4.5). Sparse: the new-series guard.
+        expr          = "sum by (service_name) (((agency_inbound_answer_seconds_count{result=\"refused\",${local.agency}} unless agency_inbound_answer_seconds_count{result=\"refused\",${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(agency_inbound_answer_seconds_count{result=\"refused\",${local.agency}}[15m]))"
+        op            = "gt"
+        threshold     = 4.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Inbound calls are being hung up at the answer"
+        description   = "agency_inbound_answer_seconds_count{result=\"refused\"} advanced by 5+ in 15m on {{ $labels.service_name }}: answer callbacks whose purpose token, V3 signature or nonce did not verify were answered with a hangup. If agy-inbound-application-broken fires too, a tenant's Application no longer carries the token this server stored (edited in Plivo's console, or a Re-point that did not commit): Re-point it from the super-admin credential page. If every Application is healthy, something else is posting to /api/v1/webhooks/plivo/inbound-answer: read the warn logs of component=plivo-inbound-webhooks for the credential id. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-calls-failed"
+        name = "Inbound calls are ending failed"
+        # outcome="failed": the call was answered but never got its media (no stream within the
+        # media deadline), or its answer ran out of budget after writing. 3+ in an hour
+        # (threshold 2.5). Sparse: the new-series guard.
+        expr          = "sum by (service_name) (((agency_inbound_calls_total{outcome=\"failed\",${local.agency}} unless agency_inbound_calls_total{outcome=\"failed\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(agency_inbound_calls_total{outcome=\"failed\",${local.agency}}[1h]))"
+        op            = "gt"
+        threshold     = 2.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Inbound calls are failing"
+        description   = "agency_inbound_calls_total{outcome=\"failed\"} advanced by 3+ in the last hour on {{ $labels.service_name }}. A failed inbound call was answered but its caller heard nothing useful: the carrier never opened our media stream (a stream URL the carrier cannot reach: PLIVO_WEBHOOK_BASE_URL, TLS, a proxy in front of /api/v1/webrtc-call), the stream slot was refused, or the answer ran out of its budget after writing the call (agy-inbound-answer-fallback). Find the calls: agency_inbound_calls with outcome 'failed' and their agency_calls leg (error_code says which). Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-unanswered-share"
+        name = "Most inbound callers in open hours reach nobody"
+        # Of the calls that came in while their route was open (answered, overflow,
+        # overflow_no_capacity, abandoned_in_queue, voicemail), the share that reached nobody
+        # (overflow, overflow_no_capacity, abandoned_in_queue) over an hour, above half, with a
+        # floor of 10 such calls (a quiet hour's two callers prove nothing). Ratio of rates, as
+        # agy-firebase-auth-rejected; the floor is an `and` filter.
+        expr          = "(sum by (service_name) (rate(agency_inbound_calls_total{outcome=~\"overflow|overflow_no_capacity|abandoned_in_queue\",${local.agency}}[1h])) / sum by (service_name) (rate(agency_inbound_calls_total{outcome=~\"answered|overflow|overflow_no_capacity|abandoned_in_queue|voicemail\",${local.agency}}[1h]))) and on (service_name) (sum by (service_name) (increase(agency_inbound_calls_total{outcome=~\"answered|overflow|overflow_no_capacity|abandoned_in_queue|voicemail\",${local.agency}}[1h])) >= 10)"
+        op            = "gt"
+        threshold     = 0.5
+        for           = "15m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "More than half of inbound callers in open hours reach nobody"
+        description   = "Over the last hour on {{ $labels.service_name }}, more than half of the inbound calls that came in while their route was open (at least 10) ended overflow (nobody free before the route's maximum wait), overflow_no_capacity (over the route's max_concurrent, or no stream capacity) or abandoned_in_queue (the caller hung up waiting). Each one is a Missed row someone must call back. Usually staffing, not a fault: too few agents on the inbound pool, or a route's limits too low; read the dashboard's Inbound row (callers waiting, offers by result, wait time) and the queue tiles in the console. A fault looks different: offers ending station_lost or lease_lost, or agy-inbound-callers-unserved and agy-inbound-connect-unavailable firing. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-answer-slow"
+        name = "Inbound answers are slow"
+        # p95 of the answer webhook over 15m above 2s, half its 4s budget (Plivo's own answer-URL
+        # timeout is a P0 check), with a floor of 5 answers in the window.
+        expr          = "histogram_quantile(0.95, sum by (service_name, le) (rate(agency_inbound_answer_seconds_bucket{${local.agency}}[15m]))) and on (service_name) (sum by (service_name) (increase(agency_inbound_answer_seconds_count{${local.agency}}[15m])) >= 5)"
+        op            = "gt"
+        threshold     = 2
+        for           = "15m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "The inbound answer p95 is above 2 seconds"
+        description   = "The 95th percentile of agency_inbound_answer_seconds has been above 2s for 15m on {{ $labels.service_name }} (at least 5 answers in the window). The answer has a 4s budget, past which the caller is told to try again (agy-inbound-answer-fallback); Plivo's own answer-URL timeout is not verified yet, so slow answers may already be failing at the carrier. The answer is Postgres work (the route, the caller's contact, one transaction writing the call) and a Redis slot: check agency's Postgres latency and pool, and Redis. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-callers-unserved"
+        name = "Inbound callers are waiting and nobody is offered them"
+        # Callers have waited for 15m (the gauge above 0 all along) and not one offer was made
+        # in the last 10m. A route's maximum wait is 2 minutes by default, so a queue that never
+        # empties with no offers means nobody is being put through at all. The offers counter is
+        # an `unless` filter, so a deployment that never offered reads as no offers.
+        expr          = "sum by (service_name) (agency_inbound_queue_waiting{${local.agency}}) unless on (service_name) (sum by (service_name) (increase(agency_inbound_offers_total{${local.agency}}[10m])) > 0)"
+        op            = "gt"
+        threshold     = 0
+        for           = "15m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Inbound callers are waiting with no offers for 15 minutes"
+        description   = "agency_inbound_queue_waiting has been above 0 for 15m on {{ $labels.service_name }} with no agency_inbound_offers_total in the last 10m: callers are queueing and no agent is offered any of them, so every one waits out the route's maximum wait and becomes a Missed row. Either nobody who could take the calls is logged in to the route's pool on the console (every agent on a break, on a phone, or outside the pool), or the connector is stuck: read the console's queue tiles, then the server's logs for component=agency-inbound-connector. With media workers on nobody is ever put through (agy-inbound-connect-unavailable). Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-connect-unavailable"
+        name = "Inbound is enabled but agents cannot be connected"
+        # The connect gauge reads 0 (MEDIA_WORKERS above 0, set at boot) while some credential has
+        # inbound enabled (the health gauge counts them): every open route's caller hears the
+        # call-back message and nobody is put through (IB8). A deployment with media workers and no
+        # inbound does not fire.
+        expr          = "(1 - max by (service_name) (agency_inbound_connect_available{${local.agency}})) and on (service_name) (sum by (service_name) (agency_inbound_applications{${local.agency}}) > 0)"
+        op            = "gt"
+        threshold     = 0
+        for           = "5m"
+        severity      = "critical"
+        no_data_state = "OK"
+        summary       = "Inbound callers cannot be put through to agents: media workers are on"
+        description   = "agency_inbound_connect_available is 0 on {{ $labels.service_name }} while a credential has inbound enabled: the server runs with MEDIA_WORKERS above 0, and inbound callers are put through to agents only in one process (decision IB8). Every caller to an open route is answered and told 'we'll call you back'; nobody is connected. Set MEDIA_WORKERS=0 and redeploy (DEPLOYMENT.md: it is an invariant while any credential has inbound enabled), or, if the workers are needed, disable inbound on the credentials first. The super-admin credential page says the same. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-application-broken"
+        name = "A tenant's inbound Application no longer matches"
+        # The scheduled health check (every 15m) found an Application whose URLs or token are not
+        # the stored ones (url_mismatch), or no Application at all (app_missing): its calls are
+        # refused with a hangup until a super-admin re-points it. A gauge, so no guard.
+        expr          = "max by (service_name) (agency_inbound_applications{health=~\"url_mismatch|app_missing\",${local.agency}})"
+        op            = "gt"
+        threshold     = 0
+        for           = "5m"
+        severity      = "critical"
+        no_data_state = "OK"
+        summary       = "An inbound Application is broken: its callers are hung up"
+        description   = "The scheduled inbound health check on {{ $labels.service_name }} found a credential's Plivo Application changed (url_mismatch) or gone (app_missing). Calls to that tenant's linked numbers are refused with a hangup (url_mismatch) or never reach us (app_missing) until it is fixed. Find the credential in the warn log 'Inbound Application does not match what is stored' (credentialId, tenantId, the mismatched URLs), open it on the super-admin Telephony Credentials page, Check health, then Re-point (it recreates a missing Application and moves the linked numbers onto it). The gauge falls on the next pass, within 15 minutes. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+      {
+        uid  = "agy-inbound-application-unchecked"
+        name = "A tenant's inbound Application cannot be checked"
+        # unreachable (Plivo did not answer) or failed (the carrier refused the credential, or its
+        # secret cannot be opened) on three passes in a row (45m).
+        expr          = "max by (service_name) (agency_inbound_applications{health=~\"unreachable|failed\",${local.agency}})"
+        op            = "gt"
+        threshold     = 0
+        for           = "45m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "An inbound Application has not been checkable for 45 minutes"
+        description   = "The scheduled inbound health check on {{ $labels.service_name }} could not check a credential's Application for 45 minutes: unreachable (Plivo did not answer: their status page, our egress) or failed (Plivo refused the tenant's stored credentials, so the tenant rotated or closed the account; or the secret cannot be opened, agy-credential-keyring-missing-keys). A credential Plivo refuses still answers its calls with the closed message while its signature verifies, but cannot be re-pointed. The warn logs 'Inbound Application health check refused for a credential' name it (credentialId, code); rotate its secret on the super-admin page. Runbook: docs/operations.md, 'Alert runbooks', inbound."
+      },
+    ]
+
     "processes" = [
       {
         uid  = "agy-cluster-child-crash"

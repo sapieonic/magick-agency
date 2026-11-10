@@ -23,6 +23,7 @@ import { operatorCarrierName } from '../../utils/carrierName';
 import { PhoneNumberCreateModal } from './phone-numbers/PhoneNumberCreateModal';
 import { PhoneNumberEditModal } from './phone-numbers/PhoneNumberEditModal';
 import { usePhoneNumberBulk } from './phone-numbers/usePhoneNumberBulk';
+import { PhoneNumberInboundPanel } from './phone-numbers/PhoneNumberInboundPanel';
 import styles from './SAPhoneNumbersPage.module.css';
 
 interface PhoneNumberAssignment {
@@ -136,6 +137,15 @@ export default function SAPhoneNumbersPage() {
       setLoading(false);
     }
   }, [clearSelection]);
+
+  // After a number's inbound link changes: the rows again (its badge), keeping the row open.
+  const refreshRows = useCallback(async () => {
+    try {
+      setPhoneNumbers(await listPhoneNumbers());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load phone numbers');
+    }
+  }, []);
 
   // The provider catalog is static for the page's life: fetched once.
   const loadCatalog = useCallback(async () => {
@@ -344,6 +354,23 @@ export default function SAPhoneNumbersPage() {
                     <div className={styles.phoneCell}>
                       <Phone size={14} className={styles.phoneIcon} />
                       <span className={styles.mono}>{pn.phone_number}</span>
+                      {pn.inbound_linked_at && (
+                        pn.inbound_route_name === null
+                          ? (
+                            <span
+                              className={styles.inboundBadgeWarn}
+                              title="Linked to inbound calls, but no account route answers it: callers hear the closed message"
+                              data-testid="inbound-no-route"
+                            >
+                              Inbound · no route
+                            </span>
+                          )
+                          : (
+                            <span className={styles.inboundBadge} title={pn.inbound_route_name ? `Linked to inbound calls, answered by ${pn.inbound_route_name}` : 'Linked to inbound calls'}>
+                              Inbound
+                            </span>
+                          )
+                      )}
                     </div>
                   </td>
                   <td>
@@ -408,6 +435,10 @@ export default function SAPhoneNumbersPage() {
                           ))
                         )}
                       </div>
+
+                      {pn.telephony_credential_id && pn.status !== 'deleted' && (
+                        <PhoneNumberInboundPanel phoneNumberId={pn.id} provider={pn.provider_name} onChanged={() => { void refreshRows(); }} />
+                      )}
 
                       <div className={styles.detailActions}>
                         {pn.status !== 'deleted' && (

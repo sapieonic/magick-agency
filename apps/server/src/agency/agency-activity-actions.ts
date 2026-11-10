@@ -81,6 +81,15 @@ type CampaignScopedAuditAction = Exclude<
   | 'agency_report_subscription.created'
   | 'agency_report_subscription.updated'
   | 'agency_report_subscription.deleted'
+  // Inbound routes and Missed inbound rows are account-wide (docs/inbound.md): no row carries a campaign.
+  | 'agency_inbound_route.created'
+  | 'agency_inbound_route.updated'
+  | 'agency_inbound_route.deleted'
+  | 'agency_inbound_call.handled'
+  | 'agency_inbound_clip.uploaded'
+  | 'agency_inbound_clip.deleted'
+  | 'agency_inbound_call.reassigned'
+  | 'agency_inbound_call.reopened'
 >;
 
 /**
@@ -184,6 +193,12 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls' },
   { value: 'agency_manual_call.orphaned', label: 'Soft-phone call closed after a restart', group: 'Calls' },
   { value: 'agency_manual_call.lapsed', label: 'Soft-phone outcome lapsed', group: 'Calls' },
+  // Answered inbound calls matched to this campaign (docs/inbound.md §6): the rows carry the
+  // matched campaign as `campaign_id`.
+  { value: 'agency_inbound_call.hung_up', label: 'Inbound call ended', group: 'Calls' },
+  { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls' },
+  { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls' },
+  { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls' },
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned', group: 'Staffing' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },

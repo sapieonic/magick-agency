@@ -3,6 +3,7 @@ import type * as Core from '../src/agency';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
 import { buildLiterals } from '../../../tooling/contracts-literals.mjs';
+import { AGENCY_STATION_CONSOLE_ONLY_EVENTS } from '../src/agency/station';
 import actions from '../fixtures/agent/actions.json';
 import customerHistory from '../fixtures/agent/customer-history.json';
 import literals from '../fixtures/agent/literals.json';
@@ -486,9 +487,15 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
     }
   });
 
-  it('covers every station server event the contract declares', () => {
+  it('covers every station server event the contract declares, but the console-only ones', () => {
+    // Inbound calls go to console stations only until P3 (AGENCY_STATION_CONSOLE_ONLY_EVENTS):
+    // the app is never sent them, so there is nothing for it to decode yet.
+    const consoleOnly = new Set<string>(AGENCY_STATION_CONSOLE_ONLY_EVENTS);
     const events = new Set(Object.values(station).map((frame) => frame.event));
-    expect([...events].sort()).toEqual([...vocab('station_server_events')].sort());
+    for (const event of consoleOnly) expect(events.has(event), event).toBe(false);
+    expect([...events].sort())
+      .toEqual([...vocab('station_server_events')].filter((e) => !consoleOnly.has(e)).sort());
+    for (const event of consoleOnly) expect(vocab('station_server_events')).toContain(event);
   });
 
   it.each(LITERAL_FIELDS)('%s.%s: `%s` is a member of %s', (file, sample, path, vocabulary) => {

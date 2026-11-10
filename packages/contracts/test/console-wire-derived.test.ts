@@ -120,6 +120,10 @@ interface OldAgencySupervisorAgent {
   redials?: number;
   // Added deliberately (mobile app, 0006): the floor's phone marker.
   client_kind: 'web' | 'mobile';
+  // Added deliberately (inbound calls P2, 0027): the floor's "Inbound call" marker.
+  on_inbound_call: boolean;
+  // Added deliberately (inbound fix pass): the floor's inbound wrap-up and its "Close and make available".
+  inbound_outcome_owed?: boolean;
 }
 
 interface OldAgencyCampaignStats {

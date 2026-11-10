@@ -73,6 +73,10 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /api/v1/webhooks/plivo/webrtc-answer/:_', 'Plivo answer callback, replies XML (carrier-facing)'],
   ['POST /api/v1/webhooks/plivo/webrtc-status/:_', 'Plivo ring and hangup callback (carrier-facing)'],
   ['POST /api/v1/webhooks/plivo/webrtc-recording/:_', 'Plivo recording-ready callback (carrier-facing)'],
+  // Inbound calls (docs/inbound.md §3.1): the credential's Plivo Application posts these.
+  ['POST /api/v1/webhooks/plivo/inbound-answer/:_', 'Plivo inbound answer callback, replies XML (carrier-facing)'],
+  ['POST /api/v1/webhooks/plivo/inbound-status/:_', 'Plivo inbound hangup callback (carrier-facing)'],
+  ['POST /api/v1/webhooks/plivo/inbound-fallback', 'Plivo inbound fallback answer URL: fixed XML, no state (carrier-facing)'],
   ['WS /api/v1/webrtc-call/:_/pstn-stream', 'carrier PSTN media leg, VoiceLink and Plivo (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],
   ['GET /super-admin/usage', 'super-admin usage counts'],

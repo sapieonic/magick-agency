@@ -142,6 +142,19 @@ export interface AgencySupervisorAgent {
    * until a station has attached. The floor marks `mobile` with a phone glyph.
    */
   client_kind: AgencyClientKind;
+  /**
+   * The session holds a live inbound call (offered to them, or connected: docs/inbound.md §6),
+   * which the floor marks "Inbound call". False while its outcome is owed after it ended: the
+   * agent is then in wrap-up like any other.
+   */
+  on_inbound_call: boolean;
+  /**
+   * The session's inbound call has ended after an agent took it and its outcome is still owed
+   * (docs/inbound.md §6): the agent is in an inbound wrap-up. The floor offers a supervisor
+   * "Close and make available" (force-available, which closes the call's outcome as lapsed).
+   * Optional on the wire like `redials`: absent from a server that predates it.
+   */
+  inbound_outcome_owed?: boolean;
 }
 
 /**

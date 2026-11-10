@@ -156,6 +156,95 @@
     ]
   },
   {
+    "name": "agency_inbound_answer_seconds",
+    "kind": "Histogram",
+    "description": "Seconds the inbound answer webhook took to answer the carrier, by result: stream, spoken (a message the carrier speaks), hangup, fallback, refused or timed_out",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2,
+        4,
+        8
+      ]
+    },
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_inbound_applications",
+    "kind": "ObservableGauge",
+    "description": "Credentials with inbound enabled, by the last scheduled health check of their carrier Application: ok, url_mismatch, app_missing, unreachable or failed (the check could not run)",
+    "attributes": [
+      "health"
+    ]
+  },
+  {
+    "name": "agency_inbound_calls_total",
+    "kind": "Counter",
+    "description": "Inbound calls ended, by outcome: answered, abandoned_in_queue, overflow, overflow_no_capacity, closed, voicemail, rejected or failed",
+    "attributes": [
+      "outcome"
+    ]
+  },
+  {
+    "name": "agency_inbound_connect_available",
+    "kind": "ObservableGauge",
+    "description": "1 when this deployment puts inbound callers through to agents (MEDIA_WORKERS=0), 0 when it cannot (media workers on: every open route answers with the call-back message, IB8); set at boot",
+    "attributes": []
+  },
+  {
+    "name": "agency_inbound_offers_total",
+    "kind": "Counter",
+    "description": "Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent's socket)",
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_inbound_overflows_total",
+    "kind": "Counter",
+    "description": "Inbound callers overflowed from the queue (the route's overflow action), by why: max_wait (waited the route's maximum), over_cap (over max_waiting with nobody free) or no_agents (nobody in the pool could take them)",
+    "attributes": [
+      "reason"
+    ]
+  },
+  {
+    "name": "agency_inbound_queue_waiting",
+    "kind": "ObservableGauge",
+    "description": "Inbound callers waiting for an agent on a route right now (on offer excluded), set as the queue changes",
+    "attributes": [
+      "route_id"
+    ]
+  },
+  {
+    "name": "agency_inbound_wait_seconds",
+    "kind": "Histogram",
+    "description": "Seconds an inbound caller waited in the queue (from first queueing), by how the wait ended: connected, abandoned, overflow or failed",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        1,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120,
+        300,
+        600
+      ]
+    },
+    "attributes": [
+      "result"
+    ]
+  },
+  {
     "name": "agency_insights_rollup_buckets_total",
     "kind": "Counter",
     "description": "Insights rollup buckets recomputed",

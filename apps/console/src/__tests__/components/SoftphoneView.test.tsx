@@ -56,6 +56,7 @@ function Harness({
   connection = 'open',
   ringback,
   presetCampaignId = null,
+  presetNumber = null,
   audioState = audio,
   startAllowed = true,
 }: {
@@ -63,6 +64,7 @@ function Harness({
   connection?: StationConnection;
   ringback: RingbackTone;
   presetCampaignId?: string | null;
+  presetNumber?: string | null;
   audioState?: SoftphoneAudio;
   startAllowed?: boolean;
 }) {
@@ -78,6 +80,7 @@ function Harness({
     surface: 'softphone_page',
     ringback,
     presetCampaignId,
+    presetNumber,
     startAllowed,
   });
   return (
@@ -377,6 +380,33 @@ describe('Ready', () => {
       fireEvent.click(screen.getByTestId('dial-call'));
     });
     expect(api.placeManualCall.mock.calls[0]![0].fields).toEqual({ customer_name: 'Rahul Verma' });
+  });
+
+  it('a Missed call’s Call back fills the pad and the campaign, focuses Call, and dials nothing', async () => {
+    await mount({ presetNumber: '+447700900123', presetCampaignId: 'camp-1' });
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+447700900123');
+    expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
+    expect(document.activeElement).toBe(screen.getByTestId('dial-call'));
+    expect(api.placeManualCall).not.toHaveBeenCalled();
+  });
+
+  it('a Call back for a campaign the agent cannot log to leaves the call untagged', async () => {
+    await mount({ presetNumber: '+447700900123', presetCampaignId: 'not-mine' });
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+447700900123');
+    expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('a Call back waits for a call still live or owing its outcome, and fills the pad once it settles', async () => {
+    const live = manualCall({ destination_e164: '+919820461733', state: 'answered' });
+    api.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, call: live });
+    const view = await mount({ presetNumber: '+447700900123' });
+    expect(screen.queryByTestId('dial-number')).toBeNull();
+    await view.frame(manualCall({
+      destination_e164: '+919820461733', state: 'ended', outcome: 'connected', settled_at: '2099-01-01T00:00:00Z', updated_at: '2099-01-01T00:00:00Z',
+    }));
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+447700900123');
+    expect(document.activeElement).toBe(screen.getByTestId('dial-call'));
+    expect(api.placeManualCall).not.toHaveBeenCalled();
   });
 
   it('redials a recent call into the pad and moves focus to Call, without dialling', async () => {

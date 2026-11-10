@@ -48,6 +48,11 @@ import type {
   TelephonyCredentialsResponse,
   UpdateTelephonyCredentialBody,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
+import type {
+  PhoneNumberInboundResponse,
+  TelephonyCredentialInboundHealthResponse,
+  TelephonyCredentialInboundResponse,
+} from '@magick-agency/contracts/api/platform/super-admin-inbound';
 
 const SA_TOKEN_KEY = 'sa_token';
 const SA_BASE = `${API_BASE}/super-admin`;
@@ -554,4 +559,50 @@ export async function syncTelephonyCredentialNumbers(id: string): Promise<Teleph
   return saFetch<TelephonyCredentialSyncNumbersResponse>(`${SA_BASE}/telephony-credentials/${id}/sync-numbers`, {
     method: 'POST',
   });
+}
+
+// ── Inbound on a credential and its numbers (docs/inbound.md §8.1, IB6) ─────
+
+/** The credential's inbound state (its Plivo Application) and its synced numbers' links. */
+export async function getCredentialInbound(id: string): Promise<TelephonyCredentialInboundResponse> {
+  return saFetch<TelephonyCredentialInboundResponse>(`${SA_BASE}/telephony-credentials/${id}/inbound`);
+}
+
+async function credentialInboundAction(id: string, action: 'enable' | 'disable' | 'repoint'): Promise<TelephonyCredentialInboundResponse> {
+  return saFetch<TelephonyCredentialInboundResponse>(`${SA_BASE}/telephony-credentials/${id}/inbound/${action}`, { method: 'POST' });
+}
+
+/** Make the Application on the tenant's Plivo account. Only an active credential. */
+export async function enableCredentialInbound(id: string): Promise<TelephonyCredentialInboundResponse> {
+  return credentialInboundAction(id, 'enable');
+}
+
+/** Delete the Application. Refused while a number is linked (409 `inbound_numbers_linked`). */
+export async function disableCredentialInbound(id: string): Promise<TelephonyCredentialInboundResponse> {
+  return credentialInboundAction(id, 'disable');
+}
+
+/** Give the Application this server's URLs now and a new token (the old one kept for a grace). */
+export async function repointCredentialInbound(id: string): Promise<TelephonyCredentialInboundResponse> {
+  return credentialInboundAction(id, 'repoint');
+}
+
+/** Ask the carrier whether the Application's URLs are still the stored ones. */
+export async function checkCredentialInboundHealth(id: string): Promise<TelephonyCredentialInboundHealthResponse> {
+  return saFetch<TelephonyCredentialInboundHealthResponse>(`${SA_BASE}/telephony-credentials/${id}/inbound/health`);
+}
+
+/** A number's inbound link, and why it cannot be linked now if it cannot. */
+export async function getPhoneNumberInbound(id: string): Promise<PhoneNumberInboundResponse> {
+  return saFetch<PhoneNumberInboundResponse>(`${SA_BASE}/phone-numbers/${id}/inbound`);
+}
+
+/** Put the number on its credential's Application (the app it was on is kept for Unlink). */
+export async function linkPhoneNumberInbound(id: string): Promise<PhoneNumberInboundResponse> {
+  return saFetch<PhoneNumberInboundResponse>(`${SA_BASE}/phone-numbers/${id}/inbound/link`, { method: 'POST' });
+}
+
+/** Put the number back on the app it was on; its account route stops answering it. */
+export async function unlinkPhoneNumberInbound(id: string): Promise<PhoneNumberInboundResponse> {
+  return saFetch<PhoneNumberInboundResponse>(`${SA_BASE}/phone-numbers/${id}/inbound/unlink`, { method: 'POST' });
 }

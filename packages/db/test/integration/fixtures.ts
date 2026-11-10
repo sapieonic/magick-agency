@@ -185,6 +185,12 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
   const analysis = await insertRow('dialer_analysis_jobs', { call_id: call.id, tenant_id: TENANT, account_id: ACCOUNT, ...backdated });
   const manualCall = await insertManualCall(session.id, backdated);
   const softphoneSettings = await insertRow('agency_softphone_settings', { tenant_id: TENANT, account_id: ACCOUNT, ...backdated });
+  const inboundRoute = await insertRow('agency_inbound_routes', {
+    tenant_id: tenant.id, account_id: account.id, name: 'Main line', timezone: 'Europe/London', ...backdated,
+  });
+  const inboundCall = await insertRow('agency_inbound_calls', {
+    tenant_id: TENANT, provider_call_id: `CA-${randomUUID()}`, to_e164: '+14155550199', ...backdated,
+  });
 
   return [
     { trigger: 'tenants_updated_at', table: 'tenants', id: tenant.id, touch: "name = 'renamed'" },
@@ -210,5 +216,59 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
     { trigger: 'trg_dialer_analysis_jobs_updated_at', table: 'dialer_analysis_jobs', id: analysis.id, touch: "error_code = 'X'" },
     { trigger: 'trg_agency_manual_calls_updated_at', table: 'agency_manual_calls', id: manualCall.id, touch: "notes = 'n'" },
     { trigger: 'trg_agency_softphone_settings_updated_at', table: 'agency_softphone_settings', id: softphoneSettings.id, touch: 'record_calls = true' },
+    { trigger: 'trg_agency_inbound_routes_updated_at', table: 'agency_inbound_routes', id: inboundRoute.id, touch: 'record_calls = true' },
+    { trigger: 'trg_agency_inbound_calls_updated_at', table: 'agency_inbound_calls', id: inboundCall.id, touch: "state = 'greeting'" },
   ];
+}
+
+/**
+ * A campaign's roster and its attempts, for a plan test to EXPLAIN over and ANALYZE, inside the
+ * caller's transaction (which rolls back). 20,000 contacts on one campaign of this account over
+ * 10,000 numbers, 1% in flight (each with a live attempt) and 1% connected (each with an ended,
+ * bridged attempt that owes its outcome), the rest pending or done, each with an ended first
+ * attempt (a done contact's dispositioned). The sweeps' partial indexes then hold the few rows
+ * they exist for, and the plan is decided by the indexes' merits.
+ *
+ * Why a plan test needs it: on the near-empty tables a full run leaves, `agency_contacts` last
+ * analyzed empty (reltuples 0, no column statistics), the planner prices an index by its pages
+ * alone, so the pick follows the files' history: a partial index bloated by earlier files' dead
+ * rows loses to `idx_agency_contacts_insights` rebuilt small by another file's down → up.
+ *
+ * ANALYZE in the rolled-back transaction: the column statistics leave with the rows, but the
+ * table's and its indexes' `reltuples` / `relpages` are written in place and stay, as do the
+ * index entries of the rolled-back rows (until a vacuum). A later file must not lean on either.
+ *
+ * Returns the roster's campaign id, for a plan over that campaign's rows: a plan for a campaign
+ * with no rows is priced on an estimate of one row, where every index ties again.
+ */
+export async function insertPlanRoster(client: pg.PoolClient): Promise<string> {
+  const campaign = randomUUID();
+  await client.query(
+    `INSERT INTO agency_campaigns (id, tenant_id, account_id, name, caller_ids) VALUES ($1, $2, $3, 'Roster', ARRAY['+14155550100'])`,
+    [campaign, TENANT, ACCOUNT]);
+  await client.query(
+    `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, state)
+     SELECT $1, $2, $3, '+1415555' || lpad((g % 10000)::text, 4, '0'),
+            CASE WHEN g % 100 = 0 THEN 'in_flight' WHEN g % 100 = 1 THEN 'connected'
+                 WHEN g % 2 = 0 THEN 'pending' ELSE 'completed' END
+       FROM generate_series(1, 20000) g`,
+    [campaign, TENANT, ACCOUNT]);
+  await client.query(
+    `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state,
+                                       outcome, bridged_at, ended_at, disposition_code)
+     SELECT ct.campaign_id, ct.id, ct.tenant_id, ct.account_id, 1, '+14155550100', 'ended',
+            CASE WHEN ct.state IN ('connected', 'completed') THEN 'connected' ELSE 'no_answer' END,
+            CASE WHEN ct.state IN ('connected', 'completed') THEN now() - interval '1 hour' END,
+            now() - interval '1 hour',
+            CASE WHEN ct.state = 'completed' THEN 'sale' END
+       FROM agency_contacts ct WHERE ct.campaign_id = $1`,
+    [campaign]);
+  await client.query(
+    `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state)
+     SELECT ct.campaign_id, ct.id, ct.tenant_id, ct.account_id, 2, '+14155550100', 'dialing'
+       FROM agency_contacts ct WHERE ct.campaign_id = $1 AND ct.state = 'in_flight'`,
+    [campaign]);
+  await client.query('ANALYZE agency_contacts');
+  await client.query('ANALYZE agency_call_attempts');
+  return campaign;
 }

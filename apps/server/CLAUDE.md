@@ -46,7 +46,8 @@ validation, enrichment) call the dialer's handlers in-process through `callCore`
 
 **Seams** (`src/seams/`, `docs/seams.md` §3): bridge → dialer runtime (the `WebRtcBridgeManager`
 member set, pinned by a type-level test), bridge → analysis hooks, super-admin → concurrency
-control, super-admin credential routes → carrier credential service. Change a seam in one commit
+control, super-admin credential routes → carrier credential service, inbound carrier callbacks → the
+agency inbound router (`seams/inbound-call-router.ts`). Change a seam in one commit
 with its consumers and its pinning test, never by adapting one side to the other.
 
 **Large route plugins:** the plugin function, its hooks and module note stay in
@@ -77,7 +78,7 @@ Run from this directory (dotenv resolves from cwd):
 pnpm vitest run test/unit/agency/pacing-engine.test.ts
 pnpm vitest run -c vitest.config.integration.ts test/integration/agency/<file>.test.ts
 pnpm vitest run -t "<test name>"
-INTEGRATION_LANE=rest pnpm test:integration        # skip the ~4.5 min wall-clock files
+INTEGRATION_LANE=rest pnpm test:integration        # skip the ~5 min wall-clock files
 ```
 
 - Unit config excludes `test/integration/**`; integration runs file-serially (one database) with
@@ -91,8 +92,9 @@ INTEGRATION_LANE=rest pnpm test:integration        # skip the ~4.5 min wall-cloc
   carriers and a simulated station fleet. Plivo's REST host is fixed: tests reach the mock
   through `setPlivoTransportForTests(carrier.fetch)`, never a configurable host. Open defects are pinned as `it.fails`: when you fix one, flip it to
   `it` and say so.
-- `test/unit/audio/decode.test.ts` needs `mpg123` and `sndfile-programs` installed; it fails
-  rather than skips in CI without them.
+- `test/unit/audio/decode.test.ts` and `test/integration/api/inbound-clips-routes.test.ts` need
+  `mpg123` and `sndfile-programs` installed (CI installs them in the unit job and the server
+  integration jobs); they fail rather than skip without them.
 - First super-admin (no seeded credentials):
   `SUPER_ADMIN_PASSWORD=… pnpm tsx scripts/create-super-admin.ts --email … --name …`
 

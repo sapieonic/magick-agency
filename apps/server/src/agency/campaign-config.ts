@@ -9,6 +9,7 @@ import {
   AGENCY_CALLBACK_GRACE_MINUTES_MAX,
   AGENCY_ON_UNSTAFF_VALUES,
   AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX,
+  AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
   AGENCY_REDIALED_DISPOSITION_CODE,
   DEVICE_AWAY_BREAK_REASON,
   RESERVED_BREAK_REASONS,
@@ -277,6 +278,8 @@ function validateRetryRule(rule: Record<string, unknown>, at: string): CampaignC
 export const RESERVED_DISPOSITION_CODE_OWNER: Readonly<Record<string, string>> = {
   [AGENCY_REDIALED_DISPOSITION_CODE]:
     'the system writes it on a call the agent redialled from wrap-up',
+  [AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE]:
+    'the system writes it on a dial cancelled because the customer rang in',
 };
 
 /** The refusal for a catalog entry using a reserved code, or null. Shared with the public validator. */
@@ -663,6 +666,8 @@ export function validateAgencyCampaignConfig(
     issues.push(...validateBreakReasonsReserved(record['break_reasons']));
   }
   issues.push(...validateBooleanSetting(record, 'allow_wrapup_redial'));
+  // Inbound sticky routing (0024, `BOOLEAN NOT NULL DEFAULT true`): the same rule.
+  issues.push(...validateBooleanSetting(record, 'inbound_sticky_enabled'));
   issues.push(...validateAssignmentSettings(record));
   issues.push(...validateCallingWindow(record, base));
   return issues;

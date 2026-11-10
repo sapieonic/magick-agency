@@ -23,6 +23,10 @@ const mocks = vi.hoisted(() => ({
   getInsightsSummary: vi.fn(),
   getInsightsUploads: vi.fn(),
   getInsightsAllocation: vi.fn(),
+  flags: new Set<string>(),
+}));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flags.has(flag) }),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -121,6 +125,7 @@ beforeEach(() => {
   });
   mocks.getAgencyCampaign.mockResolvedValue(campaign());
   mocks.updateAgencyCampaign.mockImplementation(async (_id, body) => campaign(body));
+  mocks.flags = new Set();
   mocks.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
   mocks.getInsightsUploads.mockResolvedValue(insightsSamples.uploads());
   mocks.getInsightsAllocation.mockResolvedValue(insightsSamples.allocation());
@@ -860,5 +865,31 @@ describe('the campaign section bar', () => {
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+  });
+});
+
+describe('inbound calls (P2): “Put callers through to their agent”', () => {
+  it('is offered with the inbound flag on, round-trips through save, and goes back off the response', async () => {
+    mocks.flags = new Set(['agency_inbound_enabled']);
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ inbound_sticky_enabled: true }));
+    renderPage();
+    const box = (await screen.findByRole('checkbox', { name: /put callers through to their agent/i })) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(screen.getByTestId('inbound-sticky-hint').textContent).toMatch(/agent they last spoke to first/);
+    fireEvent.click(box);
+    expect(screen.getByTestId('inbound-sticky-hint').textContent).toMatch(/next free agent/);
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].inbound_sticky_enabled).toBe(false);
+  });
+
+  it('is hidden with the flag off, and the stored value is sent back as it came', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ inbound_sticky_enabled: false }));
+    renderPage();
+    await screen.findByRole('checkbox', { name: /allow redial from wrap-up/i });
+    expect(screen.queryByRole('checkbox', { name: /put callers through to their agent/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].inbound_sticky_enabled).toBe(false);
   });
 });

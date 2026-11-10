@@ -7,11 +7,12 @@
  *
  * | Field | Source row |
  * |---|---|
- * | `dials` | `agency_call_attempts` with `dialed_at` in the window (served by the `(dialed_at, campaign_id)` index) |
+ * | `dials` | `agency_call_attempts` with `dialed_at` in the window (served by the `(dialed_at, campaign_id)` index), plus soft-phone dials (`agency_manual_calls.dialed_at`, SP5): every call agency placed in the window |
  * | `answered_calls` | the same attempts with `answered_at IS NOT NULL` (the carrier answered) |
  * | `connected_calls` | the same attempts with `bridged_at IS NOT NULL` (an agent was joined) |
  * | `talk_seconds` | Σ `agency_call_attempts.talk_seconds` over those attempts |
  * | `analysis_audio_seconds` | Σ `dialer_analysis_jobs.analysis_audio_seconds` for jobs on those attempts' calls |
+ * | `inbound_*` | inbound calls with an account (`agency_inbound_calls`, docs/inbound.md §9), windowed on `arrived_at`: counted apart from the dials (the carrier bills a received call's minutes, holding included, not a dial), with the carrier time (answer to end) and the queue time measured |
  *
  * ── Decisions this shape makes, stated so Lane A can overturn them ──────────
  *  - **Seconds, not minutes.** The plan says "talk minutes, analysis minutes";
@@ -45,11 +46,26 @@ export interface UsageCountsQuery {
 }
 
 export interface UsageCounts {
+  /** Placed calls only (campaign and soft phone); an inbound call is never a dial. */
   dials: number;
   answered_calls: number;
   connected_calls: number;
   talk_seconds: number;
   analysis_audio_seconds: number;
+  /** Inbound calls that arrived in the window (with an account), refused ones included. */
+  inbound_calls: number;
+  /** Answered by our answer XML (a message, the queue, a voicemail): each billed by the carrier. */
+  inbound_answered_calls: number;
+  /** An agent was bridged. */
+  inbound_connected_calls: number;
+  /** Carrier time: the sum of answer-to-end over the answered calls that have ended. */
+  inbound_seconds: number;
+  /** Queue time: the sum of queued-to-bridged (else to the end) over the ended calls that queued. */
+  inbound_hold_seconds: number;
+  /** Talk time from the bridge. */
+  inbound_talk_seconds: number;
+  /** Analysis audio of the inbound calls' recordings. */
+  inbound_analysis_audio_seconds: number;
 }
 
 export interface UsageCountsAccountRow {

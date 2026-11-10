@@ -603,6 +603,36 @@
       "classification": null
     },
     {
+      "name": "recording-record-api",
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Record API callback parameters (snake_case, posted to callback_url); values illustrative",
+      "kind": "recording",
+      "params": {
+        "api_id": "5a9c1e2f-0000-4000-8000-0000000a0101",
+        "call_uuid": "7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f",
+        "record_url": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3",
+        "recording_id": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+        "recording_duration": "41",
+        "recording_duration_ms": "41210",
+        "recording_start_ms": "1794045705123",
+        "recording_end_ms": "1794045746333"
+      },
+      "normalized": {
+        "kind": "recording",
+        "callUuid": "7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f",
+        "requestUuid": "",
+        "callStatus": "",
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": "",
+        "recordingUrl": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3",
+        "recordingId": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+        "recordingDurationSec": 41,
+        "wasAnswered": false
+      },
+      "event": null,
+      "classification": null
+    },
+    {
       "name": "undocumented-status",
       "source": "Plivo callback parameters (answer_url / ring_url / hangup_url / Record callbackUrl); values illustrative until a live capture (docs/status.md, Plivo step 5)",
       "kind": "status",
@@ -796,5 +826,282 @@
       },
       "status": "unknown"
     }
-  ]
+  ],
+  "inboundNote": "inbound: the Application and number-app REST shapes the adapter sends and reads (plivo-inbound.wire.ts): each request is what the builder produces from `urls` and `token`, each `read` what the reader makes of the response. All of it is UNVERIFIED until the P0 live check (docs/inbound.md §12), which replaces the values with captured ones; `clearNumberApp` (app_id null) is the least certain. `startRecording` is the Record API that records a connected inbound call from its bind (P2), and the `recording-record-api` entry its callback, read by the same reader as the `<Record>` element's.",
+  "inbound": {
+    "urls": {
+      "answerUrl": "https://agency.example.com/api/v1/webhooks/plivo/inbound-answer/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
+      "hangupUrl": "https://agency.example.com/api/v1/webhooks/plivo/inbound-status/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
+      "fallbackAnswerUrl": "https://agency.example.com/api/v1/webhooks/plivo/inbound-fallback",
+      "fallbackMethod": "POST"
+    },
+    "token": "tok_Abc-123_xyz",
+    "appName": "inbound-0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
+    "createApplication": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "POST",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/",
+      "request": {
+        "app_name": "inbound-0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
+        "answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-answer/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+        "answer_method": "POST",
+        "hangup_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-status/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+        "hangup_method": "POST",
+        "fallback_answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-fallback",
+        "fallback_method": "POST"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0002",
+          "app_id": "20372631212782780",
+          "message": "created"
+        }
+      },
+      "read": "20372631212782780"
+    },
+    "getApplication": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "GET",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/20372631212782780/",
+      "response": {
+        "status": 200,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0001",
+          "answer_method": "POST",
+          "answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-answer/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+          "app_id": "20372631212782780",
+          "app_name": "inbound-0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
+          "default_app": false,
+          "default_endpoint_app": false,
+          "enabled": true,
+          "fallback_answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-fallback",
+          "fallback_method": "POST",
+          "hangup_method": "POST",
+          "hangup_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-status/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+          "message_method": "POST",
+          "message_url": "",
+          "public_uri": false,
+          "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/20372631212782780/",
+          "sip_uri": "sip:20372631212782780@app.plivo.com",
+          "sub_account": null,
+          "log_incoming_messages": true
+        }
+      },
+      "read": {
+        "appId": "20372631212782780",
+        "appName": "inbound-0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
+        "answerUrl": "https://agency.example.com/api/v1/webhooks/plivo/inbound-answer/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+        "answerMethod": "POST",
+        "hangupUrl": "https://agency.example.com/api/v1/webhooks/plivo/inbound-status/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+        "hangupMethod": "POST",
+        "fallbackAnswerUrl": "https://agency.example.com/api/v1/webhooks/plivo/inbound-fallback",
+        "fallbackMethod": "POST"
+      }
+    },
+    "updateApplication": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "POST",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/20372631212782780/",
+      "request": {
+        "answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-answer/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+        "answer_method": "POST",
+        "hangup_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-status/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+        "hangup_method": "POST",
+        "fallback_answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-fallback",
+        "fallback_method": "POST"
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0003",
+          "message": "changed"
+        }
+      }
+    },
+    "deleteApplication": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "DELETE",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/20372631212782780/",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    "listApplications": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "GET",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/?app_name=inbound-0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60&limit=20&offset=0",
+      "response": {
+        "status": 200,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0004",
+          "meta": {
+            "limit": 20,
+            "next": null,
+            "offset": 0,
+            "previous": null,
+            "total_count": 2
+          },
+          "objects": [
+            {
+              "answer_method": "POST",
+              "answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-answer/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+              "app_id": "20372631212782780",
+              "app_name": "inbound-0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60",
+              "default_app": false,
+              "default_endpoint_app": false,
+              "enabled": true,
+              "fallback_answer_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-fallback",
+              "fallback_method": "POST",
+              "hangup_method": "POST",
+              "hangup_url": "https://agency.example.com/api/v1/webhooks/plivo/inbound-status/0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60?token=tok_Abc-123_xyz",
+              "message_method": "POST",
+              "message_url": "",
+              "public_uri": false,
+              "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/20372631212782780/",
+              "sip_uri": "sip:20372631212782780@app.plivo.com",
+              "sub_account": null,
+              "log_incoming_messages": true
+            },
+            {
+              "app_id": "18000000000000001",
+              "app_name": "Their IVR",
+              "answer_url": "https://ivr.example.net/answer",
+              "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/18000000000000001/"
+            }
+          ]
+        }
+      },
+      "read": {
+        "apps": [
+          {
+            "appId": "20372631212782780",
+            "appName": "inbound-0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60"
+          },
+          {
+            "appId": "18000000000000001",
+            "appName": "Their IVR"
+          }
+        ],
+        "more": false
+      }
+    },
+    "getNumber": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "GET",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Number/14155550101/",
+      "response": {
+        "status": 200,
+        "body": {
+          "added_on": "2026-10-01",
+          "alias": "Main line",
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0005",
+          "application": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Application/18000000000000001/",
+          "carrier": "Plivo",
+          "country": "United States",
+          "monthly_rental_rate": "0.80000",
+          "number": "14155550101",
+          "number_type": "local",
+          "region": "California, UNITED STATES",
+          "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Number/14155550101/",
+          "sms_enabled": true,
+          "sub_account": null,
+          "voice_enabled": true
+        }
+      },
+      "read": {
+        "appId": "18000000000000001"
+      }
+    },
+    "getNumberWithoutApp": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "GET",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Number/14155550102/",
+      "response": {
+        "status": 200,
+        "body": {
+          "alias": null,
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0006",
+          "application": null,
+          "number": "14155550102",
+          "resource_uri": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Number/14155550102/",
+          "sub_account": null,
+          "voice_enabled": true
+        }
+      },
+      "read": {
+        "appId": null
+      }
+    },
+    "setNumberApp": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative",
+      "verified": false,
+      "method": "POST",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Number/14155550101/",
+      "appId": "20372631212782780",
+      "request": {
+        "app_id": "20372631212782780"
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0007",
+          "message": "changed"
+        }
+      }
+    },
+    "clearNumberApp": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Application and Number API parameter and field names; values illustrative; clearing a number's app with app_id null is a guess P0 must confirm",
+      "verified": false,
+      "method": "POST",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Number/14155550102/",
+      "appId": null,
+      "request": {
+        "app_id": null
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0008",
+          "message": "changed"
+        }
+      }
+    },
+    "startRecording": {
+      "source": "UNVERIFIED until the P0 live check (docs/inbound.md §12): Plivo's documented Record API (POST Call/{call_uuid}/Record/) parameter and field names; values illustrative",
+      "verified": false,
+      "method": "POST",
+      "path": "/v1/Account/MAABCDEFGHIJKLMNOPQR/Call/7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f/Record/",
+      "callUuid": "7b1d3f5a-9c2e-4b6d-8e0f-1a2b3c4d5e6f",
+      "callbackUrl": "https://agency.example.com/api/v1/webhooks/plivo/webrtc-recording/0b6f2a3c-1d4e-4f5a-8b6c-7d8e9f0a1b2c?token=tok_Rec-456_xyz",
+      "timeLimitSeconds": 1800,
+      "request": {
+        "time_limit": 1800,
+        "file_format": "mp3",
+        "callback_url": "https://agency.example.com/api/v1/webhooks/plivo/webrtc-recording/0b6f2a3c-1d4e-4f5a-8b6c-7d8e9f0a1b2c?token=tok_Rec-456_xyz",
+        "callback_method": "POST"
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_id": "5a9c1e2f-0000-4000-8000-0000000a0100",
+          "message": "call recording started",
+          "recording_id": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+          "url": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3"
+        }
+      },
+      "read": {
+        "recordingId": "3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d",
+        "url": "https://media.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/Recording/3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d.mp3"
+      }
+    }
+  }
 }

@@ -19,7 +19,9 @@ import { initTtsFileCache, sweepTtsCache, setTtsCacheSweepObserver } from '../tt
 import { reapDecodeScratchDirs } from '../audio/decode.js';
 import { getDecodeGateStats } from '../utils/decode-gate.js';
 import { shutdownAnalytics } from '../analytics/posthog.js';
-import { getTelephonyCredentialService } from '../telephony/credentials/index.js';
+import { getTelephonyCredentialService, getTelephonyInboundService } from '../telephony/credentials/index.js';
+import { startInboundMonitor } from '../telephony/credentials/inbound-monitor.js';
+import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import type { TelephonyCredentialService } from '../telephony/credentials/credential-service.js';
 import { RedisPlivoDialRateLimiter, setPlivoDialRateLimiter } from '../telephony/plivo/plivo-dial-rate.js';
 
@@ -195,10 +197,20 @@ export async function startVoice(ctx: AppContext): Promise<() => Promise<void>> 
   guardHost.wakeSelfHeal();
 
   const stopCredentialHousekeeping = await startCredentialHousekeeping(getTelephonyCredentialService());
+  // Inbound operations (docs/inbound.md §3.2, §3.3): the connect gauge, the boot warnings
+  // (media workers on, no off-deployment fallback), and the Application health check every 15 min.
+  const stopInboundMonitor = await startInboundMonitor({
+    credentials: telephonyCredentialRepository,
+    inbound: getTelephonyInboundService(),
+    mediaWorkers: config.processes.mediaWorkers,
+    production: config.server.env === 'production',
+    fallbackAnswerUrl: config.telephony.plivo.inboundFallbackAnswerUrl,
+  });
 
   return async () => {
     if (ttsCacheSweepTimer) clearInterval(ttsCacheSweepTimer);
     stopCredentialHousekeeping();
+    stopInboundMonitor();
     // End active WebRTC bridge calls (hang up carrier leg, release slots) before
     // tearing down shared infra — they live in their own session map.
     await bridge.gracefulShutdown().catch((err) => logger.error({ err }, 'webrtc-bridge shutdown failed'));

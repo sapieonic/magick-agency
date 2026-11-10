@@ -70,6 +70,33 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'POST /softphone/calls/:id/dnc': 'manual_call_param',
   'GET /softphone/settings': 'none',
   'PUT /softphone/settings': 'none',
+  // Inbound calls (`agency/inbound.ts`): the account's routes and Missed rows, Postgres only.
+  'GET /inbound/routes': 'none',
+  'GET /inbound/routes/:id': 'none',
+  'POST /inbound/routes': 'none',
+  'PATCH /inbound/routes/:id': 'none',
+  'DELETE /inbound/routes/:id': 'none',
+  'GET /inbound/numbers': 'none',
+  'GET /inbound/clips': 'none',
+  'POST /inbound/clips': 'none',
+  'DELETE /inbound/clips/:id': 'none',
+  'GET /inbound/clips/:id/audio': 'none',
+  'GET /inbound/missed': 'none',
+  'POST /inbound/missed/:id/handled': 'none',
+  'POST /inbound/missed/:id/reopen': 'none',
+  'GET /inbound/missed/:id/voicemail': 'none',
+  // Working the Missed list and the inbound summary (`agency/inbound-missed-work.ts`), Postgres only.
+  'GET /inbound/missed/count': 'none',
+  'POST /inbound/missed/:id/assign': 'none',
+  'GET /inbound/summary': 'none',
+  // The answered inbound call (`agency/inbound-calls.ts`): inbound callers are connected only in
+  // one process (IB8), so the connector and the agents it took are this process's.
+  'GET /inbound/calls/:id': 'none',
+  'PATCH /inbound/calls/:id': 'none',
+  'POST /inbound/calls/:id/hangup': 'none',
+  'POST /inbound/calls/:id/disposition': 'none',
+  'POST /inbound/calls/:id/dnc': 'none',
+  'GET /inbound/queue': 'none',
 };
 
 /** A matched internal route: its owner kind and the path's `:id`, if it has one. */

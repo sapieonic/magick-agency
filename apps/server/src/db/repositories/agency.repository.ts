@@ -10,6 +10,7 @@
  */
 export { AgencyCampaignRepository, agencyCampaignRepository } from './agency/campaign.repository.js';
 export { AgencyContactRepository, agencyContactRepository } from './agency/contact.repository.js';
+export type { AgencyInboundContactSettlement } from './agency/contact.repository.js';
 export type {
   AgencyAgentClaim,
   AgencyAgentQueueProbe,
@@ -238,3 +239,56 @@ export type {
   ReportStateLogRow,
   ReportStatement,
 } from './agency/report-dataset-reads.js';
+export {
+  AgencyInboundRouteRepository,
+  agencyInboundRouteRepository,
+  INBOUND_ROUTE_NAME_UNIQUE,
+  inboundRouteToWire,
+} from './agency/inbound-route.repository.js';
+export type {
+  AgencyInboundAttachRefusal,
+  AgencyInboundDetachReason,
+  AgencyInboundNumberOptionRow,
+  AgencyInboundNumberRoute,
+  AgencyInboundRouteNumberRow,
+  AgencyInboundRoutePatch,
+  AgencyInboundRouteRecord,
+  AgencyInboundRouteWithNumbers,
+} from './agency/inbound-route.repository.js';
+export {
+  AgencyInboundCallRepository,
+  agencyInboundCallRepository,
+  INBOUND_CALL_TRANSITIONS,
+} from './agency/inbound-call.repository.js';
+export type {
+  AgencyInboundArrivalInput,
+  AgencyInboundArrivalTransition,
+  AgencyInboundCallRecord,
+  AgencyInboundDispositionInput,
+  AgencyInboundDispositionRefusal,
+  AgencyInboundEndInput,
+  AgencyInboundOfferRefusal,
+  AgencyInboundIdentification,
+  AgencyInboundReassignResult,
+  AgencyInboundMissedListInput,
+  AgencyInboundMissedRow,
+  AgencyInboundTransitionTarget,
+} from './agency/inbound-call.repository.js';
+// The inbound answer webhook's reads: route admission, caller identification (docs/inbound.md §4.1).
+export {
+  AgencyInboundAnswerRepository,
+  agencyInboundAnswerRepository,
+  INBOUND_CALLS_PER_ACCOUNT,
+  INBOUND_CONTACT_CANDIDATES_PER_ACCOUNT,
+} from './agency/inbound-answer.repository.js';
+export type { InboundCallSignalRow, InboundContactCandidateRow, InboundRouteSchedule } from './agency/inbound-answer.repository.js';
+// The account's recordings as the inbound route editor sees them (docs/inbound.md §8.4).
+export { AgencyInboundClipRepository, agencyInboundClipRepository } from './agency/inbound-clip.repository.js';
+export type { InboundClipUsage } from './agency/inbound-clip.repository.js';
+// The inbound summary's reads (docs/inbound.md §11).
+export {
+  AgencyInboundReportRepository,
+  agencyInboundReportRepository,
+  INBOUND_SUMMARY_AGENTS_MAX,
+} from './agency/inbound-report.repository.js';
+export type { InboundSummaryAgentRow, InboundSummaryTotalsRow } from './agency/inbound-report.repository.js';

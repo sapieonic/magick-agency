@@ -97,9 +97,12 @@ export type WrapupRedialRefusal =
  * writing up the call.
  *
  * **The countdown is an in-process timer plus the attempt row. It is never a Redis
- * TTL, and the lease rule is not negotiable on this.** The `wrapup` lease is the flat 15s
- * heartbeat lease, byte-identical to `available`, and its expiry means *the process
- * died* — not that wrap-up finished. A TTL cannot tell those apart, and if wrap-up
+ * TTL, and the lease rule is not negotiable on this.** The `wrapup` lease is the flat
+ * heartbeat lease, as long as `available`'s and renewed by the station heartbeat as
+ * `available`'s is, for as long as this manager holds the wrap-up (`stateFor`; the
+ * heartbeat's `heartbeatLeaseMs`). Its expiry means *the process died* — not that
+ * wrap-up finished; a station that goes away is written `offline` by its close, with the
+ * countdown still running here. A TTL cannot tell those apart, and if wrap-up
  * expiry were a TTL then a campaign configured with a 60-minute wrap-up would also
  * be configuring a 60-minute liveness window, during which a dead agent would still
  * be counted by the pacing tick.

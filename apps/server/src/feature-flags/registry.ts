@@ -113,4 +113,6 @@ export const FLAGS = {
   agency_contact_assignment_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_contact_assignment_enabled),
 
   agency_reports_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_reports_enabled),
+
+  agency_inbound_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_inbound_enabled),
 } as const;

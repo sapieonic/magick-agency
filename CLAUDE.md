@@ -18,6 +18,7 @@ only; never cite another system, repo or external design doc.
 | `docs/softphone.md`, `docs/mobile.md` | you work on the soft phone or the agent app |
 | `docs/insights.md` | you work on the campaign Insights tab, its rollup or the pacing history |
 | `docs/customer-history.md` | you work on the customer-history search (one number across campaigns) |
+| `docs/inbound.md` | you work on inbound calls (Plivo callbacks to agency numbers, sticky agent, queue, follow-ups); §12 is the build plan and status |
 | `docs/reports.md` | you work on report exports (agent, campaign, account PDFs and workbooks, subscriptions, the renderer) |
 | `REPORTS_SETUP.md` | you set reports up for the first time, on a dev machine or in a deployment (the renderer, the Lambda, the flag) |
 | `docs/operations.md`, `DEPLOYMENT.md` | you run, release or deploy it |

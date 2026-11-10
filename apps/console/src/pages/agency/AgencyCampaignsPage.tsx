@@ -17,6 +17,7 @@ import { ActiveCampaignCard } from './campaigns-home/ActiveCampaignCard';
 import { CampaignRow } from './campaigns-home/CampaignRow';
 import { RulesCard, Shortcuts } from './campaigns-home/Shortcuts';
 import { GetStarted } from './campaigns-home/GetStarted';
+import { InboundQueueTiles } from '../../components/agency/inbound/InboundQueueTiles';
 import styles from './AgencyCampaignsPage.module.css';
 
 /**
@@ -107,6 +108,9 @@ export function AgencyCampaignsPage() {
           </Link>
         )}
       </header>
+
+      {/* Inbound calls (P2): the supervisor's queue, polled; renders nothing without the flag. */}
+      <InboundQueueTiles />
 
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
 

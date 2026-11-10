@@ -5,6 +5,7 @@ import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useCallAnalysisProfiles } from '../../hooks/useCallAnalysisProfiles';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { errorCode } from '../../utils/agencyErrors';
 import {
   ASSIGNMENT_REFUSAL_COPY,
@@ -128,6 +129,7 @@ export function AgencyCampaignSettingsPage() {
   // Contact assignment's settings and outcome overrides: shown and sent only while
   // the flag is on (the server refuses a non-default value with it off).
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
+  const inboundEnabled = useFeatureFlagEnabled(INBOUND_FLAG);
   // Read by every viewer (`agency.campaigns.read`): an editor chooses from it, and a
   // read-only viewer is told which carrier account the campaign dials on.
   const { carriers } = useAgencyCarriers();
@@ -620,6 +622,7 @@ export function AgencyCampaignSettingsPage() {
         fieldErrors={fieldErrors}
         assignment={assignmentEnabled ? { modeLocked: assignmentModeLocked(campaign.status) } : undefined}
         readOnly={!canEdit}
+        inbound={inboundEnabled}
       />
 
       {canEdit && (

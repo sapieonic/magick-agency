@@ -3,7 +3,7 @@ import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyAgentSessionRepository, agencyCampaignRepository } from '../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from './runtime.js';
-import { AGENT_LEASE_MS } from './agent-state-machine.js';
+import { AGENT_LEASE_MS, type AgentLiveState } from './agent-state-machine.js';
 import type {
   AgencyAgentState,
   AgencyStationClientFrame,
@@ -52,6 +52,35 @@ export function breakReasonFor(
   if (state !== 'break') return undefined;
   if (row.kind === 'softphone') return SOFTPHONE_BREAK_REASON;
   return row.break_reason ?? undefined;
+}
+
+/**
+ * The lease a station heartbeat renews for an agent in `live`, or null: renew nothing.
+ *
+ * The heartbeat IS presence, so it keeps alive the lease of every state whose end is decided by
+ * something other than the TTL: `available` and `break` (the agent's own move ends them), and
+ * `wrapup`, whose end is an in-process timer, an outcome save or a supervisor (the class note of
+ * `WrapupManager`), never the lease. Unrenewed, a write-up longer than its lease left NO key, and
+ * the end of that wrap-up met `live: null`: the inbound release hook declined (the agent went
+ * `available` instead of straight to a waiting caller), and a `/break` was applied at once instead
+ * of queued, then undone by the outcome save (docs/inbound.md §6).
+ *
+ * `wrapup` is renewed only while something VOUCHES for it, so a lease nobody will ever end (one a
+ * previous process left in Redis, found by a reconnect after a restart) still lapses instead of
+ * being kept alive by a healthy station:
+ *  - `holdsWrapup`: this process's `WrapupManager` holds a campaign wrap-up for the session;
+ *  - the lease carries an inbound claim (`inboundCallId`): an answered inbound call owes its
+ *    outcome. The claim is cleared by the outcome save or the lapse sweep, which return the agent.
+ *
+ * Every other state is renewed by its owner (`reserved`, `on_call`: the attempt's or the inbound
+ * call's 5 s renewer) or by nothing (`offline`).
+ */
+export function heartbeatLeaseMs(live: AgentLiveState | null, holdsWrapup: boolean): number | null {
+  if (!live) return null;
+  if (live.state === 'available') return AGENT_LEASE_MS.available;
+  if (live.state === 'break') return AGENT_LEASE_MS.break;
+  if (live.state === 'wrapup' && (holdsWrapup || live.inboundCallId !== null)) return AGENT_LEASE_MS.wrapup;
+  return null;
 }
 
 /**
@@ -266,10 +295,13 @@ export async function handleStationSocket(
         return;
       }
 
-      // The heartbeat is what renews an idle agent's lease — it IS presence.
+      // The heartbeat is what renews a present agent's lease — it IS presence: an idle agent's,
+      // and a wrap-up this process vouches for (`heartbeatLeaseMs`). `renew` is state-matched,
+      // so a move between this read and the write is never extended.
       const live = await runtime.agents.get(sessionId);
-      if (live && (live.state === 'available' || live.state === 'break')) {
-        await runtime.agents.renew(sessionId, live.state, AGENT_LEASE_MS.available);
+      const leaseMs = heartbeatLeaseMs(live, runtime.wrapup.stateFor(sessionId) !== null);
+      if (live && leaseMs !== null) {
+        await runtime.agents.renew(sessionId, live.state, leaseMs);
       }
       // Scoped to this socket, and not merely for tidiness: `heartbeat` proved we
       // were the incumbent, then we awaited a row read and up to two Redis calls.
@@ -598,4 +630,19 @@ export async function handleStationSocket(
   if (manualCall && stillOurs()) {
     runtime.stations.send(sessionId, { event: 'manual_call', call: manualCall }, socket);
   }
+
+  // ── Inbound calls (docs/inbound.md §2, P2) ───────────────────────────────
+  // The same for an inbound call: re-adopt a bound call's leg onto this socket, restore the
+  // session's unsettled inbound call (connected, or owing its outcome) with an `inbound_call` frame,
+  // and re-send "Your customer is waiting" for every caller still waiting for this agent. A
+  // console only: the app has no inbound frame (IQ20), and a phone is never offered a call.
+  const inbound = runtime.inbound;
+  if (!inbound || upgrade.client === 'mobile' || !stillOurs()) return;
+  const restored = await inbound.reattachStation(sessionId, socket).catch((err: unknown) => {
+    log.warn({ err, sessionId }, 'Could not restore the inbound call on reconnect');
+    return null;
+  });
+  if (!restored || !stillOurs()) return;
+  if (restored.call) runtime.stations.send(sessionId, { event: 'inbound_call', call: restored.call }, socket);
+  for (const frame of restored.waiting) runtime.stations.send(sessionId, frame, socket);
 }

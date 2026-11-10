@@ -20,6 +20,13 @@ import {
   type WebRtcLifecycleEvent,
   type WebRtcLifecycleListener,
   type WebRtcRejectReason,
+  type WebRtcInboundCallParams,
+  type WebRtcInboundAcceptance,
+  type ClipSequenceResult,
+  type InboundHoldOptions,
+  type InboundHoldResult,
+  type InboundRecordOptions,
+  type InboundAudioRecording,
 } from '../../../src/core/webrtc-bridge-manager.js';
 import {
   browserLegMediaFormatOf,
@@ -34,12 +41,22 @@ interface BridgeSeam {
   createBridgedCall(params: WebRtcBridgedCallParams): Promise<WebRtcCallRecord>;
   createUnboundBridgedCall(params: Omit<WebRtcBridgedCallParams, 'browserSocket'>): Promise<WebRtcCallRecord>;
   bindBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
+  /** Whether a call is over or tearing down: asked after a refused bind (inbound, SWE-m4). */
+  isCallEnding(correlationId: string): boolean;
   reattachBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
   forceEndWithOutcome(correlationId: string, outcome: string): Promise<boolean>;
   playClipToCarrierThenHangUp(correlationId: string,
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
   getActiveCallIds(): string[];
   gracefulShutdown(): Promise<void>;
+  /** Inbound calls (docs/inbound.md §3): the answer webhook's leg taken in, and its messages played. */
+  acceptInboundCall(params: CoreInboundCallParams): Promise<CoreInboundAcceptance>;
+  playClipSequenceThenHangUp(correlationId: string,
+    opts: { clipHashes: readonly string[]; outcome: string }): Promise<CoreClipSequenceResult>;
+  /** Connecting inbound callers (docs/inbound.md §5, P2): the hold, its stop, and a voicemail's recording. */
+  playInboundHold(correlationId: string, opts: CoreInboundHoldOptions): Promise<CoreInboundHoldResult>;
+  stopInboundHold(correlationId: string): void;
+  recordInboundAudio(correlationId: string, opts: CoreInboundRecordOptions): Promise<CoreInboundAudioRecording>;
 }
 
 /** The bridge's exported types (`sipConnectionId` is excluded: docs/seams.md allows it, SIP is out). */
@@ -79,6 +96,43 @@ interface CoreLifecycleEvent {
   answeredAt?: Date;
   talkTimeSeconds?: number;
 }
+interface CoreInboundCallParams {
+  callId: string;
+  correlationId: string;
+  tenantId: string;
+  accountId: string;
+  provider: string;
+  telephonyCredentialId: string | null;
+  callerId: string;
+  destinationPhone: string;
+  carrierCallId: string;
+  takeSlots: boolean;
+  connectable: boolean;
+  browserCloseGraceMs: number;
+  parkedSeconds: number;
+  record: boolean;
+}
+interface CoreInboundHoldOptions {
+  preambleClipHashes: readonly string[];
+  holdClipHash: string | null;
+  onPreambleDone?: () => void;
+}
+type CoreInboundHoldResult = 'released' | 'aborted' | 'no_media' | 'not_found';
+interface CoreInboundRecordOptions {
+  maxSeconds: number;
+  promptClipHashes?: readonly string[];
+  beep?: boolean;
+}
+interface CoreInboundAudioRecording {
+  result: 'completed' | 'caller_left' | 'no_media' | 'not_found';
+  pcm16: Buffer;
+  sampleRate: number;
+  seconds: number;
+}
+type CoreInboundAcceptance =
+  | { accepted: true; streamUrl: string; maxDurationSeconds: number; capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' }
+  | { accepted: false; reason: 'stream_unavailable' | 'ended' };
+type CoreClipSequenceResult = 'completed' | 'aborted' | 'no_media' | 'not_found';
 type CoreRejectReason =
   | 'global_concurrency_limit'
   | 'account_concurrency_limit'
@@ -97,11 +151,17 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcBridgeManager['createBridgedCall']>().toEqualTypeOf<BridgeSeam['createBridgedCall']>();
     expectTypeOf<WebRtcBridgeManager['createUnboundBridgedCall']>().toEqualTypeOf<BridgeSeam['createUnboundBridgedCall']>();
     expectTypeOf<WebRtcBridgeManager['bindBorrowedBrowserLeg']>().toEqualTypeOf<BridgeSeam['bindBorrowedBrowserLeg']>();
+    expectTypeOf<WebRtcBridgeManager['isCallEnding']>().toEqualTypeOf<BridgeSeam['isCallEnding']>();
     expectTypeOf<WebRtcBridgeManager['reattachBorrowedBrowserLeg']>().toEqualTypeOf<BridgeSeam['reattachBorrowedBrowserLeg']>();
     expectTypeOf<WebRtcBridgeManager['forceEndWithOutcome']>().toEqualTypeOf<BridgeSeam['forceEndWithOutcome']>();
     expectTypeOf<WebRtcBridgeManager['playClipToCarrierThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipToCarrierThenHangUp']>();
     expectTypeOf<WebRtcBridgeManager['getActiveCallIds']>().toEqualTypeOf<BridgeSeam['getActiveCallIds']>();
     expectTypeOf<WebRtcBridgeManager['gracefulShutdown']>().toEqualTypeOf<BridgeSeam['gracefulShutdown']>();
+    expectTypeOf<WebRtcBridgeManager['acceptInboundCall']>().toEqualTypeOf<BridgeSeam['acceptInboundCall']>();
+    expectTypeOf<WebRtcBridgeManager['playClipSequenceThenHangUp']>().toEqualTypeOf<BridgeSeam['playClipSequenceThenHangUp']>();
+    expectTypeOf<WebRtcBridgeManager['playInboundHold']>().toEqualTypeOf<BridgeSeam['playInboundHold']>();
+    expectTypeOf<WebRtcBridgeManager['stopInboundHold']>().toEqualTypeOf<BridgeSeam['stopInboundHold']>();
+    expectTypeOf<WebRtcBridgeManager['recordInboundAudio']>().toEqualTypeOf<BridgeSeam['recordInboundAudio']>();
     // And the class as a whole satisfies the interface.
     expectTypeOf<WebRtcBridgeManager>().toMatchTypeOf<BridgeSeam>();
     expect(true).toBe(true);
@@ -115,6 +175,13 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcLifecycleEvent>().toEqualTypeOf<CoreLifecycleEvent>();
     expectTypeOf<WebRtcLifecycleListener>().toEqualTypeOf<(event: CoreLifecycleEvent) => void>();
     expectTypeOf<WebRtcRejectReason>().toEqualTypeOf<CoreRejectReason>();
+    expectTypeOf<WebRtcInboundCallParams>().toEqualTypeOf<CoreInboundCallParams>();
+    expectTypeOf<WebRtcInboundAcceptance>().toEqualTypeOf<CoreInboundAcceptance>();
+    expectTypeOf<ClipSequenceResult>().toEqualTypeOf<CoreClipSequenceResult>();
+    expectTypeOf<InboundHoldOptions>().toEqualTypeOf<CoreInboundHoldOptions>();
+    expectTypeOf<InboundHoldResult>().toEqualTypeOf<CoreInboundHoldResult>();
+    expectTypeOf<InboundRecordOptions>().toEqualTypeOf<CoreInboundRecordOptions>();
+    expectTypeOf<InboundAudioRecording>().toEqualTypeOf<CoreInboundAudioRecording>();
     expect(true).toBe(true);
   });
 

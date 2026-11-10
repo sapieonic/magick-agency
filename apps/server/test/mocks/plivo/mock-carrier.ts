@@ -18,6 +18,19 @@
  *  - `GET /v1/Account/{id}/Call/{uuid}/`         the call detail record (`call_state`,
  *    `hangup_cause_name`, `answer_time`, `end_time`, …) once the call has ended; 404 while it
  *    is live, or for a call it never named
+ * Inbound (docs/inbound.md §8.1; shapes `plivo-inbound.wire.ts`, unverified until P0):
+ *  - `POST /v1/Account/{id}/Application/`        create: 201 `{message, app_id, api_id}`
+ *  - `GET  /v1/Account/{id}/Application/?app_name&limit&offset` one page of `{app_id, app_name}`,
+ *    filtered by name when one is given
+ *  - `GET | POST | DELETE /v1/Account/{id}/Application/{app_id}/` read (200), modify (202),
+ *    delete (204, and every number on it is left with no app); 404 for an unknown one
+ *  - `GET | POST /v1/Account/{id}/Number/{digits}/` a number's `application` resource URI, and
+ *    `app_id` set on it (202; an unknown app id is a 400); 404 for a number not on the account
+ *  - `POST /v1/Account/{id}/Call/{uuid}/Record/`  the Record API (P2, a connected inbound call
+ *    recorded from its bind; unverified until P0): 202 `{message, recording_id, url, api_id}` for
+ *    a live call it has named, 404 otherwise, 400 without a positive `time_limit` and an https
+ *    `callback_url`. The recording is kept on the call (`apiRecordings`) and its callback posted
+ *    when the call ends
  * A wrong auth id or token is 401. Every request is recorded (route, auth, body, the status
  * it was answered with, the fault applied).
  *
@@ -42,7 +55,12 @@ import type WebSocket from 'ws';
 import { PLIVO_API_BASE } from '../../../src/telephony/credentials/credential-specs.js';
 import { PlivoCall, type PlivoCallScript, type PlivoDialRequest } from './carrier-call.js';
 
-export type PlivoRoute = 'account' | 'numbers' | 'create_call' | 'cancel_request' | 'hangup_call' | 'get_call' | 'unknown';
+export type PlivoRoute =
+  | 'account' | 'numbers' | 'create_call' | 'cancel_request' | 'hangup_call' | 'get_call'
+  | 'list_applications' | 'create_application' | 'get_application' | 'update_application' | 'delete_application'
+  | 'get_number' | 'update_number'
+  | 'record_call'
+  | 'unknown';
 
 export type PlivoFault =
   | { kind: 'latency'; ms: number }
@@ -73,6 +91,20 @@ export interface PlivoNumberEntry {
   alias?: string;
   /** The subaccount a main account transferred the number to (its auth id); null: the account's own. */
   sub_account?: string | null;
+  /** The Application the number's calls go to (inbound); null or absent: none. */
+  app_id?: string | null;
+}
+
+/** An Application on the mock account, as Plivo would hold it. */
+export interface MockPlivoApplication {
+  app_id: string;
+  app_name: string;
+  answer_url: string;
+  answer_method: string;
+  hangup_url: string;
+  hangup_method: string;
+  fallback_answer_url: string;
+  fallback_method: string;
 }
 
 export interface MockPlivoOptions {
@@ -105,9 +137,22 @@ function routeOf(method: string, path: string, authId: string): { route: PlivoRo
   if (method === 'POST' && rest === 'Call/') return { route: 'create_call', id: null };
   let m = new RegExp(`^Request/(${ID})/$`).exec(rest);
   if (method === 'DELETE' && m) return { route: 'cancel_request', id: m[1]! };
+  m = new RegExp(`^Call/(${ID})/Record/$`).exec(rest);
+  if (method === 'POST' && m) return { route: 'record_call', id: m[1]! };
   m = new RegExp(`^Call/(${ID})/$`).exec(rest);
   if (method === 'DELETE' && m) return { route: 'hangup_call', id: m[1]! };
   if (method === 'GET' && m) return { route: 'get_call', id: m[1]! };
+  if (rest === 'Application/') {
+    if (method === 'GET') return { route: 'list_applications', id: null };
+    if (method === 'POST') return { route: 'create_application', id: null };
+  }
+  m = new RegExp(`^Application/(${ID})/$`).exec(rest);
+  if (m && method === 'GET') return { route: 'get_application', id: m[1]! };
+  if (m && method === 'POST') return { route: 'update_application', id: m[1]! };
+  if (m && method === 'DELETE') return { route: 'delete_application', id: m[1]! };
+  m = /^Number\/(\d+)\/$/.exec(rest);
+  if (m && method === 'GET') return { route: 'get_number', id: m[1]! };
+  if (m && method === 'POST') return { route: 'update_number', id: m[1]! };
   return { route: 'unknown', id: null };
 }
 
@@ -124,6 +169,9 @@ export class MockPlivoCarrier {
   readonly calls = new Map<string, PlivoCall>();
   readonly callOrder: PlivoCall[] = [];
   numbers: PlivoNumberEntry[];
+  /** The account's Applications, by id (inbound). */
+  readonly applications = new Map<string, MockPlivoApplication>();
+  private appSeq = 0;
 
   private server: http.Server | null = null;
   private port = 0;
@@ -216,6 +264,7 @@ export class MockPlivoCarrier {
     this.callOrder.length = 0;
     this.runs.length = 0;
     this.faults.length = 0;
+    this.applications.clear();
   }
 
   async stop(): Promise<void> {
@@ -331,7 +380,156 @@ export class MockPlivoCarrier {
       case 'get_call':
         this.handleGetCall(id!, send);
         return;
+      case 'list_applications':
+        this.handleListApplications(url, send);
+        return;
+      case 'create_application':
+        this.handleCreateApplication(body, send);
+        return;
+      case 'get_application':
+      case 'update_application':
+      case 'delete_application':
+        this.handleApplication(route, id!, body, send);
+        return;
+      case 'get_number':
+      case 'update_number':
+        this.handleNumber(route, id!, body, send);
+        return;
+      case 'record_call':
+        this.handleRecordCall(id!, body, send);
+        return;
     }
+  }
+
+  /** The Record API: start recording a live call; its callback is posted when the call ends. */
+  private handleRecordCall(callUuid: string, body: unknown, send: (s: number, p: unknown) => void): void {
+    const call = this.callOrder.find((c) => c.callUuid === callUuid && c.named);
+    if (!call || call.ended) {
+      send(404, { api_id: randomUUID(), error: 'call not found' });
+      return;
+    }
+    const b = (body ?? {}) as Record<string, unknown>;
+    const timeLimit = b['time_limit'];
+    const callbackUrl = b['callback_url'];
+    if (typeof timeLimit !== 'number' || timeLimit < 1 || typeof callbackUrl !== 'string' || !/^https:\/\//.test(callbackUrl)) {
+      send(400, { api_id: randomUUID(), error: 'a positive time_limit and an https callback_url are required' });
+      return;
+    }
+    const recordingId = randomUUID();
+    call.apiRecordings.push({ recordingId, callbackUrl, timeLimitSeconds: timeLimit, startedAt: Date.now(), posted: null });
+    send(202, {
+      api_id: randomUUID(),
+      message: 'call recording started',
+      recording_id: recordingId,
+      url: `https://media.plivo.com/v1/Account/${this.authId}/Recording/${recordingId}.mp3`,
+    });
+  }
+
+  // ── Inbound: Applications and numbers' apps ─────────────────────────────────
+
+  /** Add an Application directly (a test's "someone made one in the Plivo console", or an orphan). */
+  addApplication(app: Omit<MockPlivoApplication, 'app_id'> & { app_id?: string }): MockPlivoApplication {
+    const row: MockPlivoApplication = { ...app, app_id: app.app_id ?? this.nextAppId() };
+    this.applications.set(row.app_id, row);
+    return row;
+  }
+
+  /** The app a listed number is on (null: none), or undefined for a number not on the account. */
+  numberApp(digits: string): string | null | undefined {
+    const n = this.numbers.find((x) => x.number === digits);
+    return n ? (n.app_id ?? null) : undefined;
+  }
+
+  private nextAppId(): string {
+    this.appSeq += 1;
+    return `${Date.now()}${String(this.appSeq).padStart(4, '0')}`;
+  }
+
+  private appUri(appId: string): string {
+    return `/v1/Account/${this.authId}/Application/${appId}/`;
+  }
+
+  private static readonly APP_FIELDS = ['answer_url', 'answer_method', 'hangup_url', 'hangup_method', 'fallback_answer_url', 'fallback_method'] as const;
+
+  private handleListApplications(url: URL, send: (s: number, p: unknown) => void): void {
+    const limit = Number(url.searchParams.get('limit') ?? '20');
+    const offset = Number(url.searchParams.get('offset') ?? '0');
+    const name = url.searchParams.get('app_name');
+    const all = [...this.applications.values()].filter((a) => !name || a.app_name === name);
+    const page = all.slice(offset, offset + limit);
+    const more = offset + limit < all.length;
+    send(200, {
+      api_id: randomUUID(),
+      meta: { limit, offset, total_count: all.length, next: more ? `/v1/Account/${this.authId}/Application/?limit=${limit}&offset=${offset + limit}` : null, previous: null },
+      objects: page.map((a) => ({ ...a, resource_uri: this.appUri(a.app_id) })),
+    });
+  }
+
+  private handleCreateApplication(body: unknown, send: (s: number, p: unknown) => void): void {
+    const b = (body ?? {}) as Record<string, unknown>;
+    if (typeof b['app_name'] !== 'string' || !b['app_name'] || typeof b['answer_url'] !== 'string' || !/^https:\/\//.test(b['answer_url'])) {
+      send(400, { api_id: randomUUID(), error: 'app_name and an https answer_url are required' });
+      return;
+    }
+    const app = this.addApplication({
+      app_name: b['app_name'],
+      answer_url: b['answer_url'],
+      answer_method: String(b['answer_method'] ?? 'POST'),
+      hangup_url: String(b['hangup_url'] ?? ''),
+      hangup_method: String(b['hangup_method'] ?? 'POST'),
+      fallback_answer_url: String(b['fallback_answer_url'] ?? ''),
+      fallback_method: String(b['fallback_method'] ?? 'POST'),
+    });
+    send(201, { api_id: randomUUID(), message: 'created', app_id: app.app_id });
+  }
+
+  private handleApplication(route: PlivoRoute, appId: string, body: unknown, send: (s: number, p: unknown) => void): void {
+    const app = this.applications.get(appId);
+    if (!app) {
+      send(404, { api_id: randomUUID(), error: 'not found' });
+      return;
+    }
+    if (route === 'get_application') {
+      send(200, { api_id: randomUUID(), ...app, resource_uri: this.appUri(appId), default_app: false, enabled: true });
+      return;
+    }
+    if (route === 'delete_application') {
+      this.applications.delete(appId);
+      for (const n of this.numbers) if (n.app_id === appId) n.app_id = null;
+      send(204, null);
+      return;
+    }
+    const b = (body ?? {}) as Record<string, unknown>;
+    for (const k of MockPlivoCarrier.APP_FIELDS) if (typeof b[k] === 'string') app[k] = b[k] as string;
+    send(202, { api_id: randomUUID(), message: 'changed' });
+  }
+
+  private handleNumber(route: PlivoRoute, digits: string, body: unknown, send: (s: number, p: unknown) => void): void {
+    const n = this.numbers.find((x) => x.number === digits);
+    if (!n || (n.sub_account && n.sub_account !== this.authId)) {
+      send(404, { api_id: randomUUID(), error: 'not found' });
+      return;
+    }
+    if (route === 'get_number') {
+      send(200, {
+        api_id: randomUUID(), number: n.number, alias: n.alias ?? null, voice_enabled: n.voice_enabled ?? true,
+        application: n.app_id ? this.appUri(n.app_id) : null, sub_account: n.sub_account ?? null,
+        resource_uri: `/v1/Account/${this.authId}/Number/${n.number}/`,
+      });
+      return;
+    }
+    const b = (body ?? {}) as Record<string, unknown>;
+    if (!('app_id' in b)) {
+      send(400, { api_id: randomUUID(), error: 'nothing to change' });
+      return;
+    }
+    const appId = b['app_id'];
+    if (appId !== null && (typeof appId !== 'string' || !this.applications.has(appId))) {
+      send(400, { api_id: randomUUID(), error: 'no such application' });
+      return;
+    }
+    n.app_id = appId as string | null;
+    send(202, { api_id: randomUUID(), message: 'changed' });
   }
 
   /** The CDR of an ended call; 404 while it is live, as Plivo's CDR endpoint answers. */
@@ -395,6 +593,29 @@ export class MockPlivoCarrier {
       if (script) setImmediate(() => this.runs.push(call.run(script)));
     }
     send(201, { api_id: randomUUID(), message: 'call fired', request_uuid: requestUuid });
+  }
+
+  /**
+   * A customer rings one of the account's numbers linked to the inbound Application whose answer
+   * and hangup URLs are `answerUrl` / `hangupUrl` (each with its `?token=` query, as the
+   * Application names them): an inbound {@link PlivoCall} runs `script` (typically `answer`,
+   * `connect`, `start`, then wait for our REST hangup). `from` and `to` as Plivo sends them
+   * (digits, or `anonymous` for a withheld caller). Our REST hangup reaches it by its `CallUUID`.
+   */
+  ringInbound(opts: { from: string; to: string; answerUrl: string; hangupUrl: string; script: PlivoCallScript }): PlivoCall {
+    const call = new PlivoCall({
+      request: { from: opts.from, to: opts.to, answer_url: opts.answerUrl, hangup_url: opts.hangupUrl },
+      requestUuid: '',
+      authId: this.authId,
+      authToken: () => this.authToken,
+      rewrite: (u) => this.rewrite(u),
+      sockets: this.mediaSockets,
+      direction: 'inbound',
+    });
+    this.calls.set(`inbound:${call.callUuid}`, call);
+    this.callOrder.push(call);
+    this.runs.push(call.run(opts.script));
+    return call;
   }
 
   private handleCancel(requestUuid: string, send: (s: number, p: unknown) => void): void {

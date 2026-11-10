@@ -667,6 +667,11 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   if (allowRedial !== undefined && typeof allowRedial !== 'boolean') {
     issues.push({ field: 'allow_wrapup_redial', message: 'allow_wrapup_redial must be a boolean.' });
   }
+  // Inbound sticky routing (0024): a `BOOLEAN NOT NULL` column, the same rule and message.
+  const sticky = record['inbound_sticky_enabled'];
+  if (sticky !== undefined && typeof sticky !== 'boolean') {
+    issues.push({ field: 'inbound_sticky_enabled', message: 'inbound_sticky_enabled must be a boolean.' });
+  }
   // Contact assignment and agent retry (0009): the internal handler's rules, imported.
   issues.push(...validateAssignmentSettings(record));
   issues.push(...validateCallingWindow(record));

@@ -254,7 +254,12 @@ export function useAgencyConsole(
    * does for an attempt's `reserved` and `bridged`. One `sync`, one owner — a
    * second effect syncing the soft phone would fight this one for the mic.
    */
-  const target = audioTarget({ stationIsGone, live, manualCall: station.manualCall });
+  const target = audioTarget({
+    stationIsGone,
+    live,
+    manualCall: station.manualCall,
+    inboundCall: station.inboundCall,
+  });
   useEffect(() => {
     audio.sync({
       attemptId: target.id,

@@ -18,3 +18,17 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): P
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
+
+/**
+ * Settle with `promise`, or resolve with `fallback` after `ms`, whichever is first: the bounded
+ * wait whose timeout is an answer, not an error. A rejection of `promise` within the bound rejects.
+ * The timer is cleared on settle and `unref`ed, as {@link withTimeout}'s.
+ */
+export function withTimeoutOr<T, F>(promise: Promise<T>, ms: number, fallback: F): Promise<T | F> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<F>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+    timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}

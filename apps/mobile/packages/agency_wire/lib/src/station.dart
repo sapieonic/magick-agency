@@ -40,6 +40,11 @@ enum StationEvent implements WireEnum {
 
   /// Contact assignment: this agent's own queue changed (strict / preferred).
   queue('queue'),
+
+  /// Inbound calls: console stations only until P3 (`AGENCY_STATION_CONSOLE_ONLY_EVENTS`). The
+  /// server never sends these to the app, so no frame type decodes them yet ([UnknownFrame]).
+  inboundCall('inbound_call'),
+  customerWaiting('customer_waiting'),
   unknown('');
 
   const StationEvent(this.wire);

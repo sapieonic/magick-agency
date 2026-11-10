@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
+import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE, AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
 import {
   isSystemDispositionCode,
   reservedDispositionCodeMessage,
@@ -49,5 +49,20 @@ describe('the system-written disposition `redialed`', () => {
     expect(reservedDispositionCodeMessage('redialed')).toContain('reserved');
     expect(reservedDispositionCodeMessage('sale')).toBeNull();
     expect(validateConfig(EMPTY_CAMPAIGN_CONFIG)).toEqual({});
+  });
+});
+
+describe('the system-written disposition `inbound_call` (docs/inbound.md §5.4)', () => {
+  it('is labelled, styled as the system\'s, and refused as a catalog code', () => {
+    expect(AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE).toBe('inbound_call');
+    expect(isSystemDispositionCode('inbound_call')).toBe(true);
+    expect(systemDispositionLabel('inbound_call')).toBe('Customer rang in');
+    expect(dispositionLabel('inbound_call', [{ code: 'sale', label: 'Sale' }])).toBe('Customer rang in');
+    const state = {
+      ...EMPTY_CAMPAIGN_CONFIG,
+      dispositions: [...EMPTY_CAMPAIGN_CONFIG.dispositions, { code: 'inbound_call', label: 'Rang in' }],
+    };
+    const at = `disposition_catalog[${state.dispositions.length - 1}].code`;
+    expect(validateConfig(state)[at]).toBe(reservedDispositionCodeMessage('inbound_call'));
   });
 });

@@ -137,6 +137,16 @@ export interface LiveAttempt {
    * it) until it says (`AgencyDialer.settleContactAfterDial`).
    */
   dialSettled: Promise<boolean>;
+  /**
+   * The inbound call that superseded this ringing dial (the in-flight clash, docs/inbound.md
+   * §5.4): set by `AgencyDialer.supersedeForInbound` just before the dial is cancelled, so the
+   * `ended` arm settles it as the clash (`canceled`, the system code `inbound_call`, the contact
+   * back uncharged, released `inbound_call`). `settled` is called once the attempt is settled
+   * and its agent released, whichever way it ended (`cancelled`: settled as the clash; false: the
+   * carrier answered first, or no live call was found to cancel): it drops the connector's
+   * handover if the release did not take it. Absent on every other dial.
+   */
+  supersededByInbound?: { inboundCallId: string; settled: (cancelled: boolean) => void };
 }
 
 /**

@@ -5,7 +5,7 @@ under [Later migrations](#later-migrations). This file is their inventory: the r
 they follow, every table with its purpose and columns, the unique indexes that carry invariants, the
 triggers and functions, how it is tested, and the schema questions still open. Read it before
 writing a repository, a migration or an import script. Column lists are generated from the SQL;
-the SQL is the authority. As of 2026-11-08.
+the SQL is the authority. As of 2026-11-09.
 
 ## Rules
 
@@ -22,7 +22,7 @@ the SQL is the authority. As of 2026-11-08.
 
 ## Tables
 
-33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012, 44 with 0013, 45 with 0018, 47 with 0023), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
+33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012, 44 with 0013, 45 with 0018, 47 with 0023, 50 with 0024), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
 
 | Group | Tables |
 |---|---|
@@ -37,6 +37,7 @@ the SQL is the authority. As of 2026-11-08.
 | Dialer | `agency_campaigns`, `agency_contacts`, `agency_agent_sessions`, `agency_agent_session_events`, `agency_call_attempts`, `agency_ingest_chunks`, `agency_dnc_outbox`, `agency_calls` |
 | Insights rollup (0012) | `agency_insights_rollup_dirty`, `agency_insights_rollup_buckets`, `agency_insights_rollup_agents`, `agency_insights_rollup_codes`, `agency_insights_rollup_facets` |
 | Pacing history (0013) | `agency_campaign_pacing_minutes` |
+| Inbound calls (0024) | `agency_inbound_routes`, `agency_inbound_route_numbers`, `agency_inbound_calls` |
 
 ### Identity
 
@@ -267,6 +268,9 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_agency_calls_insights_error_update` (0014) | AFTER UPDATE OF `error_code`, WHEN it changed | `agency_calls` | `agency_insights_mark_call_error()` |
 | `trg_agency_contacts_insights_zone` (0012) | AFTER UPDATE OF `timezone`, WHEN it changed | `agency_contacts` | `agency_insights_mark_contact_zone()` |
 | `trg_agency_campaigns_insights_zone` (0012) | AFTER UPDATE OF `default_timezone`, WHEN it changed | `agency_campaigns` | `agency_insights_mark_campaign_zone()` |
+| `trg_agency_attempts_inbound_reached` (0028, 0030) | AFTER UPDATE OF `disposition_code`, WHEN it changed to a code other than `voicemail`, `no_disposition`, `redialed` on a conversation (`bridged_at IS NOT NULL OR redial_number > 0`) | `agency_call_attempts` | `agency_attempt_inbound_reached()` |
+| `trg_agency_manual_calls_inbound_reached` (0028, 0030) | AFTER UPDATE OF `disposition_code`, WHEN it changed to such a code on a bridged call | `agency_manual_calls` | `agency_manual_call_inbound_reached()` |
+| `trg_agency_inbound_calls_inbound_reached` (0028) | AFTER UPDATE OF `bridged_at`, WHEN it is first set | `agency_inbound_calls` | `agency_inbound_call_inbound_reached()` |
 
 Functions:
 
@@ -283,6 +287,12 @@ Functions:
 - `agency_insights_mark_attempt_buckets()`, `agency_insights_mark_call_recording()`,
   `agency_insights_mark_contact_zone()`, `agency_insights_mark_campaign_zone()` (0012): append a
   dirty mark per insights bucket the write touched (see 0012 below).
+- `agency_inbound_close_reached_missed(tenant, account, phone, reached_at, user)` (0028, 0030):
+  closes the account's open Missed inbound rows from `phone` (matched on its digits since 0030;
+  nothing for a number with no digits) that arrived by `reached_at` (`handled`,
+  `handled_reason = 'reached'`, handled by `user`). Its three callers, `agency_attempt_inbound_reached()`,
+  `agency_manual_call_inbound_reached()` and `agency_inbound_call_inbound_reached()`, pass the
+  conversation's account, number, start and agent (see 0028 and 0030 below).
 
 `super_admins` and `account_settings` have `updated_at` columns but no trigger.
 
@@ -996,6 +1006,264 @@ definitions, the planner using the agent-first index, down then up), the server'
 `test/integration/agency/report-run-repository.test.ts` and
 `report-subscription-repository.test.ts`, the table set in `baseline.test.ts` and the down → up
 suite.
+
+### 0024 — `migrations/0024_inbound.sql`
+
+Inbound calls on Plivo numbers (`docs/inbound.md` §9, IB1–IB8): everything P1 and the spine need.
+
+- **`agency_inbound_routes`**: an account's route. `id`, `tenant_id` (FK `tenants`, CASCADE),
+  `account_id` (no FK, as campaigns'), `name` (trimmed, 1–100), `timezone` (trimmed; a usable IANA
+  zone is the server's check), `weekly_hours` / `holidays` (JSONB arrays, at most 50 / 100; elements
+  are the server's to validate), six clip ids `greeting_audio_id`, `hold_audio_id`,
+  `closed_audio_id`, `busy_audio_id`, `recording_notice_audio_id`, `callback_audio_id` (FK
+  `audio_files` ON DELETE SET NULL: a deleted clip puts the slot back on the built-in clip),
+  `sticky_mode` (`off | loose | strict`, default `loose`), `sticky_wait_seconds` (5–300, default 30,
+  at most `queue_max_wait_seconds`), `sticky_lookback_days` (1–365, default 30), `pool_campaign_ids`
+  (UUID[], at most 50, empty = the whole account), `queue_max_wait_seconds` (10–1800, default 120),
+  `max_waiting` (0–100, default 10, at most `max_concurrent`), `max_concurrent` (1–500, default
+  20), `after_hours_action` / `overflow_action` (`callback | voicemail`, default `callback`),
+  `record_calls` (false), `recording_notice` (true, IB7), `analysis_profile_id` (no FK),
+  `disposition_catalog` (JSONB array, `[]` = built-in), `created_by`, `updated_by`, `created_at`,
+  `updated_at`, `deleted_at` (soft delete), `deleted_by`. **`uq_agency_inbound_routes_name`**
+  `(tenant_id, account_id, lower(name)) WHERE deleted_at IS NULL`; `idx_agency_inbound_routes_account`
+  `(tenant_id, account_id, created_at) WHERE deleted_at IS NULL`; trigger
+  `trg_agency_inbound_routes_updated_at`.
+- **`agency_inbound_route_numbers`**: `id`, `route_id` (FK, CASCADE), `phone_number_id` (FK
+  `phone_numbers`, RESTRICT), `attached_by`, `attached_at`, `detached_at`, `detached_by`,
+  `detached_reason` (`detached | route_deleted | number_unlinked`, set exactly with `detached_at`).
+  **`uq_agency_inbound_route_numbers_active`** `(phone_number_id) WHERE detached_at IS NULL`: one
+  route answers a number. `idx_agency_inbound_route_numbers_route (route_id) WHERE detached_at IS
+  NULL`.
+- **`agency_inbound_calls`**, the spine and the Missed inbound row: `id`, `tenant_id`, `account_id`
+  (NULL = the tenant default), `route_id`, `phone_number_id`, `provider` (default `plivo`),
+  `telephony_credential_id` (composite FK `(credential, tenant, provider)`, RESTRICT, as
+  `agency_calls`'), `provider_call_id`, `from_e164` (NULL = withheld), `to_e164`,
+  `matched_contact_id`, `matched_campaign_id`, `caller_dnc`, `sticky_user_id`, `sticky_reason`,
+  `state` (`arrived | greeting | queued | offered | connected | ended`), `outcome` (`answered |
+  abandoned_in_queue | overflow | overflow_no_capacity | closed | voicemail | rejected | failed`),
+  `arrived_at`, `answered_at`, `bridged_at`, `answered_by_user_id`, `ended_at`, `talk_seconds`,
+  `webrtc_call_id`, `voicemail_key`, `callback_due_at`, `follow_up_status` (`open | handled`),
+  `follow_up_reason` (`closed | abandoned_in_queue | overflow | overflow_no_capacity | failed`),
+  `follow_up_assignee_user_id`, `handled_by_user_id`, `handled_at`, `created_at`, `updated_at`. No
+  FK but the credential's (an audit spine). CHECKs: each vocabulary (the contract's lists in
+  `packages/contracts/src/agency/inbound.ts`); E.164 numbers; a route, a match or a leg only with an
+  account; a match is contact and campaign together, a callback only on a match; ended exactly with
+  an outcome and `ended_at`; bridged exactly with its agent, `connected` and `answered` only once
+  bridged; the sticky pair together; the follow-up only on an ended call that is not `answered` or
+  `rejected`, status and reason together, an assignee only with one, `handled_at` exactly when
+  handled. **`uq_agency_inbound_calls_provider_call`** `(provider, provider_call_id)` (a retried
+  answer webhook finds its row); `idx_agency_inbound_calls_missed` `(tenant_id, account_id,
+  follow_up_status, arrived_at DESC, id DESC)` and `idx_agency_inbound_calls_missed_assignee` (with
+  the assignee after the account), both `WHERE follow_up_status IS NOT NULL`;
+  `idx_agency_inbound_calls_open (arrived_at) WHERE state <> 'ended'` (the sweep). Trigger
+  `trg_agency_inbound_calls_updated_at`.
+- **`agency_calls`**: `inbound_call_id` (no FK); `ck_agency_calls_origin` rewritten to `campaign |
+  manual | inbound`; `ck_agency_calls_inbound_correlation` (`inbound_call_id` exactly on an inbound
+  leg). `ck_agency_calls_manual_correlation` is unchanged: its arms already keep an inbound leg's
+  `campaign_id`, `agency_attempt_id` and `manual_call_id` NULL. No new index: the baseline's
+  `idx_agency_calls_provider_call_id` serves the status webhook.
+- **`agency_contacts`**: `callback_source` (`inbound`) and `callback_due_at`, together
+  (`ck_agency_contact_callback_source`).
+- **`agency_campaigns`**: `inbound_sticky_enabled BOOLEAN NOT NULL DEFAULT true`.
+- **`telephony_credentials`**: `inbound_app_id`, `inbound_answer_url`, `inbound_hangup_url`,
+  `inbound_fallback_answer_url` (without the token query), `inbound_token_hash` (sha256 hex),
+  `inbound_previous_token_hash` with `inbound_previous_token_expires_at` (the Re-point grace),
+  `inbound_enabled_at`. CHECKs: all of the enabled set or none; hashes are 64 lower-case hex; the
+  previous pair together and only beside a current token; a revoked credential has no Application.
+- **`phone_numbers`**: `inbound_linked_at` (only on a synced number) and `inbound_previous_app_id`
+  (only while linked); `idx_phone_numbers_inbound_linked (telephony_credential_id) WHERE
+  inbound_linked_at IS NOT NULL`.
+- **Locking**: the `agency_calls` and `agency_contacts` CHECKs are added `NOT VALID` (no scan under
+  ACCESS EXCLUSIVE; 0025 validates them). The small tables' CHECKs are validated here.
+- **Down** raises, before changing anything, while any inbound call or `origin = 'inbound'` leg
+  exists, or while a number is linked or a credential has inbound enabled; otherwise it drops the
+  columns and tables and restores the two-value origin CHECK.
+
+### 0025 — `migrations/0025_inbound_checks_validate.sql`
+
+Validates 0024's three `NOT VALID` CHECKs (`ck_agency_calls_origin`,
+`ck_agency_calls_inbound_correlation`, `ck_agency_contact_callback_source`) in its own transaction
+under SHARE UPDATE EXCLUSIVE (0010's pattern). Down is a no-op.
+
+**Tests** for both: `test/integration/db/inbound-migration.test.ts` (columns and defaults against
+`AGENCY_INBOUND_ROUTE_DEFAULTS`, every CHECK from both sides, each vocabulary against the contract's
+list, every limit, the unique indexes, the FKs and their ON DELETE, the indexes and that the planner
+uses them, NOT VALID then validated, the Down's refusals, down then up), the server's
+`test/integration/agency/inbound-route-repository.test.ts` and `inbound-call-repository.test.ts`,
+`test/integration/repositories/telephony-credential.repository.test.ts` (the inbound storage), the
+table set and triggers in `baseline.test.ts` and the down → up suite.
+
+### 0026 — `migrations/0026_inbound_live_indexes.sql`
+
+Inbound calls counted in their account's live-call total (`docs/inbound.md` §5.3, decision IB5),
+and the inbound callbacks the callback fallback reads (§7, CA5). (Numbered 0026 after review: it was
+first written as 0027 and never applied outside development databases; the next migration is 0027.)
+
+- **`idx_agency_inbound_calls_account_live`** `(tenant_id, account_id) WHERE state <> 'ended' AND
+  state <> 'arrived'`: the third arm of pacing's per-account live read (`countLiveForAccount`,
+  every pacing round), partial on the arm's literal predicate. Only admitted calls count: one still
+  `arrived` was turned away (the route at its `max_concurrent`, or the bridge's global or carrier
+  scope full, whose admission is taken back) and holds no line. 0024's
+  `idx_agency_inbound_calls_open` is keyed on `arrived_at` alone and would walk every tenant's
+  live inbound calls each round. The answer webhook's per-route admission count (once per call,
+  the same predicate) stays on `idx_agency_inbound_calls_open`.
+- **`idx_agency_contacts_inbound_callback`** `(campaign_id) WHERE callback_source IS NOT NULL`: a
+  campaign's open inbound callbacks. CA5's fallback sweep runs on every running owner-mode
+  campaign every 30 s; on a catalog with no callback code its pick adds `callback_source IS NOT
+  NULL` (implied by the bucket there, so the same rows move) and reads this index instead of the
+  campaign's pending roster. Empty for a tenant with no inbound; its columns are already indexed
+  elsewhere, so it costs no HOT update.
+- **`idx_agency_contacts_insights`** (0011) rebuilt with `callback_source` added to its INCLUDE
+  list: the inbound follow-up widens `isCallbackSql` to read it, and the insights as-of-now reads
+  bucket every contact through that fragment, so without it they would leave their index-only
+  scan. Same name, key and comment.
+- **Locking.** Plain `CREATE INDEX` (SHARE on the table, one scan each; `agency_contacts` scanned
+  twice, each of the size 0011 measured for the insights index, ~4 s on 1.2M contacts); the
+  insights index is built under a temporary name, then the old one dropped and the new one
+  renamed, so ACCESS EXCLUSIVE is held only from the swap to the commit. One transaction, at
+  container start, with no writer running: a deploy stops the one server, then the new container
+  migrates before it listens (`DEPLOYMENT.md`), the model 0003, 0004, 0015, 0016 and 0017 rely on.
+  A deploy that overlapped the old process would have pacing's contact writes wait for the scans;
+  that layout is not supported by these files.
+
+**Down** drops both partial indexes and rebuilds the insights index exactly as 0011 made it (the
+same swap). **Tests**: `test/integration/db/inbound-live-indexes-migration.test.ts` (the three
+definitions, the planner using the live index on a large history with a busy floor elsewhere and
+the callback index for the code-less fallback pick on a large pending roster, down restoring
+0011's insights index, up again), `insights-foundation-migration.test.ts` (the definition after
+every migration), the down → up suite, the server's `test/integration/agency/insights-reads.test.ts`
+(the as-of-now reads still covered) and `inbound-follow-up.test.ts` (the count itself).
+
+### 0027 — `migrations/0027_inbound_connect.sql`
+
+Connecting agents to inbound calls (`docs/inbound.md` §2, §6, P2): the agent side of the spine.
+
+- **`agency_inbound_calls`** gains `session_id` (the agent session it is offered to or connected
+  with; no FK; cleared by a requeue), `queued_at` (first queueing: the maximum wait counts from it),
+  `offered_at` (the latest offer), `offer_count` (`SMALLINT NOT NULL DEFAULT 0`),
+  `recording_requested` (`BOOLEAN NOT NULL DEFAULT false`, the leg's, mirrored at arrival), the
+  outcome as the soft phone's (`disposition_code` VARCHAR(64), `disposition_source` `campaign |
+  route`, `notes`, `callback_at`, `dispositioned_by_user_id`, `dispositioned_at`,
+  `dispositioned_on_behalf` `BOOLEAN NOT NULL DEFAULT false`), `settled_at`, `voicemail_seconds`
+  and `clash_attempt_id` (the ringing attempt the call cancelled, §5.4; no FK).
+- **CHECKs**: `ck_agency_inbound_calls_session` (`offered` / `connected` ⇒ a session, `offered_at`
+  and an offer; `arrived` / `greeting` / `queued` ⇒ no session; `offer_count >= 0`);
+  `ck_agency_inbound_calls_settled` (settled only once ended; an ended call offered to a session
+  but never bridged is settled, so the session is free); `ck_agency_inbound_calls_disposition` (an outcome only on a bridged call, with its
+  source and time; the source only with a code, `campaign` exactly when the call matched a
+  campaign; who saved it and on behalf only with a code); `ck_agency_inbound_calls_voicemail` (a
+  length only with the voicemail, never negative). Added validated (the table is small, and the
+  file already holds ACCESS EXCLUSIVE for the columns).
+- **`uq_agency_inbound_calls_session_unsettled`** `(session_id) WHERE session_id IS NOT NULL AND
+  settled_at IS NULL`: one unsettled inbound call per agent session (the soft phone's
+  `uq_agency_manual_call_unsettled` rule).
+- **`idx_agency_inbound_calls_live_from_digits`** `(tenant_id, account_id,
+  regexp_replace(from_e164, '[^0-9]', '', 'g')) WHERE from_e164 IS NOT NULL AND ((state <> 'ended'
+  AND state <> 'arrived') OR (bridged_at IS NOT NULL AND settled_at IS NULL))`: the inbound arm of
+  the account's busy probe (`numberLiveSql`, MC4) and the soft phone's pre-dial; the key is
+  `CONTACT_PHONE_DIGITS_SQL` with the column swapped. `arrived` is "not admitted" (0026's rule).
+- **`idx_agency_inbound_calls_unsettled_lapse`** `(ended_at) WHERE bridged_at IS NOT NULL AND
+  settled_at IS NULL`: the outcome-lapse sweep.
+- **Backfill**: every row 0024 ended is settled at its `ended_at` (P1 connected nobody), and
+  `recording_requested` is copied from the leg; `updated_at` is kept (the trigger is disabled
+  around the two UPDATEs).
+
+**Down** refuses while any call is with an agent or owes its outcome (`session_id` set and
+unsettled), or carries an outcome, notes or a callback; otherwise drops the indexes, CHECKs and
+columns. **Tests**: `test/integration/db/inbound-connect-migration.test.ts` (columns and defaults,
+every CHECK from both sides, the disposition sources against the contract's list, the unique
+index, both partial indexes by definition and by the planner on a large history, the backfill,
+the Down's refusals, down then up), the down → up suite, and the server's
+`test/integration/agency/inbound-connect-repository.test.ts`.
+
+### 0028 — `migrations/0028_inbound_missed_follow_up.sql`
+
+The Missed inbound row's follow-up and the inbound summary (`docs/inbound.md` §7, §11).
+
+- **`agency_inbound_calls.handled_reason`** VARCHAR(16): how a Missed row was handled, `marked`
+  (a person) or `reached` (the customer was put through to an agent afterwards). NULL while open,
+  and on a row handled before 0028 (read as `marked`). `ck_agency_inbound_calls_handled_reason`:
+  NULL, or the row is `handled` and the reason is one of the contract's
+  `AGENCY_INBOUND_HANDLED_REASONS`.
+- **The reached triggers**: when `bridged_at` is first set on a campaign attempt, a soft-phone
+  call or an inbound call, `agency_inbound_close_reached_missed` closes the open Missed rows of
+  the same account from that number (the contact's `phone_e164`, the soft-phone call's
+  `destination_e164`, the caller's `from_e164`) that arrived no later than the conversation began,
+  handled by its agent (the attempt's session's `agent_user_id`, the soft-phone call's
+  `agent_user_id`, the inbound call's `answered_by_user_id`). In the transaction that records the
+  conversation; `follow_up_status = 'open'` in the UPDATE's WHERE, so two conversations at once,
+  or one beside a person's Mark handled, close a row once. The contact is never touched (its
+  inbound callback is settled by the call that reaches it).
+- **`idx_agency_inbound_calls_missed_open_from`** `(tenant_id, account_id, from_e164) WHERE
+  follow_up_status = 'open' AND from_e164 IS NOT NULL`: the triggers' probe, the size of the open
+  follow-ups.
+- **`idx_agency_inbound_calls_account_arrived`** `(tenant_id, account_id, arrived_at) WHERE state =
+  'ended'`: the inbound summary's range read (ended calls only, the predicate repeated literally).
+  Partial so it never offers the Missed list a backward scan to prefer over
+  `idx_agency_inbound_calls_missed`.
+
+**Down** drops the triggers, the functions, the indexes and the column (a reached row stays
+handled, with no reason). **Tests**: `test/integration/db/inbound-missed-follow-up-migration.test.ts`
+(the CHECK against the contract's list, each trigger and what it leaves alone, two closes at once
+and a close beside a Mark handled, both indexes by definition and by the planner over a 40-account
+history, down then up), the trigger list in `baseline.test.ts`, the down → up suite, and the
+server's `test/integration/api/inbound-missed-work.test.ts`.
+
+### 0029 — `migrations/0029_inbound_reach_settles.sql`
+
+A reached inbound call settles the callback a missed call booked, and the spine keeps what the
+carrier bills (`docs/inbound.md` §6, §7, §9).
+
+- **`agency_contacts.callback_reopened`** BOOLEAN NOT NULL DEFAULT false (a constant default:
+  catalog-only, no rewrite): the contact's inbound callback (`callback_source`) reopened it from
+  `exhausted` (IB4). Written by `bookInboundCallback` (true when it reopens; a second booking keeps
+  it; any other booking false), cleared by `settleFromInbound`, whose `none` arm (a retry or plain
+  outcome, or the outcome lapsing) puts such a contact back to `exhausted`. Meaningful only while
+  `callback_source` is set (other writers that clear the callback leave it; the next booking
+  rewrites it). No index: read on a row already locked by primary key.
+- **`agency_inbound_calls.carrier_seconds`** INTEGER, NULL until known:
+  the carrier's duration of the call from its hangup callback (Plivo `Duration`).
+  `ck_agency_inbound_calls_carrier_seconds`: NULL or ≥ 0. The usage report's `inbound_seconds`
+  sums it when set, else `ended_at - answered_at` (a spoken answer ends on our side at the answer).
+
+**Down** drops both columns and the CHECK. **Tests**:
+`test/integration/db/inbound-reach-settles-migration.test.ts` (the columns, the CHECK, no rewrite
+of `agency_contacts`, down then up), `test/integration/repositories/usage-counts-inbound-carrier.test.ts`,
+the down → up suite, and the server's `inbound-agent-return.test.ts` (SWE-F2) and
+`inbound-follow-up.test.ts`.
+
+### 0030 — `migrations/0030_inbound_reached_on_outcome.sql`
+
+A Missed inbound row closes as `reached` only when a person was reached, matched on the number's
+digits; and why a call was answered closed (`docs/inbound.md` §7, §11).
+
+- **The outbound reached triggers move to the outcome.** `trg_agency_attempts_inbound_reached` and
+  `trg_agency_manual_calls_inbound_reached` are dropped and re-created `AFTER UPDATE OF
+  disposition_code`: they fire when the outcome is written or changed to a code other than
+  `voicemail` (a machine answered), `no_disposition` (the outcome lapsed) and `redialed` (a wrap-up
+  redial carries the outcome), the connect rate's human connect, on a conversation (an attempt
+  bridged or a wrap-up redial; a bridged soft-phone call). The attempt's conversation began at
+  `COALESCE(bridged_at, dialed_at, created_at)`. The WHEN carries the whole rule, so every other
+  write to the hot tables queues nothing. The inbound call's trigger is unchanged (at its bridge).
+- **Digits.** `agency_inbound_close_reached_missed` compares `regexp_replace(…, '[^0-9]', '', 'g')`
+  of both sides; `idx_agency_inbound_calls_missed_open_from` is replaced by
+  **`idx_agency_inbound_calls_missed_open_digits`** `(tenant_id, account_id, <digits of from_e164>)
+  WHERE follow_up_status = 'open' AND from_e164 IS NOT NULL` (CONTACT_PHONE_DIGITS_SQL with the
+  column swapped, byte for byte).
+- **`agency_inbound_calls.closed_cause`** VARCHAR(24): `hours`, `switched_off`, `no_route`,
+  `credential_inactive` (the contract's `AGENCY_INBOUND_CLOSED_CAUSES`,
+  `ck_agency_inbound_calls_closed_cause`), stamped by the router at arrival; NULL when the route
+  was open. Backfill (the `updated_at` trigger disabled around it): a closed call (outcome `closed`,
+  or a voicemail whose Missed reason is `closed`) is `no_route` without a route, else `hours`.
+
+**Down** restores 0028 exactly (the bridge triggers and their function bodies, the text match, the
+text index) and drops the column. **Tests**:
+`test/integration/db/inbound-reached-on-outcome-migration.test.ts` (each trigger's rule and what it
+leaves alone, a redial, a changed and a replayed outcome, digits, two closes at once and a close
+beside a Mark handled, the index by definition and by the planner, the CHECK against the contract's
+list, the backfill, down then up), the down → up suite, and the server's
+`test/integration/agency/inbound-missed-reached.test.ts` (the no-contact codes are the server's
+constants) and `test/integration/api/inbound-missed-work.test.ts`.
 
 ## Tests
 

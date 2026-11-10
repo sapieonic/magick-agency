@@ -384,9 +384,9 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
                    $10,$11,$12::jsonb,$13::jsonb,
                    $14::jsonb,$15::jsonb,$16,$17,$18,
                    $19,$20,$21,
-                   $22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb,
-                   $31,$32,$33,$34::jsonb,
-                   $35)
+                   $22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb,$31,
+                   $32,$33,$34,$35::jsonb,
+                   $36)
            RETURNING *`,
         [
           input.parent.tenant_id, input.parent.account_id, input.name,
@@ -410,6 +410,8 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
           input.config.telephony_credential_id,
           // Automatic outcomes (0022): the parent's map, with the parent's catalog above.
           JSON.stringify(input.config.outcome_dispositions ?? {}),
+          // Inbound sticky routing (0024): the parent's choice for the same customers.
+          input.config.inbound_sticky_enabled,
           input.parent.id,
           // The chain head. A generation-0 parent carries NULL here (it
           // deliberately does not stamp itself), so the child of a first retry gets

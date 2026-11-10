@@ -78,8 +78,10 @@ describe('SAUsagePage', () => {
     renderPage();
     await screen.findByText('Talk time');
     expect(screen.getByText('1:01:01')).toBeTruthy();
+    expect(screen.getByLabelText('Talk time: 1:01:01')).toBeTruthy();
     expect(screen.getByText('3,661 s')).toBeTruthy();
     expect(screen.getByText('30')).toBeTruthy();
+    expect(screen.getByLabelText('Dials: 30')).toBeTruthy();
   });
 
   it('lists a row per tenant, and account rows only when "Show accounts" is on', async () => {
@@ -107,6 +109,41 @@ describe('SAUsagePage', () => {
     await screen.findByText('Acme');
     expect(screen.getByText(/nothing is charged/i)).toBeTruthy();
     expect(screen.getByText(/dial time/i)).toBeTruthy();
+  });
+
+  it('counts inbound calls apart: their own totals, and their own table behind the Inbound calls switch', async () => {
+    const inbound = {
+      inbound_calls: 12, inbound_answered_calls: 11, inbound_connected_calls: 7, inbound_seconds: 7322,
+      inbound_hold_seconds: 125, inbound_talk_seconds: 3000, inbound_analysis_audio_seconds: 0,
+    };
+    mocks.getUsageCounts.mockResolvedValue({
+      ...RESPONSE,
+      totals: { ...RESPONSE.totals, ...inbound },
+      tenants: [{ tenant_id: 't-1', tenant_name: 'Acme', counts: { ...counts(10), ...inbound }, accounts: [] }],
+    });
+    renderPage();
+    const totals = await screen.findByTestId('usage-inbound-totals');
+    expect(within(totals).getByText('Inbound calls')).toBeTruthy();
+    // Inbound "answered" is what the service picked up, not what an agent took: said so.
+    expect(within(totals).getByText('11 picked up by the service')).toBeTruthy();
+    expect(within(totals).getByText('Inbound put through to an agent')).toBeTruthy();
+    expect(within(totals).queryByText(/\banswered\b/)).toBeNull();
+    expect(within(totals).getByText('2:02:02')).toBeTruthy(); // carrier time, 7322 s
+    expect(within(totals).getByText('0:02:05')).toBeTruthy(); // hold, 125 s
+    expect(within(totals).getByLabelText('Inbound carrier time: 2:02:02')).toBeTruthy();
+    expect(within(totals).getByLabelText('Inbound hold time: 0:02:05')).toBeTruthy();
+    // The dials are what they are: the table shows them by default.
+    expect(screen.getByRole('columnheader', { name: 'Dials' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Carrier time' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Inbound calls' }));
+    expect(await screen.findByRole('columnheader', { name: 'Carrier time' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Hold time' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Picked up by the service' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Put through to an agent' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Answered' })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Dials' })).toBeNull();
+    expect(screen.getByTitle('7,322 s')).toBeTruthy();
+    expect(screen.getByText(/Inbound calls are not dials/)).toBeTruthy();
   });
 
   it('shows an empty state when no tenant has activity', async () => {

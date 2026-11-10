@@ -68,6 +68,11 @@ const Map<ReleaseReason, ReleaseCopy> _releaseCopy = {
     'Something went wrong on our side and the call was cleaned up. Nothing you did.',
     ReleaseTone.neutral,
   ),
+  ReleaseReason.inboundCall: ReleaseCopy(
+    'The customer rang us',
+    'They called in while we were ringing them, so this call was cancelled. Nothing to do.',
+    ReleaseTone.neutral,
+  ),
 };
 
 /// Copy for a release, falling back to the server's own sentence for a reason

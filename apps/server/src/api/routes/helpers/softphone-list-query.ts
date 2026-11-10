@@ -45,12 +45,3 @@ export function softphoneListFilters(query: SoftphoneListQuery): Omit<AgencyManu
     ...(query.to ? { to: new Date(query.to) } : {}),
   };
 }
-
-/** The validated query as `callCore`'s string map (only the keys that are set). */
-export function softphoneListQueryString(query: SoftphoneListQuery): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined) out[key] = String(value);
-  }
-  return out;
-}

@@ -46,7 +46,7 @@ function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignReco
     calling_days: [0, 1, 2, 3, 4, 5, 6], default_timezone: 'UTC',
     wrapup_seconds: 30, abandon_announcement_id: null, wrapup_auto_return: true, allow_wrapup_redial: false,
     assignment_mode: 'pool', on_unstaff: 'return_to_pool', callback_owner_grace_minutes: 30, callback_fallback: 'pool',
-    allow_agent_retry: false, agent_retry_rounds: 1, agent_retry_cooldown_minutes: 30,
+    allow_agent_retry: false, agent_retry_rounds: 1, agent_retry_cooldown_minutes: 30, inbound_sticky_enabled: true,
     retry_policy: {} as never, disposition_catalog: [], outcome_dispositions: {}, break_reasons: [],
     context_display: {} as never, record_calls: false, analysis_profile_id: null,
     status: 'running',

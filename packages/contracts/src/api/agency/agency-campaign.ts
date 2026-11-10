@@ -495,6 +495,13 @@ export interface AgencyCampaign {
   agent_retry_rounds?: number;
   /** Minutes since a contact's last attempt before an agent may retry it (0–10080, default 30). */
   agent_retry_cooldown_minutes?: number;
+  /**
+   * Inbound calls (docs/inbound.md §4.1): whether a customer of this campaign who rings in is
+   * put through to their own agent first (the sticky signals read the campaign's contacts and
+   * calls). On by default (`NOT NULL DEFAULT true`). Optional on a create and a PATCH, so a form
+   * that does not know the field leaves it as it is; settable at any status.
+   */
+  inbound_sticky_enabled?: boolean;
   record_calls?: boolean;
   /**
    * Which of a contact's uploaded CSV columns are rendered, and in what order

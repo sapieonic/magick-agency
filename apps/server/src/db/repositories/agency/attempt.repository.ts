@@ -33,6 +33,7 @@ import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from '
 import { attemptAgentUserSql } from './drilldown-sql.js';
 import { projectAttemptRow } from './projections.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
+import { unclaimContactUncharged } from './contact-unclaim-sql.js';
 
 /**
  * Tell pacing that live calls ENDED on these rows' accounts, so a campaign held at
@@ -448,6 +449,50 @@ export class AgencyAttemptRepository {
     return (rowCount ?? 0) > 0;
   }
 
+  /**
+   * Settle a ringing dial its customer superseded by ringing in (the in-flight clash,
+   * docs/inbound.md §5.4, IQ8), in ONE transaction:
+   *
+   *  1. the attempt `ended`, outcome `canceled`, with the reserved system code
+   *     `inbound_call` (`AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`, refused in every catalog)
+   *     as its write-up, attributed to nobody: the customer's own call took it over, so no
+   *     outcome is owed on it. Only while the row is not already `ended` (a second settle is a
+   *     no-op and returns null);
+   *  2. its contact back to `pending` now, UNCHARGED (`unclaimContactUncharged`, the statement
+   *     `AgencyContactRepository.unclaimUncharged` runs, shared through `contact-unclaim-sql.ts`): neither
+   *     `attempt_count` nor the our-fault ledger moves, and an agent's "Retry not reached"
+   *     marker the dial consumed is restored. Only while the contact is still `in_flight`.
+   *
+   * The inbound call's own busy probe (`numberLiveSql`'s inbound arm) keeps pacing off the
+   * number while the customer is on the line. Returns the ended row, or null when it was
+   * already ended.
+   */
+  async endSupersededByInbound(input: {
+    attemptId: string;
+    contactId: string;
+    code: string;
+    talkSeconds: number | null;
+  }): Promise<{ attempt: AgencyCallAttemptRecord; contactReturned: boolean } | null> {
+    const out = await withTransaction(async (client) => {
+      const { rows } = await client.query<AgencyCallAttemptRecord>(
+        `UPDATE agency_call_attempts
+            SET state = 'ended', outcome = 'canceled', ended_at = now(),
+                talk_seconds = COALESCE($2::int, talk_seconds),
+                disposition_code = $3, dispositioned_at = now(),
+                updated_at = now()
+          WHERE id = $1 AND state <> 'ended'
+        RETURNING *`,
+        [input.attemptId, input.talkSeconds, input.code],
+      );
+      const attempt = rows[0];
+      if (!attempt) return null;
+      const returned = await unclaimContactUncharged(client, input.contactId, attempt.agent_reopened === true);
+      return { attempt, contactReturned: returned !== null };
+    }, { pool: getPool() });
+    if (out) announceCapacityFreed([out.attempt]);
+    return out;
+  }
+
   async findById(id: string): Promise<AgencyCallAttemptRecord | null> {
     const { rows } = await getPool().query<AgencyCallAttemptRecord>(
       'SELECT * FROM agency_call_attempts WHERE id = $1',
@@ -558,6 +603,17 @@ export class AgencyAttemptRepository {
    *
    * An awaiting-outcome manual call (ended, unsettled) holds no slot and is not
    * counted.
+   *
+   * The third arm is the account's live ADMITTED inbound calls (`agency_inbound_calls` past
+   * `arrived` and not `ended`: greeted, playing its message, waiting or connected), decision IB5:
+   * a customer ringing in holds a line exactly like a call we placed, so outbound pacing shrinks
+   * to make room (docs/inbound.md §5.3). A caller who was turned away (the route at its
+   * `max_concurrent`, or the global or carrier scope full: `arrived`, never admitted or the
+   * admission taken back, `refuseAdmission`) is neither waiting nor connected and holds no slot,
+   * so it does not count while it hears "all lines are busy". Served by
+   * `idx_agency_inbound_calls_account_live` (0026), whose predicate is this literal
+   * (`state <> 'ended' AND state <> 'arrived'`, the route's admission count's too). A
+   * tenant-default call (no account) is no account's.
    */
   async countLiveForAccount(tenantId: string, accountId: string): Promise<number> {
     const { rows } = await getPool().query<{ n: string }>(
@@ -567,6 +623,9 @@ export class AgencyAttemptRepository {
          +
          (SELECT COUNT(*) FROM agency_manual_calls m
            WHERE m.account_id = $2::uuid AND m.tenant_id = $1::uuid AND m.state <> 'ended')
+         +
+         (SELECT COUNT(*) FROM agency_inbound_calls i
+           WHERE i.account_id = $2::uuid AND i.tenant_id = $1::uuid AND i.state <> 'ended' AND i.state <> 'arrived')
        )::text AS n`,
       [tenantId, accountId],
     );
