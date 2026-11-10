@@ -415,6 +415,12 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       callerDnc,
       sticky,
     };
+    // The spine row as this answer writes it, whatever the plan.
+    const arrivalRow = {
+      tenantId: arrival.tenantId, phoneNumberId, provider: arrival.provider,
+      telephonyCredentialId: arrival.credentialId, providerCallId: arrival.carrierCallId,
+      fromE164: arrival.fromE164, toE164: arrival.toE164, identification, answered: true,
+    };
 
     // Past the budget before anything is written: the fallback answered the caller, and the call
     // leaves nothing behind (as a call the fallback URL answers while we are down).
@@ -424,10 +430,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       // The tenant default (§8.3): no account, so no leg and nothing to stream; the carrier speaks
       // the closed message. The Missed row is the tenant default's.
       const { call } = await agencyInboundCallRepository.insertArrival({
-        tenantId: arrival.tenantId, accountId: null, routeId: null, phoneNumberId, provider: arrival.provider,
-        telephonyCredentialId: arrival.credentialId, providerCallId: arrival.carrierCallId,
-        fromE164: arrival.fromE164, toE164: arrival.toE164, identification, answered: true,
-        recordingRequested: false, analysisProfileId: null, closedCause: 'no_route',
+        ...arrivalRow, accountId: null, routeId: null, recordingRequested: false, analysisProfileId: null, closedCause: 'no_route',
       });
       if (!call) return this.refuseForeign(arrival);
       if (call.state !== 'ended') await this.settle(call, 'closed');
@@ -468,9 +471,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         underCap = await agencyInboundAnswerRepository.countLiveAdmittedOnRoute(route.id, client) < route.max_concurrent;
       }
       const inserted = await agencyInboundCallRepository.insertArrival({
-        tenantId: arrival.tenantId, accountId, routeId: route?.id ?? null, phoneNumberId, provider: arrival.provider,
-        telephonyCredentialId: arrival.credentialId, providerCallId: arrival.carrierCallId,
-        fromE164: arrival.fromE164, toE164: arrival.toE164, identification, answered: true,
+        ...arrivalRow, accountId, routeId: route?.id ?? null,
         // A call no agent can take is never recorded (a recording starts at the bind, §6): nor is
         // one over the route's `max_concurrent`, which hears "busy" (and one the bridge's shared
         // scopes turn away has the flag taken back with its admission, `refuseAdmission`).
