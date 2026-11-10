@@ -20,9 +20,10 @@
 /// | `GET /inbound/missed/count` | | [InboundMissedCountResponse] |
 ///
 /// Refusals are an `ErrorBody` read through `inboundCode` and its typed
-/// accessors (`errors.dart`). The five call routes are never behind the
-/// inbound flag (an agent can always finish a call); the Missed list is
-/// (`403 inbound_disabled`), its count is not.
+/// accessors (`errors.dart`). Neither the five call routes nor the Missed
+/// list and its count are behind the inbound flag: work already taken stays
+/// workable with inbound switched off (the server's `requireInboundEnabled`
+/// guards only the route editor and the queue tiles).
 ///
 /// The call ([InboundCall]) is the one shape every answer carries: the
 /// `inbound_call` station frame and every call route send it whole, so a
@@ -998,7 +999,8 @@ final class InboundCallLiveRefusal {
 ///
 /// Contract: `AgencyInboundErrorCode` / `AGENCY_INBOUND_ERROR_CODES` (`errors.ts` §6).
 enum InboundErrorCode implements WireEnum {
-  /// 403: inbound is off for the tenant or account (the Missed list; never the call routes).
+  /// 403: inbound is off for the tenant or account (the route editor and the queue tiles;
+  /// never the call routes or the Missed list).
   inboundDisabled('inbound_disabled'),
   inboundRouteInvalid('inbound_route_invalid'),
   inboundRouteNotFound('inbound_route_not_found'),

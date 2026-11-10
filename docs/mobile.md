@@ -631,9 +631,12 @@ packages/
 - **Inbound calls (2026-11-10) have run only against the fixtures.** The flow is tested with the
   contract's sample frames and answers, not with a server offering a real call to a station that
   declares `caps=inbound` (that server change was built alongside), nor on a phone or a carrier.
-  The chime's Kotlin was compiled and its JVM tests run only if "Not verified yet" says so below;
-  its Swift (`Chime.swift`, the `Playout` and `VoiceEngine` changes) has never been compiled, like
-  the rest of the iOS engine. Whether CallKit's own incoming-call UI should be used for an offer
-  (the app reports it as an outgoing call, as it does a campaign call) is not decided.
+  The chime's Dart reference and vectors ran; its Kotlin (`Chime.kt`, `ChimeTest.kt`, the
+  `EngineSlot` and `VoiceEngine` changes) has not been compiled here (no Android SDK, and Maven
+  Central refused the Kotlin toolchain), so the mobile CI's debug Android build is its first
+  compile, and `ChimeTest.kt` runs only where someone runs
+  `./gradlew :agent_audio:testDebugUnitTest` (CI does not); its Swift (`Chime.swift`, the `Playout` and `VoiceEngine` changes) has never been
+  compiled, like the rest of the iOS engine. Whether CallKit's own incoming-call UI should be used
+  for an offer (the app reports it as an outgoing call, as it does a campaign call) is not decided.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.
