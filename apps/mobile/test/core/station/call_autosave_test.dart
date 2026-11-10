@@ -50,6 +50,24 @@ void main() {
     });
   });
 
+  test('restored unsent text survives later restatements of the same call (app restart)', () {
+    fakeAsync((async) {
+      // What a killed app leaves: the agent's text stored, its PATCH never landed, so the
+      // server still holds 'abc'.
+      store.entries['inbound:ib-1'] = (notes: 'abc def', at: DateTime.utc(2026, 11, 2, 5, 30));
+      final b = make(async)..callChanged('ib-1', serverNotes: 'abc', accepting: true);
+      async.flushMicrotasks();
+      expect(b.text, 'abc def');
+      // Every later station change re-reports the same row with the server's older copy.
+      b.callChanged('ib-1', serverNotes: 'abc', accepting: true);
+      b.callChanged('ib-1', serverNotes: 'abc', accepting: false);
+      expect(b.text, 'abc def');
+      // A copy the server CHANGES to still never replaces restored text no save has carried.
+      b.callChanged('ib-1', serverNotes: 'from elsewhere', accepting: false);
+      expect(b.text, 'abc def');
+    });
+  });
+
   test('notes the server came to hold reach an untouched field, never over the agent\'s typing', () {
     fakeAsync((async) {
       final a = make(async)..callChanged('ib-1', serverNotes: null, accepting: true);

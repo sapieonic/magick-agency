@@ -72,6 +72,10 @@ class CallAutosave<C, R extends Object> {
 
   /// The agent edited the notes on this call, so blank means cleared, not never typed.
   bool _touched = false;
+
+  /// The text on screen came from the store (the agent's, from before a restart) and no save has
+  /// carried it since: the server's copy is older, so it never replaces it.
+  bool _restoredUnsent = false;
   bool _accepting = false;
   Timer? _timer;
   int _inFlight = 0;
@@ -103,11 +107,13 @@ class CallAutosave<C, R extends Object> {
       _accepting = accepting;
       // Notes the server came to hold (written on another device, or by the server before the
       // first copy carried them) reach a field the agent has not typed in, with nothing of
-      // theirs on its way: never over their text.
+      // theirs on its way: never over their text, and never over text restored from the store
+      // that no save has carried yet (the server's copy is the older one).
       if (callId != null &&
           serverNotes != null &&
           serverNotes != _text &&
           !_touched &&
+          !_restoredUnsent &&
           _timer == null &&
           _inFlight == 0) {
         _text = serverNotes;
@@ -124,6 +130,7 @@ class CallAutosave<C, R extends Object> {
     _callId = callId;
     _accepting = accepting;
     _touched = false;
+    _restoredUnsent = false;
     _failure = null;
     _inFlight = 0;
     _lastKeystrokeAt = null;
@@ -143,7 +150,10 @@ class CallAutosave<C, R extends Object> {
     }
     // An edit made while the read was in flight is the agent's and wins.
     if (_disposed || _callId != callId || _touched) return;
-    if (restored != null && restored.isNotEmpty) _text = restored;
+    if (restored != null && restored.isNotEmpty && restored != _text) {
+      _text = restored;
+      _restoredUnsent = true;
+    }
     _hydrated = true;
     _refresh();
   }
@@ -178,6 +188,7 @@ class CallAutosave<C, R extends Object> {
     if (_disposed || callId != _callId) return;
     _lastSaveSucceededAt = _now();
     _failure = null;
+    if (notes != null && notes == _text) _restoredUnsent = false;
     if (notes != null) unawaited(_persist(callId, notes));
     _refresh();
   }
@@ -217,6 +228,8 @@ class CallAutosave<C, R extends Object> {
       if (_disposed || _callId != callId) return;
       _lastSaveSucceededAt = _now();
       _failure = null;
+      // The server now holds what was on screen when this was sent.
+      if (notes != null && notes == _text) _restoredUnsent = false;
       if (notes != null && _touched) unawaited(_persist(callId, notes));
       _onSaved(saved);
     } on ApiError catch (e) {

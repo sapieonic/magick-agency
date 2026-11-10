@@ -3,7 +3,7 @@ import 'package:agency_wire/agency_wire.dart';
 import '../../core/api/api_error.dart';
 import '../../core/softphone/call_labels.dart' show formatDialNumber, recentCallWhen;
 
-/// The Missed list's words, ported from the console (`utils/inbound/missedCopy.ts`,
+/// The Missed list's words, the console's own (`utils/inbound/missedCopy.ts`,
 /// `inboundCopy.ts`, `components/agency/inbound/MissedCallsList.tsx`,
 /// `pages/agency/MissedCallsPage.tsx`) in the agent's view: the app is
 /// agent-only (M2), so nothing here names an assignee or reassigns. British
