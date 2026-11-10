@@ -278,7 +278,7 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   asked, by its version key (`id@updated_at`), so a newer frame survives. The station core checks
   too: after a reconnect `ready` with an unsettled call held and no `manual_call` frame within 2 s
   (the server re-sends one only for a call still unsettled), it reads the bootstrap itself,
-  retrying with backoff (2, 4, 8, 16, then every 30 s) while the socket is open, and lets go of a
+  retrying after 4, 8, 16, then every 30 s while the socket is open, and lets go of a
   call the server no longer holds. So the router's hold and the audio never depend on the
   soft-phone controller.
 - **Where the Phone tab shows (M3).** The bootstrap (`GET /softphone/bootstrap`) answered 200 and

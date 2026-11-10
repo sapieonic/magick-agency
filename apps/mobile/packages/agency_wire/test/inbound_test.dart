@@ -318,7 +318,9 @@ void main() {
       expect(closed.callbackDueAt, DateTime.utc(2026, 11, 2, 3, 30));
       expect(closed.isOpen, isTrue);
       expect(overflow.isWithheld, isTrue);
-      expect(overflow.assigneeUserId, isNull);
+      // An agent's page carries only their own rows (the server forces assignee=me).
+      expect(overflow.assigneeUserId, 'u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c');
+      expect(overflow.assigneeName, 'Priya Kulkarni');
       expect(voicemail.hasVoicemail, isTrue);
       expect(voicemail.voicemailUrl, '/inbound/missed/7d8e9f0a-1b23-4c4d-8e5f-607182930415/voicemail');
       expect(voicemail.callerDnc, isTrue);

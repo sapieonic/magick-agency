@@ -1689,6 +1689,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     } on ApiError catch (e) {
       if (epoch != _epoch) return;
       _saving = false;
+      // The refused outcome carried nothing: notes typed since the last confirmed save go by
+      // their own route again, or they would stay on this phone with the status at saving.
+      _autosave.outcomeRefused(call.id);
       final refusal = refusalBodyOf(e);
       final code = refusal?.softphoneCode;
       final allowed = refusal?.allowedCodes;

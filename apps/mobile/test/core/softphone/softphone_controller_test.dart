@@ -516,6 +516,22 @@ void main() {
       expect(h.view.outcomes.last.label, 'Promised to pay');
       expect(h.view.padRejection, catalogChangedCopy);
     });
+
+    softphoneTest('a refused outcome sends the last keystrokes by the notes’ own route', (h) {
+      h.reply('PATCH $callsPath/mc-1', manualCallJson({'state': 'ended'}));
+      h.openWith(call: owed());
+      h.refuse('POST $callsPath/mc-1/disposition', 'disposition_invalid', status: 422, extra: {
+        'allowed_codes': ['resolved', 'promised_to_pay'],
+      });
+      h.actions.setNotes('Wants a quote');
+      h.async.elapse(const Duration(milliseconds: 300));
+      h.actions.selectOutcome('wrong_number');
+      h.run(h.actions.saveOutcome());
+      expect(h.patches('mc-1'), isEmpty, reason: 'the outcome carried them, then was refused');
+      h.async.elapse(const Duration(milliseconds: 700));
+      h.pump();
+      expect(h.patches('mc-1').single.json['notes'], 'Wants a quote');
+    });
   });
 
   // ─── Rule 5 ───────────────────────────────────────────────────────────────
