@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/router.dart';
@@ -38,11 +39,12 @@ final testAvailabilityProvider = NotifierProvider<TestAvailability, SoftphoneAva
 
 const phoneShown = SoftphoneAvailability(visible: true, startAllowed: true, loaded: true);
 
-/// A container with the test's signals, gate and availability.
-ProviderContainer shellContainer() => ProviderContainer.test(overrides: [
+/// A container with the test's signals, gate and availability, and [extra].
+ProviderContainer shellContainer({List<Override> extra = const []}) => ProviderContainer.test(overrides: [
       stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider)),
       appGateProvider.overrideWith(TestGate.new),
       softphoneAvailabilityProvider.overrideWith((ref) => ref.watch(testAvailabilityProvider)),
+      ...extra,
     ]);
 
 Future<GoRouter> pumpShell(WidgetTester tester, ProviderContainer c, {String initial = Routes.home}) async {

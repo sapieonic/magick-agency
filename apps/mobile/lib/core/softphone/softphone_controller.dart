@@ -202,6 +202,13 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   Map<String, String> _fieldErrors = const {};
   bool _fieldsTouched = false;
   String? _presetFor;
+
+  /// A Missed call's Call back waiting for the soft phone ([callBack]).
+  ({String number, String? campaignId})? _pendingCallBack;
+
+  /// How the number got onto the pad, for `agency_softphone_call_placed`
+  /// (the console's `entry`): `typed`, `pasted`, `redial` or `inbound_callback`.
+  String _entry = 'typed';
   bool _disabledSeen = false;
   int? _disabledAtSeq;
 
@@ -309,6 +316,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _clearDraft();
     _tagDraft = null;
     _presetFor = null;
+    _pendingCallBack = null;
     _disabledSeen = false;
     _disabledAtSeq = null;
     _placing = false;
@@ -328,6 +336,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   /// the next call is most likely logged where the last one was.
   void _clearDraft() {
     _number = '';
+    _entry = 'typed';
     _callerDraft = null;
     _fieldValues = const {};
     _fieldErrors = const {};
@@ -1219,6 +1228,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void setNumber(String raw) {
     if (!_dialPadEnabled) return;
     _number = normaliseTypedNumber(sanitiseDialInput(raw));
+    _entry = 'typed';
     _dialError = null;
     _emit();
   }
@@ -1227,6 +1237,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void pressKey(String key) {
     if (!_dialPadEnabled) return;
     _number = appendDialKey(_number, key);
+    _entry = 'typed';
     _dialError = null;
     _emit();
   }
@@ -1250,6 +1261,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void pasteNumber(String raw) {
     if (!_dialPadEnabled) return;
     _number = normalisePastedNumber(raw, _countryCode);
+    _entry = 'pasted';
     _dialError = null;
     _emit();
   }
@@ -1287,7 +1299,12 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     );
     try {
       final call = await _api.placeCall(request, accountId: host.accountId);
-      Telemetry.event('agency_softphone_call_placed', {'tagged': request.campaignId != null, 'overrides': _overridesLabel(overrides)});
+      Telemetry.event('agency_softphone_call_placed', {
+        'tagged': request.campaignId != null,
+        'overrides': _overridesLabel(overrides),
+        'entry': _entry,
+        'surface': _surface == SoftphoneSurface.station ? 'station' : 'softphone_page',
+      });
       CallTelemetry.instance.manualPlaced(call);
       if (epoch != _epoch) return;
       _placing = false;
@@ -1421,9 +1438,42 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     final tagId = from.tag?.campaignId;
     _tagDraft = tagId == null || _bootstrap?.taggable(tagId) != null ? tagId : null;
     _callerDraft = from.callerId;
+    _entry = 'redial';
     _dialError = null;
     _focusCallToken++;
     _emit();
+  }
+
+  @override
+  void callBack(String number, {String? campaignId}) {
+    _pendingCallBack = (number: number, campaignId: campaignId);
+    _emit();
+  }
+
+  /// Puts a waiting [callBack] on the pad once the soft phone can take it:
+  /// a session open here (the soft phone's own, or a campaign switched to it)
+  /// whose bootstrap was read for it, nothing on screen, not in finish mode.
+  /// A call live or owing its outcome keeps the screen: the number waits until
+  /// it settles (the console's `presetNumber`). Run before every emit.
+  void _applyCallBack() {
+    final pending = _pendingCallBack;
+    final host = _host;
+    final b = _bootstrap;
+    if (pending == null || host == null || b == null || _bootstrapFor != host.sessionId) return;
+    if (host.kind == SessionKind.campaign && !host.onSoftphone) return;
+    if (_call != null || _placing || _finishOnly) return;
+    _pendingCallBack = null;
+    _number = sanitiseDialInput(pending.number);
+    final tag = pending.campaignId;
+    // The matched campaign is "Log to" only where the agent may log to it;
+    // otherwise the tag stays as it was (the console's `presetCampaignId`).
+    if (tag != null && b.taggable(tag) != null && tag != _tagDraft) {
+      _tagDraft = tag;
+      _callerDraft = null;
+    }
+    _entry = 'inbound_callback';
+    _dialError = null;
+    _focusCallToken++;
   }
 
   // ─── Setup ────────────────────────────────────────────────────────────────
@@ -1749,6 +1799,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
 
   void _emit() {
     if (_building) return;
+    _applyCallBack();
     final next = _compute();
     _sendDisplayName();
     state = next;

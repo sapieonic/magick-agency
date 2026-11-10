@@ -13,6 +13,8 @@ import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
+import 'package:magick_agency_agent/features/missed/missed_access.dart';
+import 'package:magick_agency_agent/features/missed/missed_count_controller.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
 import 'package:magick_agency_agent/main.dart';
 
@@ -341,6 +343,13 @@ void main() {
         expect(overrides, contains(same(o)));
       }
       expect(origins, containsAll([softphoneViewProvider, softphoneActionsProvider, softphoneAvailabilityProvider]));
+    });
+
+    test('the Missed list’s count is plugged in behind its seam', () {
+      for (final o in missedCallsOverrides) {
+        expect(overrides, contains(same(o)));
+      }
+      expect(origins, contains(missedCallsAccessProvider));
     });
 
     test('the station core hosts the soft phone, and the pre-flight checks the soft phone asks are provided', () {

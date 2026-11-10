@@ -30,11 +30,15 @@ locally: `apps/mobile/README.md`. As of 2026-11-01.
   when Search is pressed, the others as typed. Recent searches (last five) stay on the device
   until Clear or any route to the signed-out state (sign-out, a refused session, start-up with
   nobody signed in);
+- Missed calls (inbound calls that reached nobody, assigned to the agent): a segment of My calls
+  with the open count as a badge on the tab, Call back into the soft phone, Mark handled and
+  Reopen. See "Missed calls" below;
 - the Me tab: account switch, email preferences, the dark theme switch, sound and vibration,
   diagnostics, sign out.
 
 **The tabs**: Station, Phone, Performance, My calls, Me. The Phone tab shows only where the soft
-phone is available to the agent (decision M3); without it the bar has four tabs.
+phone is available to the agent (decision M3); without it the bar has four tabs. Missed calls is
+not a tab: it is a segment of My calls, whose tab carries its badge.
 
 **The tab rule** (decision M4):
 
@@ -344,6 +348,66 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   (the app has no IANA time-zone database). Conflicts with another account are settled by
   switching account. The copy says the ringback "plays on your phone".
 
+## Missed calls
+
+The console's Missed calls page ([`inbound.md`](inbound.md) §7, §8.4) in an agent's view (M2): the
+inbound calls that reached nobody and were assigned to this agent. The routes are the console's
+(`/proxy/agency/inbound/missed`, `…/:id/handled`, `…/:id/reopen`, `…/count`); the app adds none.
+Code: `lib/features/missed/`.
+
+- **Where it is.** A third segment of My calls ("Missed calls", or "Missed" beside two others),
+  with the open count as a badge on the segment and on the My calls tab ("100+" past the server's
+  cap, `InboundMissedCountResponse.badge`). Not a sixth tab: five already leave about 72 dp each
+  on a 360 dp phone, and Material's bar holds three to five. On duty on a campaign the tab is
+  disabled like the others (M4).
+- **When it shows** (the console's `useMissedCallsAccess`, with the server's answer in place of a
+  role check, as for the Phone tab): `GET /inbound/missed/count` answered 200 (the agent holds
+  `agency.inbound.read`), and `agency_inbound_enabled` is on or the agent has rows (`has_rows`).
+  A 403 (or a 404 from a server without the route) hides it; no answer yet, or only failed reads,
+  hides it too, and a failed re-read keeps the last answer. With the flag off and rows there, the
+  list shows under the console's notice (callers hear the closed message and are still listed). The
+  count is read when a workspace starts, on return to the app at most every 5 min (at once after a
+  failed read), after a Mark handled or a Reopen, and on a pull to refresh of the list. The console
+  polls every minute while inbound is on; the app does not poll. The shell and My calls read a
+  seam (`missed_access.dart`, hidden by default) that `main.dart` plugs the count into.
+- **The list.** The agent's rows only: the server forces `assignee=me` without `agency.supervise`,
+  so the app never sends an assignee and has no Reassign. "To follow up" / "Handled" and the reason
+  filter (the console's dates are not offered), newest first, keyset pages of 50, the next page
+  fetched ten rows before the end, pull to refresh. Rows are cards of varying height (the
+  actions), not the fixed-height rows of the other lists. Each row: the caller's number (the row
+  carries no contact name) or "Number withheld", a DNC badge, why it was missed in the console's
+  words ("Out of hours", or the closed cause: "Inbound switched off", "Number not on a route",
+  "Phone line not active"; "Hung up while waiting", "Nobody free to answer", "All lines busy",
+  "Couldn't be answered"), when, the number rung and the route, the matched campaign and any
+  callback the call booked; on a handled row who handled it ("You", "Customer reached by …") and
+  the reached note.
+- **Call back** (shown where the soft phone may start a call: the Phone tab shows and the soft
+  phone is not in finish mode; otherwise the console's note says to call another way and mark the
+  call handled). It hands the number and the matched campaign to the soft phone
+  (`SoftphoneActions.callBack`) and goes to the pad: the Phone tab, or the station for a campaign
+  switched to the soft phone (SP7). Like redial it fills the pad, sets "Log to" to the matched
+  campaign when the agent may log to it (else leaves it), and focuses Call; it never dials, so the
+  DNC check and its note (SP1) and the calling hours apply as to a typed number. It waits while
+  the soft phone cannot take it (not open here yet, its bootstrap not read, a call on screen,
+  finish mode) and fills the pad when it can; with the soft phone not open the agent is told the
+  number will be ready once it is. A withheld caller's Call back is disabled with the reason. The
+  number never goes in a route.
+- **Mark handled / Reopen.** One of each at a time. The row leaves the view it no longer matches
+  (or takes the server's copy), the badge is re-read, and the result is announced. A refusal is
+  said on the row: `inbound_missed_call_not_found` in the console's words, a code it has no words
+  for in the server's sentence, no answer in the app's.
+- **Voicemail.** `voicemail_url` is served by `GET /proxy/agency/inbound/missed/:id/voicemail`
+  (`audio/wav`, bearer token and scope headers required, `Cache-Control: private, no-store`); the
+  console fetches it into a blob URL. The app has no player that can send those headers (the
+  `agent_audio` engine plays 8 kHz A-law station frames, not a 16 kHz WAV file), and adding a pub
+  dependency for playback is left for later (iOS does not build yet). A row with a voicemail says
+  "Left a voicemail · Listen on the console". The wire row carries no voicemail length, so none is
+  shown.
+- **Telemetry.** The console sends no event of its own for the Missed list, so neither does the
+  app. A call placed after Call back carries `entry: 'inbound_callback'` on
+  `agency_softphone_call_placed`, which now has the console's `entry` (`typed`, `pasted`, `redial`,
+  `inbound_callback`) and `surface` (`softphone_page`, `station`). No number is sent.
+
 ## Inside the app
 
 ```
@@ -359,7 +423,8 @@ lib/
     audio/      orchestration of packages/agent_audio by phase
     lifecycle/  foreground rules (device_away), wake lock, local notifications
   features/   auth, join, accounts, campaigns, preflight, station, softphone (the Phone tab and
-              the panel), performance, calls (with calls/softphone), settings
+              the panel), performance, calls (with calls/softphone), missed (My calls' Missed
+              segment), settings
 packages/
   agency_wire/  hand-written Dart types for the API and station frames
   agent_audio/  the native voice engine (Kotlin, Swift)

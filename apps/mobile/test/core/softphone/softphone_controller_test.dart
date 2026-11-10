@@ -225,6 +225,67 @@ void main() {
     });
   });
 
+  // ─── A Missed call's Call back ─────────────────────────────────────────────
+
+  group('Call back (a Missed call) fills the pad like redial, and never dials', () {
+    softphoneTest('number, the matched campaign as Log to, and Call takes focus', (h) {
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.number, '+918765432109');
+      expect(h.view.tagCampaignId, 'camp-1');
+      expect(h.view.focusCallToken, 1);
+      expect(h.view.canDial, isTrue);
+      h.pump();
+      expect(h.dials, isEmpty);
+    });
+
+    softphoneTest('a campaign the agent may not log to leaves Log to as it was', (h) {
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109', campaignId: 'camp-not-mine');
+      expect(h.view.number, '+918765432109');
+      expect(h.view.tagCampaignId, isNull);
+      expect(h.view.focusCallToken, 1);
+    });
+
+    softphoneTest('asked before the soft phone is open, it waits and fills the pad once it is', (h) {
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.number, '');
+      expect(h.view.focusCallToken, 0);
+      h.host.view = hostView();
+      h.pump();
+      expect(h.view.number, '+918765432109');
+      expect(h.view.tagCampaignId, 'camp-1');
+      expect(h.view.focusCallToken, 1);
+      expect(h.dials, isEmpty);
+    });
+
+    softphoneTest('a call on screen keeps it: the number waits, and the call’s own stays', (h) {
+      h.openWith(call: ringing({'id': 'mc-9', 'destination_e164': '+919000000001'}));
+      h.actions.callBack('+918765432109');
+      expect(h.view.number, '+919000000001');
+      expect(h.view.focusCallToken, 0);
+      expect(h.dials, isEmpty);
+    });
+
+    softphoneTest('in finish mode nothing is filled', (h) {
+      h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'softphone_enabled': false}));
+      h.openWith(number: '');
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.finishOnly, isTrue);
+      expect(h.view.number, '');
+      expect(h.view.focusCallToken, 0);
+    });
+
+    softphoneTest('a campaign station on the soft phone (SP7) takes it, over the station’s own tag', (h) {
+      h.host.view = hostView(sessionId: 'sess-c', kind: SessionKind.campaign, campaignId: 'camp-1', onSoftphone: true);
+      h.pump();
+      h.actions.callBack('+918765432109');
+      expect(h.view.number, '+918765432109');
+      expect(h.view.focusCallToken, 1);
+      expect(h.dials, isEmpty);
+    });
+  });
+
   // ─── Rule 3 ───────────────────────────────────────────────────────────────
 
   group('rule 3: setup locks once placed; the caller ID follows the tag', () {

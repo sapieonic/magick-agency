@@ -10,6 +10,7 @@ import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/station/station_view_mapper.dart';
+import 'package:magick_agency_agent/features/missed/missed_access.dart';
 
 import '../core/auth/support/harness.dart';
 import 'shell_harness.dart';
@@ -234,6 +235,26 @@ void main() {
       await pumpAt(tester, 800, textScale: 2);
       expect(tabLabels(tester), ['Station', 'Phone', 'Stats', 'My calls', 'Me']);
       expectOneLineEach(tester, 1.3);
+    });
+  });
+
+  group('the Missed calls badge', () {
+    testWidgets('My calls carries the open count; none, no badge', (tester) async {
+      c = shellContainer(extra: [
+        missedCallsAccessProvider.overrideWithValue(const MissedCallsAccess(visible: true, inboundOn: true, badge: '100+')),
+      ]);
+      await pumpShell(tester, c);
+      expect(tabLabels(tester), ['Station', 'Performance', 'My calls', 'Me'], reason: 'no sixth tab');
+      final badge = tester.widget<Badge>(find.byKey(const Key('tab-missed-badge')).first);
+      expect((badge.label! as Text).data, '100+');
+    });
+
+    testWidgets('no open rows (or the list hidden): no badge', (tester) async {
+      c = shellContainer(extra: [
+        missedCallsAccessProvider.overrideWithValue(const MissedCallsAccess(visible: true, inboundOn: true)),
+      ]);
+      await pumpShell(tester, c);
+      expect(find.byKey(const Key('tab-missed-badge')), findsNothing);
     });
   });
 }

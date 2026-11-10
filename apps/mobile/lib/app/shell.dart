@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../core/station/station_signals.dart';
+import '../features/missed/missed_access.dart';
 import 'routes.dart';
 
 /// The shell's branches, in the router's order (`routerProvider`). The set is
@@ -67,6 +68,9 @@ bool tabLabelFits(String label, {required double width, required TextStyle? styl
 ///   list; on the soft phone, so does the Phone tab (the soft phone is in the
 ///   station then). With a soft-phone session the Station tab is the campaign
 ///   list, which says the soft phone is open.
+///
+/// My calls carries the open Missed calls as a badge (`missedCallsAccessProvider`):
+/// the Missed list is a segment of that tab, not a tab of its own.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.shell});
 
@@ -90,6 +94,7 @@ class AppShell extends ConsumerWidget {
     final campaign = signals.sessionKind == StationSessionKind.campaign;
     final held = campaign && signals.holdsStation;
     final owed = signals.outcomeOwed;
+    final missedBadge = ref.watch(missedCallsAccessProvider.select((a) => a.badge));
 
     // The tabs that lead to the session's own screen: the only ones open while
     // an owed outcome holds the agent. On the soft phone, Phone leads to the station.
@@ -120,9 +125,12 @@ class AppShell extends ConsumerWidget {
         ShellBranch.calls => (Icons.list_alt_outlined, Icons.list_alt, fitted('My calls', 'Calls')),
         _ => (Icons.person_outline, Icons.person, 'Me'),
       };
+      Widget badged(IconData data) => branch == ShellBranch.calls && missedBadge.isNotEmpty
+          ? Badge(key: const Key('tab-missed-badge'), label: Text(missedBadge), child: Icon(data))
+          : Icon(data);
       return NavigationDestination(
-        icon: Icon(icon),
-        selectedIcon: Icon(selected),
+        icon: badged(icon),
+        selectedIcon: badged(selected),
         label: label,
         enabled: reason == null,
         tooltip: reason,

@@ -1169,6 +1169,16 @@ abstract interface class SoftphoneActions {
   /// its caller ID) and bumps [SoftphoneView.focusCallToken]. Never dials.
   void redial(String recentCallId);
 
+  /// A Missed inbound call's **Call back** (`docs/inbound.md` §7): puts
+  /// [number] (E.164) on the pad, and [campaignId] (the matched campaign) as
+  /// "Log to" when it is taggable, as [redial] does, and bumps
+  /// [SoftphoneView.focusCallToken]. Never dials: the agent presses Call, and
+  /// every soft-phone rule (the DNC check and its note) applies as to a typed
+  /// number. Held until the soft phone can take it (a session open here whose
+  /// bootstrap has been read, no call on screen, not in finish mode), so it
+  /// can be asked before the soft phone is open; a later one replaces it.
+  void callBack(String number, {String? campaignId});
+
   // ── Setup ──
 
   /// The tag before dialling; null logs to no campaign. Changing it resets the

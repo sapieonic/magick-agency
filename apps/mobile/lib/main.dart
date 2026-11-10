@@ -19,6 +19,7 @@ import 'core/station/station_deps.dart';
 import 'core/telemetry/log.dart';
 import 'core/telemetry/posthog_sink.dart';
 import 'core/telemetry/telemetry.dart';
+import 'features/missed/missed_count_controller.dart';
 import 'features/preflight/device_preflight_checks.dart';
 import 'features/preflight/preflight_checks.dart';
 
@@ -81,6 +82,9 @@ List<Override> appOverrides({required Env env, required ClientIdentity identity,
       // The soft phone's call domain behind the Phone tab's and the panel's
       // seam (softphone_view.dart), and the Phone tab's availability.
       ...softphoneOverrides,
+      // The Missed list's count behind the seam the shell and My calls read
+      // (missed_access.dart): whether the list shows, and the badge.
+      ...missedCallsOverrides,
       // Pre-flight measures with the station's own voice engine instance, never
       // a second one. The soft phone asks it for the microphone permission too.
       preflightChecksProvider.overrideWith(
