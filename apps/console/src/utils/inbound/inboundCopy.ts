@@ -8,7 +8,6 @@ import {
 } from '../../types/inbound';
 import type {
   AgencyInboundErrorCode,
-  AgencyInboundMissedCall,
   AgencyInboundMissedListQuery,
   AgencyInboundMissedReason,
   AgencyInboundStickyMode,
@@ -161,13 +160,6 @@ export function recordingUsedBy(routes: ReadonlyArray<{ name: string }>): string
   const names = routes.map((r) => `“${r.name}”`);
   const list = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   return `Used by ${list}`;
-}
-
-/** Where a Missed row stands with its assignee, in words. */
-export function assigneeLabel(call: Pick<AgencyInboundMissedCall, 'assignee_user_id' | 'assignee_name'>, userId: string | null): string {
-  if (!call.assignee_user_id) return 'The account';
-  if (call.assignee_user_id === userId) return 'You';
-  return call.assignee_name ?? 'Former member';
 }
 
 export interface MissedFiltersDraft {

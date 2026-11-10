@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   EMPTY_MISSED_FILTERS,
   INBOUND_REFUSAL_COPY,
-  assigneeLabel,
   inboundRefusalCopy,
   missedQueryFromDraft,
 } from '../../utils/inbound/inboundCopy';
@@ -53,13 +52,6 @@ describe('the Missed list query', () => {
     });
     expect(missedQueryString({ ...query, cursor: 'c 1', limit: 50 }))
       .toBe('?status=handled&assignee=unassigned&reason=closed&from=2026-11-01T00%3A00%3A00.000Z&to=2026-11-04T00%3A00%3A00.000Z&cursor=c+1&limit=50');
-  });
-
-  it('names the assignee: the caller, the account, someone, or a former member', () => {
-    expect(assigneeLabel({ assignee_user_id: null, assignee_name: null }, 'u-1')).toBe('The account');
-    expect(assigneeLabel({ assignee_user_id: 'u-1', assignee_name: 'Asha' }, 'u-1')).toBe('You');
-    expect(assigneeLabel({ assignee_user_id: 'u-2', assignee_name: 'Ravi' }, 'u-1')).toBe('Ravi');
-    expect(assigneeLabel({ assignee_user_id: 'u-3', assignee_name: null }, 'u-1')).toBe('Former member');
   });
 });
 

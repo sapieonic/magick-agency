@@ -65,11 +65,6 @@ export function useCustomerHistoryAvailable(): boolean {
   return hasPermission(useRoleOrNone(), 'agency.customer_history.read');
 }
 
-/** Whether this caller gets "Missed calls" ({@link useMissedCallsAccess}). */
-export function useMissedCallsAvailable(): boolean {
-  return useMissedCallsAccess().available;
-}
-
 /** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
 export function useSoftphoneAvailable(): boolean {
   const role = useRoleOrNone();
