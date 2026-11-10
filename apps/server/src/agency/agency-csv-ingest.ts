@@ -337,7 +337,7 @@ export interface AgencyIngestOptions {
   dedupePhones?: boolean;
   /**
    * Dedupe on these columns instead of the phone: a later row whose values in
-   * ALL of them repeat an earlier ACCEPTED row's is rejected `duplicate_key`.
+   * ALL of them repeat an earlier row accepted here is rejected `duplicate_key`.
    * Takes precedence over `dedupePhones`. For a loan book, the loan number: one
    * borrower with two loans is two rows on one number, and both must be called.
    * Up to `AGENCY_MAX_DEDUPE_COLUMNS` columns combine into one key when no single
@@ -802,8 +802,12 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
       }
 
       // Dedupe on the operator's columns. Checked after the phone, like the phone
-      // dedupe, so only an ACCEPTED row claims its key: a first row rejected for
-      // a bad number does not cost a later, good row with the same loan number.
+      // dedupe, so a row this module rejects never claims its key: a first row
+      // rejected for a bad number does not cost a later, good row with the same
+      // loan number. A row the DNC check later suppresses DOES claim it (that
+      // check runs in the service's `onBatch`, after this one), so a later row
+      // with the same key on another, callable number is dropped as a duplicate:
+      // open in docs/decisions.md §4, "DNC row claims its key".
       // The reason names the columns and never their values, which may sit in an
       // ignored column the rejected-rows export must not leak.
       if (dedupeMode === 'column') {

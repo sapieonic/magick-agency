@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   MAPPING_BLOCK_COPY,
   PHONE_DEDUPE,
@@ -58,7 +59,7 @@ function keyOf(value: string): DedupeKey {
 /** Why the choice matters, under the selects. */
 function dedupeNote(analysis: AgencyColumnAnalysis, state: MappingState, phone: string | null): string {
   if (state.dedupe.mode === 'none') {
-    return 'Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row is skipped. The dialler never calls one number twice at the same time.';
+    return 'Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row (the same number and the same value in every column not set to Ignore) is skipped. The dialler never calls one number twice at the same time.';
   }
   const keys = state.dedupe.keys;
   const onPhone = keys.some((key) => key.kind === 'phone');
@@ -106,6 +107,24 @@ export function ColumnMapper({
   const firstOptions = dedupeKeyOptions(analysis, state, 0);
   const canAddKey = canAddDedupeKey(analysis, state);
   const optionLabel = (key: DedupeKey) => (key.kind === 'phone' ? 'Phone number' : key.column);
+  const firstSelect = useRef<HTMLSelectElement>(null);
+  // A removed key's select leaves the page; focus moves to the first select
+  // rather than dropping to the document.
+  const removeKey = (index: number) => {
+    onChange(removeDedupeKey(state, index));
+    firstSelect.current?.focus();
+  };
+  const removeButton = (key: DedupeKey, index: number) => (
+    <button
+      type="button"
+      className="btn-secondary"
+      disabled={disabled}
+      aria-label={`Remove ${optionLabel(key)} from the duplicate check`}
+      onClick={() => removeKey(index)}
+    >
+      Remove
+    </button>
+  );
 
   return (
     <div className={styles.mapper}>
@@ -237,7 +256,9 @@ export function ColumnMapper({
       */}
       <div className={`form-group ${styles.dedupe}`}>
         <label htmlFor="ingest-dedupe">Check duplicates on</label>
+        <div className={styles.dedupeKey}>
         <select
+          ref={firstSelect}
           id="ingest-dedupe"
           aria-describedby="ingest-dedupe-note"
           value={keys.length > 0 ? keyValue(keys[0]!) : 'none'}
@@ -257,6 +278,9 @@ export function ColumnMapper({
           ))}
           <option value="none">Don&apos;t remove duplicates</option>
         </select>
+        {/* Any key can go while two or more remain; the last one goes by "Don't remove duplicates". */}
+        {keys.length > 1 ? removeButton(keys[0]!, 0) : null}
+        </div>
         {/*
           Keys 2 and 3: a combination. A row is a duplicate only when every key
           matches, so a loan number repeated across branches is checked together
@@ -265,7 +289,9 @@ export function ColumnMapper({
         {keys.slice(1).map((key, offset) => {
           const index = offset + 1;
           return (
-            <div key={keyValue(key)} className={styles.dedupeKey}>
+            // Keyed by position, not by value: a changed value must not remount
+            // the row, or keyboard focus drops out of the select mid-choice.
+            <div key={index} className={styles.dedupeKey}>
               <span className={styles.dedupeAnd} aria-hidden="true">and</span>
               <select
                 aria-label={`Duplicate check column ${index + 1}`}
@@ -280,15 +306,7 @@ export function ColumnMapper({
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={disabled}
-                aria-label={`Remove ${optionLabel(key)} from the duplicate check`}
-                onClick={() => onChange(removeDedupeKey(state, index))}
-              >
-                Remove
-              </button>
+              {removeButton(key, index)}
             </div>
           );
         })}

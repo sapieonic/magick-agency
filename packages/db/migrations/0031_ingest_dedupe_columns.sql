@@ -14,6 +14,9 @@
 -- `dedupe_column` (0007) is superseded and no longer written. The backfill copies every value it
 -- holds into `dedupe_columns`, so every job, old or new, is read from the one column.
 --
+-- The backfill and the Down's copy run with the `updated_at` trigger disabled: `updated_at` is the
+-- running job's heartbeat (`reapStaleJobs`), and a schema copy is not progress.
+--
 -- ── Locking ───────────────────────────────────────────────────────────────────
 -- ADD COLUMN with no default does not rewrite the table, and the CHECK is checked against the
 -- rows the backfill writes; agency_ingest_jobs holds one row per upload, not per contact.
@@ -28,11 +31,17 @@
 ALTER TABLE agency_ingest_jobs
   ADD COLUMN dedupe_columns TEXT[],
   ADD CONSTRAINT ck_agency_ingest_jobs_dedupe_columns
-    CHECK (dedupe_columns IS NULL OR cardinality(dedupe_columns) BETWEEN 1 AND 3);
+    CHECK (dedupe_columns IS NULL OR (
+      cardinality(dedupe_columns) BETWEEN 1 AND 3
+      AND array_position(dedupe_columns, NULL) IS NULL
+      AND array_position(dedupe_columns, '') IS NULL
+    ));
 
+ALTER TABLE agency_ingest_jobs DISABLE TRIGGER agency_ingest_jobs_updated_at;
 UPDATE agency_ingest_jobs
    SET dedupe_columns = ARRAY[dedupe_column]
- WHERE dedupe_column IS NOT NULL;
+ WHERE dedupe_column IS NOT NULL AND dedupe_column <> '';
+ALTER TABLE agency_ingest_jobs ENABLE TRIGGER agency_ingest_jobs_updated_at;
 
 COMMENT ON COLUMN agency_ingest_jobs.dedupe_columns IS
   'Headers that together mark a duplicate row in the file, 1 to 3, in the operator''s order: a duplicate only when every one matches an earlier accepted row (each trimmed, case-insensitive; the phone column by its normalised number; a row with any of them blank is never a duplicate). NULL: dedupe_phones decides.';
@@ -45,9 +54,11 @@ COMMENT ON COLUMN agency_ingest_jobs.dedupe_column IS
 -- 0007's column can name one header. A single-column key goes back exactly; a combination keeps
 -- its first column, which is what the job row can still say about a finished upload (the rule
 -- that ran is gone with the column).
+ALTER TABLE agency_ingest_jobs DISABLE TRIGGER agency_ingest_jobs_updated_at;
 UPDATE agency_ingest_jobs
    SET dedupe_column = dedupe_columns[1]
  WHERE dedupe_column IS NULL AND dedupe_columns IS NOT NULL;
+ALTER TABLE agency_ingest_jobs ENABLE TRIGGER agency_ingest_jobs_updated_at;
 
 COMMENT ON COLUMN agency_ingest_jobs.dedupe_column IS
   'Header whose value marks a duplicate row in the file (trimmed, case-insensitive; a blank value is never a duplicate). NULL: dedupe_phones decides.';

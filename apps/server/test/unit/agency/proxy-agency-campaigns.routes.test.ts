@@ -647,6 +647,19 @@ describe('agency ingest routes', () => {
       expect(mocks.repo.create.mock.calls[0]![0]).toMatchObject({ dedupe_columns: ['Loan No'], dedupe_phones: true });
     });
 
+    it('the phone column alone, in either form, is recorded as the phone dedupe, not a column key', async () => {
+      mocks.repo.create.mockResolvedValue(job());
+      expect((await post({ dedupe_columns: [' mobile '] })).statusCode).toBe(202);
+      expect((await post({ dedupe_column: 'Mobile' })).statusCode).toBe(202);
+      for (const [input] of mocks.repo.create.mock.calls) {
+        expect(input).not.toHaveProperty('dedupe_columns');
+        expect(input.dedupe_phones).toBe(true);
+      }
+      // In a combination the phone column is one key part and is kept.
+      await post({ dedupe_columns: ['Mobile', 'Name'] });
+      expect(mocks.repo.create.mock.calls[2]![0]).toMatchObject({ dedupe_columns: ['Mobile', 'Name'] });
+    });
+
     it('an older request without either creates the same job as before', async () => {
       mocks.repo.create.mockResolvedValue(job());
       await post({});

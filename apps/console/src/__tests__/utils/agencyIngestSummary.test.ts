@@ -208,6 +208,8 @@ describe('rejection groups', () => {
     );
     expect(summary.groups[0]!.label).toBe('Duplicate Loan No + Branch + EMI Month of an earlier row');
     expect(summary.duplicateMeaning).toBe('a row whose Loan No, Branch and EMI Month all match an earlier row in the file.');
+    expect(buildIngestSummary(job({ dedupe_columns: ['Loan No', 'Branch'] })).duplicateMeaning)
+      .toBe('a row whose Loan No and Branch both match an earlier row in the file.');
   });
 
   it('drops zero-count reasons', () => {

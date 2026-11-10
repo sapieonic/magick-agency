@@ -176,7 +176,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
     duplicates: job.duplicates,
     duplicateMeaning:
       keyColumns.length > 1
-        ? `a row whose ${keyColumns.slice(0, -1).join(', ')} and ${keyColumns[keyColumns.length - 1]} all match an earlier row in the file.`
+        ? `a row whose ${keyColumns.slice(0, -1).join(', ')} and ${keyColumns[keyColumns.length - 1]} ${keyColumns.length === 2 ? 'both' : 'all'} match an earlier row in the file.`
         : dedupeKey
           ? `a ${dedupeKey} value that already appeared earlier in the file.`
           : 'a number that already appeared earlier in the file.',

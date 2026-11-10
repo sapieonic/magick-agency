@@ -78,7 +78,7 @@ describe('ColumnMapper: Check duplicates on', () => {
 
   it('says that "don\'t remove duplicates" still skips an exact copy', () => {
     renderMapper({ ...initialMapping(ANALYSIS), dedupe: { mode: 'none' } });
-    expect(screen.getByTestId('dedupe-note').textContent).toContain('only an exact copy of an earlier row is skipped');
+    expect(screen.getByTestId('dedupe-note').textContent).toContain('only an exact copy of an earlier row (the same number and the same value in every column not set to Ignore) is skipped');
   });
 
   it('says what a chosen column means for rows that share a number', () => {
@@ -122,6 +122,31 @@ describe('ColumnMapper: Check duplicates on', () => {
       ]);
     });
 
+    it('the first key can be removed while another remains, and focus lands on the first select', () => {
+      const { select, onChange } = renderMapper(combined);
+      const remove = screen.getByRole('button', { name: 'Remove Loan No from the duplicate check' });
+      remove.focus();
+      fireEvent.click(remove);
+      expect(onChange.mock.calls[0]![0].dedupe).toEqual({ mode: 'keys', keys: [{ kind: 'phone' }] });
+      expect(document.activeElement).toBe(select);
+    });
+
+    it('a single key has no Remove: "Don\'t remove duplicates" is how to say none', () => {
+      renderMapper();
+      expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
+    });
+
+    it('changing an extra key keeps its select mounted, so keyboard focus stays in it', () => {
+      const onChange = vi.fn<(next: MappingState) => void>();
+      const { rerender } = render(<ColumnMapper analysis={ANALYSIS} state={combined} onChange={onChange} fileName="loans.csv" />);
+      const second = screen.getByLabelText('Duplicate check column 2') as HTMLSelectElement;
+      second.focus();
+      fireEvent.change(second, { target: { value: 'column:none' } });
+      rerender(<ColumnMapper analysis={ANALYSIS} state={onChange.mock.calls[0]![0]} onChange={onChange} fileName="loans.csv" />);
+      expect(screen.getByLabelText('Duplicate check column 2')).toBe(second);
+      expect(document.activeElement).toBe(second);
+    });
+
     it('offers no further key at three', () => {
       renderMapper({
         ...combined,
@@ -134,7 +159,7 @@ describe('ColumnMapper: Check duplicates on', () => {
     it('says a row is dropped only when every key matches, and that one number can hold several rows', () => {
       renderMapper(combined);
       expect(screen.getByTestId('dedupe-note').textContent).toBe(
-        'A row is dropped only when its Loan No and Mobile both match an earlier row; a row with any of them blank is always kept. Loan No has no repeats in this file, so no row will be dropped as a duplicate. Rows on one number are kept when the other columns differ. The dialler never calls one number twice at the same time.',
+        'A row is dropped only when its Loan No and Mobile both match an earlier row; a row with any of them blank is not checked. Loan No has no repeats in this file, so no row will be dropped as a duplicate. Rows on one number are kept when the other columns differ. The dialler never calls one number twice at the same time.',
       );
     });
   });

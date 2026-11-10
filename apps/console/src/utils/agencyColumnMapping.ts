@@ -168,11 +168,28 @@ export function setRole(state: MappingState, column: string, role: ColumnRole): 
     heroOrder = [...heroOrder, column];
   }
 
+  const previousPhone = phoneColumn(state);
   roles[column] = role;
-  // A duplicate column made the phone column is the phone key; saying so keeps
-  // the control and the request in step.
-  const dedupe: DedupeChoice =
-    state.dedupe.mode === 'keys' ? { mode: 'keys', keys: normaliseKeys(roles, state.dedupe.keys) } : state.dedupe;
+  let dedupe: DedupeChoice = state.dedupe;
+  if (dedupe.mode === 'keys') {
+    let keys = dedupe.keys;
+    // The phone moved onto a column that is already a key, while the phone is a
+    // key too: the two swap places, so the key still compares the same columns.
+    // Merging them would drop the old phone column from the key, and a key with
+    // fewer columns drops MORE rows (the false removal the combination exists
+    // to prevent).
+    const movedOntoKey = keys.some((key) => key.kind === 'column' && key.column === column);
+    if (role === 'phone' && movedOntoKey && previousPhone !== null && previousPhone !== column
+      && keys.some((key) => key.kind === 'phone')) {
+      keys = keys.map((key): DedupeKey => {
+        if (key.kind === 'phone') return { kind: 'column', column: previousPhone };
+        return key.column === column ? { kind: 'phone' } : key;
+      });
+    }
+    // A duplicate column made the phone column is the phone key; saying so keeps
+    // the control and the request in step.
+    dedupe = { mode: 'keys', keys: normaliseKeys(roles, keys) };
+  }
   return { ...state, roles, heroOrder, dedupe };
 }
 
@@ -322,10 +339,15 @@ export function combinationLine(analysis: AgencyColumnAnalysis, state: MappingSt
   if (keys.length < 2) return null;
   const phone = phoneColumn(state);
   const names = keys.map((key) => dedupeKeyLabel(key, phone));
-  const rule = `A row is dropped only when its ${listOf(names)} ${keys.length === 2 ? 'both' : 'all'} match an earlier row; a row with any of them blank is always kept.`;
+  const rule = `A row is dropped only when its ${listOf(names)} ${keys.length === 2 ? 'both' : 'all'} match an earlier row; a row with any of them blank is not checked.`;
+  const statOf = (key: DedupeKey) => analysis.columns.find((c) => c.name === (key.kind === 'phone' ? phone : key.column));
+  // A key column blank in every sampled row: every row has a blank part, so none is checked.
+  const blank = keys.find((key) => key.kind === 'column' && statOf(key)?.non_empty === 0);
+  if (blank) {
+    return `${rule} ${dedupeKeyLabel(blank, phone)} is blank in every row ${analysis.truncated ? 'we sampled, so none of those rows would be' : 'of this file, so no row will be'} dropped as a duplicate.`;
+  }
   const unique = keys.find((key) => {
-    const name = key.kind === 'phone' ? phone : key.column;
-    const stat = analysis.columns.find((c) => c.name === name);
+    const stat = statOf(key);
     if (!stat) return false;
     if (key.kind === 'phone') {
       const valid = Math.round(stat.phone_score * stat.non_empty);
@@ -333,8 +355,12 @@ export function combinationLine(analysis: AgencyColumnAnalysis, state: MappingSt
     }
     return typeof stat.distinct === 'number' && stat.non_empty > 0 && stat.distinct >= stat.non_empty;
   });
+  // Said of the sample when the analysis read only part of the file: a repeat
+  // further down is still a repeat.
   const none = unique
-    ? ` ${dedupeKeyLabel(unique, phone)} has no repeats ${scopeOf(analysis)}, so no row will be dropped as a duplicate.`
+    ? analysis.truncated
+      ? ` ${dedupeKeyLabel(unique, phone)} has no repeats in the rows we sampled, so none of those rows would be dropped as a duplicate.`
+      : ` ${dedupeKeyLabel(unique, phone)} has no repeats in this file, so no row will be dropped as a duplicate.`
     : '';
   return `${rule}${none}`;
 }

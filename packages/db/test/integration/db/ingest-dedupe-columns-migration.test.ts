@@ -65,6 +65,13 @@ describe('0031 — agency_ingest_jobs.dedupe_columns', () => {
       .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_ingest_jobs_dedupe_columns' });
   });
 
+  it('refuses a NULL or empty header in the list', async () => {
+    await expect(insertJob({ dedupe_columns: ['Loan No', null] }))
+      .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_ingest_jobs_dedupe_columns' });
+    await expect(insertJob({ dedupe_columns: ['Loan No', ''] }))
+      .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_ingest_jobs_dedupe_columns' });
+  });
+
   it('backfills 0007 jobs; down keeps a single key and the first of a combination; up again', async () => {
     const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
     const after = files.length - files.indexOf(FILE);
@@ -72,16 +79,25 @@ describe('0031 — agency_ingest_jobs.dedupe_columns', () => {
     const combined = await insertJob({ dedupe_columns: ['Loan No', 'Branch'] });
     const phone = await insertJob();
 
+    const stamped = async () => (await pool().query<{ id: string; updated_at: Date }>(
+      'SELECT id, updated_at FROM agency_ingest_jobs ORDER BY id')).rows.map((r) => [r.id, r.updated_at.toISOString()]);
+    const before = await stamped();
+
     await migrate('down', after);
     try {
+      // `updated_at` is a running job's heartbeat: the Down's copy is not progress.
+      expect(await stamped()).toEqual(before);
       expect(await jobRow(single['id'])).toMatchObject({ dedupe_column: 'Loan No' });
       expect(await jobRow(combined['id'])).toMatchObject({ dedupe_column: 'Loan No' });
       expect(await jobRow(phone['id'])).toMatchObject({ dedupe_column: null });
       expect(await jobRow(single['id'])).not.toHaveProperty('dedupe_columns');
       // A job an 0007 server wrote, for the backfill.
       const legacy = await insertJob({ dedupe_column: 'Policy No' });
+      const legacyStamp = (await jobRow(legacy['id']))['updated_at'];
       await migrate('up');
       expect(await jobRow(legacy['id'])).toMatchObject({ dedupe_columns: ['Policy No'] });
+      // Nor is the backfill: the heartbeat of an old job is left as it was.
+      expect(await jobRow(legacy['id'])).toMatchObject({ updated_at: legacyStamp });
     } finally {
       await migrate('up');
     }

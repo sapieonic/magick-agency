@@ -288,10 +288,23 @@ describe('the duplicate check', () => {
       expect(build(state).dedupe_columns).toEqual(['TZ', 'Full Name']);
     });
 
-    it('a key column made the phone column merges into the phone key', () => {
+    it('the phone moved onto a key column swaps the two keys: the key still compares the same columns', () => {
+      // Merging them would drop Cust Mobile from the key, and a smaller key drops more rows.
       let state = setDedupe(initialMapping(analysis()), keys(phone, col('Full Name'), col('TZ')));
       state = setRole(state, 'Full Name', 'phone');
+      expect(state.dedupe).toEqual(keys(col('Cust Mobile'), phone, col('TZ')));
+      expect(build(state).dedupe_columns).toEqual(['Cust Mobile', 'Full Name', 'TZ']);
+
+      let pair = setDedupe(initialMapping(analysis()), keys(phone, col('TZ')));
+      pair = setRole(pair, 'TZ', 'phone');
+      expect(build(pair).dedupe_columns).toEqual(['Cust Mobile', 'TZ']);
+    });
+
+    it('a key column made the phone column, with the phone not a key, becomes the phone key', () => {
+      let state = setDedupe(initialMapping(analysis()), keys(col('Full Name'), col('TZ')));
+      state = setRole(state, 'Full Name', 'phone');
       expect(state.dedupe).toEqual(keys(phone, col('TZ')));
+      expect(build(state).dedupe_columns).toEqual(['Full Name', 'TZ']);
     });
 
     it('keeps a key named twice once, and at most the maximum', () => {
@@ -350,12 +363,26 @@ describe('the duplicate check', () => {
         ],
       });
       expect(combinationLine(a, setDedupe(initialMapping(a), keys(col('Full Name'), col('TZ'))))).toBe(
-        'A row is dropped only when its Full Name and TZ both match an earlier row; a row with any of them blank is always kept.',
+        'A row is dropped only when its Full Name and TZ both match an earlier row; a row with any of them blank is not checked.',
       );
       expect(combinationLine(a, setDedupe(initialMapping(a), keys(phone, col('TZ'), col('Internal Score'))))).toBe(
-        'A row is dropped only when its Cust Mobile, TZ and Internal Score all match an earlier row; a row with any of them blank is always kept. Internal Score has no repeats in this file, so no row will be dropped as a duplicate.',
+        'A row is dropped only when its Cust Mobile, TZ and Internal Score all match an earlier row; a row with any of them blank is not checked. Internal Score has no repeats in this file, so no row will be dropped as a duplicate.',
       );
       expect(combinationLine(a, initialMapping(a))).toBeNull();
+    });
+
+    it('says a unique column only of the sample when the analysis read part of the file', () => {
+      const a = analysis({ truncated: true, columns: [column('Cust Mobile', { phone_score: 0.95, distinct_phones: 80 }), column('Full Name', { distinct: 100 }), column('TZ', { distinct: 3 })] });
+      expect(combinationLine(a, setDedupe(initialMapping(a), keys(col('Full Name'), col('TZ'))))).toBe(
+        'A row is dropped only when its Full Name and TZ both match an earlier row; a row with any of them blank is not checked. Full Name has no repeats in the rows we sampled, so none of those rows would be dropped as a duplicate.',
+      );
+    });
+
+    it('says a key column blank in every row means no row is dropped', () => {
+      const a = analysis({ columns: [column('Cust Mobile', { phone_score: 0.95, distinct_phones: 80 }), column('Full Name', { distinct: 60 }), column('TZ', { non_empty: 0, distinct: 0 })] });
+      expect(combinationLine(a, setDedupe(initialMapping(a), keys(col('Full Name'), col('TZ'))))).toBe(
+        'A row is dropped only when its Full Name and TZ both match an earlier row; a row with any of them blank is not checked. TZ is blank in every row of this file, so no row will be dropped as a duplicate.',
+      );
     });
   });
 

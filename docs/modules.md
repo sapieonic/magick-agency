@@ -185,7 +185,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
-| `apps/server/test/unit/agency/agency-ingest.service.test.ts` | 52 |
+| `apps/server/test/unit/agency/agency-ingest.service.test.ts` | 52 + 1 `it.fails` (a DNC row claims its key) |
 | `apps/server/test/unit/agency/agency-internal-ingest-ownership.test.ts` | 16 |
 | `apps/server/test/unit/agency/agency-join-result.test.ts` | 7 |
 | `apps/server/test/unit/agency/agency-proxy-path-traversal.test.ts` | 83 |
@@ -273,7 +273,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-campaign-series.routes.test.ts` | 41 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-stats-enrichment.routes.test.ts` | 26 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-transition-actor.routes.test.ts` | 30 |
-| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 157 |
+| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 158 |
 | `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 111 |
 | `apps/server/test/unit/agency/proxy-agency-my-surfaces.routes.test.ts` | 78 |
 | `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
@@ -1537,7 +1537,7 @@ errors, by `db/insights-rollup-facets-migration.test.ts`; 0015, several running 
 | `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
 | `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
-| `packages/db/test/integration/db/ingest-dedupe-columns-migration.test.ts` | 5 |
+| `packages/db/test/integration/db/ingest-dedupe-columns-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/wrapup-redial-migration.test.ts` | 6 |
 | `packages/db/test/integration/db/insights-foundation-migration.test.ts` | 8 |
 | `packages/db/test/integration/db/insights-pacing-history-migration.test.ts` | 6 |
@@ -2044,7 +2044,7 @@ Files: `AppHomeRedirect.tsx`, `accounts/AccountsPage.module.css`, `accounts/Acco
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 22 |
-| `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 12 |
+| `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 20 |
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
@@ -2124,7 +2124,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyCampaignsHome.test.ts` | ~22 |
 | `apps/console/src/__tests__/utils/agencyCatalogSync.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyClock.test.ts` | 20 |
-| `apps/console/src/__tests__/utils/agencyColumnMapping.test.ts` | 53 |
+| `apps/console/src/__tests__/utils/agencyColumnMapping.test.ts` | 56 |
 | `apps/console/src/__tests__/utils/agencyCompareTray.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyContext.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/agencyCuePrefs.test.ts` | 6 |

@@ -295,6 +295,14 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
         message: `'${ignoredKey}' is used to find duplicates, so it cannot also be ignored.`,
       });
     }
+    // The phone column alone is the phone dedupe (on the normalised number,
+    // `duplicate_phone`), which is what a job with no key records. Stored as a
+    // column key, the job, its activity row and Insights would describe a text
+    // comparison that never ran.
+    const keyColumns =
+      dedupeColumns !== undefined && dedupeColumns.length === 1 && sameColumn(dedupeColumns[0]!, input.phone_column)
+        ? undefined
+        : dedupeColumns;
 
     if (input.mode === 'replace') {
       /**
@@ -375,7 +383,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       ignore_columns: input.ignore_columns ?? [],
       default_country_code: input.default_country_code?.replace(/^\+/, '') ?? null,
       dedupe_phones: input.dedupe_phones ?? true,
-      ...(dedupeColumns !== undefined ? { dedupe_columns: dedupeColumns } : {}),
+      ...(keyColumns !== undefined ? { dedupe_columns: keyColumns } : {}),
       dry_run: input.dry_run ?? false,
       ...(input.mode ? { mode: input.mode } : {}),
       // A person, or nobody. `sessionMiddleware` has no API-key branch, so

@@ -478,8 +478,8 @@ Roster upload, choosing the duplicate column. **`agency_ingest_jobs.dedupe_colum
 the header whose value marks a duplicate row in the file (for example a loan number, so one
 borrower with two loans on one phone keeps both rows). Compared trimmed and case-insensitive; a
 blank value is never a duplicate. NULL keeps the earlier behaviour, which `dedupe_phones` decides
-(normalised phone, or none). Written by `POST /proxy/agency/ingest/jobs` (`dedupe_column`), read by
-the ingest service. No index, no rewrite. **Down** drops the column. **Tests**:
+(normalised phone, or none). Superseded by 0031's `dedupe_columns`, which the Up backfills from it:
+nothing writes or reads `dedupe_column` any more. No index, no rewrite. **Down** drops the column. **Tests**:
 `test/integration/db/ingest-dedupe-column-migration.test.ts` and the down → up inventory suite.
 
 ### 0008 — `migrations/0008_wrapup_redial.sql`
@@ -1269,17 +1269,19 @@ constants) and `test/integration/api/inbound-missed-work.test.ts`.
 
 Roster upload, combining duplicate columns. **`agency_ingest_jobs.dedupe_columns`** `TEXT[] NULL`,
 `ck_agency_ingest_jobs_dedupe_columns` (NULL, or 1 to 3 elements: the contract's
-`AGENCY_MAX_DEDUPE_COLUMNS`): the headers that together mark a duplicate row, in the operator's
+`AGENCY_MAX_DEDUPE_COLUMNS`; no NULL or empty element): the headers that together mark a duplicate row, in the operator's
 order. A row is a duplicate only when every one matches an earlier accepted row (each trimmed and
 case-insensitive; the phone column by its normalised number); a row with any of them blank is never
 a duplicate. NULL: `dedupe_phones` decides, as before. The Up backfills it from 0007's
-`dedupe_column`, which is superseded: no longer written or read. Written by
+`dedupe_column`, which is superseded: no longer written or read. The backfill and the Down's copy
+run with `agency_ingest_jobs_updated_at` disabled, so no job's `updated_at` (the running job's
+heartbeat, `reapStaleJobs`) moves. Written by
 `POST /proxy/agency/ingest/jobs` (`dedupe_columns`, or the single `dedupe_column`), read by the
 ingest service, the job payload, the audit row and the insights reads. No index; the table holds
 one row per upload. **Down** writes the first column back to `dedupe_column` where it is NULL (a
 single key exactly; a combination keeps its first column, a record of a finished upload) and drops
 the CHECK and the column. **Tests**: `test/integration/db/ingest-dedupe-columns-migration.test.ts`
-(shape, the CHECK, the backfill, down then up) and the down → up inventory suite.
+(shape, the CHECK, the backfill, `updated_at` left alone, down then up) and the down → up inventory suite.
 
 ## Tests
 
