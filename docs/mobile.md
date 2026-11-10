@@ -368,12 +368,30 @@ Code: `lib/features/missed/`.
   A 403 (or a 404 from a server without the route) hides it; no answer yet, or only failed reads,
   hides it too, and a failed re-read keeps the last answer. With the flag off and rows there, the
   list shows under the console's notice (callers hear the closed message and are still listed). The
-  count is read when a workspace starts, on return to the app at most every 5 min (at once after a
-  failed read), after a Mark handled or a Reopen, and on a pull to refresh of the list. The console
-  polls every minute while inbound is on; the app does not poll. The shell and My calls read a
-  seam (`missed_access.dart`, hidden by default) that `main.dart` plugs the count into.
-- **The list.** The agent's rows only: the server forces `assignee=me` without `agency.supervise`,
-  so the app never sends an assignee and has no Reassign. "To follow up" / "Handled" and the reason
+  shell and My calls read a seam (`missed_access.dart`, hidden by default) that `main.dart` plugs
+  the count into.
+- **Kept fresh mid-shift.** Agents keep the app open all shift, and rows change under it: a Call
+  back that reaches the customer, or the customer ringing in and being put through, closes their
+  rows as reached, and new rows are assigned. So:
+  - the count is polled every 60 s while `agency_inbound_enabled` is on and the app is in the
+    foreground (the console's poll; never in the background, and not after a 403);
+  - the count is read when a workspace starts, on return to the app when the last answer is older
+    than the poll (older than 5 min with inbound off; at once after a failed read), after a Mark
+    handled or a Reopen, and on a pull to refresh;
+  - the count is read again when a call settles on this phone: the station's signals
+    (`callActive || outcomeOwed`) going from true to false, which covers a campaign call, an
+    inbound call put through and a soft-phone call on either host (`missedCallsSettledProvider`);
+  - the list and the count are read again when the Missed segment comes on screen (picked, or the
+    My calls tab back in front: the shell's indexed stack turns its tickers back on) and the rows
+    are a minute old or a call has settled since; the rows stay on screen until the new page lands.
+  An answer from a previous workspace never touches this one's (a generation guards the read in
+  flight).
+- **The list.** The agent's rows only: every page asks for `assignee=me` (the server forces it
+  without `agency.supervise`, and without it would widen a supervisor's list to the whole account),
+  and there is no Reassign. The count route takes no assignee and counts a supervisor's whole
+  account, so for a supervisor using the app the badge (and `has_rows`) can count rows their list
+  does not show; agents, the app's users, are unaffected. Fixing it needs the count route to
+  accept `assignee=me`. "To follow up" / "Handled" and the reason
   filter (the console's dates are not offered), newest first, keyset pages of 50, the next page
   fetched ten rows before the end, pull to refresh. Rows are cards of varying height (the
   actions), not the fixed-height rows of the other lists. Each row: the caller's number (the row
@@ -389,12 +407,21 @@ Code: `lib/features/missed/`.
   (`SoftphoneActions.callBack`) and goes to the pad: the Phone tab, or the station for a campaign
   switched to the soft phone (SP7). Like redial it fills the pad, sets "Log to" to the matched
   campaign when the agent may log to it (else leaves it), and focuses Call; it never dials, so the
-  DNC check and its note (SP1) and the calling hours apply as to a typed number. It waits while
-  the soft phone cannot take it (not open here yet, its bootstrap not read, a call on screen,
-  finish mode) and fills the pad when it can; with the soft phone not open the agent is told the
-  number will be ready once it is. A withheld caller's Call back is disabled with the reason. The
-  number never goes in a route.
-- **Mark handled / Reopen.** One of each at a time. The row leaves the view it no longer matches
+  DNC check and its note (SP1) and the calling hours apply as to a typed number; an open override
+  prompt goes (it was for another number, and "Call anyway" redials that one), as it does on a
+  redial. It waits while the soft phone cannot take it (not open here yet, its bootstrap not read,
+  a call on screen, finish mode) and fills the pad when it can, and the agent is told why it
+  waits: with the soft phone not open, that the number will be ready if it is opened within
+  5 minutes; with a call on the soft phone (on the Phone tab or the station's), that the number
+  goes on the pad once the call is finished. A waiting number lapses after 5 minutes (time behind
+  a call on screen does not count: the wait starts again when the call settles), on any session
+  change but the first session to open after it (so it never fills a later session's pad or sets
+  its "Log to"), when another device takes the session, and on a workspace change. With the soft
+  phone open on another device or in another account nothing here can take it: the number is not
+  kept and the agent is told to bring the soft phone to this phone and press Call back again. A
+  withheld caller's Call back is disabled with the reason. The number never goes in a route.
+- **Mark handled / Reopen.** One of each at a time, still one across a reload of the list (only
+  the action that set the row's flag clears it). The row leaves the view it no longer matches
   (or takes the server's copy), the badge is re-read, and the result is announced. A refusal is
   said on the row: `inbound_missed_call_not_found` in the console's words, a code it has no words
   for in the server's sentence, no answer in the app's.

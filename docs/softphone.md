@@ -581,6 +581,10 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
   station in place (SP7) with the queued switch, its pill and Return to campaign, "Close the soft
   phone and join" (`closeSoftphoneSession`, read in the session's own account first), and My
   calls' "Soft-phone calls" (the agent's own; `media` never rendered).
+- **Call back from a Missed row** ([`mobile.md`](mobile.md) "Missed calls"): the console's prefill
+  (the number, the matched campaign as "Log to" where taggable, Call focused, never dialled), and
+  the dial's `agency_softphone_call_placed` carries `entry: 'inbound_callback'`. The app holds the
+  number for a soft phone not open yet for five minutes, and drops it on a session change.
 - **Ringback** is made in the app's voice engine (`packages/agent_audio`, `setRingback`), to the
   console's tone and cadence, mixed into the playout frames so any early media is still heard.
 - **What differs.** No keyboard shortcuts. The calling-hours prompt shows the window as the server
