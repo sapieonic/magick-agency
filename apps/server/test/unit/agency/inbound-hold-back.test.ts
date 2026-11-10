@@ -15,7 +15,7 @@ function hold(over: Partial<InboundHold> = {}): InboundHold {
   return { n: 1, preferredSessionIds: new Set(), poolCampaignIds: null, expiresAt: NOW + 5_000, ...over };
 }
 
-const ids = (xs: Array<{ sessionId: string }>) => xs.map((x) => x.sessionId);
+const ids = (xs: ReadonlyArray<{ sessionId: string }>) => xs.map((x) => x.sessionId);
 
 describe('holdBackForInbound', () => {
   it('no hold: every candidate', () => {
@@ -41,10 +41,10 @@ describe('holdBackForInbound', () => {
     expect(inboundHoldApplies(hold(), 'c1', NOW + 5_000)).toBe(false);
     expect(ids(holdBackForInbound(CANDIDATES, hold({ n: 4 }), 'c1', NOW + 5_000))).toEqual(['s1', 's2', 's3', 's4']);
   });
-  it('a hold of nothing (n 0, nobody preferred) changes nothing; the order is kept', () => {
+  it('a hold of nothing (n 0, nobody preferred) changes nothing: the candidates themselves, not a copy', () => {
     expect(inboundHoldApplies(hold({ n: 0 }), 'c1', NOW)).toBe(false);
     const out = holdBackForInbound(CANDIDATES, hold({ n: 0 }), 'c1', NOW);
-    expect(out).not.toBe(CANDIDATES);
+    expect(out).toBe(CANDIDATES);
     expect(ids(out)).toEqual(['s1', 's2', 's3', 's4']);
   });
 });

@@ -41,15 +41,16 @@ export function inboundHoldApplies(hold: InboundHold | undefined, campaignId: st
 
 /**
  * The candidates pacing may still reserve (see the header). `candidates` must already be in the
- * engine's order (longest idle first), which is kept. Pure.
+ * engine's order (longest idle first), which is kept. Pure: with no hold that applies, the input
+ * itself is returned (no copy, on every tick); else a new array.
  */
 export function holdBackForInbound<T extends { sessionId: string }>(
   candidates: readonly T[],
   hold: InboundHold | undefined,
   campaignId: string,
   now: number,
-): T[] {
-  if (!inboundHoldApplies(hold, campaignId, now)) return [...candidates];
+): readonly T[] {
+  if (!inboundHoldApplies(hold, campaignId, now)) return candidates;
   const rest = candidates.filter((c) => !hold.preferredSessionIds.has(c.sessionId));
   return rest.slice(Math.min(Math.max(0, hold.n), rest.length));
 }
