@@ -61,8 +61,10 @@ describe('inboundIneligibility (§4.3)', () => {
     expect(inboundIneligibility(agent('a'), c)).toBeNull();
   });
   it('a phone that declared caps=inbound may take it exactly as a console may, in every rule (IQ46)', () => {
-    // The view carries the capability, not the client kind: a capable phone is indistinguishable here.
-    expect(inboundIneligibility(agent('a', { canTakeInbound: true }), c)).toBeNull();
+    // The view carries the capability, not the client kind: a capable phone is indistinguishable
+    // here. The same agent with and without it, so the capability alone decides this assertion.
+    expect([true, false].map((canTakeInbound) => inboundIneligibility(agent('a', { canTakeInbound }), c)))
+      .toEqual([null, 'no_inbound_capability']);
     expect(candidatesFor(c, [agent('a', { canTakeInbound: false }), agent('b', { canTakeInbound: true })], NOW)).toEqual(['s-b']);
     expect(couldTakeLater(agent('a', { canTakeInbound: true, state: 'on_call' }), c)).toBe(true);
     expect(couldTakeLater(agent('a', { canTakeInbound: false, state: 'on_call' }), c)).toBe(false);

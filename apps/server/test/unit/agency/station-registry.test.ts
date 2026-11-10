@@ -263,6 +263,10 @@ describe('StationRegistry frame delivery', () => {
     expect(reg.send('p', { event: 'customer_waiting', inbound_call_id: 'c1', from_e164: null, waiting_since: '2026-11-09T10:00:00.000Z' } as any)).toBe(true);
     await reg.detach('p');
     expect(detached).toEqual([{ sessionId: 'p', canTakeInbound: true }]);
+    // And an older build's entry reports that it could not.
+    await reg.attach({ sessionId: 'q', ws: phoneWs() as any, ...ENTRY, clientKind: 'mobile' });
+    await reg.detach('q');
+    expect(detached).toEqual([{ sessionId: 'p', canTakeInbound: true }, { sessionId: 'q', canTakeInbound: false }]);
   });
 
   it('reports failure for a missing or closed socket instead of throwing', async () => {
