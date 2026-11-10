@@ -1,7 +1,6 @@
 import { API_BASE } from '../config';
 import { apiFetch } from './client';
-import { buildAuthHeaders } from './authHeaders';
-import { captureApiError } from './error-analytics';
+import { fetchAudioBlobUrl, type BlobAudio } from './blobAudio';
 import { errorCode, errorStatus } from '../utils/agencyErrors';
 import {
   AGENCY_INBOUND_ERROR_CODES,
@@ -315,8 +314,6 @@ export function voicemailFetchUrl(voicemailUrl: string): string | null {
   return path.startsWith('/proxy/') ? `${API_BASE}${path}` : `${API_BASE}/proxy/agency${path}`;
 }
 
-export type VoicemailAudio = { status: 'ready'; url: string } | { status: 'unavailable'; message: string };
-
 export const VOICEMAIL_GONE_COPY = 'This voicemail is no longer available.';
 export const VOICEMAIL_FAILED_COPY = 'We couldn’t load the voicemail. Try again in a moment.';
 
@@ -329,22 +326,11 @@ export async function fetchVoicemailBlobUrl(
   voicemailUrl: string,
   tenantId: string,
   accountId?: string,
-): Promise<VoicemailAudio> {
+): Promise<BlobAudio> {
   const url = voicemailFetchUrl(voicemailUrl);
   // Not our route: never sent anywhere with the token.
   if (url === null) return { status: 'unavailable', message: VOICEMAIL_FAILED_COPY };
-  try {
-    const headers = await buildAuthHeaders(tenantId, accountId);
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      captureApiError(url, res);
-      return { status: 'unavailable', message: res.status === 404 ? VOICEMAIL_GONE_COPY : VOICEMAIL_FAILED_COPY };
-    }
-    const blob = await res.blob();
-    return { status: 'ready', url: URL.createObjectURL(blob) };
-  } catch {
-    return { status: 'unavailable', message: VOICEMAIL_FAILED_COPY };
-  }
+  return fetchAudioBlobUrl(url, tenantId, accountId, { gone: VOICEMAIL_GONE_COPY, failed: VOICEMAIL_FAILED_COPY });
 }
 
 // ─── The agent's inbound call (P2, §6) ──────────────────────────────────────

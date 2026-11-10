@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { fetchVoicemailBlobUrl } from '../../../api/inbound';
 import { useTenant } from '../../../contexts/TenantContext';
+import { useLazyBlobAudio } from '../../../hooks/useLazyBlobAudio';
 import styles from './Inbound.module.css';
 
 /**
@@ -12,32 +12,9 @@ import styles from './Inbound.module.css';
  */
 export function VoicemailPlayer({ voicemailUrl, callerLabel }: { voicemailUrl: string; callerLabel: string }) {
   const { tenantId, accountId } = useTenant();
-  const [state, setState] = useState<
-    { status: 'idle' } | { status: 'loading' } | { status: 'ready'; url: string } | { status: 'unavailable'; message: string }
-  >({ status: 'idle' });
-  const urlRef = useRef<string | null>(null);
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-      urlRef.current = null;
-    };
-  }, []);
-
-  const load = async () => {
-    if (!tenantId || state.status === 'loading') return;
-    setState({ status: 'loading' });
-    const audio = await fetchVoicemailBlobUrl(voicemailUrl, tenantId, accountId ?? undefined);
-    if (!mounted.current) {
-      if (audio.status === 'ready') URL.revokeObjectURL(audio.url);
-      return;
-    }
-    if (audio.status === 'ready') urlRef.current = audio.url;
-    setState(audio);
-  };
+  const { state, load } = useLazyBlobAudio(() =>
+    tenantId ? fetchVoicemailBlobUrl(voicemailUrl, tenantId, accountId ?? undefined) : null,
+  );
 
   if (state.status === 'ready') {
     return (

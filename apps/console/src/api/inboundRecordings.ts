@@ -2,6 +2,7 @@ import { API_BASE } from '../config';
 import { ApiError, apiFetch } from './client';
 import { buildAuthHeaders } from './authHeaders';
 import { captureApiError } from './error-analytics';
+import { fetchAudioBlobUrl, type BlobAudio } from './blobAudio';
 import { parseInboundRefusal, type InboundRefusal } from './inbound';
 import type {
   AgencyInboundStandardRecording,
@@ -113,8 +114,6 @@ export async function deleteInboundRecording(
 /** What a preview plays: one of the account's recordings, or one of our standard recordings. */
 export type RecordingSource = { kind: 'uploaded'; clipId: string } | { kind: 'standard'; recording: AgencyInboundStandardRecording };
 
-export type RecordingAudio = { status: 'ready'; url: string } | { status: 'unavailable'; message: string };
-
 export const RECORDING_GONE_COPY = 'This recording no longer exists. Someone may have deleted it.';
 export const RECORDING_FAILED_COPY = 'We couldn’t load the recording. Try again in a moment.';
 
@@ -134,18 +133,6 @@ export async function fetchRecordingBlobUrl(
   source: RecordingSource,
   tenantId: string,
   accountId?: string,
-): Promise<RecordingAudio> {
-  const url = recordingAudioUrl(source);
-  try {
-    const headers = await buildAuthHeaders(tenantId, accountId);
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      captureApiError(url, res);
-      return { status: 'unavailable', message: res.status === 404 ? RECORDING_GONE_COPY : RECORDING_FAILED_COPY };
-    }
-    const blob = await res.blob();
-    return { status: 'ready', url: URL.createObjectURL(blob) };
-  } catch {
-    return { status: 'unavailable', message: RECORDING_FAILED_COPY };
-  }
+): Promise<BlobAudio> {
+  return fetchAudioBlobUrl(recordingAudioUrl(source), tenantId, accountId, { gone: RECORDING_GONE_COPY, failed: RECORDING_FAILED_COPY });
 }

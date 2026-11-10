@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
-import { fetchRecordingBlobUrl, type RecordingAudio, type RecordingSource } from '../../../api/inboundRecordings';
+import { fetchRecordingBlobUrl, type RecordingSource } from '../../../api/inboundRecordings';
+import { useLazyBlobAudio } from '../../../hooks/useLazyBlobAudio';
 import styles from '../InboundRecordings.module.css';
 
 /**
@@ -25,30 +25,7 @@ export function RecordingPreview({
   accountId: string | undefined;
   testId: string;
 }) {
-  const [state, setState] = useState<{ status: 'idle' } | { status: 'loading' } | RecordingAudio>({ status: 'idle' });
-  const urlRef = useRef<string | null>(null);
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-      urlRef.current = null;
-    };
-  }, []);
-
-  const load = async () => {
-    if (!tenantId || state.status === 'loading') return;
-    setState({ status: 'loading' });
-    const audio = await fetchRecordingBlobUrl(source, tenantId, accountId);
-    if (!mounted.current) {
-      if (audio.status === 'ready') URL.revokeObjectURL(audio.url);
-      return;
-    }
-    if (audio.status === 'ready') urlRef.current = audio.url;
-    setState(audio);
-  };
+  const { state, load } = useLazyBlobAudio(() => (tenantId ? fetchRecordingBlobUrl(source, tenantId, accountId) : null));
 
   if (state.status === 'ready') {
     return <audio className={styles.player} controls autoPlay src={state.url} aria-label={label} data-testid={`${testId}-audio`} />;
