@@ -15,6 +15,7 @@ import {
 import type { AgencyDisposition } from '../../types/agency';
 import { EMPTY_CAMPAIGN_CONFIG, isUsableTimezone, validateConfig } from '../agencyCampaignConfigForm';
 import { ISO_WEEKDAY_SHORT } from '../format/weekdays';
+import { readerZone } from '../format/date';
 
 /**
  * The inbound route editor's form (`docs/inbound.md` §8.1): the draft the page edits, the route
@@ -114,7 +115,7 @@ export const UNCONNECTED_ACTION_LABELS: Record<AgencyInboundUnconnectedAction, {
  * ({@link weekdayHours}, editable: a route saved with no hours would be closed at all times), in
  * the browser's zone when it is usable (the account has no zone of its own).
  */
-export function newRouteDraft(browserZone: string | undefined = safeBrowserZone()): InboundRouteDraft {
+export function newRouteDraft(browserZone: string | undefined = readerZone() ?? undefined): InboundRouteDraft {
   return {
     name: '',
     timezone: browserZone && isUsableTimezone(browserZone) ? browserZone : 'UTC',
@@ -136,14 +137,6 @@ export function newRouteDraft(browserZone: string | undefined = safeBrowserZone(
     catalog: [],
     numberIds: [],
   };
-}
-
-function safeBrowserZone(): string | undefined {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone;
-  } catch {
-    return undefined;
-  }
 }
 
 export function draftFromRoute(route: AgencyInboundRoute): InboundRouteDraft {

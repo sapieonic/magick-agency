@@ -1,4 +1,5 @@
 import type { InboundRefusal } from '../../api/inbound';
+import { statClock } from '../format/duration';
 import {
   AGENCY_INBOUND_CLIP_UPLOAD_LIMITS,
   AGENCY_INBOUND_ROUTE_LIMITS,
@@ -150,8 +151,7 @@ export const UNANSWERED_LEAD =
 /** A recording's length, as the list shows it: `0:04`, `1:30`. */
 export function recordingLength(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds)) return '';
-  const whole = Math.max(1, Math.round(seconds));
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+  return statClock(Math.max(1, seconds));
 }
 
 /** Which routes play a recording, in words; empty when none. */
