@@ -29,6 +29,10 @@ abstract interface class AudioEngine {
   /// mixed into playout). [stop] clears it.
   Future<void> setRingback(bool on);
 
+  /// The inbound chime, once (an inbound caller was offered), mixed into playout. [stop]
+  /// drops one not yet played.
+  Future<void> playChime();
+
   Future<void> startCall({required String callId, required String displayName, required String handle});
   Future<void> reportConnected(String callId);
   Future<void> endCall(String callId, {CallEndReason reason = CallEndReason.local});
@@ -76,6 +80,9 @@ final class PluginAudioEngine implements AudioEngine {
 
   @override
   Future<void> setRingback(bool on) => _audio.setRingback(on);
+
+  @override
+  Future<void> playChime() => _audio.playChime();
 
   @override
   Future<void> startCall({required String callId, required String displayName, required String handle}) =>

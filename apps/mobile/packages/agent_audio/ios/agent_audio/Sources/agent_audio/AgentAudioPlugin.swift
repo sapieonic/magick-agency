@@ -109,6 +109,9 @@ public final class AgentAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       case "setRingback":
         engine.setRingback(args["on"] as? Bool ?? false)
         result(nil)
+      case "playChime":
+        engine.playChime()
+        result(nil)
       case "setInputLevelMetering":
         engine.setMetering(args["enabled"] as? Bool ?? false)
         result(nil)

@@ -24,7 +24,7 @@ void main() {
         expect(app.start(), isA<StationStarted>());
         final join = app.requests('POST', '/proxy/agency/sessions').single;
         expect(join.body, {'campaign_id': 'camp-1'});
-        expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=boot&client=mobile&media=alaw8');
+        expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=boot&client=mobile&media=alaw8&caps=inbound');
         expect(app.view!.link, StationLink.open);
         expect(app.view!.campaignName, 'Renewals');
         expect(app.view!.dispositions.map((d) => d.code), ['interested', 'callback', 'not_interested', 'do_not_call']);

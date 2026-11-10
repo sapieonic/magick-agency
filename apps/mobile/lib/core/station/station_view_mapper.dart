@@ -1,5 +1,7 @@
 import 'package:agency_wire/agency_wire.dart' as wire;
 
+import '../inbound/inbound_call_rules.dart';
+import '../inbound/inbound_copy.dart';
 import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
 
 import 'contact_context.dart';
@@ -52,6 +54,15 @@ class StationViewMapper {
   bool _wrapupRedialPlaced = false;
   WrapupView? _wrapup;
 
+  // inbound
+  wire.InboundCall? _inboundSource;
+  int _inboundOffset = 0;
+  String? _inboundFailure;
+  InboundCallView? _inbound;
+  wire.CustomerWaitingFrame? _waitingSource;
+  int _waitingOffset = 0;
+  CustomerWaitingView? _waiting;
+
   // queue
   wire.QueueState? _queueSource;
   int _queueOffset = 0;
@@ -92,6 +103,8 @@ class StationViewMapper {
     required bool awayPauseRequested,
     ({int? remaining})? redialOverride,
     bool redialPlaced = false,
+    String? inboundHangupFailure,
+    String? inboundNotice,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -142,6 +155,97 @@ class StationViewMapper {
       fatal: fatal,
       queue: _queueFor(s.queue),
       myContactsOffered: myContactsOfferedBy(bootstrap),
+      inbound: _inboundFor(s.inboundOnStation, inboundHangupFailure),
+      customerWaiting: _waitingFor(s.customerWaiting),
+      inboundNotice: inboundNotice,
+    );
+  }
+
+  /// The inbound caller on the station, read once per copy of the call (a frame is a new copy;
+  /// a pong is not).
+  InboundCallView? _inboundFor(wire.InboundCall? call, String? hangupFailure) {
+    if (identical(call, _inboundSource) && _offset == _inboundOffset && hangupFailure == _inboundFailure) {
+      return _inbound;
+    }
+    _inboundSource = call;
+    _inboundOffset = _offset;
+    _inboundFailure = hangupFailure;
+    if (call == null) return _inbound = null;
+    final stage = switch (inboundPhase(call)) {
+      InboundPhase.offered => InboundStage.offered,
+      InboundPhase.connected => InboundStage.connected,
+      InboundPhase.outcome || null => InboundStage.outcome,
+    };
+    final match = call.match;
+    final display = match?.contextDisplay;
+    final resolved = match == null ? null : resolveContextFields(match.context, display);
+    ContactField field(ResolvedField f) => ContactField(key: f.label, label: f.label, value: f.isEmpty ? '' : f.value);
+    final previous = _inbound;
+    // The contact is resolved once per call: later frames of the same call move only its state.
+    final same = previous != null && previous.callId == call.id && match != null && previous.matched;
+    return _inbound = InboundCallView(
+      callId: call.id,
+      stage: stage,
+      fromE164: call.fromE164,
+      toE164: call.toE164,
+      routeName: call.route?.name,
+      displayName: same
+          ? previous.displayName
+          : (match == null
+              ? null
+              : displayNameFor(match.context, display, heroKeys: [for (final h in resolved!.hero) h.label])),
+      sticky: switch (call.sticky?.reason) {
+        null => null,
+        wire.InboundStickyReason.owner => InboundSticky.owner,
+        wire.InboundStickyReason.lastFromNumber => InboundSticky.lastFromNumber,
+        wire.InboundStickyReason.lastConnected => InboundSticky.lastConnected,
+        wire.InboundStickyReason.lastDialled => InboundSticky.lastDialled,
+        wire.InboundStickyReason.unknown => InboundSticky.other,
+      },
+      stickyIsYou: call.sticky?.isYou ?? false,
+      callerDnc: call.callerDnc,
+      recording: call.recording,
+      waitedSeconds: call.waitedSeconds,
+      campaignName: match?.campaignName,
+      contactState: match == null ? null : (inboundContactStateLabels[match.contactState] ?? humaniseCode(match.contactStateRaw)),
+      heroFields: same ? previous.heroFields : (resolved == null ? const [] : List.unmodifiable(resolved.hero.map(field))),
+      heroesConfigured: heroesWereConfigured(display),
+      otherFields: same
+          ? previous.otherFields
+          : (resolved == null ? const [] : List.unmodifiable([...resolved.fields.map(field), ...resolved.empty.map(field)])),
+      priorAttempts: same
+          ? previous.priorAttempts
+          : (match == null
+              ? const []
+              : priorAttemptsFor(
+                  match.priorAttempts,
+                  campaignId: match.campaignId,
+                  catalog: call.catalogSource == wire.InboundCatalogSource.campaign ? call.dispositionCatalog : const [],
+                  offsetMs: _offset,
+                )),
+      catalogKind: switch (call.catalogSource) {
+        wire.InboundCatalogSource.campaign => InboundCatalogKind.campaign,
+        wire.InboundCatalogSource.route => InboundCatalogKind.route,
+        wire.InboundCatalogSource.builtin || wire.InboundCatalogSource.unknown => InboundCatalogKind.standard,
+      },
+      connectsAt: stage == InboundStage.offered ? correctedInstant(call.connectsAt, _offset) : null,
+      bridgedAt: correctedInstant(call.bridgedAt, _offset),
+      outcomeDueAt: stage == InboundStage.outcome ? correctedInstant(call.outcomeDueAt, _offset) : null,
+      hangupFailure: stage == InboundStage.connected ? hangupFailure : null,
+    );
+  }
+
+  CustomerWaitingView? _waitingFor(wire.CustomerWaitingFrame? frame) {
+    if (identical(frame, _waitingSource) && _offset == _waitingOffset) return _waiting;
+    _waitingSource = frame;
+    _waitingOffset = _offset;
+    if (frame == null) return _waiting = null;
+    final name = frame.matchName?.trim();
+    return _waiting = CustomerWaitingView(
+      callId: frame.inboundCallId,
+      since: correctedInstant(frame.waitingSince, _offset)!,
+      name: name == null || name.isEmpty ? null : name,
+      fromE164: frame.fromE164,
     );
   }
 

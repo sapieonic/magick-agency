@@ -215,6 +215,30 @@ void main() {
     });
   });
 
+  group('chime', () {
+    test('asks the platform once per call, queued behind the arm it follows', () async {
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      final arm = audio.armMicrophone();
+      final chime = audio.playChime();
+      await Future.wait([arm, chime]);
+      await audio.stop();
+      expect(calls.map((c) => [c.method, c.arguments]), [
+        ['prepare', {'format': 'alaw8'}],
+        ['armMicrophone', null],
+        ['playChime', null],
+        ['stop', {'keepWarm': true}],
+      ]);
+      expect(audio.phase, AgentAudioPhase.prepared, reason: 'not a lifecycle call');
+    });
+
+    test('a refusal surfaces as an AgentAudioException and blocks nothing after it', () async {
+      replies['playChime'] = (_) => throw PlatformException(code: 'unknown', message: 'boom');
+      await expectLater(audio.playChime(), throwsA(isA<AgentAudioException>()));
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      expect(audio.phase, AgentAudioPhase.prepared);
+    });
+  });
+
   group('events', () {
     test('decodes the event channel and drops what it does not understand', () async {
       messenger.setMockStreamHandler(

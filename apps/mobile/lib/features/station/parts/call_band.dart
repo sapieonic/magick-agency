@@ -40,6 +40,11 @@ class CallBand extends ConsumerWidget {
           release: v?.release,
           wrapup: v?.wrapup,
           busy: v?.busy ?? StationBusy.none,
+          // An inbound call: who, and the two instants its band counts from or to.
+          inbound: v?.inbound?.stage,
+          inboundWho: v?.inbound == null ? null : InboundCopy.who(v!.inbound!),
+          inboundBridgedAt: v?.inbound?.bridgedAt,
+          inboundDue: v?.inbound?.outcomeDueAt,
         ),
       ),
     );
@@ -110,6 +115,42 @@ class CallBand extends ConsumerWidget {
       );
     }
 
+    final inbound = s.inbound;
+    if (inbound != null) {
+      final who = s.inboundWho ?? InboundCopy.numberWithheld;
+      switch (inbound) {
+        case InboundStage.offered:
+          return StatusBand(
+            key: const Key('band-inbound-offered'),
+            title: InboundCopy.incomingCall,
+            subtitle: InboundCopy.incomingFrom(who),
+            color: t.ember,
+            background: t.emberSubtle,
+            leading: const LiveDot(size: 10),
+          );
+        case InboundStage.connected:
+          final bridged = s.inboundBridgedAt;
+          return StatusBand(
+            key: const Key('band-on-call'),
+            title: StationCopy.onCall,
+            subtitle: InboundCopy.onCallWith(who),
+            color: t.success,
+            background: t.successSubtle,
+            trailing: bridged == null ? null : TalkTimer(since: bridged, now: now),
+          );
+        case InboundStage.outcome:
+          final due = s.inboundDue;
+          return StatusBand(
+            key: const Key('band-inbound-outcome'),
+            title: InboundCopy.outcomeNeeded,
+            subtitle: InboundCopy.outcomeDetail(who),
+            color: t.warning,
+            background: t.warningSubtle,
+            trailing: due == null ? null : LapseCountdown(due: due, now: now),
+          );
+      }
+    }
+
     switch (s.phase) {
       case AgentPhase.reserved:
         final n = s.countdown;
@@ -138,6 +179,47 @@ class CallBand extends ConsumerWidget {
       default:
         return const SizedBox.shrink();
     }
+  }
+}
+
+/// "Without one, it closes in 29:41": the time an owed inbound outcome waits before the server
+/// closes the call without one (`outcome_due_at`). Its own leaf, repainting each second; a screen
+/// reader is told the time it closes at, once, rather than every second.
+class LapseCountdown extends StatelessWidget {
+  const LapseCountdown({super.key, required this.due, required this.now});
+
+  final DateTime due;
+  final DateTime Function() now;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = context.tokens.warning;
+    final text = Theme.of(context).textTheme;
+    return RepaintBoundary(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 150),
+        child: Semantics(
+          label: InboundCopy.lapseSemantics(formatTime(due)),
+          excludeSemantics: true,
+          child: TickingBuilder(
+            now: now,
+            anchor: due,
+            builder: (context, at) => Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(InboundCopy.lapsePrefix, textAlign: TextAlign.end, style: text.labelSmall!.copyWith(color: color)),
+                Text(
+                  formatClock(due.difference(at), padMinutes: false),
+                  key: const Key('inbound-lapse'),
+                  style: monoStyle(context, size: 18, color: color),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

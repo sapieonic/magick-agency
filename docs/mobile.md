@@ -128,8 +128,10 @@ customer to nobody. So:
 
 ## The station socket
 
-`/proxy/agency/station/:sessionId?token=…&client=mobile&media=alaw8`. `station_ws_url` is a path
-relative to the API origin; the app resolves it against `API_ORIGIN` (`Env.resolveStationUrl`).
+`/proxy/agency/station/:sessionId?token=…&client=mobile&media=alaw8&caps=inbound`. `station_ws_url`
+is a path relative to the API origin; the app resolves it against `API_ORIGIN`
+(`Env.resolveStationUrl`). `caps=inbound` (see "Inbound calls") is sent on every connect, a re-minted
+one included.
 
 - **`client=mobile`** tunes liveness and is written to `agency_agent_sessions.client_kind` (0006)
   on every attach. The server pings a mobile station every 3 s (`MOBILE_STATION_PROBE_MS`); a
@@ -408,6 +410,84 @@ Code: `lib/features/missed/`.
   `agency_softphone_call_placed`, which now has the console's `entry` (`typed`, `pasted`, `redial`,
   `inbound_callback`) and `surface` (`softphone_page`, `station`). No number is sent.
 
+## Inbound calls
+
+The console's inbound flow ([`inbound.md`](inbound.md) §6, "The console (built, WP-D)") on the
+phone, with the app on screen: an agent on duty on a campaign is offered a caller who rang one of
+the account's numbers, sees and hears them, talks, and saves the outcome. Ringing a phone whose app
+is in the background (push) is not built: the foreground rule above stands, so a phone that leaves
+the app while `available` is paused and offered nothing.
+
+- **The gate.** The station socket declares `caps=inbound` on every upgrade
+  (`StationSocket.capabilities`, `StationCapability.withQuery`). Only a station that declares it is
+  sent `inbound_call` and `customer_waiting` frames and is searched for callers; an older build
+  that does not is never offered one.
+- **One row, replaced whole.** Every `inbound_call` frame carries the whole call; the station
+  reducer keeps the newest copy from any source (`newerInboundCall` in
+  `lib/core/inbound/inbound_call_rules.dart`, a port of the console's: a later offer wins, then
+  settled over unsettled, then progress within one offer; the frame wins a tie). HTTP answers are
+  adopted into the same copy. A frame for another session, or one that does not read, is ignored.
+- **The phase follows the call** (`StationState.effectiveState`), as for a campaign call: offered
+  reads `reserved`, connected `on_call`, ended owing its outcome `wrapup`. Everything that reads the
+  phase treats a live inbound call as a call: the shell's `callActive` (the call takes the screen,
+  the bar hides), the away rules (leaving the app during an offer, the call or an owed outcome
+  QUEUES `device_away`, never closes the socket, and the pause is cancelled on return; while the
+  outcome is owed the notification carries its save-by time, `outcome_due_at`), the wake lock, the
+  heartbeat's hold on a stalled socket, the mid-call reconnect countdown (8 s, for a connected call
+  only: the server cancels an offer whose socket is gone at `connects_at`), and the on-duty
+  notification ("Incoming call", "On a call", "Outcome needed"; Mute and Hang up once connected,
+  never while only offered). A new offer clears what a campaign call left on screen; a campaign
+  `reserved` drops an inbound copy still held.
+- **Audio.** The microphone arms on the offer (CallKit `startCall` on iOS, named by the matched
+  contact, else the number, else "Number withheld") and the uplink opens only at `bridged_at`. The
+  call's end reaches CallKit as `local` when this phone hung it up.
+- **The chime** is the console's `inbound_ring` cue, made in the engine
+  (`AgentAudio.playChime`, `packages/agent_audio/README.md` "Inbound chime"): mixed into playout,
+  never sent to the caller, played once per offer (the call id and `offered_at`), from the frame
+  handler right after the arm, so it sounds before the caller's audio binds at `connects_at`. A
+  restatement after a reconnect is silent, a re-offer after a requeue rings again, and a call
+  already connected never chimes. Me → Sounds off silences it (the screen and the haptic still
+  say a call arrived).
+- **The screens** (`lib/features/station/parts/inbound_views.dart`, reading only
+  `StationView.inbound`): the offer (the caller's name, else number, else "Number withheld"; "Your
+  customer" and why, or whose customer they usually are; Recording; the DNC badge and why they are
+  still taken; the number they rang, the route, how long they waited, the matched campaign and the
+  contact as the campaign pop shows it, prior attempts included; "Connecting…" in the band, and
+  "Connecting you to the caller…" where Hang up is, which is not offered yet); on the call (talk
+  timer from `bridged_at`, notes, Mute, Audio, Details, Mark DNC, hold-to-confirm Hang up); the
+  outcome (the pad from the call's `disposition_catalog`, with where it comes from, the callback
+  picker when the code needs a date, notes, Mark DNC, Save outcome, and "Without one, it closes in
+  m:ss" in the band, counted to `outcome_due_at` on the server's clock). They reuse the campaign
+  call's band, layout, notes field, pad, callback picker and hang-up bar.
+- **Actions** go through the same `StationActions` the campaign call uses, routed to the inbound
+  call while one is on the station (`lib/core/inbound/inbound_call_api.dart`: `GET`, `PATCH`,
+  `hangup`, `disposition`, `dnc` under `/proxy/agency/inbound/calls/:id`, every refusal a typed
+  `InboundRefusal`). Hang up only once connected (a CallKit or notification hang-up while offered is
+  ignored and the call reported to CallKit again); a refused hang-up says so and keeps the call.
+  Notes autosave 700 ms after the last keystroke (the soft phone's `CallAutosave`), are kept on the
+  phone under `inbound:<id>` until the server has them, reach a field the agent has not typed in
+  when the server comes to hold others, and go with the outcome: cleared notes as `''`, untouched
+  ones left out. An `inbound_disposition_invalid` refusal with `allowed_codes` rebuilds the pad;
+  each refusal is said in the console's words. Mark DNC confirms the number and its scope (the
+  matched campaign, else the account), and is not offered for a withheld number.
+- **Reconnect.** `ready` keeps the call (it does not carry it). The server restates a call it still
+  holds for this session right after; when no `inbound_call` frame comes within 2 s the station
+  asks `GET /inbound/calls/:id` (retrying 2, 4, 8, 16, then every 30 s on a failure that says
+  nothing about the call). An answer for this session is adopted; one for another session, or
+  `inbound_call_not_found`, retires the copy held when it asked (a newer frame survives).
+- **Why a call left.** When a call leaves the station without the agent's outcome the station
+  says why for 30 s, or until the next call: the caller hung up before they were connected; it
+  went back to the queue (also when a reconnect finds an offer no longer this station's); the time
+  to save the outcome ran out; a supervisor closed it.
+- **"Your customer is waiting"** (`customer_waiting`): a banner first in every station layout's
+  content, naming the caller (or their number). Cleared by the server's `cleared: true` for that
+  caller, and as a backstop by an offer, a `ready` (re-sent while they wait) and the station
+  leaving reserved / on a call / wrap-up.
+- **Telemetry.** The console sends no inbound call events, so the app's follow the soft phone's
+  names: `agency_inbound_call_offered` (once per chimed offer), `_connected`, `_ended` (with the
+  call's audio counts), `agency_inbound_outcome_saved` and `_refused`. Ids, codes and flags only:
+  never the number, a name or the notes.
+
 ## Inside the app
 
 ```
@@ -548,5 +628,12 @@ packages/
 - **iOS has not compiled yet.** CI's first iOS build (on `main`, 2026-11-01) stopped at package resolution: `firebase_core` 5.1.0 needs `gtm-session-fetcher` 4–6 and `google_sign_in_ios` 6.3.8 needs 3.x. The Firebase pin ("Builds and releases", iOS) fixes the resolution: SwiftPM reproduced the conflict with the plugins' constraints and resolved them with the pin. That check ran on Linux, so no Swift or Objective-C was compiled. The next `main` build is the first compile, and the Swift engine and CallKit code (the Swift ringback written to the shared vectors and CallKit for soft-phone calls included) is reviewed against the SDK headers only until it passes.
 - **Customer history (2026-11-06) has not run under Dart or Flutter.** The wire types, the number-rule port, the controller and the two screens were written, reviewed and then fixed (the filters sheet, the copy button, the options read, the three wire additions) in an environment without the SDK; no `dart test`, `flutter test` or `flutter analyze` ran. A Python transcription of the port passed every row of the shared table. The mobile CI job (run on changes to `apps/mobile`, `packages/contracts` and `packages/domain/src/customer-search-number.ts`) is the first run.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
+- **Inbound calls (2026-11-10) have run only against the fixtures.** The flow is tested with the
+  contract's sample frames and answers, not with a server offering a real call to a station that
+  declares `caps=inbound` (that server change was built alongside), nor on a phone or a carrier.
+  The chime's Kotlin was compiled and its JVM tests run only if "Not verified yet" says so below;
+  its Swift (`Chime.swift`, the `Playout` and `VoiceEngine` changes) has never been compiled, like
+  the rest of the iOS engine. Whether CallKit's own incoming-call UI should be used for an offer
+  (the app reports it as an outgoing call, as it does a campaign call) is not decided.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.

@@ -258,9 +258,12 @@ class PriorAttemptsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          // A Wrap, not a Row: at 200% text "This campaign" alone is wider than a 360 dp phone's card.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            spacing: Space.sm,
             children: [
-              Expanded(child: Text(StationCopy.priorAttempts(attempts.length), style: text.labelMedium)),
+              Text(StationCopy.priorAttempts(attempts.length), style: text.labelMedium),
               if (allHere) Text(StationCopy.thisCampaign, style: text.labelSmall),
             ],
           ),

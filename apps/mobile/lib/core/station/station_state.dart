@@ -1,6 +1,8 @@
 import 'package:agency_wire/agency_wire.dart';
 import 'package:meta/meta.dart';
 
+import '../inbound/inbound_call_rules.dart';
+import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
 import '../softphone/call_state.dart' show newerCall;
 
 /// The station's state and the one pure function that moves it: a port of the
@@ -31,6 +33,10 @@ import '../softphone/call_state.dart' show newerCall;
 /// * `queue` (contact assignment): the agent's own queue on a `strict` or
 ///   `preferred` campaign, from the bootstrap, the `ready` snapshot and the
 ///   `queue` frame. Nothing else moves it, and it moves nothing else.
+/// * `inboundCall` and `customerWaiting` (inbound calls, `docs/inbound.md` §6):
+///   the console keeps them in its own hooks beside the reducer; here they sit
+///   in it, so the phase can follow an inbound call as it follows a campaign
+///   one (`effectiveState`).
 
 /// The socket, as the reducer tracks it. Mirrors the console's `StationConnection`.
 enum StationConnection { idle, connecting, open, reconnecting, sessionGone, superseded, disconnected }
@@ -178,6 +184,8 @@ final class StationState {
     this.missedPings = 0,
     this.manualCall,
     this.queue,
+    this.inboundCall,
+    this.customerWaiting,
   });
 
   static const initial = StationState();
@@ -216,6 +224,23 @@ final class StationState {
   /// Null on a `pool` campaign (and from a server older than the feature).
   final QueueState? queue;
 
+  /// The station's inbound call: the newest copy seen, from an `inbound_call`
+  /// frame or an adopted HTTP answer (`newerInboundCall`, the frame winning a
+  /// tie). Kept once it leaves the station (settled, requeued) until a newer
+  /// one replaces it, a campaign call arrives or a reconcile retires it; only
+  /// a copy on the station (`isInboundOnStation`) moves anything.
+  final InboundCall? inboundCall;
+
+  /// "Your customer is waiting": a caller sticky to this agent waits for them
+  /// while they are busy. Cleared by the server's `cleared: true` for that
+  /// caller, and as a backstop by an offer, a `ready` (re-sent while they
+  /// wait) and the station leaving reserved / on a call / wrap-up.
+  final CustomerWaitingFrame? customerWaiting;
+
+  /// The inbound call when it holds the station (offered, connected, owing its
+  /// outcome), else null.
+  InboundCall? get inboundOnStation => isInboundOnStation(inboundCall) ? inboundCall : null;
+
   /// The attempt the station holds now (live, retained for wrap-up, or the
   /// wrap-up's own). What notes and the disposition are keyed by.
   String? get currentAttemptId => live?.attemptId ?? retainedAttempt?.attemptId ?? wrapup?.attemptId;
@@ -234,10 +259,16 @@ final class StationState {
   ///   `wrapup`, until `agent_state` (the one authority for wrap-up ending,
   ///   which clears both) says otherwise. It covers the moment between
   ///   `released` and the `agent_state` that follows it;
+  /// * an inbound call on the station: `reserved` while offered, `on_call`
+  ///   once connected, `wrapup` while its outcome is owed (the server states
+  ///   `agent_state` for these too, but the call is what moves first, and a
+  ///   reconnect restates the call after `ready`);
   /// * otherwise [agentState].
   AgentState get effectiveState {
     final call = live;
     if (call != null) return call.bridgedAt != null ? AgentState.onCall : AgentState.reserved;
+    final inbound = inboundAgentState(inboundCall);
+    if (inbound != null) return inbound;
     if (retainedAttempt != null || wrapup != null) return AgentState.wrapup;
     return agentState;
   }
@@ -262,6 +293,8 @@ final class StationState {
     int? missedPings,
     Object? manualCall = _keep,
     Object? queue = _keep,
+    Object? inboundCall = _keep,
+    Object? customerWaiting = _keep,
   }) =>
       StationState(
         connection: connection ?? this.connection,
@@ -283,12 +316,16 @@ final class StationState {
         missedPings: missedPings ?? this.missedPings,
         manualCall: identical(manualCall, _keep) ? this.manualCall : manualCall as ManualCall?,
         queue: identical(queue, _keep) ? this.queue : queue as QueueState?,
+        inboundCall: identical(inboundCall, _keep) ? this.inboundCall : inboundCall as InboundCall?,
+        customerWaiting:
+            identical(customerWaiting, _keep) ? this.customerWaiting : customerWaiting as CustomerWaitingFrame?,
       );
 
   @override
   String toString() => 'StationState($connection, $agentState, live: ${live?.attemptId}, '
       'retained: ${retainedAttempt?.attemptId}, wrapup: ${wrapup?.attemptId}, release: ${release?.reasonRaw}, '
-      'pendingBreak: $pendingBreakCode, missedPings: $missedPings, manual: $manualCall, queue: $queue)';
+      'pendingBreak: $pendingBreakCode, missedPings: $missedPings, manual: $manualCall, queue: $queue, '
+      'inbound: $inboundCall, waiting: ${customerWaiting?.inboundCallId})';
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
@@ -408,6 +445,36 @@ final class QueueAction extends StationAction {
   final QueueState queue;
 }
 
+/// An `inbound_call` frame's call (a frame whose call did not read is never
+/// dispatched). The frame is the authority: it wins a tie.
+final class InboundCallAction extends StationAction {
+  const InboundCallAction(this.call);
+  final InboundCall call;
+}
+
+/// An HTTP answer's copy of the station's inbound call (`GET`, `PATCH`, the
+/// hang-up, the outcome). Merged by `newerInboundCall` with the copy held,
+/// which wins a tie.
+final class InboundCallAdoptAction extends StationAction {
+  const InboundCallAdoptAction(this.call);
+  final InboundCall call;
+}
+
+/// The server no longer holds the call for this station (`inbound_call_not_found`,
+/// or answered as another session's): drops the held copy, but only if it is
+/// still the snapshot named by [snapshotKey] (`inboundSnapshotKey`), so a
+/// newer frame that arrived meanwhile is kept (the console's `staleKeys`).
+final class InboundCallRetireAction extends StationAction {
+  const InboundCallRetireAction(this.snapshotKey);
+  final String snapshotKey;
+}
+
+/// A `customer_waiting` frame.
+final class CustomerWaitingAction extends StationAction {
+  const CustomerWaitingAction(this.frame);
+  final CustomerWaitingFrame frame;
+}
+
 // ─── The reducer ────────────────────────────────────────────────────────────
 
 /// One authoritative statement of the break queue, from either frame that
@@ -419,6 +486,40 @@ final class QueueAction extends StationAction {
     );
 
 StationState stationReducer(StationState state, StationAction action) {
+  final next = _reduce(state, action);
+  // "Your customer is waiting" belongs to the call it waits behind: once the
+  // station leaves reserved / on a call / wrap-up, the caller is the agent's
+  // next offer (or gone), and the server says which.
+  if (next.customerWaiting != null && isCallPhase(state.effectiveState) && !isCallPhase(next.effectiveState)) {
+    return next._with(customerWaiting: null);
+  }
+  return next;
+}
+
+/// A new inbound offer reaching the station replaces whatever is on it, as a
+/// campaign `reserved` does: the agent was reserved for it from `available`
+/// (or from a wrap-up, by the release hook), so anything held is over.
+StationState _offerArrived(StationState state) => state._with(
+      release: null,
+      releasedAt: null,
+      retainedAttempt: null,
+      wrapup: null,
+      missedRelease: null,
+      live: null,
+      customerWaiting: null,
+    );
+
+StationState _inboundCall(StationState state, InboundCall? newer) {
+  if (identical(newer, state.inboundCall) || newer == state.inboundCall) return state;
+  final held = state.inboundCall;
+  final offered = newer != null &&
+      inboundPhase(newer) == InboundPhase.offered &&
+      (held == null || inboundOfferKey(held) != inboundOfferKey(newer));
+  final base = offered ? _offerArrived(state) : state;
+  return base._with(inboundCall: newer);
+}
+
+StationState _reduce(StationState state, StationAction action) {
   switch (action) {
     case ConnectionAction(:final connection):
       return connection == state.connection ? state : state._with(connection: connection);
@@ -441,7 +542,11 @@ StationState stationReducer(StationState state, StationAction action) {
         // The agent's own queue, replaced like every other field: absent on a
         // `pool` campaign, so a snapshot without it clears it.
         queue: frame.queue,
+        // Re-sent after `ready` while the caller still waits.
+        customerWaiting: null,
       );
+      // `inboundCall` is kept: `ready` does not carry it, and the server
+      // restates a call it still holds right after (else the station asks).
       if (frame.state != previous) {
         // Mobile addition: these described the state that was left.
         next = next._with(agentStateSince: null, breakReasonCode: null);
@@ -501,8 +606,10 @@ StationState stationReducer(StationState state, StationAction action) {
           : state._with(wrapup: anchor);
 
     case ReservedAction(:final attempt):
-      // A new reservation always wins: whatever is on screen belongs to a call that is over.
+      // A new reservation always wins: whatever is on screen belongs to a call
+      // that is over (an inbound copy still held included).
       return state._with(
+        inboundCall: null,
         release: null,
         releasedAt: null,
         retainedAttempt: null,
@@ -552,6 +659,25 @@ StationState stationReducer(StationState state, StationAction action) {
     case ManualCallRetireAction(:final versionKey):
       final held = state.manualCall;
       return held == null || held.versionKey != versionKey ? state : state._with(manualCall: null);
+
+    case InboundCallAction(:final call):
+      // The frame's copy goes first so it wins a tie: the frame is the authority.
+      return _inboundCall(state, newerInboundCall(call, state.inboundCall));
+
+    case InboundCallAdoptAction(:final call):
+      // The held copy goes first: an HTTP answer never displaces an equal frame.
+      return _inboundCall(state, newerInboundCall(state.inboundCall, call));
+
+    case InboundCallRetireAction(:final snapshotKey):
+      final held = state.inboundCall;
+      return held == null || inboundSnapshotKey(held) != snapshotKey ? state : state._with(inboundCall: null);
+
+    case CustomerWaitingAction(:final frame):
+      if (frame.cleared) {
+        final shown = state.customerWaiting;
+        return shown == null || shown.inboundCallId != frame.inboundCallId ? state : state._with(customerWaiting: null);
+      }
+      return frame == state.customerWaiting ? state : state._with(customerWaiting: frame);
 
     case QueueAction(:final queue):
       return queue == state.queue ? state : state._with(queue: queue);

@@ -9,6 +9,7 @@ import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
 import '../softphone/softphone_panel.dart';
 import 'parts/idle_views.dart';
+import 'parts/inbound_views.dart';
 import 'parts/link_screens.dart';
 import 'parts/on_call_view.dart';
 import 'parts/ringing_view.dart';
@@ -36,6 +37,13 @@ enum StationStage {
   reserved,
   onCall,
   wrapup,
+
+  /// An inbound caller (`docs/inbound.md` §6): offered, on the call, owing the outcome. The
+  /// phase reads reserved / on a call / wrap-up for them too; these stages pick the caller's
+  /// screens over the campaign call's.
+  inboundOffered,
+  inboundOnCall,
+  inboundOutcome,
 }
 
 /// The `soft_phone` break: the station is on the soft phone.
@@ -59,6 +67,14 @@ StationStage stationStageOf(StationView? v, String campaignId) {
       return StationStage.connecting;
     default:
       break;
+  }
+  final inbound = v.inbound;
+  if (inbound != null) {
+    return switch (inbound.stage) {
+      InboundStage.offered => StationStage.inboundOffered,
+      InboundStage.connected => StationStage.inboundOnCall,
+      InboundStage.outcome => StationStage.inboundOutcome,
+    };
   }
   return switch (v.phase) {
     AgentPhase.offline => StationStage.offline,
@@ -122,7 +138,8 @@ class _StationScreenState extends ConsumerState<StationScreen> {
   @override
   Widget build(BuildContext context) {
     final stage = ref.watch(stationViewProvider.select((v) => stationStageOf(v, widget.campaignId)));
-    final attemptId = ref.watch(stationViewProvider.select((v) => v?.call?.attemptId));
+    // The call on screen, campaign or inbound: a new call gets a new notes controller.
+    final attemptId = ref.watch(stationViewProvider.select((v) => v?.callId));
     ref.listen<AgentPhase?>(stationViewProvider.select((v) => v?.phase), _onPhase);
 
     final notes = _notesController(attemptId);
@@ -144,12 +161,18 @@ class _StationScreenState extends ConsumerState<StationScreen> {
       StationStage.reserved => const RingingView(),
       StationStage.onCall => OnCallView(notes: notes),
       StationStage.wrapup => WrapupPhaseView(key: ValueKey('wrapup-$attemptId'), notes: notes),
+      StationStage.inboundOffered => const InboundOfferView(),
+      StationStage.inboundOnCall => InboundOnCallView(notes: notes),
+      StationStage.inboundOutcome => InboundOutcomeView(key: ValueKey('inbound-outcome-$attemptId'), notes: notes),
     };
 
     final softphoneCall = ref.watch(softphoneViewProvider.select((v) => v.callOnScreen));
     final onCall = stage == StationStage.reserved ||
         stage == StationStage.onCall ||
         stage == StationStage.wrapup ||
+        stage == StationStage.inboundOffered ||
+        stage == StationStage.inboundOnCall ||
+        stage == StationStage.inboundOutcome ||
         (stage == StationStage.softphone && softphoneCall);
     // Mid-call the system back gesture must not take the call screen away;
     // the way off it is finishing the call (a soft-phone call included, until
@@ -233,14 +256,25 @@ class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
   Widget build(BuildContext context) {
     ref.listen(
       stationViewProvider.select(
-        (v) => (phase: v?.phase, away: v?.onBreak?.isDeviceAway ?? false, softphone: onSoftphoneBreak(v), label: v?.onBreak?.label),
+        (v) => (
+          phase: v?.phase,
+          away: v?.onBreak?.isDeviceAway ?? false,
+          softphone: onSoftphoneBreak(v),
+          label: v?.onBreak?.label,
+          inbound: v?.inbound == null ? null : InboundCopy.who(v!.inbound!),
+        ),
       ),
       (prev, next) {
         final phase = next.phase;
         // A break switched to the soft phone (or back) stays on break: still said.
         if (phase == null || (prev?.phase == phase && prev?.away == next.away && prev?.softphone == next.softphone)) return;
+        final inbound = next.inbound;
         _announce(
-          StationCopy.announce(phase, breakLabel: next.label, deviceAway: next.away, softphone: next.softphone),
+          inbound != null && phase == AgentPhase.reserved
+              ? InboundCopy.offerAnnouncement(inbound)
+              : inbound != null && phase == AgentPhase.wrapup
+                  ? InboundCopy.outcomeAnnouncement
+                  : StationCopy.announce(phase, breakLabel: next.label, deviceAway: next.away, softphone: next.softphone),
           assertive: phase == AgentPhase.reserved,
         );
       },

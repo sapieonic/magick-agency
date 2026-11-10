@@ -55,6 +55,7 @@ final class AudioTarget {
 /// | `bridged`                 | `startUplink`, CallKit `reportConnected`       |
 /// | `released`                | CallKit `endCall`, then `stop` (kept warm)     |
 /// | soft-phone call ringing   | `setRingback(true)` unless the ring is muted   |
+/// | inbound call offered      | as `reserved`, then `playChime` once ([chime])  |
 /// | leave                     | `release`, stop the on-duty service            |
 ///
 /// Lifecycle calls run strictly in order on one queue; [sync] records the
@@ -249,6 +250,14 @@ class AudioOrchestrator {
     final handle = _handle;
     _enqueue('startCall', () => _engine.startCall(callId: id, displayName: name, handle: handle));
     if (_bridged) _enqueue('connected', () => _engine.reportConnected(id));
+  }
+
+  /// The inbound chime, once, for the call the audio holds (an inbound offer): queued behind
+  /// the call's own start and arm, so it plays once the engine runs (the native side keeps a
+  /// request made before it does), and a later `stop` drops it.
+  void chime() {
+    if (!_opened || _callId == null) return;
+    _enqueue('chime', _engine.playChime);
   }
 
   /// Downlink: one frame, straight to the engine.

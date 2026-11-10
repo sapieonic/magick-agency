@@ -70,6 +70,10 @@ final class VoiceEngine {
   /// engine; it outlives an engine restart; `stop` clears it. A loopback test never rings.
   private var ringbackWanted = false
 
+  /// The inbound chime asked for while no call engine ran (CallKit activates the session after
+  /// `armMicrophone` returns): played when the engine starts, once; `stop` drops it. Main thread.
+  private var chimePending = false
+
   /// Uplink frames posted to main and not yet handed to Flutter, and frames dropped because
   /// main fell `maxUplinkInFlight` frames (160 ms) behind. Guarded by `uplinkLock`.
   private let uplinkLock = UnfairLock()
@@ -181,6 +185,7 @@ final class VoiceEngine {
     wantsRunning = false
     stopEngine()
     ringbackWanted = false
+    chimePending = false
     flagsLock.withLock {
       flags.open = false
       flags.muted = false
@@ -222,6 +227,16 @@ final class VoiceEngine {
   func setRingback(_ on: Bool) {
     ringbackWanted = on
     if running { playout.setRingback(on && loopback == nil) }
+  }
+
+  /// The inbound chime, once: now when a call engine runs, else when the next one starts. Never
+  /// during a loopback test (kept for the call engine after it).
+  func playChime() {
+    if running && loopback == nil {
+      playout.startChime()
+    } else {
+      chimePending = true
+    }
   }
 
   func setMetering(_ enabled: Bool) {
@@ -547,6 +562,10 @@ final class VoiceEngine {
     let acceptDownlink = loopback == nil
     flagsLock.withLock { flags.acceptDownlink = acceptDownlink }
     playout.setRingback(ringbackWanted && loopback == nil)
+    if chimePending && loopback == nil {
+      chimePending = false
+      playout.startChime()
+    }
     if speakerOverride { try? session.overrideOutputAudioPort(.speaker) }
     startIoTimer()
     scheduleCaptureWatchdog()
@@ -556,6 +575,7 @@ final class VoiceEngine {
   private func stopEngine() {
     flagsLock.withLock { flags.acceptDownlink = false }
     playout.setRingback(false)
+    playout.stopChime()
     captureWatchdog?.cancel()
     captureWatchdog = nil
     stopIoTimer()

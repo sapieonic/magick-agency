@@ -132,6 +132,17 @@ class AgentAudio {
   /// clear a request made after it. Turning it on again starts a fresh ring.
   Future<void> setRingback(bool on) => _queued(() => _invoke<void>('setRingback', {'on': on}));
 
+  /// Plays the inbound chime once (an inbound caller has been offered to the agent): the
+  /// console's `inbound_ring` cue, a two-note bell rung twice, about 0.84 s, made on the device
+  /// and mixed into the call's playout, never into the uplink. See `lib/src/tone/chime.dart`.
+  ///
+  /// Asked for before the engine runs (between [armMicrophone] and CallKit activating the
+  /// session on iOS), it plays when the engine starts; [stop] drops a request not yet played
+  /// and silences one playing. Asked for again while it plays, it starts over. Never during a
+  /// loopback test. Like [setRingback] it does not change the phase and is queued behind
+  /// pending lifecycle calls.
+  Future<void> playChime() => _queued(() => _invoke<void>('playChime'));
+
   /// Routes available now. Earpiece is absent on devices without one.
   Future<List<AudioRoute>> routes() async {
     final raw = await _invoke<List<Object?>>('routes');

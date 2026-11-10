@@ -347,8 +347,16 @@ class StationSocket {
     return _mintToken();
   }
 
+  /// What this build takes beyond its session's own work, declared on every upgrade
+  /// (`caps=inbound`): without it the server offers this station no inbound calls and sends it
+  /// neither `inbound_call` nor `customer_waiting`.
+  static const capabilities = [StationCapability.inbound];
+
   Uri _withQuery(Uri url) => url.replace(
-        queryParameters: <String, String>{...url.queryParameters, 'client': 'mobile', 'media': _media.wire},
+        queryParameters: StationCapability.withQuery(
+          <String, String>{...url.queryParameters, 'client': 'mobile', 'media': _media.wire},
+          capabilities,
+        ),
       );
 
   void _onOpen(int gen) {

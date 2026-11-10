@@ -303,6 +303,11 @@ class AgentAudioPlugin :
                 engines.setRingback(call.argument<Boolean>("on") ?: false)
                 result.success(null)
             }
+            // One-shot; kept for a call engine not yet running, until stop.
+            "playChime" -> {
+                engines.playChime()
+                result.success(null)
+            }
             "setInputLevelMetering" -> {
                 metering = call.argument<Boolean>("enabled") ?: false
                 engine?.metering = metering

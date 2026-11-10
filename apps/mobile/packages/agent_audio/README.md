@@ -49,7 +49,8 @@ Lifecycle calls are serialised in call order and checked against `AgentAudioPhas
 sides enforce the same table. `stop` is safe in any phase and repeatable. Every platform
 failure is an `AgentAudioException` with an `AgentAudioErrorCode`.
 
-Also: `setRingback` (the ringback tone on a ringing soft-phone call; see below), `setMuted`
+Also: `setRingback` (the ringback tone on a ringing soft-phone call; see below), `playChime`
+(the inbound chime, once, when an inbound caller is offered; see below), `setMuted`
 (uplink keeps flowing as encoded silence, so the far end keeps its timing),
 `routes` / `currentRoute` / `setRoute`, `setInputLevelMetering` (≈10 `InputLevel` events/s),
 `loopbackTest` (pre-flight), `configureCallSystem(useCallKit:)`, `startOnDutyService` /
@@ -172,6 +173,31 @@ answered or ends.
   not load. The Swift engine follows the same rules (`ringbackWanted` in `VoiceEngine.swift`)
   with no test here.
 
+## Inbound chime
+
+When an inbound caller is offered to the agent (the station's `inbound_call` frame, `offered`),
+the app calls `playChime()` once, right after arming the microphone for the call, so the agent
+hears the offer before the caller's audio binds at `connects_at` (about 1.5 s later).
+
+- It is the console's `inbound_ring` cue (`CUE_SPECS.inbound_ring`): 784, 587, 784, 587 Hz,
+  each with an 8 ms linear attack, 120 ms hold and 25 ms linear release, gaps of 30, 160 and
+  30 ms, after a 5 ms lead, peaking at 0.12 of full scale; about 0.84 s, then silence.
+- Specification: `lib/src/tone/chime.dart`, written like the ringback's (each tone's phase from
+  the integer index within the tone, floor(x + 0.5)). Golden vectors
+  (`test/support/chime_vectors.dart`: the lead, the edges, a gap, the end, a checksum and the
+  energy, at 8 and 16 kHz) are asserted by `test/chime_test.dart` and by `ChimeTest.kt`;
+  `Chime.swift` is written to them.
+- Mixed into each 20 ms playout frame after the ringback, at the wire rate, with a saturating
+  add (Kotlin `VoiceEngine.playbackLoop`, Swift `Playout.render`), so it is heard only on the
+  phone, never sent to the caller.
+- One-shot: a request made before the engine runs (iOS starts it when CallKit activates the
+  session, after `armMicrophone` returns) plays when it starts; `stop` drops one not yet played
+  and silences one playing; a restart after a device error does not replay it; a loopback test
+  never chimes. On Android the request goes through `EngineSlot` (`chimePending`), checked by
+  `ChimeTest.kt` with a fake engine; Swift keeps `chimePending` in `VoiceEngine.swift`.
+- The app decides when (once per offer: the call id and `offered_at`) and whether (the Sounds
+  setting); this package only plays it.
+
 ## Codec and resampling
 
 - G.711 A-law, table-based (4096-entry encode on the 13-bit magnitude, 256-entry decode),
@@ -282,13 +308,15 @@ flutter analyze .
 
 Kotlin unit tests (`android/src/test`) cover A-law, the decimator (shared checksum), the
 jitter buffer (replaying the Dart trace), the ringback tone (the Dart vectors, cadence,
-mixing, the request kept across arm and cleared by stop), framing, the uplink encoder, the
+mixing, the request kept across arm and cleared by stop), the inbound chime (the Dart vectors,
+played once frame by frame, a request before the engine runs, dropped by stop), framing, the uplink encoder, the
 level meter and the interruption tracker; they need no Android or Flutter classes. They run with the app's Gradle
 build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`).
 
 The Swift sources cannot be compiled on Linux. `ALaw.swift` documents the same checksums;
 the trace format is documented in `test/support/jitter_trace.dart` for a Swift replay test,
-and `Ringback.swift` is written to the vectors in `test/support/ringback_vectors.dart`.
+`Ringback.swift` is written to the vectors in `test/support/ringback_vectors.dart`, and
+`Chime.swift` to those in `test/support/chime_vectors.dart`.
 
 ## Known limits
 

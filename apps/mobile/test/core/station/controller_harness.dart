@@ -170,6 +170,7 @@ class App {
           return StationFrame.decode(text);
         }),
         stationUnauthorizedSinkProvider.overrideWithValue(unauthorized.add),
+        stationSoundsProvider.overrideWithValue(() => sounds),
         ...stationOverrides,
       ],
     );
@@ -211,6 +212,9 @@ class App {
   final Map<String, Reply> routes = {};
   int decodes = 0;
   int mints = 0;
+
+  /// Me → Sounds, as the inbound chime reads it.
+  bool sounds = true;
 
   StationController get controller => container.read(stationControllerProvider.notifier);
   StationView? get view => container.read(stationControllerProvider);

@@ -128,6 +128,77 @@ final class CallTelemetry {
     media.reset();
   }
 
+  // ─── Inbound calls ────────────────────────────────────────────────────────
+  //
+  // The console sends no inbound call events (`apps/console/src/analytics/events.ts` has
+  // none), so these follow the soft phone's names: `agency_inbound_call_offered`, `_connected`,
+  // `_ended`, and `agency_inbound_outcome_saved` / `_refused`. Ids only: never the caller's
+  // number, the contact's name or the notes.
+
+  _Tracked? _inbound;
+  DateTime? _inboundOfferedAt;
+
+  /// The offer this phone chimed for (once per offer: a restatement is not a new one).
+  void inboundOffered(InboundCall call) {
+    Telemetry.event('agency_inbound_call_offered', {
+      'route_id': call.route?.id,
+      'matched': call.match != null,
+      'campaign_id': call.match?.campaignId,
+      'sticky': call.sticky != null,
+      'sticky_is_you': call.sticky?.isYou ?? false,
+      'recording': call.recording,
+      'caller_dnc': call.callerDnc,
+      'withheld': call.fromE164 == null,
+      'waited_seconds': call.waitedSeconds,
+      'catalog_source': call.catalogSourceRaw,
+    });
+  }
+
+  /// The station's copy of the inbound call, whenever it changes.
+  void inboundChanged(InboundCall call) {
+    var t = _inbound;
+    if (t == null || t.id != call.id) {
+      final live = call.isLive;
+      t = _inbound = _Tracked(call.id, live: live, connected: call.bridgedAt != null);
+      _inboundOfferedAt = live && call.state == InboundCallState.offered ? _now() : null;
+      if (live) media.reset();
+    }
+    if (!t.live) return;
+    if (!t.connected && call.bridgedAt != null) {
+      t.connected = true;
+      final offeredAt = _inboundOfferedAt;
+      Telemetry.event('agency_inbound_call_connected', {
+        'route_id': call.route?.id,
+        'offer_seconds': offeredAt == null ? 0 : _now().difference(offeredAt).inSeconds,
+        'from_reconnect': offeredAt == null,
+      });
+    }
+    // Left the line: ended, settled before it was answered, or back in the queue.
+    final over = call.state == InboundCallState.ended || call.state == InboundCallState.queued || call.isSettled;
+    if (!t.ended && over) {
+      t.ended = true;
+      Telemetry.event('agency_inbound_call_ended', {
+        'route_id': call.route?.id,
+        'state': call.stateRaw,
+        'outcome': call.outcomeRaw,
+        'was_connected': call.bridgedAt != null,
+        'talk_seconds': call.talkSeconds ?? 0,
+        ...media.properties,
+      });
+    }
+  }
+
+  void inboundOutcomeSaved(InboundCall call, {required String code, required bool callback}) =>
+      Telemetry.event('agency_inbound_outcome_saved', {
+        'catalog_source': call.catalogSourceRaw,
+        'code': code,
+        'callback': callback,
+      });
+
+  /// [code]: the refusal's code; null when none came back.
+  void inboundOutcomeRefused(InboundCall call, {required String? code}) =>
+      Telemetry.event('agency_inbound_outcome_refused', {'catalog_source': call.catalogSourceRaw, 'code': code});
+
   // ─── Soft-phone calls ─────────────────────────────────────────────────────
 
   /// The soft phone placed [call] from this phone: its end is reported even

@@ -87,6 +87,15 @@ class FakeAudioEngine implements AudioEngine {
     return _record(on ? 'ringback.on' : 'ringback.off');
   }
 
+  /// Chimes played ([playChime]), counted.
+  int chimes = 0;
+
+  @override
+  Future<void> playChime() {
+    chimes++;
+    return _record('chime');
+  }
+
   @override
   Future<void> startCall({required String callId, required String displayName, required String handle}) {
     startedCalls.add((callId: callId, displayName: displayName, handle: handle));
