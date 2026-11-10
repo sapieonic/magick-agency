@@ -92,8 +92,9 @@ INTEGRATION_LANE=rest pnpm test:integration        # skip the ~5 min wall-clock 
   carriers and a simulated station fleet. Plivo's REST host is fixed: tests reach the mock
   through `setPlivoTransportForTests(carrier.fetch)`, never a configurable host. Open defects are pinned as `it.fails`: when you fix one, flip it to
   `it` and say so.
-- `test/unit/audio/decode.test.ts` needs `mpg123` and `sndfile-programs` installed; it fails
-  rather than skips in CI without them.
+- `test/unit/audio/decode.test.ts` and `test/integration/api/inbound-clips-routes.test.ts` need
+  `mpg123` and `sndfile-programs` installed (CI installs them in the unit job and the server
+  integration jobs); they fail rather than skip without them.
 - First super-admin (no seeded credentials):
   `SUPER_ADMIN_PASSWORD=… pnpm tsx scripts/create-super-admin.ts --email … --name …`
 
