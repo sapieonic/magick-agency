@@ -113,6 +113,7 @@ void main() {
 
       // Holding the bar while only offered ends nothing.
       final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
       await gesture.up();
       await tester.pump();
