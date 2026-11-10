@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
@@ -12,8 +15,12 @@ import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/features/calls/calls_screen.dart';
 import 'package:magick_agency_agent/features/missed/missed_calls_copy.dart';
 import 'package:magick_agency_agent/features/missed/missed_calls_list.dart';
+import 'package:magick_agency_agent/features/missed/missed_count_controller.dart' show missedRereadOnEntryAfter;
 
 import '../../core/auth/support/harness.dart' show testSignalsProvider;
+import '../../core/softphone/fake_softphone_host.dart'
+    show FakeSoftphoneHost, campaignHost, copyHost, hostView, softphoneCoreOverrides;
+import '../../core/softphone/manual_calls.dart' show bootstrapJson, manualCallJson;
 import '../calls/softphone_support.dart' show FakeSoftphoneCallsApi, softphoneCallsOverrides;
 import '../softphone/softphone_harness.dart' show FakeSoftphoneActions;
 import 'support.dart';
@@ -168,24 +175,24 @@ void main() {
   });
 
   group('Call back', () {
-    testWidgets('hands the number and the matched campaign to the soft phone and opens it; never dials', (tester) async {
+    testWidgets('hands the number and the matched campaign to the soft phone and opens it', (tester) async {
       await open(tester, [missed('m1')], view: const SoftphoneView(screen: SoftphoneScreenActive()));
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
-      expect(actions.calls, ['callBack']);
+      expect(actions.calls, ['callBack'], reason: 'only the hand-off: the screen dials nothing itself');
       expect(actions.args['callBack'], ['+918765432109', 'camp-1']);
-      expect(actions.count('dial'), 0);
       expect(find.text('at /phone'), findsOneWidget);
-      expect(find.byKey(const Key('missed-call-back-waits')), findsNothing, reason: 'the pad is filled at once');
+      expect(find.byType(SnackBar), findsNothing, reason: 'the pad is filled at once');
     });
 
-    testWidgets('with the soft phone not open yet, the agent is told the number will be ready', (tester) async {
+    testWidgets('with the soft phone not open yet, the agent is told it waits five minutes for it', (tester) async {
       await open(tester, [missed('m1')]);
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
       expect(find.text('at /phone'), findsOneWidget);
       expect(find.byKey(const Key('missed-call-back-waits')), findsOneWidget);
-      expect(actions.count('dial'), 0);
+      expect(find.text(MissedCopy.callBackWaits), findsOneWidget);
+      expect(MissedCopy.callBackWaits, contains('within 5 minutes'));
     });
 
     testWidgets('a campaign station on the soft phone (SP7): it goes to the station, where the pad is', (tester) async {
@@ -197,8 +204,31 @@ void main() {
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
       expect(find.text('at /home/station/c1'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+    });
+
+    testWidgets('with a soft-phone call on the station, the agent is told the number waits for it', (tester) async {
+      await open(
+        tester,
+        [missed('m1')],
+        signals: const StationSignals(onDuty: true, onBreak: true, campaignId: 'c1', onSoftphone: true, outcomeOwed: true),
+        view: const SoftphoneView(phase: SoftphonePhase.outcome, callId: 'mc-1'),
+      );
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+      expect(find.byKey(const Key('missed-call-back-after-call')), findsOneWidget);
+      expect(find.text(MissedCopy.callBackAfterCall), findsOneWidget);
+    });
+
+    testWidgets('with the soft phone open on another device, nothing is promised', (tester) async {
+      await open(tester, [missed('m1')], view: const SoftphoneView(screen: SoftphoneScreenOtherDevice()));
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(find.text('at /phone'), findsOneWidget, reason: 'where "Use it on this phone" is');
+      expect(find.byKey(const Key('missed-call-back-elsewhere')), findsOneWidget);
       expect(find.byKey(const Key('missed-call-back-waits')), findsNothing);
-      expect(actions.count('dial'), 0);
+      expect(MissedCopy.callBackElsewhere, isNot(contains('ready')));
     });
 
     testWidgets('not offered where the soft phone is not on (hidden, or finish mode), and the note says why', (tester) async {
@@ -206,6 +236,145 @@ void main() {
       expect(find.byKey(const Key('missed-call-back')), findsNothing);
       expect(find.byKey(const Key('missed-no-softphone')), findsOneWidget);
       expect(find.byKey(const Key('missed-mark-handled')), findsOneWidget);
+    });
+  });
+
+  group('Call back through the real soft phone: the number on its pad, and nothing dialled', () {
+    const dialPath = 'POST /proxy/agency/softphone/calls';
+    late FakeSoftphoneHost host;
+    late List<String> sent;
+    late ProviderContainer container;
+
+    Future<http.Response> handle(http.Request r) async {
+      final route = '${r.method} ${r.url.path}';
+      sent.add(route);
+      http.Response json(int status, Object body) =>
+          http.Response(jsonEncode(body), status, headers: {'content-type': 'application/json'});
+      return switch (route) {
+        'GET /proxy/agency/softphone/bootstrap' => json(200, bootstrapJson()),
+        'GET /proxy/agency/softphone/calls' => json(200, {'rows': <Object?>[], 'next_cursor': null, 'limit': 8}),
+        dialPath => json(201, manualCallJson()),
+        _ => json(404, {'error': 'Not Found', 'message': 'no route'}),
+      };
+    }
+
+    Future<void> openReal(WidgetTester tester) async {
+      await setPhoneSize(tester);
+      host = FakeSoftphoneHost();
+      sent = [];
+      api.autoPage = missedPage([missed('m1')]);
+      final router = GoRouter(
+        initialLocation: Routes.calls,
+        routes: [
+          GoRoute(path: Routes.calls, builder: (_, _) => const Scaffold(body: MissedCallsList())),
+          GoRoute(path: Routes.phone, builder: (_, s) => Scaffold(body: Text('at ${s.uri}'))),
+          GoRoute(path: Routes.stationPattern, builder: (_, s) => Scaffold(body: Text('at ${s.uri}'))),
+        ],
+      );
+      addTearDown(router.dispose);
+      container = ProviderContainer.test(overrides: [
+        ...softphoneCoreOverrides(host: host, handle: handle, now: () => fixedNow),
+        ...missedOverrides(api, base: false),
+        stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider)),
+      ]);
+      host.bind(container);
+      container.read(softphoneAvailabilityProvider);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(theme: buildTheme(AppTokens.dark, Brightness.dark), routerConfig: router),
+      ));
+      await flush(tester);
+      await flush(tester);
+    }
+
+    int dials() => sent.where((r) => r == dialPath).length;
+
+    testWidgets('the soft phone open here: filled at once, Log to the matched campaign, Call focused', (tester) async {
+      await openReal(tester);
+      host.view = hostView();
+      await flush(tester);
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      final view = container.read(softphoneViewProvider);
+      expect(find.text('at /phone'), findsOneWidget);
+      expect(view.number, '+918765432109');
+      expect(view.tagCampaignId, 'camp-1');
+      expect(view.focusCallToken, 1);
+      expect(view.canDial, isTrue, reason: 'the agent may press Call');
+      await tester.pump(const Duration(seconds: 30));
+      expect(dials(), 0);
+    });
+
+    testWidgets('behind a call on the station’s soft phone: told, then on the pad once it settles, never dialled',
+        (tester) async {
+      await openReal(tester);
+      final call = ManualCall.fromJson(manualCallJson({'id': 'mc-9', 'state': 'ringing', 'session_id': 'sess-1'}));
+      host.view = campaignHost(call: call);
+      container.read(testSignalsProvider.notifier).set(
+            const StationSignals(onDuty: true, onBreak: true, campaignId: 'camp-1', onSoftphone: true, callActive: true),
+          );
+      await flush(tester);
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('missed-call-back-after-call')), findsOneWidget);
+      expect(container.read(softphoneViewProvider).number, isNot('+918765432109'));
+
+      host.view = copyHost(host.view!, clearCall: true);
+      await flush(tester);
+      final view = container.read(softphoneViewProvider);
+      expect(view.number, '+918765432109');
+      expect(view.focusCallToken, 1);
+      await tester.pump(const Duration(seconds: 30));
+      expect(dials(), 0);
+    });
+  });
+
+  group('kept fresh mid-shift', () {
+    testWidgets('My calls coming back to the front after a minute reads the rows and the badge again', (tester) async {
+      await setPhoneSize(tester);
+      final clock = TestClock();
+      api.autoPage = missedPage([missed('m1')]);
+      final onScreen = ValueNotifier(true);
+      addTearDown(onScreen.dispose);
+      final container = ProviderContainer.test(overrides: [
+        ...missedOverrides(api, clock: clock),
+        softphoneAvailabilityProvider.overrideWithValue(phoneOn),
+        softphoneActionsProvider.overrideWithValue(actions),
+        stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider)),
+      ]);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: buildTheme(AppTokens.dark, Brightness.dark),
+          // The shell's indexed stack turns a tab's tickers off while another is in front.
+          home: ValueListenableBuilder<bool>(
+            valueListenable: onScreen,
+            builder: (_, on, _) => TickerMode(enabled: on, child: const Scaffold(body: MissedCallsList())),
+          ),
+        ),
+      ));
+      await flush(tester);
+      await flush(tester);
+      expect(api.queries, hasLength(1));
+      final reads = api.countReads;
+
+      onScreen.value = false;
+      await flush(tester);
+      onScreen.value = true;
+      await flush(tester);
+      expect(api.queries, hasLength(1), reason: 'back within the minute: nothing read');
+
+      onScreen.value = false;
+      await flush(tester);
+      clock.now = clock.now.add(missedRereadOnEntryAfter);
+      api.autoPage = missedPage([]);
+      api.countAnswer = countOf(0);
+      onScreen.value = true;
+      await flush(tester);
+      await flush(tester);
+      expect(api.queries, hasLength(2));
+      expect(api.countReads, reads + 1);
+      expect(find.byKey(const Key('missed-row-m1')), findsNothing, reason: 'closed as reached meanwhile');
     });
   });
 
@@ -249,12 +418,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('All lines busy').last);
     await tester.pumpAndSettle();
-    expect(api.queries.last.toQuery(), {'status': 'open', 'reason': 'overflow_no_capacity', 'limit': '50'});
+    expect(api.queries.last.toQuery(), {'status': 'open', 'assignee': 'me', 'reason': 'overflow_no_capacity', 'limit': '50'});
     await tester.tap(find.byKey(const Key('missed-filter-reason')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Any reason').last);
     await tester.pumpAndSettle();
-    expect(api.queries.last.toQuery(), {'status': 'open', 'limit': '50'});
+    expect(api.queries.last.toQuery(), {'status': 'open', 'assignee': 'me', 'limit': '50'});
   });
 
   group('on My calls', () {

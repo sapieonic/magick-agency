@@ -11,8 +11,9 @@ import 'missed_calls_api.dart';
 import 'missed_calls_copy.dart';
 import 'missed_count_controller.dart';
 
-/// "My calls" → "Missed calls": the agent's own Missed rows (the server shows
-/// an agent only the rows assigned to them), newest first, keyset-paged, To
+/// "My calls" → "Missed calls": the agent's own Missed rows (`assignee=me`:
+/// the server forces it without `agency.supervise`, and a supervisor using the
+/// app sees their own too), newest first, keyset-paged, To
 /// follow up or Handled, with a reason filter, and per row Mark handled or
 /// Reopen (a port of the console's `MissedCallsList` in an agent's view).
 ///
@@ -42,8 +43,15 @@ class MissedFilters {
   MissedFilters withStatus(InboundFollowUpStatus status) => MissedFilters(status: status, reason: reason);
   MissedFilters withReason(InboundMissedReason? reason) => MissedFilters(status: status, reason: reason);
 
-  InboundMissedQuery toQuery({String? cursor}) =>
-      InboundMissedQuery(status: status, reason: reason, cursor: cursor, limit: missedCallsPageSize);
+  /// Always the caller's own rows: without an assignee the server widens a
+  /// supervisor's list to the whole account.
+  InboundMissedQuery toQuery({String? cursor}) => InboundMissedQuery(
+        status: status,
+        assignee: InboundMissedQuery.assigneeMe,
+        reason: reason,
+        cursor: cursor,
+        limit: missedCallsPageSize,
+      );
 
   @override
   bool operator ==(Object other) => other is MissedFilters && other.status == status && other.reason == reason;
@@ -82,10 +90,11 @@ class MissedCallsState {
   final String? moreError;
   final bool refreshing;
 
-  /// The row a Mark handled is in flight for (one at a time, the console's rule).
+  /// The row a Mark handled is in flight for (one at a time, the console's
+  /// rule). Kept through a reload: only the action that set it clears it.
   final String? marking;
 
-  /// The row a Reopen is in flight for.
+  /// The row a Reopen is in flight for; kept through a reload, as [marking].
   final String? reopening;
 
   /// The last row action's refusal, shown on its row.
@@ -160,21 +169,56 @@ class MissedCallsController extends Notifier<MissedCallsState> {
   String? _workspace;
   bool _requested = false;
 
+  /// When the first page on screen was read, and whether a call has settled
+  /// on this phone since (the server may have closed a row as reached).
+  DateTime? _loadedAt;
+  bool _settledSince = false;
+
+  /// Which Mark handled / Reopen owns [MissedCallsState.marking] /
+  /// [MissedCallsState.reopening]: an action clears the flag only while it
+  /// still owns it (never one set after a reload or in another workspace).
+  int _actionSeq = 0;
+  int? _markingAction;
+  int? _reopeningAction;
+
   MissedCallsApi get _api => ref.read(missedCallsApiProvider);
+  DateTime _now() => ref.read(missedClockProvider)();
 
   @override
   MissedCallsState build() {
     _workspace = ref.watch(agentWorkspaceProvider);
     _generation++;
     _requested = false;
+    _loadedAt = null;
+    _settledSince = false;
+    _markingAction = null;
+    _reopeningAction = null;
+    ref.listen<int>(missedCallsSettledProvider, (_, _) => _settledSince = true);
     return MissedCallsState();
   }
 
-  /// Ensure a first page exists (the segment shown, a workspace switch).
+  /// Ensure a first page exists (a workspace switch).
   Future<void> ensureLoaded() {
     final current = state;
     if (_requested && current.status != MissedListStatus.error) return Future.value();
     return _loadFirst(current.filters, keepRows: false);
+  }
+
+  /// The segment came on screen (shown, or its tab came back to the front):
+  /// the first page if there is none; otherwise the rows read again when they
+  /// are [missedRereadOnEntryAfter] old or a call has settled since, and the
+  /// badge's count when it is that old. Agents keep the app open all shift,
+  /// and rows close by themselves (a customer reached) or arrive (assigned).
+  Future<void> entered() {
+    final current = state;
+    if (!_requested || current.status == MissedListStatus.error) return ensureLoaded();
+    final count = ref.read(missedCountControllerProvider.notifier).refreshIfOlderThan(missedRereadOnEntryAfter);
+    final loadedAt = _loadedAt;
+    final stale = current.status == MissedListStatus.ready &&
+        !current.refreshing &&
+        (_settledSince || loadedAt == null || _now().difference(loadedAt) >= missedRereadOnEntryAfter);
+    if (!stale) return count;
+    return Future.wait([count, _loadFirst(current.filters, keepRows: current.rows.isNotEmpty)]);
   }
 
   /// Replace the applied filters and read the first page. A no-op when
@@ -194,18 +238,22 @@ class MissedCallsController extends Notifier<MissedCallsState> {
   Future<void> _loadFirst(MissedFilters filters, {required bool keepRows}) async {
     if (_workspace == null) return;
     _requested = true;
+    _settledSince = false;
     final mine = ++_generation;
     state = keepRows
         ? state.copyWith(refreshing: true, loadingMore: false, clearMoreError: true)
-        : MissedCallsState(filters: filters);
+        : MissedCallsState(filters: filters, marking: state.marking, reopening: state.reopening);
     try {
       final page = await _api.list(filters.toQuery());
       if (!ref.mounted || mine != _generation) return;
+      _loadedAt = _now();
       state = MissedCallsState(
         filters: filters,
         status: MissedListStatus.ready,
         rows: page.rows,
         nextCursor: page.nextCursor,
+        marking: state.marking,
+        reopening: state.reopening,
       );
     } on Exception catch (e) {
       if (!ref.mounted || mine != _generation) return;
@@ -213,7 +261,13 @@ class MissedCallsController extends Notifier<MissedCallsState> {
       final message = _message(e, MissedCopy.loadFailed);
       state = keepRows
           ? state.copyWith(refreshing: false, error: message)
-          : MissedCallsState(filters: filters, status: MissedListStatus.error, error: message);
+          : MissedCallsState(
+              filters: filters,
+              status: MissedListStatus.error,
+              error: message,
+              marking: state.marking,
+              reopening: state.reopening,
+            );
     }
   }
 
@@ -250,12 +304,17 @@ class MissedCallsController extends Notifier<MissedCallsState> {
   /// Mark handled: off the To follow up list (onto Handled), the badge re-read.
   Future<MissedActionResult> markHandled(InboundMissedCall call) async {
     if (state.marking != null) return const MissedActionResult(ok: false, message: MissedCopy.marking);
+    final action = _markingAction = ++_actionSeq;
     state = state.copyWith(marking: call.id, clearRowError: true);
     final mine = _generation;
+    bool owns() => ref.mounted && _markingAction == action;
     try {
       final updated = await _api.markHandled(call.id);
       if (!ref.mounted) return MissedActionResult(ok: true, message: MissedCopy.markedAnnouncement(call));
-      state = state.copyWith(clearMarking: true);
+      if (owns()) {
+        _markingAction = null;
+        state = state.copyWith(clearMarking: true);
+      }
       if (mine == _generation) _settleRow(call.id, updated, keep: !state.filters.open);
       unawaited(ref.read(missedCountControllerProvider.notifier).refresh());
       return MissedActionResult(ok: true, message: MissedCopy.markedAnnouncement(call));
@@ -263,7 +322,10 @@ class MissedCallsController extends Notifier<MissedCallsState> {
       final message = MissedCopy.handledRefusal(e);
       if (!ref.mounted) return MissedActionResult(ok: false, message: message);
       _refused('mark handled', e);
-      state = state.copyWith(clearMarking: true, rowError: (id: call.id, message: message));
+      if (owns()) {
+        _markingAction = null;
+        state = state.copyWith(clearMarking: true, rowError: (id: call.id, message: message));
+      }
       return MissedActionResult(ok: false, message: message);
     }
   }
@@ -271,12 +333,17 @@ class MissedCallsController extends Notifier<MissedCallsState> {
   /// Reopen: off the Handled list, back to To follow up; the badge re-read.
   Future<MissedActionResult> reopen(InboundMissedCall call) async {
     if (state.reopening != null) return const MissedActionResult(ok: false, message: MissedCopy.reopening);
+    final action = _reopeningAction = ++_actionSeq;
     state = state.copyWith(reopening: call.id, clearRowError: true);
     final mine = _generation;
+    bool owns() => ref.mounted && _reopeningAction == action;
     try {
       final updated = await _api.reopen(call.id);
       if (!ref.mounted) return MissedActionResult(ok: true, message: MissedCopy.reopenedAnnouncement(call));
-      state = state.copyWith(clearReopening: true);
+      if (owns()) {
+        _reopeningAction = null;
+        state = state.copyWith(clearReopening: true);
+      }
       if (mine == _generation) _settleRow(call.id, updated, keep: state.filters.status != InboundFollowUpStatus.handled);
       unawaited(ref.read(missedCountControllerProvider.notifier).refresh());
       return MissedActionResult(ok: true, message: MissedCopy.reopenedAnnouncement(call));
@@ -284,7 +351,10 @@ class MissedCallsController extends Notifier<MissedCallsState> {
       final message = MissedCopy.reopenRefusal(e);
       if (!ref.mounted) return MissedActionResult(ok: false, message: message);
       _refused('reopen', e);
-      state = state.copyWith(clearReopening: true, rowError: (id: call.id, message: message));
+      if (owns()) {
+        _reopeningAction = null;
+        state = state.copyWith(clearReopening: true, rowError: (id: call.id, message: message));
+      }
       return MissedActionResult(ok: false, message: message);
     }
   }

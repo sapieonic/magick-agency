@@ -1,9 +1,15 @@
+import 'dart:async';
+
+import 'package:agency_wire/agency_wire.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
+import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/features/missed/missed_access.dart';
 import 'package:magick_agency_agent/features/missed/missed_count_controller.dart';
 
+import '../../core/auth/support/harness.dart' show testSignalsProvider;
 import 'support.dart';
 
 /// Where the Missed list shows (the console's `useMissedCallsAccess`, with the
@@ -141,6 +147,119 @@ void main() {
       final n = c.read(missedCountControllerProvider.notifier);
       await Future.wait([n.refresh(), n.refresh()]);
       expect(api.countReads, 2);
+    });
+  });
+
+  group('kept fresh mid-shift', () {
+    /// On a fake clock, with the console's poll and the station's signals the test sets.
+    ProviderContainer polled(FakeAsync async, {bool inboundOn = true}) {
+      final c = ProviderContainer(overrides: [
+        ...missedOverrides(api, inboundOn: inboundOn, lifecycle: lifecycle, clock: clock, poll: missedCountPollEvery),
+        stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider)),
+      ]);
+      c.listen(missedCallsAccessProvider, (_, _) {});
+      async.flushMicrotasks();
+      return c;
+    }
+
+    void later(FakeAsync async, Duration d) {
+      clock.now = clock.now.add(d);
+      async.elapse(d);
+    }
+
+    test('polled every minute while inbound is on and the app is in front, never in the background', () {
+      fakeAsync((async) {
+        final c = polled(async);
+        expect(api.countReads, 1);
+        later(async, const Duration(seconds: 59));
+        expect(api.countReads, 1);
+        api.countAnswer = countOf(4);
+        later(async, const Duration(seconds: 1));
+        expect(api.countReads, 2);
+        expect(c.read(missedCallsAccessProvider).badge, '4', reason: 'a row assigned mid-shift shows');
+        later(async, missedCountPollEvery);
+        expect(api.countReads, 3);
+
+        lifecycle.hide();
+        later(async, const Duration(minutes: 10));
+        expect(api.countReads, 3, reason: 'no poll in the background');
+
+        lifecycle.show();
+        async.flushMicrotasks();
+        expect(api.countReads, 4, reason: 'back after more than a poll: read at once');
+        later(async, missedCountPollEvery);
+        expect(api.countReads, 5);
+        c.dispose();
+      });
+    });
+
+    test('with inbound off it is not polled (the console’s rule)', () {
+      fakeAsync((async) {
+        api.countAnswer = countOf(1);
+        final c = polled(async, inboundOn: false);
+        later(async, const Duration(minutes: 10));
+        expect(api.countReads, 1);
+        c.dispose();
+      });
+    });
+
+    test('a 403 stops the poll', () {
+      fakeAsync((async) {
+        api.countAnswer = forbidden;
+        final c = polled(async);
+        later(async, const Duration(minutes: 10));
+        expect(api.countReads, 1);
+        c.dispose();
+      });
+    });
+
+    test('a call settling on this phone (campaign, inbound or soft phone) reads it again', () {
+      fakeAsync((async) {
+        final c = polled(async);
+        final signals = c.read(testSignalsProvider.notifier);
+        signals.set(const StationSignals(onDuty: true, callActive: true, onBreak: true, sessionKind: StationSessionKind.softphone));
+        async.elapse(Duration.zero);
+        expect(api.countReads, 1, reason: 'a call starting reads nothing');
+        signals.set(const StationSignals(onDuty: true, outcomeOwed: true, onBreak: true, sessionKind: StationSessionKind.softphone));
+        async.elapse(Duration.zero);
+        expect(api.countReads, 1, reason: 'owing its outcome is not settled: the server closes the row on the outcome');
+        api.countAnswer = countOf(2);
+        signals.set(const StationSignals(onDuty: true, onBreak: true, sessionKind: StationSessionKind.softphone));
+        async.elapse(Duration.zero);
+        expect(api.countReads, 2);
+        expect(c.read(missedCallsAccessProvider).badge, '2');
+
+        // An inbound call put through on a campaign station, through its wrap-up.
+        signals.set(const StationSignals(onDuty: true, callActive: true, campaignId: 'c1'));
+        async.elapse(Duration.zero);
+        signals.set(const StationSignals(onDuty: true, campaignId: 'c1'));
+        async.elapse(Duration.zero);
+        expect(api.countReads, 3);
+        c.dispose();
+      });
+    });
+
+    test('an earlier workspace’s read ending never lets go of this one’s', () async {
+      final oldRead = Completer<InboundMissedCountResponse>();
+      api.countAnswer = oldRead.future;
+      final c = containerWith();
+      await settle();
+      expect(api.countReads, 1);
+
+      final newRead = Completer<InboundMissedCountResponse>();
+      api.countAnswer = newRead.future;
+      c.read(testWorkspaceProvider.notifier).set('u1:t1:a2');
+      c.read(missedCallsAccessProvider);
+      await settle();
+      expect(api.countReads, 2);
+
+      oldRead.complete(countOf(9));
+      await settle();
+      final again = c.read(missedCountControllerProvider.notifier).refresh();
+      expect(api.countReads, 2, reason: 'the new workspace’s read is still in flight: shared');
+      newRead.complete(countOf(7));
+      await again;
+      expect(c.read(missedCallsAccessProvider).badge, '7');
     });
   });
 }

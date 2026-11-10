@@ -6,6 +6,7 @@ import 'package:magick_agency_agent/app/providers.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/auth/fake_auth_service.dart';
 import 'package:magick_agency_agent/features/missed/missed_calls_api.dart';
+import 'package:magick_agency_agent/features/missed/missed_calls_controller.dart' show MissedFilters;
 import 'package:magick_agency_agent/features/missed/missed_calls_copy.dart';
 
 import '../../core/auth/support/harness.dart';
@@ -37,23 +38,24 @@ void main() {
     return calls.single;
   }
 
-  test('list: GET /proxy/agency/inbound/missed with the status, reason, cursor and limit; never an assignee', () async {
+  test('list: GET /proxy/agency/inbound/missed with the status, the agent’s own rows, the reason, cursor and limit',
+      () async {
     h.server.json('GET', '/proxy/agency/inbound/missed', {
       'rows': [missedJson('m1'), missedJson('m2', {'from_e164': null, 'reason': 'overflow', 'closed_cause': null})],
       'next_cursor': 'cur-3',
       'limit': 50,
     });
-    final page = await api.list(const InboundMissedQuery(
-      status: InboundFollowUpStatus.handled,
-      reason: InboundMissedReason.overflow,
-      cursor: 'cur-2',
-      limit: 50,
-    ));
+    // The list's own query: `assignee=me`, or the server widens a supervisor's to the account.
+    final page = await api.list(
+      const MissedFilters(status: InboundFollowUpStatus.handled, reason: InboundMissedReason.overflow)
+          .toQuery(cursor: 'cur-2'),
+    );
     expect(page.rows.map((r) => r.id), ['m1', 'm2']);
     expect(page.rows.last.isWithheld, isTrue);
     expect(page.nextCursor, 'cur-3');
     final req = only('GET', '/proxy/agency/inbound/missed');
-    expect(req.url.queryParameters, {'status': 'handled', 'reason': 'overflow', 'cursor': 'cur-2', 'limit': '50'});
+    expect(req.url.queryParameters,
+        {'status': 'handled', 'assignee': 'me', 'reason': 'overflow', 'cursor': 'cur-2', 'limit': '50'});
     expect(req.headers['x-tenant-id'], 't1');
     expect(req.headers['x-account-id'], 'a1');
   });

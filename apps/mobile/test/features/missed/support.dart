@@ -143,17 +143,32 @@ class FakeMissedCallsApi implements MissedCallsApi {
 /// An app-lifecycle source a test drives.
 class TestLifecycle implements AppLifecycleSource {
   void Function()? _onShow;
+  void Function()? _onHide;
 
   @override
-  bool get isForeground => true;
+  bool isForeground = true;
 
   @override
-  void attach({required void Function() onHide, required void Function() onShow}) => _onShow = onShow;
+  void attach({required void Function() onHide, required void Function() onShow}) {
+    _onShow = onShow;
+    _onHide = onHide;
+  }
 
   @override
-  void detach() => _onShow = null;
+  void detach() {
+    _onShow = null;
+    _onHide = null;
+  }
 
-  void show() => _onShow?.call();
+  void show() {
+    isForeground = true;
+    _onShow?.call();
+  }
+
+  void hide() {
+    isForeground = false;
+    _onHide?.call();
+  }
 }
 
 /// A clock a test moves.
@@ -169,6 +184,7 @@ List<Override> missedOverrides(
   TestLifecycle? lifecycle,
   TestClock? clock,
   bool base = true,
+  Duration? poll,
 }) =>
     [
       // The gate, the workspace and the clock; left out where a screen's own helper brings them.
@@ -177,5 +193,7 @@ List<Override> missedOverrides(
       featureFlagProvider(inboundFlagKey).overrideWithValue(inboundOn),
       missedLifecycleSourceProvider.overrideWithValue(lifecycle ?? TestLifecycle()),
       missedClockProvider.overrideWithValue((clock ?? TestClock()).call),
+      // No poll unless a test is about it: a widget test must end with no timer pending.
+      missedCountPollProvider.overrideWithValue(poll),
       ...missedCallsOverrides,
     ];

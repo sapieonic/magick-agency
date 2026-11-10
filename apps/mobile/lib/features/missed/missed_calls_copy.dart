@@ -49,8 +49,19 @@ abstract final class MissedCopy {
   static const voicemail = 'Left a voicemail';
   static const voicemailOnConsole = 'Listen on the console';
 
-  /// After Call back, while the soft phone is not open here yet.
-  static const callBackWaits = 'Open the soft phone and the number will be ready on the pad. Nothing is dialled until you press Call.';
+  /// After Call back, while the soft phone is not open here yet (it waits
+  /// five minutes: `callBackWaitsFor`).
+  static const callBackWaits = 'Open the soft phone within 5 minutes and the number will be ready on the pad. '
+      'Nothing is dialled until you press Call.';
+
+  /// After Call back, with a call on the soft phone: the number waits for it.
+  static const callBackAfterCall = 'The number goes on the pad once this call is finished. '
+      'Nothing is dialled until you press Call.';
+
+  /// After Call back, with the soft phone open on another device or in
+  /// another account: nothing here can take the number, so none is kept.
+  static const callBackElsewhere = 'Your soft phone is open on another device or in another account. '
+      'Bring it to this phone, then press Call back again.';
 
   static const loadFailed = 'We couldn’t load the missed calls.';
   static const moreFailed = 'We couldn’t load older missed calls.';

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:agency_wire/agency_wire.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
@@ -34,12 +35,45 @@ class MissedCallsList extends ConsumerStatefulWidget {
 class _MissedCallsListState extends ConsumerState<MissedCallsList> {
   bool _prefetchScheduled = false;
 
+  /// Whether this list is on screen: the shell keeps My calls alive in an
+  /// indexed stack and turns its tickers off while another tab is in front.
+  ValueListenable<TickerModeData>? _onScreen;
+  bool _wasOnScreen = true;
+
   @override
   void initState() {
     super.initState();
-    Future.microtask(() {
-      if (mounted) unawaited(ref.read(missedCallsControllerProvider.notifier).ensureLoaded());
-    });
+    // Built when the segment is picked: entered.
+    Future.microtask(_entered);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final onScreen = TickerMode.getValuesNotifier(context);
+    if (identical(onScreen, _onScreen)) return;
+    _onScreen?.removeListener(_onScreenChanged);
+    _onScreen = onScreen..addListener(_onScreenChanged);
+    _wasOnScreen = onScreen.value.enabled;
+  }
+
+  @override
+  void dispose() {
+    _onScreen?.removeListener(_onScreenChanged);
+    super.dispose();
+  }
+
+  /// The My calls tab came back to the front with this segment picked.
+  void _onScreenChanged() {
+    final now = _onScreen?.value.enabled ?? false;
+    final back = now && !_wasOnScreen;
+    _wasOnScreen = now;
+    // Told while the tree builds: the read starts after it.
+    if (back) Future.microtask(_entered);
+  }
+
+  void _entered() {
+    if (mounted) unawaited(ref.read(missedCallsControllerProvider.notifier).entered());
   }
 
   void _maybePrefetch() {
