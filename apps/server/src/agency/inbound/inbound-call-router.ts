@@ -86,7 +86,7 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  * `greeting` (if set), then `closed` / `callback` / `busy` per the plan, then the call is put down.
  * No caller is put down in silence: on our stream a message with no recording of the route's plays
  * our standard recording (`inbound-standard-clips.ts`), and a call answered before anything
- * streams hears the same words spoken by the carrier ({@link spokenMessageFor}; the greeting is
+ * streams hears the same words spoken by the carrier ({@link messageSlotFor}; the greeting is
  * then not played). A caller who withheld their number or whose number is on DNC is never
  * promised a callback: in opening hours the busy message ("try again shortly") stands in for the
  * call-back one, on every path ({@link messageSlotFor}); they never hear "we're closed" while the
@@ -152,14 +152,17 @@ const log = createChildLogger({ component: 'agency-inbound-router' });
  * no route books one due now), in the transaction that ends the spine.
  */
 
-/** The message a plan's caller is answered with: its clip slot on the route, and the carrier's spoken stand-in for it. */
-const PLAN_MESSAGE: Record<PlannedOutcome, { slot: AgencyInboundClipSlot; spoken: InboundSpokenMessage }> = {
-  closed: { slot: 'closed', spoken: 'closed' },
-  overflow: { slot: 'callback', spoken: 'callback' },
-  overflow_no_capacity: { slot: 'busy', spoken: 'busy' },
+/** The message a plan's caller is answered with: its clip slot on the route, which is also the carrier's spoken stand-in for it. */
+const PLAN_MESSAGE: Record<PlannedOutcome, InboundSpokenMessage> = {
+  closed: 'closed',
+  overflow: 'callback',
+  overflow_no_capacity: 'busy',
 };
 
 type PlannedOutcome = Extract<AgencyInboundCallOutcome, 'closed' | 'overflow' | 'overflow_no_capacity'>;
+
+/** The account's `agency_inbound_enabled` as one answer read it: `unknown` when it could not be read. */
+type InboundFlag = 'on' | 'off' | 'unknown';
 
 /** How long a connectable call may wait before an agent is bound beyond the queue's maximum wait: the preamble. */
 export const INBOUND_PREAMBLE_ALLOWANCE_SECONDS = 60;
@@ -205,22 +208,14 @@ export function mayPromiseCallback(caller: InboundCallerPromise): boolean {
  * takes), so the closed words ("we're closed") would be false there; a `closed` plan keeps the
  * closed words for everyone, and over capacity (`overflow_no_capacity`) is busy for everyone.
  */
-export function messageSlotFor(planned: PlannedOutcome, caller: InboundCallerPromise): 'closed' | 'callback' | 'busy' {
-  const slot = PLAN_MESSAGE[planned].slot as 'closed' | 'callback' | 'busy';
+export function messageSlotFor(planned: PlannedOutcome, caller: InboundCallerPromise): InboundSpokenMessage {
+  const slot = PLAN_MESSAGE[planned];
   return slot === 'callback' && !mayPromiseCallback(caller) ? 'busy' : slot;
 }
 
-/**
- * What the carrier speaks for a plan when nothing will stream and the route has no recording for
- * its message: the standard recording's words for {@link messageSlotFor}'s slot.
- */
-export function spokenMessageFor(planned: PlannedOutcome, caller: InboundCallerPromise): InboundSpokenMessage {
-  return messageSlotFor(planned, caller);
-}
-
-/** A message slot as a part that never plays silence: the route's recording, else our standard one. */
-function withStandard(slot: 'closed' | 'callback' | 'busy'): InboundClipPart {
-  return { slot, standard: slot };
+/** A clip slot as a part that never plays silence: the route's recording, else our standard one (`AGENCY_INBOUND_SLOT_STANDARD`). */
+function withStandard(slot: AgencyInboundClipSlot): InboundClipPart {
+  return { slot, standard: AGENCY_INBOUND_SLOT_STANDARD[slot] };
 }
 
 /** How many answers given up on (their callers heard the fallback) this process remembers until their hangup. */
@@ -282,7 +277,7 @@ export function takesVoicemail(
  */
 export function voicemailPrompt(
   route: AgencyInboundRouteRecord | null,
-  messageSlot: 'closed' | 'callback' | 'busy',
+  messageSlot: InboundSpokenMessage,
   caller: InboundCallerPromise,
 ): InboundClipPart {
   if (!mayPromiseCallback(caller)) return { slot: null, standard: 'voicemail_prompt_neutral' };
@@ -306,7 +301,6 @@ export function outcomeAfterPlayback(planned: PlannedOutcome, result: ClipSequen
 
 /** A call this process is playing messages to. */
 interface LiveInboundCall {
-  planned: PlannedOutcome | 'queue';
   /** The carrier's hangup arrived while the messages were (to be) playing. */
   callerHungUp: boolean;
 }
@@ -395,15 +389,26 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     });
     const match = identity.match;
     const accountId = match?.accountId ?? route?.account_id ?? null;
-    const callerDnc = await this.callerOnDnc(arrival, accountId, match);
+    // Independent reads, together. A failure surfaces as it would read one after another: the DNC
+    // read's first, then the members' (the flag read never fails: `inboundFlag`).
+    const [dncRead, membersRead, flagRead] = await Promise.allSettled([
+      this.callerOnDnc(arrival, accountId, match),
+      accountId && identity.candidates.length > 0
+        ? agencyInboundAnswerRepository.filterAccountMembers(arrival.tenantId, accountId, identity.candidates.map((c) => c.userId))
+        : null,
+      // The flag only matters for an account's route (the kill switch and P2, below).
+      accountId !== null && route !== null ? this.inboundFlag(arrival.tenantId, accountId) : 'unknown' as const,
+    ]);
+    if (dncRead.status === 'rejected') throw dncRead.reason;
+    if (membersRead.status === 'rejected') throw membersRead.reason;
+    const callerDnc = dncRead.value;
+    const members = membersRead.value;
+    const flag: InboundFlag = flagRead.status === 'fulfilled' ? flagRead.value : 'unknown';
     // Every candidate who can see the account, in rank order: the first is the sticky agent; the
     // connector names whichever of them takes the call (P2).
-    let stickyCandidates: Array<{ userId: string; reason: AgencyInboundStickyReason }> = [];
-    if (accountId && identity.candidates.length > 0) {
-      const members = await agencyInboundAnswerRepository.filterAccountMembers(
-        arrival.tenantId, accountId, identity.candidates.map((c) => c.userId));
-      stickyCandidates = identity.candidates.filter((c) => members.has(c.userId)).map((c) => ({ userId: c.userId, reason: c.reason }));
-    }
+    const stickyCandidates: Array<{ userId: string; reason: AgencyInboundStickyReason }> = members
+      ? identity.candidates.filter((c) => members.has(c.userId)).map((c) => ({ userId: c.userId, reason: c.reason }))
+      : [];
     const sticky = stickyCandidates[0] ?? null;
     const identification = {
       match: match ? { contactId: match.contactId, campaignId: match.campaignId } : null,
@@ -431,21 +436,22 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
 
     // The kill switch (§8.1): with the account's `agency_inbound_enabled` off, a caller is told
     // the route is closed, by the carrier (no queue, no stream, no voicemail), and left a Missed row.
-    const switchedOff = route !== null && await this.switchedOff(arrival.tenantId, accountId);
-    let planned: PlannedOutcome = arrival.credentialStatus !== 'active' || !route || switchedOff
-      || inboundScheduleState(route, at) !== 'open' ? 'closed' : 'overflow';
+    // A flag that could not be read is not off (the call is answered as P1, with no agent connected).
+    const switchedOff = flag === 'off';
+    // Why the route is closed now, on the row (`closed_cause`, 0030): the inbound summary counts
+    // each apart (§11). Null: open.
+    const closedCause: AgencyInboundClosedCause | null = arrival.credentialStatus !== 'active' ? 'credential_inactive'
+      : !route ? 'no_route'
+        : switchedOff ? 'switched_off'
+          : inboundScheduleState(route, at) !== 'open' ? 'hours'
+            : null;
+    let planned: PlannedOutcome = closedCause ? 'closed' : 'overflow';
     // Out of the route's hours (not a credential that is not active, nor no route, nor switched
     // off): the route's after-hours action applies (a voicemail, §7).
-    const afterHours = planned === 'closed' && arrival.credentialStatus === 'active' && route !== null && !switchedOff;
-    // Why, on the row (`closed_cause`, 0030): the inbound summary counts each apart (§11).
-    const closedCause: AgencyInboundClosedCause | null = planned !== 'closed' ? null
-      : arrival.credentialStatus !== 'active' ? 'credential_inactive'
-        : !route ? 'no_route'
-          : switchedOff ? 'switched_off'
-            : 'hours';
+    const afterHours = closedCause === 'hours';
     // P2: an open route's caller may be put through to an agent (the header). Decided before the
     // insert, so the leg asks for the recording the route wants (IB7's notice depends on it).
-    const mayConnect = planned === 'overflow' && route !== null && await this.mayConnect(arrival.tenantId, accountId);
+    const mayConnect = planned === 'overflow' && route !== null && this.mayConnect(flag);
     // PM-M6 / SWE-N4: decided before the greeting. A caller nobody in their pool could take, now
     // or once their current work ends (the connector's own rule and presence read, its rejoin grace
     // included), is not put in the queue to hear "please hold" and then, at once, the overflow:
@@ -531,7 +537,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     if (!queue && !voicemail && (switchedOff || !routeClipId(route, messageSlot))) {
       await this.endLeg(legId, { status: 'completed', outcome: `inbound_${planned}` });
       await this.settle(call, planned);
-      return { kind: 'spoken', message: spokenMessageFor(planned, call) };
+      return { kind: 'spoken', message: messageSlotFor(planned, call) };
     }
 
     const accepted = await this.deps.bridge.acceptInboundCall({
@@ -621,7 +627,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       // answered (`settle` leaves that one no follow-up, and its outcome is `failed`). Remembered
       // too, for an answer that wrote the row and is still taking its stream.
       if (call.state !== 'ended') {
-        await this.settle(call, this.givenUp.has(key) ? 'failed' : 'abandoned_in_queue');
+        await this.settleCall(call, 'abandoned_in_queue');
         this.noteEarlyHangup(hangup);
       }
       this.givenUp.delete(key);
@@ -713,7 +719,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
   clips(route: AgencyInboundRouteRecord, slots: readonly AgencyInboundClipSlot[]): Promise<string[]> {
     return resolveInboundClips(
       route,
-      slots.map((slot) => ({ slot, standard: AGENCY_INBOUND_SLOT_STANDARD[slot] })),
+      slots.map(withStandard),
       { tenantId: route.tenant_id, accountId: route.account_id },
     );
   }
@@ -736,8 +742,11 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     }
   }
 
-  /** Whether this account's callers may be put through to agents now (the header). */
-  private async mayConnect(tenantId: string, accountId: string): Promise<boolean> {
+  /**
+   * Whether this account's callers may be put through to agents now (the header), given the
+   * account's `agency_inbound_enabled` ({@link inboundFlag}): only when it reads on.
+   */
+  private mayConnect(flag: InboundFlag): boolean {
     const connect = this.deps.connect;
     if (!connect?.connector) return false;
     if (connect.mediaWorkers > 0) {
@@ -747,27 +756,23 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       }
       return false;
     }
-    try {
-      return await connect.enabled(tenantId, accountId);
-    } catch (err) {
-      log.warn({ err, tenantId, accountId }, 'Could not read agency_inbound_enabled — answering the call as P1');
-      return false;
-    }
+    return flag === 'on';
   }
 
   /**
-   * The kill switch (§8.1): whether the account's `agency_inbound_enabled` is off. Only with the
-   * P2 gate wired (`connect`, as `startInboundCalls` always does); a read that fails is not off
-   * (the call is answered as P1, with no agent connected: `mayConnect` reads the flag too).
+   * The account's `agency_inbound_enabled`, read once per answer: `off` is the kill switch
+   * (§8.1), `on` lets P2 connect ({@link mayConnect}). Only with the P2 gate wired (`connect`, as
+   * `startInboundCalls` always does); a read that fails, or no gate, is `unknown`: not off (the call
+   * is answered as if inbound were on) and not on (no agent is connected: P1's answer). Never rejects.
    */
-  private async switchedOff(tenantId: string, accountId: string): Promise<boolean> {
+  private async inboundFlag(tenantId: string, accountId: string): Promise<InboundFlag> {
     const connect = this.deps.connect;
-    if (!connect) return false;
+    if (!connect) return 'unknown';
     try {
-      return !(await connect.enabled(tenantId, accountId));
+      return await connect.enabled(tenantId, accountId) ? 'on' : 'off';
     } catch (err) {
-      log.warn({ err, tenantId, accountId }, 'Could not read agency_inbound_enabled — answering the call as if inbound were on');
-      return false;
+      log.warn({ err, tenantId, accountId }, 'Could not read agency_inbound_enabled — answering the call as P1, as if inbound were on');
+      return 'unknown';
     }
   }
 
@@ -787,14 +792,22 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     recordingNotice: boolean,
   ): void {
     const connector = this.deps.connect!.connector!;
-    const live: LiveInboundCall = { planned: 'queue', callerHungUp: false };
+    this.track(call, () => connector.take({ call, route, stickyCandidates, recordingNotice })
+      .catch((err: unknown) => log.error({ err, inboundCallId: call.id }, 'Inbound connector failed a call')));
+  }
+
+  /**
+   * Hold `call` in `live` while `body` runs in the background (`drain` waits for it), then let it
+   * go: a hangup that came meanwhile left the given-up mark to this run (`ended`), so it is
+   * dropped here.
+   */
+  private track(call: AgencyInboundCallRecord, body: (live: LiveInboundCall) => Promise<void>): void {
+    const live: LiveInboundCall = { callerHungUp: false };
     this.live.set(call.id, live);
-    const run = connector.take({ call, route, stickyCandidates, recordingNotice })
-      .catch((err: unknown) => log.error({ err, inboundCallId: call.id }, 'Inbound connector failed a call'))
-      .finally(() => {
-        this.live.delete(call.id);
-        if (live.callerHungUp) this.givenUp.delete(carrierKey(call.provider, call.provider_call_id));
-      });
+    const run = body(live).finally(() => {
+      this.live.delete(call.id);
+      if (live.callerHungUp) this.givenUp.delete(carrierKey(call.provider, call.provider_call_id));
+    });
     this.running.add(run);
     void run.finally(() => this.running.delete(run));
   }
@@ -855,22 +868,13 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     slots: readonly InboundClipPart[],
     route: AgencyInboundRouteRecord,
   ): void {
-    const live: LiveInboundCall = { planned: which, callerHungUp: false };
-    this.live.set(call.id, live);
-    const run = (async () => {
-      const key = carrierKey(call.provider, call.provider_call_id);
+    this.track(call, async () => {
       try {
-        const end = await this.voicemailEnd(call, which, route, slots);
-        await this.settle(call, this.givenUp.has(key) ? 'failed' : end);
+        await this.settleCall(call, await this.voicemailEnd(call, which, route, slots));
       } catch (err) {
         log.error({ err, inboundCallId: call.id }, 'Could not settle an inbound voicemail call — the sweep will');
-      } finally {
-        this.live.delete(call.id);
-        if (live.callerHungUp) this.givenUp.delete(key);
       }
-    })();
-    this.running.add(run);
-    void run.finally(() => this.running.delete(run));
+    });
   }
 
   /**
@@ -908,9 +912,7 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
     slots: readonly InboundClipPart[],
     route: AgencyInboundRouteRecord | null,
   ): void {
-    const live: LiveInboundCall = { planned, callerHungUp: false };
-    this.live.set(call.id, live);
-    const run = (async () => {
+    this.track(call, async (live) => {
       let result: ClipSequenceResult = 'not_found';
       try {
         const clipHashes = route
@@ -920,21 +922,14 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
       } catch (err) {
         log.error({ err, inboundCallId: call.id }, 'Inbound messages failed');
       }
-      const key = carrierKey(call.provider, call.provider_call_id);
       try {
-        // An answer given up on after its stream was promised: the caller heard the fallback.
-        await this.settle(call, this.givenUp.has(key) ? 'failed' : outcomeAfterPlayback(planned, result, live.callerHungUp));
+        // An answer given up on after its stream was promised (the caller heard the fallback) ends `failed`: `settleCall`.
+        await this.settleCall(call, outcomeAfterPlayback(planned, result, live.callerHungUp));
       } catch (err) {
         // The sweep ends it if this could not (the spine is durable).
         log.error({ err, inboundCallId: call.id }, 'Could not settle an inbound call — the sweep will');
-      } finally {
-        this.live.delete(call.id);
-        // The hangup came while this call was played to, so `ended` left the mark to this loop.
-        if (live.callerHungUp) this.givenUp.delete(key);
       }
-    })();
-    this.running.add(run);
-    void run.finally(() => this.running.delete(run));
+    });
   }
 
   /**
@@ -1000,12 +995,20 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
    */
   private async callbackOwed(call: AgencyInboundCallRecord): Promise<{ contactId: string; dueAt: Date } | null> {
     if (!call.matched_contact_id || !call.from_e164 || call.caller_dnc || !call.account_id) return null;
-    const dnc = await this.deps.dnc.check(call.tenant_id, call.from_e164, { accountId: call.account_id, campaignId: call.matched_campaign_id });
+    // Both reads together; a failure surfaces as it would read one after another (the schedule's
+    // only once the DNC check is clear, since a caller not clear owes none either way).
+    const [dncRead, scheduleRead] = await Promise.allSettled([
+      this.deps.dnc.check(call.tenant_id, call.from_e164, { accountId: call.account_id, campaignId: call.matched_campaign_id }),
+      call.route_id ? agencyInboundAnswerRepository.findRouteSchedule(call.route_id) : null,
+    ]);
+    if (dncRead.status === 'rejected') throw dncRead.reason;
+    const dnc = dncRead.value;
     if (dnc !== 'clear') {
       if (dnc === 'unavailable') log.warn({ inboundCallId: call.id }, 'DNC check unavailable — no callback booked for this inbound call (fails closed)');
       return null;
     }
-    const schedule: InboundRouteSchedule | null = call.route_id ? await agencyInboundAnswerRepository.findRouteSchedule(call.route_id) : null;
+    if (scheduleRead.status === 'rejected') throw scheduleRead.reason;
+    const schedule: InboundRouteSchedule | null = scheduleRead.value;
     const now = this.now();
     const dueAt = schedule ? nextInboundOpening(schedule, now) : now;
     if (!dueAt) {

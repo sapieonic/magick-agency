@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest';
 import {
   mayPromiseCallback,
   messageSlotFor,
-  spokenMessageFor,
   voicemailPrompt,
 } from '../../../../src/agency/inbound/inbound-call-router.js';
 import type { AgencyInboundRouteRecord } from '../../../../src/db/repositories/agency.repository.js';
@@ -39,11 +38,9 @@ describe('messageSlotFor and the carrier’s spoken words', () => {
   it('a withheld or DNC caller in opening hours hears the busy words instead of the call-back promise, never "we`re closed" (PM-N1); a closed plan stays closed and over capacity stays busy, for everyone', () => {
     for (const caller of [WITHHELD, DNC]) {
       expect(messageSlotFor('overflow', caller)).toBe('busy');
-      expect(spokenMessageFor('overflow', caller)).toBe('busy');
       expect(messageSlotFor('overflow_no_capacity', caller)).toBe('busy');
       expect(messageSlotFor('closed', caller)).toBe('closed');
     }
-    expect(spokenMessageFor('overflow', CALLER)).toBe('callback');
   });
 });
 
