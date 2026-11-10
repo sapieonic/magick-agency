@@ -386,14 +386,9 @@ export class InboundConnector {
     }
   }
 
-  /** Wait for every event queued on this call so far. */
-  async settled(callId: string): Promise<void> {
-    await (this.chains.get(callId) ?? Promise.resolve());
-  }
-
   // ─── Reads ────────────────────────────────────────────────────────────────
 
-  /** The calls this connector holds (tests, the router's drain). */
+  /** The calls this connector holds (tests). */
   heldCallIds(): string[] {
     return [...this.calls.keys()];
   }
@@ -486,9 +481,13 @@ export class InboundConnector {
    *    next caller (one of the route's account);
    *  - `noneCouldTake`: no session could take the route's next caller now or once their current
    *    work ends ({@link anyoneCouldTake}, PM-M6): such a caller is overflowed at once.
+   * `viewsOf` memoises the agent views per account: pass one map to every route of one tile read,
+   * so each account's views are read once for all of them.
    */
-  async routeAgents(route: Pick<AgencyInboundRouteRecord, 'id' | 'tenant_id' | 'account_id' | 'pool_campaign_ids'>): Promise<{ eligible: number; noneCouldTake: boolean }> {
-    const viewsOf = new Map<string, Promise<InboundAgentView[]>>();
+  async routeAgents(
+    route: Pick<AgencyInboundRouteRecord, 'id' | 'tenant_id' | 'account_id' | 'pool_campaign_ids'>,
+    viewsOf: InboundAgentViewsMemo = new Map(),
+  ): Promise<{ eligible: number; noneCouldTake: boolean }> {
     const views = (key: string): Promise<InboundAgentView[]> => {
       let v = viewsOf.get(key);
       if (!v) {
@@ -815,14 +814,7 @@ export class InboundConnector {
     }
     if (admitted === 'over_cap') {
       // Over `max_waiting`: only an agent free right now keeps this caller.
-      void this.trackBackground(this.search(held.accountKey).then(() => {
-        // Marked before the exit is queued, as every exit is (the header): no search reserves for a
-        // caller whose overflow message is about to play.
-        if (held.phase === 'queued' && this.queue.offeredTo(held.id) === null) held.leaving = true;
-        return this.serial(held.id, async () => {
-          if (held.phase === 'queued') await this.leave(held, 'over_cap');
-        });
-      }));
+      void this.trackBackground(this.search(held.accountKey).then(() => this.exitWhenQueued(held, 'over_cap')));
       return;
     }
     this.searchInBackground(held.accountKey);
@@ -850,13 +842,19 @@ export class InboundConnector {
       this.searchInBackground(held.accountKey);
       return;
     }
-    // An offer in flight runs to its bind or its cancel (the cancel overflows a lapsed caller). A
-    // caller still waiting is marked leaving NOW, before the chain gets to it: from this instant no
-    // search or release hook reserves an agent for them (M4: none waits behind their message).
-    if (held.phase === 'queued' && this.queue.offeredTo(callId) === null) held.leaving = true;
-    void this.serial(callId, async () => {
-      if (held.phase === 'queued') await this.leave(held, 'max_wait');
-    });
+    // An offer in flight runs to its bind or its cancel (the cancel overflows a lapsed caller).
+    void this.exitWhenQueued(held, 'max_wait');
+  }
+
+  /**
+   * Queue `held`'s exit ({@link leave}) on its chain. A caller still waiting (queued, no offer in
+   * flight) is marked leaving NOW, before the chain gets to it, as every exit is (the header): from
+   * this instant no search or release hook reserves an agent for them (M4: none waits behind their
+   * message). The exit itself runs only for a caller still queued then.
+   */
+  private exitWhenQueued(held: HeldCall, why: InboundOverflowReason): Promise<void> {
+    if (held.phase === 'queued' && this.queue.offeredTo(held.id) === null) held.leaving = true;
+    return this.serial(held.id, () => this.leave(held, why));
   }
 
   /**
@@ -1061,10 +1059,7 @@ export class InboundConnector {
     }
     await this.sendFrame(held);
     this.bySession.delete(sessionId);
-    held.phase = 'done';
-    this.calls.delete(held.id);
-    held.finish();
-    this.unsubscribeWhenIdle();
+    this.dropCall(held);
     log.info({ inboundCallId: held.id, sessionId, talkSeconds }, 'Inbound call ended — its outcome is owed');
   }
 
@@ -1174,11 +1169,8 @@ export class InboundConnector {
       if (anyoneCouldTake(caller, views)) continue;
       const held = this.calls.get(caller.callId);
       if (!held || held.phase !== 'queued' || held.leaving || this.handovers.of(held.id) || this.queue.offeredTo(held.id) !== null) continue;
-      held.leaving = true;
       log.info({ inboundCallId: held.id }, 'Nobody in the pool could take this inbound caller — overflowing now');
-      void this.serial(held.id, async () => {
-        if (held.phase === 'queued') await this.leave(held, 'no_agents');
-      });
+      void this.exitWhenQueued(held, 'no_agents');
     }
   }
 
@@ -1253,32 +1245,25 @@ export class InboundConnector {
       this.members(tenantId, accountId, [...new Set([...stations, ...rejoining.map((r) => r.station)].map((s) => s.agentUserId))]),
       Promise.all(rejoining.map((r) => r.atClose)),
     ]);
-    const open: InboundAgentView[] = stations.map((s, i) => ({
+    const viewOf = (s: StationDetached, stationOpen: boolean, rejoins: boolean, live: InboundAgentView['live']): InboundAgentView => ({
       sessionId: s.sessionId,
       agentUserId: s.agentUserId,
       tenantId: s.tenantId,
       accountId: s.accountId,
       campaignId: s.campaignId,
       clientKind: s.clientKind,
-      stationOpen: s.ws.readyState === 1,
+      stationOpen,
+      ...(rejoins ? { rejoining: true } : {}),
+      member: members.has(s.agentUserId),
+      live,
+    });
+    const open = stations.map((s, i) => viewOf(s, s.ws.readyState === 1,
       // Closed (and detached: its grace began) while this read was in flight. Its state was read
       // in the same synchronous run as the registry, so before the close: the grace's rule.
-      ...(s.ws.readyState !== 1 && this.rejoining.has(s.sessionId) && !this.deps.stations.get(s.sessionId) ? { rejoining: true } : {}),
-      member: members.has(s.agentUserId),
-      live: states[i] ?? null,
-    }));
-    const back: InboundAgentView[] = rejoining.map((r, i) => ({
-      sessionId: r.station.sessionId,
-      agentUserId: r.station.agentUserId,
-      tenantId: r.station.tenantId,
-      accountId: r.station.accountId,
-      campaignId: r.station.campaignId,
-      clientKind: r.station.clientKind,
-      stationOpen: false,
-      rejoining: true,
-      member: members.has(r.station.agentUserId),
-      live: rejoinState(states[stations.length + i] ?? null, atClose[i] ?? null),
-    }));
+      s.ws.readyState !== 1 && this.rejoining.has(s.sessionId) && !this.deps.stations.get(s.sessionId),
+      states[i] ?? null));
+    const back = rejoining.map((r, i) => viewOf(r.station, false, true,
+      rejoinState(states[stations.length + i] ?? null, atClose[i] ?? null)));
     // Open stations first: a user's open session is the one `stickyAgentOf` finds.
     return [...open, ...back];
   }
@@ -1395,8 +1380,13 @@ export class InboundConnector {
     // Every path that ends a held hand-over lets its session go first (`InboundHandovers.release`).
     this.handovers.forget(held.id);
     if (held.record.queued_at) trackInboundWait(result, (this.now() - held.record.queued_at.getTime()) / 1000);
-    held.phase = 'done';
     if (held.sessionId && this.bySession.get(held.sessionId) === held.id) this.bySession.delete(held.sessionId);
+    this.dropCall(held);
+  }
+
+  /** The call is done and no longer held: whoever waits on it ({@link whenLeft}) is told. */
+  private dropCall(held: HeldCall): void {
+    held.phase = 'done';
     this.calls.delete(held.id);
     held.finish();
     this.unsubscribeWhenIdle();
@@ -1524,6 +1514,9 @@ export class InboundConnector {
     }
   }
 }
+
+/** The agent views of each account key, read once per tile read ({@link InboundConnector.routeAgents}). */
+export type InboundAgentViewsMemo = Map<string, Promise<InboundAgentView[]>>;
 
 /** A caller of `accountId` arriving on `route`, as the search would see them (the next caller: no sticky agent, none declined). */
 function nextCallerView(

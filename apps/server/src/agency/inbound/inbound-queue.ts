@@ -134,14 +134,6 @@ export class InboundQueue {
     return over ? 'over_cap' : 'queued';
   }
 
-  has(callId: string): boolean {
-    return this.held.has(callId);
-  }
-
-  get(callId: string): InboundQueueEntry | undefined {
-    return this.held.get(callId)?.entry;
-  }
-
   offeredTo(callId: string): string | null {
     return this.held.get(callId)?.offeredTo ?? null;
   }

@@ -223,9 +223,7 @@ export class InboundHandovers {
   async release(callId: string, opts: { returnAgent: boolean }): Promise<void> {
     const h = this.byCall.get(callId);
     if (!h) return;
-    this.byCall.delete(callId);
-    if (h.timer) clearTimeout(h.timer);
-    if (this.bySession.get(h.sessionId) === callId) this.bySession.delete(h.sessionId);
+    this.forget(callId);
     if (!h.held) return;
     this.host.unseat(callId, h.sessionId);
     await this.host.unreserve(h.sessionId, callId);

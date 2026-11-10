@@ -66,7 +66,7 @@ import type { SoftphoneActor } from '../softphone/types.js';
 import { UUID_RE } from '../../utils/uuid.js';
 import { inboundCallToWire, loadInboundPanelContext, resolveInboundCatalog } from './inbound-call-wire.js';
 import { INBOUND_LAPSE_SETTLEMENT, inboundContactSettlement } from './inbound-settlement.js';
-import type { InboundConnector } from './inbound-connector.js';
+import type { InboundAgentViewsMemo, InboundConnector } from './inbound-connector.js';
 
 const log = createChildLogger({ component: 'agency-inbound-calls' });
 
@@ -402,9 +402,11 @@ export class InboundCallService {
     const connector = this.deps.connector();
     const snapshot = new Map((connector?.queueSnapshot() ?? []).map((s) => [s.routeId, s]));
     const routes = await agencyInboundRouteRepository.listForAccount(tenantId, accountId);
+    // One read of each account's agents for every route (they share the account).
+    const views: InboundAgentViewsMemo = new Map();
     const tiles = await Promise.all(routes.map(async (route): Promise<AgencyInboundQueueTile> => {
       const s = snapshot.get(route.id);
-      const agents = connector ? await connector.routeAgents(route) : null;
+      const agents = connector ? await connector.routeAgents(route, views) : null;
       return {
         route_id: route.id,
         route_name: route.name,
