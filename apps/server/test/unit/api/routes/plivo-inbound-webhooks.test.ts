@@ -18,8 +18,7 @@ vi.mock('../../../../src/config/index.js', () => ({
 
 const { credentials } = vi.hoisted(() => ({
   credentials: {
-    findInbound: vi.fn(),
-    inboundTokenMatches: vi.fn(),
+    findInboundForCallback: vi.fn(),
   },
 }));
 vi.mock('@magick-agency/db/repositories/telephony-credential.repository', () => ({ telephonyCredentialRepository: credentials }));
@@ -102,12 +101,12 @@ describe('Plivo inbound webhooks', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     resetInboundCallRouter();
-    credentials.findInbound.mockResolvedValue({
+    credentials.findInboundForCallback.mockImplementation(async (_id: string, hash: string) => ({
       credential_id: CRED, tenant_id: TENANT, provider: 'plivo', status: 'active', app_id: 'app-1',
       answer_url: STORED_ANSWER, hangup_url: STORED_HANGUP, fallback_answer_url: 'https://x/f',
       enabled_at: new Date(), previous_token_expires_at: null, linked_numbers: 1,
-    });
-    credentials.inboundTokenMatches.mockImplementation(async (_id: string, hash: string) => hash === hashInboundToken(TOKEN));
+      token_matches: hash === hashInboundToken(TOKEN),
+    }));
     router = {
       answer: vi.fn().mockResolvedValue({ kind: 'stream', callId: 'leg-1', streamUrl: STREAM, maxDurationSeconds: 1800 }),
       ended: vi.fn().mockResolvedValue({ legId: 'leg-1' }),
@@ -134,6 +133,7 @@ describe('Plivo inbound webhooks', () => {
         carrierCallId: 'cu-1', fromE164: '+919812345678', toE164: '+14155550101',
       }, { signal: expect.any(AbortSignal) });
       expect(bridge.inboundCallbackAdapter).toHaveBeenCalledWith(CRED, TENANT, 'plivo');
+      expect(bridge.inboundCallbackAdapter).toHaveBeenCalledTimes(1); // the one that verified it renders the stream
     });
 
     it('verifies over the STORED url (+ the query), never env\'s base or the path it arrived on', async () => {
@@ -150,9 +150,9 @@ describe('Plivo inbound webhooks', () => {
       expect((await post(app, 'answer', ARRIVAL, { token: 'wrong' })).body).toBe(PLIVO_HANGUP_XML);
       expect((await post(app, 'answer', ARRIVAL, { token: '' })).body).toBe(PLIVO_HANGUP_XML);
       expect((await post(app, 'answer', ARRIVAL, { credentialId: 'not-a-uuid' })).body).toBe(PLIVO_HANGUP_XML);
-      credentials.findInbound.mockResolvedValueOnce(null);
+      credentials.findInboundForCallback.mockResolvedValueOnce(null);
       expect((await post(app, 'answer', ARRIVAL)).body).toBe(PLIVO_HANGUP_XML);
-      credentials.findInbound.mockResolvedValueOnce({ credential_id: CRED, tenant_id: TENANT, provider: 'plivo', status: 'active', answer_url: null, hangup_url: null });
+      credentials.findInboundForCallback.mockResolvedValueOnce({ credential_id: CRED, tenant_id: TENANT, provider: 'plivo', status: 'active', answer_url: null, hangup_url: null, token_matches: false });
       expect((await post(app, 'answer', ARRIVAL)).body).toBe(PLIVO_HANGUP_XML);
       bridge.inboundCallbackAdapter.mockResolvedValueOnce(null);
       expect((await post(app, 'answer', ARRIVAL)).body).toBe(PLIVO_HANGUP_XML);
@@ -201,8 +201,8 @@ describe('Plivo inbound webhooks', () => {
     });
 
     it('passes a disabled credential\'s status on (it still verifies, §10)', async () => {
-      credentials.findInbound.mockResolvedValueOnce({
-        credential_id: CRED, tenant_id: TENANT, provider: 'plivo', status: 'disabled', answer_url: STORED_ANSWER, hangup_url: STORED_HANGUP,
+      credentials.findInboundForCallback.mockResolvedValueOnce({
+        credential_id: CRED, tenant_id: TENANT, provider: 'plivo', status: 'disabled', answer_url: STORED_ANSWER, hangup_url: STORED_HANGUP, token_matches: true,
       });
       await post(app, 'answer', ARRIVAL);
       expect(router.answer).toHaveBeenCalledWith(expect.objectContaining({ credentialStatus: 'disabled' }), expect.anything());
@@ -307,7 +307,7 @@ describe('Plivo inbound webhooks', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/xml/);
     expect(res.body).toBe(PLIVO_INBOUND_FALLBACK_XML);
-    expect(credentials.findInbound).not.toHaveBeenCalled();
+    expect(credentials.findInboundForCallback).not.toHaveBeenCalled();
     expect(router.answer).not.toHaveBeenCalled();
   });
 });

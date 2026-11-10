@@ -488,6 +488,29 @@ describe('telephony credentials (integration)', () => {
       expect(await repo.repointInbound((await create()).id, { tokenHash: H1, previousTokenGraceSeconds: 60, ...urls('d') }, admin)).toBeNull();
     });
 
+    it('findInboundForCallback: findInbound plus the token match, answering as inboundTokenMatches does', async () => {
+      const c = await create();
+      const read = (h: string) => repo.findInboundForCallback(c.id, h);
+      const agrees = async (h: string, expected: boolean) => {
+        expect(await repo.inboundTokenMatches(c.id, h)).toBe(expected);
+        expect((await read(h))!.token_matches).toBe(expected);
+      };
+      await agrees(H1, false); // not enabled
+      await repo.enableInbound(c.id, { appId: 'app-1', tokenHash: H1, ...urls('a') }, admin);
+      const { token_matches: _matches, ...state } = (await read(H1))!;
+      expect(state).toEqual(await repo.findInbound(c.id));
+      await agrees(H1, true);
+      await agrees(H2, false);
+      await repo.repointInbound(c.id, { tokenHash: H2, previousTokenGraceSeconds: 3600, ...urls('b') }, admin);
+      await agrees(H2, true);
+      await agrees(H1, true); // the grace
+      await getTestPool().query(
+        `UPDATE telephony_credentials SET inbound_previous_token_expires_at = now() - interval '1 second' WHERE id = $1`, [c.id]);
+      await agrees(H1, false);
+      await agrees(H2, true);
+      expect(await repo.findInboundForCallback(randomUUID(), H1)).toBeNull();
+    });
+
     it('disable is refused while a number is linked, and clears every inbound column once none is', async () => {
       const c = await create();
       expect(await repo.disableInbound(c.id, admin)).toEqual({ ok: false, reason: 'not_enabled' });

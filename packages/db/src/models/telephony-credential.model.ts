@@ -69,7 +69,7 @@ export interface CreateTelephonyCredentialInput {
 /**
  * A credential's inbound state (0024; docs/inbound.md §3.1, §8.1), as `findInbound` and the
  * inbound writes return it. The token hashes are deliberately absent: they are written and
- * compared in SQL only (`inboundTokenMatches`), never read back.
+ * compared in SQL only (`inboundTokenMatches`, `findInboundForCallback`), never read back.
  */
 export interface TelephonyCredentialInboundRecord {
   credential_id: string;

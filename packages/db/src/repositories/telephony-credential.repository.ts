@@ -51,6 +51,15 @@ const INBOUND_COLUMNS = `
     WHERE pn.telephony_credential_id = c.id AND pn.inbound_linked_at IS NOT NULL) AS linked_numbers`;
 
 /**
+ * SQL over `telephony_credentials c`: `$2` (a token's sha256 hex) is the credential's current
+ * inbound token, or its previous one before that one's expiry, while inbound is enabled. An
+ * equality on a value the caller would have to guess in full (the membership-invite rule).
+ */
+const INBOUND_TOKEN_MATCHES = `c.inbound_app_id IS NOT NULL
+  AND (c.inbound_token_hash = $2
+       OR (c.inbound_previous_token_hash = $2 AND c.inbound_previous_token_expires_at > NOW()))`;
+
+/**
  * Call statuses that are still live (hangup, cancel, webhook checks need the
  * credential). Bound as a `varchar[]` parameter, so it cannot drift from the calls
  * model.
@@ -403,13 +412,27 @@ export class TelephonyCredentialRepository {
   // ── Inbound (0024; docs/inbound.md §3.1, §8.1) ──────────────────────────────
   // The Application, its URLs and the purpose token's hash. Enabled is all of it or none of it
   // (ck_telephony_credentials_inbound). The token hashes are never selected: a write stores one,
-  // `inboundTokenMatches` compares one, and nothing reads one back.
+  // `inboundTokenMatches` and `findInboundForCallback` compare one (`INBOUND_TOKEN_MATCHES`), and
+  // nothing reads one back.
 
   /** The credential's inbound state, or null when there is no such credential. */
   async findInbound(id: string): Promise<TelephonyCredentialInboundRecord | null> {
     const result = await getPool().query<TelephonyCredentialInboundRecord>(
       `SELECT ${INBOUND_COLUMNS} FROM telephony_credentials c WHERE c.id = $1`,
       [id],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * `findInbound` plus whether `tokenHash` matches (`inboundTokenMatches`), in one read: what an
+   * inbound webhook checks first. Null when there is no such credential.
+   */
+  async findInboundForCallback(id: string, tokenHash: string): Promise<(TelephonyCredentialInboundRecord & { token_matches: boolean }) | null> {
+    const result = await getPool().query<TelephonyCredentialInboundRecord & { token_matches: boolean }>(
+      `SELECT ${INBOUND_COLUMNS}, (${INBOUND_TOKEN_MATCHES}) IS TRUE AS token_matches
+         FROM telephony_credentials c WHERE c.id = $1`,
+      [id, tokenHash],
     );
     return result.rows[0] ?? null;
   }
@@ -548,10 +571,7 @@ export class TelephonyCredentialRepository {
    */
   async inboundTokenMatches(id: string, tokenHash: string): Promise<boolean> {
     const result = await getPool().query(
-      `SELECT 1 FROM telephony_credentials
-        WHERE id = $1 AND inbound_app_id IS NOT NULL
-          AND (inbound_token_hash = $2
-               OR (inbound_previous_token_hash = $2 AND inbound_previous_token_expires_at > NOW()))`,
+      `SELECT 1 FROM telephony_credentials c WHERE c.id = $1 AND ${INBOUND_TOKEN_MATCHES}`,
       [id, tokenHash],
     );
     return (result.rowCount ?? 0) > 0;

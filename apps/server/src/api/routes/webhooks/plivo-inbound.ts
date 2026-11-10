@@ -11,7 +11,7 @@
 //
 //  1. the purpose token in the query (`?token=`, minted when inbound was enabled): its sha256 must
 //     match the credential's current hash, or the previous one inside a Re-point's grace
-//     (`inboundTokenMatches`);
+//     (`findInboundForCallback`, in the same read as the credential);
 //  2. Plivo's V3 signature against the credential's own auth token(s) (`call_control`: a disabled
 //     or invalid credential still verifies, §10), computed over the URL STORED on the credential
 //     (`inbound_answer_url` / `inbound_hangup_url`, the exact string the Application was given)
@@ -35,11 +35,13 @@
 // nothing more and leaves no follow-up for a caller who was asked to try again.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
-import { trackInboundAnswer } from '@magick-agency/observability/metrics/agency';
+import { trackInboundAnswer, type InboundAnswerResult } from '@magick-agency/observability/metrics/agency';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import type { TelephonyCredentialInboundRecord } from '@magick-agency/db/models/telephony-credential.model';
 import type { WebRtcBridgeManager } from '../../../core/webrtc-bridge-manager.js';
 import type { TelephonyProvider } from '../../../telephony/types.js';
+import { UUID_RE } from '../../../utils/uuid.js';
+import { withTimeout } from '../../../utils/with-timeout.js';
 import { PLIVO_HANGUP_XML } from '../../../telephony/plivo/plivo.adapter.js';
 import { hashInboundToken } from '../../../telephony/plivo/inbound-token.js';
 import { PLIVO_INBOUND_ROUTES, inboundSignedUrl } from '../../../telephony/plivo/inbound-urls.js';
@@ -57,7 +59,6 @@ import { formParams, signatureHeaders } from './plivo.js';
 const log = createChildLogger({ component: 'plivo-inbound-webhooks' });
 
 const PROVIDER = 'plivo';
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * How long the answer webhook may take before the caller is answered with the fallback message
@@ -96,16 +97,17 @@ export interface PlivoInboundCallbackInput {
   headers: Record<string, string | undefined>;
 }
 
-/** The credential's verified callback: its record and the nonce this request claimed. */
+/** The credential's verified callback: its record, the adapter that verified it and the nonce this request claimed. */
 interface Verified {
   credential: TelephonyCredentialInboundRecord;
+  adapter: TelephonyProvider;
   nonce: string;
 }
 
 /** Checks 1–3 of the header. Null: refused (logged, with ids only); `unavailable`: the replay guard could not be asked. */
 async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackInput): Promise<Verified | null | 'unavailable'> {
   const { kind, credentialId } = input;
-  if (!UUID.test(credentialId)) {
+  if (!UUID_RE.test(credentialId)) {
     log.warn({ kind }, 'Inbound Plivo callback for a malformed credential id — refusing');
     return null;
   }
@@ -113,21 +115,21 @@ async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackIn
     log.warn({ kind, credentialId }, 'Inbound Plivo callback with no purpose token — refusing');
     return null;
   }
-  const credential = await telephonyCredentialRepository.findInbound(credentialId);
+  const credential = await telephonyCredentialRepository.findInboundForCallback(credentialId, hashInboundToken(input.token));
   const storedUrl = kind === 'answer' ? credential?.answer_url : credential?.hangup_url;
   if (!credential || credential.provider !== PROVIDER || !storedUrl) {
     log.warn({ kind, credentialId }, 'Inbound Plivo callback for a credential with no inbound Application — refusing');
     return null;
   }
-  if (!await telephonyCredentialRepository.inboundTokenMatches(credentialId, hashInboundToken(input.token))) {
+  if (!credential.token_matches) {
     log.warn({ kind, credentialId }, 'Inbound Plivo callback with a purpose token that does not match — refusing');
     return null;
   }
-  const adapter: TelephonyProvider | null = await bridge.inboundCallbackAdapter(credentialId, credential.tenant_id, PROVIDER);
+  const adapter = await bridge.inboundCallbackAdapter(credentialId, credential.tenant_id, PROVIDER);
   const signed = adapter?.verifyCarrierRequest?.({
     method: 'POST', url: inboundSignedUrl(storedUrl, input.requestUrl), params: input.params, headers: input.headers,
   }) === true;
-  if (!signed) {
+  if (!adapter || !signed) {
     log.warn({ kind, credentialId }, 'Inbound Plivo callback with a signature that does not verify over the stored URL — refusing');
     return null;
   }
@@ -147,14 +149,13 @@ async function verify(bridge: WebRtcBridgeManager, input: PlivoInboundCallbackIn
     log.warn({ kind, credentialId }, 'Inbound Plivo callback whose signed nonce this credential has already seen (a replay) — refusing');
     return null;
   }
-  return { credential, nonce };
+  return { credential, adapter, nonce };
 }
 
-/** The decision, rendered as the XML Plivo runs. */
-function render(adapter: TelephonyProvider | null, decision: InboundAnswerDecision): Answer {
+/** The decision, rendered as the XML Plivo runs (`adapter`: the one that verified the callback). */
+function render(adapter: TelephonyProvider, decision: InboundAnswerDecision): Answer {
   switch (decision.kind) {
     case 'stream':
-      if (!adapter) return FALLBACK;
       return xml(adapter.generateAnswerResponse(decision.callId, decision.streamUrl, { maxDurationSeconds: decision.maxDurationSeconds }));
     case 'spoken':
       return xml(PLIVO_INBOUND_SPOKEN_XML[decision.message]);
@@ -162,17 +163,6 @@ function render(adapter: TelephonyProvider | null, decision: InboundAnswerDecisi
       return HANGUP;
     case 'fallback':
       return FALLBACK;
-  }
-}
-
-/** `p`, or `onTimeout` once `ms` pass first. */
-async function within<T>(p: Promise<T>, ms: number, onTimeout: T): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<T>((resolve) => { timer = setTimeout(() => resolve(onTimeout), ms); });
-  try {
-    return await Promise.race([p, timeout]);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -188,26 +178,27 @@ export async function handlePlivoInboundCallback(
   opts: { budgetMs?: number } = {},
 ): Promise<Answer> {
   const startedAt = performance.now();
+  const answered = (result: InboundAnswerResult) => trackInboundAnswer(result, (performance.now() - startedAt) / 1000);
   const { kind, credentialId } = input;
   let verified: Verified | null = null;
   try {
     const checked = await verify(bridge, input);
     if (checked === 'unavailable') {
       // Not ours to answer now: Plivo's fallback answer URL speaks to the caller (QA-F11).
-      if (kind === 'answer') trackInboundAnswer('fallback', (performance.now() - startedAt) / 1000);
+      if (kind === 'answer') answered('fallback');
       return UNAVAILABLE;
     }
     verified = checked;
     if (!verified) {
-      if (kind === 'answer') trackInboundAnswer('refused', (performance.now() - startedAt) / 1000);
+      if (kind === 'answer') answered('refused');
       return refuse(kind);
     }
-    const { credential } = verified;
+    const { credential, adapter } = verified;
     if (kind === 'answer') {
       const read = readPlivoInboundArrival(input.params);
       if (!read.ok) {
         log.warn({ credentialId, reason: read.reason }, 'Inbound Plivo answer callback that is not an arriving call — hanging up');
-        trackInboundAnswer('refused', (performance.now() - startedAt) / 1000);
+        answered('refused');
         return HANGUP;
       }
       const budget = new AbortController();
@@ -220,19 +211,23 @@ export async function handlePlivoInboundCallback(
         fromE164: read.arrival.fromE164,
         toE164: read.arrival.toE164,
       }, { signal: budget.signal });
-      const decision = await within<InboundAnswerDecision | typeof TIMED_OUT>(work, opts.budgetMs ?? INBOUND_ANSWER_BUDGET_MS, TIMED_OUT);
+      // A fault of the work itself goes on to the catch below; only the budget's end is TIMED_OUT.
+      // (`faulted` is set before the bound's own rejection handler runs: it was attached first.)
+      let faulted = false;
+      work.catch(() => { faulted = true; });
+      const decision = await withTimeout(work, opts.budgetMs ?? INBOUND_ANSWER_BUDGET_MS, 'Inbound answer')
+        .catch((err: unknown): typeof TIMED_OUT => { if (faulted) throw err; return TIMED_OUT; });
       if (decision === TIMED_OUT) {
         // The caller is the fallback's now: the router stops placing the call where it got to
         // and leaves no follow-up (they were told to try again, not that we would call).
         budget.abort();
         work.catch((err: unknown) => log.error({ err, credentialId }, 'Inbound answer failed after its budget'));
         log.error({ credentialId, budgetMs: opts.budgetMs ?? INBOUND_ANSWER_BUDGET_MS }, 'Inbound answer over its budget — answering with the fallback message');
-        trackInboundAnswer('timed_out', (performance.now() - startedAt) / 1000);
+        answered('timed_out');
         return FALLBACK;
       }
-      const adapter = decision.kind === 'stream' ? await bridge.inboundCallbackAdapter(credentialId, credential.tenant_id, PROVIDER) : null;
       const answer = render(adapter, decision);
-      trackInboundAnswer(decision.kind, (performance.now() - startedAt) / 1000);
+      answered(decision.kind);
       log.info({ credentialId, decision: decision.kind }, 'Inbound Plivo call answered');
       return answer;
     }
@@ -259,7 +254,7 @@ export async function handlePlivoInboundCallback(
     log.error({ err, credentialId, kind }, 'Inbound Plivo callback failed');
     if (verified) await bridge.releaseInboundCallbackNonce(credentialId, verified.nonce);
     if (kind === 'answer') {
-      trackInboundAnswer('fallback', (performance.now() - startedAt) / 1000);
+      answered('fallback');
       return FALLBACK;
     }
     return UNAVAILABLE;
