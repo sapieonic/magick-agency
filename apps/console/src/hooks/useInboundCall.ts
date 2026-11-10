@@ -6,6 +6,7 @@ import {
   markInboundCallDnc,
   updateInboundCallNotes,
   type InboundRefusal,
+  type InboundResult,
 } from '../api/inbound';
 import { errorCode } from '../utils/agencyErrors';
 import { resyncCatalog } from '../utils/agencyCatalogSync';
@@ -17,7 +18,7 @@ import {
   type DispositionBlockReason,
   type DispositionFormState,
 } from '../utils/agencyDispositionForm';
-import { notesStatus, type NotesStatus } from '../utils/agencyNotes';
+import type { NotesStatus } from '../utils/agencyNotes';
 import { formatDialNumber } from '../utils/softphone/phoneInput';
 import { INBOUND_REFUSAL_COPY, inboundRefusalCopy } from '../utils/inbound/inboundCopy';
 import {
@@ -27,6 +28,7 @@ import {
   type InboundPhase,
 } from '../utils/inbound/inboundCall';
 import { useLatestRef } from './useLatestRef';
+import { useCallNotesAutosave, type NotesSaveSettled } from './useCallNotesAutosave';
 import type { ServerClock } from './useServerClock';
 import type { StationConnection } from './agencyStation/types';
 import type { AgencyDisposition } from '../types/agency';
@@ -155,7 +157,7 @@ export interface InboundCallState {
   announcement: string;
 }
 
-export const NOTES_DEBOUNCE_MS = 700;
+export { NOTES_DEBOUNCE_MS } from './useCallNotesAutosave';
 /** How long the station says why a call left it (`notice`). */
 export const INBOUND_NOTICE_MS = 30_000;
 
@@ -266,22 +268,19 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
       setDncFailure(null);
       setDncConfirmOpen(false);
       setNotice(null);
-      notesSaveRef.current = { lastKeystrokeAt: null, lastSaveSucceededAt: null, lastUpdatedAt: null };
+      resetStamps();
     }
     if (!call && prev) {
       hydratedForRef.current = null;
       notesTouchedRef.current = false;
-      if (saveTimerRef.current !== null) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
+      cancelSave();
       setNotesState('');
       setFormState(EMPTY_DISPOSITION_FORM);
       setCatalogOverride(null);
       setPadRejection(null);
       setHangupFailure(null);
       setDncConfirmOpen(false);
-      setNotesMeta((m) => ({ ...m, inFlight: false, failure: null }));
+      clearSaveState();
       // Why it left, when the agent did not save its outcome: the copy that left with it.
       const last = heldRef.current && heldRef.current.id === prev.id ? heldRef.current : prev;
       if (last.settled_at !== null && last.bridged_at === null) setNotice(INBOUND_HUNG_UP_EARLY_COPY);
@@ -310,72 +309,44 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
   }, [phase]);
 
   // ── Notes autosave ────────────────────────────────────────────────────────
-  const notesSaveRef = useRef<{ lastKeystrokeAt: number | null; lastSaveSucceededAt: number | null; lastUpdatedAt: string | null }>({
-    lastKeystrokeAt: null,
-    lastSaveSucceededAt: null,
-    lastUpdatedAt: null,
-  });
-  const [notesMeta, setNotesMeta] = useState<{ inFlight: boolean; failure: 'retryable' | 'terminal' | null; tick: number }>({
-    inFlight: false,
-    failure: null,
-    tick: 0,
-  });
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notesRef = useLatestRef(notes);
-  const callRef = useLatestRef(call);
-
-  const flushSave = useCallback(async () => {
-    saveTimerRef.current = null;
-    const target = callRef.current;
-    if (!target || !tenantId || !accountId) return;
-    const text = notesRef.current;
-    const sentAt = Date.now();
-    setNotesMeta((m) => ({ ...m, inFlight: true }));
-    const result = await updateInboundCallNotes(target.id, text, tenantId, accountId);
-    if (callRef.current?.id !== target.id) return;
-    if (result.ok) {
-      // The row carries no `updated_at`: the stamp shown is the moment this save succeeded.
-      notesSaveRef.current = {
-        ...notesSaveRef.current,
-        lastSaveSucceededAt: sentAt,
-        lastUpdatedAt: new Date(sentAt).toISOString(),
-      };
-      setNotesMeta((m) => ({ inFlight: false, failure: null, tick: m.tick + 1 }));
-      adoptCall(result.value);
-      return;
-    }
-    const terminal = result.refusal.code === 'inbound_call_not_found' || result.refusal.code === 'inbound_outcome_already_saved';
-    setNotesMeta((m) => ({ inFlight: false, failure: terminal ? 'terminal' : 'retryable', tick: m.tick + 1 }));
-    if (!terminal) saveTimerRef.current = setTimeout(() => void flushSave(), NOTES_DEBOUNCE_MS * 4);
-  }, [callRef, notesRef, tenantId, accountId, adoptCall]);
-
-  useEffect(() => () => {
-    if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
-  }, []);
+  const sendNotes = useCallback(
+    (target: AgencyInboundCall) =>
+      tenantId && accountId ? updateInboundCallNotes(target.id, notesRef.current, tenantId, accountId) : null,
+    [notesRef, tenantId, accountId],
+  );
+  const settleNotes = useCallback(
+    (result: InboundResult<AgencyInboundCall>, sentAt: number): NotesSaveSettled => {
+      if (result.ok) {
+        adoptCall(result.value);
+        // The row carries no `updated_at`: the stamp shown is the moment this save succeeded.
+        return { ok: true, updatedAt: new Date(sentAt).toISOString() };
+      }
+      const terminal = result.refusal.code === 'inbound_call_not_found' || result.refusal.code === 'inbound_outcome_already_saved';
+      return { ok: false, terminal, retry: !terminal };
+    },
+    [adoptCall],
+  );
+  const {
+    status: notesStatusLine,
+    scheduleSave,
+    cancelSave,
+    markKeystroke,
+    resetStamps,
+    clearSaveState,
+  } = useCallNotesAutosave({ call, notes, send: sendNotes, settle: settleNotes });
 
   const setNotes = useCallback(
     (value: string) => {
       setNotesState(value);
       notesTouchedRef.current = true;
-      notesSaveRef.current = { ...notesSaveRef.current, lastKeystrokeAt: Date.now() };
-      setNotesMeta((m) => ({ ...m, tick: m.tick + 1 }));
-      if (!callRef.current) return;
-      if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => void flushSave(), NOTES_DEBOUNCE_MS);
+      markKeystroke();
+      scheduleSave();
     },
-    [callRef, flushSave],
+    [markKeystroke, scheduleSave],
   );
 
   const notesEnabled = call !== null;
-  const notesStatusLine = notesStatus({
-    notes,
-    lastKeystrokeAt: notesSaveRef.current.lastKeystrokeAt,
-    lastSaveSucceededAt: notesSaveRef.current.lastSaveSucceededAt,
-    lastUpdatedAt: notesSaveRef.current.lastUpdatedAt,
-    inFlight: notesMeta.inFlight,
-    failure: notesMeta.failure,
-    acceptingWrites: notesEnabled,
-  });
 
   // ── The outcome ───────────────────────────────────────────────────────────
   /** The pad opens with the caller on the line, as the soft phone's does; Save opens when the call ends. */
@@ -403,10 +374,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     if (saveBlockAt(now) !== null) return;
     const payload = buildSubmitPayload(catalog, fullForm, now);
     if (!payload) return;
-    if (saveTimerRef.current !== null) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    cancelSave();
     savingRef.current = true;
     setSaving(true);
     setPadRejection(null);
@@ -439,7 +407,7 @@ export function useInboundCall(options: UseInboundCallOptions): InboundCallState
     if (refusal.code === 'inbound_outcome_already_saved' || refusal.code === 'inbound_call_not_found') reconcile();
     setPadRejection(message);
     setAnnouncement(`The outcome wasn’t saved. ${message}`);
-  }, [call, tenantId, accountId, clock, saveBlockAt, catalog, fullForm, adoptCall, reconcile]);
+  }, [call, tenantId, accountId, clock, saveBlockAt, catalog, fullForm, adoptCall, reconcile, cancelSave]);
 
   // ── Call controls ─────────────────────────────────────────────────────────
   /**
