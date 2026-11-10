@@ -558,9 +558,9 @@ describe('agency ingest routes', () => {
     };
 
     it('a committed upload writes one started row: who, the file, the mode and the duplicate rule', async () => {
-      mocks.repo.create.mockResolvedValue(job({ status: 'pending', dedupe_column: 'Loan No', dedupe_phones: true }));
+      mocks.repo.create.mockResolvedValue(job({ status: 'pending', dedupe_columns: ['Loan No', 'Branch'], dedupe_phones: true }));
       const app = await buildApp();
-      const res = await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...committed, dedupe_column: 'Loan No' } });
+      const res = await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...committed, dedupe_columns: ['Loan No', 'Branch'] } });
       expect(res.statusCode, res.body).toBe(202);
 
       expect(mocks.auditLog).toHaveBeenCalledTimes(1);
@@ -571,7 +571,7 @@ describe('agency ingest routes', () => {
         resource_type: 'agency_campaign', resource_id: 'campaign-1', campaign_id: 'campaign-1',
         details: {
           campaign_id: 'campaign-1', job_id: '00000000-0000-4000-8000-000000000001',
-          file_name: 'roster.csv', mode: 'append', dedupe_column: 'Loan No', dedupe_phones: true,
+          file_name: 'roster.csv', mode: 'append', dedupe_columns: ['Loan No', 'Branch'], dedupe_phones: true,
         },
       });
       await app.close();
@@ -618,7 +618,7 @@ describe('agency ingest routes', () => {
     });
   });
 
-  describe('dedupe_column', () => {
+  describe('dedupe_columns', () => {
     const base = {
       s3_key: `agency-ingest/${TENANT}/u/roster.csv`,
       file_name: 'roster.csv',
@@ -626,59 +626,57 @@ describe('agency ingest routes', () => {
       campaign_id: '11111111-2222-3333-4444-555555555555',
     };
 
-    it('stores the chosen column, trimmed, on the job', async () => {
-      mocks.repo.create.mockResolvedValue(job());
+    async function post(payload: Record<string, unknown>) {
       const app = await buildApp();
-      const res = await app.inject({
-        method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...base, dedupe_column: ' Loan No ' },
-      });
+      const res = await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...base, ...payload } });
+      await app.close();
+      return res;
+    }
+
+    it('stores the chosen columns, trimmed, in order, on the job', async () => {
+      mocks.repo.create.mockResolvedValue(job());
+      const res = await post({ dedupe_columns: [' Loan No ', 'Branch', 'Mobile'] });
+      expect(res.statusCode, res.body).toBe(202);
+      expect(mocks.repo.create.mock.calls[0]![0]).toMatchObject({ dedupe_columns: ['Loan No', 'Branch', 'Mobile'], dedupe_phones: true });
+    });
+
+    it('the single-column dedupe_column is a one-column key', async () => {
+      mocks.repo.create.mockResolvedValue(job());
+      const res = await post({ dedupe_column: ' Loan No ' });
       expect(res.statusCode).toBe(202);
-      expect(mocks.repo.create.mock.calls[0]![0]).toMatchObject({ dedupe_column: 'Loan No', dedupe_phones: true });
-      await app.close();
+      expect(mocks.repo.create.mock.calls[0]![0]).toMatchObject({ dedupe_columns: ['Loan No'], dedupe_phones: true });
     });
 
-    it('an older request without it creates the same job as before', async () => {
+    it('an older request without either creates the same job as before', async () => {
       mocks.repo.create.mockResolvedValue(job());
-      const app = await buildApp();
-      await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: base });
-      expect(mocks.repo.create.mock.calls[0]![0]).not.toHaveProperty('dedupe_column');
+      await post({});
+      expect(mocks.repo.create.mock.calls[0]![0]).not.toHaveProperty('dedupe_columns');
       expect(mocks.repo.create.mock.calls[0]![0].dedupe_phones).toBe(true);
-      await app.close();
     });
 
-    it('refuses 400 with dedupe_phones: false, before any job exists', async () => {
-      const app = await buildApp();
-      const res = await app.inject({
-        method: 'POST', url: `${PREFIX}/ingest/jobs`,
-        payload: { ...base, dedupe_column: 'Loan No', dedupe_phones: false },
-      });
+    it.each([
+      ['an empty list', { dedupe_columns: [] }, null],
+      ['more than three columns', { dedupe_columns: ['A', 'B', 'C', 'D'] }, null],
+      ['a blank column name', { dedupe_columns: ['Loan No', '   '] }, null],
+      ['a blank single column', { dedupe_column: '   ' }, null],
+      ['both forms at once', { dedupe_columns: ['Loan No'], dedupe_column: 'Loan No' }, 'not both'],
+      ['a column named twice, matched as the ingest matches headers', { dedupe_columns: ['Loan No', ' loan no '] }, 'more than once'],
+      ['dedupe_phones: false', { dedupe_columns: ['Loan No'], dedupe_phones: false }, 'dedupe_phones'],
+      ['the single form with dedupe_phones: false', { dedupe_column: 'Loan No', dedupe_phones: false }, 'dedupe_phones'],
+    ])('refuses 400 for %s, before any job exists', async (_name, payload, message) => {
+      const res = await post(payload);
       expect(res.statusCode).toBe(400);
+      if (message) expect(res.json().message).toContain(message);
       expect(mocks.repo.create).not.toHaveBeenCalled();
-      await app.close();
     });
 
-    it('refuses 400 when the column is also ignored, matched as the ingest matches headers', async () => {
+    it('refuses 400 when any key column is also ignored, matched as the ingest matches headers, naming it', async () => {
       // An ignored column is not in the roster's row fingerprint, so two loans that
       // differ only there would collapse into one contact at the insert.
-      const app = await buildApp();
-      const res = await app.inject({
-        method: 'POST', url: `${PREFIX}/ingest/jobs`,
-        payload: { ...base, dedupe_column: 'Loan No', ignore_columns: ['Notes', ' loan no '] },
-      });
+      const res = await post({ dedupe_columns: ['Branch', 'Loan No'], ignore_columns: ['Notes', ' loan no '] });
       expect(res.statusCode).toBe(400);
-      expect(res.json().message).toContain('cannot also be ignored');
+      expect(res.json().message).toBe("'Loan No' is used to find duplicates, so it cannot also be ignored.");
       expect(mocks.repo.create).not.toHaveBeenCalled();
-      await app.close();
-    });
-
-    it('refuses 400 for a blank column name', async () => {
-      const app = await buildApp();
-      const res = await app.inject({
-        method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...base, dedupe_column: '   ' },
-      });
-      expect(res.statusCode).toBe(400);
-      expect(mocks.repo.create).not.toHaveBeenCalled();
-      await app.close();
     });
   });
 
@@ -1141,16 +1139,16 @@ describe('agency ingest routes', () => {
       // Never a fourth addend — an operator adds these against their spreadsheet.
       expect(body.duplicates).toBe(30);
       expect(body.rejected_by_reason).toEqual({ invalid_phone: 70, duplicate_phone: 30 });
-      // Null for a job from before 0007 (no key on the row) as for one that chose none.
-      expect(body.dedupe_column).toBeNull();
+      // Empty for a job read without the column (no key on the row) as for one that chose none.
+      expect(body.dedupe_columns).toEqual([]);
       await app.close();
     });
 
-    it('serves the job\'s dedupe_column so the summary can name it', async () => {
-      mocks.repo.findById.mockResolvedValue(job({ dedupe_column: 'Loan No' }));
+    it('serves the job\'s dedupe_columns so the summary can name them', async () => {
+      mocks.repo.findById.mockResolvedValue(job({ dedupe_columns: ['Loan No', 'Branch'] }));
       const app = await buildApp();
       const body = (await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001` })).json();
-      expect(body.dedupe_column).toBe('Loan No');
+      expect(body.dedupe_columns).toEqual(['Loan No', 'Branch']);
       await app.close();
     });
 

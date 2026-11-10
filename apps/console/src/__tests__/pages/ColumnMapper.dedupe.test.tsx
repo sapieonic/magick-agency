@@ -48,7 +48,7 @@ describe('ColumnMapper: Check duplicates on', () => {
   it('picking a column sets it on the mapping', () => {
     const { select, onChange } = renderMapper();
     fireEvent.change(select, { target: { value: 'column:Loan No' } });
-    expect(onChange.mock.calls[0]![0].dedupe).toEqual({ mode: 'column', column: 'Loan No' });
+    expect(onChange.mock.calls[0]![0].dedupe).toEqual({ mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }] });
   });
 
   it('a column named `none` is a column, and the none option is none', () => {
@@ -56,9 +56,18 @@ describe('ColumnMapper: Check duplicates on', () => {
     fireEvent.change(select, { target: { value: 'column:none' } });
     fireEvent.change(select, { target: { value: 'none' } });
     expect(onChange.mock.calls.map(([next]) => next.dedupe)).toEqual([
-      { mode: 'column', column: 'none' },
+      { mode: 'keys', keys: [{ kind: 'column', column: 'none' }] },
       { mode: 'none' },
     ]);
+  });
+
+  it('from none, picking a key starts a one-key check', () => {
+    const { select, onChange } = renderMapper({ ...initialMapping(ANALYSIS), dedupe: { mode: 'none' } });
+    expect(select.value).toBe('none');
+    expect([...select.options].map((o) => o.textContent)).toEqual(['Phone number', 'Loan No', 'none', "Don't remove duplicates"]);
+    fireEvent.change(select, { target: { value: 'column:Loan No' } });
+    expect(onChange.mock.calls[0]![0].dedupe).toEqual({ mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }] });
+    expect(screen.queryByRole('button', { name: 'Combine with another column' })).toBeNull();
   });
 
   it('links the select to its note for screen readers', () => {
@@ -73,9 +82,60 @@ describe('ColumnMapper: Check duplicates on', () => {
   });
 
   it('says what a chosen column means for rows that share a number', () => {
-    renderMapper({ ...initialMapping(ANALYSIS), dedupe: { mode: 'column', column: 'Loan No' } });
+    renderMapper({ ...initialMapping(ANALYSIS), dedupe: { mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }] } });
     expect(screen.getByTestId('dedupe-note').textContent).toBe(
       'Loan No: 100% unique in this file. Rows that share a phone number are all kept. The dialler never calls one number twice at the same time.',
     );
+  });
+
+  describe('combining columns', () => {
+    const combined: MappingState = {
+      ...initialMapping(ANALYSIS),
+      dedupe: { mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }, { kind: 'phone' }] },
+    };
+
+    it('"Combine with another column" adds the next key not yet chosen', () => {
+      const { onChange } = renderMapper();
+      fireEvent.click(screen.getByRole('button', { name: 'Combine with another column' }));
+      expect(onChange.mock.calls[0]![0].dedupe).toEqual({
+        mode: 'keys', keys: [{ kind: 'phone' }, { kind: 'column', column: 'Loan No' }],
+      });
+    });
+
+    it('shows a select per extra key, each offering only the keys the others do not hold', () => {
+      const { select } = renderMapper(combined);
+      expect(select.value).toBe('column:Loan No');
+      expect([...select.options].map((o) => o.textContent)).toEqual(['Loan No', 'none', "Don't remove duplicates"]);
+      const second = screen.getByLabelText('Duplicate check column 2') as HTMLSelectElement;
+      expect(second.value).toBe('phone');
+      expect([...second.options].map((o) => o.textContent)).toEqual(['Phone number', 'none']);
+      expect(second.getAttribute('aria-describedby')).toBe('ingest-dedupe-note');
+    });
+
+    it('changing or removing an extra key updates the mapping', () => {
+      const { onChange } = renderMapper(combined);
+      fireEvent.change(screen.getByLabelText('Duplicate check column 2'), { target: { value: 'column:none' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Remove Phone number from the duplicate check' }));
+      expect(onChange.mock.calls.map(([next]) => next.dedupe)).toEqual([
+        { mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }, { kind: 'column', column: 'none' }] },
+        { mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }] },
+      ]);
+    });
+
+    it('offers no further key at three', () => {
+      renderMapper({
+        ...combined,
+        dedupe: { mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }, { kind: 'phone' }, { kind: 'column', column: 'none' }] },
+      });
+      expect(screen.getByLabelText('Duplicate check column 3')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Combine with another column' })).toBeNull();
+    });
+
+    it('says a row is dropped only when every key matches, and that one number can hold several rows', () => {
+      renderMapper(combined);
+      expect(screen.getByTestId('dedupe-note').textContent).toBe(
+        'A row is dropped only when its Loan No and Mobile both match an earlier row; a row with any of them blank is always kept. Loan No has no repeats in this file, so no row will be dropped as a duplicate. Rows on one number are kept when the other columns differ. The dialler never calls one number twice at the same time.',
+      );
+    });
   });
 });

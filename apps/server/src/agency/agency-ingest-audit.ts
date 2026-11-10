@@ -4,7 +4,9 @@
  *
  * - `agency_campaign.roster_upload_started`: a COMMITTED upload job was created (never a
  *   dry run: a preview writes no roster). The uploader is the actor; `details` carry the
- *   job, the file name, the mode and the duplicate rule (`dedupe_column`, null = phone).
+ *   job, the file name, the mode and the duplicate rule (`dedupe_columns`, the key's
+ *   columns in order; null = phone, or none when `dedupe_phones` is false). Rows written
+ *   before 0031 carry a single `dedupe_column` instead.
  * - `agency_campaign.roster_upload_completed` / `agency_campaign.roster_upload_failed`:
  *   the job reached a terminal state, read back from the job row once the run has ended,
  *   so every terminal branch of the ingest is covered by one write; a job the stale-job
@@ -41,7 +43,7 @@ export function auditRosterUploadStarted(job: AgencyIngestJobRecord, actor: Audi
       job_id: job.id,
       file_name: job.file_name,
       mode: job.mode ?? 'append',
-      dedupe_column: job.dedupe_column ?? null,
+      dedupe_columns: job.dedupe_columns && job.dedupe_columns.length > 0 ? job.dedupe_columns : null,
       dedupe_phones: job.dedupe_phones,
     },
   });

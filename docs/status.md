@@ -464,6 +464,21 @@ phone number (the default, unchanged), any kept column, or none.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
   duplicate column".
 
+### Roster upload: combining up to three duplicate columns 2026-11-10
+
+One column is not always a unique key: a loan number can repeat across branches, and deduping on it
+alone dropped the second branch's loan. "Check duplicates on" now combines up to three columns
+("Combine with another column"); a row is dropped only when every chosen column matches an earlier
+accepted row, and a row with any of them blank is kept.
+
+- Migration `0031_ingest_dedupe_columns.sql` (`agency_ingest_jobs.dedupe_columns TEXT[]`, 1 to 3,
+  backfilled from 0007's `dedupe_column`, which is no longer written). Contract:
+  `dedupe_columns` on the ingest request (the single `dedupe_column` is still accepted, as one key)
+  and on the job, the insights summary and the uploads list (replacing `dedupe_column` there);
+  `AGENCY_MAX_DEDUPE_COLUMNS`. The readiness check's `detail.dedupe_column` names the key as one
+  label (`Loan No + Branch`). A phone-only upload sends the same request as before.
+- Rule and defaults: [`decisions.md`](decisions.md) §4, "Combined duplicate key".
+
 ### Wrap-up redial 2026-11-03
 
 A connected call can drop for reasons on any side. With the campaign setting "Allow redial from

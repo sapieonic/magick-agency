@@ -273,7 +273,7 @@ bench database first (from `packages/db`, `DATABASE_URL` the bench's).
 
 The request becomes `{ by: 'column', column: 'Loan No', value: 'LN-0042' }`. Roster rows keep
 every non-phone column in `agency_contacts.context` (JSONB) and the ingest already knows each
-upload's key column (`agency_ingest_jobs.dedupe_column`, migration 0007). A per-campaign scan of
+upload's key columns (`agency_ingest_jobs.dedupe_columns`, `0031_ingest_dedupe_columns.sql`; one to three). A per-campaign scan of
 `context->>column` does not serve a tenant-wide search, so v2 adds a key-value index filled at
 ingest:
 
@@ -288,7 +288,7 @@ CREATE TABLE agency_contact_keys (
 );
 ```
 
-- **Filled at ingest** for the upload's `dedupe_column` (and any column the tenant marks as a
+- **Filled at ingest** for each of the upload's `dedupe_columns` (and any column the tenant marks as a
   key in settings), in the same transaction as the contact rows; a backfill job fills existing
   campaigns once.
 - **Search**: `(tenant_id, column_key, value_norm)` → contact ids → `account_id = ANY($visible)`

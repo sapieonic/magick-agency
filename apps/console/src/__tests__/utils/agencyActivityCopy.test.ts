@@ -251,6 +251,11 @@ describe('activityDetailSummary', () => {
       .toBe('Uploaded “may.csv”, adding to the roster, duplicates found on “Loan No”.');
     expect(activityDetailSummary({ ...started, detail: { file_name: 'may.csv', mode: 'replace', dedupe_column: null } }))
       .toBe('Uploaded “may.csv”, replacing the roster, duplicates found on the phone number.');
+    // Since 0031 the row carries the key's columns; a combination names each.
+    expect(activityDetailSummary({ ...started, detail: { file_name: 'may.csv', mode: 'append', dedupe_columns: ['Loan No', 'Branch'] } }))
+      .toBe('Uploaded “may.csv”, adding to the roster, duplicates found on “Loan No” + “Branch”.');
+    expect(activityDetailSummary({ ...started, detail: { file_name: 'may.csv', mode: 'append', dedupe_columns: null, dedupe_phones: false } }))
+      .toBe('Uploaded “may.csv”, adding to the roster, no duplicate check.');
 
     const counts = { rows_read: 1200, accepted: 1150, rejected: 50, duplicates: 20 };
     expect(activityDetailSummary(row({ action: 'agency_campaign.roster_upload_completed', detail: { status: 'completed', ...counts } })))

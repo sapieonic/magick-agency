@@ -416,8 +416,8 @@ export class AgencyIngestService {
         ignoreColumns: job.ignore_columns ?? [],
         ...(job.default_country_code ? { defaultCountryCode: job.default_country_code } : {}),
         dedupePhones: job.dedupe_phones,
-        // NULL, or no key on a row read before 0007: `dedupe_phones` decides.
-        ...(job.dedupe_column ? { dedupeColumn: job.dedupe_column } : {}),
+        // NULL, or no key on a row read before 0031: `dedupe_phones` decides.
+        ...(job.dedupe_columns && job.dedupe_columns.length > 0 ? { dedupeColumns: job.dedupe_columns } : {}),
         batchSize: AGENCY_INGEST_BATCH_SIZE,
 
         onBatch: async (contacts, streamProgress) => {

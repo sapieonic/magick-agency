@@ -113,7 +113,7 @@ Columns: `id`, `call_id`, `tenant_id`, `event_type`, `event_category`, `severity
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `phone_e164`, `source`, `reason`, `added_by`, `created_at`.
 
-**`agency_ingest_jobs`**. CSV roster ingest jobs: the S3 object, column mapping, progress counters, rejected-rows export, status and errors. 0007 adds `dedupe_column` (the column whose value marks a duplicate row; see below).
+**`agency_ingest_jobs`**. CSV roster ingest jobs: the S3 object, column mapping, progress counters, rejected-rows export, status and errors. 0007 adds `dedupe_column` (the column whose value marks a duplicate row; see below), superseded by 0031's `dedupe_columns` (up to three columns combined).
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `s3_key`, `file_name`, `file_size_bytes`, `phone_column`, `timezone_column`, `ignore_columns`, `default_country_code`, `dedupe_phones`, `dry_run`, `status`, `cancel_requested`, `rows_read`, `accepted`, `rejected`, `duplicates`, `rejected_by_reason`, `bytes_read`, `chunks_sent`, `chunks_total`, `headers`, `context_columns`, `rejected_s3_key`, `rejected_row_count`, `rejected_truncated`, `error_code`, `error_message`, `created_by`, `created_at`, `started_at`, `finished_at`, `updated_at`, `core_rejected_duplicate_rows`, `core_duplicate_source_rows`, `core_rejected_duplicate_rows_may_undercount`, `mode`, `replace_superseded_contacts`, `replace_superseded_uncertain`.
 
@@ -1264,6 +1264,22 @@ beside a Mark handled, the index by definition and by the planner, the CHECK aga
 list, the backfill, down then up), the down → up suite, and the server's
 `test/integration/agency/inbound-missed-reached.test.ts` (the no-contact codes are the server's
 constants) and `test/integration/api/inbound-missed-work.test.ts`.
+
+### 0031 — `migrations/0031_ingest_dedupe_columns.sql`
+
+Roster upload, combining duplicate columns. **`agency_ingest_jobs.dedupe_columns`** `TEXT[] NULL`,
+`ck_agency_ingest_jobs_dedupe_columns` (NULL, or 1 to 3 elements: the contract's
+`AGENCY_MAX_DEDUPE_COLUMNS`): the headers that together mark a duplicate row, in the operator's
+order. A row is a duplicate only when every one matches an earlier accepted row (each trimmed and
+case-insensitive; the phone column by its normalised number); a row with any of them blank is never
+a duplicate. NULL: `dedupe_phones` decides, as before. The Up backfills it from 0007's
+`dedupe_column`, which is superseded: no longer written or read. Written by
+`POST /proxy/agency/ingest/jobs` (`dedupe_columns`, or the single `dedupe_column`), read by the
+ingest service, the job payload, the audit row and the insights reads. No index; the table holds
+one row per upload. **Down** writes the first column back to `dedupe_column` where it is NULL (a
+single key exactly; a combination keeps its first column, a record of a finished upload) and drops
+the CHECK and the column. **Tests**: `test/integration/db/ingest-dedupe-columns-migration.test.ts`
+(shape, the CHECK, the backfill, down then up) and the down → up inventory suite.
 
 ## Tests
 

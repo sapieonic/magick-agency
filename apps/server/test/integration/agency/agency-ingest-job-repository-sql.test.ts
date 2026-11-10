@@ -60,13 +60,15 @@ describe('AgencyIngestJobRepository on real Postgres', () => {
       replace_superseded_uncertain: false, core_rejected_duplicate_rows_may_undercount: false,
     });
     expect(job.file_size_bytes).toBe('42');
-    expect(job.dedupe_column).toBeNull();
+    expect(job.dedupe_columns).toBeNull();
   });
 
-  it('create: dedupe_column is stored, alone and alongside mode replace', async () => {
-    expect(await create({ dedupe_column: 'Loan No' })).toMatchObject({ dedupe_column: 'Loan No', mode: 'append' });
-    expect(await create({ dedupe_column: 'Loan No', mode: 'replace' }))
-      .toMatchObject({ dedupe_column: 'Loan No', mode: 'replace' });
+  it('create: dedupe_columns is stored in order, alone and alongside mode replace', async () => {
+    expect(await create({ dedupe_columns: ['Loan No'] })).toMatchObject({ dedupe_columns: ['Loan No'], mode: 'append' });
+    expect(await create({ dedupe_columns: ['Loan No', 'Branch', 'Mobile'], mode: 'replace' }))
+      .toMatchObject({ dedupe_columns: ['Loan No', 'Branch', 'Mobile'], mode: 'replace' });
+    // An empty list is no choice, as omitting it is: the column stays NULL.
+    expect(await create({ dedupe_columns: [] })).toMatchObject({ dedupe_columns: null });
   });
 
   it('create: mode replace takes the optional $14 column; dry_run and dedupe_phones=false are kept', async () => {

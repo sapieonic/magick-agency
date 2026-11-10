@@ -56,18 +56,18 @@ describe('AgencyIngestJobRepository', () => {
       expect(paramsOf()[10]).toBe(false);
     });
 
-    it('names dedupe_column only when one was chosen, so an older request inserts as before', async () => {
+    it('names dedupe_columns only when a key was chosen, so an older request inserts as before', async () => {
       await repo.create({ tenant_id: TENANT, s3_key: 'k', file_name: 'f.csv', phone_column: 'Mobile' });
       expect(sqlOf()).not.toContain('dedupe_column');
       expect(paramsOf()).toHaveLength(13);
 
       await repo.create({
         tenant_id: TENANT, s3_key: 'k', file_name: 'f.csv', phone_column: 'Mobile',
-        dedupe_column: 'Loan No', mode: 'replace',
+        dedupe_columns: ['Loan No', 'Branch'], mode: 'replace',
       });
-      expect(sqlOf(1)).toContain('created_by, mode, dedupe_column)');
+      expect(sqlOf(1)).toContain('created_by, mode, dedupe_columns)');
       expect(sqlOf(1)).toContain('$13,$14,$15)');
-      expect(paramsOf(1).slice(13)).toEqual(['replace', 'Loan No']);
+      expect(paramsOf(1).slice(13)).toEqual(['replace', ['Loan No', 'Branch']]);
     });
 
     it('stores an empty ignore list rather than NULL', async () => {

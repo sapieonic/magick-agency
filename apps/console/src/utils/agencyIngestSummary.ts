@@ -117,11 +117,11 @@ export interface IngestSummaryModel {
   highRejectionWarning: string | null;
 }
 
-function labelFor(code: string, dedupeColumn: string | null): string {
-  // Names the column the operator chose, so "Duplicate Loan No of an earlier row"
-  // says which rule dropped the row. Falls back to the static label for a job
-  // served without the column.
-  if (code === 'duplicate_key' && dedupeColumn) return `Duplicate ${dedupeColumn} of an earlier row`;
+function labelFor(code: string, dedupeKey: string | null): string {
+  // Names the columns the operator chose, so "Duplicate Loan No + Branch of an
+  // earlier row" says which rule dropped the row. Falls back to the static label
+  // for a job served without them.
+  if (code === 'duplicate_key' && dedupeKey) return `Duplicate ${dedupeKey} of an earlier row`;
   return (REJECTION_LABELS as Record<string, string>)[code] ?? 'Rejected for another reason';
 }
 
@@ -134,6 +134,9 @@ function labelFor(code: string, dedupeColumn: string | null): string {
  */
 export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
   const rowsRead = job.rows_read;
+  // `?? []`: a job served before `dedupe_columns` has no key.
+  const keyColumns = job.dedupe_columns ?? [];
+  const dedupeKey = keyColumns.length > 0 ? keyColumns.join(' + ') : null;
   const accepted = job.accepted;
   const rejected = job.rejected;
 
@@ -142,7 +145,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
 
   const groups: RejectionGroup[] = Object.entries(byReason)
     .filter(([, count]) => typeof count === 'number' && count > 0)
-    .map(([code, count]) => ({ code, label: labelFor(code, job.dedupe_column ?? null), count: count as number }))
+    .map(([code, count]) => ({ code, label: labelFor(code, dedupeKey), count: count as number }))
     // Largest first, then by code so the order is stable between polls — a list
     // that reorders while an operator is reading it looks like the numbers moved.
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
@@ -171,9 +174,12 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
      */
     reconciliationLine: `${formatCount(accepted)} accepted + ${formatCount(rejected)} rejected = ${formatCount(rowsRead)} rows read`,
     duplicates: job.duplicates,
-    duplicateMeaning: job.dedupe_column
-      ? `a ${job.dedupe_column} value that already appeared earlier in the file.`
-      : 'a number that already appeared earlier in the file.',
+    duplicateMeaning:
+      keyColumns.length > 1
+        ? `a row whose ${keyColumns.slice(0, -1).join(', ')} and ${keyColumns[keyColumns.length - 1]} all match an earlier row in the file.`
+        : dedupeKey
+          ? `a ${dedupeKey} value that already appeared earlier in the file.`
+          : 'a number that already appeared earlier in the file.',
     dncSuppressed,
     dncNotice:
       dncSuppressed > 0

@@ -24,7 +24,7 @@ type Check = Omit<AgencyReadinessCheck, 'code'>;
 /** What the checks read, gathered first so the checks themselves are pure. */
 export interface ReadinessFacts {
   roster: Pick<RosterCounts, 'total' | 'unassigned_open'>;
-  lastUpload: { rejected: number; duplicates: number; dedupe_column: string | null; phone_column: string | null } | null;
+  lastUpload: { rejected: number; duplicates: number; dedupe_columns: string[]; phone_column: string | null } | null;
   staffed: number;
   onDnc: number;
   clipPresent: boolean;
@@ -42,7 +42,8 @@ export function readinessChecks(campaign: AgencyCampaignRecord, f: ReadinessFact
       detail: {
         rejected: f.lastUpload?.rejected ?? null,
         duplicates: f.lastUpload?.duplicates ?? null,
-        dedupe_column: f.lastUpload?.dedupe_column ?? null,
+        // `detail` holds scalars: the key's columns as one label, `Loan No + Branch`.
+        dedupe_column: f.lastUpload && f.lastUpload.dedupe_columns.length > 0 ? f.lastUpload.dedupe_columns.join(' + ') : null,
       },
     },
     // Implied by any committed upload, or by a roster at all (a retry campaign's is seeded from
@@ -115,7 +116,7 @@ export async function readinessFacts(campaign: AgencyCampaignRecord, roster?: Ro
   return {
     roster: counts,
     lastUpload: upload
-      ? { rejected: upload.rejected, duplicates: upload.duplicates, dedupe_column: upload.dedupe_column, phone_column: upload.phone_column }
+      ? { rejected: upload.rejected, duplicates: upload.duplicates, dedupe_columns: upload.dedupe_columns, phone_column: upload.phone_column }
       : null,
     staffed: staffing.length,
     onDnc,

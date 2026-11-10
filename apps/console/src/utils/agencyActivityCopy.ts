@@ -274,9 +274,13 @@ export function activityDetailSummary(row: ActivityRow): string | null {
     const file = str(detail['file_name']);
     if (!file) return null;
     const mode = detail['mode'] === 'replace' ? 'replacing the roster' : 'adding to the roster';
-    const dedupe = str(detail['dedupe_column']);
+    // `dedupe_columns` since 0031; a row written before it carries one `dedupe_column`.
+    const columns = Array.isArray(detail['dedupe_columns'])
+      ? detail['dedupe_columns'].filter((c): c is string => typeof c === 'string' && c !== '')
+      : [];
+    const dedupe = columns.length > 0 ? columns.map((c) => `“${c}”`).join(' + ') : str(detail['dedupe_column']) ? `“${str(detail['dedupe_column'])}”` : null;
     const rule = dedupe
-      ? `duplicates found on “${dedupe}”`
+      ? `duplicates found on ${dedupe}`
       : detail['dedupe_phones'] === false ? 'no duplicate check' : 'duplicates found on the phone number';
     return `Uploaded “${file}”, ${mode}, ${rule}.`;
   }

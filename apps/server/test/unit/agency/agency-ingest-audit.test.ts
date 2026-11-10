@@ -14,7 +14,7 @@ type Job = Parameters<typeof auditRosterUploadEnded>[0];
 function job(over: Partial<Job> = {}): Job {
   return {
     id: 'job-1', tenant_id: 't-1', account_id: 'a-1', campaign_id: 'c-1',
-    file_name: 'roster.csv', dry_run: false, mode: 'append', dedupe_phones: true, dedupe_column: null,
+    file_name: 'roster.csv', dry_run: false, mode: 'append', dedupe_phones: true, dedupe_columns: null,
     status: 'completed', rows_read: '10', accepted: '8', rejected: '2', duplicates: '1',
     error_code: null, replace_superseded_contacts: null,
     ...over,

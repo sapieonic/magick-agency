@@ -400,7 +400,7 @@ export function buildCampaign(spec: CampaignSpec, options: { attemptsCap?: numbe
       { to_status: 'paused', at: '2026-10-22T06:42:00Z', actor: null, reason: 'abandonment_ceiling' },
       { to_status: 'running', at: '2026-10-22T07:05:00Z', actor: { user_id: '7d1e2f30-4a5b-46c7-8d9e-0f1a2b3c4d5e', name: 'Meera Joshi' }, reason: null },
     ],
-    dedupe_column: 'account_number',
+    dedupe_columns: ['account_number'],
     parent_campaign: null,
     child_campaigns: [],
     settings: {

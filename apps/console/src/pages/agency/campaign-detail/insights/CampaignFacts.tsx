@@ -30,7 +30,7 @@ export function CampaignMeta({ summary }: { summary: AgencyInsightsSummary }) {
       : `created ${formatZoned(summary.created_at, zone)}`,
   );
   parts.push(`assignment ${ASSIGNMENT_MODE_LABELS[summary.settings.assignment_mode].toLowerCase()}`);
-  parts.push(`duplicates checked on ${summary.dedupe_column ?? 'phone'}`);
+  parts.push(`duplicates checked on ${summary.dedupe_columns.length > 0 ? summary.dedupe_columns.join(' + ') : 'phone'}`);
   return (
     <p className={styles.muted} data-testid="insights-meta">
       {parts.join(' · ')}

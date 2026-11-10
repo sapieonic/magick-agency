@@ -78,7 +78,7 @@ export function UploadsSection({
       key: 'duplicates',
       header: 'Duplicates',
       numeric: true,
-      render: (u) => `${formatCount(u.duplicates)} on ${u.dedupe_column ?? 'phone'}`,
+      render: (u) => `${formatCount(u.duplicates)} on ${u.dedupe_columns.length > 0 ? u.dedupe_columns.join(' + ') : 'phone'}`,
       csv: (u) => u.duplicates,
     },
     {

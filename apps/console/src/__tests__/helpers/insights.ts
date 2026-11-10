@@ -131,7 +131,7 @@ export function summary(status: AgencyCampaignStatus = 'running', over: Partial<
     started_at: status === 'draft' ? null : '2026-10-31T03:32:00.000Z',
     ended_at: status === 'stopped' || status === 'completed' ? '2026-11-04T10:14:00.000Z' : null,
     transitions: [{ to_status: 'running', at: '2026-10-31T03:32:00.000Z', actor: ANITA, reason: 'supervisor' }],
-    dedupe_column: 'Loan No',
+    dedupe_columns: ['Loan No'],
     parent_campaign: null,
     child_campaigns: [],
     settings: {
@@ -432,7 +432,7 @@ export function uploads(over: Partial<AgencyInsightsUploads> = {}): AgencyInsigh
         rejected: 212,
         rejected_by_reason: { invalid_phone: 180, missing_phone: 32 },
         duplicates: 96,
-        dedupe_column: 'Loan No',
+        dedupe_columns: ['Loan No'],
         has_rejected_export: true,
       },
     ],

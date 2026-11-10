@@ -180,11 +180,11 @@ describe('agency ingest round trip on real Postgres', () => {
     beforeEach(() => { s3.files.set(LOANS_KEY, LOANS); });
 
     it('deduped on the loan number: both loans on one number become contacts; the repeated loan is rejected and named', async () => {
-      const job = await newJob({ s3_key: LOANS_KEY, file_name: 'loans.csv', dedupe_column: 'Loan No' });
+      const job = await newJob({ s3_key: LOANS_KEY, file_name: 'loans.csv', dedupe_columns: ['Loan No'] });
       await agencyIngestService.run({ job, campaignId });
 
       const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
-      expect(done).toMatchObject({ status: 'completed', dedupe_column: 'Loan No', rejected_by_reason: { duplicate_key: 1 } });
+      expect(done).toMatchObject({ status: 'completed', dedupe_columns: ['Loan No'], rejected_by_reason: { duplicate_key: 1 } });
       expect([done.rows_read, done.accepted, done.rejected, done.duplicates, done.core_rejected_duplicate_rows])
         .toEqual(['3', '2', '1', '1', '0']);
       expect(await loansOn('+919876543101')).toEqual(['LN-001', 'LN-002']);
@@ -199,8 +199,19 @@ describe('agency ingest round trip on real Postgres', () => {
       await agencyIngestService.run({ job, campaignId });
 
       const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
-      expect(done).toMatchObject({ status: 'completed', dedupe_column: null, rejected_by_reason: { duplicate_phone: 1 } });
+      expect(done).toMatchObject({ status: 'completed', dedupe_columns: null, rejected_by_reason: { duplicate_phone: 1 } });
       expect(await loansOn('+919876543101')).toEqual(['LN-001']);
+      expect(await loansOn('+919876543102')).toEqual(['ln-001']);
+    });
+
+    it('deduped on loan number + name: every row differs in one of them, so all three become contacts', async () => {
+      const job = await newJob({ s3_key: LOANS_KEY, file_name: 'loans.csv', dedupe_columns: ['Loan No', 'Name'] });
+      await agencyIngestService.run({ job, campaignId });
+
+      const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+      expect(done).toMatchObject({ status: 'completed', dedupe_columns: ['Loan No', 'Name'], rejected_by_reason: {} });
+      expect([done.rows_read, done.accepted, done.rejected, done.duplicates]).toEqual(['3', '3', '0', '0']);
+      expect(await loansOn('+919876543101')).toEqual(['LN-001', 'LN-002']);
       expect(await loansOn('+919876543102')).toEqual(['ln-001']);
     });
   });
