@@ -607,8 +607,16 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
     }
   });
 
-  it('onStationCannotTakeInbound: an unbound offer cancelled at once (requeued, the next agent offered before connects_at), a hand-over held through the preamble let go; each agent returned', async () => {
-    const c = connector({ connectDelayMs: 5_000 });
+  it('onStationCannotTakeInbound: an unbound offer cancelled at once (requeued, the next agent offered before connects_at), a hand-over held through the preamble let go; each agent returned before it settles', async () => {
+    // A slow return, so settling before it has run would show (the station socket's `ready` waits on it).
+    const c: Connector = connector({
+      connectDelayMs: 5_000,
+      releaseAgent: async (id) => {
+        await sleep(150);
+        if (await c.takeOnRelease(id)) return;
+        await agents.set(id, 'available', { leaseMs: AGENT_LEASE_MS.available });
+      },
+    });
     const first = await agent('available');
     await sleep(5);
     const { call } = await caller(c);
