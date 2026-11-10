@@ -15,6 +15,7 @@ import type {
   AgencyInboundRouteConfig,
 } from '@magick-agency/contracts/api/agency/inbound';
 import type { AgencyInboundMissedRow } from '../../../db/repositories/agency.repository.js';
+import type { InboundCallRefusal } from '../../../agency/inbound/inbound-disposition.js';
 
 /**
  * The HTTP status of every inbound refusal, as `errors.ts` §6 states it beside each code. A
@@ -89,11 +90,8 @@ export type InboundRefusal =
   | { code: 'inbound_clip_in_use'; routes: AgencyInboundClipRouteRef[] }
   | { code: 'inbound_clip_invalid'; upload_reason: AgencyInboundClipInvalidReason; message?: string }
   | { code: 'inbound_call_live'; inbound_call_id: string }
-  | {
-    code: 'inbound_disposition_invalid';
-    reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
-    allowed_codes?: string[];
-  }
+  // The call operations' own (`inbound_disposition_invalid` with its reason), stated once there.
+  | InboundCallRefusal
   | { code: 'inbound_route_invalid'; details: Array<{ path: string; message: string }> }
   | { code: 'inbound_number_not_found' | 'inbound_number_not_linked'; phone_number_id: string }
   | { code: 'inbound_number_in_use'; phone_number_id: string; route_id?: string };
