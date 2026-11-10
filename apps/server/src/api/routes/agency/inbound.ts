@@ -62,48 +62,49 @@ import {
   parseInboundRouteUpdate,
   type InboundRouteIssue,
 } from '../../../agency/inbound/route-config.js';
+import type { SoftphoneActor } from '../../../agency/softphone/types.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { sendRefusal } from '../helpers/refusal.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { INBOUND_MISSED_DEFAULT_LIMIT, inboundMissedQuerySchema } from '../helpers/inbound-missed-query.js';
 import {
   inboundMissedToWire,
   inboundRouteConfigOf,
+  sendInboundAnswer,
   sendInboundRefusal,
   type InboundCallHandledAudit,
   type InboundCallReopenedAudit,
   type InboundVoicemailLocation,
-  type InboundCoreAnswer,
   type InboundRefusal,
   type InboundRouteCreatedAudit,
   type InboundRouteDeletedAudit,
   type InboundRouteUpdatedAudit,
 } from './inbound-answer.js';
 
-export interface InboundActor {
-  tenantId: string;
-  accountId: string;
-  userId: string;
-  /** The caller's role holds `agency.supervise` (derived by the public layer, never a body). */
-  supervise: boolean;
-}
-
-/** The query's actor, or the 400 `missing_actor` (unreachable behind the public layer). */
-export function queryActor(request: FastifyRequest, reply: FastifyReply): InboundActor | null {
-  const query = (request.query ?? {}) as { actor_user_id?: unknown; supervise?: unknown };
-  const userId = typeof query.actor_user_id === 'string' ? query.actor_user_id : '';
-  if (!UUID_RE.test(userId)) {
-    void reply.code(400).send({
-      error: 'Bad Request', code: 'missing_actor', message: 'This action must be attributed to a user.',
-    });
+/**
+ * The actor of an inbound internal handler, or the 400 `missing_actor` (unreachable behind the
+ * public layer). `supervise`: the caller's role holds `agency.supervise` (derived by the public
+ * layer from the role, never from what the caller says).
+ */
+function actorOr400(request: FastifyRequest, reply: FastifyReply, userId: unknown, supervise: boolean): SoftphoneActor | null {
+  if (typeof userId !== 'string' || !UUID_RE.test(userId)) {
+    void sendRefusal(reply, 400, 'missing_actor', 'This action must be attributed to a user.');
     return null;
   }
-  return { tenantId: getTenantId(request), accountId: getAccountId(request), userId, supervise: query.supervise === 'true' };
+  return { tenantId: getTenantId(request), accountId: getAccountId(request), userId, supervise };
 }
 
-function answer<TAnswer, TAudit>(reply: FastifyReply, status: number, body: TAnswer, audit: TAudit): FastifyReply {
-  const envelope: InboundCoreAnswer<TAnswer, TAudit> = { answer: body, audit };
-  return reply.code(status).send(envelope);
+/** The query's actor (`?actor_user_id=`, `?supervise=true`). */
+export function queryActor(request: FastifyRequest, reply: FastifyReply): SoftphoneActor | null {
+  const query = (request.query ?? {}) as { actor_user_id?: unknown; supervise?: unknown };
+  return actorOr400(request, reply, query.actor_user_id, query.supervise === 'true');
+}
+
+/** The body's actor (`agent_user_id`, `on_behalf`), as the soft phone's calls carry it. */
+export function bodyActor(request: FastifyRequest, reply: FastifyReply): SoftphoneActor | null {
+  const body = (request.body ?? {}) as { agent_user_id?: unknown; on_behalf?: unknown };
+  return actorOr400(request, reply, body.agent_user_id, body.on_behalf === true);
 }
 
 /** A route `:id`: a malformed one is the same 404 as an unknown one (never a `22P02`). */
@@ -254,7 +255,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, out.value.routeId);
     if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
     const audit: InboundRouteCreatedAudit = { route_id: route.id, numbers_added: out.value.added };
-    return answer<AgencyInboundRouteResponse, InboundRouteCreatedAudit>(reply, 201, { route: routeWithWarnings(route) }, audit);
+    return sendInboundAnswer<AgencyInboundRouteResponse, InboundRouteCreatedAudit>(reply, 201, { route: routeWithWarnings(route) }, audit);
   });
 
   // ── PATCH /inbound/routes/:id — judged as the route it makes ──────────────
@@ -302,7 +303,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
 
     const route = await agencyInboundRouteRepository.findById(actor.tenantId, actor.accountId, id);
     if (!route) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
-    return answer<AgencyInboundRouteResponse, InboundRouteUpdatedAudit>(reply, 200, { route: routeWithWarnings(route) }, out.value);
+    return sendInboundAnswer<AgencyInboundRouteResponse, InboundRouteUpdatedAudit>(reply, 200, { route: routeWithWarnings(route) }, out.value);
   });
 
   // ── DELETE /inbound/routes/:id — soft delete; its numbers are detached ────
@@ -314,7 +315,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     const deleted = await agencyInboundRouteRepository.softDelete(actor.tenantId, actor.accountId, id, actor.userId);
     if (!deleted) return sendInboundRefusal(reply, { code: 'inbound_route_not_found' });
     const audit: InboundRouteDeletedAudit = { route_id: id, numbers_removed: deleted.detachedPhoneNumberIds };
-    return answer(reply, 200, null, audit);
+    return sendInboundAnswer(reply, 200, null, audit);
   });
 
   // ── GET /inbound/numbers — the route editor's number choices ──────────────
@@ -397,7 +398,7 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     });
     if (!marked) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
     const audit: InboundCallHandledAudit = { call_id: marked.call.id, changed: marked.changed, reason: marked.call.follow_up_reason! };
-    return answer(reply, 200, { call: inboundMissedToWire(marked.call) }, audit);
+    return sendInboundAnswer(reply, 200, { call: inboundMissedToWire(marked.call) }, audit);
   });
 
   // ── POST /inbound/missed/:id/reopen — idempotent ──────────────────────────
@@ -421,6 +422,6 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
       handled_reason: reopened.previous ? (reopened.previous.reason ?? 'marked') : null,
       handled_by_user_id: reopened.previous?.handledByUserId ?? null,
     };
-    return answer(reply, 200, { call: inboundMissedToWire(reopened.call) }, audit);
+    return sendInboundAnswer(reply, 200, { call: inboundMissedToWire(reopened.call) }, audit);
   });
 }

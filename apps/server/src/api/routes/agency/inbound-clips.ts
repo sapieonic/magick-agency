@@ -18,7 +18,7 @@
  *
  * `GET /inbound/clips` stays in `./inbound.ts` with the other route editor choices.
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   AGENCY_INBOUND_CLIP_UPLOAD_LIMITS as LIMITS,
@@ -32,13 +32,15 @@ import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import { agencyInboundClipRepository } from '../../../db/repositories/agency.repository.js';
 import { isInboundRecordingKey } from '../../../agency/inbound/inbound-recordings.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { sendRefusal } from '../helpers/refusal.js';
 import {
+  sendInboundAnswer,
   sendInboundRefusal,
   type InboundClipDeletedAudit,
   type InboundClipUploadedAudit,
-  type InboundCoreAnswer,
   type InboundRefusal,
 } from './inbound-answer.js';
+import { queryActor } from './inbound.js';
 
 /** Where a recording's bytes are, for the public layer's preview stream (`GET /inbound/clips/:id/audio`). */
 export interface InboundClipAudioLocation {
@@ -63,29 +65,17 @@ const recordBody = z.object({
   pcm_sample_rate: z.number().int().positive(),
 }).strict();
 
-function actorOr400(request: FastifyRequest, reply: FastifyReply): string | null {
-  const userId = (request.query as { actor_user_id?: unknown } | undefined)?.actor_user_id;
-  if (typeof userId === 'string' && UUID_RE.test(userId)) return userId;
-  void reply.code(400).send({ error: 'Bad Request', code: 'missing_actor', message: 'This action must be attributed to a user.' });
-  return null;
-}
-
-function answer<TAnswer, TAudit>(reply: FastifyReply, status: number, body: TAnswer, audit: TAudit): FastifyReply {
-  const envelope: InboundCoreAnswer<TAnswer, TAudit> = { answer: body, audit };
-  return reply.code(status).send(envelope);
-}
-
 export async function registerInboundClipRoutes(sub: FastifyInstance): Promise<void> {
   // ── POST /inbound/clips — record a stored recording ───────────────────────
   sub.post('/inbound/clips', async (request, reply) => {
-    if (!actorOr400(request, reply)) return reply;
+    if (!queryActor(request, reply)) return reply;
     const tenantId = getTenantId(request);
     const accountId = getAccountId(request);
     const parsed = recordBody.safeParse(request.body);
     if (!parsed.success || !isInboundRecordingKey(parsed.data.s3_key, tenantId, accountId)) {
       // A contract violation between the two layers, never a user's mistake: the public layer
       // validated the file and minted the key.
-      return reply.code(400).send({ error: 'Bad Request', code: 'invalid_recording', message: 'The recording to record is invalid.' });
+      return sendRefusal(reply, 400, 'invalid_recording', 'The recording to record is invalid.');
     }
     const b = parsed.data;
     let id: string;
@@ -104,7 +94,7 @@ export async function registerInboundClipRoutes(sub: FastifyInstance): Promise<v
     const clip = await agencyInboundClipRepository.findOption(tenantId, accountId, id);
     if (!clip) return sendInboundRefusal(reply, { code: 'inbound_clip_not_found' });
     const audit: InboundClipUploadedAudit = { clip_id: id, size_bytes: b.size_bytes, duration_seconds: b.duration_seconds };
-    return answer<AgencyInboundClipResponse, InboundClipUploadedAudit>(reply, 201, { clip }, audit);
+    return sendInboundAnswer<AgencyInboundClipResponse, InboundClipUploadedAudit>(reply, 201, { clip }, audit);
   });
 
   // ── GET /inbound/clips/:id/audio — where a recording is stored, for its preview ──
@@ -119,7 +109,7 @@ export async function registerInboundClipRoutes(sub: FastifyInstance): Promise<v
 
   // ── DELETE /inbound/clips/:id — refused while something uses it ───────────
   sub.delete<{ Params: { id: string } }>('/inbound/clips/:id', async (request, reply) => {
-    if (!actorOr400(request, reply)) return reply;
+    if (!queryActor(request, reply)) return reply;
     const id = request.params.id;
     if (!UUID_RE.test(id)) return sendInboundRefusal(reply, { code: 'inbound_clip_not_found' });
     const tenantId = getTenantId(request);
@@ -134,6 +124,6 @@ export async function registerInboundClipRoutes(sub: FastifyInstance): Promise<v
       return sendInboundRefusal(reply, refusal);
     }
     const audit: InboundClipDeletedAudit = { clip_id: id.toLowerCase(), s3_key: out.s3Key };
-    return answer(reply, 200, null, audit);
+    return sendInboundAnswer(reply, 200, null, audit);
   });
 }

@@ -131,6 +131,12 @@ export interface InboundCoreAnswer<TAnswer, TAudit> {
   audit: TAudit;
 }
 
+/** Send the {@link InboundCoreAnswer} envelope with `status`. */
+export function sendInboundAnswer<TAnswer, TAudit>(reply: FastifyReply, status: number, body: TAnswer, audit: TAudit): FastifyReply {
+  const envelope: InboundCoreAnswer<TAnswer, TAudit> = { answer: body, audit };
+  return reply.code(status).send(envelope);
+}
+
 /** `POST /inbound/routes`. */
 export interface InboundRouteCreatedAudit {
   route_id: string;

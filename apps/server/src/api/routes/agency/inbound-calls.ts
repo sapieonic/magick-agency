@@ -14,46 +14,27 @@
  * (`on_behalf` = the caller holds `agency.supervise`), on a GET `?actor_user_id=` +
  * `?supervise=true`. Every read and write names the request's tenant and account.
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
-import type { InboundCallActor } from '../../../agency/inbound/inbound-disposition.js';
-import { UUID_RE } from '../../../utils/uuid.js';
+import type { InboundCallService } from '../../../agency/inbound/inbound-disposition.js';
 import {
+  sendInboundAnswer,
   sendInboundRefusal,
   type InboundCallDispositionAudit,
   type InboundCallDncAudit,
   type InboundCallHangupAudit,
-  type InboundCoreAnswer,
 } from './inbound-answer.js';
-
-function refuseMissingActor(reply: FastifyReply): null {
-  void reply.code(400).send({ error: 'Bad Request', code: 'missing_actor', message: 'This action must be attributed to a user.' });
-  return null;
-}
-
-/** The body's actor (`agent_user_id`, `on_behalf`). */
-function bodyActor(request: FastifyRequest, reply: FastifyReply): InboundCallActor | null {
-  const body = (request.body ?? {}) as { agent_user_id?: unknown; on_behalf?: unknown };
-  const userId = typeof body.agent_user_id === 'string' ? body.agent_user_id : '';
-  if (!UUID_RE.test(userId)) return refuseMissingActor(reply);
-  return { tenantId: getTenantId(request), accountId: getAccountId(request), userId, supervise: body.on_behalf === true };
-}
-
-/** A GET's actor (`?actor_user_id=`, `?supervise=true`). */
-function queryActor(request: FastifyRequest, reply: FastifyReply): InboundCallActor | null {
-  const query = (request.query ?? {}) as { actor_user_id?: unknown; supervise?: unknown };
-  const userId = typeof query.actor_user_id === 'string' ? query.actor_user_id : '';
-  if (!UUID_RE.test(userId)) return refuseMissingActor(reply);
-  return { tenantId: getTenantId(request), accountId: getAccountId(request), userId, supervise: query.supervise === 'true' };
-}
-
-function answer<TAnswer, TAudit>(reply: FastifyReply, body: TAnswer, audit: TAudit): FastifyReply {
-  const envelope: InboundCoreAnswer<TAnswer, TAudit> = { answer: body, audit };
-  return reply.code(200).send(envelope);
-}
+import { bodyActor, queryActor } from './inbound.js';
 
 export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: AgencyRuntime | null): Promise<void> {
+  /** The runtime's call service, or (a routing-only app, no runtime) the call cannot be found. */
+  const serviceOr404 = (reply: FastifyReply): InboundCallService | null => {
+    const service = runtime?.inboundCalls;
+    if (service) return service;
+    void sendInboundRefusal(reply, { code: 'inbound_call_not_found' });
+    return null;
+  };
+
   // ── GET /inbound/queue — the supervisor's queue tiles ─────────────────────
   // `agency.supervise` is the public layer's; this answers the account's tiles to anyone it lets in.
   sub.get('/inbound/queue', async (request, reply) => {
@@ -70,9 +51,8 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
   sub.get<{ Params: { id: string } }>('/inbound/calls/:id', async (request, reply) => {
     const actor = queryActor(request, reply);
     if (!actor) return reply;
-    // No runtime here (a routing-only app): the call cannot be found.
-    const service = runtime?.inboundCalls;
-    if (!service) return sendInboundRefusal(reply, { code: 'inbound_call_not_found' });
+    const service = serviceOr404(reply);
+    if (!service) return reply;
     const found = await service.get(actor, request.params.id);
     if (!found.ok) return sendInboundRefusal(reply, found.refusal);
     return reply.send({ call: found.call });
@@ -82,9 +62,8 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
   sub.patch<{ Params: { id: string } }>('/inbound/calls/:id', async (request, reply) => {
     const actor = bodyActor(request, reply);
     if (!actor) return reply;
-    // No runtime here (a routing-only app): the call cannot be found.
-    const service = runtime?.inboundCalls;
-    if (!service) return sendInboundRefusal(reply, { code: 'inbound_call_not_found' });
+    const service = serviceOr404(reply);
+    if (!service) return reply;
     const body = request.body as { notes?: unknown };
     if (body.notes !== undefined && typeof body.notes !== 'string') {
       return reply.code(400).send({ error: 'Validation failed', details: { notes: 'must be a string' } });
@@ -103,24 +82,22 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
   sub.post<{ Params: { id: string } }>('/inbound/calls/:id/hangup', async (request, reply) => {
     const actor = bodyActor(request, reply);
     if (!actor) return reply;
-    // No runtime here (a routing-only app): the call cannot be found.
-    const service = runtime?.inboundCalls;
-    if (!service) return sendInboundRefusal(reply, { code: 'inbound_call_not_found' });
+    const service = serviceOr404(reply);
+    if (!service) return reply;
     const hung = await service.hangup(actor, request.params.id);
     if (!hung.ok) return sendInboundRefusal(reply, hung.refusal);
     const audit: InboundCallHangupAudit = {
       call_id: hung.call.id, on_behalf: hung.onBehalf, campaign_id: hung.call.match?.campaign_id ?? null, hung_up: hung.hungUp,
     };
-    return answer(reply, { call: hung.call }, audit);
+    return sendInboundAnswer(reply, 200, { call: hung.call }, audit);
   });
 
   // ── POST /inbound/calls/:id/disposition — the outcome ─────────────────────
   sub.post<{ Params: { id: string } }>('/inbound/calls/:id/disposition', async (request, reply) => {
     const actor = bodyActor(request, reply);
     if (!actor) return reply;
-    // No runtime here (a routing-only app): the call cannot be found.
-    const service = runtime?.inboundCalls;
-    if (!service) return sendInboundRefusal(reply, { code: 'inbound_call_not_found' });
+    const service = serviceOr404(reply);
+    if (!service) return reply;
     const body = request.body as { code?: unknown; notes?: unknown; callback_at?: unknown };
     if (typeof body.code !== 'string') return reply.code(400).send({ error: 'Validation failed', details: { code: 'required' } });
     const saved = await service.submitDisposition(actor, request.params.id, {
@@ -138,16 +115,15 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
       replay: saved.replay,
       dnc_entry: saved.dncEntry ? { ...saved.dncEntry, scope: campaignId ? 'campaign' : 'account' } : null,
     };
-    return answer(reply, saved.response, audit);
+    return sendInboundAnswer(reply, 200, saved.response, audit);
   });
 
   // ── POST /inbound/calls/:id/dnc — mark the caller's number Do Not Call ────
   sub.post<{ Params: { id: string } }>('/inbound/calls/:id/dnc', async (request, reply) => {
     const actor = bodyActor(request, reply);
     if (!actor) return reply;
-    // No runtime here (a routing-only app): the call cannot be found.
-    const service = runtime?.inboundCalls;
-    if (!service) return sendInboundRefusal(reply, { code: 'inbound_call_not_found' });
+    const service = serviceOr404(reply);
+    if (!service) return reply;
     const body = request.body as { reason?: unknown };
     const marked = await service.markDnc(actor, request.params.id, typeof body.reason === 'string' ? { reason: body.reason } : {});
     if (!marked.ok) return sendInboundRefusal(reply, marked.refusal);
@@ -160,6 +136,6 @@ export async function registerInboundCallRoutes(sub: FastifyInstance, runtime: A
       dnc_recorded: marked.response.dnc_recorded,
       dnc_entry: marked.dncEntry ? { ...marked.dncEntry, scope: marked.response.scope } : null,
     };
-    return answer(reply, marked.response, audit);
+    return sendInboundAnswer(reply, 200, marked.response, audit);
   });
 }
