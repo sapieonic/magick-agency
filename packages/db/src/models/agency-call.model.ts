@@ -23,11 +23,12 @@ export type WebRtcCallStatus =
   | 'canceled';
 
 /**
- * Which spine a media leg belongs to (`agency_calls.origin`, 0005): `campaign`, placed
+ * Which spine a media leg belongs to (`agency_calls.origin`, 0005, 0024): `campaign`, placed
  * by pacing for an `agency_call_attempts` row; `manual`, a soft-phone dial for an
- * `agency_manual_calls` row (docs/softphone.md). Both are agency calls (SP5).
+ * `agency_manual_calls` row (docs/softphone.md); `inbound`, a customer's call to an inbound
+ * route, for an `agency_inbound_calls` row (docs/inbound.md). All are agency calls (SP5).
  */
-export type WebRtcCallOrigin = 'campaign' | 'manual';
+export type WebRtcCallOrigin = 'campaign' | 'manual' | 'inbound';
 
 /** Statuses a call may still be live in (used by the stale-call sweep). */
 export const WEBRTC_NON_TERMINAL_STATUSES: readonly WebRtcCallStatus[] = [
@@ -157,6 +158,12 @@ export interface WebRtcCallRecord {
   origin: WebRtcCallOrigin;
   /** The `agency_manual_calls.id` this leg belongs to (set exactly when `origin` is `manual`). Correlation only, no FK. */
   manual_call_id: string | null;
+  /**
+   * The `agency_inbound_calls.id` this leg belongs to (set exactly when `origin` is `inbound`,
+   * `ck_agency_calls_inbound_correlation`). Correlation only, no FK. On an inbound leg
+   * `caller_id` is the number rung and `destination_phone` the caller's (empty when withheld).
+   */
+  inbound_call_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -193,7 +200,12 @@ export interface CreateWebRtcCallInput {
    * Both are in `create`'s INSERT column list — an optional field that is not would
    * typecheck and be dropped silently.
    */
-  origin?: WebRtcCallOrigin;
+  /**
+   * Never `inbound`: an inbound leg is written with its spine row, in one transaction, by
+   * `AgencyInboundCallRepository.insertArrival` (it answers a call that already arrived, so it
+   * is not refused for a credential that stopped being active, docs/inbound.md §10).
+   */
+  origin?: Exclude<WebRtcCallOrigin, 'inbound'>;
   /** The `agency_manual_calls.id` a manual leg is placed for. Correlation only, no FK. */
   manual_call_id?: string | null;
 }

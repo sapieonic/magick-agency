@@ -34,16 +34,21 @@ export function rejectMalformedIdParams(
 ): preHandlerHookHandler {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (opts.onlyUnder && !(request.routeOptions.url ?? '').startsWith(opts.onlyUnder)) return undefined;
-    const params = (request.params ?? {}) as Record<string, unknown>;
-    for (const [name, answer] of Object.entries(answers)) {
-      const value = params[name];
-      if (value === undefined) continue;
-      if (typeof value !== 'string' || !UUID_RE.test(value)) {
-        return reply.code(answer.status).send(answer.body);
-      }
-    }
-    return undefined;
+    return refuseMalformed(answers, request, reply);
   };
+}
+
+/** The first malformed param named in `answers` gets its answer; none: undefined (the request goes on). */
+function refuseMalformed(answers: Readonly<Record<string, MalformedIdAnswer>>, request: FastifyRequest, reply: FastifyReply) {
+  const params = (request.params ?? {}) as Record<string, unknown>;
+  for (const [name, answer] of Object.entries(answers)) {
+    const value = params[name];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !UUID_RE.test(value)) {
+      return reply.code(answer.status).send(answer.body);
+    }
+  }
+  return undefined;
 }
 
 /**

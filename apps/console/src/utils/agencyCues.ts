@@ -23,8 +23,18 @@
  * a regression shows up as data instead of as an argument.
  */
 
-/** The three cues. Distinguished by rhythm and contour, never by pitch alone. */
-export type CueName = 'get_ready' | 'connect' | 'disconnect';
+/**
+ * The cues. Distinguished by rhythm and contour, never by pitch alone.
+ *
+ * `inbound_ring` is the inbound call's chime (IB1, `docs/inbound.md` §6): a caller has been put
+ * through to this agent and their audio binds in a moment. It has no rail flash of its own
+ * ({@link VisualCueName}): its visual is the inbound panel replacing the whole station, which is
+ * on screen before the caller's audio is.
+ */
+export type CueName = 'get_ready' | 'connect' | 'disconnect' | 'inbound_ring';
+
+/** The cues with a rail flash: the station's three. */
+export type VisualCueName = Exclude<CueName, 'inbound_ring'>;
 
 /**
  * One tone of a cue. Sine, one oscillator, created fresh and stopped at the end
@@ -83,6 +93,22 @@ export const CUE_SPECS: Record<CueName, CueSpec> = {
     ],
     peak: 0.11,
   },
+  /**
+   * The inbound chime: a two-note bell rung twice (high–low, high–low). Told apart from the
+   * station's three by rhythm (two PAIRS of long tones, a pause between them, where they are
+   * single short gestures) and by contour (it falls and rises again, where get-ready is flat,
+   * connect only rises and disconnect only falls). Longer than any of them, because it is the
+   * one cue that arrives with no call the agent was expecting.
+   */
+  inbound_ring: {
+    tones: [
+      { hz: 784, holdS: 0.12, gapS: 0.03 },
+      { hz: 587, holdS: 0.12, gapS: 0.16 },
+      { hz: 784, holdS: 0.12, gapS: 0.03 },
+      { hz: 587, holdS: 0.12, gapS: 0 },
+    ],
+    peak: 0.12,
+  },
 };
 
 /**
@@ -136,7 +162,7 @@ export interface VisualCueSpec {
   durationMs: number;
 }
 
-export const VISUAL_CUE_SPECS: Record<CueName, VisualCueSpec> = {
+export const VISUAL_CUE_SPECS: Record<VisualCueName, VisualCueSpec> = {
   get_ready: { pulses: 3, travel: 'still', durationMs: 540 },
   connect: { pulses: 1, travel: 'up', durationMs: 900 },
   disconnect: { pulses: 2, travel: 'down', durationMs: 620 },
@@ -151,7 +177,7 @@ export const VISUAL_CUE_SPECS: Record<CueName, VisualCueSpec> = {
  * to one treatment makes all three signatures equal, which is the mutation that
  * has to fail.
  */
-export function visualCueSignature(cue: CueName): string {
+export function visualCueSignature(cue: VisualCueName): string {
   const spec = VISUAL_CUE_SPECS[cue];
   return `${spec.pulses}x-${spec.travel}-${spec.durationMs}ms`;
 }
@@ -182,7 +208,7 @@ export interface CueSink {
  */
 export interface EscalatedVisual {
   attemptId: string;
-  cue: CueName;
+  cue: VisualCueName;
 }
 
 export interface CueDispatcherOptions {
@@ -230,6 +256,10 @@ export class CueDispatcher {
   private readonly readied = new Set<string>();
   private readonly connected = new Set<string>();
   private readonly disconnected = new Set<string>();
+  /** Inbound offers already chimed, keyed `callId@offered_at` (see {@link onInboundCall}). */
+  private readonly rung = new Set<string>();
+  /** Inbound calls seen `offered` in this tab: only those may sound connect. */
+  private readonly inboundOffered = new Set<string>();
 
   constructor(options: CueDispatcherOptions) {
     this.opts = options;
@@ -281,6 +311,41 @@ export class CueDispatcher {
     remember(this.readied, attemptId);
   }
 
+  /**
+   * An `inbound_call` frame (P2): the inbound chime on an offer, then the station's own connect
+   * and disconnect, keyed on the call id as the station's are on the attempt id.
+   *
+   *  - `offered` chimes **once per offer**: keyed on the call and its `offered_at`, so a frame
+   *    restated after a reconnect is silent, and a caller requeued and offered to this agent
+   *    again is a new offer, which chimes again.
+   *  - `connected` sounds connect only for a call this tab saw offered. The first frame after a
+   *    page load restates a call already under way: it is recorded and plays nothing, as
+   *    `ready.active_attempt` does ({@link onRehydrated}).
+   *  - `ended` falls only after a connect, the station's rule ({@link onReleased}).
+   */
+  onInboundCall(
+    call: { id: string; state: string; offered_at: string; bridged_at: string | null },
+    frameReceivedAt: number,
+  ): void {
+    if (call.state === 'offered') {
+      const key = `${call.id}@${call.offered_at}`;
+      remember(this.inboundOffered, call.id);
+      if (this.rung.has(key)) return;
+      remember(this.rung, key);
+      this.fire('inbound_ring', call.id, null);
+      return;
+    }
+    if (call.state === 'connected') {
+      if (this.inboundOffered.has(call.id)) this.onBridged(call.id, frameReceivedAt);
+      else this.onRehydrated(call.id, true);
+      return;
+    }
+    if (call.state === 'ended') {
+      if (call.bridged_at !== null && !this.inboundOffered.has(call.id)) this.onRehydrated(call.id, true);
+      this.onReleased(call.id);
+    }
+  }
+
   private fire(cue: CueName, attemptId: string, frameReceivedAt: number | null): void {
     const volume = this.opts.volume();
     const escalated = this.opts.escalated();
@@ -299,7 +364,7 @@ export class CueDispatcher {
      * the same defect in the visual channel that's assertion 2 pins in
      * the audible one.
      */
-    if (escalated) {
+    if (escalated && cue !== 'inbound_ring') {
       this.opts.onEscalatedVisual?.({ attemptId, cue });
     }
 

@@ -11,6 +11,7 @@ import {
   Sparkles,
   Shield,
   Phone,
+  PhoneIncoming,
   Briefcase,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
@@ -97,6 +98,9 @@ const NAV_SECTIONS: NavSection[] = [
       // practice everyone who sees it is a viewer or above); editing needs
       // `agency.softphone.manage`, which the page checks.
       { label: 'Soft phone', to: '/app/softphone', icon: Phone, permission: 'agency.softphone.dial', flag: 'agency_softphone_enabled', capability: 'agency' },
+      // Settings → Inbound calls (docs/inbound.md §8.1): the account's routes. Account admins only;
+      // nobody below `agency.inbound.write` can read a route, so the entry floors there.
+      { label: 'Inbound calls', to: '/app/inbound', icon: PhoneIncoming, permission: 'agency.inbound.write', flag: 'agency_inbound_enabled', capability: 'agency' },
     ],
   },
 ];

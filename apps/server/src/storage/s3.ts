@@ -38,6 +38,11 @@ export function initS3Client(config: S3Config): void {
   log.info({ bucket: audioBucket, region: config.region }, 'S3 client initialized');
 }
 
+/** Whether object storage is configured in this process (`S3_AUDIO_BUCKET`): what a caller checks before promising to store a file. */
+export function isStorageConfigured(): boolean {
+  return s3Client !== null;
+}
+
 function getClient(): S3Client {
   if (!s3Client) throw new Error('S3 client not initialized. Call initS3Client() first.');
   return s3Client;
@@ -277,13 +282,21 @@ export async function uploadJson(key: string, value: unknown, signal?: AbortSign
  * Also returns `contentLength`, which is what makes the ingest's progress bar determinate:
  * bytes-read over bytes-total is the only honest completion fraction when the row count is
  * unknown until the file has been read.
+ *
+ * `range`: an HTTP `Range` header value passed through as it came (a voicemail's player seeking,
+ * `GET /inbound/missed/:id/voicemail`): S3 answers that part with `contentRange` (the caller
+ * answers 206), or the whole object when the range does not apply.
  */
-export async function getFileStream(key: string): Promise<{ body: Readable; contentLength?: number }> {
+export async function getFileStream(
+  key: string,
+  opts: { range?: string } = {},
+): Promise<{ body: Readable; contentLength?: number; contentRange?: string; contentType?: string }> {
   return withSpan('s3.get_stream', { 's3.key': key }, async (span) => {
     const client = getClient();
     const response = await client.send(new GetObjectCommand({
       Bucket: audioBucket,
       Key: key,
+      ...(opts.range !== undefined ? { Range: opts.range } : {}),
     }));
     if (!response.Body) throw new Error(`Empty response body for S3 key: ${key}`);
     s3OperationsTotal.inc({ operation: 'get_stream', status: 'success' });
@@ -293,8 +306,16 @@ export async function getFileStream(key: string): Promise<{ body: Readable; cont
     return {
       body: response.Body as Readable,
       ...(response.ContentLength !== undefined ? { contentLength: response.ContentLength } : {}),
+      ...(response.ContentRange !== undefined ? { contentRange: response.ContentRange } : {}),
+      ...(response.ContentType !== undefined ? { contentType: response.ContentType } : {}),
     };
   });
+}
+
+/** Whether a read or HEAD of an object failed because there is no such object (S3's 404). */
+export function isS3NotFound(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } } | null | undefined;
+  return e?.name === 'NotFound' || e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
 }
 
 /**

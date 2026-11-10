@@ -29,6 +29,7 @@ const ALL_REASONS: AgencyReleaseReason[] = [
   'campaign_stopped',
   'supervisor_released',
   'orphaned',
+  'inbound_call',
 ];
 
 function frame(overrides: Partial<AgencyStationReleasedFrame> = {}): AgencyStationReleasedFrame {
@@ -67,6 +68,15 @@ describe('release copy — exhaustive over the contract union', () => {
       expect(`${copy.headline} ${copy.subtext}`).not.toContain(reason);
     },
   );
+
+  it('the in-flight clash says what happened: the dial stopped and their call is coming to this agent, not “nothing to do”', () => {
+    const copy = resolveReleaseCopy(frame({ reason: 'inbound_call' }));
+    expect(copy.headline).toBe('The customer rang us');
+    expect(copy.subtext).toBe('We stopped this call because they rang us. Their call comes to you next.');
+    expect(copy.subtext).not.toMatch(/Nothing to do/);
+    // The subtext is clamped to two lines: short enough for a phone.
+    expect(copy.subtext.length).toBeLessThanOrEqual(80);
+  });
 
   it('recognises every union member', () => {
     for (const reason of ALL_REASONS) expect(isKnownReleaseReason(reason)).toBe(true);

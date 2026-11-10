@@ -56,7 +56,7 @@ vi.mock('@opentelemetry/api', () => {
   };
 });
 
-await import('../src/metrics/agency.js');
+const { trackInboundQueueWaiting } = await import('../src/metrics/agency.js');
 
 const SOURCE = readFileSync(resolve(__dirname, '../src/metrics/agency.ts'), 'utf8');
 
@@ -186,5 +186,24 @@ describe('metrics OTLP contract', () => {
       (fixture as FixtureEntry[]).map(e => [e.name, [[...e.attributes].sort()]]),
     );
     expect(declared).toEqual(expected);
+  });
+});
+
+describe('agency_inbound_queue_waiting', () => {
+  it('a route nobody waits on any more reports 0 once, then its series goes (SWE-n1)', () => {
+    const collect = () => {
+      const seen: Array<{ value: number; attrs?: Record<string, unknown> }> = [];
+      otel.gauges.get('agency_inbound_queue_waiting')!({ observe: (value, attrs) => { seen.push({ value, attrs }); } });
+      return seen;
+    };
+    trackInboundQueueWaiting('route-1', 2);
+    trackInboundQueueWaiting('route-2', 1);
+    expect(collect()).toEqual([{ value: 2, attrs: { route_id: 'route-1' } }, { value: 1, attrs: { route_id: 'route-2' } }]);
+    trackInboundQueueWaiting('route-1', 0);
+    expect(collect()).toEqual([{ value: 0, attrs: { route_id: 'route-1' } }, { value: 1, attrs: { route_id: 'route-2' } }]);
+    expect(collect()).toEqual([{ value: 1, attrs: { route_id: 'route-2' } }]);
+    trackInboundQueueWaiting('route-2', 0);
+    collect();
+    expect(collect()).toEqual([]);
   });
 });

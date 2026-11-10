@@ -62,6 +62,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
     break_reason: null,
     calls_handled: 3,
     client_kind: 'web',
+    on_inbound_call: false,
     ...over,
   };
 }
@@ -403,13 +404,15 @@ describe('agentDisplayName — what a tile calls someone the API could not resol
 });
 
 describe('the force-return control', () => {
-  it('is offered on a wrap-up and on nothing else', () => {
+  it('is offered on a wrap-up and on nothing else, unless an inbound outcome is owed', () => {
     // The route is the one thing that can end a HELD wrap-up, and that is all it
     // is for. Offering it elsewhere advertises an action the API will refuse.
     expect(canForceAvailable(agent({ state: 'wrapup' }))).toBe(true);
     for (const state of ['offline', 'available', 'reserved', 'on_call', 'break'] as const) {
       expect(canForceAvailable(agent({ state }))).toBe(false);
     }
+    // An agent on a break who owes an inbound outcome (rehydrated there): the server closes it.
+    expect(canForceAvailable(agent({ state: 'break', inbound_outcome_owed: true }))).toBe(true);
   });
 
   it('is offered on ANY wrap-up, not only an overrunning one', () => {
@@ -663,5 +666,20 @@ describe('floorStateLabel — the state as a supervisor reads it', () => {
     expect(floorStateLabel({ state: 'break', break_reason: 'Lunch' })).toBe('On break · Lunch');
     expect(floorStateLabel({ state: 'break', break_reason: null })).toBe('On break');
     expect(floorStateLabel({ state: 'on_call', break_reason: null })).toBe(AGENCY_FLOOR_STATE_LABELS.on_call);
+  });
+
+  it('names an inbound call, offered (reserved) or connected (on a call), as "Inbound call" (P2)', () => {
+    expect(floorStateLabel({ state: 'reserved', break_reason: null, on_inbound_call: true })).toBe('Inbound call');
+    expect(floorStateLabel({ state: 'on_call', break_reason: null, on_inbound_call: true })).toBe('Inbound call');
+    // An inbound call that ended and owes its outcome is not flagged: it reads as wrap-up.
+    expect(floorStateLabel({ state: 'wrapup', break_reason: null, on_inbound_call: false })).toBe(AGENCY_FLOOR_STATE_LABELS.wrapup);
+  });
+
+  it('names a wrap-up that owes an inbound call`s outcome, and only a wrap-up', () => {
+    expect(floorStateLabel({ state: 'wrapup', break_reason: null, on_inbound_call: false, inbound_outcome_owed: true }))
+      .toBe('Wrapping up an inbound call');
+    // Rehydrated onto a break while owing it: the break is what a supervisor sees.
+    expect(floorStateLabel({ state: 'break', break_reason: 'Lunch', inbound_outcome_owed: true })).toBe('On break · Lunch');
+    expect(floorStateLabel({ state: 'wrapup', break_reason: null, inbound_outcome_owed: false })).toBe(AGENCY_FLOOR_STATE_LABELS.wrapup);
   });
 });

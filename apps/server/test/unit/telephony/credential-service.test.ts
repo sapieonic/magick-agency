@@ -32,6 +32,8 @@ class FakeRepo implements CredentialRepo {
   secrets: TelephonyCredentialSecretRecord[] = [];
   campaigns = new Map<string, number>();
   inFlight = new Map<string, number>();
+  /** Inbound state by credential: an Application id and how many numbers are linked to it. */
+  inbound = new Map<string, { appId: string; linked: number }>();
   /** The post-end holds `shredIfIdle` / `findRevokedUnshredded` were called with. */
   holds: number[] = [];
 
@@ -96,7 +98,8 @@ class FakeRepo implements CredentialRepo {
     return { ...r };
   }
   async revoke(id: string) {
-    const r = this.rows.get(id); if (!r || r.status === 'revoked' || (this.campaigns.get(id) ?? 0) > 0) return null;
+    const r = this.rows.get(id);
+    if (!r || r.status === 'revoked' || (this.campaigns.get(id) ?? 0) > 0 || this.inbound.has(id)) return null;
     r.status = 'revoked'; r.revoked_at = new Date(); return { ...r };
   }
   async shredIfIdle(id: string, hold: number) {
@@ -114,6 +117,16 @@ class FakeRepo implements CredentialRepo {
     return before - this.secrets.length;
   }
   async usage(id: string) { return { campaigns: this.campaigns.get(id) ?? 0, inFlightCalls: this.inFlight.get(id) ?? 0 }; }
+  async findInbound(id: string) {
+    const r = this.rows.get(id);
+    if (!r) return null;
+    const i = this.inbound.get(id);
+    return {
+      credential_id: id, tenant_id: r.tenant_id, provider: r.provider, status: r.status,
+      app_id: i?.appId ?? null, answer_url: null, hangup_url: null, fallback_answer_url: null,
+      enabled_at: i ? new Date() : null, previous_token_expires_at: null, linked_numbers: i?.linked ?? 0,
+    };
+  }
   async liveCampaigns(id: string, limit: number) {
     return Array.from({ length: Math.min(limit, this.campaigns.get(id) ?? 0) }, (_, i) => ({
       id: `camp-${i}`, name: `Campaign ${i + 1}`, status: i === 0 ? 'running' : 'draft', tenant_name: 'Acme', account_name: i === 1 ? null : 'Main',
@@ -526,6 +539,32 @@ describe('verify, disable, enable, revoke', () => {
     expect(!r.ok && r.message).toBe(
       '2 campaigns that are not finished still use this credential: “Campaign 1” (Acme / Main, running) and '
       + '“Campaign 2” (Acme / a removed account, draft). Move them to another carrier account, or stop them, first.');
+    expect(repo.rows.get(row.id)!.status).toBe('active');
+  });
+
+  it.each([
+    [0, 'Inbound calls are enabled on this credential. Disable inbound before revoking it.'],
+    [2, 'Inbound calls are enabled on this credential and 2 numbers are linked. Unlink the numbers, then disable inbound before revoking it.'],
+  ])('refuses to revoke while inbound is enabled (%i numbers linked): inbound_enabled, saying what to do first', async (linked, message) => {
+    const row = await createOk();
+    repo.inbound.set(row.id, { appId: 'app-1', linked });
+    const r = await svc.revoke(row.id, ADMIN);
+    expect(r).toEqual({ ok: false, code: 'inbound_enabled', message });
+    expect(repo.rows.get(row.id)!.status).toBe('active');
+    repo.inbound.delete(row.id);
+    expect((await svc.revoke(row.id, ADMIN)).ok).toBe(true);
+  });
+
+  it('refuses a revoke whose credential had inbound enabled after the check (the revoke statement refuses it too)', async () => {
+    const row = await createOk();
+    const findInbound = repo.findInbound.bind(repo);
+    let first = true;
+    repo.findInbound = async (id: string) => {
+      if (first) { first = false; const out = await findInbound(id); repo.inbound.set(id, { appId: 'app-1', linked: 0 }); return out; }
+      return findInbound(id);
+    };
+    const r = await svc.revoke(row.id, ADMIN);
+    expect(!r.ok && r.code).toBe('inbound_enabled');
     expect(repo.rows.get(row.id)!.status).toBe('active');
   });
 

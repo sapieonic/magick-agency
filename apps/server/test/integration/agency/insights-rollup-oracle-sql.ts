@@ -141,7 +141,7 @@ async function oracleOverrides(pool: pg.Pool, r: OracleRange, overrideCodes: str
        UNION ALL
        SELECT s.agent_user_id, (SELECT p.disposition_code FROM agency_call_attempts p
                                  WHERE p.contact_id = a.contact_id AND p.attempt_number < a.attempt_number
-                                   AND p.disposition_code IS NOT NULL AND p.disposition_code <> 'redialed'
+                                   AND p.disposition_code IS NOT NULL AND p.disposition_code NOT IN ('redialed', 'inbound_call')
                                  ORDER BY p.attempt_number DESC LIMIT 1), 'used'
          FROM agency_call_attempts a
          LEFT JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id

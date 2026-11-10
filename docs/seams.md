@@ -70,12 +70,21 @@ class WebRtcBridgeManager {
   createBridgedCall(params: WebRtcBridgedCallParams): Promise<WebRtcCallRecord>;
   createUnboundBridgedCall(params: Omit<WebRtcBridgedCallParams, 'browserSocket'>): Promise<WebRtcCallRecord>;
   bindBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
+  isCallEnding(correlationId: string): boolean;
   reattachBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
   forceEndWithOutcome(correlationId: string, outcome: string): Promise<boolean>;
   playClipToCarrierThenHangUp(correlationId: string,
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
   getActiveCallIds(): string[];
   gracefulShutdown(): Promise<void>;
+  // Inbound calls (docs/inbound.md §3), P1:
+  acceptInboundCall(params: WebRtcInboundCallParams): Promise<WebRtcInboundAcceptance>;
+  playClipSequenceThenHangUp(correlationId: string,
+    opts: { clipHashes: readonly string[]; outcome: string }): Promise<ClipSequenceResult>;
+  // Connecting inbound callers (docs/inbound.md §5), P2:
+  playInboundHold(correlationId: string, opts: InboundHoldOptions): Promise<InboundHoldResult>;
+  stopInboundHold(correlationId: string): void;
+  recordInboundAudio(correlationId: string, opts: InboundRecordOptions): Promise<InboundAudioRecording>;
 }
 export class WebRtcCallError extends Error {}
 export interface WebRtcOutboundParams {}
@@ -124,6 +133,58 @@ which provides the concurrency guard (`acquireTelephonyConcurrency`, `releaseTel
 checks that `WebRtcBridgeManager` satisfies an interface listing exactly these members, so a
 signature change fails `tsc`.
 
+The two inbound members take in a call a customer placed, whose `origin = 'inbound'` leg the
+inbound answer webhook wrote: `acceptInboundCall` registers its session (answered at once, a media
+deadline in place of the ring deadline, no browser leg), takes the shared slots and returns the
+stream URL the answer XML names; admission never refuses it (IB5: `capacity` is `admitted`,
+`account_full` (held with no slot), `no_capacity` (global or carrier scope full: held with no slot
+to hear why) or `not_requested`), and a retried answer gets the live session's stream.
+`playClipSequenceThenHangUp` waits for the carrier's media, plays the clips paced, then hangs up
+under the outcome (`completed`); a caller who leaves mid-clip stops it with no hangup of ours
+(`aborted`); `no_media`, `not_found` otherwise. The session's `correlationId` is the inbound call's
+id. `WebRtcInboundCallParams`, `WebRtcInboundAcceptance` and `ClipSequenceResult` are in
+`bridge-types.ts`, pinned by the same contract test.
+
+P2 puts inbound callers through to agents. `WebRtcInboundCallParams` names `connectable`,
+`browserCloseGraceMs`, `parkedSeconds` and `record` (P1's messages-only calls pass `false`, 0, 0,
+`false`; a voicemail that is not connectable passes its budget floor as `parkedSeconds`, and the
+call's budget is the longer of it and the account's max duration). A **connectable** call is parked: its browser leg is borrowed and unbound, so
+`bindBorrowedBrowserLeg` (keyed on the inbound call's id) can put the agent's station socket on it
+and a dropped socket after that is held `browserCloseGraceMs` for `reattachBorrowedBrowserLeg`. Its
+budget is `parkedSeconds` (at least the media deadline) plus the account's max duration: the
+answer's `maxDurationSeconds` (so the answer XML's stream timeout) and the slot and token lifetimes
+are that sum, and the bridge's own timer ends a call still unbound after `parkedSeconds`
+(`max_duration_reached`, a backstop behind the caller's queue). The bind is where the agent takes
+over, synchronously and before the relay attaches: whatever the bridge plays to the caller stops (no
+frame of it follows the bind), the max duration is re-armed in full and talk time counts from the
+bind (0 for a call no agent took). With `record` (under the account's `allow_recording`), the call
+is recorded from the `bridged` moment through the carrier's record-on-demand API
+(`ProviderCapabilities.recordsOnDemand`, Plivo's Record API), with a `webhook` token minted then for
+the recording callback (`…/webrtc-recording/:callId`, whose reader takes the `<Record>` element's
+params and the Record API's alike); the hold is never recorded.
+
+- `playInboundHold` waits for the carrier's media, plays `preambleClipHashes` once, then loops the
+  hold clip (none, or one not on this replica: the built-in generated hold tone,
+  `core/bridge/hold-tone.ts`) until it is stopped. It never hangs up. `released`: stopped with the
+  caller still on (the bind, `stopInboundHold`, a recording, a later hold); `aborted`: the caller
+  left; `no_media`, `not_found`. `onPreambleDone` (optional) is called once, synchronously, when
+  the preamble has played and the loop starts: the inbound connector queues the caller from it,
+  so no agent is bound during the greeting or the recording notice (docs/inbound.md §2, IQ5).
+- `stopInboundHold` stops what the bridge plays to the caller, synchronously: an overflow message or
+  a voicemail prompt can follow at once.
+- `isCallEnding` answers whether the call keyed on the correlation id is over or tearing down (no
+  session by that id, or one tearing down): what the inbound connector asks after a refused
+  `bindBorrowedBrowserLeg`, so an ending call is left to its `ended` while one refused for any
+  other reason has its offer cancelled.
+- `recordInboundAudio` stops the hold, plays `promptClipHashes` once and, with `beep`, a 400 ms
+  beep, then records the caller through a carrier tap installed only for the recording and fed
+  before the relay's no-browser-leg drop, bounded to `maxSeconds` of audio and of wall clock. It
+  never hangs up. It answers PCM16 at 16 kHz: `completed` (the maximum), `caller_left` (what was
+  captured until the caller hung up), `no_media`, `not_found`.
+
+`InboundHoldOptions`, `InboundHoldResult`, `InboundRecordOptions` and `InboundAudioRecording` are in
+`bridge-types.ts`, pinned by the contract test.
+
 ### 3.2 Voice engine → analysis
 
 `apps/server/src/seams/bridge-analysis-hooks.ts`. The bridge calls
@@ -161,7 +222,13 @@ shared repository, so it works the same before and after voice bootstrap), and t
 background work, the hourly sweep, is started from `bootstrap/voice.ts`. Route tests inject a
 fake through the plugin's `service` option. If the service ever gains state that needs
 bootstrap ordering, move it behind a seam like §3.3. Number sync
-(`POST /super-admin/telephony-credentials/:id/sync-numbers`, `syncNumbers`) goes the same way.
+(`POST /super-admin/telephony-credentials/:id/sync-numbers`, `syncNumbers`) goes the same way, and so
+does inbound on a credential (docs/inbound.md §8): the routes in
+`api/routes/super-admin-telephony-credentials/inbound.ts`, registered by the same plugin, call
+`TelephonyInboundService` through `getTelephonyInboundService()` (`telephony/credentials/`, built on
+the credential service, which opens the secrets; tests inject a fake through the plugin's `inbound`
+option). The super-admin phone routes call its §8.2 cascade (`reconcileNumber`) after an unassign,
+retire or delete, the same way.
 
 The other readers of the credential store outside the voice area import it directly too, for the
 same reason (no bootstrap state), and none of them opens a secret except through the service:
@@ -174,6 +241,29 @@ same reason (no bootstrap state), and none of them opens a secret except through
 - every recording fetch (the attempt and soft-phone recording proxies, signed playback, the
   analysis runner) asks `telephony/recording-access.ts` for the call's hosts and headers, which
   resolves the pinned credential through the service lazily (`getRecordingAccessResolver`).
+
+### 3.5 Voice engine (inbound carrier callbacks) → agency (inbound router)
+
+`apps/server/src/seams/inbound-call-router.ts`. The voice area owns the carrier-facing surface of
+an inbound call (`api/routes/webhooks/plivo-inbound.ts` under `/api/v1/webhooks/plivo`: the
+credential's purpose token, the V3 signature over the URL stored on the credential plus the query,
+the per-credential nonce, the XML Plivo runs); what the call means is the agency area's, reached
+only through `InboundCallRouter`: `answer(arrival, { signal })` returns a decision (`stream` with
+the URL; `spoken` with an `InboundSpokenMessage`, `closed`, `callback` or `busy`, whose XML is the
+voice area's, `PLIVO_INBOUND_SPOKEN_XML`, saying the words of the standard recordings the agency area
+plays on its stream, `AGENCY_INBOUND_STANDARD_WORDS` in the contract; `hangup`; `fallback`), and the route aborts
+`signal` when the answer's budget runs out and it has answered the fallback message, after which
+the router places nothing more and leaves no follow-up; `ended(hangup)` settles the call (and records
+the carrier's `durationSeconds`, Plivo's `Duration`, on it when the hangup carries one) and
+returns its media leg, which the route then hands to the bridge as a carrier hangup
+(`handleCarrierStatus`). The
+implementation is `agency/inbound/inbound-call-router.ts`, registered by `bootstrap/agency.ts`
+(`startInboundCalls` in `agency/inbound/start.ts`, after the startup sweep) and cleared at its stop; until then an arriving call
+is answered with the fixed fallback message and nothing is written. Tests:
+`test/unit/api/routes/plivo-inbound-webhooks.test.ts` (the route with a stub router, the unwired
+default included, each spoken message, the signal), `test/integration/agency/inbound-call-router.test.ts`
+(the router on real Postgres with a fake bridge) and `test/integration/telephony/plivo-inbound-e2e.test.ts`
+(through `buildApp` and the bootstraps).
 
 ## 4. Shared infrastructure
 

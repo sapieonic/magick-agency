@@ -156,6 +156,25 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/customers/export',
   'POST /proxy/agency/customers/search',
   'POST /proxy/agency/customers/timeline',
+  // Inbound calls (docs/inbound.md §8.1): `agency.inbound.read` floors at `agent`, for the agent's
+  // OWN Missed inbound rows. The internal handler forces the list to the caller and marks only
+  // their rows (another's answers `inbound_missed_call_not_found`); the routes themselves are
+  // `agency.inbound.write` (account admin) and refuse an agent.
+  'GET /proxy/agency/inbound/missed',
+  'POST /proxy/agency/inbound/missed/:id/handled',
+  'POST /proxy/agency/inbound/missed/:id/reopen',
+  'GET /proxy/agency/inbound/missed/:id/voicemail',
+  // The nav badge's count of the same rows (an agent's own; the account's with supervise). The
+  // reassign and the inbound summary are `agency.supervise` and refuse an agent.
+  'GET /proxy/agency/inbound/missed/count',
+  // The answered inbound call's finish (docs/inbound.md §6, P2): `agency.inbound.read`, so the
+  // agent who took a call can finish it. The internal handler acts only on a call offered to or
+  // connected with the caller's own session (another's answers `inbound_call_not_found`).
+  'GET /proxy/agency/inbound/calls/:id',
+  'PATCH /proxy/agency/inbound/calls/:id',
+  'POST /proxy/agency/inbound/calls/:id/hangup',
+  'POST /proxy/agency/inbound/calls/:id/disposition',
+  'POST /proxy/agency/inbound/calls/:id/dnc',
   // Reports (docs/reports.md, RP5): `agency.station.connect`, so an agent can export their OWN
   // review and see their own runs. The reach over a subject is the route's (another agent, a
   // campaign or the account is a 403 past the guards; others' runs are 404s). Subscriptions are

@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, afterEach } from 'vitest';
+import type { PoolClient } from 'pg';
 import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertAccount, insertTenant, insertWebrtcCall } from '../setup/factories.js';
+import { PLAN_ROSTER_TIMEOUT_MS, endPlanTransactions, inPlanTransaction } from '../plan-transaction.js';
 
 /*
  * `usageCountsRepository` on the real
@@ -10,7 +12,8 @@ import { insertAccount, insertTenant, insertWebrtcCall } from '../setup/factorie
  * window on the ATTEMPT's `dialed_at` for every column, analysis seconds
  * attributed to the dial they analysed, tenant/account narrowing, an attempt
  * whose tenant/account row is gone still counted under its id — and that the
- * query is served by `idx_agency_attempts_billing (dialed_at, campaign_id)`.
+ * query is served by `idx_agency_attempts_billing (dialed_at, campaign_id)` — and that inbound calls
+ * are counted in their own columns, the dial columns unchanged by them.
  */
 
 const captured: { text: string; values: unknown[] }[] = [];
@@ -131,6 +134,72 @@ async function manualCall(opts: {
   );
 }
 
+/**
+ * One inbound call (`agency_inbound_calls`, 0024) to the account, with an optional media leg and
+ * analysis job: counted apart from the dials, windowed on `arrived_at`. `accountId` null: the
+ * tenant default (no route, no leg). Answered and bridged at arrival unless the offsets (seconds
+ * after arrival) say otherwise; ended at the end of the last one given, or `endAfter`; `live`:
+ * not ended yet.
+ */
+async function inboundCall(opts: {
+  tenantId: string;
+  accountId: string | null;
+  arrivedAt: Date;
+  answered?: boolean;
+  bridged?: boolean;
+  talkSeconds?: number | null;
+  analysisSeconds?: number | null;
+  queuedAfter?: number;
+  bridgedAfter?: number;
+  endAfter?: number;
+  live?: boolean;
+}) {
+  const pool = getTestPool();
+  const inboundCallId = randomUUID();
+  let callId: string | null = null;
+  if (opts.analysisSeconds !== undefined && opts.accountId) {
+    const call = await insertWebrtcCall({
+      tenant_id: opts.tenantId, account_id: opts.accountId, campaign_id: null,
+      origin: 'inbound', inbound_call_id: inboundCallId,
+    });
+    callId = call.id;
+    await pool.query(
+      `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, analysis_audio_seconds)
+       VALUES ($1, $2, $3, 'completed', $4)`,
+      [callId, opts.tenantId, opts.accountId, opts.analysisSeconds],
+    );
+  }
+  // Bridged: answered by an agent. Answered only: the closed message played, a Missed row. Neither:
+  // refused with a hangup at the answer (`rejected`, no follow-up).
+  const live = opts.live === true;
+  const outcome = live ? null : opts.bridged ? 'answered' : opts.answered ? 'closed' : 'rejected';
+  const missed = outcome === 'closed';
+  const after = (s: number) => new Date(opts.arrivedAt.getTime() + s * 1000);
+  const end = opts.endAfter ?? opts.bridgedAfter ?? opts.queuedAfter ?? 0;
+  const bridgedAt = opts.bridged ? after(opts.bridgedAfter ?? 0) : null;
+  const sessionId = opts.bridged ? randomUUID() : null;
+  await pool.query(
+    `INSERT INTO agency_inbound_calls
+       (id, tenant_id, account_id, provider_call_id, to_e164, from_e164, state, outcome,
+        arrived_at, answered_at, bridged_at, answered_by_user_id, ended_at, talk_seconds, webrtc_call_id,
+        follow_up_status, follow_up_reason, queued_at, session_id, offered_at, offer_count, settled_at)
+     VALUES ($1, $2, $3, $4, '+14155550100', '+14155550199', $14, $5, $6, $7, $8, $9, $10, $11, $12, $13, $15,
+             $16, $17, $18, $19, $20)`,
+    [
+      inboundCallId, opts.tenantId, opts.accountId, `CA-${inboundCallId}`,
+      outcome, opts.arrivedAt,
+      opts.answered || opts.bridged ? opts.arrivedAt : null,
+      bridgedAt,
+      opts.bridged ? randomUUID() : null,
+      live ? null : after(end),
+      opts.talkSeconds ?? null, callId,
+      missed ? 'open' : null, live ? 'queued' : 'ended', missed ? 'closed' : null,
+      opts.queuedAfter === undefined ? null : after(opts.queuedAfter),
+      sessionId, bridgedAt, opts.bridged ? 1 : 0, live || opts.bridged ? null : after(end),
+    ],
+  );
+}
+
 async function workspace(name: string) {
   const tenant = await insertTenant({ name });
   const accountA = await insertAccount({ tenant_id: tenant.id, name: `${name} A` });
@@ -144,11 +213,51 @@ async function workspace(name: string) {
   };
 }
 
+/** A row's inbound columns when the account had no inbound call. */
+const NO_INBOUND = {
+  inbound_calls: 0, inbound_answered_calls: 0, inbound_connected_calls: 0, inbound_seconds: 0,
+  inbound_hold_seconds: 0, inbound_talk_seconds: 0, inbound_analysis_audio_seconds: 0,
+};
+
+/**
+ * A year of placed dials for the plan test: 50 campaigns of `accountId`, 400 contacts each, one
+ * ended attempt per contact, dialled once every ~26 minutes across the 365 days up to `TO` (so the
+ * one-month window holds a twelfth of them), ANALYZEd. Inside the caller's transaction, which rolls
+ * back (plan-transaction.ts: the statistics go with the rows).
+ */
+async function seedYearOfDials(client: PoolClient, tenantId: string, accountId: string): Promise<void> {
+  await client.query(
+    `WITH c AS (
+       INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids)
+       SELECT $1::uuid, $2::uuid, 'Plan ' || g, ARRAY['+14155550100'] FROM generate_series(1, 50) g
+       RETURNING id
+     )
+     INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164)
+     SELECT c.id, $1::uuid, $2::uuid, '+1415' || lpad((row_number() OVER ())::text, 7, '0')
+       FROM c, generate_series(1, 400)`,
+    [tenantId, accountId],
+  );
+  await client.query(
+    `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, dialed_at, ended_at)
+     SELECT ct.campaign_id, ct.id, ct.tenant_id, ct.account_id, 1, '+14155550100', 'ended',
+            $3::timestamptz - (row_number() OVER (ORDER BY ct.id)) * interval '26 minutes',
+            $3::timestamptz - (row_number() OVER (ORDER BY ct.id)) * interval '26 minutes' + interval '1 minute'
+       FROM agency_contacts ct
+       JOIN agency_campaigns cam ON cam.id = ct.campaign_id AND cam.name LIKE 'Plan %'
+      WHERE ct.tenant_id = $1::uuid AND ct.account_id = $2::uuid`,
+    [tenantId, accountId, TO],
+  );
+  await client.query('ANALYZE agency_call_attempts');
+}
+
 describe('usageCountsRepository.countByAccount (integration)', () => {
   beforeEach(async () => {
     await truncateAll();
     captured.length = 0;
   });
+
+  // A plan test that timed out with its seeding transaction open must not hold the tables for the next.
+  afterEach(endPlanTransactions);
 
   afterAll(async () => {
     await closeTestPool();
@@ -171,11 +280,11 @@ describe('usageCountsRepository.countByAccount (integration)', () => {
     expect(rows).toEqual([
       {
         tenant_id: w.tenant.id, tenant_name: 'Alpha', account_id: w.accountA.id, account_name: 'Alpha A',
-        dials: 4, answered_calls: 3, connected_calls: 2, talk_seconds: 157, analysis_audio_seconds: 118,
+        dials: 4, answered_calls: 3, connected_calls: 2, talk_seconds: 157, analysis_audio_seconds: 118, ...NO_INBOUND,
       },
       {
         tenant_id: w.tenant.id, tenant_name: 'Alpha', account_id: w.accountB.id, account_name: 'Alpha B',
-        dials: 1, answered_calls: 1, connected_calls: 1, talk_seconds: 45, analysis_audio_seconds: 40,
+        dials: 1, answered_calls: 1, connected_calls: 1, talk_seconds: 45, analysis_audio_seconds: 40, ...NO_INBOUND,
       },
     ]);
   });
@@ -207,6 +316,63 @@ describe('usageCountsRepository.countByAccount (integration)', () => {
     expect(narrowed.map((r) => [r.account_id, r.dials])).toEqual([[w.accountB.id, 1]]);
     // An account with ONLY soft-phone dials still gets a row.
     expect(rows.map((r) => r.account_id)).toContain(w.accountB.id);
+  });
+
+  it('inbound calls are counted apart: the dial columns are what they are without them (outbound unchanged)', async () => {
+    const w = await workspace('Inbound');
+    const base = { tenantId: w.tenant.id, accountId: w.accountA.id, campaignId: w.campaignA };
+    await attempt({ ...base, dialedAt: IN, answered: true, bridged: true, talkSeconds: 60, analysisSeconds: 55 });
+    await manualCall({ tenantId: w.tenant.id, accountId: w.accountA.id, dialedAt: IN, answered: true, talkSeconds: 5 });
+    const before = await usageCountsRepository.countByAccount({ from: FROM, to: TO });
+    const dialColumns = (r: { account_id: string; dials: number; answered_calls: number; connected_calls: number; talk_seconds: number; analysis_audio_seconds: number }) => ({
+      account_id: r.account_id, dials: r.dials, answered_calls: r.answered_calls, connected_calls: r.connected_calls,
+      talk_seconds: r.talk_seconds, analysis_audio_seconds: r.analysis_audio_seconds,
+    });
+    expect(before.map(dialColumns)).toEqual([
+      { account_id: w.accountA.id, dials: 2, answered_calls: 2, connected_calls: 1, talk_seconds: 65, analysis_audio_seconds: 55 },
+    ]);
+
+    const inbound = { tenantId: w.tenant.id, accountId: w.accountA.id };
+    await inboundCall({ ...inbound, arrivedAt: IN, answered: true, bridged: true, talkSeconds: 90, analysisSeconds: 80, queuedAfter: 4, bridgedAfter: 34, endAfter: 124 });
+    await inboundCall({ ...inbound, arrivedAt: IN, answered: true, endAfter: 12 });            // answered, played closed, nobody bridged
+    await inboundCall({ ...inbound, arrivedAt: IN, answered: true, queuedAfter: 3, endAfter: 123 }); // waited, nobody free: hold to the end
+    await inboundCall({ ...inbound, arrivedAt: IN });                                         // refused with a hangup: never answered
+    await inboundCall({ ...inbound, arrivedAt: IN, answered: true, queuedAfter: 2, live: true }); // still waiting: a call, no seconds yet
+    await inboundCall({ ...inbound, arrivedAt: TO, answered: true, talkSeconds: 1000, endAfter: 1000 }); // outside [from, to)
+    await inboundCall({ tenantId: w.tenant.id, accountId: null, arrivedAt: IN, answered: true, endAfter: 9 }); // the tenant default
+    await inboundCall({ tenantId: w.tenant.id, accountId: w.accountB.id, arrivedAt: FROM, answered: true, endAfter: 7 });
+
+    const rows = await usageCountsRepository.countByAccount({ from: FROM, to: TO });
+    // The dial columns are exactly what they were: an inbound call is not a dial.
+    expect(rows.map(dialColumns)).toEqual([
+      ...before.map(dialColumns),
+      // An account with ONLY inbound calls gets a row, with no dials.
+      { account_id: w.accountB.id, dials: 0, answered_calls: 0, connected_calls: 0, talk_seconds: 0, analysis_audio_seconds: 0 },
+    ]);
+    expect(rows[0]).toMatchObject({
+      inbound_calls: 5, inbound_answered_calls: 4, inbound_connected_calls: 1,
+      // carrier time, answer to end: 124 + 12 + 123 (the live call adds nothing yet, the refused one was never answered)
+      inbound_seconds: 259,
+      // hold, queued to bridged (30) or to the end (120)
+      inbound_hold_seconds: 150,
+      inbound_talk_seconds: 90, inbound_analysis_audio_seconds: 80,
+    });
+    expect(rows[1]).toMatchObject({ account_id: w.accountB.id, inbound_calls: 1, inbound_answered_calls: 1, inbound_seconds: 7, inbound_hold_seconds: 0 });
+
+    // The tenant / account narrowing applies to inbound calls too.
+    const narrowed = await usageCountsRepository.countByAccount({
+      from: FROM, to: TO, tenantId: w.tenant.id, accountId: w.accountB.id,
+    });
+    expect(narrowed.map((r) => [r.account_id, r.dials, r.inbound_calls])).toEqual([[w.accountB.id, 0, 1]]);
+  });
+
+  it('inbound durations are summed exactly and rounded once per row, not per call', async () => {
+    const w = await workspace('Rounding');
+    const inbound = { tenantId: w.tenant.id, accountId: w.accountA.id };
+    // Three calls of 1.4 s each: 4.2 s in all, so 4 (per-call rounding would say 3, per-call ceiling 6).
+    for (let i = 0; i < 3; i++) await inboundCall({ ...inbound, arrivedAt: IN, answered: true, endAfter: 1.4 });
+    const [row] = await usageCountsRepository.countByAccount({ from: FROM, to: TO });
+    expect(row).toMatchObject({ inbound_calls: 3, inbound_seconds: 4, dials: 0 });
   });
 
   it('the window is half-open [from, to) on dialed_at; undialed attempts never count', async () => {
@@ -300,21 +466,27 @@ describe('usageCountsRepository.countByAccount (integration)', () => {
     await usageCountsRepository.countByAccount({ from: FROM, to: TO });
     expect(captured).toHaveLength(2);
 
-    const client = await getTestPool().connect();
-    try {
-      await client.query('BEGIN');
-      // A handful of rows would otherwise always be a sequential scan; this asks
-      // whether the planner CAN use the index for this predicate, which is what
-      // a production-sized table needs.
+    // Over a year of dials of the test's own, ANALYZEd in a rolled-back transaction: on the
+    // near-empty table a full run leaves, the window scan of idx_agency_attempts_billing and a full
+    // scan of idx_agency_attempts_campaign_dialed (campaign_id, dialed_at) tie on their page counts,
+    // and the pick followed whatever rows and statistics earlier files left behind. Over these rows
+    // the month's range scan is what the planner chooses on its merits. Sequential scans are priced
+    // out: the property is the index the query uses on a production-sized table, not whether a
+    // 20,000-row table is small enough to read whole.
+    const plans = await inPlanTransaction(async (client) => {
+      await seedYearOfDials(client, w.tenant.id, w.accountA.id);
       await client.query('SET LOCAL enable_seqscan = off');
+      const out: string[] = [];
       for (const { text, values } of captured) {
         const plan = await client.query(`EXPLAIN ${text}`, values);
-        const lines = plan.rows.map((r: Record<string, string>) => r['QUERY PLAN']).join('\n');
-        expect(lines).toContain('idx_agency_attempts_billing');
+        out.push(plan.rows.map((r: Record<string, string>) => r['QUERY PLAN']).join('\n'));
       }
-    } finally {
-      await client.query('ROLLBACK');
-      client.release();
+      return out;
+    });
+    expect(plans).toHaveLength(2);
+    for (const lines of plans) {
+      expect(lines).toContain('idx_agency_attempts_billing');
+      expect(lines).not.toContain('idx_agency_attempts_campaign_dialed');
     }
-  });
+  }, PLAN_ROSTER_TIMEOUT_MS);
 });

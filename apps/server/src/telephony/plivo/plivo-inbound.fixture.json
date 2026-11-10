@@ -1,0 +1,153 @@
+{
+  "description": "Plivo inbound fixture: the params Plivo posts to a tenant's inbound Application (answer_url, hangup_url) -> readPlivoInboundArrival / readPlivoInboundHangup (plivo-inbound.webhook.ts). The parameter names are Plivo's documented callback parameters; every entry is verified: false until a live inbound call is captured (docs/inbound.md §12, P0), when entries recorded from it are to be added and these corrected. A change to the reader that alters any mapping reds its test.",
+  "entries": [
+    {
+      "name": "answer: a known caller",
+      "verified": false,
+      "kind": "answer",
+      "params": {
+        "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d",
+        "From": "919812345678",
+        "To": "14155550101",
+        "Direction": "inbound",
+        "CallStatus": "ringing",
+        "Event": "StartApp",
+        "CallerName": "",
+        "BillRate": "0.0085"
+      },
+      "arrival": { "ok": true, "callUuid": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d", "fromE164": "+919812345678", "toE164": "+14155550101", "callStatus": "ringing" }
+    },
+    {
+      "name": "answer: the caller withheld their number",
+      "verified": false,
+      "kind": "answer",
+      "params": {
+        "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5e",
+        "From": "anonymous",
+        "To": "14155550101",
+        "Direction": "inbound",
+        "CallStatus": "ringing"
+      },
+      "arrival": { "ok": true, "callUuid": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5e", "fromE164": null, "toE164": "+14155550101", "callStatus": "ringing" }
+    },
+    {
+      "name": "answer: a SIP caller and an in-progress status",
+      "verified": false,
+      "kind": "answer",
+      "params": {
+        "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5f",
+        "From": "sip:someone@example.test",
+        "To": "+14155550101",
+        "Direction": "inbound",
+        "CallStatus": "in-progress"
+      },
+      "arrival": { "ok": true, "callUuid": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5f", "fromE164": null, "toE164": "+14155550101", "callStatus": "in-progress" }
+    },
+    {
+      "name": "answer: no Direction (read as inbound)",
+      "verified": false,
+      "kind": "answer",
+      "params": {
+        "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c60",
+        "From": "447700900123",
+        "To": "14155550101"
+      },
+      "arrival": { "ok": true, "callUuid": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c60", "fromE164": "+447700900123", "toE164": "+14155550101", "callStatus": "" }
+    },
+    {
+      "name": "answer: an outbound call's answer posted to the inbound URL",
+      "verified": false,
+      "kind": "answer",
+      "params": {
+        "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c61",
+        "From": "14155550101",
+        "To": "919812345678",
+        "Direction": "outbound",
+        "CallStatus": "in-progress"
+      },
+      "arrival": { "ok": false, "reason": "not_inbound" }
+    },
+    {
+      "name": "answer: no number rung",
+      "verified": false,
+      "kind": "answer",
+      "params": { "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c62", "From": "919812345678", "To": "", "Direction": "inbound" },
+      "arrival": { "ok": false, "reason": "no_to" }
+    },
+    {
+      "name": "answer: no CallUUID",
+      "verified": false,
+      "kind": "answer",
+      "params": { "From": "919812345678", "To": "14155550101", "Direction": "inbound" },
+      "arrival": { "ok": false, "reason": "no_call_uuid" }
+    },
+    {
+      "name": "hangup: the caller hung up",
+      "verified": false,
+      "kind": "hangup",
+      "params": {
+        "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d",
+        "From": "919812345678",
+        "To": "14155550101",
+        "Direction": "inbound",
+        "CallStatus": "completed",
+        "Event": "Hangup",
+        "HangupCause": "NORMAL_CLEARING",
+        "HangupCauseName": "Normal Hangup",
+        "HangupCauseCode": "4000",
+        "HangupSource": "Caller",
+        "Duration": "14",
+        "BillDuration": "60",
+        "StartTime": "2026-11-09 10:00:00",
+        "AnswerTime": "2026-11-09 10:00:00",
+        "EndTime": "2026-11-09 10:00:14"
+      },
+      "hangup": {
+        "callUuid": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d",
+        "callStatus": "completed",
+        "terminal": true,
+        "hangupCause": "Normal Hangup",
+        "hangupCauseCode": "4000",
+        "hangupSource": "Caller",
+        "durationSec": 14,
+        "endedAt": "2026-11-09 10:00:14"
+      }
+    },
+    {
+      "name": "hangup: our REST hangup after the messages",
+      "verified": false,
+      "kind": "hangup",
+      "params": {
+        "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d",
+        "Direction": "inbound",
+        "CallStatus": "completed",
+        "HangupCause": "NORMAL_CLEARING",
+        "HangupSource": "API Request",
+        "Duration": "21"
+      },
+      "hangup": {
+        "callUuid": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d",
+        "callStatus": "completed",
+        "terminal": true,
+        "hangupCause": "NORMAL_CLEARING",
+        "hangupCauseCode": "",
+        "hangupSource": "API Request",
+        "durationSec": 21
+      }
+    },
+    {
+      "name": "hangup: a non-terminal status (not a hangup)",
+      "verified": false,
+      "kind": "hangup",
+      "params": { "CallUUID": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d", "CallStatus": "in-progress" },
+      "hangup": {
+        "callUuid": "7c1e3a2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d",
+        "callStatus": "in-progress",
+        "terminal": false,
+        "hangupCause": "",
+        "hangupCauseCode": "",
+        "hangupSource": ""
+      }
+    }
+  ]
+}

@@ -9,6 +9,9 @@ import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurren
 import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
 import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
 import { startReportPipeline, type ReportPipeline } from '../agency/reports/pipeline.js';
+import { startInboundCalls } from '../agency/inbound/start.js';
+import { DncRegistry } from '../agency/dnc-registry.js';
+import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -119,6 +122,21 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   // occupancy from dead rows and quietly dial nothing forever.
   await agencyRuntime.start();
 
+  // Inbound calls (docs/inbound.md): the startup sweep ends calls a restart left open, then
+  // the router takes the inbound answer and hangup webhooks (`seams/inbound-call-router.ts`).
+  // Not gated on `agency_inbound_enabled`: a call on a linked number is always answered (§8.1).
+  // P2 (docs/inbound.md §2): the connector puts waiting callers through to agents, gated on the
+  // account's `agency_inbound_enabled` and on one process (IB8); the outcome-lapse sweep with it.
+  const inbound = await startInboundCalls({
+    bridge: ensureVoiceEngine(ctx.redis).bridge,
+    dnc: new DncRegistry(),
+    connect: {
+      runtime: agencyRuntime,
+      enabled: (tenantId, accountId) => getFeatureFlagService().isEnabled(FLAGS.agency_inbound_enabled, { tenantId, accountId }),
+      mediaWorkers: ctx.config.processes.mediaWorkers,
+    },
+  });
+
   // Main process only (this bootstrap never runs in a worker), so once per deployment.
   const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
   // Main process only, like the rollup job: one assembler and one tick per deployment.
@@ -128,12 +146,17 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
+    // First, synchronously: an arriving call now hears the fallback message rather than reaching
+    // a stopping runtime. Its calls still held are then ended and settled (bounded) while the
+    // runtime and the database are still up, before the runtime stops below.
+    const inboundStopped = inbound.stop();
     // The report pipeline stops beside the rest (it needs none of it), so its bounded wait
     // overlaps the runtime's completion-notice drain, which in one process runs in
     // `agencyRuntime.stop()`. With media workers it already stopped as a shutdown drain
     // (`index.ts`), and this is the same, settled promise.
     const reportsStopped = reports.stop();
     const rest = (async () => {
+      await inboundStopped;
       // The batch in flight commits or rolls back; marks left over are the next boot's.
       await insightsRollup.stop();
       // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents

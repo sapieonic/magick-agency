@@ -28,6 +28,7 @@ import type {
   OutboundCallRequest,
   ProviderCallStatus,
   ProviderCapabilities,
+  StartRecordingRequest,
   TelephonyProvider,
 } from '../types.js';
 import type { AppConfig } from '../../config/index.js';
@@ -52,6 +53,24 @@ import { acquirePlivoDialSlot, getPlivoDialRateLimiter, type PlivoDialRateLimite
 import { verifyPlivoV3Signature } from './plivo-signature.js';
 import { inferPlivoCallbackKind, normalizePlivoCallback, plivoCallEvent } from './plivo.webhook.js';
 import { PLIVO_STREAM_CONTENT_TYPE, PLIVO_STREAM_SAMPLE_RATE } from './plivo.media.js';
+import type { PlivoInboundUrls } from './inbound-urls.js';
+import {
+  PLIVO_APP_ID,
+  PLIVO_APPLICATIONS_MAX_PAGES,
+  PLIVO_APPLICATIONS_PAGE_SIZE,
+  PlivoApiError,
+  plivoCreateApplicationBody,
+  plivoNumberAppBody,
+  plivoStartRecordingBody,
+  plivoStatusFailure,
+  plivoUpdateApplicationBody,
+  readPlivoApplication,
+  readPlivoApplicationPage,
+  readPlivoCreatedApplication,
+  readPlivoNumberApp,
+  readPlivoRecordingStarted,
+  type PlivoApplication,
+} from './plivo-inbound.wire.js';
 
 const log = createChildLogger({ component: 'plivo-adapter' });
 
@@ -253,7 +272,8 @@ export class PlivoAdapter implements TelephonyProvider {
    * (`cancelDialRequest`) and, once Plivo has named it, hung up by its call id.
    * The create-call places the call at once: nothing is queued. `ringTimeoutSeconds`: the
    * `ring_timeout` every dial carries (`PLIVO_RING_TIMEOUT_SECONDS`), so the bridge ends a
-   * call whose answer and terminal callbacks never arrived soon after it.
+   * call whose answer and terminal callbacks never arrived soon after it. `recordsOnDemand`: a
+   * live call is recorded from now on with the Record API ({@link startRecording}).
    */
   readonly capabilities: ProviderCapabilities;
 
@@ -271,7 +291,9 @@ export class PlivoAdapter implements TelephonyProvider {
     this.authId = opts.authId;
     this.authToken = opts.authToken;
     this.previousAuthTokens = opts.previousAuthTokens ?? [];
-    this.capabilities = { cancelRinging: true, queuesOutboundDials: false, ringTimeoutSeconds: opts.ringTimeoutSeconds };
+    this.capabilities = {
+      cancelRinging: true, queuesOutboundDials: false, ringTimeoutSeconds: opts.ringTimeoutSeconds, recordsOnDemand: true,
+    };
     this.settings = {
       webhookBaseUrl: opts.webhookBaseUrl,
       callsPerSecond: opts.callsPerSecond,
@@ -582,6 +604,148 @@ export class PlivoAdapter implements TelephonyProvider {
       log.warn({ err, providerCallId }, 'Plivo recording lookup failed');
       return null;
     }
+  }
+
+  // ── Inbound: the Application and numbers' apps (docs/inbound.md §8.1) ─────────────────
+  // Request and response shapes: `plivo-inbound.wire.ts` (unverified until P0). Every failure
+  // is a `PlivoApiError` (`auth_rejected`, `unreachable`, `refused`); a 404 the operation reads
+  // as "gone" is an answer, not a failure. Nothing here is retried: the inbound service decides.
+
+  /** One inbound REST request; any transport failure (timeout, network) is `unreachable`. */
+  private async inboundRequest(
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    operation: string,
+    body?: Record<string, unknown>,
+  ): Promise<{ status: number; text: string }> {
+    try {
+      return await this.send(method, path, operation, body);
+    } catch (err) {
+      log.warn({ err, operation }, 'Plivo inbound request failed before an answer');
+      throw new PlivoApiError('unreachable', operation, null, 'Plivo could not be reached');
+    }
+  }
+
+  /** `Number/{digits}/` for an E.164 number; a malformed one never reaches a URL. */
+  private numberPath(e164: string, operation: string): string {
+    try {
+      return `Number/${plivoNumber(e164, 'from')}/`;
+    } catch {
+      throw new PlivoApiError('refused', operation, null, 'malformed phone number');
+    }
+  }
+
+  private appPath(appId: string): string {
+    if (!PLIVO_APP_ID.test(appId ?? '')) throw new PlivoApiError('refused', 'Plivo application', null, 'malformed application id');
+    return `Application/${encodeURIComponent(appId)}/`;
+  }
+
+  /** Create the inbound Application; its id. The answer and hangup URLs carry `token`. */
+  async createInboundApplication(appName: string, urls: PlivoInboundUrls, token: string): Promise<string> {
+    const op = 'Plivo create application';
+    const { status, text } = await this.inboundRequest('POST', 'Application/', op, plivoCreateApplicationBody(appName, urls, token));
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    const appId = readPlivoCreatedApplication(text);
+    if (!appId) throw new PlivoApiError('refused', op, status, 'Plivo created an application without a readable app_id');
+    return appId;
+  }
+
+  /** The Application as Plivo holds it; null when Plivo has no such Application (404). */
+  async getInboundApplication(appId: string): Promise<PlivoApplication | null> {
+    const op = 'Plivo get application';
+    const { status, text } = await this.inboundRequest('GET', this.appPath(appId), op);
+    if (status === 404) return null;
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    const app = readPlivoApplication(text);
+    if (!app) throw new PlivoApiError('refused', op, status, 'Plivo sent an unreadable application');
+    return app;
+  }
+
+  /** Point the Application at `urls` with `token`; `not_found` when Plivo has no such Application. */
+  async updateInboundApplication(appId: string, urls: PlivoInboundUrls, token: string): Promise<'updated' | 'not_found'> {
+    const op = 'Plivo update application';
+    const { status, text } = await this.inboundRequest('POST', this.appPath(appId), op, plivoUpdateApplicationBody(urls, token));
+    if (status === 404) return 'not_found';
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    return 'updated';
+  }
+
+  /** Delete the Application; `not_found` when it is already gone. */
+  async deleteInboundApplication(appId: string): Promise<'deleted' | 'not_found'> {
+    const op = 'Plivo delete application';
+    const { status, text } = await this.inboundRequest('DELETE', this.appPath(appId), op);
+    if (status === 404) return 'not_found';
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    return 'deleted';
+  }
+
+  /**
+   * The ids of the account's Applications named exactly `appName`, page by page (the next
+   * page's URL built from the offset, never taken from the response). Bounded: past
+   * `PLIVO_APPLICATIONS_MAX_PAGES` pages the rest is not read (logged).
+   */
+  async findInboundApplications(appName: string): Promise<string[]> {
+    const op = 'Plivo list applications';
+    const found: string[] = [];
+    for (let page = 0; page < PLIVO_APPLICATIONS_MAX_PAGES; page++) {
+      const path = `Application/?app_name=${encodeURIComponent(appName)}&limit=${PLIVO_APPLICATIONS_PAGE_SIZE}`
+        + `&offset=${page * PLIVO_APPLICATIONS_PAGE_SIZE}`;
+      const { status, text } = await this.inboundRequest('GET', path, op);
+      if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+      const read = readPlivoApplicationPage(text);
+      if (!read) throw new PlivoApiError('refused', op, status, 'Plivo sent an unreadable application list');
+      for (const app of read.apps) if (app.appName === appName) found.push(app.appId);
+      if (!read.more) return found;
+    }
+    log.warn({ operation: op, pages: PLIVO_APPLICATIONS_MAX_PAGES }, 'Plivo application list longer than the pages read — an Application by this name past them is not found');
+    return found;
+  }
+
+  /** The app number `e164` is on (null: none), or null when the account has no such number. */
+  async getNumberApp(e164: string): Promise<{ appId: string | null } | null> {
+    const op = 'Plivo get number';
+    const { status, text } = await this.inboundRequest('GET', this.numberPath(e164, op), op);
+    if (status === 404) return null;
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    const app = readPlivoNumberApp(text);
+    if (!app) throw new PlivoApiError('refused', op, status, 'Plivo sent an unreadable number');
+    return app;
+  }
+
+  /** Put number `e164` on app `appId` (null: none); `not_found` when the account has no such number. */
+  async setNumberApp(e164: string, appId: string | null): Promise<'updated' | 'not_found'> {
+    const op = 'Plivo update number';
+    const path = this.numberPath(e164, op);
+    if (appId !== null && !PLIVO_APP_ID.test(appId)) throw new PlivoApiError('refused', op, null, 'malformed application id');
+    const { status, text } = await this.inboundRequest('POST', path, op, plivoNumberAppBody(appId));
+    if (status === 404) return 'not_found';
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    return 'updated';
+  }
+
+  /**
+   * Record a live call from now on (`POST Call/{call_uuid}/Record/`, the Record API; shapes in
+   * `plivo-inbound.wire.ts`, unverified until P0): an mp3 of at most `timeLimitSeconds`, posted to
+   * `callbackUrl` when ready. The callback URL must be on our webhook origin over https, as the
+   * dial's are. Resolves Plivo's recording id (null when its answer names none); throws a
+   * `PlivoApiError` on a refusal or no answer, and on a malformed call id or callback URL.
+   */
+  async startRecording(carrierCallId: string, req: StartRecordingRequest): Promise<{ recordingId: string | null }> {
+    const op = 'Plivo record call';
+    if (!PLIVO_ID.test(carrierCallId ?? '')) throw new PlivoApiError('refused', op, null, 'malformed call id');
+    let callbackUrl: string;
+    try {
+      callbackUrl = this.checkCallbackUrl(req.callbackUrl, 'callback_url');
+    } catch (err) {
+      throw new PlivoApiError('refused', op, null, err instanceof Error ? err.message : 'callback_url refused');
+    }
+    const timeLimit = positiveInt(req.timeLimitSeconds);
+    if (!timeLimit) throw new PlivoApiError('refused', op, null, 'no time limit');
+    const { status, text } = await this.inboundRequest(
+      'POST', `Call/${encodeURIComponent(carrierCallId)}/Record/`, op, plivoStartRecordingBody(callbackUrl, timeLimit),
+    );
+    if (status < 200 || status >= 300) throw plivoStatusFailure(op, status, text);
+    return { recordingId: readPlivoRecordingStarted(text)?.recordingId ?? null };
   }
 
   /** Plivo's signature covers the URL and a nonce, which this signature cannot carry. */

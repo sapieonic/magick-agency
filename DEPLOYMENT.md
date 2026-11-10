@@ -693,6 +693,40 @@ PLIVO_WEBHOOK_BASE_URL=https://agency.example.com/api/v1/webhooks/plivo
 Recreate the server, then follow `docs/operations.md`, "Enabling Plivo for a tenant" (add the
 credential, sync its numbers, the concurrency allocation, the campaign's carrier).
 
+**Inbound calls on Plivo numbers** (optional; [`docs/inbound.md`](docs/inbound.md)). Before the
+first credential gets inbound enabled:
+
+- **`MEDIA_WORKERS=0`.** Inbound callers are put through to agents only in one process (decision
+  IB8). With media workers on, calls are still answered, but nobody is ever connected and every
+  caller to an open route is told "we'll call you back". The server warns at boot, the super-admin
+  credential page says "Calls can't be put through to agents", and `agy-inbound-connect-unavailable`
+  pages. Keep it at 0 for as long as any credential has inbound enabled.
+- **Host the fallback answer XML off this deployment** and set
+  `PLIVO_INBOUND_FALLBACK_ANSWER_URL` to it. Plivo fetches it (with GET) when our answer URL fails
+  or this deployment is down; without it the fallback is our own route, which is down with us, so
+  callers hear nothing useful during an outage or a deploy. Any `https:` static host that does not
+  depend on this deployment will do (an S3 bucket behind CloudFront, a CDN), answering `GET` with
+  `Content-Type: application/xml` and exactly:
+
+  ```xml
+  <Response>
+    <Speak voice="WOMAN" language="en-GB">Thank you for calling. All our lines are busy at the moment. Please try again shortly. Goodbye.</Speak>
+    <Hangup/>
+  </Response>
+  ```
+
+  These are our standard busy message's words in the voice the server's own spoken messages use
+  (`AGENCY_INBOUND_STANDARD_WORDS.busy`, `PLIVO_INBOUND_BUSY_XML`), so a caller during an outage
+  hears the same British voice as any other time. Not the closed message: "we're closed" is false
+  during opening hours. It must not promise a callback: a call the fallback answers never reaches
+  us, so it leaves no Missed row. Check it from outside with `curl -si <url>` (200, the XML, that content type). The
+  URL must be an absolute `https:` URL with no fragment, or the server does not start. In
+  production the server warns at boot while inbound is enabled without it. After setting or
+  changing it, **Re-point** every credential with inbound enabled (the Application keeps the URL it
+  was given until then).
+
+Then set inbound up per tenant with `docs/operations.md`, "Setting up inbound calls for a tenant".
+
 ## 9. Verify the deployment
 
 Run through this once before letting agents in. With the API on its own host, step 7.3 says
@@ -714,6 +748,12 @@ which name each check uses.
 - [ ] Upload a small roster CSV (proves S3).
 - [ ] One real call on a test campaign: it rings, connects to the agent's browser, the status
       moves through the console, and the recording plays back if recording is on.
+- [ ] Inbound calls (only if a credential will have inbound enabled, step 8.6): `MEDIA_WORKERS=0`;
+      `PLIVO_INBOUND_FALLBACK_ANSWER_URL` set to the fallback XML hosted off this deployment, and
+      `curl -si` on it answers 200 with the XML; the boot log has neither inbound warning
+      ("MEDIA_WORKERS is above 0", "no PLIVO_INBOUND_FALLBACK_ANSWER_URL"); one test call to a
+      linked number on a route reaches an agent (`docs/operations.md`, "Setting up inbound calls
+      for a tenant").
 - [ ] The full pre-deploy checklist in [`docs/status.md`](docs/status.md) ("Pre-deploy checklist").
 
 ## 10. Variant: AWS load balancer and ACM instead of Caddy

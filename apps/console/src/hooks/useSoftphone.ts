@@ -10,6 +10,7 @@ import {
   type SoftphoneDncListedRefusal,
   type SoftphoneOutsideHoursRefusal,
   type SoftphoneRefusal,
+  type SoftphoneResult,
 } from '../api/softphone';
 import {
   trackAgencySoftphoneCallPlaced,
@@ -29,7 +30,7 @@ import {
   type DispositionFormState,
 } from '../utils/agencyDispositionForm';
 import { CATALOG_CHANGED_COPY } from '../components/agency/DispositionPad';
-import { notesStatus, type NotesStatus } from '../utils/agencyNotes';
+import type { NotesStatus } from '../utils/agencyNotes';
 import {
   appendDialKey,
   deleteLastDialChar,
@@ -64,6 +65,7 @@ import { refusalCopy, SOFTPHONE_REFUSAL_COPY } from '../utils/softphone/refusalC
 import { RingbackTone } from '../utils/softphone/ringback';
 import type { ServerClock } from './useServerClock';
 import { useLatestRef } from './useLatestRef';
+import { useCallNotesAutosave, type NotesSaveSettled } from './useCallNotesAutosave';
 import type { StationConnection } from './agencyStation/types';
 import type { AgencyDisposition } from '../types/agency';
 import type {
@@ -125,8 +127,15 @@ export interface UseSoftphoneOptions {
   frameCall: AgencyManualCall | null;
   clock: ServerClock;
   audio: SoftphoneAudio;
-  /** Log calls to this campaign by default (the station's campaign, SP7). */
+  /** Log calls to this campaign by default (the station's campaign, SP7; a Missed call's campaign). */
   presetCampaignId?: string | null;
+  /**
+   * Fill the pad with this number once the soft phone is ready, as a redial does: the Call
+   * button takes focus and nothing is dialled until the agent presses it. A Missed inbound
+   * call's Call back (`utils/softphone/prefill.ts`). Ignored while a call is live or owes its
+   * outcome, and in finish mode.
+   */
+  presetNumber?: string | null;
   /** Which host this is, for copy and analytics. */
   surface: 'softphone_page' | 'station';
   /** The agent's cue volume (0–100), for the ringback. */
@@ -296,7 +305,6 @@ export interface SoftphoneState {
   announcement: string;
 }
 
-const NOTES_DEBOUNCE_MS = 700;
 const RECENT_LIMIT = 8;
 
 function callKey(call: AgencyManualCall): string {
@@ -321,6 +329,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     clock,
     audio,
     presetCampaignId = null,
+    presetNumber = null,
     surface,
     cueVolume = 70,
     enabled = true,
@@ -418,7 +427,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const [lastCall, setLastCall] = useState<AgencyManualCall | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [focusCallToken, setFocusCallToken] = useState(0);
-  const entryRef = useRef<'typed' | 'pasted' | 'redial'>('typed');
+  const entryRef = useRef<'typed' | 'pasted' | 'redial' | 'inbound_callback'>('typed');
   const selectionMethodRef = useRef<'number_key' | 'click'>('click');
   const presetAppliedRef = useRef(false);
 
@@ -531,13 +540,27 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setHangupFailure(null);
       setCallerDraft(null);
       entryRef.current = 'typed';
-      notesSaveRef.current = { lastKeystrokeAt: null, lastSaveSucceededAt: null, lastUpdatedAt: null };
-      setNotesMeta((m) => ({ ...m, inFlight: false, failure: null }));
+      resetStamps();
+      clearSaveState();
       loadRecent();
     }
     // `newest` is read for the settled copy only; the effect is keyed on the call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.id, call === null]);
+
+  // A number handed in (a Missed call's Call back), filled like a redial once the bootstrap
+  // can say whether a call is still on this soft phone, and never dialled. A call that is live
+  // or owes its outcome keeps the screen: the number waits until it settles, and is filled then.
+  // Declared after the settle effect above, which empties the pad, so it fills the emptied pad.
+  const presetNumberAppliedRef = useRef(false);
+  useEffect(() => {
+    if (presetNumberAppliedRef.current || !bootstrap || !presetNumber || finishOnly) return;
+    if (call !== null) return;
+    presetNumberAppliedRef.current = true;
+    entryRef.current = 'inbound_callback';
+    setNumberState(sanitiseDialInput(presetNumber));
+    setFocusCallToken((n) => n + 1);
+  }, [bootstrap, presetNumber, call, finishOnly]);
 
   /**
    * The field set arriving after the call (a reload where the `manual_call` frame
@@ -826,70 +849,49 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   );
 
   // ── Fields and notes, autosaved onto the live call ───────────────────────
-  const notesSaveRef = useRef<{ lastKeystrokeAt: number | null; lastSaveSucceededAt: number | null; lastUpdatedAt: string | null }>({
-    lastKeystrokeAt: null,
-    lastSaveSucceededAt: null,
-    lastUpdatedAt: null,
-  });
-  const [notesMeta, setNotesMeta] = useState<{ inFlight: boolean; failure: 'retryable' | 'terminal' | null; tick: number }>({
-    inFlight: false,
-    failure: null,
-    tick: 0,
-  });
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftRef = useRef({ fieldValues, notes });
   draftRef.current = { fieldValues, notes };
-  const callRef = useRef(call);
-  callRef.current = call;
 
-  const flushSave = useCallback(async () => {
-    saveTimerRef.current = null;
-    const target = callRef.current;
-    if (!target || !tenantId || !accountId) return;
-    const { fieldValues: values, notes: text } = draftRef.current;
-    // Read at send time, not from the render that armed the timer: a save armed
-    // before the field set arrived may fire after it.
-    const fieldSet = fieldSetRef.current;
-    const sentAt = Date.now();
-    setNotesMeta((m) => ({ ...m, inFlight: true }));
-    const result = await updateManualCall(
-      target.id,
-      // Notes alone until the field set is known: `fields` would replace the stored values.
-      fieldSet.known ? { fields: cleanFieldValues(fieldSet.fields, values), notes: text } : { notes: text },
-      tenantId,
-      accountId,
-    );
-    if (callRef.current?.id !== target.id) return;
-    if (result.ok) {
-      notesSaveRef.current = {
-        ...notesSaveRef.current,
-        lastSaveSucceededAt: sentAt,
-        lastUpdatedAt: result.value.updated_at,
-      };
-      setNotesMeta((m) => ({ inFlight: false, failure: null, tick: m.tick + 1 }));
-      adoptCall(result.value);
-      return;
-    }
-    const refusal = result.refusal;
-    if (refusal.code === 'fields_invalid' && refusal.details) {
-      setFieldErrors(fieldErrorsFromDetails(refusal.details));
-    }
-    const terminal = refusal.code === 'call_settled' || refusal.code === 'call_not_found';
-    setNotesMeta((m) => ({ inFlight: false, failure: terminal ? 'terminal' : 'retryable', tick: m.tick + 1 }));
-    if (!terminal && refusal.code !== 'fields_invalid') {
-      saveTimerRef.current = setTimeout(() => void flushSave(), NOTES_DEBOUNCE_MS * 4);
-    }
-  }, [tenantId, accountId, fieldSetRef, adoptCall]);
-
-  const scheduleSave = useCallback(() => {
-    if (!callRef.current) return;
-    if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => void flushSave(), NOTES_DEBOUNCE_MS);
-  }, [flushSave]);
-
-  useEffect(() => () => {
-    if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
-  }, []);
+  const sendDraft = useCallback(
+    (target: AgencyManualCall) => {
+      if (!tenantId || !accountId) return null;
+      const { fieldValues: values, notes: text } = draftRef.current;
+      // Read at send time, not from the render that armed the timer: a save armed
+      // before the field set arrived may fire after it.
+      const fieldSet = fieldSetRef.current;
+      return updateManualCall(
+        target.id,
+        // Notes alone until the field set is known: `fields` would replace the stored values.
+        fieldSet.known ? { fields: cleanFieldValues(fieldSet.fields, values), notes: text } : { notes: text },
+        tenantId,
+        accountId,
+      );
+    },
+    [tenantId, accountId, fieldSetRef],
+  );
+  const settleDraft = useCallback(
+    (result: SoftphoneResult<AgencyManualCall>): NotesSaveSettled => {
+      if (result.ok) {
+        adoptCall(result.value);
+        return { ok: true, updatedAt: result.value.updated_at };
+      }
+      const refusal = result.refusal;
+      if (refusal.code === 'fields_invalid' && refusal.details) {
+        setFieldErrors(fieldErrorsFromDetails(refusal.details));
+      }
+      const terminal = refusal.code === 'call_settled' || refusal.code === 'call_not_found';
+      return { ok: false, terminal, retry: !terminal && refusal.code !== 'fields_invalid' };
+    },
+    [adoptCall],
+  );
+  const {
+    status: notesStatusLine,
+    scheduleSave,
+    cancelSave,
+    markKeystroke,
+    resetStamps,
+    clearSaveState,
+  } = useCallNotesAutosave({ call, notes, send: sendDraft, settle: settleDraft });
 
   const setFieldValue = useCallback(
     (key: string, value: CallFieldValue) => {
@@ -910,23 +912,13 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     (value: string) => {
       setNotesState(value);
       notesTouchedRef.current = true;
-      notesSaveRef.current = { ...notesSaveRef.current, lastKeystrokeAt: Date.now() };
-      setNotesMeta((m) => ({ ...m, tick: m.tick + 1 }));
+      markKeystroke();
       scheduleSave();
     },
-    [scheduleSave],
+    [markKeystroke, scheduleSave],
   );
 
   const notesEnabled = call !== null;
-  const notesStatusLine = notesStatus({
-    notes,
-    lastKeystrokeAt: notesSaveRef.current.lastKeystrokeAt,
-    lastSaveSucceededAt: notesSaveRef.current.lastSaveSucceededAt,
-    lastUpdatedAt: notesSaveRef.current.lastUpdatedAt,
-    inFlight: notesMeta.inFlight,
-    failure: notesMeta.failure,
-    acceptingWrites: notesEnabled,
-  });
 
   // ── Outcome ───────────────────────────────────────────────────────────────
   const padEnabled = phase === 'on_call' || phase === 'outcome';
@@ -966,10 +958,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (saveBlockAt(now) !== null) return;
     const payload = buildSubmitPayload(catalog, fullForm, now);
     if (!payload) return;
-    if (saveTimerRef.current !== null) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    cancelSave();
     setSaving(true);
     setPadRejection(null);
     const cleaned = cleanFieldValues(fields, fieldValues);
@@ -1021,7 +1010,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setPadRejection(refusalCopy(refusal));
     }
     setAnnouncement(`The outcome wasn’t saved. ${refusalCopy(refusal)}`);
-  }, [call, saving, tenantId, accountId, clock, fields, fieldsKnown, fieldValues, saveBlockAt, catalog, fullForm, adoptCall, loadBootstrap]);
+  }, [call, saving, tenantId, accountId, clock, fields, fieldsKnown, fieldValues, saveBlockAt, catalog, fullForm, adoptCall, loadBootstrap, cancelSave]);
 
   // ── Hang up ───────────────────────────────────────────────────────────────
   const hangup = useCallback(async () => {

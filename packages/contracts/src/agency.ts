@@ -74,4 +74,5 @@ export * from './agency/spine';
 export * from './agency/softphone';
 export * from './agency/breaks';
 export * from './agency/assignment';
+export * from './agency/inbound';
 export type { AgencyActionErrorCode, AgencySoftphoneErrorCode } from './errors';

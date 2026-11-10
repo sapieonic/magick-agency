@@ -5,7 +5,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { uuidFor } from '../setup/factories.js';
 import { TEST_REDIS_URL } from '../../helpers/test-redis.js';
 import { DEFAULTS as DB_DEFAULTS } from '../../../../../packages/db/test/integration/setup/factories.js';
-import { insertAgencyCampaign, insertAgencyContacts } from './agency-factories.js';
+import { insertAgencyCampaign, insertAgencyContacts, insertAgentSession } from './agency-factories.js';
 import { FakeStationSocket, ScriptedBridge } from './chaos/harness.js';
 
 /*
@@ -762,5 +762,24 @@ describe('the agent state machine, walked as one cycle (integration)', () => {
     // circuit distinguishes them.
     expect(ledger.filter((s) => s === 'available').length).toBeGreaterThanOrEqual(2);
     expect(ledger.filter((s) => s === 'wrapup').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('rehydrates a `wrapup` lease nothing in this process holds (a previous process left it) as `break`; a wrap-up it holds stays `wrapup`', async () => {
+    // The heartbeat renews `wrapup` only while this process vouches for it, so a key a crashed
+    // process left would lapse on its own; the reconnect must not adopt it as a live wrap-up
+    // nothing will ever end in the meantime.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const orphan = (await insertAgentSession(campaign.id)).id as string;
+    await runtime.agents.set(orphan, 'wrapup', { attemptId: uuidFor('attempt-of-a-dead-process'), leaseMs: 45_000 });
+    expect(await runtime.rehydrateAgent(orphan)).toBe('break');
+    expect((await runtime.agents.get(orphan))?.state).toBe('break');
+
+    const held = (await insertAgentSession(campaign.id)).id as string;
+    expect(await runtime.wrapup.enter({
+      sessionId: held, attemptId: uuidFor('attempt-held-here'), campaignId: campaign.id, tenantId: TENANT,
+      wrapupSeconds: 0, autoReturn: false, requiresDisposition: true,
+    })).toBe(true);
+    expect(await runtime.rehydrateAgent(held)).toBe('wrapup');
+    expect((await runtime.agents.get(held))?.state).toBe('wrapup');
   });
 });

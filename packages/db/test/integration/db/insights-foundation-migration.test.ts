@@ -9,7 +9,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../../../src/migrations-dir.js';
 import { TEST_DB_URL } from '../../helpers/test-db.js';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import { insertAttempt, insertCampaign, insertContact } from '../fixtures.js';
+import { ACCOUNT, TENANT, insertAttempt, insertCampaign, insertContact } from '../fixtures.js';
 
 const pool = () => getTestPool();
 
@@ -55,6 +55,40 @@ async function planOf(sql: string, params: unknown[] = []): Promise<string> {
     await client.query('ROLLBACK');
     client.release();
   }
+}
+
+const ROSTER_CAMPAIGNS = 4;
+const ROSTER_NAME = 'Insights plan roster';
+
+/**
+ * 20,000 contacts over four campaigns of this account, interleaved row by row (as several
+ * campaigns' imports land in one table), COMMITTED and then `VACUUM (ANALYZE)`d so the visibility
+ * map marks the pages all-visible, as autovacuum keeps a production table. Returns the campaign a
+ * plan reads (a quarter of the rows, scattered over every page).
+ */
+async function insertVacuumedRoster(): Promise<string> {
+  const { rows } = await pool().query<{ id: string }>(
+    `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids)
+     SELECT $1, $2, $3, ARRAY['+14155550100'] FROM generate_series(1, $4::int) RETURNING id`,
+    [TENANT, ACCOUNT, ROSTER_NAME, ROSTER_CAMPAIGNS]);
+  const campaigns = rows.map((r) => r.id);
+  await pool().query(
+    `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, state)
+     SELECT ($1::uuid[])[1 + g % $4::int], $2, $3, '+1415555' || lpad((g % 10000)::text, 4, '0'),
+            CASE WHEN g % 100 = 0 THEN 'in_flight' WHEN g % 100 = 1 THEN 'connected'
+                 WHEN g % 2 = 0 THEN 'pending' ELSE 'completed' END
+       FROM generate_series(1, 20000) g`,
+    [campaigns, TENANT, ACCOUNT, ROSTER_CAMPAIGNS]);
+  await pool().query('VACUUM (ANALYZE) agency_contacts');
+  return campaigns[0]!;
+}
+
+/** The roster's rows gone, and their pages given back (a later file sizes the table by its pages). */
+async function removeVacuumedRoster(): Promise<void> {
+  await pool().query(
+    `DELETE FROM agency_contacts WHERE campaign_id IN (SELECT id FROM agency_campaigns WHERE name = $1)`, [ROSTER_NAME]);
+  await pool().query('DELETE FROM agency_campaigns WHERE name = $1', [ROSTER_NAME]);
+  await pool().query('VACUUM agency_contacts');
 }
 
 async function dialsPlaced(contactId: string): Promise<number> {
@@ -154,9 +188,11 @@ describe('0011 — insights foundation', () => {
   });
 
   it('the insights indexes exist with their definitions and comments', async () => {
+    // 0026 rebuilt it with `callback_source` (the inbound callback isCallbackSql reads); its own test
+    // pins that its down restores this file's definition.
     expect(await indexDef('idx_agency_contacts_insights')).toBe(
       'CREATE INDEX idx_agency_contacts_insights ON public.agency_contacts USING btree (campaign_id, state) '
-      + 'INCLUDE (next_attempt_at, suppressed_reason, attempt_count, dials_placed, last_outcome, last_disposition, assigned_user_id)',
+      + 'INCLUDE (next_attempt_at, suppressed_reason, attempt_count, dials_placed, last_outcome, last_disposition, assigned_user_id, callback_source)',
     );
     expect(await indexDef('idx_agency_attempts_campaign_dialed')).toBe(
       'CREATE INDEX idx_agency_attempts_campaign_dialed ON public.agency_call_attempts USING btree (campaign_id, dialed_at) '
@@ -175,21 +211,36 @@ describe('0011 — insights foundation', () => {
     }
   });
 
-  // No ANALYZE or VACUUM here: either leaves pg_class statistics behind (reltuples is updated in
-  // place, never rolled back), and other files' plan tests then see a different planner. With the
-  // test's near-empty tables, each read is phrased so its index is the only one that serves it
-  // whole: the only covering index for the bucket count, the only index giving the range in order.
+  // Over a roster of the test's own, committed and VACUUM ANALYZEd: an index-only scan is priced
+  // by how much of the table the visibility map marks all-visible, and only a VACUUM outside a
+  // transaction sets it. Planned on the near-empty tables a full run leaves (as it was), the pick
+  // followed whether autovacuum's ANALYZE had landed and went to idx_agency_contacts_assignee about
+  // one full run in four; seeded inside a rolled-back transaction (0003/0004's roster) nothing is
+  // all-visible, an index-only scan costs what an index scan does, and the narrower
+  // idx_agency_contacts_assignee wins every time. The roster's rows and pages go again before the
+  // test ends (deleted, then VACUUM gives the pages back, as 0017's test does), so a later file
+  // does not plan over a table sized by them. The ANALYZE's column statistics stay: no plan test
+  // leans on agency_contacts' statistics without ANALYZEing its own rows first.
   it('a roster bucket count for one campaign is an Index Only Scan on idx_agency_contacts_insights', async () => {
-    const plan = await planOf(
-      `SELECT state, count(*)::int AS n,
-              count(*) FILTER (WHERE suppressed_reason IS NOT NULL)::int AS suppressed,
-              sum(dials_placed)::int AS dials, count(assigned_user_id)::int AS assigned
-         FROM agency_contacts WHERE campaign_id = $1 GROUP BY state`,
-      [CAMPAIGN],
-    );
-    expect(plan).toMatch(/Index Only Scan using idx_agency_contacts_insights on agency_contacts/);
-    expect(plan).toMatch(/Index Cond: \(campaign_id = /);
-  });
+    const campaign = await insertVacuumedRoster();
+    try {
+      const plan = await planOf(
+        `SELECT state, count(*)::int AS n,
+                count(*) FILTER (WHERE suppressed_reason IS NOT NULL)::int AS suppressed,
+                sum(dials_placed)::int AS dials, count(assigned_user_id)::int AS assigned
+           FROM agency_contacts WHERE campaign_id = $1 GROUP BY state`,
+        [campaign],
+      );
+      expect(plan, plan).toMatch(/Index Only Scan using idx_agency_contacts_insights on agency_contacts/);
+      expect(plan, plan).toMatch(/Index Cond: \(campaign_id = /);
+    } finally {
+      await removeVacuumedRoster();
+    }
+    // Seeding, two VACUUMs and a delete: seconds on a loaded machine, as 0017's roster test.
+  }, 60_000);
+
+  // The ranged reads plan over the near-empty tables a full run leaves: each is phrased so its
+  // index is the only one that serves it whole (the only index giving the range in order).
 
   it('the ranged attempt and session-event reads use their indexes, in order', async () => {
     const dialed = await planOf(

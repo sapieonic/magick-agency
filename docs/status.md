@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-07.
+"is it done". As of 2026-11-09.
 
 ## Summary
 
@@ -1079,6 +1079,61 @@ module's `terraform validate` (its provider download timed out; `fmt` passed). C
 this branch: every count below is a local run, so the renderer's PDF suite on GitHub's runner,
 `build-lambda.mjs` in CI and the `mobile.yml` job are unproven until the branch is pushed.
 
+### Inbound calls 2026-11-09 (IB1–IB8, [`inbound.md`](inbound.md))
+
+Customers ringing back the Plivo numbers agency dials from, answered on our stream and turned into
+follow-ups when nobody takes them. Designed and locked the same day (IB1–IB8). **P1 is built**: the
+foundation below, then three slices on it (the super-admin's Application and number links with the
+§8.2 cascade; the answer, hangup and fallback webhooks with what callers hear, the Missed row, the
+inbound callback and the sweep; the console's routes and Missed list with Call back), then an
+independent review's fixes (`inbound.md` §12): a `CallUUID` another tenant or credential holds is
+refused; the live-index migration renumbered `0026`; IB5 counts admitted callers only; CA5's
+code-less sweep reads an index of inbound callbacks; read-only carrier calls out of the operator
+transactions; an answer past its budget leaves no follow-up; a second Re-point refused while the
+first's token is still needed; a message with no recording is spoken by the carrier, never
+silence. **P2 is built** (connecting agents, console stations, one process, IB8): parked callers on
+a looped hold, the queue, sticky routing (loose and strict), the offer and the bind, the release
+hook taking an agent from wrap-up, `inbound_waiting` holding pacing back, the in-flight clash (§5.4),
+voicemail, the outcome routes and the console's panel, then an independent review's fixes
+(`inbound.md` §12, P2 row), then a verification pass's two test fixes (below, "Test counts").
+**The fix pass is done** (two rounds, decisions IQ25–IQ45 in [`decisions.md`](decisions.md) §4,
+"Inbound fix pass"; the P2 plan's build rulings are IQ1–IQ24 there): independent engineering,
+product and QA reviews of P1 and P2, then a review of the first round, each behaviour fix pinned by a
+test and each guard mutation-checked (`inbound.md` §12). What changed for callers and agents: our seven standard
+recordings in British English wherever a route has none, so no caller is put down in silence;
+withheld and DNC callers never promised a callback; recordings uploaded and previewed in the route
+editor; a caller nobody in the pool could take overflowed at once, decided at the answer, with a
+15 s rejoin grace for a dropped station; a declined offer requeued; an agent on a break never
+lifted back into the pool; the inbound wrap-up on the matched campaign's auto-return rule (120 s
+for an unmatched caller) and a supervisor's "Close and make available"; the webhooks' nonce guard
+failing closed; crash-swept calls `failed` and early hangups ended at once; the kill switch and a
+credential disable that keeps its links; `MEDIA_WORKERS=0` a loud deployment invariant, the
+Application health check on a timer, nine `agy-inbound-*` alert rules and a dashboard row; inbound
+counted apart in usage with carrier and hold time; Missed rows closed when a person is reached,
+Reopen, reassign and a nav badge; why a call was answered closed (`closed_cause`) and the inbound
+summary. Migrations `0028`–`0030`.
+
+| Area | What was built |
+|---|---|
+| Database | `0026_inbound_live_indexes.sql`: IB5's per-account live index, the inbound callbacks index, `callback_source` in the insights index. `0024_inbound.sql`: `agency_inbound_routes`, `agency_inbound_route_numbers` (one live route per number), the spine `agency_inbound_calls` (also the Missed row), `agency_calls.origin = 'inbound'` with `inbound_call_id`, contact `callback_source` / `callback_due_at`, `agency_campaigns.inbound_sticky_enabled`, the credential's inbound Application, URLs and token hash, numbers' `inbound_linked_at`; `0025_inbound_checks_validate.sql` validates the big tables' CHECKs (`packages/db/BASELINE.md`) |
+| Contracts | `src/agency/inbound.ts` (vocabularies, route config, defaults, limits), `src/api/agency/inbound.ts` (route DTOs, the Missed list), `src/api/platform/super-admin-inbound.ts` (credential inbound state and health, number link, super-admin audit actions), error codes `errors.ts` §6, flag `agency_inbound_enabled` (default off), permissions `agency.inbound.read` (agent) and `agency.inbound.write` (account admin) |
+| Domain | `inbound-schedule.ts` (open at an instant; the exact next opening across DST and holidays), `plivo-number.ts` (moved from the credential specs: one number rule for sync and webhooks), `zone-clock.ts` (the wall-clock primitives moved out of `calling-hours.ts`) |
+| Server | `agency/inbound/route-config.ts` (the route body's zod schemas; a PATCH judged as the route it makes), `db/repositories/agency/inbound-route.repository.ts` and `inbound-call.repository.ts`, `telephony/plivo/inbound-token.ts`; the credential's inbound storage in `packages/db`; usage counts' third arm; the `'agency'` call scope takes inbound legs; audit vocabulary. Then the slices: `telephony/credentials/inbound-service.ts` and the super-admin inbound routes; `api/routes/webhooks/plivo-inbound.ts`, `seams/inbound-call-router.ts`, `agency/inbound/inbound-call-router.ts`, `identify-caller.ts`, `inbound-clips.ts`, the bridge's `acceptInboundCall` / `playClipSequenceThenHangUp`; the console routes `proxy-agency-inbound/` |
+| Console, super-admin | Settings → Inbound calls (routes and the route editor), Missed calls (supervisors and agents) with Call back into the soft phone; the credential page's Inbound section, the numbers page's Link / Unlink |
+| P2 database and contracts | `0027_inbound_connect.sql`; `AgencyInboundCall`, the `inbound_call` and `customer_waiting` station frames (console stations only), release reason `inbound_call`, the queue tile, `voicemail_url`, `inbound_waiting` on the pacing bus, the agent hash's `inbound` field |
+| P2 server | The bridge's parked mode (`playInboundHold`, `stopInboundHold`, `recordInboundAudio`), `agency/inbound/inbound-connector.ts` with `inbound-queue.ts` and `eligibility.ts`, the release hook (`AgencyDialer.registerInboundTake`), `pacing/inbound-hold-back.ts`, the finish routes (`/inbound/calls/:id`, notes, hangup, disposition, dnc) and `GET /inbound/queue`, `inbound-voicemail.ts`, the in-flight clash in the dialer, the outcome-lapse sweep, the metrics |
+| P2 console | `InboundCallView` in the station's geometry, the chime, the "Your customer is waiting" pill, the supervisor's queue tiles, the campaign's "Put callers through to their agent", voicemail playback on the Missed list |
+| Fix pass database and contracts | `0028_inbound_missed_follow_up.sql` (`handled_reason`, the summary's index), `0029_inbound_reach_settles.sql` (`callback_reopened`, `carrier_seconds`), `0030_inbound_reached_on_outcome.sql` (the person-reached close, `closed_cause`); `AGENCY_INBOUND_STANDARD_WORDS` and the standard recordings' names, the queue tile's `no_agents_available`, route warnings, the recording upload and preview, Reopen, reassign, the badge's count, the summary |
+| Fix pass server | `apps/server/assets/inbound/` (seven WAVs and their README) with `scripts/generate-inbound-clips.ts` and `inbound-standard-clips.ts`; `inbound-recordings.ts` and the clip routes; `inbound/start.ts` (sweeps, lapse timer, shutdown), `inbound-handover.ts`, `inbound-wrapup.ts`; `telephony/credentials/inbound-monitor.ts`; the summary (`inbound-report.repository.ts`) and the Missed work routes; the inbound usage columns; `grafana/` inbound rules and dashboard row |
+| Fix pass console, super-admin | The route editor's recordings (upload, Play, delete), default hours and warnings; Missed calls' Reopen, Reassign, "Former member", the badge and the flag-off notice; the Inbound summary; the floor's "Close and make available"; super-admin's connect-unavailable copy, "Inbound · no route", unrouted Missed rows on a number, the Usage page's inbound columns |
+
+**The mobile wire:** P2's foundation changed `agency_wire` itself (`enums.dart`, `softphone.dart`,
+`station.dart` and the fixtures test); its `dart test` has now run on the merged branch: 510
+passed (Dart 3.13.7). No inbound call has been placed: P0 (the live Plivo checks) needs an
+account. Still to build: P3 (the mobile app's frames, pickups from break and the soft phone, the
+media-worker handover, reports and Insights) and P4 (VoiceLink inbound); what else remains is
+under "Not built".
+
 ### Reports infrastructure 2026-11-09
 
 `aws/terraform` now owns everything reports need except the database (Supabase) and Redis
@@ -1105,7 +1160,118 @@ and the server's integration lanes (no Postgres on this machine at the time).
 
 ## Test counts
 
-Latest run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
+Latest run, 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
+§12), on the merged branch:
+
+Run one after another from inside each package on the default test database
+(`magick_agency_test`) and Redis db 1 with no other run sharing them. The integration lanes, `pnpm
+build`, `test:grafana`, `test:release`, lint and every unit suite ran again on `dbdbc72`, after
+the behaviour-preserving cleanup pass (shared helpers, dead code removed, fewer reads on the answer
+path; no contract or migration change). `pnpm lint` clean in 9 packages; `pnpm test:grafana` 33 and `pnpm
+test:release` 10 pass; `pnpm build` green. `apps/mobile/packages/agency_wire` `dart test` 510 passed
+and `dart analyze` clean (Dart 3.13.7 only, the package run outside the Flutter workspace with the
+contract fixtures linked; `agent_audio` and the app need Flutter and were not run).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9614 passed + 1 expected fail (488 files) | rest lane 2631 passed + 9 expected fail + 2 skipped (249 files + 2 skipped, the opt-in scale suites); wall-clock lane 19 (4 files) |
+| `packages/db` | 428 (25 files) | 731 (73 files) |
+| `apps/console` | 6100 (323 files) | — |
+| `apps/super-admin` | 506 (37 files) | — |
+| `packages/contracts` | 372 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `packages/web-ui` | 240 (20 files) | — |
+| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped) | — |
+| `packages/observability` | 18 (4 files) | — |
+
+One failure on the first unit run, fixed and not a product fault: `apps/super-admin`
+`SAUsagePage` read a stat card's text while its count-up animation (`useCountUp`) was mid-frame
+("0:02:02" for "2:02:02"), about one run in three; the cards' settled `aria-label` is read instead
+(`044aab9`), green 10 runs in a row; the super-admin tests now run with reduced motion, so the cards
+show their settled value and the test reads the visible text again. Known flakes the fix pass removed: the `packages/db` plan tests
+that flipped with autovacuum's statistics (0003, 0004, 0005, 0011, 0015, 0017 and the usage read now
+plan over rows of their own), `report-assembler-deadline`'s unhandled timer, and the audit drain's
+threshold at `LOAD_SCALE=3`.
+
+Previous run, 2026-11-09, inbound calls P1 and P2 complete (`inbound.md` §12, after the P2 review
+fix pass and the verification pass's two test fixes), on commit `6840f9b`, run one after another
+from inside each package on the default test database (`magick_agency_test`) and Redis db 1 with no
+other run sharing them; every step green on its first run, no flake seen: `pnpm lint` clean in 9
+packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass. Not run: `pnpm build` and
+`apps/mobile` (no Flutter or Dart here: P2's `agency_wire` changes are untested by `dart test`).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9467 passed + 1 expected fail + 42 skipped (478 files) | rest lane 2520 passed + 9 expected fail + 2 skipped (239 files + 2 skipped, the opt-in scale suites); wall-clock lane 19 (4 files) |
+| `packages/db` | 428 (25 files) | 696 (68 files) |
+| `apps/console` | 6016 (316 files) | — |
+| `apps/super-admin` | 500 (37 files) | — |
+| `packages/contracts` | 367 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `packages/web-ui` | 240 (20 files) | — |
+| `apps/report-renderer` | 88 passed + 2 skipped (11 files + 1 skipped) | — |
+| `packages/observability` | 14 (3 files) | — |
+
+The previous full run (on `2f68f55`) failed three tests, each a test that read a state before the
+code under test had settled it, not a product fault (commits `be46605`, `6840f9b`):
+
+- `packages/db` `attempt-indexes-migration` (`idx_agency_contacts_connected`) and
+  `contacts-in-flight-index-migration` (`idx_agency_contacts_in_flight`): their EXPLAIN plans ran
+  over whatever earlier files left. In the failing file order `agency_contacts` was analyzed empty
+  (reltuples 0, no column statistics), both partial indexes were bloated by earlier files' dead
+  rows (5 pages) and `idx_agency_contacts_insights` was 1 page, rebuilt by the last down → up
+  across `0026` (which rebuilds it); priced by pages, the planner served both sweeps from the
+  insights index with `state` on its second column. Reproduced red in that order and on a scratch
+  database in that state. Over a campaign-shaped roster with fresh statistics both sweeps use their
+  partial indexes, with or without `0026`, so this is not a production regression; it is the same
+  latent fragility the busy-probe test had, exposed by the inbound work (`0026`'s rebuild on every
+  down → up across it, more rolled-back rosters). Both tests now insert and ANALYZE a roster and
+  its attempts inside their rolled-back transaction (`insertPlanRoster`, `test/integration/fixtures.ts`).
+  Mutation-checked: each partial predicate widened to take `pending`, and each made one the query
+  does not imply, turns the plan assertion red. A rolled-back ANALYZE still leaves the table's and
+  indexes' `reltuples` / `relpages` (written in place) and the rows' index entries behind, so a
+  plan test that seeds nothing can still follow what an earlier file did.
+- `apps/server` `inbound-connect-e2e` 2b (the sticky wait lapses, the team takes the caller): it
+  read B's `inbound_call` frame and A's last `customer_waiting` at the instant the spine row read
+  `offered`, which the connector commits before it sends the frames (and A's socket carries the
+  first call's audio ahead of the notice). Under CPU load the old test failed 1 run in 9 (on B's
+  frame); the full lane failed it on A's. The connector's order is right (one resolved panel
+  promise, frames in call order; an offered caller is out of every search). The test now waits for
+  both frames and pins A's notices for the call as exactly [waiting, cleared]: 28 of 28 runs under
+  CPU load green; mutation-checked (re-notifying on every search, and not clearing on the offer,
+  each red).
+
+Previous run, 2026-11-09, inbound calls P1 (the foundation, the three slices and the review's fixes,
+`inbound.md` §12), from inside each package, on this worktree's own test database and Redis db with
+no other run sharing them: `pnpm lint` clean in 9 packages; `pnpm test:grafana` 33 and
+`pnpm test:release` 10 pass; `contracts-literals --check` up to date (51 vocabularies). Not rerun
+(untouched by the fix pass): `apps/report-renderer`, `packages/web-ui`, `packages/domain`,
+`pnpm build`, and `apps/mobile` (no Flutter or Dart here; the only contract change since the
+slices is a super-admin error code, which the app does not decode).
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9305 passed + 1 expected fail + 42 skipped (468 files) | rest lane 2416 passed + 9 expected fail + 2 skipped (231 files + 2 skipped, the opt-in scale suites); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 684 (67 files) |
+| `apps/console` | 5913 (309 files) | — |
+| `apps/super-admin` | 500 (37 files) | — |
+| `packages/contracts` | 361 (12 files) | — |
+| `packages/observability` | 14 (3 files) | — |
+
+Inbound's own files within those counts: server unit `plivo-inbound-webhooks` 17,
+`inbound-service` 17, `plivo-inbound-adapter` 12, `agency/inbound/*` 25, `webrtc-bridge-inbound`
+12; server integration `inbound-call-router` 15, `inbound-call-repository` 20, `inbound-follow-up`
+17, `inbound-route-repository` 18, `api/inbound-routes` 13, `plivo-inbound-e2e` 18,
+`plivo-inbound-admin` 22; db integration `inbound-migration` 31, `inbound-live-indexes-migration` 6,
+`phone-number-inbound.repository` 7. `multiple-running-campaigns-migration`'s busy-probe plan test,
+which failed once in a full `packages/db` run and passed alone, now seeds and analyzes its own
+roster inside its rolled-back transaction: its plan had followed the statistics and index sizes
+earlier files left on `agency_contacts`. Reproduced red on the old test (and green on the new) with
+the live-number index bloated by earlier inserts and `idx_agency_contacts_customer_history` rebuilt
+small, as another file's down → up leaves it: the planner then served the probe from that index.
+Not caused by the inbound indexes or a widened probe (`numberLiveSql` is unchanged).
+
+Previous run, 2026-11-08, the reports feature (RP1–RP16) after the final review's fixes (the flag
 gate on schedules and emails, `subject_changed`, the restart reclaim, final callback refusals) and
 the simplification pass (shared helpers, one definition-key list in the contracts, the workbook's
 Definition cells filled, the console's outcome words in the workbook, lighter dataset reads,
@@ -1463,6 +1629,28 @@ files are listed in [`modules.md`](modules.md).
 Chromium layer, S3 lifecycle and the signed callback over the internet are tested only with
 mocks and the in-process renderer); see "Reports 2026-11-08" above.
 
+**Inbound calls** ([`inbound.md`](inbound.md) §12): P1 and P2 are built (answering, following up,
+and connecting callers to agents on console stations), reviewed, and the fix pass is done (two
+rounds, IQ25–IQ45). Remaining:
+
+- **P0**, the live Plivo checks, with a Plivo account: until then the Application, number, Record
+  API, hangup and answer-URL shapes (and the 4 s answer budget against Plivo's timeout) are the
+  mock carrier's.
+- **P3**: the mobile app's frames (a mobile agent is never offered a call; an all-mobile team sends
+  every caller to Missed calls), pickups from break and the soft phone, the media-worker handover,
+  "press 1 for a callback"; inbound in Insights, agent reports and customer history.
+- **P4**: VoiceLink inbound.
+- **Sign-offs**: listening to the seven standard recordings in a call, and their licence (CC BY-SA
+  4.0); the voicemail and spine retention for a UK pilot (`AGENCY_RETENTION_DAYS`, deletion on
+  request) ([`decisions.md`](decisions.md) §5).
+- **Follow-ups not built**: bulk Mark handled; grouping repeat callers on the Missed list; CSV
+  export and a per-route split of the inbound summary; service level (answered within 20 s); a
+  same-day "Closed now" override and holidays a supervisor can edit; bulk number link in
+  super-admin; "Close and put on break" on the floor; a "Save outcome on behalf" screen (the API
+  exists); keeping a pending contact's original due time after a reach (the reached call settles
+  its booked inbound callback); a console surface for tenant-default Missed rows (super-admins see
+  them per number).
+
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
 
@@ -1476,7 +1664,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Shutdown grace | Ratify `stop_grace_period: 45s`, now in `docker/docker-compose.prod.yml` (the completion-email drain is 30 s; Docker's default grace is 10 s), and the new wait for in-flight pacing ticks (5 s bound) |
 | Tidy-up defaults | Ratify the **default, pending Manas** rows of the 2026-10-16/17 rulings, including the `en-IN` display locale and the rounding rule |
 | Rate floors | Campaign rates withheld under 25 dials, agent rates under 20: one number or two? |
-| Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up; abandon clip upload-only; no API keys; super-admins created fresh |
+| Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up (superseded for Plivo numbers linked to inbound by IB1–IB8, `inbound.md`: P1 and P2 built, answering, following up and connecting callers to console stations); abandon clip upload-only; no API keys; super-admins created fresh |
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused; when built, it also clears the owner of every contact it retires (CA11, "Contact assignment" above) |
@@ -1492,6 +1680,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
 | Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
+| Inbound calls | A Plivo account for P0. Ratify the fix pass's defaults IQ25–IQ45 (`decisions.md` §4, "Inbound fix pass"): the 15 s rejoin grace, the 120 s unmatched wrap-up, the busy words for withheld and DNC callers, the kill switch's closed message, the upload limits, the alert thresholds. Sign off the standard recordings (listening and licence); decide the voicemail and spine retention for a UK pilot |
 | Plivo on tenants' own accounts | Ratify PL1–PL16 (`decisions.md` §4, "Plivo on tenants' own accounts"): a 403 on dial read as a geo-permission refusal; the three automatic pauses (`carrier_auth`, `carrier_account_unavailable`, and `carrier_refusing_calls` after five refusals in a row, PL11); a carrier with no webhook base not offered or started (PL12); numbers of a credential that cannot dial not offered; synced numbers tenant-wide; recordings from `media.plivo.com` only; the calls-per-second default of 2 per account; the carrier choice shown only with more than one carrier account |
 
 ## Deployment invariants
@@ -1516,6 +1705,10 @@ in [`operations.md`](operations.md).
    fields (config refuses without them).
 7. **Stop grace at least 45 s**, or the shutdown's 30 s completion-mail drain is cut
    (`docker/docker-compose.prod.yml` sets it).
+8. **`MEDIA_WORKERS=0` while any credential has inbound enabled** (IB8, IQ38). With media
+   workers on, inbound callers are answered but nobody is put through to an agent; the server
+   warns at boot and `agy-inbound-connect-unavailable` pages (`operations.md`, "Deployment
+   invariants" 8).
 
 The production image and compose file (`docker/`, see [`operations.md`](operations.md)
 "Production packaging") write invariants 1–5 and 7 into their headers and enforce what they can:
@@ -1622,6 +1815,9 @@ account their browser last had open. Every signed-in console page is now served 
       `TELEPHONY_CREDENTIAL_ACTIVE_KEY` set and backed up apart from the database;
       `PLIVO_WEBHOOK_BASE_URL` the public https origin plus `/api/v1/webhooks/plivo`
       (`operations.md`, "Enabling Plivo for a tenant").
+- [ ] Inbound calls (only if a credential will have inbound enabled): `MEDIA_WORKERS=0` for as long as
+      any credential has inbound enabled, and `PLIVO_INBOUND_FALLBACK_ANSWER_URL` set to the fallback
+      XML hosted off this deployment (`DEPLOYMENT.md` 8.6); the Grafana inbound rules applied.
 - [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `node dist/create-super-admin.js`
       inside the server container (`operations.md` "First super-admin").
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.

@@ -192,6 +192,27 @@ export interface ProviderCapabilities {
    * dial, and its terminal webhook is the end); such a call keeps only the max duration.
    */
   readonly ringTimeoutSeconds?: number;
+  /**
+   * Whether the adapter can start recording a live call it did not record from its answer
+   * ({@link TelephonyProvider.startRecording}: Plivo's Record API). The bridge records a
+   * connectable inbound call this way once an agent is put through, so the time the caller spent
+   * on hold is never recorded. Optional and false when absent: such a carrier's inbound calls are
+   * not recorded.
+   */
+  readonly recordsOnDemand?: boolean;
+}
+
+/** What {@link TelephonyProvider.startRecording} sends to the carrier. */
+export interface StartRecordingRequest {
+  /** Where the carrier posts the finished recording (our recording callback, with its webhook token). */
+  callbackUrl: string;
+  /** The longest the recording runs, in seconds. */
+  timeLimitSeconds: number;
+}
+
+/** Read of {@link ProviderCapabilities.recordsOnDemand}: false when undeclared or when the method is missing. */
+export function recordsOnDemand(provider: Pick<TelephonyProvider, 'capabilities' | 'startRecording'>): boolean {
+  return provider.capabilities?.recordsOnDemand === true && typeof provider.startRecording === 'function';
 }
 
 /**
@@ -257,6 +278,13 @@ export interface TelephonyProvider {
    * absent means the carrier signs nothing and the URL token is the only check.
    */
   verifyCarrierRequest?(req: CarrierHttpRequest): boolean;
+  /**
+   * Start recording a live call by the carrier's own call id; the recording is posted to
+   * `callbackUrl` when it is ready. Optional, with {@link ProviderCapabilities.recordsOnDemand}.
+   * Resolves the carrier's id for the recording (null when it names none); throws when the
+   * carrier refused or could not be asked.
+   */
+  startRecording?(carrierCallId: string, req: StartRecordingRequest): Promise<{ recordingId: string | null }>;
 }
 
 export interface MediaStreamConfig {

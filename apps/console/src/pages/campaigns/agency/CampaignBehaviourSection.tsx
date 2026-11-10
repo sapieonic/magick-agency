@@ -13,6 +13,7 @@ import { OutcomeDispositionMap } from './OutcomeDispositionMap';
 import { WrapupFields } from './WrapupFields';
 import { AbandonmentCeilingFields } from './AbandonmentCeilingFields';
 import { AssignmentFields } from './AssignmentFields';
+import { InboundStickyField } from './InboundStickyField';
 
 /**
  * Campaign configuration: calling hours, the
@@ -101,6 +102,12 @@ export interface CampaignBehaviourSectionProps {
    * nothing.
    */
   readOnly?: boolean;
+  /**
+   * Inbound calls (`agency_inbound_enabled`): adds "Put callers through to their agent"
+   * (`inbound_sticky_enabled`). Absent, the control is not shown; the page sends the loaded
+   * value either way.
+   */
+  inbound?: boolean;
 }
 
 export function CampaignBehaviourSection({
@@ -112,6 +119,7 @@ export function CampaignBehaviourSection({
   include = ['hours', 'behaviour'],
   assignment,
   readOnly = false,
+  inbound = false,
 }: CampaignBehaviourSectionProps) {
   const errors = useConfigFieldErrors(fieldErrors);
   // The catalog row each mapped outcome follows through code edits (`followCatalogEdit`).
@@ -163,6 +171,12 @@ export function CampaignBehaviourSection({
         onChange={(patch) => onChange({ ...state, ...patch })}
         errors={errors}
       />
+      {inbound ? (
+        <InboundStickyField
+          checked={state.inboundSticky}
+          onChange={(inboundSticky) => onChange({ ...state, inboundSticky })}
+        />
+      ) : null}
       <AbandonmentCeilingFields
         ceilingPct={state.abandonmentCeilingPct}
         storedPct={state.abandonmentCeilingStoredPct}

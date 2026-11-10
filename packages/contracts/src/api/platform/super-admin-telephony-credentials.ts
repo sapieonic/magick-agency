@@ -199,6 +199,29 @@ export interface TelephonyCredentialSyncNumbersResponse {
  * - `too_many_numbers` (422): the account lists more numbers than one sync reads, so the
  *   list is incomplete and nothing was changed (a partial list would retire numbers that
  *   are still on the account).
+ *
+ * Inbound (`./super-admin-inbound`, docs/inbound.md §8):
+ * - `inbound_enabled` (409): inbound is enabled on the credential. A revoke is refused
+ *   until inbound is disabled (every number unlinked first); an Enable is refused as a
+ *   repeat.
+ * - `inbound_not_enabled` (409): the action needs inbound enabled on the credential.
+ * - `inbound_numbers_linked` (409): Disable inbound is refused while any of the
+ *   credential's numbers is linked; unlink them first.
+ * - `inbound_previous_token_in_use` (409): Re-point is refused while a call answered before
+ *   the last Re-point is still live on the credential: its hangup still needs the token that
+ *   Re-point replaced, which a second Re-point would drop. Try again once it has ended (at most
+ *   the longest call, about four hours, after that Re-point).
+ * - `inbound_unconfigured` (503): the server has no public base for Plivo's callbacks
+ *   (`PLIVO_WEBHOOK_BASE_URL`), so it cannot give the carrier inbound URLs.
+ * - `phone_number_not_found` (404): no such phone number.
+ * - `phone_number_not_linkable` (409): the number cannot be linked (not synced from a
+ *   credential, not active, not assigned to the credential's tenant, the credential not
+ *   active, or inbound not enabled on it); the message says which.
+ * - `phone_number_not_linked` (409): Unlink on a number that is not linked.
+ * - `carrier_number_missing` (409): the carrier account does not have the number (it was
+ *   released there); sync the credential's numbers.
+ * - `carrier_refused` (422): the carrier answered the request with a refusal that is not
+ *   about the credential (HTTP 400, 404 on an Application, ...); nothing was changed.
  */
 export type TelephonyCredentialErrorCode =
   | 'credential_store_unavailable'
@@ -215,7 +238,17 @@ export type TelephonyCredentialErrorCode =
   | 'invalid_transition'
   | 'in_use'
   | 'credential_not_active'
-  | 'too_many_numbers';
+  | 'too_many_numbers'
+  | 'inbound_enabled'
+  | 'inbound_not_enabled'
+  | 'inbound_numbers_linked'
+  | 'inbound_previous_token_in_use'
+  | 'inbound_unconfigured'
+  | 'phone_number_not_found'
+  | 'phone_number_not_linkable'
+  | 'phone_number_not_linked'
+  | 'carrier_number_missing'
+  | 'carrier_refused';
 
 /** Runtime list of {@link TelephonyCredentialErrorCode}, in declaration order. */
 export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
@@ -234,6 +267,16 @@ export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
   'in_use',
   'credential_not_active',
   'too_many_numbers',
+  'inbound_enabled',
+  'inbound_not_enabled',
+  'inbound_numbers_linked',
+  'inbound_previous_token_in_use',
+  'inbound_unconfigured',
+  'phone_number_not_found',
+  'phone_number_not_linkable',
+  'phone_number_not_linked',
+  'carrier_number_missing',
+  'carrier_refused',
 ] as const satisfies readonly TelephonyCredentialErrorCode[];
 
 const _allTelephonyCredentialErrorCodesListed: AllListed<

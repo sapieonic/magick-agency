@@ -775,6 +775,17 @@ export interface AgencySoftphoneDispositionInvalidRefusal extends AgencySoftphon
   reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
 }
 
+/**
+ * 409 `customer_on_inbound_call`: the number is on an inbound call to the account (waiting,
+ * connected, or its outcome still owed). No override. The account's busy rule (MC4) with an
+ * inbound call on the line: the customer is calling us, so `contact_in_flight`'s "a campaign is
+ * calling this customer" would be false, and an unmatched caller has no contact to name.
+ */
+export interface AgencySoftphoneCustomerOnInboundCallRefusal extends AgencySoftphoneErrorResponse {
+  code: 'customer_on_inbound_call';
+  inbound_call_id: string;
+}
+
 /** 409 `contact_in_flight`: a campaign attempt is live on the matched contact. No override. */
 export interface AgencySoftphoneContactInFlightRefusal extends AgencySoftphoneErrorResponse {
   code: 'contact_in_flight';

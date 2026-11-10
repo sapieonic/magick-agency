@@ -129,6 +129,53 @@ describe('WebRtcBridgeSession.getTalkTimeSeconds', () => {
     vi.advanceTimersByTime(2_600); // 2.6s rounds to 3
     expect(s.getTalkTimeSeconds()).toBe(3);
   });
+
+  it('a call whose talk starts at the bind (a connectable inbound call): 0 until talkFrom, then from it, never from the answer', () => {
+    const s = makeSession();
+    s.talkCountsFromBind = true;
+    s.markAnswered();
+    vi.advanceTimersByTime(40_000); // on hold
+    expect(s.getTalkTimeSeconds()).toBe(0);
+    s.talkFrom = new Date();
+    vi.advanceTimersByTime(12_000);
+    expect(s.getTalkTimeSeconds()).toBe(12);
+  });
+});
+
+describe('WebRtcBridgeSession carrier tap and playback', () => {
+  it('one tap at a time: installing another closes the first; destroy closes it, and stops what plays', () => {
+    const s = makeSession();
+    const first = { feed: vi.fn(), close: vi.fn() };
+    const second = { feed: vi.fn(), close: vi.fn() };
+    s.installCarrierTap(first);
+    expect(s.carrierTap).toBe(first);
+    s.installCarrierTap(second);
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(s.carrierTap).toBe(second);
+    const playback = { stop: vi.fn() };
+    s.carrierPlayback = playback;
+    s.destroy();
+    expect(second.close).toHaveBeenCalledTimes(1);
+    expect(s.carrierTap).toBeNull();
+    expect(playback.stop).toHaveBeenCalledTimes(1);
+    expect(s.carrierPlayback).toBeNull();
+  });
+
+  it('removeCarrierTap removes only the tap it names, without closing it; a tap on a destroyed session is closed at once', () => {
+    const s = makeSession();
+    const tap = { feed: vi.fn(), close: vi.fn() };
+    s.installCarrierTap(tap);
+    s.removeCarrierTap({ feed: vi.fn(), close: vi.fn() });
+    expect(s.carrierTap).toBe(tap);
+    s.removeCarrierTap(tap);
+    expect(s.carrierTap).toBeNull();
+    expect(tap.close).not.toHaveBeenCalled();
+    s.destroy();
+    const late = { feed: vi.fn(), close: vi.fn() };
+    s.installCarrierTap(late);
+    expect(late.close).toHaveBeenCalledTimes(1);
+    expect(s.carrierTap).toBeNull();
+  });
 });
 
 describe('WebRtcBridgeSession.getDurationSeconds', () => {

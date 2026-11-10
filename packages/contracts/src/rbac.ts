@@ -34,9 +34,10 @@ export type MembershipRole = Role;
  * level 5. Every permission that predates the agency feature floors at `viewer`
  * or above, which means an `agent` membership grants access to exactly the six
  * agent-floored `agency.*` action permissions below (the four station ones,
- * `agency.softphone.dial` and `agency.contacts.own`), PLUS `agency.flags.read` and
+ * `agency.softphone.dial` and `agency.contacts.own`), PLUS `agency.flags.read`,
  * `agency.customer_history.read` (one number's history, with media, other agents' notes and
- * DNC reasons withheld; see its matrix entry), and to nothing else — no campaign list, no
+ * DNC reasons withheld; see its matrix entry) and `agency.inbound.read` (the Missed inbound
+ * rows assigned to the agent), and to nothing else — no campaign list, no
  * analytics, no contacts beyond the agent's own, no recordings, and no other `/proxy/*` route. That is the design, not an oversight: agent actions
  * get agency-native routes that can additionally verify the caller is the
  * reserved agent for the attempt.
@@ -126,7 +127,10 @@ export type Permission =
   | 'agency.contacts.own'
   | 'agency.softphone.manage'
   // Customer history: search one number across the tenant's campaigns, in the caller's accounts.
-  | 'agency.customer_history.read';
+  | 'agency.customer_history.read'
+  // Inbound calls (docs/inbound.md §8.1): the Missed inbound list, and the account's routes.
+  | 'agency.inbound.read'
+  | 'agency.inbound.write';
 
 /** Minimum role required for each permission */
 export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
@@ -281,6 +285,21 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // with what outcome, which is what they need before calling a customer back, and nothing of the
   // supervise-only media. Every search and export is audited, and searches are capped per user.
   'agency.customer_history.read': 'agent',
+  // ── Inbound calls (docs/inbound.md §7, §8.1) ─────────────────────────────
+  // READ floors at `agent`: an agent sees the Missed inbound rows ASSIGNED TO THEM (the sticky
+  // agent's follow-ups, §7) and marks them handled, so a customer who rang back while they were
+  // away reaches the agent who knows them. The subject of what it reads is the caller for an
+  // agent: the routes force `assignee = me` unless the caller also holds `agency.supervise`, which
+  // opens the account's whole list (and the unassigned rows). It reads no route configuration and
+  // no other agent's rows, so the hierarchy comment's "nothing beyond their own" still holds.
+  // Every route it guards also requires the `agency_inbound_enabled` flag.
+  //
+  // WRITE floors at `account_admin`: a route decides which numbers ring through to whom, when the
+  // account is open, what callers hear and whether calls are recorded — account-wide settings,
+  // as `agency.softphone.manage` is. Linking a number to inbound is not here at all: only the
+  // service's operators do that (IB6), from the super-admin console.
+  'agency.inbound.read': 'agent',
+  'agency.inbound.write': 'account_admin',
 };
 
 /** Every permission, for enumeration (tests, route tables, admin screens). */

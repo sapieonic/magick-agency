@@ -27,7 +27,8 @@ import {
   releaseReasonFor,
   requiresDisposition,
 } from './outcome-classifier.js';
-import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { carrierCancelsRinging } from '../telephony/carrier-ringing.js';
 import type {
   AgencyActiveAttempt,
   AgencyAgentState,
@@ -62,12 +63,21 @@ import {
 /**
  * What {@link AgencyDialer.releaseAgent} did: the state it wrote (`offline` for a
  * departed agent, else `break` for a queued break or `available`) and the write's
- * result. A refused `available` (`manual_call_live`, `softphone_session`) moved nothing.
+ * result. A refused `available` (`manual_call_live`, `softphone_session`,
+ * `inbound_call_owed`) moved nothing. `reserved`: the inbound release hook took the agent
+ * for a waiting caller instead (docs/inbound.md §2), and `releaseAgent` wrote nothing.
  */
 export interface AgentReleaseResult {
-  state: 'available' | 'break' | 'offline';
+  state: 'available' | 'break' | 'offline' | 'reserved';
   result: AgentSetResult;
 }
+
+/**
+ * The inbound connector's release hook (`InboundConnector.takeOnRelease`): asked by
+ * {@link AgencyDialer.releaseAgent} before it writes `available`; true when it reserved the
+ * agent for a waiting inbound caller and offered them the call.
+ */
+export type InboundReleaseHook = (sessionId: string) => Promise<boolean>;
 
 const log = createChildLogger({ component: 'agency-dialer' });
 
@@ -144,6 +154,21 @@ const MISSED_RELEASE_TTL_MS = 5 * 60_000;
  * caller: Redis is the authority on agent state, so a mirror that could not be
  * written is a stale dashboard column, logged and never a reason to stop.
  */
+/** A number's digits, as the busy probe compares them (`CONTACT_PHONE_DIGITS_SQL`). */
+function phoneDigits(phone: string | null | undefined): string {
+  return (phone ?? '').replace(/[^0-9]/g, '');
+}
+
+/**
+ * Whether a customer ringing in may supersede this dial (docs/inbound.md §5.4): placed, still
+ * ringing (never answered or bridged), not abandoned, not a wrap-up redial, not already
+ * superseded. `AgencyDialer.findRingingAttemptTo` says why each is excluded.
+ */
+function isSupersedable(live: LiveAttempt): boolean {
+  return !live.placing && live.answeredAt === null && live.bridgedAt === null && !live.abandoned
+    && !live.cmd.redial && !live.supersededByInbound;
+}
+
 async function mirrored(write: Promise<unknown>, sessionId: string, failure: string): Promise<void> {
   await write.catch((err) => log.warn({ err, sessionId }, failure));
 }
@@ -229,6 +254,8 @@ export class AgencyDialer {
    */
   private readonly unboundStationGrace = new Map<string, NodeJS.Timeout>();
   private unsubscribeLifecycle: (() => void) | null = null;
+  /** {@link registerInboundTake}: the inbound connector's release hook, while one runs. */
+  private inboundTake: InboundReleaseHook | null = null;
 
   constructor(
     private readonly bridge: WebRtcBridgeManager,
@@ -243,6 +270,14 @@ export class AgencyDialer {
      */
     private readonly refusalBreaker: CarrierRefusalBreaker = new CarrierRefusalBreaker(null, ''),
   ) {}
+
+  /**
+   * Install (or, with null, remove) the inbound release hook (docs/inbound.md §2: "the release
+   * hook"). {@link releaseAgent} asks it, with no queued break, before writing `available`.
+   */
+  registerInboundTake(hook: InboundReleaseHook | null): void {
+    this.inboundTake = hook;
+  }
 
   /** Subscribe to bridge lifecycle. Call once at wiring time. */
   start(): void {
@@ -890,6 +925,11 @@ export class AgencyDialer {
     const live = ev.correlationId ? this.liveByAttempt.get(ev.correlationId) : undefined;
     if (!live) return; // not ours — an ordinary browser dialer call
 
+    // A dial superseded by its customer's own call (§5.4) that the carrier answered before our
+    // cancel landed is a conversation now: it keeps its agent and settles as any call does, and
+    // the inbound caller queues normally (the connector's handover is dropped).
+    if (ev.phase !== 'ended' && live.supersededByInbound) this.keepSupersededDial(live, ev.phase);
+
     // Switch on the phase EXPLICITLY. This used to read "if bridged … else it must
     // be ended", and a phase added to the bridge's union would have fallen straight
     // into teardown — ending a live call the instant the carrier answered it.
@@ -1384,6 +1424,14 @@ export class AgencyDialer {
     // the policy (the our-fault `canceled` path, a 5-minute delay by default and as
     // short as a campaign likes) lost the hold. It stays `in_flight` (claimed, so no
     // tick can take it) for the moment the dial takes to return (`dialSettled`).
+    // ── A ringing dial its customer superseded by ringing in (§5.4) ─────────
+    // Never placing (`supersedeForInbound` refuses a dial in flight), never answered or bridged
+    // (those arms dropped the mark): the clash's own settlement.
+    const clash = live.supersededByInbound;
+    if (clash && live.answeredAt === null && live.bridgedAt === null && !live.placing) {
+      await this.endSupersededByInbound(live, ev, clash);
+      return;
+    }
     const contactAfterDial = live.placing && live.answeredAt === null && live.bridgedAt === null;
     this.forgetAttempt(cmd);
 
@@ -1399,6 +1447,138 @@ export class AgencyDialer {
       }
     }
     if (contactAfterDial) await this.settleContactAfterDial(live, settled);
+  }
+
+  // ─── The in-flight clash (docs/inbound.md §5.4, IQ7, IQ8) ─────────────────────
+
+  /**
+   * An unanswered paced dial this replica drives to `phoneE164`'s number on the account (digits
+   * compared, as the busy probe compares them), or null: what a customer ringing in may
+   * supersede ({@link supersedeForInbound}). `cancelsRinging`: the dial's carrier can stop it
+   * ringing (Plivo, PL8); on one that cannot (VoiceLink) nothing is cancelled and the caller
+   * queues normally (IQ7).
+   *
+   * Never a dial still being placed (the carrier may not have it yet, and an end racing the
+   * dial is the dial's own failure path's to settle), an answered or bridged one (a
+   * conversation), an abandoned one, or a wrap-up redial (the agent owes the conversation's
+   * outcome first; it rings into the customer's busy line and settles as it would).
+   */
+  findRingingAttemptTo(
+    tenantId: string,
+    accountId: string,
+    phoneE164: string,
+  ): { attemptId: string; sessionId: string; cancelsRinging: boolean } | null {
+    const digits = phoneDigits(phoneE164);
+    if (!digits) return null;
+    for (const [attemptId, live] of this.liveByAttempt) {
+      const cmd = live.cmd;
+      if (cmd.tenantId !== tenantId || cmd.accountId !== accountId || !isSupersedable(live)) continue;
+      if (phoneDigits(cmd.contact.phone_e164) !== digits) continue;
+      return { attemptId, sessionId: cmd.sessionId, cancelsRinging: carrierCancelsRinging(cmd.campaign.telephony_provider) };
+    }
+    return null;
+  }
+
+  /**
+   * Cancel a ringing dial because its customer rang in on `inboundCallId` (§5.4). Synchronous up
+   * to the cancel: the attempt is re-checked (still ringing, unanswered), marked, and
+   * `forceEndWithOutcome(…, 'canceled')` is called at once, whose first step marks the bridge
+   * session ending, so no answer can be taken for it afterwards. The `ended` arm then settles it
+   * ({@link endSupersededByInbound}) and releases the agent, whose release hook hands them the
+   * inbound call. `settled` runs once, when the attempt is settled and the agent released:
+   * `cancelled` true for the clash's settlement; false when the dial was not cancelled after all
+   * (the cancel found no live call, or the carrier answered first and it is a call now).
+   *
+   * False, and nothing done: the attempt is no longer supersedable.
+   */
+  supersedeForInbound(attemptId: string, opts: { inboundCallId: string; settled: (cancelled: boolean) => void }): boolean {
+    const live = this.liveByAttempt.get(attemptId);
+    if (!live || !isSupersedable(live)) return false;
+    let once = false;
+    const settled = (cancelled: boolean): void => {
+      if (once) return;
+      once = true;
+      try {
+        opts.settled(cancelled);
+      } catch (err) {
+        log.error({ err, attemptId }, 'Inbound clash settle hook failed');
+      }
+    };
+    live.supersededByInbound = { inboundCallId: opts.inboundCallId, settled };
+    log.info({ attemptId, sessionId: live.cmd.sessionId, inboundCallId: opts.inboundCallId },
+      'Cancelling a ringing dial: its customer rang in');
+    void this.bridge.forceEndWithOutcome(attemptId, 'canceled').then((ended) => {
+      if (ended) return;
+      // No live call by that id: nothing will end it here, so nothing hands the agent over.
+      if (live.supersededByInbound?.settled === settled) delete live.supersededByInbound;
+      settled(false);
+    }, (err: unknown) => {
+      // The hand-over is dropped now rather than at its 15 s backstop (the caller queues
+      // normally). The mark stays: a dial that ends after all still settles as the clash.
+      log.error({ err, attemptId }, 'Could not cancel a dial its customer superseded');
+      settled(false);
+    });
+    return true;
+  }
+
+  /** A superseded dial the carrier answered first: kept as a call, the handover dropped. */
+  private keepSupersededDial(live: LiveAttempt, phase: WebRtcLifecycleEvent['phase']): void {
+    const clash = live.supersededByInbound!;
+    delete live.supersededByInbound;
+    log.warn({ attemptId: live.cmd.attemptId, inboundCallId: clash.inboundCallId, phase },
+      'A dial superseded by its customer\'s call was answered first — kept; the inbound caller queues normally');
+    clash.settled(false);
+  }
+
+  /**
+   * The `ended` arm of a dial its customer superseded (§5.4, IQ8): the attempt `canceled` with
+   * the system code `inbound_call` and its contact back `pending` uncharged, in one transaction
+   * (`endSupersededByInbound`); the `released` frame with reason `inbound_call` (unless the
+   * agent was never shown the dial: late binding); then the agent released, which runs the
+   * inbound release hook first (no queued break): it offers them the customer's call. No
+   * wrap-up: nobody was spoken to. A row that could not be written goes to the reaper.
+   */
+  private async endSupersededByInbound(
+    live: LiveAttempt,
+    ev: WebRtcLifecycleEvent,
+    clash: NonNullable<LiveAttempt['supersededByInbound']>,
+  ): Promise<void> {
+    const cmd = live.cmd;
+    this.forgetAttempt(cmd);
+    try {
+      try {
+        const ended = await agencyAttemptRepository.endSupersededByInbound({
+          attemptId: cmd.attemptId,
+          contactId: cmd.contactId,
+          code: AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
+          talkSeconds: typeof ev.talkTimeSeconds === 'number' ? Math.max(0, Math.round(ev.talkTimeSeconds)) : null,
+        });
+        agencyAttemptHoldSeconds.observe({ tenant_id: cmd.tenantId, outcome: 'canceled' }, elapsedSeconds(live.dialedAt));
+        if (ended && !ended.contactReturned) {
+          log.warn({ attemptId: cmd.attemptId, contactId: cmd.contactId }, 'Superseded dial\'s contact was no longer in flight — left as it is');
+        }
+      } catch (err) {
+        this.noteUnrecordedEnd(cmd.attemptId, false);
+        log.error({ err, attemptId: cmd.attemptId }, 'Could not settle a dial its customer superseded — the reaper ends it');
+      }
+      if (!isUnannounced(live)) {
+        const reason: AgencyReleaseReason = 'inbound_call';
+        const message = releaseMessageFor(reason);
+        if (!this.sendReleased(cmd, reason, false, message)) {
+          this.holdMissedRelease(cmd.sessionId, {
+            attempt_id: cmd.attemptId, reason, requires_disposition: false, message, ended_at: new Date().toISOString(),
+          });
+        }
+      }
+      log.info({ attemptId: cmd.attemptId, inboundCallId: clash.inboundCallId, lateBinding: live.lateBinding, announced: !isUnannounced(live) },
+        'Agency attempt ended: its customer rang in');
+    } finally {
+      try {
+        await this.releaseAgent(cmd.sessionId);
+      } finally {
+        clash.settled(true);
+      }
+    }
   }
 
   /**
@@ -1832,8 +2012,10 @@ export class AgencyDialer {
    *
    * Returns what it did: the state written and the write's {@link AgentSetResult}.
    * `manual_call_live` / `softphone_session` mean the soft phone's guard refused
-   * `available` and NOTHING moved; the supervisor's force-available answers that
-   * as a 409 rather than claiming the agent is back. The settle paths ignore it.
+   * `available` and NOTHING moved; `inbound_call_owed` the inbound call's guard (the
+   * session holds an inbound call, docs/inbound.md §6). The supervisor's
+   * force-available answers either as a 409 rather than claiming the agent is back.
+   * The settle paths ignore it.
    */
   async releaseAgent(sessionId: string): Promise<AgentReleaseResult> {
     // ── NOT purely replica-local, contrary to an earlier version of this note ──
@@ -1869,6 +2051,19 @@ export class AgencyDialer {
     // takes a break and later goes available is not silently pulled back out of the
     // pool on their next call's release.
     const queuedBreak = this.breaks.take(sessionId);
+    // ── A waiting inbound caller first (docs/inbound.md §2, "Sticky agent in wrap-up") ──────
+    // Before any `available` write, so an agent coming out of a call or a wrap-up is offered a
+    // caller with no `available` instant pacing could reserve them in (WR5: an outcome owed is
+    // already saved when this runs). A queued break wins: the agent asked for it, and the caller
+    // keeps waiting for someone else. The hook reserves by a compare-and-swap from the state the
+    // agent is in (`reserved`, `on_call`, `wrapup`) and sends the offer's frames itself.
+    if (!queuedBreak && this.inboundTake) {
+      const taken = await this.inboundTake(sessionId).catch((err: unknown) => {
+        log.error({ err, sessionId }, 'Inbound release hook failed — returning the agent to the pool');
+        return false;
+      });
+      if (taken) return { state: 'reserved', result: 'ok' };
+    }
     const state = queuedBreak ? 'break' : 'available';
     const since = new Date();
     // A queued switch to the soft phone applying now is audited (SP7), with the state
@@ -1877,8 +2072,14 @@ export class AgencyDialer {
       ? (await Promise.resolve().then(() => this.agents.get(sessionId)).catch(() => null))?.state ?? null
       : null;
 
+    // Announced below, not by the write: the `available` listeners start an inbound search (which
+    // may reserve this agent and send `reserved` and `inbound_call` at once) and a pacing tick, and
+    // neither may overtake this release's own mirror and `available` frame. Announced by the
+    // write, a search that won the race left the station a stale `available` after the offer and
+    // the row reading `available` under it.
     const set = await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
+      announce: false,
     });
     // The soft phone's guard (docs/softphone.md §4.1): `available` is refused while
     // the session holds a soft-phone call or is a soft-phone session. The agent
@@ -1886,6 +2087,13 @@ export class AgencyDialer {
     // a move that did not happen (a supervisor's force-available reaches here).
     if (set === 'manual_call_live' || set === 'softphone_session') {
       log.info({ sessionId, refused: set }, 'Release to available refused — the session is on the soft phone');
+      return { state, result: set };
+    }
+    // The inbound call's guard (docs/inbound.md §6): the session holds an inbound call, which
+    // returns the agent itself once its outcome is saved or lapses. Nothing moved, so nothing is
+    // mirrored or announced.
+    if (set === 'inbound_call_owed') {
+      log.info({ sessionId }, 'Release to available refused — the session holds an inbound call');
       return { state, result: set };
     }
     await mirrored(
@@ -1899,6 +2107,7 @@ export class AgencyDialer {
       since: since.toISOString(),
       ...(queuedBreak ? { break_reason: queuedBreak.code } : {}),
     });
+    if (state === 'available' && set === 'ok') this.agents.announceAvailable(sessionId);
     if (queuedBreak) {
       log.info({ sessionId, reason: queuedBreak.code }, 'Queued break applied after wrap-up');
     }

@@ -958,3 +958,23 @@ describe('editCatalog — the outcome editor as a pure reducer', () => {
     expect(editCatalog(before, { type: 'update', index: 9, patch: { label: 'x' } })).toBe(before);
   });
 });
+
+describe('inbound calls: put callers through to their agent (P2)', () => {
+  it('is on for a new campaign and for one read from a server that predates it', () => {
+    expect(EMPTY_CAMPAIGN_CONFIG.inboundSticky).toBe(true);
+    expect(configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft' }).inboundSticky).toBe(true);
+  });
+
+  it('is sent on every save, false included, so it can be turned back on and off', () => {
+    expect(buildConfigPayload(config()).inbound_sticky_enabled).toBe(true);
+    expect(buildConfigPayload(config({ inboundSticky: false })).inbound_sticky_enabled).toBe(false);
+    // Whatever the contact-assignment scope: it is not an assignment setting.
+    expect(buildConfigPayload(config({ inboundSticky: false }), 'none').inbound_sticky_enabled).toBe(false);
+  });
+
+  it('round-trips a campaign that has it off', () => {
+    const state = configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'running', inbound_sticky_enabled: false });
+    expect(state.inboundSticky).toBe(false);
+    expect(buildConfigPayload(state).inbound_sticky_enabled).toBe(false);
+  });
+});

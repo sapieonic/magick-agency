@@ -426,7 +426,9 @@ export type AgencySoftphoneErrorCode =
   /** 409. Contact assignment: the tagged campaign is `strict` and the number's contact belongs to another agent. A supervisor is not refused. */
   | 'contact_assigned_elsewhere'
   /** 409. The carrier account the caller ID's number is on cannot place calls: it is no longer active (disabled, invalid, revoked) or the carrier refused its credentials. Nothing was dialled, and retrying cannot help until support has fixed the account; another caller ID may. */
-  | 'carrier_account_unavailable';
+  | 'carrier_account_unavailable'
+  /** 409. The number is on an inbound call to the account right now: the customer is waiting for an agent, talking to one, or their call's outcome is still owed (docs/inbound.md §5.4, MC4). No override; `inbound_call_id` names the call. */
+  | 'customer_on_inbound_call';
 
 /** Runtime list of {@link AgencySoftphoneErrorCode}, in declaration order. */
 export const AGENCY_SOFTPHONE_ERROR_CODES = [
@@ -456,6 +458,7 @@ export const AGENCY_SOFTPHONE_ERROR_CODES = [
   'settings_invalid',
   'contact_assigned_elsewhere',
   'carrier_account_unavailable',
+  'customer_on_inbound_call',
 ] as const satisfies readonly AgencySoftphoneErrorCode[];
 
 const _allSoftphoneCodesListed: AllListed<
@@ -523,3 +526,89 @@ const _allReportCodesListed: AllListed<
   typeof AGENCY_REPORT_ERROR_CODES
 > = true;
 void _allReportCodesListed;
+
+// ─── 6. Inbound refusals ────────────────────────────────────────────────────
+//
+// The codes of the account's inbound routes (`/proxy/agency/inbound/*`, docs/inbound.md §7, §8;
+// shapes in `./api/agency/inbound`). The body is `{ error, message, details? }`. HTTP status
+// beside each code. The route repository's refusal reasons map onto them one to one
+// (`apps/server/src/db/repositories/agency/inbound-route.repository.ts`).
+//
+// P2 adds the inbound CALL's codes (the agent's panel, docs/inbound.md §6): its finish routes
+// (`/proxy/agency/inbound/calls/*`), and `inbound_call_live`, which the campaign session routes
+// answer beside their action codes (as they answer the soft phone's `manual_call_live`). None of
+// them may overlap the action, soft-phone or report unions (`test/errors.test.ts`), so the outcome
+// refusal is `inbound_disposition_invalid`, not the soft phone's `disposition_invalid`.
+
+/** Why an inbound route refused. */
+export type AgencyInboundErrorCode =
+  /** 403. `agency_inbound_enabled` is off for the tenant or account. */
+  | 'inbound_disabled'
+  /** 400. The route body is invalid; `details` lists `{ path, message }` per problem (`weekly_hours[2].end`, `clips.greeting`, …). */
+  | 'inbound_route_invalid'
+  /** 404. No such live route in this account. */
+  | 'inbound_route_not_found'
+  /** 409. Another live route of the account has this name (case-insensitive). */
+  | 'inbound_route_name_taken'
+  /** 409. A number is not one of the tenant's active numbers this account may use. `details.phone_number_id`. */
+  | 'inbound_number_not_found'
+  /** 409. A number is not linked to inbound: only the service's operators link numbers (IB6, PL15, "contact support"). `details.phone_number_id`. */
+  | 'inbound_number_not_linked'
+  /** 409. A number already answers another live route. `details.phone_number_id`, `details.route_id`. */
+  | 'inbound_number_in_use'
+  /** 404. No such Missed inbound row the caller may see. */
+  | 'inbound_missed_call_not_found'
+  /** 409. `POST /sessions/:id/available`, `force-available`, `leave` and the return from the soft phone (P2): the session holds an inbound call that is offered, connected or awaiting its outcome. `inbound_call_id` names it. */
+  | 'inbound_call_live'
+  /** 404. No such inbound call the caller may act on (the agent who took it, or `agency.supervise`). */
+  | 'inbound_call_not_found'
+  /** 409. The call cannot take an outcome: it is still live, or it ended without reaching an agent. */
+  | 'inbound_call_not_dispositionable'
+  /** 400. The outcome code is not in the call's catalog (`allowed_codes`), or its note or callback time is missing or invalid (`reason`). */
+  | 'inbound_disposition_invalid'
+  /** 409. Another outcome is already saved on the call, or it lapsed `no_disposition`. */
+  | 'inbound_outcome_already_saved'
+  /** 404. No such recording (audio file) in this account. */
+  | 'inbound_clip_not_found'
+  /** 409. A live route of the account plays the recording; `routes` names them. Choose another recording there first. */
+  | 'inbound_clip_in_use'
+  /** 400 (413 when the file is over the size limit). The upload is not a usable recording; `upload_reason` says why. */
+  | 'inbound_clip_invalid'
+  /** 409. Another recording of the account already has that name. */
+  | 'inbound_clip_name_taken'
+  /** 503. This deployment has no audio storage, so recordings cannot be uploaded. */
+  | 'inbound_clip_storage_unavailable'
+  /** 409. `POST /inbound/missed/:id/assign`: the Missed row is already handled (marked, or closed because the customer was reached); a follow-up that is done is not handed on. */
+  | 'inbound_missed_call_handled'
+  /** 400. `POST /inbound/missed/:id/assign`: the person named is not an active member who can work this account's Missed calls. */
+  | 'inbound_assignee_invalid';
+
+/** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
+export const AGENCY_INBOUND_ERROR_CODES = [
+  'inbound_disabled',
+  'inbound_route_invalid',
+  'inbound_route_not_found',
+  'inbound_route_name_taken',
+  'inbound_number_not_found',
+  'inbound_number_not_linked',
+  'inbound_number_in_use',
+  'inbound_missed_call_not_found',
+  'inbound_call_live',
+  'inbound_call_not_found',
+  'inbound_call_not_dispositionable',
+  'inbound_disposition_invalid',
+  'inbound_outcome_already_saved',
+  'inbound_clip_not_found',
+  'inbound_clip_in_use',
+  'inbound_clip_invalid',
+  'inbound_clip_name_taken',
+  'inbound_clip_storage_unavailable',
+  'inbound_missed_call_handled',
+  'inbound_assignee_invalid',
+] as const satisfies readonly AgencyInboundErrorCode[];
+
+const _allInboundCodesListed: AllListed<
+  AgencyInboundErrorCode,
+  typeof AGENCY_INBOUND_ERROR_CODES
+> = true;
+void _allInboundCodesListed;

@@ -407,26 +407,7 @@ export function StateRail({
            announce on every cue. It is absolutely positioned so a flash cannot
            shift a control by a pixel (frozen-geometry rule 1).
       */}
-      {cueFlash ? (
-        <span
-          key={`${cueFlash.cue}:${cueFlash.attemptId}`}
-          className={styles.cueFlash}
-          data-testid="cue-flash"
-          data-cue-flash={cueFlash.cue}
-          data-cue-pulses={VISUAL_CUE_SPECS[cueFlash.cue].pulses}
-          data-cue-travel={VISUAL_CUE_SPECS[cueFlash.cue].travel}
-          style={
-            {
-              '--cue-pulses': VISUAL_CUE_SPECS[cueFlash.cue].pulses,
-              '--cue-duration': `${VISUAL_CUE_SPECS[cueFlash.cue].durationMs}ms`,
-              // One pulse's worth of the total, so N pulses fill the same window
-              // the hook holds the attribute for.
-              '--cue-pulse-duration': `${Math.round(VISUAL_CUE_SPECS[cueFlash.cue].durationMs / VISUAL_CUE_SPECS[cueFlash.cue].pulses)}ms`,
-            } as CSSProperties
-          }
-          aria-hidden="true"
-        />
-      ) : null}
+      {cueFlash ? <CueFlashBand key={`${cueFlash.cue}:${cueFlash.attemptId}`} flash={cueFlash} /> : null}
 
       <span className={styles.accent} aria-hidden="true" />
       <span className={styles.label} data-testid="rail-label">
@@ -493,6 +474,34 @@ export function StateRail({
         <span className={styles.blockedReason}>Waiting for the station connection…</span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The cue's visual band (see the note where the rail renders it). Exported so the inbound call's
+ * rail, which stands where this rail does, flashes connect and disconnect the same way. The
+ * caller keys it on cue and subject, which is what restarts the animation (note 2 above).
+ */
+export function CueFlashBand({ flash }: { flash: CueFlash }) {
+  const spec = VISUAL_CUE_SPECS[flash.cue];
+  return (
+    <span
+      className={styles.cueFlash}
+      data-testid="cue-flash"
+      data-cue-flash={flash.cue}
+      data-cue-pulses={spec.pulses}
+      data-cue-travel={spec.travel}
+      style={
+        {
+          '--cue-pulses': spec.pulses,
+          '--cue-duration': `${spec.durationMs}ms`,
+          // One pulse's worth of the total, so N pulses fill the same window
+          // the hook holds the attribute for.
+          '--cue-pulse-duration': `${Math.round(spec.durationMs / spec.pulses)}ms`,
+        } as CSSProperties
+      }
+      aria-hidden="true"
+    />
   );
 }
 

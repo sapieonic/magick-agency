@@ -356,6 +356,12 @@ export interface CampaignConfigState {
    */
   allowWrapupRedial: boolean;
   /**
+   * `inbound_sticky_enabled` (inbound P2): a customer of this campaign who rings in is put
+   * through to the agent they last dealt with, before the team. On by default (the column's
+   * default), which a campaign read from a server that predates it behaves as.
+   */
+  inboundSticky: boolean;
+  /**
    * `abandonment_ceiling_pct`: the rolling 24-hour abandonment rate above which the
    * campaign pauses itself. Bounds, scale and copy: `utils/agency/abandonmentCeiling.ts`.
    */

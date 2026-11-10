@@ -6,6 +6,10 @@ import { registerAttemptRoutes } from './agency/attempts.js';
 import { registerSoftphoneRoutes } from './agency/softphone.js';
 import { registerRedialRoutes } from './agency/redial.js';
 import { registerMyContactCallRoutes } from './agency/my-contact-call.js';
+import { registerInboundRoutes } from './agency/inbound.js';
+import { registerInboundCallRoutes } from './agency/inbound-calls.js';
+import { registerInboundClipRoutes } from './agency/inbound-clips.js';
+import { registerInboundMissedWorkRoutes } from './agency/inbound-missed-work.js';
 
 export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // This module is the session and attempt handlers only, registered on the
@@ -28,5 +32,13 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     await registerMyContactCallRoutes(sub, runtime);
     // The soft phone (docs/softphone.md §6), and the switch of a campaign session to it.
     await registerSoftphoneRoutes(sub, runtime);
+    // Inbound calls (docs/inbound.md §7, §8.1): the account's routes and its Missed inbound list.
+    await registerInboundRoutes(sub);
+    // The account's recordings for inbound routes: record an upload, delete one no route uses.
+    await registerInboundClipRoutes(sub);
+    // Working the Missed list (the badge's count, a supervisor's reassign) and the inbound summary.
+    await registerInboundMissedWorkRoutes(sub);
+    // The answered inbound call (docs/inbound.md §6): read, notes, hang up, the outcome, Mark DNC.
+    await registerInboundCallRoutes(sub, runtime);
   });
 }

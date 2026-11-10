@@ -3,6 +3,7 @@
 // how to ask the carrier whether the credential works. VoiceLink is the service's own
 // account (env) and has no spec here.
 import { z } from 'zod';
+import { plivoNumberToE164 } from '@magick-agency/domain/plivo-number';
 import type {
   TelephonyCredentialField,
   TelephonyNumberSyncSkipReason,
@@ -73,19 +74,12 @@ const CHECK_TIMEOUT_MS = 10_000;
 export const PLIVO_NUMBERS_PAGE_SIZE = 20;
 /** Pages one sync reads at most (1,000 numbers): an account with more is refused, not half-synced. */
 export const PLIVO_NUMBERS_MAX_PAGES = 50;
-const E164 = /^\+[1-9]\d{1,14}$/;
-
 /**
- * A Plivo account number as E.164. Plivo lists account numbers as digits with the
- * country code and no `+` (`18135401302`); a `+` already present is kept. Anything
- * else (letters, too long, a leading zero) is null.
+ * A Plivo account number as E.164 (`18135401302` → `+18135401302`; anything else null). The
+ * rule lives in the domain because inbound webhooks normalise `From` / `To` with it too, and a
+ * number must read the same at sync and at the answer. Re-exported for this file's callers.
  */
-export function plivoNumberToE164(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  const candidate = trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
-  return E164.test(candidate) ? candidate : null;
-}
+export { plivoNumberToE164 };
 
 function plivoAuth(publicConfig: Record<string, string>, secret: Record<string, string>) {
   const authId = publicConfig['auth_id']!;

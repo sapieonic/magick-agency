@@ -506,6 +506,8 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     calls_handled: string;
     redials: string;
     client_kind: AgencyClientKind;
+    on_inbound_call: boolean;
+    inbound_outcome_owed: boolean;
   }>(
     // `calls_handled` counts by `reserved_agent_id`, which is a SESSION id,
     // so this is the attempts handled in THIS session — what
@@ -527,13 +529,27 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
               -- session's placed wrap-up redials.
               COUNT(a.id) FILTER (WHERE ${CONVERSATION_ATTEMPT_SQL})::text AS calls_handled,
               COUNT(a.id) FILTER (WHERE a.redial_number > 0 AND a.dialed_at IS NOT NULL)::text AS redials,
-              s.client_kind
+              s.client_kind,
+              COALESCE(ib.on_call, false) AS on_inbound_call,
+              COALESCE(ib.outcome_owed, false) AS inbound_outcome_owed
          FROM agency_agent_sessions s
+         -- The session's unsettled inbound call, if any: one probe of
+         -- uq_agency_inbound_calls_session_unsettled (0027), which holds at most one per session.
+         -- on_call: offered to or connected with the session (docs/inbound.md §6);
+         -- outcome_owed: the agent took it, it has ended and still owes its outcome (the inbound
+         -- wrap-up).
+         LEFT JOIN LATERAL (
+           SELECT ib.state IN ('offered', 'connected') AS on_call,
+                  (ib.state = 'ended' AND ib.bridged_at IS NOT NULL) AS outcome_owed
+             FROM agency_inbound_calls ib
+            WHERE ib.session_id = s.id AND ib.settled_at IS NULL
+            LIMIT 1
+         ) ib ON true
          LEFT JOIN agency_call_attempts a
                 ON a.reserved_agent_id = s.id
         WHERE s.campaign_id = $1
           AND s.left_at IS NULL
-        GROUP BY s.id, s.agent_user_id, s.state, s.state_since, s.break_reason, s.client_kind`,
+        GROUP BY s.id, s.agent_user_id, s.state, s.state_since, s.break_reason, s.client_kind, ib.on_call, ib.outcome_owed`,
     [campaignId],
   );
 
@@ -550,6 +566,8 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     redials: Number(r.redials ?? 0),
     // The app the station last attached from (0006); the floor's phone marker.
     client_kind: r.client_kind === 'mobile' ? 'mobile' : 'web',
+    on_inbound_call: r.on_inbound_call === true,
+    inbound_outcome_owed: r.inbound_outcome_owed === true,
   }));
 }
 

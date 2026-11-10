@@ -45,11 +45,21 @@ const auth = () => ({
   authorization: `Bearer ${jwt.sign({ sub: ADMIN.id, email: ADMIN.email, type: 'super_admin' }, SECRET)}`,
 });
 
-function usageRow(tenantId: string, tenantName: string, accountId: string, accountName: string, n: number[]) {
+/** A row's inbound counts when the account had no inbound call. */
+const NO_INBOUND = {
+  inbound_calls: 0, inbound_answered_calls: 0, inbound_connected_calls: 0, inbound_seconds: 0,
+  inbound_hold_seconds: 0, inbound_talk_seconds: 0, inbound_analysis_audio_seconds: 0,
+};
+
+function usageRow(tenantId: string, tenantName: string, accountId: string, accountName: string, n: number[], inbound: number[] = [0, 0, 0, 0, 0, 0, 0]) {
   const [dials, answered_calls, connected_calls, talk_seconds, analysis_audio_seconds] = n as [number, number, number, number, number];
+  const [inbound_calls, inbound_answered_calls, inbound_connected_calls, inbound_seconds, inbound_hold_seconds, inbound_talk_seconds, inbound_analysis_audio_seconds] =
+    inbound as [number, number, number, number, number, number, number];
   return {
     tenant_id: tenantId, tenant_name: tenantName, account_id: accountId, account_name: accountName,
     dials, answered_calls, connected_calls, talk_seconds, analysis_audio_seconds,
+    inbound_calls, inbound_answered_calls, inbound_connected_calls, inbound_seconds, inbound_hold_seconds,
+    inbound_talk_seconds, inbound_analysis_audio_seconds,
   };
 }
 
@@ -159,7 +169,7 @@ describe('GET /super-admin/usage — grouping', () => {
     expect(res.json()).toEqual({
       from: FROM,
       to: TO,
-      totals: { dials: 0, answered_calls: 0, connected_calls: 0, talk_seconds: 0, analysis_audio_seconds: 0 },
+      totals: { dials: 0, answered_calls: 0, connected_calls: 0, talk_seconds: 0, analysis_audio_seconds: 0, ...NO_INBOUND },
       tenants: [],
     });
   });
@@ -180,32 +190,51 @@ describe('GET /super-admin/usage — grouping', () => {
     expect(body.tenants[0]).toEqual({
       tenant_id: T2,
       tenant_name: 'Zeta',
-      counts: { dials: 7, answered_calls: 5, connected_calls: 4, talk_seconds: 301, analysis_audio_seconds: 280 },
+      counts: { dials: 7, answered_calls: 5, connected_calls: 4, talk_seconds: 301, analysis_audio_seconds: 280, ...NO_INBOUND },
       accounts: [
         {
           account_id: A3, account_name: 'Ops',
-          counts: { dials: 7, answered_calls: 5, connected_calls: 4, talk_seconds: 301, analysis_audio_seconds: 280 },
+          counts: { dials: 7, answered_calls: 5, connected_calls: 4, talk_seconds: 301, analysis_audio_seconds: 280, ...NO_INBOUND },
         },
       ],
     });
     expect(body.tenants[1]).toEqual({
       tenant_id: T1,
       tenant_name: 'Acme',
-      counts: { dials: 103, answered_calls: 62, connected_calls: 42, talk_seconds: 12_404, analysis_audio_seconds: 9_000 },
+      counts: { dials: 103, answered_calls: 62, connected_calls: 42, talk_seconds: 12_404, analysis_audio_seconds: 9_000, ...NO_INBOUND },
       accounts: [
         {
           account_id: A1, account_name: 'Sales',
-          counts: { dials: 100, answered_calls: 60, connected_calls: 41, talk_seconds: 12_345, analysis_audio_seconds: 9_000 },
+          counts: { dials: 100, answered_calls: 60, connected_calls: 41, talk_seconds: 12_345, analysis_audio_seconds: 9_000, ...NO_INBOUND },
         },
         {
           account_id: A2, account_name: 'Support',
-          counts: { dials: 3, answered_calls: 2, connected_calls: 1, talk_seconds: 59, analysis_audio_seconds: 0 },
+          counts: { dials: 3, answered_calls: 2, connected_calls: 1, talk_seconds: 59, analysis_audio_seconds: 0, ...NO_INBOUND },
         },
       ],
     });
     expect(body.totals).toEqual({
-      dials: 110, answered_calls: 67, connected_calls: 46, talk_seconds: 12_705, analysis_audio_seconds: 9_280,
+      dials: 110, answered_calls: 67, connected_calls: 46, talk_seconds: 12_705, analysis_audio_seconds: 9_280, ...NO_INBOUND,
     });
+  });
+
+  it('inbound counts ride beside the dials and are summed into the tenant and the totals on their own', async () => {
+    mocks.countByAccount.mockResolvedValue([
+      usageRow(T1, 'Acme', A1, 'Sales', [10, 6, 4, 600, 500], [3, 2, 1, 400, 90, 120, 100]),
+      usageRow(T1, 'Acme', A2, 'Support', [0, 0, 0, 0, 0], [5, 5, 2, 700, 200, 300, 0]),
+    ]);
+    const body = (await get({ from: FROM, to: TO })).json();
+    expect(body.tenants[0].accounts[1].counts).toEqual({
+      dials: 0, answered_calls: 0, connected_calls: 0, talk_seconds: 0, analysis_audio_seconds: 0,
+      inbound_calls: 5, inbound_answered_calls: 5, inbound_connected_calls: 2, inbound_seconds: 700,
+      inbound_hold_seconds: 200, inbound_talk_seconds: 300, inbound_analysis_audio_seconds: 0,
+    });
+    expect(body.totals).toEqual({
+      dials: 10, answered_calls: 6, connected_calls: 4, talk_seconds: 600, analysis_audio_seconds: 500,
+      inbound_calls: 8, inbound_answered_calls: 7, inbound_connected_calls: 3, inbound_seconds: 1100,
+      inbound_hold_seconds: 290, inbound_talk_seconds: 420, inbound_analysis_audio_seconds: 100,
+    });
+    expect(body.tenants[0].counts).toEqual(body.totals);
   });
 
   it('an account row\'s counts are not aliased to the tenant accumulator', async () => {

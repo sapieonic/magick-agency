@@ -60,16 +60,22 @@ const SPIN_CEILING = 5_000;
 
 type AnyBuffer = { push(e: unknown): void; flush(): Promise<void>; forceFlush(): Promise<void> };
 
-/** Wrap the instance's flush to count calls and break a spin (see the header). */
-function instrument(buffer: AnyBuffer): { calls: () => number } {
+/**
+ * Wrap the instance's flush to count calls and break a spin (see the header). The count that
+ * means something is the calls made from {@link mark} on (`forceFlush`'s own): every push past the
+ * 100th while the first flush writes also calls `flush()`, which returns at once, so the calls
+ * before it grow with `LOAD_SCALE` and say nothing about a spin.
+ */
+function instrument(buffer: AnyBuffer): { calls: () => number; mark: () => void; sinceMark: () => number } {
   const original = buffer.flush.bind(buffer);
   let calls = 0;
+  let marked = 0;
   buffer.flush = async () => {
     calls++;
-    if (calls === SPIN_CEILING) for (const p of io.pending.splice(0)) p.release();
+    if (calls - marked === SPIN_CEILING) for (const p of io.pending.splice(0)) p.release();
     return original();
   };
-  return { calls: () => calls };
+  return { calls: () => calls, mark: () => { marked = calls; }, sinceMark: () => calls - marked };
 }
 
 const event = (i: number) => ({ tenantId: 't', accountId: 'a', eventType: `e${i}`, eventCategory: 'system', severity: 'info', eventData: { i } });
@@ -86,13 +92,18 @@ describe.each([
     const total = 100 + scaled(37);
 
     // The 100th push starts a flush that is NOT awaited (the request path never waits on
-    // audit); the rest land while it is writing.
+    // audit); the rest land while it is writing (at LOAD_SCALE ≥ 3 enough of them to fill the
+    // buffer again, each then calling a flush() that returns at once: not forceFlush's doing).
     for (let i = 0; i < total; i++) buffer.push(event(i));
     expect(io.pending.length, 'the 100th push started a flush').toBe(1);
+    expect(probe.calls(), 'one flush() per push from the 100th on').toBe(1 + Math.max(0, total - 199));
 
+    probe.mark();
     await buffer.forceFlush();
 
-    expect(probe.calls(), 'forceFlush busy-waited on the in-flight flush').toBeLessThan(10);
+    // forceFlush waits on the write in flight, then flushes what is left: a call or two, at any
+    // scale. A microtask-only loop reaches the spin ceiling.
+    expect(probe.sinceMark(), 'forceFlush busy-waited on the in-flight flush').toBeLessThan(10);
     const flat = io.written.flat() as Array<{ eventData: { i: number } }>;
     expect(flat.map((e) => e.eventData.i)).toEqual(Array.from({ length: total }, (_, i) => i));
   });

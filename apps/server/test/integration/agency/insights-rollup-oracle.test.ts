@@ -8,7 +8,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS } from '../setup/factories.js';
-import { OVERRIDE_CODES, SUCCESS_CODES, WORLD_BASE, seedWorld, type WorldCampaign } from './insights-rollup-world.js';
+import { randomUUID } from 'node:crypto';
+import { ATTEMPT_COLUMNS, OVERRIDE_CODES, SUCCESS_CODES, WORLD_BASE, bulkInsert, seedWorld, type WorldCampaign } from './insights-rollup-world.js';
 import { oracleAgents, oracleFacets, oracleTotals, oracleTrend, type OracleRange } from './insights-rollup-oracle-sql.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
@@ -219,6 +220,52 @@ describe('insights rollup — every read equals the attempts table', () => {
 
     await drain();
     await assertMatchesOracle();
+  });
+
+  it('a dial its customer superseded (`inbound_call`, docs/inbound.md §5.4) is a placed `canceled` dial, never an outcome, an answer or the code that granted an override', async () => {
+    const c = campaigns[2]!;
+    const agent = c.agents[0]!;
+    const contactId = randomUUID();
+    await pool().query(
+      `INSERT INTO agency_contacts (id, campaign_id, tenant_id, account_id, phone_e164, context, state)
+       VALUES ($1, $2, $3, $4, '+919999000001', '{}', 'pending')`,
+      [contactId, c.id, DEFAULTS.tenantId, DEFAULTS.accountId],
+    );
+    // Outside the world's two days and inside the lifetime range: these three are the slice's only dials.
+    const t0 = new Date(WORLD_BASE.getTime() + 60 * HOUR);
+    const plus = (s: number) => new Date(t0.getTime() + s * 1000);
+    const base = { campaign_id: c.id, contact_id: contactId, tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId,
+      caller_id: '+919000000001', reserved_agent_id: agent.sessionId, state: 'ended', redial_number: 0,
+      agent_reopened: false, agent_manual: false, override_applied: [] as string[] };
+    await bulkInsert(pool(), 'agency_call_attempts', ATTEMPT_COLUMNS, [
+      // 1. A conversation written up with a code that grants an override.
+      { ...base, id: randomUUID(), attempt_number: 1, outcome: 'connected', disposition_code: 'retry_later',
+        dialed_at: plus(0), answered_at: plus(5), bridged_at: plus(5.2), ended_at: plus(60) },
+      // 2. The next dial rang while the customer rang us: cancelled, the system code, uncharged.
+      { ...base, id: randomUUID(), attempt_number: 2, outcome: 'canceled', disposition_code: 'inbound_call',
+        dialed_at: plus(1800), ended_at: plus(1812) },
+      // 3. A later dial spends the override `retry_later` granted.
+      { ...base, id: randomUUID(), attempt_number: 3, outcome: 'no_answer', override_applied: ['extra_attempts'],
+        dialed_at: plus(3600), ended_at: plus(3630) },
+    ]);
+    await drain();
+    await assertMatchesOracle();
+
+    const slice = (await repo.activity({ campaignId: c.id, tenantId: DEFAULTS.tenantId, from: t0, to: plus(3 * 3600), successCodes: SUCCESS_CODES, overrideCodes: OVERRIDE_CODES }))!;
+    // A placed dial: counted, under the outcome it ended with.
+    expect(slice.calls.dials).toBe(3);
+    expect(Object.fromEntries(Object.entries(slice.calls.by_outcome).filter(([, n]) => n > 0)))
+      .toEqual({ connected: 1, canceled: 1, no_answer: 1 });
+    // Not an answer (the abandonment ceiling's denominator), not a conversation, never an outcome.
+    const hours = (await repo.trends({ campaignId: c.id, tenantId: DEFAULTS.tenantId, from: t0, to: plus(3 * 3600), bucket: 'hour', timezone: 'UTC', successCodes: SUCCESS_CODES }))!;
+    expect(hours.buckets.reduce((s, b) => s + b.answered, 0)).toBe(1);
+    expect(hours.buckets.reduce((s, b) => s + b.abandoned, 0)).toBe(0);
+    expect(hours.buckets.reduce((s, b) => s + b.first_dials, 0)).toBe(3);
+    expect(slice.calls.conversations).toBe(1);
+    expect(slice.outcomes.map((o) => o.code)).toEqual(['retry_later']);
+    // The override the third dial spent was granted by `retry_later`, two dials back: the system
+    // code between is skipped, as `redialed` is.
+    expect(slice.overrides.find((o) => o.code === 'retry_later')).toMatchObject({ granted: 1, used: 1 });
   });
 
   it('a campaign outside the tenant reads as nothing', async () => {

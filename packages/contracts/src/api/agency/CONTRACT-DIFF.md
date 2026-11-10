@@ -34,7 +34,7 @@ against.
 | `AgencySoftphoneCreateSessionRequest`, `AgencyManualCallCreateRequest`, `AgencyManualCallUpdateRequest`, `AgencyManualCallHangupRequest`, `AgencyManualCallDispositionRequest`, `AgencyManualCallDncRequest` | carry the actor (`agent_user_id`, and `on_behalf` where a supervisor may act) | derived: the same bodies without them (§5); the session create and the hangup are `Record<string, never>` | The public API layer fills the actor from the authenticated session |
 | `AgencyWrapupState` | `seconds_total: number`; `held_reason: AgencyWrapupHoldReason \| null` (required; 2 members) | no `seconds_total`; `held_reason?: AgencyWrapupHold \| null` (2 members) | `supervisor_hold` is declared on both sides but nothing produces it (`docs/decisions.md`, still open) |
 | `AgencyStationReadyFrame` | `active_wrapup?: AgencyWrapupState` (dialer) | `active_wrapup?: AgencyWrapupState` (console, above) | Otherwise the dialer frame |
-| `AgencySupervisorAgent` | no name | `agent_name: string \| null` | Public API layer enrichment: it joins the name from `users` |
+| `AgencySupervisorAgent` | no name | `agent_name: string \| null` | Public API layer enrichment: it joins the name from `users`. `on_inbound_call` (P2) and `inbound_outcome_owed?` (the inbound wrap-up) are inherited unchanged |
 | `AgencyCampaignStats` | every counter required | every counter optional; `agents` is the console's `AgencySupervisorAgent[]`; adds `agents_peak?: number \| null` | `agents_peak` has no producer; the console degrades on absence. `stall`, `other_stalls`, `concurrency_limit`, `concurrency_in_use` and `abandonment_ceiling_pct` keep the dialer declaration. `concurrency?: AgencyCampaignConcurrency \| null` (MC7) is optional on both sides, like `attempts_retried` |
 | `AgencyRetryCreateResponse` (declared, not derived) | generic discriminated union `AgencyRetryCreated<T> \| AgencyRetryReplayed<T>` on `idempotent_replay` | one interface: `campaign: AgencyCampaign`, `idempotent_replay?: boolean`, `contacts_seeded: number \| null`, `duplicates_collapsed?: number \| null`, `excluded: … \| null` | Same wire; the console flattens the union |
 | `AgencyCampaignLineage` | `campaigns: AgencyLineageCampaign[]` | `campaigns: AgencyCampaignLineageEntry[]` | Entries differ only in `status: string` (§2) |
@@ -90,6 +90,22 @@ package root.
   `AgencyKeysetPage`, `AgencyContactDetail`.
 - `agency-stats.ts`: `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, `AgencyRosterSort`,
   `AgencyRosterPercentiles`, `AgencyGroupDimension`, `AgencyGroupKey`, `AgencyGroupSort`.
+- `inbound.ts` (`docs/inbound.md`): the inbound vocabularies and route configuration (P1), and
+  the P2 call shapes the console reads unchanged: `AgencyInboundCall` (with `AgencyInboundCallMatch`,
+  `AgencyInboundCallSticky`), `AgencyInboundCallResponse`, the disposition and DNC responses, the
+  `inbound_call` and `customer_waiting` station frames, the disposition and catalog sources and the
+  constants (`AGENCY_INBOUND_CONNECT_DELAY_MS`, `AGENCY_INBOUND_OUTCOME_LAPSE_MS`,
+  `AGENCY_INBOUND_VOICEMAIL_MAX_SECONDS`, `AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE`).
+  `AgencyInboundErrorCode` / `AGENCY_INBOUND_ERROR_CODES` from `../../errors`. Console-only there:
+  the route, number and clip DTOs (the recordings' upload and delete, their limits and refusal
+  reasons, the route warnings), the standard recordings' words (`AGENCY_INBOUND_STANDARD_WORDS`,
+  which the server's carrier messages also speak), the Missed list (`voicemail_url?` is P2's;
+  `assignee_departed` and `handled_reason`, whose vocabulary `AGENCY_INBOUND_HANDLED_REASONS` is the
+  dialer contract's), its count, reassign, reopen and the inbound summary (`AgencyInboundMissedCountResponse`,
+  `AgencyInboundMissedAssign*`, `AgencyInboundReopenResponse`, `AgencyInboundSummary*`, whose
+  closed-call lines read the dialer contract's `AGENCY_INBOUND_CLOSED_CAUSES`, `AGENCY_INBOUND_MISSED_COUNT_CAP`,
+  `AGENCY_INBOUND_SUMMARY_MAX_DAYS`), the supervisor's `AgencyInboundQueueTile` /
+  `AgencyInboundQueueResponse`, `AgencyInboundCallLiveRefusal` and the request bodies (§5).
 - `softphone.ts` (`docs/softphone.md`): every soft-phone shape the console reads unchanged — the
   manual call and its vocabularies, call fields, settings, bootstrap, session response, list query,
   disposition and DNC responses, the refusal bodies, `AgencyStationManualCallFrame` —
@@ -109,7 +125,8 @@ union stay declared in `api/agency/agency.ts`.
 
 ## 4. Console wire types with no dialer-contract counterpart
 
-Shapes the public API layer owns outright: the campaign object (`AgencyCampaign`; the internal
+Shapes the public API layer owns outright: the campaign object (`AgencyCampaign`, which carries
+`inbound_sticky_enabled?` from P2 of inbound calls; the internal
 handlers serialise it in `apps/server/src/api/responses/agency-campaign.response.ts`), the carriers a
 campaign may dial on (`AgencyCarrier`, `AgencyCarriersResponse`; served by the public layer itself), ingest
 (`AgencyIngest*`, `AgencyUploadResponse`, `AgencyColumn*`), retry policy
@@ -157,3 +174,7 @@ the roster row with its name and `AgencyRosterBenchmark`), never their dialer tw
   re-exported into the console namespace. No `on_behalf`: only the session's own agent may redial.
 - The soft-phone request bodies (`../../agency/softphone.ts`) carry the same two fields for the
   internal handlers; the console's are derived without them (§1).
+- The inbound call request bodies (`../../agency/inbound.ts`: `AgencyInboundCallUpdateRequest`,
+  `…HangupRequest`, `…DispositionRequest`, `…DncRequest`, docs/inbound.md §6) likewise: the console's
+  (`inbound.ts` here) are derived without `agent_user_id` and `on_behalf`; the hangup is
+  `Record<string, never>`.

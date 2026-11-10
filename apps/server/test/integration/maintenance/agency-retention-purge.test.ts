@@ -19,6 +19,8 @@ const cfg = vi.hoisted(() => ({
   },
 }));
 vi.mock('../../../src/config/index.js', () => cfg);
+const bucket = vi.hoisted(() => ({ deleted: [] as string[] }));
+vi.mock('../../../src/storage/s3.js', () => ({ deleteFile: async (key: string) => { bucket.deleted.push(key); }, isStorageConfigured: () => true }));
 const { runRetentionPurge } = await import('../../../src/maintenance/retention-purge.js');
 
 const analysis = () => JSON.stringify({ common: { overall_sentiment: { label: 'positive' }, summary: 'keep this summary' } });
@@ -38,6 +40,41 @@ describe('agency retention purge (integration)', () => {
   async function age(id: string, days: number) {
     await getTestPool().query(`UPDATE agency_calls SET created_at = now() - make_interval(days => $2) WHERE id = $1`, [id, days]);
   }
+
+  it('inbound voicemails on the row window: the old one`s object deleted and the call forgets it (its Missed row kept); a recent one kept', async () => {
+    cfg.config.retention.agencyRetentionDays = 85;
+    bucket.deleted = [];
+    const pool = getTestPool();
+    const insert = async (daysAgo: number) => {
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO agency_inbound_calls (tenant_id, account_id, provider_call_id, from_e164, to_e164, state, outcome, arrived_at,
+                                           ended_at, settled_at, follow_up_status, follow_up_reason, voicemail_key, voicemail_seconds)
+         VALUES ($1, $2, $3, '+447700900123', '+14155550100', 'ended', 'voicemail', now() - make_interval(days => $4),
+                 now() - make_interval(days => $4), now() - make_interval(days => $4), 'open', 'closed', $5, 12)
+         RETURNING id`,
+        [DEFAULTS.tenantId, DEFAULTS.accountId, `CA-${daysAgo}-${Math.random()}`, daysAgo, `inbound-voicemail/vm-${daysAgo}.wav`]);
+      return rows[0]!.id;
+    };
+    const old = await insert(90);
+    const recent = await insert(10);
+
+    const dry = await runRetentionPurge({ dryRun: true });
+    expect(dry.inbound_voicemails_deleted).toBe(1);
+    expect(bucket.deleted).toEqual([]);
+
+    const report = await runRetentionPurge();
+    expect(report.error).toBeUndefined();
+    expect(report.inbound_voicemails_deleted).toBe(1);
+    expect(bucket.deleted).toEqual(['inbound-voicemail/vm-90.wav']);
+    const rows = (await pool.query(`SELECT id, voicemail_key, voicemail_seconds, follow_up_status FROM agency_inbound_calls ORDER BY arrived_at`)).rows;
+    expect(rows).toEqual([
+      { id: old, voicemail_key: null, voicemail_seconds: null, follow_up_status: 'open' },
+      { id: recent, voicemail_key: 'inbound-voicemail/vm-10.wav', voicemail_seconds: 12, follow_up_status: 'open' },
+    ]);
+    // Once forgotten, never deleted again.
+    expect((await runRetentionPurge()).inbound_voicemails_deleted).toBe(0);
+    expect(bucket.deleted).toHaveLength(1);
+  });
 
   it('purges old jobs before old calls while preserving recent rows', async () => {
     cfg.config.retention.agencyRetentionDays = 85;

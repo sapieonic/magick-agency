@@ -33,6 +33,10 @@ const AGENCY_PERMISSIONS: Permission[] = [
   // Customer history (CH1: everyone can search). A read of one number the caller typed in
   // full, with supervise-only media and other agents' notes withheld (CH8).
   'agency.customer_history.read',
+  // Inbound calls (docs/inbound.md §8.1): the Missed inbound rows assigned to the caller (the
+  // routes force `assignee = me` without `agency.supervise`). Configuring routes is
+  // `agency.inbound.write`, at account_admin.
+  'agency.inbound.read',
 ];
 
 /**
@@ -111,7 +115,7 @@ describe('agent role — grants nothing that predates the Agency Dialer', () => 
     expect(hasPermission('agent', 'tenant.read')).toBe(false);
   });
 
-  it('resolves to exactly the six agency action permissions, the customer history and the flag map, and nothing else', () => {
+  it('resolves to exactly the six agency action permissions, the customer history, their own Missed inbound rows and the flag map, and nothing else', () => {
     const granted = ALL_PERMISSIONS.filter((p) => hasPermission('agent', p)).sort();
     expect(granted).toEqual([...AGENT_PERMISSIONS].sort());
   });

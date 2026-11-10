@@ -219,6 +219,42 @@ export class BridgeWsTokens {
     }
   }
 
+  private credentialNonceKey(credentialId: string, nonce: string): string {
+    return `${this.keyPrefix}webrtc:credential-callback-nonce:${credentialId}:${nonce}`;
+  }
+
+  /**
+   * The same replay guard for a callback that names no call of ours: the inbound Application's
+   * credential-level URLs (docs/inbound.md §3.1), whose token is the credential's and does not
+   * die with a call. One key per (credential, nonce), `SET NX` with
+   * {@link CALLBACK_NONCE_TTL_SECONDS}: a set per credential would grow with every call the
+   * number ever took. Past the TTL a replay is answered idempotently by the call it names (the
+   * spine is unique on the carrier's call id). Fails CLOSED when Redis cannot answer
+   * (`unavailable`, QA-F11): the caller refuses the callback with a 503, so the carrier answers
+   * the caller from the Application's fallback URL (or retries the hangup) and no replay can slip
+   * through an outage. With no Redis configured at all (a dev process) every nonce is `claimed`.
+   */
+  async claimCredentialCallbackNonce(credentialId: string, nonce: string): Promise<'claimed' | 'replay' | 'unavailable'> {
+    if (!this.redis) return 'claimed';
+    try {
+      const set = await this.redis.set(this.credentialNonceKey(credentialId, nonce), '1', 'EX', CALLBACK_NONCE_TTL_SECONDS, 'NX');
+      return set === 'OK' ? 'claimed' : 'replay';
+    } catch (err) {
+      log.warn({ err, credentialId }, 'Credential callback nonce not recorded (Redis) — refusing the callback (fails closed)');
+      return 'unavailable';
+    }
+  }
+
+  /** Forget a credential callback's nonce whose processing failed, so the carrier's retry is not a replay. Never throws. */
+  async releaseCredentialCallbackNonce(credentialId: string, nonce: string): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.del(this.credentialNonceKey(credentialId, nonce));
+    } catch (err) {
+      log.warn({ err, credentialId }, 'Credential callback nonce not released (Redis) — a retry of it may be refused');
+    }
+  }
+
   async clearWsToken(callId: string): Promise<void> {
     // Q6: the media legs' tokens die with the call; the WEBHOOK token (and a remembered
     // unstored one) outlives it by the grace window, because the carrier's terminal report

@@ -81,6 +81,7 @@ import {
 } from './pacing/invalidation-bus.js';
 import { GenerationTtlCache, PACING_CACHE_TTL_MS } from './pacing/read-cache.js';
 import { PACING_SHARE_WAIT_MS, PACING_SPLIT_DEADLINE_MS, PacingRound, ShareRotation, accountKeyOf } from './pacing/round.js';
+import { holdBackForInbound, type InboundHold } from './pacing/inbound-hold-back.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { ownerModeOf, queueStateKey, readAgentQueues, type AgentQueueReading } from './pacing/agent-queue.js';
@@ -477,6 +478,12 @@ export class PacingEngine {
    * contacts become claimable, and bounds the waste to one slot per round.
    */
   private readonly demandCap = new Map<string, number>();
+  /**
+   * The latest `inbound_waiting` per account key (docs/inbound.md §5.2): inbound callers waiting
+   * for the account's agents, so `planTick` leaves them room (`pacing/inbound-hold-back.ts`).
+   * Replaced by each event, dropped by one with nothing to hold, and ignored once it lapses.
+   */
+  private readonly inboundHolds = new Map<string, InboundHold>();
 
   /** A new round, with the engine's share settings. */
   private newRound(fresh: boolean): PacingRound {
@@ -1287,6 +1294,25 @@ export class PacingEngine {
       case 'account_capacity_freed':
         this.markAccountDirty(accountKeyOf(event.tenantId, event.accountId));
         return;
+      case 'inbound_waiting': {
+        const key = accountKeyOf(event.tenantId, event.accountId);
+        const before = this.inboundHolds.get(key);
+        if (event.n === 0 && event.preferredSessionIds.length === 0) this.inboundHolds.delete(key);
+        else {
+          this.inboundHolds.set(key, {
+            n: event.n,
+            preferredSessionIds: new Set(event.preferredSessionIds),
+            poolCampaignIds: event.poolCampaignIds === null ? null : new Set(event.poolCampaignIds),
+            expiresAt: this.now() + event.ttlMs,
+          });
+        }
+        // A changed hold changes what a tick may reserve, to 0 included (the callers were taken:
+        // the agents held back are dialable again). A republish of the same hold wakes nothing.
+        const after = this.inboundHolds.get(key);
+        if ((before?.n ?? 0) !== (after?.n ?? 0)
+          || !sameIds(before?.preferredSessionIds, after?.preferredSessionIds)) this.markAccountDirty(key);
+        return;
+      }
       case 'agent_available': {
         const campaignId = event.campaignId ?? this.localCampaignOf(event.sessionId);
         if (campaignId) this.markDirty(campaignId);
@@ -1597,6 +1623,17 @@ export class PacingEngine {
     // Ties broken on session id, so the order is total and a tick is reproducible.
     candidates.sort((a, b) =>
       a.availableSince - b.availableSince || a.sessionId.localeCompare(b.sessionId));
+
+    // ── Inbound callers first (docs/inbound.md §5.2, IQ2) ─────────────────────
+    // While inbound callers wait for this account's agents, the agents they are sticky to and the
+    // `n` longest idle are not this tick's to reserve (`pacing/inbound-hold-back.ts`). After the
+    // sort, so the agents held back are the ones the inbound search would offer the callers to.
+    const inboundHeld = holdBackForInbound(
+      candidates, this.inboundHolds.get(accountKeyOf(campaign.tenant_id, campaign.account_id)), campaign.id, this.now());
+    if (inboundHeld.length !== candidates.length) {
+      candidates.splice(0, candidates.length, ...inboundHeld);
+      if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };
+    }
 
     // ── Contact assignment: an agent with nothing due is not reserved (CA3). ──────
     // `strict` / `preferred`: one probe of every available agent's own queue (and the pool's,
@@ -2638,4 +2675,13 @@ export function gateHistoryField(decision: PreDialDecision): PacingHistoryField 
 function rowVersion(row: AgencyCampaignRecord): string {
   const at = (row as { updated_at?: Date | string | null }).updated_at;
   return at instanceof Date ? at.toISOString() : String(at ?? '');
+}
+
+/** Two id sets with the same members (either may be absent: empty). */
+function sameIds(a: ReadonlySet<string> | undefined, b: ReadonlySet<string> | undefined): boolean {
+  const x = a ?? new Set<string>();
+  const y = b ?? new Set<string>();
+  if (x.size !== y.size) return false;
+  for (const id of x) if (!y.has(id)) return false;
+  return true;
 }

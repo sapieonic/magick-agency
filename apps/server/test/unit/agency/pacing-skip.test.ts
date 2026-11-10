@@ -1272,3 +1272,86 @@ describe('PacingEngine rounds: supervise pass primes the row cache', () => {
     expect(repos.campaign.findById).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── Inbound callers first (docs/inbound.md §5.2, IQ2) ───────────────────────
+
+describe('PacingEngine rounds: inbound_waiting holds agents back for waiting inbound callers', () => {
+  const waiting = (over: Partial<Extract<PacingInvalidationEvent, { type: 'inbound_waiting' }>> = {}): PacingInvalidationEvent => ({
+    type: 'inbound_waiting', tenantId: 't1', accountId: 'a1', n: 1, preferredSessionIds: [], poolCampaignIds: null, ttlMs: 5_000, ...over,
+  });
+  const reservedIds = (agents: ReturnType<typeof makeAgents>) => agents.reserve.mock.calls.map((c) => c[0]);
+
+  beforeEach(() => {
+    repos.contact.claimDialable.mockImplementation(async (_id: string, limit: number) =>
+      Array.from({ length: limit }, (_, i) => contact(`c${i}`)));
+  });
+
+  it('holds back the n longest-idle candidates (s1 before s2 by the session-id tie-break)', async () => {
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1' }), agents }));
+    lead(r.e);
+    r.bus.publish(waiting({ n: 1 }));
+    await r.e.runRound();
+    expect(reservedIds(agents)).toEqual(['s2']);
+  });
+
+  it('drops the sessions a waiting caller is sticky to, then n of the rest', async () => {
+    const agents = makeAgents({ s1: 'available', s2: 'available', s3: 'available' });
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }, { id: 's3' }]);
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1', s3: 'camp-1' }), agents }));
+    lead(r.e);
+    r.bus.publish(waiting({ n: 1, preferredSessionIds: ['s3'] }));
+    await r.e.runRound();
+    expect(reservedIds(agents)).toEqual(['s2']);
+  });
+
+  it('only on the campaigns of the routes` pools; another account`s callers hold nothing here', async () => {
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1' }), agents }));
+    lead(r.e);
+    r.bus.publish(waiting({ n: 2, poolCampaignIds: ['camp-other'] }));
+    r.bus.publish(waiting({ n: 2, accountId: 'a-other' }));
+    await r.e.runRound();
+    expect(reservedIds(agents).sort()).toEqual(['s1', 's2']);
+  });
+
+  it('n = 0 lifts it and wakes the campaign at once; a hold nobody republishes lapses after its TTL', async () => {
+    const states: Record<string, string> = { s1: 'available', s2: 'available' };
+    const agents = makeAgents(states);
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1' }), agents }));
+    lead(r.e);
+    r.bus.publish(waiting({ n: 2 }));
+    await r.e.runRound();
+    expect(agents.reserve).not.toHaveBeenCalled();
+    expect(r.ticks.at(-1)).toMatchObject({ mode: 'full', quiescent: true });
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.at(-1)).toMatchObject({ mode: 'skipped' }); // quiescent: nothing reads until a change
+    // The callers were taken: n = 0 wakes the campaign on the very next round.
+    r.bus.publish(waiting({ n: 0 }));
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.at(-1)).toMatchObject({ mode: 'full', cause: 'event' });
+    expect(reservedIds(agents).sort()).toEqual(['s1', 's2']);
+
+    states.s1 = 'available';
+    states.s2 = 'available';
+    agents.reserve.mockClear();
+    r.bus.publish(waiting({ n: 2, ttlMs: 1_000 }));
+    r.clock.t += 1_000;
+    await r.e.runRound();
+    expect(reservedIds(agents).sort()).toEqual(['s1', 's2']);
+  });
+
+  it('the same hold republished wakes nothing', async () => {
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1' }), agents: makeAgents({ s1: 'on_call' }) }));
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    lead(r.e);
+    r.bus.publish(waiting({ n: 1, preferredSessionIds: ['s1'] }));
+    await r.e.runRound();
+    r.bus.publish(waiting({ n: 1, preferredSessionIds: ['s1'] }));
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.map((t) => t.mode)).toEqual(['full', 'skipped']);
+  });
+});

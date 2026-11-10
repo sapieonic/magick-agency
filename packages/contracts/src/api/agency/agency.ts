@@ -40,6 +40,8 @@ import type {
   AgencyStationTokenResponse,
   AgencyStationManualCallFrame,
   AgencyStationQueueFrame,
+  AgencyStationInboundCallFrame,
+  AgencyStationCustomerWaitingFrame,
   AgencyQueueIdleReason,
   AgencyQueueState,
   AgencyWrapupHoldReason,
@@ -355,7 +357,11 @@ export type AgencyStationServerFrame =
   // A soft-phone call's state change; re-exported from `./softphone` unchanged.
   | AgencyStationManualCallFrame
   // Contact assignment: this agent's own queue; re-exported from the dialer contract unchanged.
-  | AgencyStationQueueFrame;
+  | AgencyStationQueueFrame
+  // Inbound calls (P2): the call offered to or connected with this agent, and a sticky caller
+  // waiting; declared in `../../agency/inbound`, re-exported from `./inbound` unchanged.
+  | AgencyStationInboundCallFrame
+  | AgencyStationCustomerWaitingFrame;
 
 /**
  * The station socket's close codes (re-mint and retry versus re-bootstrap), declared

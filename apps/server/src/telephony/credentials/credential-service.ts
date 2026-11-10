@@ -42,7 +42,7 @@ const OPEN_CACHE_MAX = 256;
 export type CredentialRepo = Pick<TelephonyCredentialRepository,
   | 'create' | 'findById' | 'findOpenableSecrets' | 'findOpenableVersions' | 'list' | 'updateLabel' | 'rotateSecret'
   | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'liveCampaigns' | 'distinctKekIds'
-  | 'findRevokedUnshredded' | 'pruneRetiredSecrets'>;
+  | 'findRevokedUnshredded' | 'pruneRetiredSecrets' | 'findInbound'>;
 
 export interface TenantLookup {
   findById(id: string): Promise<{ id: string } | null>;
@@ -384,7 +384,11 @@ export class TelephonyCredentialService {
 
   /**
    * Revoke (terminal). Refused while a live campaign is pinned to it (checked again
-   * in the revoking statement, under a row lock): move the campaigns first. Calls
+   * in the revoking statement, under a row lock): move the campaigns first. Refused
+   * while inbound is enabled on it (`inbound_enabled`, also checked in the revoking
+   * statement; docs/inbound.md §8.2): a revoked credential could never remove its
+   * Application or put a linked number back, so unlink the numbers and disable inbound
+   * first (`TelephonyInboundService`). Calls
    * already placed keep hanging up and checking webhooks on it; the secrets are
    * shredded once none is in flight and the last ended more than the post-call
    * webhook window ago (`WEBHOOK_TOKEN_POST_END_GRACE_SECONDS`), here or by the sweep.
@@ -395,11 +399,15 @@ export class TelephonyCredentialService {
     if (current.status === 'revoked') return fail('invalid_transition', 'The credential is already revoked');
     const usage = await this.deps.repo.usage(id);
     if (usage.campaigns > 0) return this.inUse(id, usage.campaigns);
+    const inbound = await this.inboundEnabled(id);
+    if (inbound) return inbound;
     const row = await this.deps.repo.revoke(id, adminId);
     if (!row) {
-      // Pinned between the check above and the revoke, or revoked concurrently.
+      // Pinned, or inbound enabled, between the checks above and the revoke, or revoked concurrently.
       const raced = await this.deps.repo.usage(id);
       if (raced.campaigns > 0) return this.inUse(id, raced.campaigns);
+      const racedInbound = await this.inboundEnabled(id);
+      if (racedInbound) return racedInbound;
       return this.transitionRefused(id, 'The credential is already revoked');
     }
     this.forget(id);
@@ -476,6 +484,15 @@ export class TelephonyCredentialService {
 
   async get(id: string): Promise<TelephonyCredentialRecord | null> {
     return this.deps.repo.findById(id);
+  }
+
+  /** The `inbound_enabled` revoke refusal when inbound is enabled on the credential, else null. */
+  private async inboundEnabled(id: string): Promise<ServiceResult<never> | null> {
+    const inbound = await this.deps.repo.findInbound(id);
+    if (!inbound?.app_id) return null;
+    const linked = inbound.linked_numbers;
+    return fail('inbound_enabled', `Inbound calls are enabled on this credential${linked > 0 ? ` and ${linked === 1 ? '1 number is' : `${linked} numbers are`} linked` : ''}. `
+      + `${linked > 0 ? 'Unlink the numbers, then disable inbound' : 'Disable inbound'} before revoking it.`);
   }
 
   /** The `in_use` revoke refusal, naming the campaigns that block it. */

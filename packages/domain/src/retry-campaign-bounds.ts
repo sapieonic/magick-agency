@@ -127,6 +127,9 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
   // Automatic outcomes for unanswered calls (0022): they name codes of the catalog the
   // child inherits beside them.
   'outcome_dispositions',
+  // Inbound calls (0024, docs/inbound.md §4.1): whether the campaign's customers who ring in are
+  // put through to their own agent. The child's customers are the parent's.
+  'inbound_sticky_enabled',
 ] as const;
 
 /**

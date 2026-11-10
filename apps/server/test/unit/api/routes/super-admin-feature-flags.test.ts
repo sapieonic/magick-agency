@@ -167,7 +167,7 @@ describe('super-admin feature-flags routes', () => {
       expect(mocks.flagRepo.findGlobal).toHaveBeenCalledTimes(1);
       expect(res.json().flags.map((f: { key: string }) => f.key)).toEqual([
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
-        'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled',
+        'agency_console_alaw8', 'agency_contact_assignment_enabled', 'agency_reports_enabled', 'agency_inbound_enabled',
       ]);
     });
 

@@ -14,6 +14,7 @@ vi.mock('../../../../src/auth/super-admin.middleware.js', () => ({
 vi.mock('../../../../src/audit/super-admin-audit.js', () => ({ recordSuperAdminAudit: mocks.audit }));
 vi.mock('../../../../src/telephony/credentials/index.js', () => ({
   getTelephonyCredentialService: () => { throw new Error('tests pass a service'); },
+  getTelephonyInboundService: () => { throw new Error('tests pass an inbound service'); },
 }));
 
 import { superAdminTelephonyCredentialRoutes } from '../../../../src/api/routes/super-admin-telephony-credentials.routes.js';
@@ -35,7 +36,20 @@ const SYNC = {
   conflicts: [{ phone_number: '+14155550005', reason: 'registered_elsewhere' }], active_numbers: 2,
 };
 
+const INBOUND_STATE = {
+  inbound: { enabled: true, app_id: 'app-1', enabled_at: '2026-11-09T00:00:00.000Z', linked_numbers: 1, previous_token_expires_at: null },
+  webhook_base_configured: true,
+  numbers: [],
+};
+const NUMBER = '33333333-3333-4333-8333-333333333333';
+const NUMBER_STATE = {
+  phone_number_id: NUMBER, phone_number: '+14155550101',
+  link: { linked: true, linked_at: '2026-11-09T00:00:00.000Z', previous_app_id: null, route: null },
+  credential: { id: ID, label: 'Main', status: 'active', inbound_enabled: true }, link_blocker: null,
+};
+
 let svc: Record<string, ReturnType<typeof vi.fn>> & { storeAvailable: boolean };
+let inb: Record<string, ReturnType<typeof vi.fn>>;
 let app: FastifyInstance;
 
 beforeEach(async () => {
@@ -54,11 +68,22 @@ beforeEach(async () => {
     list: vi.fn().mockResolvedValue([ROW]),
     syncNumbers: vi.fn().mockResolvedValue({ ok: true, value: { credential: ROW, sync: SYNC } }),
   } as never;
+  inb = {
+    state: vi.fn().mockResolvedValue({ ok: true, value: INBOUND_STATE }),
+    enable: vi.fn().mockResolvedValue({ ok: true, value: INBOUND_STATE }),
+    disable: vi.fn().mockResolvedValue({ ok: true, value: INBOUND_STATE }),
+    repoint: vi.fn().mockResolvedValue({ ok: true, value: INBOUND_STATE }),
+    health: vi.fn().mockResolvedValue({ ok: true, value: { inbound: INBOUND_STATE.inbound, health: { health: 'ok', mismatched: [], stored_urls_current: true, checked_at: 'x' } } }),
+    numberState: vi.fn().mockResolvedValue({ ok: true, value: NUMBER_STATE }),
+    link: vi.fn().mockResolvedValue({ ok: true, value: NUMBER_STATE }),
+    unlink: vi.fn().mockResolvedValue({ ok: true, value: NUMBER_STATE }),
+    reconcileCredential: vi.fn().mockResolvedValue(0),
+  };
   app = Fastify();
   // The app-wide 5xx mask, as `buildApp` registers it, so the status mapping is tested
   // against what an admin actually receives.
   app.addHook('onSend', errorMaskHook);
-  await app.register(superAdminTelephonyCredentialRoutes, { prefix: '/super-admin', service: () => svc as never });
+  await app.register(superAdminTelephonyCredentialRoutes, { prefix: '/super-admin', service: () => svc as never, inbound: () => inb as never });
   await app.ready();
 });
 
@@ -124,6 +149,10 @@ describe('super-admin telephony credential routes', () => {
     tenant_not_found: 404, not_found: 404, duplicate_account: 409, duplicate_label: 409, carrier_rejected: 422,
     carrier_unreachable: 502, version_conflict: 409, invalid_transition: 409, in_use: 409,
     credential_not_active: 409, too_many_numbers: 422,
+    inbound_enabled: 409, inbound_not_enabled: 409, inbound_numbers_linked: 409, inbound_previous_token_in_use: 409,
+    inbound_unconfigured: 503,
+    phone_number_not_found: 404, phone_number_not_linkable: 409, phone_number_not_linked: 409,
+    carrier_number_missing: 409, carrier_refused: 422,
   };
 
   it('has an expected status for every code of the contract, and no other', () => {
@@ -172,6 +201,27 @@ describe('super-admin telephony credential routes', () => {
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: `${action}_telephony_credential` }));
   });
 
+  it('a disable runs no inbound cascade: the credential keeps its links and routes (docs/inbound.md §8.2); nor does a refused one', async () => {
+    const res = await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/disable` });
+    expect(res.statusCode).toBe(200);
+    expect(svc.disable).toHaveBeenCalledWith(ID, 'super-1');
+    expect(inb.reconcileCredential).not.toHaveBeenCalled();
+    svc.disable!.mockResolvedValueOnce({ ok: false, code: 'invalid_transition', message: 'm' });
+    expect((await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/disable` })).statusCode).toBe(409);
+    expect(inb.reconcileCredential).not.toHaveBeenCalled();
+    // Verify and enable run no cascade.
+    await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/verify` });
+    await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/enable` });
+    expect(inb.reconcileCredential).not.toHaveBeenCalled();
+  });
+
+  it('revoke answers 409 inbound_enabled while inbound is enabled', async () => {
+    svc.revoke!.mockResolvedValueOnce({ ok: false, code: 'inbound_enabled', message: 'Disable inbound before revoking it.' });
+    const res = await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/revoke` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: 'inbound_enabled', message: 'Disable inbound before revoking it.' });
+  });
+
   it('revoke answers 409 while a campaign pins it, and audits whether it shredded', async () => {
     svc.revoke!.mockResolvedValueOnce({ ok: false, code: 'in_use', message: '1 campaign(s)' });
     expect((await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/revoke` })).statusCode).toBe(409);
@@ -194,6 +244,8 @@ describe('POST /super-admin/telephony-credentials/:id/sync-numbers', () => {
     const res = await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/sync-numbers` });
     expect(res.statusCode).toBe(200);
     expect(svc.syncNumbers).toHaveBeenCalledWith(ID, 'super-1');
+    // The numbers it retired leave inbound (docs/inbound.md §8.2).
+    expect(inb.reconcileCredential).toHaveBeenCalledWith(ID, { adminId: 'super-1', adminEmail: 'admin@example.com' });
     expect(res.json()).toEqual({ credential: expect.objectContaining({ id: ID, status: 'active' }), sync: SYNC });
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'sync_telephony_credential_numbers', resource_type: 'telephony_credential', resource_id: ID,
@@ -213,5 +265,55 @@ describe('POST /super-admin/telephony-credentials/:id/sync-numbers', () => {
     expect(res.statusCode).toBe(status);
     expect(res.json()).toMatchObject({ error: code, message: 'service message' });
     expect(mocks.audit).not.toHaveBeenCalled();
+    expect(inb.reconcileCredential).not.toHaveBeenCalled();
+  });
+});
+
+describe('inbound routes (docs/inbound.md §8.1)', () => {
+  const ACTOR = { adminId: 'super-1', adminEmail: 'admin@example.com' };
+  it.each([
+    ['GET', `/super-admin/telephony-credentials/${ID}/inbound`, 'state', [ID], INBOUND_STATE],
+    ['POST', `/super-admin/telephony-credentials/${ID}/inbound/enable`, 'enable', [ID, ACTOR], INBOUND_STATE],
+    ['POST', `/super-admin/telephony-credentials/${ID}/inbound/disable`, 'disable', [ID, ACTOR], INBOUND_STATE],
+    ['POST', `/super-admin/telephony-credentials/${ID}/inbound/repoint`, 'repoint', [ID, ACTOR], INBOUND_STATE],
+    ['GET', `/super-admin/phone-numbers/${NUMBER}/inbound`, 'numberState', [NUMBER], NUMBER_STATE],
+    ['POST', `/super-admin/phone-numbers/${NUMBER}/inbound/link`, 'link', [NUMBER, ACTOR], NUMBER_STATE],
+    ['POST', `/super-admin/phone-numbers/${NUMBER}/inbound/unlink`, 'unlink', [NUMBER, ACTOR], NUMBER_STATE],
+  ] as const)('%s %s calls %s as the signed-in admin and answers its value', async (method, url, fn, args, body) => {
+    const res = await app.inject({ method, url });
+    expect(res.statusCode).toBe(200);
+    expect(inb[fn]).toHaveBeenCalledWith(...args);
+    expect(res.json()).toEqual(body);
+  });
+
+  it('health answers the check', async () => {
+    const res = await app.inject({ method: 'GET', url: `/super-admin/telephony-credentials/${ID}/inbound/health` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().health).toMatchObject({ health: 'ok', stored_urls_current: true });
+    expect(inb.health).toHaveBeenCalledWith(ID);
+  });
+
+  it.each([
+    ['/super-admin/telephony-credentials/nope/inbound/enable', 'not_found'],
+    ['/super-admin/phone-numbers/nope/inbound/link', 'phone_number_not_found'],
+  ])('POST %s answers 404 (%s) for a non-UUID id without calling the service', async (url, error) => {
+    const res = await app.inject({ method: 'POST', url });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe(error);
+    for (const fn of Object.keys(inb)) expect(inb[fn]).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['enable', 'inbound_unconfigured', 503], ['enable', 'inbound_enabled', 409], ['disable', 'inbound_numbers_linked', 409],
+    ['repoint', 'carrier_unreachable', 502], ['link', 'phone_number_not_linkable', 409], ['link', 'carrier_number_missing', 409],
+    ['unlink', 'phone_number_not_linked', 409], ['link', 'carrier_refused', 422],
+  ])('%s refused with %s answers %i with the service`s message (a 5xx kept, not masked)', async (fn, code, status) => {
+    inb[fn]!.mockResolvedValue({ ok: false, code, message: 'service message' });
+    const url = ['link', 'unlink'].includes(fn)
+      ? `/super-admin/phone-numbers/${NUMBER}/inbound/${fn}`
+      : `/super-admin/telephony-credentials/${ID}/inbound/${fn}`;
+    const res = await app.inject({ method: 'POST', url });
+    expect(res.statusCode).toBe(status);
+    expect(res.json()).toEqual({ error: code, message: 'service message' });
   });
 });

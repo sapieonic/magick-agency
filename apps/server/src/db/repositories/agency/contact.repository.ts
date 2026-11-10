@@ -26,6 +26,7 @@ import type {
 // of this rule was deliberately not written.
 import { normalizeE164 } from '../../../agency/dnc-registry.js';
 import { CONTACT_PHONE_DIGITS_SQL, contactPhoneDigitsSql } from './sql-fragments.js';
+import { unclaimContactUncharged, type UnclaimedContact } from './contact-unclaim-sql.js';
 import {
   contactListFilterConditions,
   keysetCondition,
@@ -272,6 +273,19 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
         WHERE c.id = picked.id
        RETURNING picked.agent_user_id AS claimed_for_user_id, c.*`;
 }
+
+/**
+ * What an inbound call's outcome asks of its matched contact
+ * ({@link AgencyContactRepository.settleFromInbound}), resolved by the caller from the disposition:
+ * a callback due at `at`; done (`completed`: a success or a terminal code); do not call
+ * (`suppressed`, with its reason; the DNC entry is the caller's write); or nothing (`none`: a retry
+ * code or a plain one: the customer rang us, so no retry is scheduled from it).
+ */
+export type AgencyInboundContactSettlement =
+  | { kind: 'callback'; at: Date }
+  | { kind: 'completed' }
+  | { kind: 'suppressed'; reason: string }
+  | { kind: 'none' };
 
 export class AgencyContactRepository {
   /**
@@ -611,6 +625,14 @@ export class AgencyContactRepository {
    * Never a live contact: only `pending` rows are picked, under `FOR UPDATE SKIP LOCKED` in a
    * MATERIALIZED pick (a row a tick is claiming is skipped, not waited on), and the UPDATE
    * re-checks `pending` on the locked row. Returns the moves (at most `limit`).
+   *
+   * **A catalog with no callback code** books no disposition callback, so the only callback such
+   * a campaign can hold is an inbound one (`isCallbackSql`'s `callback_source IS NOT NULL` arm):
+   * the pick then says so (`c.callback_source IS NOT NULL`, which the bucket already implies, so
+   * the same rows move) and is served by `idx_agency_contacts_inbound_callback` (0026), which
+   * holds only contacts with an inbound callback booked. The sweep runs on every running
+   * owner-mode campaign every 30 s; without this it walked each such campaign's pending roster to
+   * find nothing on every tenant with no inbound.
    */
   async fallBackOverdueCallbacks(input: {
     campaignId: string;
@@ -619,7 +641,7 @@ export class AgencyContactRepository {
     batchId: string;
     limit: number;
   }): Promise<AgencyCallbackFallbackMove[]> {
-    if (input.callbackCodes.length === 0 || input.limit <= 0) return [];
+    if (input.limit <= 0) return [];
     const { rows } = await getPool().query<{ contact_id: string; from_user_id: string }>(
       `WITH due AS MATERIALIZED (
          SELECT c.id, c.assigned_user_id
@@ -627,7 +649,8 @@ export class AgencyContactRepository {
           WHERE c.campaign_id = $1::uuid
             AND c.state = 'pending'
             AND c.assigned_user_id IS NOT NULL
-            AND c.next_attempt_at <= now() - make_interval(mins => $2::int)
+            AND c.next_attempt_at <= now() - make_interval(mins => $2::int)${input.callbackCodes.length === 0 ? `
+            AND c.callback_source IS NOT NULL` : ''}
             AND ${contactBucketSql('c', '$3')} = 'callback'
             AND NOT EXISTS (
               SELECT 1 FROM agency_agent_sessions s
@@ -946,6 +969,9 @@ export class AgencyContactRepository {
                                      + CASE WHEN cur.held AND $3::varchar = 'our_fault' THEN 1 ELSE 0 END,
                 last_outcome = CASE WHEN cur.held THEN COALESCE($4::varchar, c.last_outcome) ELSE c.last_outcome END,
                 last_disposition = COALESCE($5::varchar, c.last_disposition),
+                -- A placed soft-phone call settles an inbound callback, as chargeAttempt does.
+                callback_source = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_source END,
+                callback_due_at = CASE WHEN cur.held AND $3::varchar = 'attempt' THEN NULL ELSE c.callback_due_at END,
                 next_attempt_at = CASE
                                     WHEN c.suppressed_reason = 'dnc' OR NOT cur.held THEN c.next_attempt_at
                                     ELSE COALESCE($6::timestamptz, c.next_attempt_at)
@@ -1013,6 +1039,136 @@ export class AgencyContactRepository {
     );
     const row = rows[0];
     return row ? { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at } : null;
+  }
+
+  // ─── Inbound calls (docs/inbound.md §5.4, §6, P2) ────────────────────────
+
+  /**
+   * Settle the roster contact an inbound call matched, from the outcome its agent saved
+   * (docs/inbound.md §6; SP6's forward-only rule, decisions IB4 and IQ9). The caller resolves the
+   * disposition into a {@link AgencyInboundContactSettlement}; this applies it to the contact as
+   * it stands now, on the locked row, so the arm and the write cannot disagree:
+   *
+   *  - `pending`: `callback` → `pending` due at `at`; `completed` → `completed`; `suppressed` →
+   *    `suppressed` with its reason; `none` (a retry or a plain code, or the outcome lapsing) →
+   *    unchanged, except a contact its inbound callback reopened from `exhausted`
+   *    (`callback_reopened`, 0029), which goes back to `exhausted` (never claimed: the dialer
+   *    claims `pending` only): the customer was reached, and the reopen was only for that
+   *    callback (SWE-F2);
+   *  - `exhausted`: the same, so only a callback reopens it (IQ9, the customer asked to be called),
+   *    and a success or a suppress closes it; `none` leaves it exhausted;
+   *  - `in_flight` / `connected` (another call is live on it, or owes its outcome): only
+   *    `suppressed` applies; that call's own settlement does the rest;
+   *  - `completed` / `suppressed`, or a DNC-suppressed `pending` row (a pre-fix leftover): never
+   *    reopened, nothing applies.
+   *
+   * `attempt_count` and the our-fault ledger are never charged: the customer rang us, it is not a
+   * dial. On the `pending` and `exhausted` arms the call's outcome lands as the contact's last
+   * (`last_outcome = 'connected'`, `last_disposition` the code), so a callback code reads as a
+   * callback (`isCallbackSql`). The contact's INBOUND callback (`callback_source`, booked by an
+   * earlier call that reached nobody) is cleared on every arm: the customer has now spoken to an
+   * agent.
+   *
+   * Only for a call that BRIDGED (no conversation, nothing to settle). Run it on the transaction
+   * that saves the outcome (`AgencyInboundCallRepository.saveDisposition`), with the DNC write for
+   * a suppress code (B8), and only when that save is not a replay; and, with `none` and the lapse's
+   * code, on the transaction that closes an owed outcome (the lapse sweep, a supervisor's close:
+   * `InboundCallService`), so a reach whose outcome never came settles the contact too.
+   *
+   * @returns where the contact landed and which arm ran (`settled`: the open arm; `suppressed`: a
+   *   live contact suppressed; `unchanged`), or null when the call matched no contact, did not
+   *   bridge, or the contact is gone.
+   */
+  async settleFromInbound(
+    input: { inboundCallId: string; settlement: AgencyInboundContactSettlement; lastDisposition: string | null },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<{
+    contactId: string;
+    state: AgencyContactState;
+    nextAttemptAt: Date | null;
+    applied: 'settled' | 'suppressed' | 'unchanged';
+  } | null> {
+    const st = input.settlement;
+    const { rows } = await (deps.client ?? getPool()).query<{
+      id: string; state: AgencyContactState; next_attempt_at: Date | null; applied: 'settled' | 'suppressed' | 'unchanged';
+    }>(
+      `WITH cur AS (
+         SELECT c.id, c.state, c.suppressed_reason,
+                (c.callback_source IS NOT NULL AND c.callback_reopened) AS reopened
+           FROM agency_inbound_calls i
+           JOIN agency_contacts c
+             ON c.id = i.matched_contact_id AND c.campaign_id = i.matched_campaign_id AND c.tenant_id = i.tenant_id
+          WHERE i.id = $1::uuid AND i.bridged_at IS NOT NULL
+            FOR UPDATE OF c
+       ), dec AS (
+         SELECT cur.id, cur.state,
+                (cur.state IN ('pending', 'exhausted') AND cur.suppressed_reason IS DISTINCT FROM 'dnc') AS open_arm,
+                CASE
+                  WHEN cur.suppressed_reason = 'dnc' THEN cur.state
+                  WHEN cur.state IN ('pending', 'exhausted') THEN
+                    CASE $2::text
+                      WHEN 'callback' THEN 'pending'
+                      WHEN 'completed' THEN 'completed'
+                      WHEN 'suppressed' THEN 'suppressed'
+                      -- Nothing that moves it: a contact the callback reopened (0029) goes back.
+                      ELSE CASE WHEN cur.state = 'pending' AND cur.reopened THEN 'exhausted' ELSE cur.state END
+                    END
+                  WHEN cur.state IN ('in_flight', 'connected') AND $2::text = 'suppressed' THEN 'suppressed'
+                  ELSE cur.state
+                END AS next_state
+           FROM cur
+       )
+       UPDATE agency_contacts c
+          SET state = dec.next_state,
+              next_attempt_at = CASE WHEN dec.open_arm AND $2::text = 'callback' THEN $3::timestamptz
+                                     ELSE c.next_attempt_at END,
+              suppressed_reason = CASE WHEN dec.next_state = 'suppressed' AND dec.state <> 'suppressed'
+                                       THEN COALESCE($4::varchar, c.suppressed_reason) ELSE c.suppressed_reason END,
+              last_outcome = CASE WHEN dec.open_arm THEN 'connected' ELSE c.last_outcome END,
+              last_disposition = CASE WHEN dec.open_arm THEN COALESCE($5::varchar, c.last_disposition)
+                                      ELSE c.last_disposition END,
+              callback_source = NULL,
+              callback_due_at = NULL,
+              callback_reopened = false,
+              updated_at = now()
+         FROM dec
+        WHERE c.id = dec.id
+       RETURNING c.id, c.state, c.next_attempt_at,
+                 CASE WHEN dec.open_arm THEN 'settled'
+                      WHEN dec.next_state <> dec.state THEN 'suppressed'
+                      ELSE 'unchanged' END AS applied`,
+      [
+        input.inboundCallId,
+        st.kind,
+        st.kind === 'callback' ? st.at : null,
+        st.kind === 'suppressed' ? st.reason : null,
+        input.lastDisposition,
+      ],
+    );
+    const row = rows[0];
+    return row ? { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at, applied: row.applied } : null;
+  }
+
+  /**
+   * Return a contact whose ringing dial was cancelled because its customer rang in (§5.4, IQ8):
+   * `in_flight` → `pending`, due now, UNCHARGED: neither `attempt_count` nor the our-fault ledger
+   * moves, and `last_outcome` is left as it was (the attempt ends `canceled` with the system code
+   * `inbound_call`; the conversation happens on the inbound call). An inbound callback on it is
+   * kept, as an our-fault redial keeps one (`chargeAttempt`'s rule). Pacing does not take it back
+   * at once: the inbound call keeps its number busy (`numberLiveSql`'s inbound arm) until the call
+   * settles. `restoreAgentReopen`: the cancelled dial had consumed an agent-retry reopen
+   * (`agent_reopen_pending`), which goes back, as {@link unclaim}'s.
+   *
+   * @returns the contact as returned, or null when it is not `in_flight` (already settled by
+   *   another path) or gone.
+   */
+  async unclaimUncharged(
+    contactId: string,
+    opts: { restoreAgentReopen?: boolean } = {},
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<UnclaimedContact | null> {
+    // The statement is shared with the attempt repository's clash settle (contact-unclaim-sql.ts).
+    return unclaimContactUncharged(deps.client ?? getPool(), contactId, opts.restoreAgentReopen === true);
   }
 
   /**
@@ -1100,18 +1256,94 @@ export class AgencyContactRepository {
    * nothing can pick it up, and a crash in the gap leaves a stuck `in_flight`
    * row behind a terminal attempt, which the reaper's stranded-contact sweep
    * ({@link findStrandedInFlight}) requeues.
+   *
+   * **It settles an inbound callback.** A placed call to the contact is the call an inbound
+   * callback (`callback_source`, docs/inbound.md §7) asked for, so its source and due time are
+   * cleared here, with the charge. An our-fault redial ({@link chargeOurFaultAttempt}) is not a
+   * call the customer took part in and keeps it.
    */
   async chargeAttempt(contactId: string, outcome: string | null): Promise<number> {
     const { rows } = await getPool().query<{ attempt_count: number }>(
       `UPDATE agency_contacts
           SET attempt_count = attempt_count + 1,
               last_outcome  = COALESCE($2, last_outcome),
+              callback_source = NULL,
+              callback_due_at = NULL,
               updated_at    = now()
         WHERE id = $1
         RETURNING attempt_count`,
       [contactId, outcome],
     );
     return rows[0]?.attempt_count ?? 0;
+  }
+
+  /**
+   * Book an INBOUND callback on a contact whose customer rang in and reached nobody
+   * (docs/inbound.md §7, decisions IB3 and IB4): `callback_source = 'inbound'` with its due time,
+   * and the contact due by then, so the dialer's ordinary claims dial it.
+   *
+   * Only while, on the locked row:
+   *  - its campaign is `running` or `paused` (a completed, stopped or draft campaign dials no one);
+   *  - it is `pending` or `exhausted`. IB4: an exhausted contact (retries used up) is REOPENED,
+   *    `pending` again; a terminal outcome never is: `completed` (a success or a terminal
+   *    disposition) and `suppressed` stay as they are, and a live contact (`in_flight`,
+   *    `connected`: a call to it right now) is left to that call's settlement;
+   *  - it is not DNC-suppressed (`suppressed_reason IS DISTINCT FROM 'dnc'`: a pre-fix `pending`
+   *    row carrying it is never reopened by this, B8). The caller's number is checked against the
+   *    DNC registry by the caller before, and again at dial time by the pre-dial gate.
+   *
+   * Whether it reopened the contact is kept on the contact (`callback_reopened`, 0029: a reopen, or
+   * a contact already holding a reopening callback, is true; any other booking false), so the
+   * reach that settles the callback can put a reopened contact back ({@link settleFromInbound}).
+   *
+   * Due time: a `pending` contact already due sooner keeps its sooner time (`LEAST`), so an
+   * inbound call never delays a call the dialer owed; an exhausted one is due at `dueAt`. A
+   * contact already holding an inbound callback keeps the earlier of the two due times.
+   * Ownership is untouched: on a `strict` / `preferred` campaign the owner's claim dials it
+   * (CA4 / CA5's grace and fallback read it through `isCallbackSql`), on `pool` any agent does,
+   * from the owner's dedicated caller ID if they have one (DN2, read at dial time).
+   *
+   * Run it on the transaction that ends the inbound call (`AgencyInboundCallRepository.end`), so
+   * the Missed row's `callback_due_at` and the contact's callback commit together.
+   *
+   * @returns the callback that landed (`reopened`: the contact was `exhausted`), or null when the
+   *   contact is missing, of another tenant, or in a state or campaign that takes none.
+   */
+  async bookInboundCallback(
+    input: { tenantId: string; contactId: string; dueAt: Date },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<{ contactId: string; dueAt: Date; nextAttemptAt: Date; reopened: boolean } | null> {
+    const { rows } = await (deps.client ?? getPool()).query<{
+      id: string; callback_due_at: Date; next_attempt_at: Date; reopened: boolean;
+    }>(
+      `WITH target AS (
+         SELECT c.id, c.state AS prior_state
+           FROM agency_contacts c
+           JOIN agency_campaigns cam ON cam.id = c.campaign_id
+          WHERE c.id = $1::uuid AND c.tenant_id = $2::uuid
+            AND cam.status IN ('running', 'paused')
+            AND c.state IN ('pending', 'exhausted')
+            AND c.suppressed_reason IS DISTINCT FROM 'dnc'
+            FOR UPDATE OF c
+       )
+       UPDATE agency_contacts c
+          SET state = 'pending',
+              next_attempt_at = CASE WHEN t.prior_state = 'pending' THEN LEAST(c.next_attempt_at, $3::timestamptz)
+                                     ELSE $3::timestamptz END,
+              callback_source = 'inbound',
+              callback_due_at = LEAST(COALESCE(c.callback_due_at, $3::timestamptz), $3::timestamptz),
+              -- 0029: whether this callback reopened the contact (a second booking keeps the first's answer).
+              callback_reopened = CASE WHEN t.prior_state = 'exhausted' THEN true
+                                       WHEN c.callback_source IS NOT NULL THEN c.callback_reopened
+                                       ELSE false END,
+              updated_at = now()
+         FROM target t
+        WHERE c.id = t.id
+       RETURNING c.id, c.callback_due_at, c.next_attempt_at, t.prior_state = 'exhausted' AS reopened`,
+      [input.contactId, input.tenantId, input.dueAt],
+    );
+    const row = rows[0];
+    return row ? { contactId: row.id, dueAt: row.callback_due_at, nextAttemptAt: row.next_attempt_at, reopened: row.reopened } : null;
   }
 
   /**

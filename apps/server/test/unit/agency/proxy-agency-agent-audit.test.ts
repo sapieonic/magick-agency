@@ -198,6 +198,41 @@ describe('agency session and attempt audits', () => {
     await app.close();
   });
 
+  it('force-available that closed an owed inbound outcome audits it under the call (closed by a supervisor); the facts never reach the client', async () => {
+    const CALL = '77777777-7777-4777-8777-777777777777';
+    mocks.proxyToCore.mockResolvedValue({
+      status: 200,
+      body: { session_id: SESSION, campaign_id: CAMPAIGN, state: 'available', inbound_closed: { inbound_call_id: CALL, campaign_id: null } },
+    });
+    const app = await buildApp('account_admin', SUPERVISOR);
+    const res = await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/force-available`, payload: { reason: 'agent went home' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).not.toHaveProperty('inbound_closed');
+    expect(mocks.auditLog).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      account_id: ACCOUNT,
+      actor_type: 'human',
+      user_id: SUPERVISOR,
+      action: 'agency_inbound_call.closed',
+      resource_type: 'agency_inbound_call',
+      resource_id: CALL,
+      details: { via: 'force_available', session_id: SESSION, reason: 'agent went home' },
+    });
+    // Audited even when the release that followed was refused: the close itself happened.
+    mocks.auditLog.mockClear();
+    mocks.proxyToCore.mockResolvedValue({
+      status: 409,
+      body: { error: 'Conflict', code: 'inbound_call_live', inbound_call_id: 'next', inbound_closed: { inbound_call_id: CALL, campaign_id: CAMPAIGN } },
+    });
+    const refused = await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/force-available`, payload: {} });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).not.toHaveProperty('inbound_closed');
+    expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'agency_inbound_call.closed', resource_id: CALL, campaign_id: CAMPAIGN,
+    }));
+    await app.close();
+  });
+
   it('hang-up audits the attempt with campaign_id from the internal handler', async () => {
     const app = await buildApp();
     await app.inject({ method: 'POST', url: `${PREFIX}/attempts/${ATTEMPT}/hangup` });

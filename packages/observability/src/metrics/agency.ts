@@ -879,3 +879,115 @@ export const agencyReportsEmailsTotal = counter<'result'>(meter, 'agency_reports
 export const agencyReportsSubscriptionRunsTotal = counter<'result'>(meter, 'agency_reports_subscription_runs_total', {
   description: 'Subscription periods turned into runs, by result: created, duplicate (the period already had one), or flag_off (skipped: agency_reports_enabled off for the account)',
 });
+
+// ─── Inbound calls (docs/inbound.md; apps/server/src/agency/inbound/) ──────────────────────
+
+/** What the inbound answer webhook answered: the router's decision, or why it never decided. */
+export type InboundAnswerResult = 'stream' | 'spoken' | 'hangup' | 'fallback' | 'refused' | 'timed_out';
+
+export const agencyInboundCallsTotal = counter<'outcome'>(meter, 'agency_inbound_calls_total', {
+  description: 'Inbound calls ended, by outcome: answered, abandoned_in_queue, overflow, overflow_no_capacity, closed, voicemail, rejected or failed',
+});
+
+export const agencyInboundAnswerSeconds = histogram<'result'>(meter, 'agency_inbound_answer_seconds', {
+  description: 'Seconds the inbound answer webhook took to answer the carrier, by result: stream, spoken (a message the carrier speaks), hangup, fallback, refused or timed_out',
+  unit: 's',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8],
+});
+
+/** One inbound answer webhook answered (the carrier's answer-URL timeout bounds it). */
+export function trackInboundAnswer(result: InboundAnswerResult, seconds: number): void {
+  agencyInboundAnswerSeconds.observe({ result }, seconds);
+}
+
+/** One inbound call ended (its spine row's outcome), once per call. */
+export function trackInboundCallEnded(outcome: string): void {
+  agencyInboundCallsTotal.inc({ outcome });
+}
+
+/** How an inbound caller's wait ended (`agency_inbound_wait_seconds`). */
+export type InboundWaitResult = 'connected' | 'abandoned' | 'overflow' | 'failed';
+
+/** How one offer of an inbound caller to an agent ended (`agency_inbound_offers_total`). */
+export type InboundOfferResult = 'connected' | 'caller_left' | 'station_lost' | 'lease_lost' | 'refused' | 'declined' | 'bind_refused';
+
+/**
+ * Why a waiting inbound caller was overflowed from the queue (`agency_inbound_overflows_total`):
+ * `max_wait` (waited the route's maximum), `over_cap` (over `max_waiting` with nobody free at
+ * once), `no_agents` (nobody in the pool could take them, now or once their current work ended:
+ * everyone on a break, offline, on the phone app or outside the pool). Each is written `overflow`
+ * on the spine.
+ */
+export type InboundOverflowReason = 'max_wait' | 'over_cap' | 'no_agents';
+
+export const agencyInboundQueueWaiting = gauge<'route_id'>(meter, 'agency_inbound_queue_waiting', {
+  description: 'Inbound callers waiting for an agent on a route right now (on offer excluded), set as the queue changes',
+});
+
+export const agencyInboundWaitSeconds = histogram<'result'>(meter, 'agency_inbound_wait_seconds', {
+  description: 'Seconds an inbound caller waited in the queue (from first queueing), by how the wait ended: connected, abandoned, overflow or failed',
+  unit: 's',
+  buckets: [1, 5, 10, 20, 30, 60, 120, 300, 600],
+});
+
+export const agencyInboundOffersTotal = counter<'result'>(meter, 'agency_inbound_offers_total', {
+  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent\'s socket)',
+});
+
+export const agencyInboundOverflowsTotal = counter<'reason'>(meter, 'agency_inbound_overflows_total', {
+  description: 'Inbound callers overflowed from the queue (the route\'s overflow action), by why: max_wait (waited the route\'s maximum), over_cap (over max_waiting with nobody free) or no_agents (nobody in the pool could take them)',
+});
+
+/**
+ * One inbound route's waiting callers now. A route nobody waits on any more reports 0 at the next
+ * export and its series then goes (a deleted route keeps no series for the process's life).
+ */
+export function trackInboundQueueWaiting(routeId: string, waiting: number): void {
+  if (waiting === 0) agencyInboundQueueWaiting.retire({ route_id: routeId }, 0);
+  else agencyInboundQueueWaiting.set({ route_id: routeId }, waiting);
+}
+
+/** One waiting caller overflowed from the queue. */
+export function trackInboundOverflow(reason: InboundOverflowReason): void {
+  agencyInboundOverflowsTotal.inc({ reason });
+}
+
+/** One inbound caller's wait ended (once per call that queued). */
+export function trackInboundWait(result: InboundWaitResult, seconds: number): void {
+  agencyInboundWaitSeconds.observe({ result }, Math.max(0, seconds));
+}
+
+/** One offer ended. */
+export function trackInboundOffer(result: InboundOfferResult): void {
+  agencyInboundOffersTotal.inc({ result });
+}
+
+// ─── Inbound operations (docs/inbound.md §3.2, §8.1; `telephony/credentials/inbound-monitor.ts`) ─
+
+/**
+ * What the scheduled health check found for one inbound-enabled credential's carrier Application:
+ * the health check's own answers (`ok`, `url_mismatch`, `app_missing`, `unreachable`), or
+ * `failed` when it could not run (the carrier refused the credential, its secret cannot be opened).
+ */
+export type InboundApplicationHealth = 'ok' | 'url_mismatch' | 'app_missing' | 'unreachable' | 'failed';
+
+/** Every {@link InboundApplicationHealth}, so each pass sets every series (zeros included). */
+export const INBOUND_APPLICATION_HEALTHS: readonly InboundApplicationHealth[] = ['ok', 'url_mismatch', 'app_missing', 'unreachable', 'failed'];
+
+export const agencyInboundConnectAvailable = gauge(meter, 'agency_inbound_connect_available', {
+  description: '1 when this deployment puts inbound callers through to agents (MEDIA_WORKERS=0), 0 when it cannot (media workers on: every open route answers with the call-back message, IB8); set at boot',
+});
+
+export const agencyInboundApplications = gauge<'health'>(meter, 'agency_inbound_applications', {
+  description: 'Credentials with inbound enabled, by the last scheduled health check of their carrier Application: ok, url_mismatch, app_missing, unreachable or failed (the check could not run)',
+});
+
+/** Whether inbound callers can be put through to agents on this deployment (set once, at boot). */
+export function trackInboundConnectAvailable(available: boolean): void {
+  agencyInboundConnectAvailable.set(available ? 1 : 0);
+}
+
+/** One scheduled health pass: how many inbound-enabled credentials ended in each result. */
+export function trackInboundApplicationHealth(counts: Readonly<Record<InboundApplicationHealth, number>>): void {
+  for (const health of INBOUND_APPLICATION_HEALTHS) agencyInboundApplications.set({ health }, counts[health]);
+}

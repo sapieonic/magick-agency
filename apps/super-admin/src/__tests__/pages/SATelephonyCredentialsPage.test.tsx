@@ -15,6 +15,12 @@ const mocks = vi.hoisted(() => ({
   revokeTelephonyCredential: vi.fn(),
   syncTelephonyCredentialNumbers: vi.fn(),
   listTenants: vi.fn(),
+  // The expanded row's inbound section (its own suite: CredentialInboundSection.test.tsx).
+  getCredentialInbound: vi.fn(),
+  enableCredentialInbound: vi.fn(),
+  disableCredentialInbound: vi.fn(),
+  repointCredentialInbound: vi.fn(),
+  checkCredentialInboundHealth: vi.fn(),
 }));
 
 vi.mock('../../api/super-admin', () => ({ ...mocks }));
@@ -52,6 +58,10 @@ beforeEach(() => {
   mocks.rotateTelephonyCredentialSecret.mockResolvedValue(makeCred({ secret_version: 3, secret_hint: 'zz99' }));
   mocks.disableTelephonyCredential.mockResolvedValue(makeCred({ status: 'disabled' }));
   mocks.revokeTelephonyCredential.mockResolvedValue(makeCred({ status: 'revoked', revoked_at: '2026-10-11T00:00:00Z' }));
+  mocks.getCredentialInbound.mockResolvedValue({
+    inbound: { enabled: false, app_id: null, enabled_at: null, linked_numbers: 0, previous_token_expires_at: null },
+    webhook_base_configured: true, numbers: [],
+  });
 });
 afterEach(() => cleanup());
 

@@ -186,3 +186,158 @@ export interface WebRtcLifecycleEvent {
 }
 
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
+
+/**
+ * A call a customer placed to one of a tenant's numbers, already answered by the inbound answer
+ * webhook (docs/inbound.md §3): its media leg is the `agency_calls` row the webhook wrote
+ * (`origin = 'inbound'`), and the bridge holds the caller on our stream (principle 2). The
+ * bridge places nothing: it registers the session, takes the shared slots and hands back the
+ * stream the answer XML names.
+ */
+export interface WebRtcInboundCallParams {
+  /** The `agency_calls` leg the answer webhook wrote: the session's call id. */
+  callId: string;
+  /** What lifecycle events carry and the correlation-keyed members take: the inbound call's id. */
+  correlationId: string;
+  tenantId: string;
+  accountId: string;
+  provider: string;
+  /** The tenant carrier credential the call arrived on (resolved for `call_control` to hang it up). */
+  telephonyCredentialId: string | null;
+  /** The number rung. */
+  callerId: string;
+  /** The caller's number, '' when withheld. */
+  destinationPhone: string;
+  /** The carrier's own call id (Plivo's `CallUUID`). */
+  carrierCallId: string;
+  /**
+   * Take the shared slots (global, account, provider). False when the caller has already turned the
+   * call away (its route is at its own `max_concurrent`): it is streamed only to hear why, and
+   * holds no slot.
+   */
+  takeSlots: boolean;
+  /**
+   * The call may be put through to an agent (docs/inbound.md §5, P2): its browser leg is borrowed
+   * and unbound, so `bindBorrowedBrowserLeg` (keyed on {@link correlationId}) can put the agent's
+   * station socket on it later. False: the caller only ever hears messages (P1), and a bind is
+   * refused.
+   */
+  connectable: boolean;
+  /**
+   * Connectable calls only: how long the call is held after the bound station socket drops,
+   * waiting for `reattachBorrowedBrowserLeg` (0: a drop hangs up at once). The caller's value, as
+   * {@link WebRtcBridgedCallParams.browserCloseGraceMs} is, and for the same reason.
+   */
+  browserCloseGraceMs: number;
+  /**
+   * A connectable call: the longest the call may be held before an agent is put through, in
+   * seconds: the caller's messages, the queue's maximum wait, and anything played or recorded
+   * after it (an overflow message, a voicemail). The call's whole budget is `parkedSeconds` + the
+   * account's maximum duration: the answer's `maxDurationSeconds` (and so the stream's own timeout)
+   * and the slot and token lifetimes are that sum, while the bridge's own timer ends a call still
+   * unbound after `parkedSeconds`, as a backstop, and is re-armed with the full maximum duration at
+   * the bind. Never taken as less than the media deadline (`INBOUND_MEDIA_DEADLINE_SECONDS`).
+   *
+   * Any other call (it only hears a message, or leaves a voicemail): a FLOOR on its budget, which is
+   * the account's maximum duration or this, whichever is longer (0: the maximum duration). A
+   * voicemail's prompt and recording must fit whatever the account's ceiling (docs/inbound.md §7).
+   */
+  parkedSeconds: number;
+  /**
+   * Record the conversation once an agent is put through (the route's `record_calls`). The bridge
+   * still ANDs it with the account's recording ceiling (`allow_recording`), and starts it at the
+   * `bridged` moment through the carrier's record-on-demand API (`recordsOnDemand`); a carrier
+   * without one records nothing. Ignored for a call that is not {@link connectable}.
+   */
+  record: boolean;
+}
+
+/** What `WebRtcBridgeManager.playInboundHold` plays: the preamble once, then the hold on a loop. */
+export interface InboundHoldOptions {
+  /** Played once, in order (a greeting, a recording notice); a clip not on this replica's disk is skipped. */
+  preambleClipHashes: readonly string[];
+  /**
+   * Looped after the preamble until the hold is stopped. Null (the route has no hold clip), or a
+   * clip not on this replica's disk: the built-in generated hold tone instead (IQ24), never silence.
+   */
+  holdClipHash: string | null;
+  /**
+   * Called once, synchronously, when the preamble has finished playing and the hold loop starts
+   * (straight after the media is ready when there is no preamble). The agency side queues the
+   * caller from here, so no agent is bound while the greeting or the recording notice (IB7) is
+   * still playing (docs/inbound.md §2, IQ5). Not called when the hold ends before the loop starts
+   * (the caller left, a stop, no media). A listener that throws is logged, never the hold's fault.
+   */
+  onPreambleDone?: () => void;
+}
+
+/**
+ * How `WebRtcBridgeManager.playInboundHold` ended. It never hangs up:
+ *  - `released`: the hold was stopped with the leg still up: an agent was bound
+ *    (`bindBorrowedBrowserLeg`), or `stopInboundHold`, or a recording took the line
+ *    (`recordInboundAudio`), or a later `playInboundHold` replaced it;
+ *  - `aborted`: the caller went (the stream closed, the call ended) while it played;
+ *  - `no_media`: the call ended before the carrier's media was negotiated;
+ *  - `not_found`: no live call by that correlation id.
+ */
+export type InboundHoldResult = 'released' | 'aborted' | 'no_media' | 'not_found';
+
+/** What `WebRtcBridgeManager.recordInboundAudio` records, and what it plays first. */
+export interface InboundRecordOptions {
+  /** The longest recording, in seconds of the caller's audio (and of wall clock from its start). */
+  maxSeconds: number;
+  /** Played once before recording, in order (the prompt); a clip not on this replica's disk is skipped. */
+  promptClipHashes?: readonly string[];
+  /** Play the built-in 400 ms beep after the prompt, just before recording starts (IQ14). */
+  beep?: boolean;
+}
+
+/**
+ * The caller's audio `WebRtcBridgeManager.recordInboundAudio` captured. `result`:
+ *  - `completed`: `maxSeconds` reached with the caller still on; the call is NOT hung up (the
+ *    caller ends it, e.g. `forceEndWithOutcome`);
+ *  - `caller_left`: the caller hung up (during the prompt, or while recording): what was captured
+ *    until then;
+ *  - `no_media`: the call ended before the carrier's media was negotiated; nothing captured;
+ *  - `not_found`: no live call by that correlation id; nothing captured.
+ */
+export interface InboundAudioRecording {
+  result: 'completed' | 'caller_left' | 'no_media' | 'not_found';
+  /** PCM16 little-endian mono at {@link sampleRate}, decoded from the carrier's wire audio. */
+  pcm16: Buffer;
+  sampleRate: number;
+  /** Seconds of audio in {@link pcm16}. */
+  seconds: number;
+}
+
+/**
+ * How an inbound call was taken in. `capacity` says what the caller hears next:
+ *  - `admitted`: the slots are held;
+ *  - `account_full`: the account's own limit refused a slot, and the call is held anyway, with no
+ *    slot (decision IB5: an inbound call is never refused for the account limit; its live row
+ *    counts in the account's live total instead);
+ *  - `no_capacity`: the global or the carrier's scope is full (or cannot be read): the caller is to
+ *    hear "all lines are busy" and be put down (`overflow_no_capacity`), on a session with no slot;
+ *  - `not_requested`: `takeSlots` was false.
+ * `accepted: false`: no stream can be offered (no webhook base configured), or the leg has
+ * already ended here; the caller answers the call another way.
+ */
+export type WebRtcInboundAcceptance =
+  | {
+    accepted: true;
+    streamUrl: string;
+    maxDurationSeconds: number;
+    capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested';
+  }
+  | { accepted: false; reason: 'stream_unavailable' | 'ended' };
+
+/**
+ * How `WebRtcBridgeManager.playClipSequenceThenHangUp` ended:
+ *  - `completed`: every clip played (or was skipped as unavailable) and the call was hung up under
+ *    the caller's outcome;
+ *  - `aborted`: the far end went (the stream closed or the call ended) before the last clip
+ *    finished; the call ends by its own path, never under the caller's outcome;
+ *  - `no_media`: the call ended before the carrier's media was negotiated;
+ *  - `not_found`: no live call by that correlation id.
+ */
+export type ClipSequenceResult = 'completed' | 'aborted' | 'no_media' | 'not_found';

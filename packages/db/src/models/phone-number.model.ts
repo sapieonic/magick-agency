@@ -18,6 +18,13 @@ export interface PhoneNumberRecord {
    * by `syncForCredential`.
    */
   telephony_credential_id: string | null;
+  /**
+   * When a super-admin linked the number to its credential's inbound Application (IB6; 0024).
+   * NULL: not linked. Only a synced number (`telephony_credential_id` set) can be linked.
+   */
+  inbound_linked_at: Date | null;
+  /** The carrier app the number pointed at before linking, restored by Unlink. NULL: none, or not linked. */
+  inbound_previous_app_id: string | null;
   notes: string | null;
   created_by: string | null;
   created_at: Date;
@@ -25,6 +32,8 @@ export interface PhoneNumberRecord {
   // Joined fields (optional, from provider join)
   provider_name?: string;
   provider_display_name?: string;
+  /** `findAll` only: the account route answering the number now; NULL when none does. */
+  inbound_route_name?: string | null;
 }
 
 export interface CreatePhoneNumberInput {
@@ -99,4 +108,49 @@ export interface NumberSyncResult {
   conflicts: Array<{ phone_number: string; reason: NumberSyncConflictReason }>;
   /** The credential's active numbers after the sync. */
   active: number;
+}
+
+/**
+ * A number's inbound link (0024; docs/inbound.md §8.1) and everything Link checks, as
+ * `findInboundLink` and `listInboundForCredential` read it. The route is the account route
+ * answering the number now (its one live `agency_inbound_route_numbers` row), if any.
+ */
+export interface PhoneNumberInboundLinkRecord {
+  phone_number_id: string;
+  phone_number: string;
+  status: PhoneNumberRecord['status'];
+  /** NULL: a number on the service's own account, which can never be linked. */
+  telephony_credential_id: string | null;
+  inbound_linked_at: Date | null;
+  inbound_previous_app_id: string | null;
+  /** The credential's, when the number is synced from one (else NULL). */
+  credential_label: string | null;
+  credential_status: string | null;
+  credential_tenant_id: string | null;
+  /** The credential's inbound Application; NULL when inbound is not enabled on it. */
+  credential_app_id: string | null;
+  /** Assigned to the credential's tenant (false for a number on the service's own account). */
+  assigned: boolean;
+  route_id: string | null;
+  route_name: string | null;
+  route_account_id: string | null;
+}
+
+/** A number's tenant-default Missed rows still open (`findUnroutedMissed`). */
+export interface UnroutedMissedSummary {
+  open_count: number;
+  latest_arrived_at: Date | null;
+  /** NULL: the latest caller withheld their number (or there is none). */
+  latest_from_e164: string | null;
+}
+
+/** What `clearInboundLink` cleared: the link as it was. */
+export interface ClearedInboundLink {
+  phone_number_id: string;
+  phone_number: string;
+  status: PhoneNumberRecord['status'];
+  telephony_credential_id: string;
+  inbound_linked_at: Date;
+  /** The app the number pointed at before linking: the one to restore on the carrier. */
+  inbound_previous_app_id: string | null;
 }

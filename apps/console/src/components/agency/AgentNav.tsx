@@ -1,12 +1,14 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
-import { ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneOutgoing, Search } from 'lucide-react';
+import { ChartNoAxesCombined, FileText, ListChecks, Phone, PhoneIncoming, PhoneOutgoing, Search } from 'lucide-react';
 import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useReportsAccess } from '../../hooks/useReportsAccess';
+import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
+import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import styles from './AgentNav.module.css';
 
 /**
@@ -42,6 +44,7 @@ const ICONS: Record<AgentSurfaceId, typeof ListChecks> = {
   attempts: PhoneOutgoing,
   customers: Search,
   reports: FileText,
+  missed: PhoneIncoming,
 };
 
 /**
@@ -99,7 +102,19 @@ export function AgentNav({
   const reports = reportsAccess.enabled && reportsAccess.canSelf;
   const hintId = useId();
   const hint = lockedReason ? null : leaveHint;
-  const surfaces = agentSurfacesFor({ softphone, customers, reports });
+  const missedAccess = useMissedCallsAccess();
+  const missed = missedAccess.available;
+  const missedBadge = missedBadgeText(missedAccess.count);
+  const missedBadgeSr = missedBadgeLabel(missedAccess.count);
+  const surfaces = agentSurfacesFor({ softphone, customers, reports, missed });
+  // The open Missed calls beside their entry, wherever it renders (current, locked or a link).
+  const badgeFor = (id: AgentSurfaceId) =>
+    id === 'missed' && missedBadge ? (
+      <span className={styles.badge} data-testid="agent-nav-missed-badge">
+        <span aria-hidden="true">{missedBadge}</span>
+        <span className={styles.srOnly}>{`, ${missedBadgeSr}`}</span>
+      </span>
+    ) : null;
   return (
     <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
       {surfaces.map((surface) => {
@@ -117,6 +132,7 @@ export function AgentNav({
             >
               <Icon size={15} aria-hidden="true" />
               {surface.label}
+              {badgeFor(surface.id)}
             </span>
           );
         }
@@ -134,6 +150,7 @@ export function AgentNav({
             >
               <Icon size={15} aria-hidden="true" />
               {surface.label}
+              {badgeFor(surface.id)}
             </span>
           );
         }
@@ -150,6 +167,7 @@ export function AgentNav({
           >
             <Icon size={15} aria-hidden="true" />
             {surface.label}
+            {badgeFor(surface.id)}
           </Link>
         );
       })}

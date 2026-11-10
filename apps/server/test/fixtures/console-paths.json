@@ -1064,6 +1064,62 @@
     },
     {
       "method": "GET",
+      "path": "/super-admin/telephony-credentials/:id/inbound",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound on a tenant's Plivo credential (docs/inbound.md §8.1, IB6): the Application's state and the credential's numbers' links"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-credentials/:id/inbound/enable",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): create the Plivo Application on the tenant's account; audited"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-credentials/:id/inbound/disable",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): delete the Application; refused while numbers are linked; audited"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-credentials/:id/inbound/repoint",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): give the Application this server's URLs and a new token; audited"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/telephony-credentials/:id/inbound/health",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): the Application's live URLs against the stored ones"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/phone-numbers/:id/inbound",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): a number's link and whether it can be linked"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers/:id/inbound/link",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): link a synced number to its credential's Application; audited"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers/:id/inbound/unlink",
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "inbound (IB6): restore the number's previous app; audited"
+    },
+    {
+      "method": "GET",
       "path": "/super-admin/tenants/:id/byoc-phone-numbers",
       "status": "not_served",
       "reason": "super-admin telephony providers / credentials / BYOC: not served (out of scope)"
@@ -2372,6 +2428,174 @@
       "source": "apps/console/src/api/softphone.ts",
       "status": "served",
       "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/routes",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/routes/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/routes",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/agency/inbound/routes/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/inbound/routes/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/numbers",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/clips",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound route, served by the public API layer at the console path (docs/inbound.md §8.1, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/clips",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "inbound recording upload from the route editor, served by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/inbound/clips/:id",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "inbound recording delete from the route editor, served by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/clips/:id/audio",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "an inbound recording's preview from the route editor, streamed by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/clips/standard/:recording/audio",
+      "source": "apps/console/src/api/inboundRecordings.ts",
+      "status": "served",
+      "reason": "a standard inbound recording's preview from the route editor, streamed from the image by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/missed",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound Missed list, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/missed/:id/handled",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "inbound Missed list, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/missed/:id/reopen",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "a handled Missed row put back on the list, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/missed/:id/voicemail",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "a Missed row's voicemail (P2), the row's voicemail_url, streamed by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/missed/count",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the Missed list's open count for the nav badge, served by the public API layer at the console path (docs/inbound.md §8.4, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/missed/:id/assign",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "a supervisor's reassign of a Missed row, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/summary",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the inbound summary for supervisors, served by the public API layer at the console path (docs/inbound.md §11, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/calls/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/agency/inbound/calls/:id",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/hangup",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/disposition",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/calls/:id/dnc",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the answered inbound call (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/inbound/queue",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "the supervisor’s inbound queue tiles (P2), served by the public API layer at the console path (docs/inbound.md §6, decision B16)"
     },
     {
       "method": "POST",

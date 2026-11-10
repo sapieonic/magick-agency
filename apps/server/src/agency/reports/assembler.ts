@@ -214,6 +214,11 @@ export async function streamDetailFile(
       if (!finished) await iterator.return?.();
     }
   } catch (err) {
+    // The failure is reported by the throw below. The body's `error` event only tells the upload
+    // its input failed, and an upload that has not attached to the body yet (S3 stalled before
+    // reading, the deadline landing mid-FETCH rather than on `drain`) leaves the event with no
+    // listener, which Node raises as an uncaught exception. Listen here so it never is.
+    gzip.on('error', () => undefined);
     gzip.destroy(err instanceof Error ? err : new Error(String(err)));
     await upload.catch(() => undefined);
     throw err;

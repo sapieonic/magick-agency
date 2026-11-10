@@ -1,7 +1,12 @@
 import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import { AGENCY_STATION_CLOSE, type AgencyClientKind, type AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_STATION_CLOSE,
+  AGENCY_STATION_CONSOLE_ONLY_EVENTS,
+  type AgencyClientKind,
+  type AgencyStationServerFrame,
+} from '@magick-agency/contracts/agency';
 import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import { closeForSendBacklog, sendVerdict, STATION_PCM16_LIMITS } from '../utils/ws-backpressure.js';
@@ -35,6 +40,9 @@ interface StationEntry {
    */
   lastSeen: number;
 }
+
+/** A station as it was when it detached (`onDetached`): who it was, with no socket. */
+export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaignId' | 'tenantId' | 'accountId' | 'agentUserId' | 'clientKind'>>;
 
 /** What `attach` takes: the entry, with the client kind defaulting to `web`. */
 export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind'> & { clientKind?: AgencyClientKind };
@@ -88,10 +96,14 @@ export class StationRegistry {
     return () => { this.attachListeners.delete(listener); };
   }
 
-  private readonly detachListeners = new Set<(sessionId: string) => void>();
+  private readonly detachListeners = new Set<(sessionId: string, station: StationDetached) => void>();
 
-  /** Be told after every detach (a media worker tells the primary's directory). Total. */
-  onDetached(listener: (sessionId: string) => void): () => void {
+  /**
+   * Be told after every detach (a media worker tells the primary's directory; the inbound
+   * connector's rejoin grace), with the station as it was. Synchronous, before the ownership key
+   * is deleted. Total.
+   */
+  onDetached(listener: (sessionId: string, station: StationDetached) => void): () => void {
     this.detachListeners.add(listener);
     return () => { this.detachListeners.delete(listener); };
   }
@@ -201,8 +213,12 @@ export class StationRegistry {
     if (!entry || (ws && entry.ws !== ws)) return;
     this.stations.delete(sessionId);
     this.stopProbe(sessionId);
+    const station: StationDetached = {
+      sessionId, campaignId: entry.campaignId, tenantId: entry.tenantId, accountId: entry.accountId,
+      agentUserId: entry.agentUserId, clientKind: entry.clientKind,
+    };
     for (const listener of this.detachListeners) {
-      try { listener(sessionId); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
+      try { listener(sessionId, station); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
     }
     if (this.redis) {
       await this.redis.del(this.ownershipKey(sessionId)).catch((err) =>
@@ -530,10 +546,21 @@ export class StationRegistry {
    * not reading at all: the socket is closed 4408 `station_send_backlog` (the console
    * re-mints and reconnects, and `ready` carries the state again) and this returns false,
    * so a dial tick treats the agent as not there, as for a socket that is gone.
+   *
+   * ── Console-only events ─────────────────────────────────────────────────
+   * An event in `AGENCY_STATION_CONSOLE_ONLY_EVENTS` (the inbound call frames) is never sent to a
+   * MOBILE station, whoever asks: the app has no wire type for it yet (docs/inbound.md §4.3, IQ20).
+   * Enforced here, the one send path, so the rule does not rest on every inbound caller of `send`
+   * having already ruled a phone out. Dropped, logged, and answered false (not delivered).
    */
   send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
-    const ws = this.stations.get(sessionId)?.ws;
+    const entry = this.stations.get(sessionId);
+    const ws = entry?.ws;
     if (!ws || ws.readyState !== 1 /* OPEN */) return false;
+    if (entry.clientKind === 'mobile' && isConsoleOnly(frame.event)) {
+      log.warn({ sessionId, event: frame.event }, 'Console-only station frame not sent to a mobile station');
+      return false;
+    }
     // "Answer this socket, or answer nobody" — never "answer whoever is here now".
     if (expectedWs !== undefined && ws !== expectedWs) return false;
     const verdict = sendVerdict(ws, { media: frame.event === 'media' }, STATION_PCM16_LIMITS);
@@ -582,4 +609,11 @@ export class StationRegistry {
   size(): number {
     return this.stations.size;
   }
+}
+
+const CONSOLE_ONLY: ReadonlySet<string> = new Set(AGENCY_STATION_CONSOLE_ONLY_EVENTS);
+
+/** Whether `event` is one a mobile station is never sent (`AGENCY_STATION_CONSOLE_ONLY_EVENTS`). */
+function isConsoleOnly(event: AgencyStationServerFrame['event']): boolean {
+  return CONSOLE_ONLY.has(event);
 }

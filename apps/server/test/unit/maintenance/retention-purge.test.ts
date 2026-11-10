@@ -10,6 +10,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  */
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
+  deleteFile: vi.fn(),
+  storageConfigured: true,
   config: {
     server: { env: 'test' },
     retention: {
@@ -41,6 +43,8 @@ vi.mock('@magick-agency/db', () => ({
   getPool: () => ({ query: mocks.query }),
 }));
 
+vi.mock('../../../src/storage/s3.js', () => ({ deleteFile: mocks.deleteFile, isStorageConfigured: () => mocks.storageConfigured }));
+
 // No-delay retry so Slack failure tests don't sleep
 vi.mock('../../../src/utils/retry.js', () => ({
   withRetry: async (fn: () => Promise<unknown>) => fn(),
@@ -51,11 +55,26 @@ import { runRetentionPurge, isPurgeRunning } from '../../../src/maintenance/rete
 const DAY = 24 * 60 * 60 * 1000;
 
 /** Default query mock: every DELETE removes fewer rows than a batch, partitions listed above. */
-function mockQueries(opts: { deleteRowCounts?: number[]; updateRowCount?: number } = {}) {
+function mockQueries(opts: { deleteRowCounts?: number[]; updateRowCount?: number; voicemails?: Array<{ id: string; voicemail_key: string }> } = {}) {
   const deleteRowCounts = [...(opts.deleteRowCounts ?? [])];
-  mocks.query.mockImplementation(async (sql: string) => {
+  let voicemails = [...(opts.voicemails ?? [])];
+  mocks.query.mockImplementation(async (sql: string, values: unknown[] = []) => {
     if (sql.trimStart().startsWith('SELECT count')) {
       return { rows: [{ n: 7 }], rowCount: 1 };
+    }
+    if (sql.trimStart().startsWith('SELECT id, voicemail_key, arrived_at FROM agency_inbound_calls')) {
+      // The keyset walk: rows after the cursor (`$3`, `$4`), in order, over the rows as first given.
+      const afterId = values[3] as string | null;
+      const all = opts.voicemails ?? [];
+      const from = afterId === null ? 0 : all.findIndex((v) => v.id === afterId) + 1;
+      const rows = all.slice(from).filter((v) => voicemails.includes(v)).slice(0, values[1] as number)
+        .map((v) => ({ ...v, arrived_at: new Date(all.indexOf(v)) }));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.trimStart().startsWith('UPDATE agency_inbound_calls')) {
+      const before = voicemails.length;
+      voicemails = voicemails.filter((v) => !(v.id === values[0] && v.voicemail_key === values[1]));
+      return { rows: [], rowCount: before - voicemails.length };
     }
     if (sql.trimStart().startsWith('DELETE') || sql.trimStart().startsWith('DROP')) {
       return { rows: [], rowCount: deleteRowCounts.shift() ?? 3 };
@@ -77,6 +96,7 @@ describe('runRetentionPurge (agency slice)', () => {
     mocks.config.retention.slackWebhookUrl = undefined;
     mocks.config.retention.agencyRetentionDays = 85;
     mocks.config.retention.agencyTranscriptRetentionDays = undefined;
+    mocks.storageConfigured = true;
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
     // Pin Date only (timers stay real) so partition-drop expectations are
     // deterministic: cutoff = 2026-06-12 - 85d = 2026-03-19.
@@ -224,6 +244,78 @@ describe('runRetentionPurge (agency slice)', () => {
     expect(report.tables['agency_calls']).toBe(7);
     expect(report.agency_transcripts_nulled).toBe(7);
     expect(executedSql().some((s) => s.startsWith('DELETE') || s.startsWith('DROP') || s.startsWith('UPDATE'))).toBe(false);
+  });
+
+  it('inbound voicemails on the row window: each object deleted from the bucket, THEN the row forgets it', async () => {
+    mocks.deleteFile.mockResolvedValue(undefined);
+    mockQueries({ voicemails: [{ id: 'c-1', voicemail_key: 'inbound-voicemail/t/a/c-1.wav' }, { id: 'c-2', voicemail_key: 'inbound-voicemail/t/a/c-2.wav' }] });
+    const report = await runRetentionPurge();
+
+    expect(report.error).toBeUndefined();
+    expect(report.inbound_voicemails_deleted).toBe(2);
+    expect(mocks.deleteFile.mock.calls.map((c) => c[0])).toEqual(['inbound-voicemail/t/a/c-1.wav', 'inbound-voicemail/t/a/c-2.wav']);
+    const select = mocks.query.mock.calls.find((c) => (c[0] as string).includes('SELECT id, voicemail_key'))!;
+    expect(((select[1] as unknown[])[0] as Date).getTime()).toBe(Date.now() - 85 * DAY);
+    const clears = executedSql().filter((s) => s.startsWith('UPDATE agency_inbound_calls'));
+    expect(clears).toHaveLength(2);
+    // Only the voicemail: the inbound call (its Missed row) is kept.
+    for (const c of clears) expect(c).toContain('SET voicemail_key = NULL, voicemail_seconds = NULL WHERE id = $1 AND voicemail_key = $2');
+    expect(executedSql().some((s) => s.startsWith('DELETE FROM agency_inbound_calls'))).toBe(false);
+  });
+
+  it('a voicemail whose object cannot be deleted stays named (the next run retries it), is counted, and the rest go on', async () => {
+    mocks.config.retention.agencyTranscriptRetentionDays = 30;
+    mocks.deleteFile.mockImplementation(async (key: string) => {
+      if (key.endsWith('c-1.wav')) throw new Error('S3 down');
+    });
+    mockQueries({ voicemails: [{ id: 'c-1', voicemail_key: 'inbound-voicemail/t/a/c-1.wav' }, { id: 'c-2', voicemail_key: 'inbound-voicemail/t/a/c-2.wav' }] });
+    const report = await runRetentionPurge();
+
+    expect(report.error).toBeUndefined();
+    expect(report.inbound_voicemails_failed).toBe(1);
+    expect(report.inbound_voicemails_deleted).toBe(1);
+    const clears = mocks.query.mock.calls.filter((c) => (c[0] as string).trimStart().startsWith('UPDATE agency_inbound_calls'));
+    expect(clears.map((c) => (c[1] as unknown[])[0])).toEqual(['c-2']);
+    // The database steps ran: the voicemail step is last, so the bucket never holds them back.
+    expect(executedSql().some((s) => s.startsWith('UPDATE agency_calls'))).toBe(true);
+  });
+
+  it('with no bucket configured the voicemail step is skipped, the rows keep their keys, and the run is not failed', async () => {
+    mocks.storageConfigured = false;
+    mockQueries({ voicemails: [{ id: 'c-1', voicemail_key: 'inbound-voicemail/t/a/c-1.wav' }] });
+    const report = await runRetentionPurge();
+
+    expect(report.error).toBeUndefined();
+    expect(report.inbound_voicemails_deleted).toBe(0);
+    expect(mocks.deleteFile).not.toHaveBeenCalled();
+    expect(executedSql().some((s) => s.includes('agency_inbound_calls'))).toBe(false);
+  });
+
+  it('walks past more than a batch of voicemails with a keyset, a failing row not read twice', async () => {
+    const many = Array.from({ length: 450 }, (_, i) => ({ id: `c-${i}`, voicemail_key: `inbound-voicemail/t/a/c-${i}.wav` }));
+    mocks.deleteFile.mockImplementation(async (key: string) => {
+      if (key.endsWith('/c-0.wav')) throw new Error('S3 down');
+    });
+    mockQueries({ voicemails: many });
+    const report = await runRetentionPurge();
+
+    expect(report.inbound_voicemails_deleted).toBe(449);
+    expect(report.inbound_voicemails_failed).toBe(1);
+    expect(mocks.deleteFile).toHaveBeenCalledTimes(450);
+  });
+
+  it('a dry run counts the voicemails and deletes none; no window, no voicemail step', async () => {
+    mockQueries({ voicemails: [{ id: 'c-1', voicemail_key: 'k' }] });
+    const dry = await runRetentionPurge({ dryRun: true });
+    expect(dry.inbound_voicemails_deleted).toBe(7);
+    expect(mocks.deleteFile).not.toHaveBeenCalled();
+
+    mocks.config.retention.agencyRetentionDays = undefined;
+    vi.clearAllMocks();
+    mockQueries({ voicemails: [{ id: 'c-1', voicemail_key: 'k' }] });
+    const none = await runRetentionPurge();
+    expect(none.inbound_voicemails_deleted).toBe(0);
+    expect(executedSql().some((s) => s.includes('agency_inbound_calls'))).toBe(false);
   });
 
   it('posts a Slack summary when the webhook is configured', async () => {

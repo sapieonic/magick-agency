@@ -72,3 +72,46 @@ describe('BridgeWsTokens callback nonces', () => {
     await expect(tokens.releaseCallbackNonce('call-1', 'n1')).resolves.toBeUndefined();
   });
 });
+
+// The inbound Application's credential-level nonces (`claimCredentialCallbackNonce`, docs/inbound.md
+// §3.1): `SET NX` per (credential, nonce). Unlike the per-call guard it fails CLOSED (QA-F11): a
+// Redis that cannot answer is `unavailable`, which the webhook answers 503 (the carrier falls back).
+describe('BridgeWsTokens credential callback nonces (inbound)', () => {
+  function kvRedis() {
+    const keys = new Map<string, { value: string; ttl: number }>();
+    let failing = false;
+    return {
+      keys,
+      fail(on: boolean) { failing = on; },
+      async set(key: string, value: string, _ex: 'EX', ttl: number, _nx: 'NX') {
+        if (failing) throw new Error('redis down');
+        if (keys.has(key)) return null;
+        keys.set(key, { value, ttl });
+        return 'OK';
+      },
+      async del(key: string) { if (failing) throw new Error('redis down'); return keys.delete(key) ? 1 : 0; },
+    };
+  }
+
+  it('claimed the first time, replay for a repeat on the same credential; another credential or nonce is new', async () => {
+    const redis = kvRedis();
+    const tokens = new BridgeWsTokens(redis as any, 'p:');
+    expect(await tokens.claimCredentialCallbackNonce('cred-1', 'n1')).toBe('claimed');
+    expect(await tokens.claimCredentialCallbackNonce('cred-1', 'n1')).toBe('replay');
+    expect(await tokens.claimCredentialCallbackNonce('cred-1', 'n2')).toBe('claimed');
+    expect(await tokens.claimCredentialCallbackNonce('cred-2', 'n1')).toBe('claimed');
+    expect(redis.keys.get('p:webrtc:credential-callback-nonce:cred-1:n1')?.ttl).toBe(CALLBACK_NONCE_TTL_SECONDS);
+    await tokens.releaseCredentialCallbackNonce('cred-1', 'n1');
+    expect(await tokens.claimCredentialCallbackNonce('cred-1', 'n1')).toBe('claimed');
+  });
+
+  it('fails closed: Redis erroring is `unavailable` (never `claimed`); no Redis configured at all claims (a dev process)', async () => {
+    const redis = kvRedis();
+    redis.fail(true);
+    const tokens = new BridgeWsTokens(redis as any, '');
+    expect(await tokens.claimCredentialCallbackNonce('cred-1', 'n1')).toBe('unavailable');
+    expect(await tokens.claimCredentialCallbackNonce('cred-1', 'n1')).toBe('unavailable');
+    await expect(tokens.releaseCredentialCallbackNonce('cred-1', 'n1')).resolves.toBeUndefined();
+    expect(await new BridgeWsTokens(null, '').claimCredentialCallbackNonce('cred-1', 'n1')).toBe('claimed');
+  });
+});

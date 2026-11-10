@@ -1496,7 +1496,7 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     /** Which refusals the agent dialled through with a note. */
     overrides: 'none' | 'dnc' | 'hours' | 'both';
     /** How the number got into the field. */
-    entry: 'typed' | 'pasted' | 'redial';
+    entry: 'typed' | 'pasted' | 'redial' | 'inbound_callback';
     /** `station`: a campaign session switched to the soft phone (SP7). */
     surface: 'softphone_page' | 'station';
   };

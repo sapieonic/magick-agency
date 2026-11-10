@@ -93,6 +93,8 @@ const { repos } = vi.hoisted(() => ({
       joinOrRehydrate: vi.fn(),
     },
     manualCall: { findUnsettledForSession: vi.fn().mockResolvedValue(null), findWireById: vi.fn() },
+    // The inbound call's twin of the soft phone's owed-call read (docs/inbound.md §6).
+    inboundCall: { findUnsettledForSession: vi.fn().mockResolvedValue(null) },
   },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -101,6 +103,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAgentSessionRepository: repos.session,
   agencyManualCallRepository: repos.manualCall,
+  agencyInboundCallRepository: repos.inboundCall,
 }));
 
 import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';
@@ -138,6 +141,9 @@ async function harness(): Promise<Harness> {
       claimManual: vi.fn().mockResolvedValue({ ok: true }),
       manualCallOf: vi.fn().mockResolvedValue(null),
       releaseManual: vi.fn().mockResolvedValue(true),
+      rehydrateInbound: vi.fn().mockResolvedValue({ state: 'break', changed: false }),
+      inboundCallOf: vi.fn().mockResolvedValue(null),
+      releaseInbound: vi.fn().mockResolvedValue(true),
     },
     wrapup: { stateFor: vi.fn(() => null), noteDisposition: vi.fn(), cancel: vi.fn(), force: vi.fn() },
     /**
@@ -178,6 +184,8 @@ async function harness(): Promise<Harness> {
     },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
+    // A supervisor's force-available closes an owed inbound outcome (`closeOwedForSupervisor`).
+    inboundCalls: { closeOwedForSupervisor: vi.fn().mockResolvedValue({ kind: 'none' }) },
     dialer: {
       reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),
@@ -236,6 +244,7 @@ beforeEach(async () => {
   // `clearAllMocks` keeps implementations: a case that stages an owed soft-phone call must
   // not leak it into the next one.
   repos.manualCall.findUnsettledForSession.mockReset().mockResolvedValue(null);
+  repos.inboundCall.findUnsettledForSession.mockReset().mockResolvedValue(null);
   h = await harness();
 });
 
@@ -864,6 +873,54 @@ describe('/available and the soft phone', () => {
   });
 });
 
+describe('/available and an inbound call (docs/inbound.md §6)', () => {
+  it('answers 409 inbound_call_live from the database BEFORE any write, re-claiming an owed outcome', async () => {
+    // A lease that lapsed took the `inbound` field: Redis alone would let this through.
+    repos.inboundCall.findUnsettledForSession.mockResolvedValue({ id: 'ib-1', state: 'ended', bridged_at: new Date() });
+
+    const res = await post('/available');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-1' });
+    expect(h.runtime.agents.rehydrateInbound).toHaveBeenCalledWith('sess-1', 'ib-1');
+    expect(h.runtime.agents.set).not.toHaveBeenCalledWith('sess-1', 'available', expect.anything());
+    expect(repos.session.setState).not.toHaveBeenCalled();
+    expect(h.sent.some((f: { event?: string; state?: string }) => f.event === 'agent_state' && f.state === 'available')).toBe(false);
+  });
+
+  it('a live (offered or connected) call is refused without touching its field: the connector owns it', async () => {
+    repos.inboundCall.findUnsettledForSession.mockResolvedValue({ id: 'ib-1', state: 'connected', bridged_at: new Date() });
+    const res = await post('/available');
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-1' });
+    expect(h.runtime.agents.rehydrateInbound).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 inbound_call_live when the Lua write refuses (a reservation landed after the read)', async () => {
+    h.runtime.agents.set.mockResolvedValue('inbound_call_owed');
+    repos.inboundCall.findUnsettledForSession
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'ib-2', state: 'offered', bridged_at: null });
+
+    const res = await post('/available');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-2' });
+    expect(repos.session.setState).not.toHaveBeenCalled();
+  });
+
+  it('a stale field with nothing owed is cleared by the id it holds, and the agent goes available', async () => {
+    h.runtime.agents.set.mockResolvedValueOnce('inbound_call_owed').mockResolvedValue('ok');
+    h.runtime.agents.inboundCallOf.mockResolvedValue('ib-stale');
+
+    const res = await post('/available');
+
+    expect(res.statusCode).toBe(200);
+    expect(h.runtime.agents.releaseInbound).toHaveBeenCalledWith('sess-1', 'ib-stale');
+    expect(repos.session.setState).toHaveBeenCalledWith('sess-1', 'available');
+  });
+});
+
 describe('/force-available answers what it did', () => {
   const asSupervisor = () => post('/force-available', { agent_user_id: 'u-supervisor', on_behalf: true });
 
@@ -887,6 +944,34 @@ describe('/force-available answers what it did', () => {
     const res = await asSupervisor();
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
+  });
+
+  it('409 inbound_call_live while the agent is on an inbound call (offered or connected); nothing released', async () => {
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'live', inboundCallId: 'ib-1' });
+    const res = await asSupervisor();
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-1' });
+    expect(res.json()).not.toHaveProperty('inbound_closed');
+    expect(h.runtime.dialer.releaseAgent).not.toHaveBeenCalled();
+  });
+
+  it('an owed inbound outcome is closed and the agent released; the answer carries the close for the audit', async () => {
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'closed', call: { id: 'ib-2', matched_campaign_id: 'c-9' } });
+    h.runtime.dialer.releaseAgent.mockResolvedValue({ state: 'available', result: 'ok' });
+    const res = await asSupervisor();
+    expect(res.statusCode).toBe(200);
+    expect(h.runtime.inboundCalls.closeOwedForSupervisor).toHaveBeenCalledWith('sess-1');
+    expect(h.runtime.dialer.releaseAgent).toHaveBeenCalledWith('sess-1');
+    expect(res.json()).toMatchObject({ state: 'available', inbound_closed: { inbound_call_id: 'ib-2', campaign_id: 'c-9' } });
+  });
+
+  it('409 inbound_call_live when the release\'s own guard refused (a new offer landed after the close), the close still reported', async () => {
+    h.runtime.inboundCalls.closeOwedForSupervisor.mockResolvedValue({ kind: 'closed', call: { id: 'ib-2', matched_campaign_id: null } });
+    h.runtime.dialer.releaseAgent.mockResolvedValue({ state: 'available', result: 'inbound_call_owed' });
+    repos.inboundCall.findUnsettledForSession.mockResolvedValue({ id: 'ib-3', state: 'offered', bridged_at: null });
+    const res = await asSupervisor();
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'inbound_call_live', inbound_call_id: 'ib-3', inbound_closed: { inbound_call_id: 'ib-2' } });
   });
 
   it('the state actually written: a queued break, or offline for a station that is gone', async () => {

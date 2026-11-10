@@ -59,6 +59,13 @@ export interface HistogramMetric<L extends string = never> {
 export interface GaugeMetric<L extends string = never> {
   set(value: number): void;
   set<T extends LabelValues<L>>(labels: ExactLabels<L, T>, value: number): void;
+  /**
+   * Report `value` for this label set at the next collection only, then stop reporting it (a
+   * later `set` brings it back). For a series whose subject is gone (a route nobody waits on):
+   * its last value is exported once, so the series ends on it instead of freezing on an earlier
+   * one, and it is never exported again.
+   */
+  retire<T extends LabelValues<L>>(labels: ExactLabels<L, T>, value: number): void;
   /** Stop reporting every label set. */
   reset(): void;
 }
@@ -122,12 +129,13 @@ export function gauge<L extends string = never>(
   options: InstrumentOptions,
   initial?: number,
 ): GaugeMetric<L> {
-  const values = new Map<string, { attributes: Attributes | undefined; value: number }>();
+  const values = new Map<string, { attributes: Attributes | undefined; value: number; retiring?: true }>();
   if (initial !== undefined) values.set('', { attributes: undefined, value: initial });
   meter.createObservableGauge(name, options).addCallback((result) => {
-    for (const { attributes, value } of values.values()) {
+    for (const [key, { attributes, value, retiring }] of [...values]) {
       if (attributes) result.observe(value, attributes);
       else result.observe(value);
+      if (retiring) values.delete(key);
     }
   });
   return {
@@ -137,6 +145,9 @@ export function gauge<L extends string = never>(
       } else {
         values.set('', { attributes: undefined, value: labelsOrValue });
       }
+    },
+    retire(labels: LabelValues<L>, value: number): void {
+      values.set(labelKey(labels), { attributes: { ...labels } as Attributes, value, retiring: true });
     },
     reset(): void {
       values.clear();

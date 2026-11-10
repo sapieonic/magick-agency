@@ -46,6 +46,14 @@ export type SoftphoneRefusal =
   | { code: 'fields_invalid'; details: CallFieldIssue[] }
   | { code: 'contact_in_flight'; campaign_id: string; contact_id: string }
   | { code: 'contact_assigned_elsewhere' }
+  /** The number is on an inbound call to the account (docs/inbound.md §5.4, MC4). */
+  | { code: 'customer_on_inbound_call'; inbound_call_id: string }
+  /**
+   * The return from the soft phone (`setAvailableGuarded`) on a session that holds an inbound call
+   * owing its outcome (docs/inbound.md §6): the inbound family's code, as the campaign session
+   * routes answer the soft phone's `manual_call_live`.
+   */
+  | { code: 'inbound_call_live'; inbound_call_id: string }
   | {
     code: 'outside_calling_hours';
     window: AgencyCallingWindow;
@@ -73,7 +81,7 @@ export type SoftphoneRefusal =
 // Every refusal code is a contract code (the reverse is not required: the API
 // layer owns `softphone_disabled`, `session_on_campaign`, `session_on_softphone`
 // and `settings_invalid`).
-type _UnlistedRefusal = Exclude<SoftphoneRefusal['code'], AgencySoftphoneErrorCode>;
+type _UnlistedRefusal = Exclude<SoftphoneRefusal['code'], AgencySoftphoneErrorCode | 'inbound_call_live'>;
 const _everyRefusalIsAContractCode: _UnlistedRefusal extends never ? true : _UnlistedRefusal = true;
 void _everyRefusalIsAContractCode;
 
@@ -93,6 +101,8 @@ export function softphoneRefusalMessage(refusal: SoftphoneRefusal): string {
     case 'fields_invalid': return 'Some call details are invalid.';
     case 'contact_in_flight': return 'A campaign call to this contact is in progress.';
     case 'contact_assigned_elsewhere': return 'This number belongs to another agent on this campaign.';
+    case 'customer_on_inbound_call': return 'This customer is on a call to us right now.';
+    case 'inbound_call_live': return 'Save the outcome of your inbound call first.';
     case 'outside_calling_hours': return 'The campaign\'s calling hours are closed for this number.';
     case 'dnc_listed': return 'This number is on the Do Not Call list.';
     case 'dnc_unavailable': return 'The Do Not Call list could not be checked. Try again shortly.';

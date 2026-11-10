@@ -160,6 +160,55 @@ describe('streamDetailFile', () => {
     await expect(streamDetailFile(src, 'k', 5, storage)).rejects.toThrow('cursor died');
     expect(returned).toBe(true);
   });
+
+  /**
+   * The deadline landing while a row is being read (the cursor's FETCH in flight), not while the
+   * file waits on `drain`, into an upload that has not attached to its body yet. The failure is
+   * the function's rejection; failing the body must not ALSO raise an `error` event nobody
+   * listens to, which Node turns into an uncaught exception (the 1-in-5 "report build timed out"
+   * the integration deadline test left behind). Mutation-checked: without the assembler's own
+   * listener on the body the `error` event below is uncaught and this test reds.
+   */
+  it('a failure while no one listens to the body fails the body without an uncaught error event', async () => {
+    let body: Readable | undefined;
+    const storage = {
+      // Has not started reading: no listener on the body, settles only when told to stop.
+      uploadStream: vi.fn((_key: string, b: Readable, _type: string, signal?: AbortSignal) => {
+        body = b;
+        return new Promise<number>((_, reject) => { signal?.addEventListener('abort', () => reject(signal.reason)); });
+      }),
+    };
+    const deadline = new AbortController();
+    const src: ReportDetailSource = {
+      sheet: 'attempts', label: 'Attempts', columns: [],
+      rows: (signal) => ({
+        [Symbol.asyncIterator]: () => ({
+          // The FETCH in flight: cancelled by the deadline, reported as the deadline.
+          next: () => new Promise<IteratorResult<unknown[]>>((_, reject) => {
+            signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          }),
+          return: async () => ({ done: true as const, value: undefined }),
+        }),
+      }),
+    };
+    const uncaught: unknown[] = [];
+    const onUncaught = (err: unknown) => { uncaught.push(err); };
+    // Ahead of the runner's own handler, so the test itself sees it and says so.
+    process.prependListener('uncaughtException', onUncaught);
+    try {
+      const streaming = streamDetailFile(src, 'k', 1_000, storage, deadline.signal);
+      setTimeout(() => deadline.abort(new Error('report build timed out after 10ms')), 10);
+      await expect(streaming).rejects.toThrow('report build timed out after 10ms');
+      // Let the body's destroy run its error emission.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(body?.destroyed).toBe(true);
+      expect((body as Readable & { errored?: unknown }).errored).toMatchObject({ message: 'report build timed out after 10ms' });
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.removeListener('uncaughtException', onUncaught);
+    }
+  });
 });
 
 describe('assembling one run', () => {

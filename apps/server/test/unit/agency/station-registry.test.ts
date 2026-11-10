@@ -206,6 +206,33 @@ describe('StationRegistry frame delivery', () => {
     expect(ws.sent[0]).toMatchObject({ event: 'ready' });
   });
 
+  it('never sends a console-only event (AGENCY_STATION_CONSOLE_ONLY_EVENTS) to a mobile station, whoever asks (SWE-m5)', async () => {
+    const reg = new StationRegistry(fakeRedis() as any, '', 'r1');
+    // A phone's socket is probed (ping/pong) from attach: the fake takes the listeners and ignores them.
+    const phone = Object.assign(fakeWs(), { on() {}, off() {}, ping() {} });
+    const desk = fakeWs();
+    await reg.attach({ sessionId: 'phone', ws: phone as any, ...ENTRY, clientKind: 'mobile' });
+    await reg.attach({ sessionId: 'desk', ws: desk as any, ...ENTRY, agentUserId: 'u2' });
+    try {
+      const frames = [
+        { event: 'inbound_call', call: { id: 'c1' } },
+        { event: 'customer_waiting', inbound_call_id: 'c1', from_e164: '+447700900000', waiting_since: '2026-11-09T10:00:00.000Z' },
+      ] as const;
+      for (const frame of frames) {
+        expect(reg.send('phone', frame as any), frame.event).toBe(false);
+        expect(reg.send('desk', frame as any), frame.event).toBe(true);
+      }
+      expect(phone.sent.filter((f) => f.event === 'inbound_call' || f.event === 'customer_waiting')).toEqual([]);
+      expect(desk.sent.map((f) => f.event)).toEqual(['inbound_call', 'customer_waiting']);
+      // Everything else still reaches the phone.
+      expect(reg.send('phone', { event: 'agent_state', state: 'available', since: '2026-11-09T10:00:00.000Z' } as any)).toBe(true);
+      expect(phone.sent.at(-1)).toMatchObject({ event: 'agent_state' });
+    } finally {
+      await reg.detach('phone');
+      await reg.detach('desk');
+    }
+  });
+
   it('reports failure for a missing or closed socket instead of throwing', async () => {
     const reg = new StationRegistry(null, '', 'r1');
     const ws = fakeWs();

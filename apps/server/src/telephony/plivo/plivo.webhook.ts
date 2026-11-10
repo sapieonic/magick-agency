@@ -4,7 +4,8 @@
 //  - `answer_url` when the callee answers (`CallStatus=in-progress`); we reply with XML;
 //  - `ring_url` and `hangup_url` (both our status URL): `CallStatus=ringing`, then one
 //    terminal status: completed | busy | failed | timeout | no-answer | cancel;
-//  - the `<Record callbackUrl>` when a session recording is ready (`RecordUrl`, …).
+//  - the `<Record callbackUrl>` when a session recording is ready (`RecordUrl`, …), or the
+//    Record API's `callback_url` (`record_url`, …) for a recording started on a live call.
 //
 // The terminal vocabulary is VoiceLink's (`VoicelinkOutcome`), so the bridge settles both
 // carriers' terminals the same way.
@@ -37,11 +38,11 @@ export interface NormalizedPlivoCallback {
   answeredAt?: string;
   /** `EndTime` as Plivo sent it (non-empty only). */
   endedAt?: string;
-  /** `RecordUrl` (recording callbacks). */
+  /** `RecordUrl`, or the Record API's `record_url` (recording callbacks). */
   recordingUrl?: string;
-  /** `RecordingID` (recording callbacks). */
+  /** `RecordingID`, or `recording_id` (recording callbacks). */
   recordingId?: string;
-  /** `RecordingDuration`, whole seconds (recording callbacks). */
+  /** `RecordingDuration`, or `recording_duration`, whole seconds (recording callbacks). */
   recordingDurationSec?: number;
   /** True iff the callee answered. */
   wasAnswered: boolean;
@@ -76,15 +77,18 @@ export function normalizePlivoCallback(kind: PlivoCallbackKind, params: Record<s
   const endTime = str(params, 'EndTime');
   const durationSec = seconds(str(params, 'Duration'));
   const billSec = seconds(str(params, 'BillDuration'));
-  const recordingUrl = str(params, 'RecordUrl');
-  const recordingId = str(params, 'RecordingID');
-  const recordingDurationSec = seconds(str(params, 'RecordingDuration'));
+  // A recording callback comes in two shapes: the `<Record>` element's (`RecordUrl`, …) and the
+  // Record API's (`record_url`, …; unverified until P0, `plivo-inbound.wire.ts`). Either is read.
+  const recordingParam = (xml: string, api: string): string => str(params, xml) || (kind === 'recording' ? str(params, api) : '');
+  const recordingUrl = recordingParam('RecordUrl', 'record_url');
+  const recordingId = recordingParam('RecordingID', 'recording_id');
+  const recordingDurationSec = seconds(recordingParam('RecordingDuration', 'recording_duration'));
   const wasAnswered = callStatus === 'in-progress'
     || isRealInstant(answerTime)
     || (callStatus === 'completed' && ((durationSec ?? 0) > 0 || (billSec ?? 0) > 0));
   return {
     kind,
-    callUuid: str(params, 'CallUUID'),
+    callUuid: recordingParam('CallUUID', 'call_uuid'),
     requestUuid: str(params, 'RequestUUID'),
     callStatus,
     hangupCause: str(params, 'HangupCauseName') || str(params, 'HangupCause'),
@@ -217,6 +221,6 @@ export function plivoCallbackFromEvent(event: CallEvent): NormalizedPlivoCallbac
 
 /** Which callback a param set is, when the route does not say: a recording, else a status. */
 export function inferPlivoCallbackKind(params: Record<string, string>): PlivoCallbackKind {
-  if (str(params, 'RecordUrl') || str(params, 'RecordingID')) return 'recording';
+  if (str(params, 'RecordUrl') || str(params, 'RecordingID') || str(params, 'record_url') || str(params, 'recording_id')) return 'recording';
   return 'status';
 }

@@ -198,7 +198,7 @@ const VOCABULARIES = {
   station_close_codes: ['agency/station.ts#AGENCY_STATION_CLOSE', () => constNumberObject('agency/station.ts', 'AGENCY_STATION_CLOSE')],
   station_server_events: [
     'agency/station.ts#AgencyStationServerFrame',
-    () => frameEvents('agency/station.ts', 'AgencyStationServerFrame', ['agency/station.ts', 'agency/actions.ts', 'agency/softphone.ts']),
+    () => frameEvents('agency/station.ts', 'AgencyStationServerFrame', ['agency/station.ts', 'agency/actions.ts', 'agency/softphone.ts', 'agency/inbound.ts']),
   ],
   wrapup_hold_reasons: ['agency/actions.ts#AgencyWrapupHoldReason', () => typeUnion('agency/actions.ts', 'AgencyWrapupHoldReason')],
   dnc_scopes: ['agency/actions.ts#AgencyDncScope', () => typeUnion('agency/actions.ts', 'AgencyDncScope')],

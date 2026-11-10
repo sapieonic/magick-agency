@@ -9,8 +9,10 @@ import type {
   AgencyStationReleasedFrame,
 } from '../types/agency';
 import type { AgencyManualCall } from '../types/softphone';
+import type { AgencyInboundCall, AgencyStationCustomerWaitingFrame } from '../types/inbound';
 import type { WrapupAnchor } from './agencyWrapup';
 import { newerCall } from './softphone/callState';
+import { newerInboundCall } from './inbound/inboundCall';
 import type { LiveAttempt, StationConnection } from '../hooks/agencyStation/types';
 
 /**
@@ -72,7 +74,28 @@ export interface StationState {
    * `ready` carried none (a `pool` campaign has no per-agent queue).
    */
   queue: AgencyQueueState | null | undefined;
+  /**
+   * The inbound call offered to or connected with this session, as the newest `inbound_call`
+   * frame stated it (P2, `docs/inbound.md` §6): the WHOLE row, never patched. Kept through a
+   * `ready`, like `manualCall`: the server re-sends it right after `ready` while it still holds
+   * the station, and a call that settled or was requeued while the socket was away is the
+   * panel's to reconcile (`useInboundCall`).
+   */
+  inboundCall: AgencyInboundCall | null;
+  /**
+   * "Your customer is waiting": a caller sticky to this agent is queued while the agent is busy
+   * (`customer_waiting`). Cleared by the server's `customer_waiting` with `cleared: true` for that
+   * caller (taken by anyone, overflowed, hung up), and, as a backstop, by what makes it untrue: an
+   * offer (`inbound_call`), a `ready` (a snapshot: the server re-sends it
+   * after `ready` while the caller still waits), and the agent leaving the busy states
+   * (`available`: the release hook would have offered them the caller first; `break` and
+   * `offline`: they are not eligible, so the caller goes to the team).
+   */
+  customerWaiting: AgencyStationCustomerWaitingFrame | null;
 }
+
+/** The agent states in which a sticky caller waits for this agent rather than going to them. */
+const BUSY_FOR_WAITING: ReadonlySet<AgencyAgentState> = new Set<AgencyAgentState>(['reserved', 'on_call', 'wrapup']);
 
 export const INITIAL_STATION_STATE: StationState = {
   connection: 'idle',
@@ -93,6 +116,8 @@ export const INITIAL_STATION_STATE: StationState = {
   missedPings: 0,
   manualCall: null,
   queue: undefined,
+  inboundCall: null,
+  customerWaiting: null,
 };
 
 export type StationAction =
@@ -116,7 +141,11 @@ export type StationAction =
   /** A `manual_call` frame: the whole row, kept only when it is not older than the copy held. */
   | { type: 'manual_call'; call: AgencyManualCall }
   /** A `queue` frame: this agent's queue changed (sent only on a change). */
-  | { type: 'queue'; queue: AgencyQueueState };
+  | { type: 'queue'; queue: AgencyQueueState }
+  /** An `inbound_call` frame: the whole row, kept only when it is not older than the copy held. */
+  | { type: 'inbound_call'; call: AgencyInboundCall }
+  /** A `customer_waiting` frame. */
+  | { type: 'customer_waiting'; frame: AgencyStationCustomerWaitingFrame };
 
 /**
  * `state` itself when nothing in `changes` differs — so a frame that restates
@@ -175,6 +204,8 @@ export function stationReducer(state: StationState, action: StationAction): Stat
         // A snapshot like every other field: absent means this campaign states no
         // per-agent queue, not "keep what we had".
         queue: frame.queue ?? null,
+        // Re-sent by the server right after `ready` while the caller still waits.
+        customerWaiting: null,
       };
       if (frame.state === 'wrapup') {
         // A deadline only when this replica still owns the timer; absent, the
@@ -210,6 +241,7 @@ export function stationReducer(state: StationState, action: StationAction): Stat
         breakReasonCode: frame.break_reason ?? null,
         ...breakQueue(state, frame.pending_state, frame.pending_break_reason),
       };
+      if (!BUSY_FOR_WAITING.has(frame.state)) next.customerWaiting = null;
       if (frame.state !== 'wrapup') {
         // `agent_state` is the one authority for wrap-up ENDING.
         next.wrapup = null;
@@ -295,5 +327,26 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       }
       return { ...state, queue: { due: next.due, reason: next.reason, next_due_at: next.next_due_at } };
     }
+
+    case 'inbound_call': {
+      // The frame's copy goes first so it wins a tie: the frame is the authority. An offer
+      // retires the waiting pill: the caller is the one being put through (the release hook
+      // offers a sticky caller first), or no longer waits for this agent.
+      const inboundCall = newerInboundCall(action.call, state.inboundCall);
+      return patch(state, {
+        inboundCall,
+        customerWaiting: action.call.state === 'offered' ? null : state.customerWaiting,
+      });
+    }
+
+    case 'customer_waiting':
+      // `cleared`: that caller no longer waits for this agent (taken, overflowed, gone). Only the
+      // pill for THAT caller goes; a clear for another caller changes nothing.
+      if (action.frame.cleared) {
+        return state.customerWaiting?.inbound_call_id === action.frame.inbound_call_id
+          ? patch(state, { customerWaiting: null })
+          : state;
+      }
+      return patch(state, { customerWaiting: action.frame });
   }
 }

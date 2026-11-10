@@ -102,7 +102,7 @@ const WEBRTC_LIST_COLUMNS = `
   provider, provider_call_id, status, outcome, error_code, error_message,
   initiated_by, metadata,
   recording_requested, recording_url, recording_duration_seconds,
-  campaign_id, origin, manual_call_id,
+  campaign_id, origin, manual_call_id, inbound_call_id,
   answered_at, ended_at, duration_seconds, talk_time_seconds,
   analysis_profile_id, analysis_language, analysis_status,
   analysis_consent, analysis_consent_at,
@@ -116,10 +116,10 @@ const WEBRTC_LIST_COLUMNS = `
  * This is the scope boundary a read states.
  *
  * **The enum's meaning is ownership, not the shape of the predicate.**
- * `'agency'` resolves to "a campaign leg, or a soft-phone leg": a manual dial
- * (docs/softphone.md, SP5) is agency-owned with `campaign_id` NULL and
- * `origin = 'manual'`. Callers must not encode the predicate; it changes here, in
- * one place, as it did for the soft phone.
+ * `'agency'` resolves to "a campaign leg, a soft-phone leg or an inbound leg": a manual dial
+ * (docs/softphone.md, SP5) and a customer's inbound call (docs/inbound.md) are agency-owned
+ * with `campaign_id` NULL and `origin` `manual` / `inbound`. Callers must not encode the
+ * predicate; it changes here, in one place, as it did for the soft phone and for inbound.
  */
 export type WebRtcCallScope = 'agency';
 
@@ -132,8 +132,8 @@ export type WebRtcCallScope = 'agency';
  */
 function scopeClause(scope: WebRtcCallScope): string {
   return scope === 'agency'
-    ? "(campaign_id IS NOT NULL OR origin = 'manual')"
-    : "(campaign_id IS NULL AND origin <> 'manual')";
+    ? "(campaign_id IS NOT NULL OR origin IN ('manual', 'inbound'))"
+    : "(campaign_id IS NULL AND origin NOT IN ('manual', 'inbound'))";
 }
 
 /**

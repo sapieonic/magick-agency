@@ -165,6 +165,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Real decoders for the server's recording uploads
+      # (test/integration/api/inbound-clips-routes.test.ts decodes a real WAV).
+      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
       - if: env.IN_SCOPE == 'true'
         run: pnpm install --frozen-lockfile
       # From inside the package directory: dotenv resolves from cwd.

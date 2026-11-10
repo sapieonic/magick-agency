@@ -24,14 +24,26 @@ import styles from './AgentStation.module.css';
  * grouping that makes the campaign name visible next to the raw code.
  */
 
+/**
+ * What the list reads off a call: the earlier attempts, and the campaign the call is from. A
+ * campaign attempt is one; so is an inbound caller's matched contact (`AgencyInboundCallMatch`).
+ */
+export type PriorAttemptsSource = Pick<AgencyReservedAttempt, 'prior_attempts' | 'campaign_id' | 'campaign_name'>;
+
 /** The contact's earlier attempts, grouped by the campaign each came from. */
 export function PriorAttemptsList({
   attempt,
   currentCatalog,
+  nameCurrentCampaign = false,
 }: {
-  attempt: AgencyReservedAttempt;
+  attempt: PriorAttemptsSource;
   /** THIS campaign's `disposition_catalog`, from the bootstrap. */
   currentCatalog: AgencyDisposition[] | undefined;
+  /**
+   * Head the call's own campaign by its name rather than "This campaign": an inbound caller's
+   * campaign is not necessarily the one the agent is signed into.
+   */
+  nameCurrentCampaign?: boolean;
 }) {
   /**
    * The catalog a prior attempt's disposition may be resolved through — THIS
@@ -111,7 +123,7 @@ export function PriorAttemptsList({
                   pick out — which is the whole point of the split.
                 */}
                 <span className={styles.priorGroupName}>
-                  {group.isCurrent ? 'This campaign' : group.campaignName}
+                  {group.isCurrent && !nameCurrentCampaign ? 'This campaign' : group.campaignName}
                 </span>
                 <span className={styles.priorGroupCount}>{group.attempts.length}</span>
               </h3>

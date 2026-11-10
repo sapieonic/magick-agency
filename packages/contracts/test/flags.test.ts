@@ -11,12 +11,13 @@ const EXPECTED = {
   agency_console_alaw8: { default: true, envVar: 'FF_AGENCY_CONSOLE_ALAW8', clientExposed: true },
   agency_contact_assignment_enabled: { default: false, envVar: 'FF_AGENCY_CONTACT_ASSIGNMENT', clientExposed: true },
   agency_reports_enabled: { default: false, envVar: 'FF_AGENCY_REPORTS', clientExposed: true },
+  agency_inbound_enabled: { default: false, envVar: 'FF_AGENCY_INBOUND', clientExposed: true },
 } as const;
 
 describe('agency flags', () => {
-  it('are exactly the seven keys', () => {
+  it('are exactly the eight keys', () => {
     expect(Object.keys(AGENCY_FLAGS).sort()).toEqual([...AGENCY_FLAG_KEYS].sort());
-    expect(AGENCY_FLAG_KEYS).toHaveLength(7);
+    expect(AGENCY_FLAG_KEYS).toHaveLength(8);
   });
 
   it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {
@@ -38,6 +39,7 @@ describe('agency flags', () => {
       agency_console_alaw8: true,
       agency_contact_assignment_enabled: false,
       agency_reports_enabled: false,
+      agency_inbound_enabled: false,
     };
     expect(Object.keys(map)).not.toContain('agency_late_binding');
   });

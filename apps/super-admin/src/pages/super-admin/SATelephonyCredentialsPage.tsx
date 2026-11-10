@@ -33,6 +33,8 @@ import { TenantPicker } from '../../components/super-admin/TenantPicker';
 import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { operatorCarrierName } from '../../utils/carrierName';
+import { CredentialInboundSection } from './telephony-credentials/CredentialInboundSection';
+import { formatDateTime as fmt, refusalCopy } from '../../utils/operatorCopy';
 import styles from './SATelephonyCredentialsPage.module.css';
 
 /**
@@ -52,8 +54,6 @@ const ACTIONS: Record<CredentialAction, (id: string) => Promise<TelephonyCredent
   enable: enableTelephonyCredential,
   revoke: revokeTelephonyCredential,
 };
-
-const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-IN') : '—');
 
 /** Why a number the carrier listed was not taken at all. */
 const SKIP_REASON: Record<TelephonyNumberSyncSkipReason, string> = {
@@ -80,10 +80,7 @@ const SYNC_REFUSAL: Record<string, string> = {
 };
 
 function syncRefusal(err: unknown): string {
-  const details = (err as { details?: unknown } | null)?.details;
-  const code = details && typeof details === 'object' ? (details as { error?: unknown }).error : undefined;
-  if (typeof code === 'string' && Object.hasOwn(SYNC_REFUSAL, code)) return SYNC_REFUSAL[code]!;
-  return err instanceof Error && err.message ? err.message : 'Failed to sync numbers';
+  return refusalCopy(err, SYNC_REFUSAL, 'Failed to sync numbers');
 }
 
 /** One sync's outcome, under the credential it ran for. */
@@ -411,6 +408,7 @@ export default function SATelephonyCredentialsPage() {
                         </div>
                       )}
                       {sync?.id === c.id && <SyncSummary outcome={sync} />}
+                      {c.status !== 'revoked' && <CredentialInboundSection credential={c} />}
                     </td>
                   </tr>
                 )}
@@ -554,10 +552,11 @@ export default function SATelephonyCredentialsPage() {
         title={confirm?.action === 'revoke' ? 'Revoke credential?' : 'Disable credential?'}
         message={
           confirm?.action === 'revoke'
-            ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed two hours after its last call ends, once the carrier’s late callbacks are in. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first.`
+            ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed two hours after its last call ends, once the carrier’s late callbacks are in. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first, and inbound calls disabled.`
             : `“${confirm?.cred.label ?? ''}” stops placing new calls. Calls already in progress finish normally. `
               + 'Running campaigns on it pause automatically, and stay paused after you enable it again '
-              + 'until a supervisor resumes each one.'
+              + 'until a supervisor resumes each one. Numbers linked to inbound calls stay linked and on their routes: '
+              + 'their callers hear the closed message until you enable the credential again.'
         }
         confirmLabel={confirm?.action === 'revoke' ? 'Revoke' : 'Disable'}
         danger

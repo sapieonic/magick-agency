@@ -6,17 +6,20 @@
 // (refused while an account runs two campaigns; otherwise the unique index is back) then up.
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
-import type { PoolClient } from 'pg';
 import { runner } from 'node-pg-migrate';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../../../src/migrations-dir.js';
 import { TEST_DB_URL } from '../../helpers/test-db.js';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { ACCOUNT, TENANT, insertCampaign } from '../fixtures.js';
+import { PLAN_ROSTER_TIMEOUT_MS, endPlanTransactions, inPlanTransaction } from '../plan-transaction.js';
 
 const pool = () => getTestPool();
 
 beforeEach(truncateAll);
+// A test that timed out with its roster transaction still running must not hold the tables for
+// the next test or file (plan-transaction.ts).
+afterEach(endPlanTransactions);
 afterAll(closeTestPool);
 
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
@@ -31,18 +34,39 @@ async function indexDef(name: string): Promise<string | undefined> {
   return rows[0]?.indexdef;
 }
 
-/** The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts). */
+/**
+ * The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts), over
+ * a roster of this test's own, ANALYZEd inside the rolled-back transaction (the column statistics
+ * leave with the rows; the table's reltuples and relpages, written in place, do not: see
+ * insertPlanRoster in ../fixtures.ts).
+ *
+ * Without its own rows the plan followed whatever statistics earlier files left on
+ * agency_contacts: on a table last analyzed empty (reltuples 0, no column statistics) the planner
+ * prices every index alike and serves the probe's `live` side from
+ * idx_agency_contacts_customer_history (0017; tenant, account, then the number as stored),
+ * filtering the digits and the states, so the probe below failed in a full run and passed alone.
+ * The roster here is a campaign's shape: 20,000 rows over 10,000 numbers on this account, 1% in
+ * flight and 1% connected, the rest pending or done; the plan is then decided by the indexes'
+ * merits, every run.
+ */
 async function planOf(sql: string): Promise<string> {
-  const client: PoolClient = await pool().connect();
-  try {
-    await client.query('BEGIN');
+  return inPlanTransaction(async (client) => {
+    const campaign = randomUUID();
+    await client.query(
+      `INSERT INTO agency_campaigns (id, tenant_id, account_id, name, caller_ids) VALUES ($1, $2, $3, 'Roster', ARRAY['+14155550100'])`,
+      [campaign, TENANT, ACCOUNT]);
+    await client.query(
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, state)
+       SELECT $1, $2, $3, '+1415555' || lpad((g % 10000)::text, 4, '0'),
+              CASE WHEN g % 100 = 0 THEN 'in_flight' WHEN g % 100 = 1 THEN 'connected'
+                   WHEN g % 2 = 0 THEN 'pending' ELSE 'completed' END
+         FROM generate_series(1, 20000) g`,
+      [campaign, TENANT, ACCOUNT]);
+    await client.query('ANALYZE agency_contacts');
     await client.query('SET LOCAL enable_seqscan = off');
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
-  } finally {
-    await client.query('ROLLBACK');
-    client.release();
-  }
+  });
 }
 
 describe('0015 — several running campaigns per account', () => {
@@ -87,7 +111,7 @@ describe('0015 — several running campaigns per account', () => {
     // the digits are an index condition, not a filter on rows the index returned.
     expect(point).toContain(INDEX);
     expect(point).toMatch(/Index Cond: .*account_id.*regexp_replace/);
-  });
+  }, PLAN_ROSTER_TIMEOUT_MS);
 
   it('down refuses while an account runs two campaigns, and changes nothing', async () => {
     const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
