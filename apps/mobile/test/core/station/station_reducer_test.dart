@@ -438,4 +438,40 @@ void main() {
       expect(mapped.phase, AgentPhase.reserved);
     });
   });
+
+  test('the inbound caller\'s prior attempts follow a new clock offset (the contact is not resolved again)', () {
+    final call = inboundCall('inbound_call_offered');
+    final mapper = StationViewMapper();
+    InboundCallView map(int offsetMs) => mapper
+        .map(
+          campaignId: 'camp-1',
+          campaignName: 'Renewals',
+          sessionId: 'sess-1',
+          s: StationState(agentState: AgentState.reserved, inboundCall: call, clockOffsetMs: offsetMs),
+          bootstrap: null,
+          catalog: const [],
+          breakReasons: const [],
+          pendingBreakCode: null,
+          audio: const AudioView(),
+          notes: const NotesView(),
+          busy: StationBusy.none,
+          actionError: null,
+          fatal: null,
+          dispositionSavedCode: null,
+          countdown: null,
+          reconnectDeadline: null,
+          reconnectWindow: null,
+          dncOutcome: null,
+          missedReleaseDismissed: false,
+          awayPauseRequested: false,
+        )
+        .inbound!;
+    final before = map(0);
+    expect(before.priorAttempts, isNotEmpty);
+    final after = map(5000);
+    expect(after.displayName, before.displayName);
+    for (var i = 0; i < before.priorAttempts.length; i++) {
+      expect(before.priorAttempts[i].at.difference(after.priorAttempts[i].at).abs(), const Duration(seconds: 5));
+    }
+  });
 }

@@ -73,6 +73,15 @@ void main() {
         {'tagged': true, 'overrides': 'none', 'entry': 'inbound_callback', 'surface': 'softphone_page'});
   });
 
+  softphoneTest('a Call back number edited on the pad (a backspace) is the agent\'s own: `typed`', (h) {
+    h.openWith(number: '');
+    h.actions.callBack('+918765432109', campaignId: 'camp-1');
+    h.actions.backspace();
+    h.reply('POST $callsPath', manualCallJson(), status: 201);
+    h.run(h.actions.dial());
+    expect(sink.last('agency_softphone_call_placed'), containsPair('entry', 'typed'));
+  });
+
   softphoneTest('a pasted number is `pasted`', (h) {
     h.openWith(number: '');
     h.actions.pasteNumber('tel:+919820461733');

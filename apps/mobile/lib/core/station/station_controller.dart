@@ -16,6 +16,7 @@ import '../inbound/inbound_call_rules.dart';
 import '../inbound/inbound_copy.dart';
 import '../lifecycle/app_lifecycle.dart';
 import '../lifecycle/lifecycle_policy.dart';
+import '../softphone/call_labels.dart' show formatDialNumber;
 import '../softphone/call_state.dart';
 import '../softphone/refusal_copy.dart' show refusalBodyOf, softphoneErrorCopy;
 import '../softphone/softphone_api.dart';
@@ -2081,18 +2082,12 @@ class StationController extends Notifier<StationView?>
           final campaign = value.scope == DncEntryScope.campaign ? call.match?.campaignName : null;
           _inboundDnc = (
             callId: call.id,
-            text: inboundDncOutcomeCopy(_displayPhone(value.phoneE164), campaignName: campaign),
+            text: inboundDncOutcomeCopy(formatDialNumber(value.phoneE164), campaignName: campaign),
           );
         case InboundRefused(:final refusal):
           _actionError = inboundDncFailedCopy(refusal);
       }
     });
-  }
-
-  /// `+91 98400 12345` for Indian mobiles; anything else as given (the screens' format).
-  static String _displayPhone(String e164) {
-    final m = RegExp(r'^\+91(\d{5})(\d{5})$').firstMatch(e164);
-    return m == null ? e164 : '+91 ${m.group(1)} ${m.group(2)}';
   }
 
   // ─── A held inbound call after a reconnect ─────────────────────────────

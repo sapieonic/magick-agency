@@ -1294,6 +1294,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void backspace() {
     if (!_dialPadEnabled) return;
     _number = deleteLastDialChar(_number);
+    // An edited redial or Call back number is the agent's own now.
+    _entry = 'typed';
     _emit();
   }
 
@@ -1301,6 +1303,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void clearNumber() {
     if (!_dialPadEnabled) return;
     _number = '';
+    _entry = 'typed';
     _dialError = null;
     _emit();
   }

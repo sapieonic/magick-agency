@@ -167,6 +167,8 @@ class StationViewMapper {
     if (identical(call, _inboundSource) && _offset == _inboundOffset && hangupFailure == _inboundFailure) {
       return _inbound;
     }
+    // The offset the copy on screen was mapped with.
+    final previousOffset = _inboundOffset;
     _inboundSource = call;
     _inboundOffset = _offset;
     _inboundFailure = hangupFailure;
@@ -183,6 +185,8 @@ class StationViewMapper {
     final previous = _inbound;
     // The contact is resolved once per call: later frames of the same call move only its state.
     final same = previous != null && previous.callId == call.id && match != null && previous.matched;
+    // The prior attempts' times are mapped with the clock offset: a new offset maps them again.
+    final sameTimes = same && previousOffset == _offset;
     return _inbound = InboundCallView(
       callId: call.id,
       stage: stage,
@@ -213,7 +217,7 @@ class StationViewMapper {
       otherFields: same
           ? previous.otherFields
           : (resolved == null ? const [] : List.unmodifiable([...resolved.fields.map(field), ...resolved.empty.map(field)])),
-      priorAttempts: same
+      priorAttempts: sameTimes
           ? previous.priorAttempts
           : (match == null
               ? const []
