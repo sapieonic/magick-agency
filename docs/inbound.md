@@ -321,7 +321,7 @@ rate-limited and audited (CH2, CH6, CH10, CH11).
 |---|---|---|---|
 | 1 | The contact's owner | `agency_contacts.assigned_user_id` | on |
 | 2 | The agent whose latest attempt or manual call to this number went out from the number rung | attempts `caller_id` + `reserved_agent_id` → session's `agent_user_id`; manual calls | on |
-| 3 | The last agent who spoke to the customer (connected) | attempts, manual calls | on |
+| 3 | The last agent who spoke to the customer (connected), in either direction: an answered inbound call counts (IQ49) | attempts, manual calls, the caller's bridged inbound calls (`answered_by_user_id`; `idx_agency_inbound_calls_answered_from`, `0033`) | on |
 | 4 | The last agent who dialled them, unanswered | attempts | off |
 
 The dedicated caller ID (DN) is deliberately not a signal: when every number of a campaign is
@@ -403,6 +403,15 @@ could take the account's callers does not overflow them all. When the grace ends
 searched again (its own timer, as well as the 2 s republish): a caller held only by an agent who
 never came back is overflowed then. An agent who was on a break when the station closed never
 counted and does not.
+
+**The device-away grace (IQ50).** A phone's `device_away` pause less than
+`DEVICE_AWAY_RETURN_GRACE_MS` (30 s, contracts; the server's `INBOUND_DEVICE_AWAY_GRACE_MS`) old
+counts as one who could take a caller (`awayGrace`), never offered one: the app returns an agent who
+comes back within 30 s on its own, so callers queue for them instead of overflowing at once. When
+the pause began is the session row's (`state_since` with `break_reason = 'device_away'`; Redis holds
+no break reason), read only for sessions Redis says went on a break inside the grace; a failed read
+counts nobody. When the grace ends the connector searches the account again, as for the rejoin
+grace. A `phone_call` pause (IQ51) never counts: the agent is on another call.
 
 ### 5.2 Inbound priority over pacing
 
@@ -604,14 +613,12 @@ station's (back at the head of the queue, `queued_at` kept), the caller is never
 session again, the agent goes back to the pool, and nothing is recorded as abandoned (no Missed
 row, no callback); with nobody else who could take them the caller is overflowed (§5.1). The
 console offers Hang up only once connected, so this is the API's (and a supervisor's on behalf).
-**The wrap-up** (`inbound-wrapup.ts`; replaces IQ11's "no auto-return"): the outbound wrap-up's
-auto-return rule (`wrapup-manager.ts`) for the call's matched campaign: with `wrapup_auto_return` on
-and a `wrapup_seconds` window the outcome lapses that long after the call ended; with auto-return
-off, or `wrapup_seconds = 0` ("no timer"), the agent keeps the call until they save it. A caller
-who matched no campaign (or whose campaign row is gone) takes its own default, 120 s with
-auto-return (`INBOUND_DEFAULT_WRAPUP`, round 2: an unmatched caller is a new enquiry with no contact
-record, so the agent needs longer than a new campaign's 30 s; there is no account-level wrap-up
-setting). A matched call keeps its campaign's rule. The 30-minute lapse
+**The wrap-up** (`inbound-wrapup.ts`; IQ52, which replaced IQ32's campaign rule and its 120 s
+unmatched default): the ROUTE's window, `agency_inbound_routes.wrapup_seconds` (30 s by default,
+10–600, set in the route editor; `0032_inbound_route_wrapup.sql`), always with auto-return, on a
+console or a phone. It is captured on the call row when the call arrives
+(`agency_inbound_calls.wrapup_seconds`, NULL read as 30 s), so editing or deleting the route never
+moves a countdown already on screen. The 30-minute lapse
 (`AGENCY_INBOUND_OUTCOME_LAPSE_MS`) stays as the backstop: no outcome waits longer. The panel's
 `outcome_due_at` and the lapse sweep's SQL (`lapseUnsettled`) read the one rule. The sweep runs
 every 5 s (`INBOUND_LAPSE_SWEEP_INTERVAL_MS`) and closes each lapsed outcome `no_disposition`
@@ -703,6 +710,14 @@ paths:
   an inbound reservation (`reserveForInbound`, also a CAS from `available`) cannot both win: the
   loser is re-decided (device-away then queues behind the offer). A hand-over held through a
   caller's preamble is a reservation too: a device-away queued during it waits behind that call.
+- **The phone-call break** (IQ51; `POST /sessions/:id/break {reason: 'phone_call'}`, reserved
+  beside `device_away` and `soft_phone`, `APP_PAUSE_BREAK_REASONS`): the app asks for it when a
+  cellular call starts while the agent is available, and lifts it with `/available` when the call
+  ends. The server runs the device-away rules with its own code: applied at once from `available`,
+  queued behind a reservation, call or wrap-up, never replacing a break already chosen or queued, a
+  `200` with the current state where it changes nothing, withdrawn by `break/cancel`. No campaign
+  catalog may list it, and for inbound it is an ordinary break (never could-take, unlike a fresh
+  `device_away`, §5.1).
 - **An older build's `ready`.** When such a build takes over a session holding an inbound offer or
   a hand-over held through the preamble, the offer is let go right after the attach and before the
   rehydrate (`InboundConnector.onStationCannotTakeInbound`, bounded at 3 s). It first waits for
@@ -714,6 +729,13 @@ paths:
   return's own `agent_state` frame follows). An offer refused because the station cannot take
   inbound calls is `station_incapable`, never `session_busy`: the agent is returned with no read
   of the call records, so a failed read can never put them on a break.
+- **Older builds on the floor (IQ56).** `GET /campaigns/:id/stats` `agents[].can_take_inbound`
+  (`StationRegistry.inboundCapabilityBySession`, process-local): `false` for a phone station that
+  did not declare `caps=inbound`, which the supervisor floor marks "App can't take inbound calls —
+  update the app"; `null` when this process holds no live station for the session (with media
+  workers, a station a worker holds; such a deployment puts no caller through anyway). When the
+  pilot starts, `MOBILE_MIN_SUPPORTED_VERSION` is raised to the first release that declares it, so
+  every older build blocks on "Update required" (a deployment setting, not code).
 - **The app's side (IQ47, built 2026-11-10;** [`mobile.md`](mobile.md) "Inbound calls", "Missed
   calls"). The app connects with `client=mobile&media=alaw8&caps=inbound` on every upgrade and
   follows the console's flow on its station: the offer with the chime once per offer, the call, the
@@ -805,6 +827,17 @@ webhook's assignee rule), or to the account, audited `agency_inbound_call.reassi
 A handled row is not reassigned. A row whose assignee has since left the account (removed or
 deactivated) reads **Former member**, with the prompt to reassign it. Agents still see and mark only
 their own rows. The nav entry carries the open count of the caller's scope as a badge.
+
+**The Team view and claim (IQ49).** An agent may also read the account's unassigned rows
+(`assignee=unassigned`: an unmatched or withheld caller nobody answered) and claim one:
+`POST /inbound/missed/:id/claim` assigns it to them only while it is unassigned (a compare-and-set),
+answers the row (200 also when it is already theirs), refuses `inbound_missed_call_claimed` (409)
+when someone else has it and `inbound_missed_call_handled` (409) for a handled row, and is audited
+`agency_inbound_call.claimed` (`from: null`, `to`) when it changed. An agent may play the voicemail
+of an open unassigned row, to decide. Every row carries `match_name` (IQ54): the matched contact's
+name (the first of `name`, `full_name`, `customer_name`, `first_name` in its roster columns, trimmed,
+at most 100 characters; `match-name.ts`), null when the caller was not matched, withheld their
+number or the contact has no name.
 
 Voicemail (optional per route, IB3) is recorded from our own stream (we hold the μ-law frames), not
 by moving the call to `<Record>` XML, unless the P0 check proves the transfer clean: the bridge's
@@ -999,10 +1032,11 @@ role, fill names and write the audit rows; the internal handlers
 | `DELETE /inbound/clips/:id` | `agency.inbound.write` | delete one no live route (or active announcement) uses; 204; `inbound_clip_in_use` (409, naming the routes), `inbound_clip_not_found` |
 | `GET /inbound/clips/:id/audio` | `agency.inbound.write` | the editor's preview of one of the account's recordings: its bytes as stored, streamed from the bucket (the internal handler says where, tenant and account scoped); `inbound_clip_not_found` for another account's, an unknown or malformed id, or an object gone from the bucket |
 | `GET /inbound/clips/standard/:recording/audio` | `agency.inbound.write` | the preview of one of our standard recordings (`AGENCY_INBOUND_STANDARD_RECORDINGS`), `audio/wav` from the image; an unknown name is `inbound_clip_not_found` |
-| `GET /inbound/missed` | `agency.inbound.read` | keyset page, newest first; `status` (default `open`), `assignee`, `reason`, `from`/`to` |
+| `GET /inbound/missed` | `agency.inbound.read` | keyset page, newest first; `status` (default `open`), `assignee`, `reason`, `from`/`to`; rows carry `match_name` (IQ54) |
+| `POST /inbound/missed/:id/claim` | `agency.inbound.read` | an unassigned row to the caller (IQ49, a compare-and-set); `{ call }`, 200 also when already theirs; `inbound_missed_call_claimed` (409), `inbound_missed_call_handled` (409), `inbound_missed_call_not_found`; audited `agency_inbound_call.claimed` when it changed; not behind the flag |
 | `POST /inbound/missed/:id/handled` | `agency.inbound.read` | idempotent: first handler and time kept, audited once; `handled_reason = 'marked'` |
 | `POST /inbound/missed/:id/reopen` | `agency.inbound.read` | a handled row back to open (reason, handler and time cleared; assignee kept); Mark handled's rules (an agent's own rows); idempotent; audited `agency_inbound_call.reopened` (`handled_reason`, `handled_by_user_id`: how it had been handled) when it changed; not behind the flag |
-| `GET /inbound/missed/count` | `agency.inbound.read` | the nav badge: the open rows of the caller's scope (an agent's own; with `agency.supervise`, the account's), counted to 100 (`open_capped` past it), and whether the scope has any row (`has_rows`); not behind the flag |
+| `GET /inbound/missed/count` | `agency.inbound.read` | the nav badge: the open rows of the caller's scope (an agent's own; with `agency.supervise`, the account's), narrowed by the list's `assignee` when given (IQ57: a supervisor's `me` counts only theirs) and by `since` (rows whose call arrived at or after it: the app's "rang while you were away", IQ50), counted to 100 (`open_capped` past it), and whether the scope has any row (`has_rows`); not behind the flag |
 | `POST /inbound/missed/:id/assign` | `agency.supervise` | `{ assignee_user_id }` (a member, or `null`: the account); `inbound_assignee_invalid` (400) for someone who cannot work the account's rows, `inbound_missed_call_handled` (409) for a handled row; audited `agency_inbound_call.reassigned` when it changed; not behind the flag |
 | `GET /inbound/summary` | `agency.supervise` | the inbound summary over `from`–`to` (§11); not behind the flag |
 
@@ -1032,10 +1066,10 @@ the list and Mark handled answer with the flag off is the server's read rule; ac
 calls follow the server's answer.
 
 **Who sees which Missed rows.** An agent (no `agency.supervise`) reads and marks only the rows
-assigned to them: the list is forced to `assignee=me` whatever was asked, and another's row
-answers `inbound_missed_call_not_found`. A row assigned to the account (no sticky agent) is
-therefore a supervisor's to work; §8.1 gives an agent "their own Missed rows", and a row nobody
-owns shown to every agent would be worked twice or by nobody. Supervisors read the account's,
+assigned to them: the list is forced to `assignee=me` whatever was asked but `unassigned`, and
+another's row answers `inbound_missed_call_not_found`. A row assigned to the account (no sticky
+agent) is shown to agents only in the Team view (`assignee=unassigned`) and is worked once claimed
+(IQ49), so it is never worked twice or by nobody. Supervisors read the account's,
 filtering by `me`, `unassigned` or a person.
 
 **Recordings (the final review's fix pass).** An account admin uploads recordings from the route
@@ -1276,6 +1310,18 @@ Inventory and the CHECK: `packages/db/BASELINE.md` "0029".
 - **`agency_inbound_calls.carrier_seconds`** (NULL until known, ≥ 0): the carrier's duration from
   its hangup callback (Plivo `Duration`, passed through the seam as `durationSeconds`), recorded
   whatever the call's state; `inbound_seconds` reads it when set (§9 "Usage counts").
+
+### 9.3 The pilot rulings (built: `0032_inbound_route_wrapup.sql`, `0033_inbound_answered_from_index.sql`)
+
+Inventory: `packages/db/BASELINE.md` "0032", "0033".
+
+- **`agency_inbound_routes.wrapup_seconds`** (SMALLINT NOT NULL DEFAULT 30, CHECK 10–600): the
+  route's wrap-up window (IQ52, §6). **`agency_inbound_calls.wrapup_seconds`** (nullable): the
+  window captured from the route when the call arrives, read by the panel's `outcome_due_at` and the
+  lapse sweep (NULL: 30 s); existing calls were backfilled from their route.
+- **`idx_agency_inbound_calls_answered_from`** (`tenant_id, account_id, from_e164, arrived_at DESC,
+  id DESC` WHERE `bridged_at IS NOT NULL AND from_e164 IS NOT NULL`): the caller's answered inbound
+  calls for the sticky signal (IQ49, §4.1).
 
 ## 10. Restart and failure
 
