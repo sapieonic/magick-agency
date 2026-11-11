@@ -13,6 +13,7 @@ const CRED_A = '11111111-1111-4111-8111-111111111111';
 const CRED_OLD = '99999999-9999-4999-8999-999999999999';
 
 const mocks = vi.hoisted(() => ({
+  transitionAgencyCampaign: vi.fn(),
   useTenant: vi.fn(),
   useAgencyCarriers: vi.fn(),
   getAgencyCampaign: vi.fn(),
@@ -64,6 +65,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  // The campaign header above the form: its lifecycle controls and lineage strip.
+  transitionAgencyCampaign: mocks.transitionAgencyCampaign,
+  campaignLineage: async () => ({ root_campaign_id: 'camp-1', campaigns: [] }),
 }));
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';

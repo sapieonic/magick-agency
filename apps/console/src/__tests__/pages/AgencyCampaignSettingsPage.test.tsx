@@ -14,6 +14,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  */
 
 const mocks = vi.hoisted(() => ({
+  transitionAgencyCampaign: vi.fn(),
   useTenant: vi.fn(),
   getAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
@@ -73,6 +74,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  // The campaign header above the form: its lifecycle controls and lineage strip.
+  transitionAgencyCampaign: mocks.transitionAgencyCampaign,
+  campaignLineage: async () => ({ root_campaign_id: 'camp-1', campaigns: [] }),
 }));
 // The lifecycle and upload history under the form (IN13), and the tab bar's overdue-callbacks badge.
 vi.mock('../../api/agencyInsights', () => ({
@@ -875,6 +879,49 @@ describe('the campaign section bar', () => {
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+  });
+});
+
+/**
+ * ── The campaign's header, as on its Monitor tabs ──────────────────────────
+ * Settings is where "who changed the caller ID?" is asked, so History is here; and the
+ * campaign's name and its lifecycle controls, which the assignment notice tells people to use.
+ */
+describe('the campaign header on Settings', () => {
+  it('names the campaign, shows its status, the lifecycle controls and History', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Collections — August' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /pause/i })).toBeTruthy();
+    expect(screen.getByTestId('campaign-history-link').getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
+  });
+
+  it('leaves out the controls and History below their gates', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+    expect(screen.queryByRole('button', { name: /pause/i })).toBeNull();
+    expect(screen.queryByTestId('campaign-history-link')).toBeNull();
+  });
+
+  it('pauses the campaign without touching edits in progress', async () => {
+    // Loaded running; read again (after the pause) as paused.
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({ status: 'running' }))
+      .mockResolvedValue(campaign({ status: 'paused' }));
+    mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    renderPage();
+
+    const name = (await screen.findByLabelText(/campaign name/i)) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: 'Collections — September' } });
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+
+    await waitFor(() => expect(mocks.transitionAgencyCampaign)
+      .toHaveBeenCalledWith('camp-1', 'pause', 'tenant-1', 'account-1'));
+    expect(await screen.findByRole('button', { name: /resume/i })).toBeTruthy();
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Collections — September');
   });
 });
 

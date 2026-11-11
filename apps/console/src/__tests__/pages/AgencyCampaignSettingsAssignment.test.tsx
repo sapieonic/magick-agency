@@ -11,6 +11,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  */
 
 const mocks = vi.hoisted(() => ({
+  transitionAgencyCampaign: vi.fn(),
   useTenant: vi.fn(),
   getAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
@@ -47,6 +48,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  // The campaign header above the form: its lifecycle controls and lineage strip.
+  transitionAgencyCampaign: mocks.transitionAgencyCampaign,
+  campaignLineage: async () => ({ root_campaign_id: 'camp-1', campaigns: [] }),
 }));
 vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),

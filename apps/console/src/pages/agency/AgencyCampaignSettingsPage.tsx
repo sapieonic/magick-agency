@@ -70,7 +70,8 @@ import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
+import { useCampaignLifecycle } from './campaign-detail/useCampaignLifecycle';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from './AgencyCampaignSettingsPage.module.css';
 
@@ -107,6 +108,11 @@ export function AgencyCampaignSettingsPage() {
   const { showToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  /** When `campaign` was last read or written: the header's "Updated" stamp. */
+  const [campaignReadAt, setCampaignReadAt] = useState<Date | null>(null);
+  /** The campaign at click time, for the header's lifecycle controls (`useCampaignLifecycle`). */
+  const campaignRef = useRef<AgencyCampaign | null>(campaign);
+  campaignRef.current = campaign;
   const [config, setConfig] = useState<CampaignConfigState | null>(null);
   const [name, setName] = useState('');
   const [callerIds, setCallerIds] = useState<string[]>([]);
@@ -134,6 +140,9 @@ export function AgencyCampaignSettingsPage() {
   const [assignmentResetPending, setAssignmentResetPending] = useState(false);
 
   const canEdit = hasPermission(role, 'agency.campaigns.write');
+  // The header's lifecycle controls and Join as agent, gated as on the Monitor tabs.
+  const canSupervise = hasPermission(role, 'agency.supervise');
+  const canJoinStation = hasPermission(role, 'agency.station.connect');
   // Contact assignment's settings and outcome overrides: shown and sent only while
   // the flag is on (the server refuses a non-default value with it off).
   const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
@@ -177,6 +186,7 @@ export function AgencyCampaignSettingsPage() {
     try {
       const record = await getAgencyCampaign(id, tenantId, accountId);
       setCampaign(record);
+      setCampaignReadAt(new Date());
       const loaded = configFromCampaign(record);
       setConfig(loaded);
       dispositionOrderRef.current = loaded.dispositions.map((d) => d.code);
@@ -195,6 +205,42 @@ export function AgencyCampaignSettingsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /*
+    The header's reads and writes: the campaign row only, never the form. A lifecycle
+    action or the header's Refresh must not throw away edits in progress, so they update
+    `campaign` (the status, and what a save compares against) and leave the fields alone.
+  */
+  const refreshCampaign = useCallback(async (): Promise<AgencyCampaign | null> => {
+    if (!id || !tenantId || !accountId) return null;
+    try {
+      const record = await getAgencyCampaign(id, tenantId, accountId);
+      if (record.id !== id) return campaignRef.current;
+      campaignRef.current = record;
+      setCampaign(record);
+      setCampaignReadAt(new Date());
+      return record;
+    } catch {
+      return campaignRef.current;
+    }
+  }, [id, tenantId, accountId]);
+
+  const commitCampaign = useCallback((record: AgencyCampaign) => {
+    campaignRef.current = record;
+    setCampaign(record);
+    setCampaignReadAt(new Date());
+  }, []);
+
+  const lifecycle = useCampaignLifecycle({
+    id,
+    tenantId,
+    accountId,
+    campaignRef,
+    refreshCampaign,
+    commitCampaign,
+    reload: () => void refreshCampaign(),
+    fromTab: 'settings',
+  });
 
   const onSave = useCallback(async () => {
     if (!id || !config || !recording) return;
@@ -287,6 +333,7 @@ export function AgencyCampaignSettingsPage() {
         accountId ?? undefined,
       );
       setCampaign(updated);
+      setCampaignReadAt(new Date());
       // Computed against what was ABOUT TO BE SAVED, before the re-seed below
       // replaces `config` with whatever the server normalised it to.
       const priorOrder = dispositionOrderRef.current;
@@ -381,7 +428,7 @@ export function AgencyCampaignSettingsPage() {
   */
   const assignmentLeftovers = campaign && !assignmentEnabled ? storedAssignmentLeftovers(campaign) : [];
   const agentsVisible = assignmentEnabled || inboundEnabled || assignmentLeftovers.length > 0;
-  const historyVisible = hasPermission(role, 'agency.supervise');
+  const historyVisible = canSupervise;
   const sections = CAMPAIGN_SETTINGS_SECTIONS.filter(
     (section) => (section.id !== 'agents' || agentsVisible)
       && (section.id !== 'roster-uploads' || historyVisible),
@@ -443,23 +490,32 @@ export function AgencyCampaignSettingsPage() {
     <div className={styles.page}>
 
       {/*
-        The campaign workspace's section bar, in the same slot on every one of
-        its screens. These four sections used to be reachable only
-        as secondary buttons on the detail page's header row — the same row
-        that carries Stop — so getting from Contacts to Call attempts meant
-        going back through the campaign first.
+        The campaign's own header, as on its Monitor tabs: its name and status, the
+        lifecycle controls (pausing before an assignment-mode change is said below, so
+        it belongs here) and History — "who changed the caller ID?" is asked here.
       */}
+      <CampaignDetailHeader
+        campaign={campaign}
+        lastUpdatedAt={campaignReadAt}
+        autoRefreshing={false}
+        concurrency={undefined}
+        tenantId={tenantId}
+        accountId={accountId}
+        canControl={canSupervise}
+        busy={lifecycle.busy}
+        onAction={lifecycle.onAction}
+        canRetry={false}
+        canJoinStation={canJoinStation}
+        role={role}
+        onRefresh={() => void refreshCampaign()}
+      />
+
       <CampaignTabs
         campaignId={campaign.id}
         active="settings"
         role={role}
         campaignStatus={campaign.status}
       />
-
-      <div className={styles.header}>
-        <h1 className={styles.title}>Settings</h1>
-        <AgencyCampaignStatusBadge status={campaign.status} />
-      </div>
 
       {isLive && (
         <p className={styles.liveNote}>
@@ -746,6 +802,8 @@ export function AgencyCampaignSettingsPage() {
           ) : null}
         </div>
       </div>
+
+      {lifecycle.confirmDialog}
     </div>
   );
 }

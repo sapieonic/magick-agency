@@ -44,19 +44,6 @@
   }
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 12px 0 8px;
-}
-
-.title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
 .liveNote {
   padding: 10px 14px;
   margin-bottom: 16px;
