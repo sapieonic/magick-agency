@@ -29,6 +29,7 @@ function Editor() {
       <Link to="/elsewhere">Elsewhere</Link>
       <button type="button" onClick={() => navigate({ hash: '#recording' }, { replace: true })}>Section</button>
       <button type="button" onClick={() => navigate(-1)}>Go back</button>
+      <span data-testid="dirty">{dirty ? 'unsaved' : 'clean'}</span>
       {guard.asking && (
         <div role="dialog">
           <button type="button" onClick={guard.leave}>Leave</button>
@@ -132,10 +133,16 @@ describe('useUnsavedChangesGuard — a full page load', () => {
   });
 });
 
+/** Every location the router heard from the history: a held Back must never reach it. */
+let heard: string[] = [];
+
 /** The console's own router: a plain `<Router>` over a browser history (`ScopedRouter`). */
 function BrowserApp({ history }: { history: ReturnType<typeof UNSAFE_createBrowserHistory> }) {
   const [state, setState] = useState({ action: history.action, location: history.location });
-  useLayoutEffect(() => history.listen(({ action, location }) => setState({ action, location })), [history]);
+  useLayoutEffect(() => history.listen(({ action, location }) => {
+    heard.push(location.pathname);
+    setState({ action, location });
+  }), [history]);
   return (
     <Router location={state.location} navigationType={state.action} navigator={history}>
       <Routes>
@@ -156,6 +163,7 @@ describe('useUnsavedChangesGuard — Back in the browser', () => {
     expect(where()).toBe('/settings');
 
     fireEvent.click(screen.getByText('Edit'));
+    heard = [];
     await act(async () => {
       window.history.back();
     });
@@ -163,6 +171,9 @@ describe('useUnsavedChangesGuard — Back in the browser', () => {
     // Back in the browser too, not only on screen.
     await waitFor(() => expect(window.location.pathname).toBe('/settings'));
     expect(where()).toBe('/settings');
+    // The page never left: the router never heard of the step, and the edits are still there.
+    expect(heard).toEqual([]);
+    expect(screen.getByTestId('dirty').textContent).toBe('unsaved');
 
     fireEvent.click(screen.getByText('Leave'));
     await waitFor(() => expect(where()).toBe('/before'));
