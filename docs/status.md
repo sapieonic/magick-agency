@@ -1224,6 +1224,51 @@ compile yet, and the chime's Swift has never been compiled. The chime's Kotlin w
 (`ChimeTest.kt`, `RingbackTest.kt`). Ringing a phone whose app is in the background (push) is
 parked, not started: a phone that leaves the app while available is paused and offered nothing.
 
+### Inbound calls on the mobile app: persona review 2026-11-11
+
+A third independent review of the branch, by four reviewers with fresh context: a principal
+engineer on the server and contracts, one on the app, a principal product manager and a principal
+QA engineer (who also ran mutation probes and a compatibility matrix). No Critical findings; one
+High on the app (the Missed row cut the caller's number short). Every engineering and QA finding
+was fixed, with its guard mutation-checked; the product findings that are copy were fixed, the
+ones that need a ruling are under "Open decisions and owners" (Inbound calls).
+
+**The server.** An offer refused because the station cannot take inbound calls is its own result,
+`station_incapable`: the agent is returned with no read of the call records, so a failed read can
+no longer put an older build's agent on a break (it was `session_busy`, whose give-back fails
+closed). An older build's `ready` now waits for every return of the session the connector has in
+flight (the search's or the release hook's reservation through its offer or give-back, a
+give-back, the bind's cancel when its timer fires during the attach), bounded at 3 s
+(`inbound.md` §6). The post-offer requeue awaits the panel before the spine's write and logs a
+requeue that moves nothing or throws. `PacingStations.get` states `canTakeInbound` (the media
+workers' directory says `false`: IB8, IQ13); a filtered inbound frame is logged at debug;
+`agency_inbound_offers_total` gains a `client` label. New tests: the silent-station sweep's
+inbound arm (a phone dropped, a console left alone), the bind firing first, the search giving back
+after its lock, the 3 s bound, a capable phone reconnecting inside the offer window, two
+strict-sticky callers then an older-build takeover, a console handing a connected call to a phone
+(A-law), an older build silent on a bound call; the re-offer timing bound loosened to 5 s so a
+loaded runner cannot fail it.
+
+**The app.** The Missed row wraps instead of cutting the number short (tested at 360 dp, 1× and
+2× text, with the app's fonts). Inbound telemetry is tracked per offer, so a re-offer reports its
+own funnel, and a copy the station lets go of reports its end (`retired: true`). An offer the
+server no longer holds is retired at once by a `ready` that says the agent is not reserved, and
+by a backstop 10 s past `connects_at`, so the microphone, CallKit and the notification no longer
+hold a call that is not there while the reconnect check's reads fail. "A call is coming through"
+replaces "Incoming call" for a `reserved` with no offer (a campaign reconnect showed inbound
+words). A waiting Call back never erases the agent's own dial refusal, and the Missed feature reads
+where the number stands from the soft phone (`callBackWaiting`). "Your customer is waiting" is a
+live region. The inbound routes are made when the station is built (never first in teardown).
+Notes give up on a 403 and retry a 401 on the backoff, on the inbound call and the soft phone.
+
+**Copy, on both the console and the app.** A paused campaign says "no campaign calls for now" and
+that customers who ring in can still reach the agent (the search never reads the campaign's
+status, so they are still offered callers); the `last_from_number` reason says "you last called
+them from this number"; "Your customer is waiting" no longer promises to put them through (a
+teammate takes them after a loose wait); the console's strict-mode hint names only an older
+version of the phone app. In the app: "Listen on the web console", the Missed subtitle (reaching a
+customer closes the row on its own), "Switch to the soft phone", and "dialling", "dialled".
+
 ## Test counts
 
 Latest run, 2026-11-10, inbound calls on the mobile app (IQ46, IQ47; `inbound.md` §12, P3 row),
@@ -1770,7 +1815,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
 | Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
-| Inbound calls | A Plivo account for P0. Ratify the fix pass's defaults IQ25–IQ45 (`decisions.md` §4, "Inbound fix pass"): the 15 s rejoin grace, the 120 s unmatched wrap-up, the busy words for withheld and DNC callers, the kill switch's closed message, the upload limits, the alert thresholds. Sign off the standard recordings (listening and licence); decide the voicemail and spine retention for a UK pilot |
+| Inbound calls | Product rulings from the 2026-11-11 persona review (above), before a pilot: (1) Missed calls while on duty: show "N customers to call back" on the station and allow the list (and Call back with the switch to the soft phone in one step) without taking a break; (2) callers nobody owns: an unmatched caller's Missed row is the account's and no phone agent sees it, and an answered inbound call is not a sticky signal (a team view or claim, or a supervisor owner with an alert); (3) a phone that leaves the app while available is paused and offered nothing, so callers in that window go to Missed: return the agent automatically after a short absence, count a recent `device_away` as could-take, and say "N customers rang while you were away"; with the cellular-call pause ("Mobile app" row); (4) the outcome pad during an inbound call on a phone, or a longer inbound wrap-up there; (5) in-app voicemail playback; (6) the caller's name on a Missed row (`match_name` on the wire) and what Mark handled records; (7) calling back a DNC caller from Missed; (8) older app builds: show supervisors which phones cannot take inbound calls and raise `mobile.min_supported` after the pilot; (9) the offer screen's order on a small phone, and a longer `connects_at` for phones (IQ4); (10) a supervisor's Missed badge counts the whole account (the count route takes no `assignee`). Engineering follow-ups: split the inbound call slot out of the station controller and merge the campaign `NotesAutosave` into `CallAutosave`; run the `agent_audio` Kotlin tests in CI. A Plivo account for P0. Ratify the fix pass's defaults IQ25–IQ45 (`decisions.md` §4, "Inbound fix pass"): the 15 s rejoin grace, the 120 s unmatched wrap-up, the busy words for withheld and DNC callers, the kill switch's closed message, the upload limits, the alert thresholds. Sign off the standard recordings (listening and licence); decide the voicemail and spine retention for a UK pilot |
 | Plivo on tenants' own accounts | Ratify PL1–PL16 (`decisions.md` §4, "Plivo on tenants' own accounts"): a 403 on dial read as a geo-permission refusal; the three automatic pauses (`carrier_auth`, `carrier_account_unavailable`, and `carrier_refusing_calls` after five refusals in a row, PL11); a carrier with no webhook base not offered or started (PL12); numbers of a credential that cannot dial not offered; synced numbers tenant-wide; recordings from `media.plivo.com` only; the calls-per-second default of 2 per account; the carrier choice shown only with more than one carrier account |
 
 ## Deployment invariants
