@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
+import { usePageCrumbs } from '../../../components/layout/PageCrumbs';
 import { Info, Lock, MessageSquare, PhoneMissed, PhoneOff, SearchX } from 'lucide-react';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -255,17 +255,21 @@ export default function SoftphoneCallDetailPage() {
     return list;
   }, [detail, bootstrap]);
 
-  const breadcrumbs = useMemo(() => {
-    const trail: Array<{ label: string; href?: string }> = [{ label: 'Soft-phone calls', href: '/agency/softphone' }];
-    const tag = detail?.call.tag;
-    if (tag) trail.push({ label: tag.campaign_name, href: `/agency/campaigns/${tag.campaign_id}/manual-calls` });
-    return trail;
-  }, [detail]);
+  /*
+    The trail back, in the top bar: "Campaigns / Soft-phone calls / <campaign> / <when>". The
+    campaign the call was logged to leads to that campaign's soft-phone calls.
+  */
+  const current = detail && detail.call.id === callId ? detail : null;
+  const tag = current?.call.tag ?? null;
+  usePageCrumbs([
+    { label: 'Soft-phone calls', to: '/agency/softphone' },
+    ...(tag ? [{ label: tag.campaign_name, to: `/agency/campaigns/${tag.campaign_id}/manual-calls` }] : []),
+    { label: current ? formatSpineTimestamp(current.call.created_at) : 'Call' },
+  ]);
 
   if (loading) {
     return (
       <div>
-        <Breadcrumbs items={[...breadcrumbs, { label: 'Call' }]} />
         <LoadingSpinner />
       </div>
     );
@@ -274,12 +278,12 @@ export default function SoftphoneCallDetailPage() {
   if (error) {
     return (
       <div>
-        <Breadcrumbs items={[...breadcrumbs, { label: 'Call' }]} />
         {terminal ? (
           <EmptyState
             icon={<SearchX size={28} />}
             title="We can’t show this call"
-            description={`${error} Use the trail above to go back to the soft-phone calls.`}
+            description={error}
+            action={<Link to="/agency/softphone" className="btn-secondary">Back to soft-phone calls</Link>}
           />
         ) : (
           <ErrorAlert message={error} onRetry={() => void load()} />
@@ -290,13 +294,11 @@ export default function SoftphoneCallDetailPage() {
 
   if (!detail) return null;
   const { call, media, call_availability: availability } = detail;
-  const leaf = formatSpineTimestamp(call.created_at);
 
   if (!media) {
     const absent = NO_MEDIA_COPY[availability];
     return (
       <div>
-        <Breadcrumbs items={[...breadcrumbs, { label: leaf }]} />
         <EmptyState icon={absent.icon} title={absent.title} description={absent.description} />
         <div className={styles.attemptRecord}>
           <FactCard card={recordCard(call)} icon={<Info size={16} />} />
@@ -311,8 +313,6 @@ export default function SoftphoneCallDetailPage() {
   return (
     <CallDetailView
       call={media}
-      breadcrumbs={breadcrumbs}
-      leafLabel={leaf}
       subtitle={`Soft phone · ${loggedToLabel(call)}`}
       roleLabels={ROLE_LABELS}
       identityFacts={manualIdentityFacts(call)}

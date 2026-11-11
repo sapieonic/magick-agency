@@ -74,8 +74,6 @@ const CALL: WebRtcCallRecord = {
 function props(overrides: Partial<CallDetailViewProps> = {}): CallDetailViewProps {
   return {
     call: CALL,
-    breadcrumbs: [{ label: 'Campaigns', href: '/agency/campaigns' }],
-    leafLabel: 'Attempt 2',
     subtitle: 'Connected',
     roleLabels: { agent: 'Agent', customer: 'Customer' },
     identityFacts: [],

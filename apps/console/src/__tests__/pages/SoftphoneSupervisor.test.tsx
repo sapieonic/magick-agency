@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, act, fireEvent, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { WithPageCrumbs, suppliedCrumbs } from '../helpers/pageCrumbs';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
@@ -306,9 +307,11 @@ const MEDIA: WebRtcCallRecord = {
 async function renderDetail() {
   render(
     <MemoryRouter initialEntries={['/agency/softphone/calls/mc-tag']}>
-      <Routes>
-        <Route path="/agency/softphone/calls/:callId" element={<SoftphoneCallDetailPage />} />
-      </Routes>
+      <WithPageCrumbs>
+        <Routes>
+          <Route path="/agency/softphone/calls/:callId" element={<SoftphoneCallDetailPage />} />
+        </Routes>
+      </WithPageCrumbs>
     </MemoryRouter>,
   );
   await act(async () => {});
@@ -344,8 +347,9 @@ describe('a soft-phone call’s detail', () => {
     expect(document.body.textContent).toMatch(/Listed on12 Oct 2026/);
     expect(document.body.textContent).not.toContain('dnc-1');
     // The trail goes back through the campaign the call was logged to.
-    const trail = within(screen.getByRole('navigation', { name: 'Breadcrumb' }));
-    expect(trail.getByRole('link', { name: 'Home Loan Renewals' }).getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
+    expect(suppliedCrumbs()).toMatch(
+      /^Soft-phone calls→\/agency\/softphone \/ Home Loan Renewals→\/agency\/campaigns\/camp-1\/manual-calls \/ .+/,
+    );
   });
 
   it('names the supervisor who saved an outcome on the agent’s behalf, and says only what it knows without a name', async () => {

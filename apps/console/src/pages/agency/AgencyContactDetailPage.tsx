@@ -13,7 +13,6 @@ import {
   formatTalkTime,
   recordingCellCopy,
 } from '../../utils/agencySpineCopy';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -263,14 +262,6 @@ export function AgencyContactDetailPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Contacts', href: `/agency/campaigns/${id}/contacts` },
-          { label: contact.phone_e164 },
-        ]}
-      />
 
       <header className={styles.header}>
         <div className={styles.headerCopy}>

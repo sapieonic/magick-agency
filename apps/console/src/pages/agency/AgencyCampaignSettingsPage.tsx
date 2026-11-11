@@ -62,7 +62,6 @@ import {
   type CarrierChoice,
 } from '../../utils/agencyCarriers';
 import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { SettingsSectionNav, useSectionInView } from '../../components/agency/SettingsSectionNav';
 import { ComposerSection } from '../campaigns/components/ComposerSection';
@@ -442,13 +441,6 @@ export function AgencyCampaignSettingsPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: campaign.name, href: `/agency/campaigns/${campaign.id}` },
-          { label: 'Settings' },
-        ]}
-      />
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of

@@ -7,7 +7,6 @@ import { hasPermission } from '../../utils/permissions';
 import { mappingBlockReason } from '../../utils/agencyColumnMapping';
 import { ColumnMapper } from '../campaigns/agency/ColumnMapper';
 import { IngestSummary } from '../campaigns/agency/IngestSummary';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
@@ -131,17 +130,6 @@ export function AgencyCampaignContactsPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: campaign.name, href: `/agency/campaigns/${campaign.id}` },
-          // Back to the roster, not just to the campaign: this page is now
-          // reached from there and an operator who has finished uploading wants
-          // to look at what landed.
-          { label: 'Contacts', href: `/agency/campaigns/${campaign.id}/contacts` },
-          { label: 'Add contacts' },
-        ]}
-      />
 
       <div className={styles.header}>
         <h1 className={styles.title}>Add contacts</h1>

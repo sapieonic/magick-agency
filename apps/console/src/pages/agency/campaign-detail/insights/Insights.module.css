@@ -828,11 +828,6 @@
     break-before: page;
   }
 
-  /* The breadcrumb trail above the page is navigation too. */
-  :global(nav[aria-label='Breadcrumb']) {
-    display: none !important;
-  }
-
   /* No controls: the printout is the numbers, not the buttons that move them. */
   .toolbarRight,
   .segmented,

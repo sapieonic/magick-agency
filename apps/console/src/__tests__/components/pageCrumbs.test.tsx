@@ -92,10 +92,12 @@ describe('the breadcrumb a page supplies', () => {
     expect(bar.getByText('Settings').getAttribute('aria-current')).toBe('page');
   });
 
-  it('keeps the generic crumb until the campaign’s name is known', async () => {
+  it('holds the campaign’s slot until its name is known', async () => {
     renderAt(null);
     await act(async () => {});
-    expect(crumbs()).toEqual(['Campaigns', 'Campaign']);
+    expect(crumbs()).toEqual(['Campaigns', 'Campaign', 'Settings']);
+    expect(within(screen.getByTestId('console-breadcrumb')).getByRole('link', { name: 'Campaign' })
+      .getAttribute('href')).toBe('/agency/campaigns/camp-1');
   });
 
   it('never names the previous campaign while the next one loads', async () => {
@@ -106,7 +108,7 @@ describe('the breadcrumb a page supplies', () => {
     // Same route, another campaign: the page stays mounted with the first one in state.
     fireEvent.click(screen.getByRole('link', { name: 'Go to camp-2' }));
     await act(async () => {});
-    expect(crumbs()).toEqual(['Campaigns', 'Campaign']);
+    expect(crumbs()).toEqual(['Campaigns', 'Campaign', 'Settings']);
 
     // Its own name once it has loaded.
     fireEvent.click(screen.getByRole('button', { name: 'Load' }));

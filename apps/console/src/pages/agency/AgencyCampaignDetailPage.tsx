@@ -7,7 +7,6 @@ import { transitionAgencyCampaign } from '../../api/agencyCampaigns';
 import { withCarrierRefusalCopy } from '../../utils/agencyCarriers';
 import { ApiError } from '../../api/client';
 import { hasPermission } from '../../utils/permissions';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -298,12 +297,6 @@ export function AgencyCampaignDetailPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: campaign.name },
-        ]}
-      />
 
       <CampaignDetailHeader
         campaign={campaign}

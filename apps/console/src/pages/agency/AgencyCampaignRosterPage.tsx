@@ -41,7 +41,6 @@ import {
   exportTruncationNotice,
   formatSpineTimestamp,
 } from '../../utils/agencySpineCopy';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -459,13 +458,6 @@ export function AgencyCampaignRosterPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Contacts' },
-        ]}
-      />
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
