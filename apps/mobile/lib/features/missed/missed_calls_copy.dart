@@ -48,9 +48,11 @@ abstract final class MissedCopy {
 
   static const callBack = 'Call back';
 
-  /// Call back's label for a screen reader: whom it calls, or why it is off
-  /// (the withheld note under the row says the same on screen).
-  static String callBackLabel(String caller) => 'Call back $caller';
+  /// Call back's label for a screen reader: whom it calls (the contact's name
+  /// first when the call matched one, IQ54), or why it is off (the withheld
+  /// note under the row says the same on screen).
+  static String callBackLabel(String caller, {String? name}) =>
+      name == null ? 'Call back $caller' : 'Call back $name, $caller';
   static const callBackWithheldLabel = 'Call back (number withheld)';
   static const markHandled = 'Mark handled';
   static const marking = 'Marking…';
@@ -134,8 +136,14 @@ abstract final class MissedCopy {
     return reasonLabel(call.reason, call.reasonRaw);
   }
 
+  /// The matched contact's name (IQ54, `match_name`), shown above the number;
+  /// null for an unmatched or withheld caller, or a contact with no name.
+  static String? name(InboundMissedCall call) {
+    final n = call.matchName?.trim();
+    return call.isWithheld || n == null || n.isEmpty ? null : n;
+  }
+
   /// The caller: their number laid out for reading, or "Number withheld".
-  /// The row carries no contact name (only the matched contact's id).
   static String caller(InboundMissedCall call) => call.isWithheld ? withheld : formatDialNumber(call.fromE164);
 
   /// The caller in a sentence ("the call from …").

@@ -114,4 +114,56 @@ void main() {
       expect(find.byKey(const Key('missed-dnc-note')), findsNothing, reason: why);
     }
   });
+
+  group('the caller\'s name (IQ54)', () {
+    RenderParagraph nameParagraph(WidgetTester tester) =>
+        tester.renderObject<RenderParagraph>(find.descendant(of: find.byKey(const Key('missed-name')), matching: find.byType(RichText)));
+
+    testWidgets('above the number; Call back names them for a screen reader', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpTile(tester, {'match_name': 'Rahul Deshmukh'});
+      expect(tester.widget<Text>(find.byKey(const Key('missed-name'))).data, 'Rahul Deshmukh');
+      expect(
+        tester.getTopLeft(find.byKey(const Key('missed-name'))).dy,
+        lessThan(tester.getTopLeft(find.byKey(const Key('missed-caller'))).dy),
+      );
+      expect(find.bySemanticsLabel('Call back Rahul Deshmukh, +91 87654 32109'), findsOneWidget);
+      handle.dispose();
+    });
+
+    for (final scale in [1.0, 2.0]) {
+      testWidgets('360 dp, text ×$scale, DNC and a long reason: a long name ellipsises, the number never does',
+          (tester) async {
+        await pumpTile(
+          tester,
+          {
+            'match_name': 'Venkatanarasimharajuvaripeta Subrahmanya Lakshminarayana Chakravarthy',
+            'caller_dnc': true,
+            'reason': 'overflow_no_capacity',
+            'closed_cause': null,
+          },
+          textScale: scale,
+        );
+        expect(nameParagraph(tester).didExceedMaxLines, isTrue);
+        expect(tester.widget<Text>(find.byKey(const Key('missed-caller'))).data, '+91 87654 32109');
+        expect(callerParagraph(tester).didExceedMaxLines, isFalse);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('withheld, unmatched or a blank name: the row as before', (tester) async {
+      for (final over in <Map<String, Object?>>[
+        {'match_name': null},
+        {'match_name': '  '},
+        {'match_name': 'Rahul Deshmukh', 'from_e164': null},
+      ]) {
+        await pumpTile(tester, over);
+        expect(find.byKey(const Key('missed-name')), findsNothing, reason: '$over');
+      }
+      final handle = tester.ensureSemantics();
+      await pumpTile(tester, {'match_name': null});
+      expect(find.bySemanticsLabel('Call back +91 87654 32109'), findsOneWidget);
+      handle.dispose();
+    });
+  });
 }

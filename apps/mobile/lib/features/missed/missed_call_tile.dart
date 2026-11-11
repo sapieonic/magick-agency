@@ -6,7 +6,8 @@ import '../../app/theme/tokens.dart';
 import '../../ui/primitives.dart';
 import 'missed_calls_copy.dart';
 
-/// One Missed row: who rang (their number, or "Number withheld"), a DNC badge
+/// One Missed row: who rang (the matched contact's name above their number,
+/// or "Number withheld"), a DNC badge
 /// (and, under Call back, that calling back asks for a reason: IQ55), why it was missed, when and which number they rang (and the route), the
 /// matched campaign and any callback it booked, a voicemail, and the row's
 /// actions: Call back and Mark handled while open, Reopen once handled. The
@@ -52,6 +53,7 @@ class MissedCallTile extends StatelessWidget {
     final small = text.bodySmall!;
     final callbackBooked = MissedCopy.callbackBooked(call, now);
     final caller = MissedCopy.caller(call);
+    final name = MissedCopy.name(call);
     return DecoratedBox(
       key: ValueKey('missed-row-${call.id}'),
       decoration: BoxDecoration(
@@ -63,6 +65,18 @@ class MissedCallTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
+            // IQ54: the matched contact's name above the number. One line, cut short with an
+            // ellipsis when it must be: the number below never is.
+            if (name != null) ...[
+              Text(
+                name,
+                key: const Key('missed-name'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.titleSmall!.copyWith(color: t.textPrimary),
+              ),
+              const SizedBox(height: 2),
+            ],
             // The caller, the DNC badge and the reason pill share a line when
             // they fit, the pill at the line's end; when they do not (a 360 dp
             // phone with DNC and a long reason, or large text) the pill, then
@@ -163,7 +177,7 @@ class MissedCallTile extends StatelessWidget {
                           onPressed: call.isWithheld ? null : onCallBack,
                           icon: const Icon(Icons.call, size: 18),
                           label: Semantics(
-                            label: call.isWithheld ? MissedCopy.callBackWithheldLabel : MissedCopy.callBackLabel(caller),
+                            label: call.isWithheld ? MissedCopy.callBackWithheldLabel : MissedCopy.callBackLabel(caller, name: name),
                             excludeSemantics: true,
                             child: const Text(MissedCopy.callBack),
                           ),
