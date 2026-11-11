@@ -1341,7 +1341,25 @@ its Swift have never been compiled.
 
 ## Test counts
 
-Latest run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
+Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) and its review fixes,
+on `feat/console-nav-redesign`:
+
+Run on commit `987bb84`, from inside each package. `pnpm lint` clean, `pnpm build` clean, `pnpm
+test:tooling` 16 pass. `agency_wire` `dart test` 605 passed for the new Home board contract (run on
+`fix/nav-home` before the merge). **Not green, so no counts recorded for them:** `apps/server` unit
+had 3 failures, all in `inbound-recordings.test.ts` (9662 passed): this machine has no audio
+decoder (`sox`, `ffmpeg`, `mpg123` absent), and the file fails the same way on a branch with no
+server code change. `apps/server` integration (both lanes) and `packages/db` were not run: Docker
+was down, so `test/integration/api/agency-home-board.test.ts` (the Home board route and
+`listForHome`'s SQL) has not run yet and must before the branch merges. Not run (untouched):
+`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`, `packages/domain`, `apps/mobile`.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/console` | 6554 (339 files) | — |
+| `packages/contracts` | 476 (14 files) | — |
+
+Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
 
 Run on commit `c41091e` (the docs commits after it change no code), one after another from inside
 each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green
