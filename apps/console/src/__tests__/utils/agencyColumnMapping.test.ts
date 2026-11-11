@@ -22,12 +22,11 @@ import {
   combinationLine,
   uniquenessLine,
   PHONE_DEDUPE,
-  MAX_DEDUPE_KEYS,
   phoneUniquenessLine,
   MAPPING_BLOCK_COPY,
   MAX_HERO_FIELDS,
 } from '../../utils/agencyColumnMapping';
-import type { AgencyColumnAnalysis, AgencyColumnStat } from '../../types/agency-campaign';
+import { AGENCY_MAX_DEDUPE_COLUMNS, type AgencyColumnAnalysis, type AgencyColumnStat } from '../../types/agency-campaign';
 
 /**
  * requirement: *the operator can map any column as the phone
@@ -310,7 +309,7 @@ describe('the duplicate check', () => {
     it('keeps a key named twice once, and at most the maximum', () => {
       const state = initialMapping(analysis());
       expect(setDedupe(state, keys(col('TZ'), col('TZ'), phone)).dedupe).toEqual(keys(col('TZ'), phone));
-      expect(MAX_DEDUPE_KEYS).toBe(3);
+      expect(AGENCY_MAX_DEDUPE_COLUMNS).toBe(3);
       expect(setDedupe(state, keys(phone, col('Full Name'), col('TZ'), col('Internal Score'))).dedupe)
         .toEqual(keys(phone, col('Full Name'), col('TZ')));
     });

@@ -43,7 +43,7 @@ export function auditRosterUploadStarted(job: AgencyIngestJobRecord, actor: Audi
       job_id: job.id,
       file_name: job.file_name,
       mode: job.mode ?? 'append',
-      dedupe_columns: job.dedupe_columns && job.dedupe_columns.length > 0 ? job.dedupe_columns : null,
+      dedupe_columns: job.dedupe_columns?.length ? job.dedupe_columns : null,
       dedupe_phones: job.dedupe_phones,
     },
   });

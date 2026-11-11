@@ -2,6 +2,7 @@ import type {
   AgencyIngestJob,
   AgencyIngestReasonCode,
 } from '../types/agency-campaign';
+import { combinationMatch, dedupeKeyName } from './agencyColumnMapping';
 
 /**
  * The ingest summary, as arithmetic (requirement: *the counts
@@ -136,7 +137,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
   const rowsRead = job.rows_read;
   // `?? []`: a job served before `dedupe_columns` has no key.
   const keyColumns = job.dedupe_columns ?? [];
-  const dedupeKey = keyColumns.length > 0 ? keyColumns.join(' + ') : null;
+  const dedupeKey = dedupeKeyName(keyColumns);
   const accepted = job.accepted;
   const rejected = job.rejected;
 
@@ -176,7 +177,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
     duplicates: job.duplicates,
     duplicateMeaning:
       keyColumns.length > 1
-        ? `a row whose ${keyColumns.slice(0, -1).join(', ')} and ${keyColumns[keyColumns.length - 1]} ${keyColumns.length === 2 ? 'both' : 'all'} match an earlier row in the file.`
+        ? `a row whose ${combinationMatch(keyColumns)} an earlier row in the file.`
         : dedupeKey
           ? `a ${dedupeKey} value that already appeared earlier in the file.`
           : 'a number that already appeared earlier in the file.',

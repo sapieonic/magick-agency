@@ -301,7 +301,7 @@ export class AgencyIngestJobRepository {
     // one that does fails loudly on a schema that cannot record what it asked.
     const optional: [string, unknown][] = [];
     if (input.mode === 'replace') optional.push(['mode', input.mode]);
-    if (input.dedupe_columns && input.dedupe_columns.length > 0) {
+    if (input.dedupe_columns?.length) {
       optional.push(['dedupe_columns', input.dedupe_columns]);
     }
     for (const [, value] of optional) values.push(value);

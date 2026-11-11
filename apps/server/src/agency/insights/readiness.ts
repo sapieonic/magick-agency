@@ -43,7 +43,7 @@ export function readinessChecks(campaign: AgencyCampaignRecord, f: ReadinessFact
         rejected: f.lastUpload?.rejected ?? null,
         duplicates: f.lastUpload?.duplicates ?? null,
         // `detail` holds scalars: the key's columns as one label, `Loan No + Branch`.
-        dedupe_column: f.lastUpload && f.lastUpload.dedupe_columns.length > 0 ? f.lastUpload.dedupe_columns.join(' + ') : null,
+        dedupe_column: f.lastUpload?.dedupe_columns.join(' + ') || null,
       },
     },
     // Implied by any committed upload, or by a roster at all (a retry campaign's is seeded from

@@ -4,6 +4,7 @@ import {
   type AgencyIngestRequest,
 } from '../types/agency-campaign';
 import type { AgencyContextDisplay } from '../types/agency';
+import { joinAnd } from './agencyCampaignConfigForm';
 
 /**
  * Column mapping — the roles, their arity rules, and the request they
@@ -71,9 +72,6 @@ export interface MappingState {
   dedupe: DedupeChoice;
 }
 
-/** Most columns one duplicate key combines; the server refuses more. */
-export const MAX_DEDUPE_KEYS = AGENCY_MAX_DEDUPE_COLUMNS;
-
 /**
  * One part of the duplicate key: the phone number, or another column such as a
  * loan number. `phone` names no column: it follows whichever column holds the
@@ -82,7 +80,7 @@ export const MAX_DEDUPE_KEYS = AGENCY_MAX_DEDUPE_COLUMNS;
 export type DedupeKey = { kind: 'phone' } | { kind: 'column'; column: string };
 
 /**
- * "Check duplicates on": up to {@link MAX_DEDUPE_KEYS} keys, in the operator's
+ * "Check duplicates on": up to {@link AGENCY_MAX_DEDUPE_COLUMNS} keys, in the operator's
  * order, or nothing. One key is what this control always offered: the phone
  * number (the default, and what every upload did before it existed) or one
  * column. Several are a combination: a row is a duplicate only when EVERY key
@@ -107,7 +105,7 @@ export function dedupeKeys(choice: DedupeChoice): DedupeKey[] {
 /**
  * The keys as the mapping can honour them: a column now holding the phone becomes
  * the phone key (the phone dedupe compares normalised numbers), a key named twice
- * counts once, and at most {@link MAX_DEDUPE_KEYS} are kept.
+ * counts once, and at most {@link AGENCY_MAX_DEDUPE_COLUMNS} are kept.
  */
 function normaliseKeys(roles: ColumnMapping, keys: DedupeKey[]): DedupeKey[] {
   const out: DedupeKey[] = [];
@@ -115,7 +113,7 @@ function normaliseKeys(roles: ColumnMapping, keys: DedupeKey[]): DedupeKey[] {
     const next: DedupeKey = key.kind === 'column' && roles[key.column] === 'phone' ? { kind: 'phone' } : key;
     if (!out.some((k) => sameKey(k, next))) out.push(next);
   }
-  return out.slice(0, MAX_DEDUPE_KEYS);
+  return out.slice(0, AGENCY_MAX_DEDUPE_COLUMNS);
 }
 
 /**
@@ -172,22 +170,17 @@ export function setRole(state: MappingState, column: string, role: ColumnRole): 
   roles[column] = role;
   let dedupe: DedupeChoice = state.dedupe;
   if (dedupe.mode === 'keys') {
-    let keys = dedupe.keys;
     // The phone moved onto a column that is already a key, while the phone is a
     // key too: the two swap places, so the key still compares the same columns.
     // Merging them would drop the old phone column from the key, and a key with
     // fewer columns drops MORE rows (the false removal the combination exists
-    // to prevent).
-    const movedOntoKey = keys.some((key) => key.kind === 'column' && key.column === column);
-    if (role === 'phone' && movedOntoKey && previousPhone !== null && previousPhone !== column
-      && keys.some((key) => key.kind === 'phone')) {
-      keys = keys.map((key): DedupeKey => {
-        if (key.kind === 'phone') return { kind: 'column', column: previousPhone };
-        return key.column === column ? { kind: 'phone' } : key;
-      });
-    }
-    // A duplicate column made the phone column is the phone key; saying so keeps
-    // the control and the request in step.
+    // to prevent). The old phone key becomes its column here; the moved column
+    // becomes the phone key in `normaliseKeys`, as any column made the phone does.
+    const swap = role === 'phone' && previousPhone !== null
+      && dedupe.keys.some((key) => key.kind === 'column' && key.column === column);
+    const keys = swap
+      ? dedupe.keys.map((key): DedupeKey => (key.kind === 'phone' ? { kind: 'column', column: previousPhone } : key))
+      : dedupe.keys;
     dedupe = { mode: 'keys', keys: normaliseKeys(roles, keys) };
   }
   return { ...state, roles, heroOrder, dedupe };
@@ -211,11 +204,11 @@ export function setDedupe(state: MappingState, choice: DedupeChoice): MappingSta
  * key already elsewhere in the list moves here rather than appearing twice.
  */
 export function setDedupeKey(state: MappingState, index: number, key: DedupeKey): MappingState {
-  const keys = [...dedupeKeys(state.dedupe)];
+  const keys = dedupeKeys(state.dedupe);
   if (index < 0 || index > keys.length) return state;
-  const others = keys.filter((k, i) => i !== index && !sameKey(k, key));
-  others.splice(Math.min(index, others.length), 0, key);
-  return setDedupe(state, { mode: 'keys', keys: others });
+  const next = keys.filter((k, i) => i !== index && !sameKey(k, key));
+  next.splice(index, 0, key);
+  return setDedupe(state, { mode: 'keys', keys: next });
 }
 
 /** Drop the key at `index`. The last key cannot be removed: "Don't remove duplicates" is how to say none. */
@@ -244,14 +237,14 @@ export function dedupeKeyOptions(analysis: AgencyColumnAnalysis, state: MappingS
  * maximum, or when the choice is "Don't remove duplicates".
  */
 export function addDedupeKey(analysis: AgencyColumnAnalysis, state: MappingState): MappingState {
-  if (!canAddDedupeKey(analysis, state)) return state;
   const keys = dedupeKeys(state.dedupe);
-  const next = dedupeKeyOptions(analysis, state, keys.length)[0]!;
-  return setDedupe(state, { mode: 'keys', keys: [...keys, next] });
+  if (state.dedupe.mode !== 'keys' || keys.length >= AGENCY_MAX_DEDUPE_COLUMNS) return state;
+  const next = dedupeKeyOptions(analysis, state, keys.length)[0];
+  return next ? setDedupe(state, { mode: 'keys', keys: [...keys, next] }) : state;
 }
 
 export function canAddDedupeKey(analysis: AgencyColumnAnalysis, state: MappingState): boolean {
-  if (state.dedupe.mode !== 'keys' || state.dedupe.keys.length >= MAX_DEDUPE_KEYS) return false;
+  if (state.dedupe.mode !== 'keys' || state.dedupe.keys.length >= AGENCY_MAX_DEDUPE_COLUMNS) return false;
   return dedupeKeyOptions(analysis, state, state.dedupe.keys.length).length > 0;
 }
 
@@ -285,6 +278,21 @@ function percentUnique(distinct: number, total: number): number {
   return Math.floor((distinct / total) * 100);
 }
 
+type ColumnStat = AgencyColumnAnalysis['columns'][number];
+
+/**
+ * A column's values as the duplicate check counts them: every non-blank value,
+ * or for the phone the valid numbers (normalised, so `9876543210` and
+ * `+91 98765 43210` count once). `null` when there is none, or the analysis was
+ * served without the count. `distinct < total` means some row repeats an earlier one.
+ */
+function dedupeCounts(stat: ColumnStat | undefined, phone: boolean): { total: number; distinct: number } | null {
+  if (!stat) return null;
+  const total = phone ? Math.round(stat.phone_score * stat.non_empty) : stat.non_empty;
+  const distinct = phone ? stat.distinct_phones : stat.distinct;
+  return total > 0 && typeof distinct === 'number' ? { total, distinct } : null;
+}
+
 /**
  * How unique a column is in the sampled rows, as the duplicate check compares
  * values (trimmed, case-insensitive): "Loan No: 100% unique in this file". Helps
@@ -294,15 +302,15 @@ function percentUnique(distinct: number, total: number): number {
  */
 export function uniquenessLine(analysis: AgencyColumnAnalysis, column: string | null): string | null {
   if (column === null) return null;
-  const stat = analysis.columns.find((c) => c.name === column);
-  if (!stat || stat.non_empty === 0 || typeof stat.distinct !== 'number') return null;
-  const repeats = stat.non_empty - stat.distinct;
-  const blank = stat.non_empty < analysis.rows_sampled
-    ? ` ${(analysis.rows_sampled - stat.non_empty).toLocaleString()} blank, and a blank value is never a duplicate.`
+  const counts = dedupeCounts(analysis.columns.find((c) => c.name === column), false);
+  if (!counts) return null;
+  const repeats = counts.total - counts.distinct;
+  const blank = counts.total < analysis.rows_sampled
+    ? ` ${(analysis.rows_sampled - counts.total).toLocaleString()} blank, and a blank value is never a duplicate.`
     : '';
-  return repeats === 0
+  return repeats <= 0
     ? `${column}: 100% unique ${scopeOf(analysis)}.${blank}`
-    : `${column}: ${percentUnique(stat.distinct, stat.non_empty)}% unique ${scopeOf(analysis)}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier value and will be dropped.${blank}`;
+    : `${column}: ${percentUnique(counts.distinct, counts.total)}% unique ${scopeOf(analysis)}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier value and will be dropped.${blank}`;
 }
 
 /**
@@ -313,18 +321,25 @@ export function uniquenessLine(analysis: AgencyColumnAnalysis, column: string | 
  */
 export function phoneUniquenessLine(analysis: AgencyColumnAnalysis, column: string | null): string | null {
   if (column === null) return null;
-  const stat = analysis.columns.find((c) => c.name === column);
-  if (!stat || typeof stat.distinct_phones !== 'number') return null;
-  const valid = Math.round(stat.phone_score * stat.non_empty);
-  if (valid === 0) return null;
-  const repeats = valid - stat.distinct_phones;
+  const counts = dedupeCounts(analysis.columns.find((c) => c.name === column), true);
+  if (!counts) return null;
+  const repeats = counts.total - counts.distinct;
   return repeats <= 0
     ? `${column}: every valid number is unique ${scopeOf(analysis)}.`
-    : `${column}: ${percentUnique(stat.distinct_phones, valid)}% of valid numbers are unique ${scopeOf(analysis)}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier number and will be dropped.`;
+    : `${column}: ${percentUnique(counts.distinct, counts.total)}% of valid numbers are unique ${scopeOf(analysis)}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier number and will be dropped.`;
 }
 
-function listOf(names: string[]): string {
-  return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+/**
+ * A combined key's columns as one name, as the ingest labels it: `Loan No + Branch`.
+ * `null` for no key (the phone dedupe, or none).
+ */
+export function dedupeKeyName(columns: readonly string[]): string | null {
+  return columns.length > 0 ? columns.join(' + ') : null;
+}
+
+/** `Loan No and Branch both match` / `A, B and C all match`: the rule a combination applies. */
+export function combinationMatch(names: readonly string[]): string {
+  return `${joinAnd(names)} ${names.length === 2 ? 'both' : 'all'} match`;
 }
 
 /**
@@ -339,30 +354,21 @@ export function combinationLine(analysis: AgencyColumnAnalysis, state: MappingSt
   if (keys.length < 2) return null;
   const phone = phoneColumn(state);
   const names = keys.map((key) => dedupeKeyLabel(key, phone));
-  const rule = `A row is dropped only when its ${listOf(names)} ${keys.length === 2 ? 'both' : 'all'} match an earlier row; a row with any of them blank is not checked.`;
+  const rule = `A row is dropped only when its ${combinationMatch(names)} an earlier row; a row with any of them blank is not checked.`;
   const statOf = (key: DedupeKey) => analysis.columns.find((c) => c.name === (key.kind === 'phone' ? phone : key.column));
   // A key column blank in every sampled row: every row has a blank part, so none is checked.
   const blank = keys.find((key) => key.kind === 'column' && statOf(key)?.non_empty === 0);
-  if (blank) {
-    return `${rule} ${dedupeKeyLabel(blank, phone)} is blank in every row ${analysis.truncated ? 'we sampled, so none of those rows would be' : 'of this file, so no row will be'} dropped as a duplicate.`;
-  }
-  const unique = keys.find((key) => {
-    const stat = statOf(key);
-    if (!stat) return false;
-    if (key.kind === 'phone') {
-      const valid = Math.round(stat.phone_score * stat.non_empty);
-      return typeof stat.distinct_phones === 'number' && valid > 0 && stat.distinct_phones >= valid;
-    }
-    return typeof stat.distinct === 'number' && stat.non_empty > 0 && stat.distinct >= stat.non_empty;
-  });
   // Said of the sample when the analysis read only part of the file: a repeat
   // further down is still a repeat.
-  const none = unique
-    ? analysis.truncated
-      ? ` ${dedupeKeyLabel(unique, phone)} has no repeats in the rows we sampled, so none of those rows would be dropped as a duplicate.`
-      : ` ${dedupeKeyLabel(unique, phone)} has no repeats in this file, so no row will be dropped as a duplicate.`
-    : '';
-  return `${rule}${none}`;
+  const outcome = `${analysis.truncated ? 'so none of those rows would be' : 'so no row will be'} dropped as a duplicate.`;
+  if (blank) {
+    return `${rule} ${dedupeKeyLabel(blank, phone)} is blank in every row ${analysis.truncated ? 'we sampled' : 'of this file'}, ${outcome}`;
+  }
+  const unique = keys.find((key) => {
+    const counts = dedupeCounts(statOf(key), key.kind === 'phone');
+    return counts !== null && counts.distinct >= counts.total;
+  });
+  return unique ? `${rule} ${dedupeKeyLabel(unique, phone)} has no repeats ${scopeOf(analysis)}, ${outcome}` : rule;
 }
 
 /**
@@ -506,7 +512,7 @@ export function buildIngestRequest(
   // normalised number.
   if (state.dedupe.mode === 'none') request.dedupe_phones = false;
   const keys = dedupeKeys(state.dedupe);
-  if (!(keys.length === 1 && keys[0]!.kind === 'phone') && keys.length > 0) {
+  if (keys.length > 1 || keys[0]?.kind === 'column') {
     request.dedupe_columns = keys.map((key) => dedupeKeyLabel(key, phone));
   }
   if (options.campaignId) request.campaign_id = options.campaignId;

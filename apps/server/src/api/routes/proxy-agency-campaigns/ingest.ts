@@ -18,6 +18,7 @@ import {
   AGENCY_MAX_COLUMNS,
   AGENCY_MAX_ROWS,
   AGENCY_MAX_CELL_BYTES,
+  sameHeader,
 } from '../../../agency/agency-csv-ingest.js';
 import { agencyIngestJobRepository } from '../../../agency/agency-ingest-job.repository.js';
 import { isTenantUploadKey, uploadKey } from '../../../agency/agency-ingest-keys.js';
@@ -266,10 +267,9 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
     }
     const dedupeColumns =
       input.dedupe_columns ?? (input.dedupe_column !== undefined ? [input.dedupe_column] : undefined);
-    const sameColumn = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
     // A column named twice is not a combination; refusing it keeps the key the
     // operator sees the key that runs.
-    const repeated = dedupeColumns?.find((column, i) => dedupeColumns.findIndex((c) => sameColumn(c, column)) !== i);
+    const repeated = dedupeColumns?.find((column, i) => dedupeColumns.findIndex((c) => sameHeader(c, column)) !== i);
     if (repeated !== undefined) {
       return reply.code(400).send({
         error: 'Validation Error',
@@ -288,7 +288,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
     // roster's `row_fingerprint` either: two rows that differ only there (one
     // borrower, two loan numbers) pass this check and then collapse into one
     // contact at the roster insert. Refused rather than half-honoured.
-    const ignoredKey = dedupeColumns?.find((key) => (input.ignore_columns ?? []).some((column) => sameColumn(column, key)));
+    const ignoredKey = dedupeColumns?.find((key) => (input.ignore_columns ?? []).some((column) => sameHeader(column, key)));
     if (ignoredKey !== undefined) {
       return reply.code(400).send({
         error: 'Validation Error',
@@ -300,7 +300,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
     // column key, the job, its activity row and Insights would describe a text
     // comparison that never ran.
     const keyColumns =
-      dedupeColumns !== undefined && dedupeColumns.length === 1 && sameColumn(dedupeColumns[0]!, input.phone_column)
+      dedupeColumns?.length === 1 && sameHeader(dedupeColumns[0]!, input.phone_column)
         ? undefined
         : dedupeColumns;
 

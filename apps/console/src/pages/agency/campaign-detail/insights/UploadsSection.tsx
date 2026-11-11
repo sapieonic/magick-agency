@@ -3,6 +3,7 @@ import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import type { AgencyInsightsUpload, AgencyInsightsUploads } from '../../../../types/agency-insights';
 import { downloadRejectedRows } from '../../../../api/agencyCampaigns';
 import { formatCount } from '../../../../utils/format/number';
+import { dedupeKeyName } from '../../../../utils/agencyColumnMapping';
 import { actorName, formatZoned, rejectReasonLabel } from '../../../../utils/agency/insights/copy';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import { outcomeReportFilename } from '../../../../api/exportCsv';
@@ -78,7 +79,7 @@ export function UploadsSection({
       key: 'duplicates',
       header: 'Duplicates',
       numeric: true,
-      render: (u) => `${formatCount(u.duplicates)} on ${u.dedupe_columns.length > 0 ? u.dedupe_columns.join(' + ') : 'phone'}`,
+      render: (u) => `${formatCount(u.duplicates)} on ${dedupeKeyName(u.dedupe_columns) ?? 'phone'}`,
       csv: (u) => u.duplicates,
     },
     {

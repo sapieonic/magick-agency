@@ -1,7 +1,6 @@
 import { useRef } from 'react';
 import {
   MAPPING_BLOCK_COPY,
-  PHONE_DEDUPE,
   ROLE_LABELS,
   addDedupeKey,
   canAddDedupeKey,
@@ -56,31 +55,24 @@ function keyOf(value: string): DedupeKey {
   return value.startsWith(COLUMN_PREFIX) ? { kind: 'column', column: value.slice(COLUMN_PREFIX.length) } : { kind: 'phone' };
 }
 
-/** Why the choice matters, under the selects. */
+const NEVER_TWICE = 'The dialler never calls one number twice at the same time.';
+
+/** Why the choice matters, under the selects: what the sample shows, then what the rule keeps. */
 function dedupeNote(analysis: AgencyColumnAnalysis, state: MappingState, phone: string | null): string {
   if (state.dedupe.mode === 'none') {
-    return 'Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row (the same number and the same value in every column not set to Ignore) is skipped. The dialler never calls one number twice at the same time.';
+    return `Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row (the same number and the same value in every column not set to Ignore) is skipped. ${NEVER_TWICE}`;
   }
   const keys = state.dedupe.keys;
   const onPhone = keys.some((key) => key.kind === 'phone');
-  if (keys.length === 1 && onPhone) {
-    return [
-      phoneUniquenessLine(analysis, phone),
-      'A row whose number already appeared earlier in the file is dropped. If one person can have several rows (two loans, two policies), check duplicates on that number instead, or combine columns.',
-    ].filter(Boolean).join(' ');
-  }
-  if (keys.length === 1) {
-    return [
-      uniquenessLine(analysis, dedupeKeyLabel(keys[0]!, phone)),
-      'Rows that share a phone number are all kept. The dialler never calls one number twice at the same time.',
-    ].filter(Boolean).join(' ');
-  }
-  return [
-    combinationLine(analysis, state),
-    onPhone
-      ? 'Rows on one number are kept when the other columns differ. The dialler never calls one number twice at the same time.'
-      : 'Rows that share a phone number are all kept. The dialler never calls one number twice at the same time.',
-  ].filter(Boolean).join(' ');
+  const lead = keys.length > 1
+    ? combinationLine(analysis, state)
+    : onPhone ? phoneUniquenessLine(analysis, phone) : uniquenessLine(analysis, dedupeKeyLabel(keys[0]!, phone));
+  const tail = !onPhone
+    ? `Rows that share a phone number are all kept. ${NEVER_TWICE}`
+    : keys.length > 1
+      ? `Rows on one number are kept when the other columns differ. ${NEVER_TWICE}`
+      : 'A row whose number already appeared earlier in the file is dropped. If one person can have several rows (two loans, two policies), check duplicates on that number instead, or combine columns.';
+  return [lead, tail].filter(Boolean).join(' ');
 }
 
 export interface ColumnMapperProps {
@@ -104,9 +96,14 @@ export function ColumnMapper({
   const heroFull = heroLimitReached(state);
   const countryError = countryCodeError(state.defaultCountryCode);
   const keys = dedupeKeys(state.dedupe);
-  const firstOptions = dedupeKeyOptions(analysis, state, 0);
   const canAddKey = canAddDedupeKey(analysis, state);
-  const optionLabel = (key: DedupeKey) => (key.kind === 'phone' ? 'Phone number' : key.column);
+  // The options name the phone key "Phone number", not its column.
+  const optionLabel = (key: DedupeKey) => dedupeKeyLabel(key, null);
+  const renderOptions = (options: DedupeKey[]) => options.map((option) => (
+    <option key={keyValue(option)} value={keyValue(option)}>
+      {optionLabel(option)}
+    </option>
+  ));
   const firstSelect = useRef<HTMLSelectElement>(null);
   // A removed key's select leaves the page; focus moves to the first select
   // rather than dropping to the document.
@@ -265,17 +262,11 @@ export function ColumnMapper({
           disabled={disabled}
           onChange={(event) => {
             const value = event.target.value;
-            if (value === 'none') onChange(setDedupe(state, { mode: 'none' }));
-            else if (state.dedupe.mode === 'none') onChange(setDedupe(state, { mode: 'keys', keys: [keyOf(value)] }));
-            else onChange(setDedupeKey(state, 0, keyOf(value)));
+            onChange(value === 'none' ? setDedupe(state, { mode: 'none' }) : setDedupeKey(state, 0, keyOf(value)));
           }}
         >
           {/* The current first key is always listed, so the select can show it. */}
-          {(keys.length > 0 ? firstOptions : dedupeKeyOptions(analysis, { ...state, dedupe: PHONE_DEDUPE }, 0)).map((key) => (
-            <option key={keyValue(key)} value={keyValue(key)}>
-              {optionLabel(key)}
-            </option>
-          ))}
+          {renderOptions(dedupeKeyOptions(analysis, state, 0))}
           <option value="none">Don&apos;t remove duplicates</option>
         </select>
         {/* Any key can go while two or more remain; the last one goes by "Don't remove duplicates". */}
@@ -300,11 +291,7 @@ export function ColumnMapper({
                 disabled={disabled}
                 onChange={(event) => onChange(setDedupeKey(state, index, keyOf(event.target.value)))}
               >
-                {dedupeKeyOptions(analysis, state, index).map((option) => (
-                  <option key={keyValue(option)} value={keyValue(option)}>
-                    {optionLabel(option)}
-                  </option>
-                ))}
+                {renderOptions(dedupeKeyOptions(analysis, state, index))}
               </select>
               {removeButton(key, index)}
             </div>

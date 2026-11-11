@@ -462,6 +462,15 @@ function normalizeHeader(header: string): string {
 }
 
 /**
+ * Whether two header names resolve to the same column here. The ingest route
+ * refuses a key named twice or ignored by this same rule, so its checks hold for
+ * what the ingest resolves.
+ */
+export function sameHeader(a: string, b: string): boolean {
+  return normalizeHeader(a) === normalizeHeader(b);
+}
+
+/**
  * Resolve a mapped column name to its index. Matching is case-insensitive and
  * trim-tolerant because the operator picks the name from a dropdown we populated
  * from these same headers, but the file may round-trip through a spreadsheet
@@ -651,28 +660,28 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
           }
         }
 
-        const keyed = dedupeColumns !== undefined && dedupeColumns.length > 0;
-        if (keyed) {
-          for (const column of dedupeColumns) {
-            const index = resolveColumn(headers, column);
-            if (index === -1) {
-              throw new AgencyIngestError(
-                'dedupe_column_missing',
-                `The column chosen to find duplicates, '${column}', is not in the file.`,
-              );
-            }
-            // A column named twice is one key part; the route refuses it, this
-            // module does not depend on that.
-            if (!keyIndexes.includes(index)) keyIndexes.push(index);
+        for (const column of dedupeColumns ?? []) {
+          const index = resolveColumn(headers, column);
+          if (index === -1) {
+            throw new AgencyIngestError(
+              'dedupe_column_missing',
+              `The column chosen to find duplicates, '${column}', is not in the file.`,
+            );
           }
-          // The phone column chosen alone is the phone dedupe, on the normalised
-          // number rather than the raw text. In a combination it is one part,
-          // still compared as the normalised number (`rowKey`).
-          if (keyIndexes.length === 1 && keyIndexes[0] === phoneIndex) keyIndexes = [];
-          keyLabel = keyIndexes.map((i) => headers[i]!).join(' + ');
+          // A column named twice is one key part; the route refuses it, this
+          // module does not depend on that.
+          if (!keyIndexes.includes(index)) keyIndexes.push(index);
         }
-        const phoneDedupe = keyed ? keyIndexes.length === 0 : dedupePhones;
-        dedupeMode = keyIndexes.length > 0 ? 'column' : phoneDedupe ? 'phone' : 'none';
+        // The phone column chosen alone is the phone dedupe, on the normalised
+        // number rather than the raw text. In a combination it is one part,
+        // still compared as the normalised number (`rowKey`).
+        if (keyIndexes.length === 1 && keyIndexes[0] === phoneIndex) keyIndexes = [];
+        keyLabel = keyIndexes.map((i) => headers[i]!).join(' + ');
+        // A key that came down to the phone alone is the phone dedupe whatever
+        // `dedupePhones` says (the route refuses a key with `dedupe_phones: false`).
+        dedupeMode = keyIndexes.length > 0
+          ? 'column'
+          : (dedupeColumns?.length ?? 0) > 0 || dedupePhones ? 'phone' : 'none';
 
         retainedHeaders = headers.filter(
           (h, i) => i !== phoneIndex && !ignored.has(normalizeHeader(h)),
