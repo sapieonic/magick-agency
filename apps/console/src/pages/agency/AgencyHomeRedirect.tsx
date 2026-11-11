@@ -2,6 +2,7 @@ import { Navigate } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { agencyPersona } from '../../utils/agencyPersona';
+import { HOME_PATH, canSeeHome } from '../../utils/consoleNav';
 
 /**
  * Where `/agency` goes — which depends on who opened it.
@@ -15,9 +16,11 @@ import { agencyPersona } from '../../utils/agencyPersona';
  *
  * Now the two personas land where their job is:
  *
- *  - **supervisor** → the campaign list. Setting campaigns up and watching them is
- *    the job, and every campaign's own page carries its health strip, performance
- *    readouts and agent floor.
+ *  - **supervisor** → Home (`/agency/home`, B28): what needs them now, the floor
+ *    and today so far, across every live campaign. Whoever passes Home's gate
+ *    (`canSeeHome`, `agency.supervise`) lands there, so an account switch, which is a
+ *    full page load at the new account's home, lands there too. A supervisor who
+ *    somehow fails it keeps the old landing, the campaign list.
  *  - **agent** → `/dialer`, the agent home: the campaigns they are staffed on and
  *    the way into each.
  *
@@ -77,6 +80,10 @@ export function AgencyHomeRedirect() {
    */
   if (persona === null) return <LoadingSpinner />;
 
+  // This route renders only inside `/agency`'s capability and flag gates, so Home's gate
+  // comes down to its permission here.
+  const home = canSeeHome({ role, isFlagEnabled: () => true, isCapabilityEnabled: () => true });
+  if (home) return <Navigate to={HOME_PATH} replace />;
   return <Navigate to={persona === 'supervisor' ? '/agency/campaigns' : '/dialer'} replace />;
 }
 

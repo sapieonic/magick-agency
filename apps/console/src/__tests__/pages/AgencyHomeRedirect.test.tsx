@@ -43,14 +43,14 @@ afterEach(() => cleanup());
 
 describe('AgencyHomeRedirect', () => {
   it.each(['account_admin', 'tenant_admin', 'tenant_owner'] as const)(
-    'sends %s to the campaign list — setting campaigns up is the job',
+    'sends %s to Home, which passes its gate (B28)',
     async (role) => {
       mocks.useTenant.mockReturnValue({ role });
 
       renderIndex();
 
       await waitFor(() =>
-        expect(screen.getByTestId('where').textContent).toBe('/agency/campaigns'),
+        expect(screen.getByTestId('where').textContent).toBe('/agency/home'),
       );
     },
   );

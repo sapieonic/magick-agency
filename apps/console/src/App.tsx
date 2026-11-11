@@ -68,6 +68,7 @@ const AgentPerformancePage = lazy(() => import('./pages/agency/AgentPerformanceP
 const AgentAttemptsPage = lazy(() => import('./pages/agency/AgentAttemptsPage'));
 const SoftphonePage = lazy(() => import('./pages/agency/SoftphonePage'));
 const AgencyHomeRedirect = lazy(() => import('./pages/agency/AgencyHomeRedirect'));
+const HomePage = lazy(() => import('./pages/agency/HomePage'));
 const AgencyCampaignDetailPage = lazy(() => import('./pages/agency/AgencyCampaignDetailPage'));
 const CampaignLandingRedirect = lazy(() => import('./pages/agency/campaign-detail/CampaignLandingRedirect'));
 const DncPage = lazy(() => import('./pages/agency/DncPage'));
@@ -548,6 +549,12 @@ export default function App() {
                     a 403. See `AgencyHomeRedirect`.
                   */}
                   <Route index element={<AgencyHomeRedirect />} />
+                  {/*
+                    Home (B28): what needs a supervisor now, the floor and today so far.
+                    `agency.supervise`, which the page checks (`HOME_GATE`); anyone else is
+                    sent back to the index, which picks their landing.
+                  */}
+                  <Route path="home" element={<HomePage />} />
                   <Route path="campaigns" element={<AgencyCampaignsPage />} />
                   <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
                   {/*

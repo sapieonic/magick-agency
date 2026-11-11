@@ -8,6 +8,7 @@ import {
   productSurfaceForPath,
   settingsEntryForPath,
   settingsGroupTitle,
+  canSeeHome,
   tabBarFor,
   visibleSections,
   visibleSettingsGroups,
@@ -48,9 +49,10 @@ const sectionIds = (i: GateInput) => visibleSections(i).map((s) => s.section.id)
 const settingsIds = (i: GateInput) => visibleSettingsGroups(i).flatMap((g) => g.entries.map((e) => e.id));
 
 describe('the work sections', () => {
-  it('offers a supervisor all four, in order, each opening its first page', () => {
+  it('offers a supervisor Home and all four, in order, each opening its first page', () => {
     const shown = visibleSections(input('account_admin'));
     expect(shown.map((s) => [s.section.label, s.href])).toEqual([
+      ['Home', '/agency/home'],
       ['Campaigns', '/agency/campaigns'],
       ['Inbound', '/agency/inbound/missed'],
       ['Reports', '/agency/analytics'],
@@ -58,7 +60,7 @@ describe('the work sections', () => {
     ]);
   });
 
-  it.each(['viewer', 'operator'] as const)('offers a %s the same four (read floors)', (role) => {
+  it.each(['viewer', 'operator'] as const)('offers a %s the same four but not Home (read floors; Home needs agency.supervise)', (role) => {
     expect(sectionIds(input(role))).toEqual(['campaigns', 'inbound', 'reports', 'dnc']);
   });
 
@@ -76,7 +78,7 @@ describe('the work sections', () => {
   });
 
   it('drops Inbound when the missed-calls rule says there is nothing to read', () => {
-    expect(sectionIds(input('account_admin', { missed: false }))).toEqual(['campaigns', 'reports', 'dnc']);
+    expect(sectionIds(input('account_admin', { missed: false }))).toEqual(['home', 'campaigns', 'reports', 'dnc']);
   });
 
   it('keeps Reports on Analytics alone with the reports flag off', () => {
@@ -265,5 +267,27 @@ describe('the analytics product', () => {
     expect(productSurfaceForPath('/agency')).toBe('agency');
     expect(productSurfaceForPath('/settings/team')).toBe('ai');
     expect(productSurfaceForPath('/app')).toBe('ai');
+  });
+});
+
+describe('Home (B28)', () => {
+  it('is gated at agency.supervise, with the dialer on', () => {
+    for (const role of ['account_admin', 'tenant_admin', 'tenant_owner'] as const) {
+      expect(canSeeHome(input(role))).toBe(true);
+    }
+    for (const role of ['viewer', 'operator', 'agent', undefined] as const) {
+      expect(canSeeHome(input(role))).toBe(false);
+    }
+    expect(canSeeHome(input('tenant_owner', { capsOff: ['agency'] }))).toBe(false);
+    expect(canSeeHome(input('tenant_owner', { flagsOff: ['agency_dialer_enabled'] }))).toBe(false);
+  });
+
+  it('is active on its own URL only, has no tab bar, and is its own breadcrumb', () => {
+    expect(activeNavId('/agency/home')).toBe('home');
+    expect(activeNavId('/agency/home/')).toBe('home');
+    expect(activeNavId('/agency')).toBeNull();
+    expect(activeNavId('/agency/campaigns')).toBe('campaigns');
+    expect(tabBarFor('/agency/home', input('account_admin'))).toBeNull();
+    expect(breadcrumbFor('/agency/home')).toEqual([{ label: 'Home' }]);
   });
 });

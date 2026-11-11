@@ -153,3 +153,11 @@
     display: flex;
   }
 }
+
+/* Home's needs-attention count: the warning tone, outlined, so it never reads as the
+   missed-calls count beside Inbound. */
+.navBadgeAttention {
+  background: var(--warning-subtle);
+  color: var(--warning);
+  box-shadow: inset 0 0 0 1px var(--warning);
+}
