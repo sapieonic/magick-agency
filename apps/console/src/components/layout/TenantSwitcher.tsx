@@ -7,12 +7,11 @@ import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
 import styles from './TenantSwitcher.module.css';
 
 /**
- * `variant="context"` is the sidebar's context block (decision B28): no box, the tenant small
- * and muted, the account in bold, each the full width of the sidebar.
+ * The tenant line of the sidebar's context block (decision B28): no box, small and muted above the account, the full
+ * width of the sidebar. A plain label with one to choose from, the switcher otherwise.
  */
-export function TenantSwitcher({ variant = 'bar' }: { variant?: 'bar' | 'context' } = {}) {
-  const ctx = variant === 'context';
-  const triggerClass = ctx ? `${styles.trigger} ${styles.contextTrigger}` : styles.trigger;
+export function TenantSwitcher() {
+  const triggerClass = styles.trigger;
   const { tenants } = useAuth();
   const { activeTenant, setActiveTenantId } = useTenant();
   const [open, setOpen] = useState(false);
@@ -61,7 +60,7 @@ export function TenantSwitcher({ variant = 'bar' }: { variant?: 'bar' | 'context
   }
 
   return (
-    <div className={ctx ? `${styles.switcher} ${styles.contextSwitcher}` : styles.switcher} ref={ref} onBlur={handleBlur}>
+    <div className={styles.switcher} ref={ref} onBlur={handleBlur}>
       <button
         ref={triggerRef}
         className={triggerClass}

@@ -24,16 +24,23 @@ profiles, team, invites and settings. Detail: `docs/architecture.md` "UIs", `doc
 - One shell (B28): every signed-in page except `/station` and `/dialer/*` renders in
   `components/layout/ConsoleLayout` (via `ConsoleShell`). Sidebar entries, section tab bars,
   breadcrumbs and Settings entries, each with its gate, are tables in `utils/consoleNav.ts`; add a
-  page there, gated as its route is. Settings pages live under `/settings/*`; `/app/<page>` only
-  redirects there (`LegacyAppRedirect`), so never link to `/app/...` (`agencyShellBoundary.test.ts`).
+  page there, gated as its route is, and add its route to `navRouteGates.test.ts`, which checks
+  every offer (sidebar, tabs, Settings, search) against the route it opens for every role and
+  flag. A Settings entry carries `SETTINGS_GATE` (`AgentLanding` sends a dedicated agent away).
+  Pages leave their own breadcrumbs out: on a phone the top bar's back arrow goes up one crumb.
+  Settings pages live under `/settings/*`; `/app/<page>` only redirects there
+  (`LegacyAppRedirect`), so never link to `/app/...` (`agencyShellBoundary.test.ts`).
   A page names what the URL cannot (a campaign's name) in the top bar's breadcrumb with
   `usePageCrumbs` (`components/layout/PageCrumbs.tsx`; campaign pages via `useCampaignCrumbs`).
 - One search (B28): the top bar's field and ⌘K open `components/common/GlobalSearch`, whose results
   come from `utils/consoleSearch.ts`. Pages are read from `consoleNav.ts`, so a new tab is found by
-  its label with no extra step (add words to `PAGE_KEYWORDS` if people would type others); a new
-  Settings entry needs a `SETTINGS_SEARCH` row (`consoleSearch.test.ts` fails without one), naming
-  only settings its page really has. The same words drive the hub's "Find a setting" filter. A
-  phone number runs `hooks/useCustomerSearchRun.ts`, shared with `CustomerSearchBox`.
+  its label with no extra step (add words to `PAGE_KEYWORDS` if people would type others, and keep
+  a renamed page's old name there); a new Settings entry needs a `SETTINGS_SEARCH` row and a new
+  campaign screen a `CAMPAIGN_TAB_KEYWORDS` row (`consoleSearch.test.ts` fails without either),
+  naming only settings its page really has. Campaign Settings sections come from
+  `campaignSettingsSectionsFor`, the rule the page itself shows them by. The same words drive the
+  hub's "Find a setting" filter. A phone number runs `hooks/useCustomerSearchRun.ts`, shared with
+  `CustomerSearchBox`.
 - The campaign bar (`utils/agencyCampaignTabs.ts`, IN13/IN14) is grouped but flat: one tab per
   question. Campaign Settings sections are `utils/campaignSettingsSections.ts`; their ids are
   link anchors (`…/settings#<id>`), so rename a label, never an id.

@@ -76,7 +76,7 @@ export default function InboundRoutesPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Inbound calls"
+        title="Inbound routing"
         actions={
           <Link to="/settings/inbound/new" className={`btn-primary ${styles.iconLabel}`} data-testid="inbound-new-route">
             <Plus size={15} aria-hidden="true" />

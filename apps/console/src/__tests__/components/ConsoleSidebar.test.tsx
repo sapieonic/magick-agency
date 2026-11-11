@@ -64,7 +64,9 @@ async function renderAt(path = '/agency/campaigns', role: string | null = 'accou
 }
 
 const nav = () => screen.getByRole('navigation', { name: 'Main' });
-const navLabels = () => within(nav()).queryAllByRole('link').map((a) => (a.textContent ?? '').replace(/\d.*$/, '').trim());
+const allNavLabels = () => within(nav()).queryAllByRole('link').map((a) => (a.textContent ?? '').replace(/\d.*$/, '').trim());
+/** The work entries: every link in the Main landmark but Settings, which sits at its foot. */
+const navLabels = () => allNavLabels().filter((label) => label !== 'Settings');
 const href = (testId: string) => screen.getByTestId(testId).getAttribute('href');
 const isActive = (testId: string) => screen.getByTestId(testId).getAttribute('aria-current') === 'page';
 
@@ -90,9 +92,21 @@ describe('the work sections', () => {
     expect(href('console-nav-dnc')).toBe('/agency/dnc');
   });
 
-  it('offers an agent nothing to work on, which is why an agent is never routed here', async () => {
+  it('offers an agent nothing to work on, only the way back to the dialler', async () => {
     await renderAt('/agency/campaigns', 'agent');
-    expect(navLabels()).toEqual([]);
+    expect(navLabels()).toEqual(['Take calls']);
+    expect(href('console-nav-dialer')).toBe('/dialer');
+  });
+
+  it('offers viewers and operators the dialler as Take calls, and supervisors not', async () => {
+    for (const role of ['viewer', 'operator']) {
+      await renderAt('/agency/campaigns', role);
+      expect(navLabels().at(-1), role).toBe('Take calls');
+      expect(isActive('console-nav-dialer')).toBe(false);
+      cleanup();
+    }
+    await renderAt('/agency/campaigns', 'account_admin');
+    expect(navLabels()).not.toContain('Take calls');
   });
 
   it('offers nothing while the role is unresolved', async () => {
@@ -123,8 +137,24 @@ describe('the work sections', () => {
 });
 
 describe('Settings and the version, pinned at the foot', () => {
-  it.each(['agent', 'viewer', 'account_admin', 'tenant_owner'])('shows Settings to %s', async (role) => {
+  it.each(['viewer', 'operator', 'account_admin', 'tenant_owner'])('shows Settings to %s', async (role) => {
     await renderAt('/agency/campaigns', role);
+    expect(href('console-nav-settings')).toBe('/settings');
+  });
+
+  it('keeps Settings inside the Main navigation landmark, last', async () => {
+    await renderAt();
+    expect(allNavLabels().at(-1)).toBe('Settings');
+    expect(within(nav()).getByTestId('console-nav-settings')).toBeTruthy();
+  });
+
+  it('leaves Settings out for a dedicated agent while the dialer is on: every Settings page sends them to /dialer', async () => {
+    await renderAt('/agency/campaigns', 'agent');
+    expect(screen.queryByTestId('console-nav-settings')).toBeNull();
+    cleanup();
+    // With the dialer off `AgentLanding` keeps them in the shell, so Settings is theirs.
+    mocks.flags = new Set();
+    await renderAt('/settings/profile', 'agent');
     expect(href('console-nav-settings')).toBe('/settings');
   });
 

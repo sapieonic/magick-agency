@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../contexts/GovernanceContext', () => ({ useGovernance: mocks.useGovernance }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: mocks.useFeatureFlags }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: null, memberships: [] }) }));
 vi.mock('../../analytics/events', () => ({
   trackFeatureGateUnavailable: mocks.trackFeatureGateUnavailable,
 }));

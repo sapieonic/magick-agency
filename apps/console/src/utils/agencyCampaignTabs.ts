@@ -1,5 +1,6 @@
 import type { Permission } from './permissions';
 import { hasPermission } from './permissions';
+import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
 import type { Role } from '../types/auth';
 
 /**
@@ -177,7 +178,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     // calls. Not a tab since IN14: the second view of Call log.
     permission: 'agency.supervise',
     path: (id) => `/agency/campaigns/${id}/manual-calls`,
-    flag: 'agency_softphone_enabled',
+    flag: SOFTPHONE_FLAG,
   },
   {
     id: 'activity',

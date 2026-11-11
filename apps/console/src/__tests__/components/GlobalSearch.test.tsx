@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   role: 'account_admin' as string | undefined,
   accountId: 'account-1' as string | null,
   dialerOn: true,
+  phone: false,
   listAgencyCampaigns: vi.fn(),
   searchCustomers: vi.fn(),
   getCustomerSearchOptions: vi.fn(),
@@ -47,6 +48,7 @@ import { ConsoleLayout } from '../../components/layout/ConsoleLayout';
 import { resetCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSearchDefaultCallingCode';
 import { clearCustomerSearchAnswers, customerSearchAnswer } from '../../utils/customerHistoryStore';
 import { ApiError } from '../../api/client';
+import { SEARCH_CAMPAIGNS_FRESH_MS, resetSearchCampaignsCache } from '../../hooks/useSearchCampaigns';
 
 const fixture = customerHistoryFixture();
 
@@ -56,22 +58,27 @@ function Where() {
   return <div data-testid="where">{`${lastLocation.pathname}${lastLocation.search}${lastLocation.hash}`}</div>;
 }
 
-function renderShell(path = '/agency/campaigns') {
-  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-    matches: false,
-    media: query,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  }));
-  return render(
+function shellAt(path: string) {
+  return (
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route element={<ConsoleLayout />}>
           <Route path="*" element={<Where />} />
         </Route>
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+}
+
+function renderShell(path = '/agency/campaigns') {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: query === '(max-width: 768px)' ? mocks.phone : false,
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  const view = render(shellAt(path));
+  return { ...view, rerenderShell: () => view.rerender(shellAt(path)) };
 }
 
 const trigger = () => screen.getByTestId('console-search-trigger');
@@ -87,7 +94,9 @@ beforeEach(() => {
   mocks.role = 'account_admin';
   mocks.accountId = 'account-1';
   mocks.dialerOn = true;
+  mocks.phone = false;
   lastLocation = null;
+  resetSearchCampaignsCache();
   clearCustomerSearchAnswers();
   resetCustomerSearchDefaultCallingCode();
   mocks.listAgencyCampaigns.mockResolvedValue([
@@ -145,6 +154,42 @@ describe('opening and closing', () => {
     fireEvent.click(trigger());
     fireEvent.click(dialog());
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('layers', () => {
+  it('Escape closes only the topmost layer: search over the phone’s drawer, then the drawer', async () => {
+    mocks.phone = true;
+    renderShell();
+    const toggle = screen.getByRole('button', { name: 'Toggle menu' });
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.keyDown(document, { key: 'k', metaKey: true });
+    expect(dialog()).toBeTruthy();
+
+    key('Escape');
+    expect(screen.queryByRole('dialog', { name: 'Search' })).toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+describe('what was typed', () => {
+  it('survives the flags resolving while search is open: the palette is never remounted', async () => {
+    mocks.dialerOn = false;
+    const { rerenderShell } = renderShell('/settings/profile');
+    fireEvent.click(trigger());
+    type('inbound');
+    expect(options().map((o) => o.textContent)).toEqual(['Inbound routingSettings › This accountSetting']);
+    await waitFor(() => expect(document.activeElement).toBe(input()));
+
+    mocks.dialerOn = true;
+    rerenderShell();
+    expect(input().value).toBe('inbound');
+    expect(document.activeElement).toBe(input());
+    await waitFor(() => expect(options().map((o) => o.textContent)).toContain('Missed callsInboundPage'));
   });
 });
 
@@ -247,6 +292,77 @@ describe('campaigns', () => {
     fireEvent.click(trigger());
     type('diwali');
     expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+  });
+
+  it('are kept for the session: a second open within a minute reads nothing, and shows them at once', async () => {
+    renderShell();
+    fireEvent.click(trigger());
+    type('diwali');
+    await waitFor(() => expect(options().length).toBe(2));
+    key('Escape');
+    fireEvent.click(trigger());
+    type('diwali');
+    // At once, with no "Loading campaigns…" and no second read.
+    expect(options().length).toBe(2);
+    expect(within(dialog()).queryByText('Loading campaigns…')).toBeNull();
+    expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(1);
+  });
+
+  it('are read again in the background when the list kept is old, showing the old list meanwhile', async () => {
+    const now = vi.spyOn(Date, 'now');
+    try {
+      now.mockReturnValue(1_000_000);
+      renderShell();
+      fireEvent.click(trigger());
+      type('diwali');
+      await waitFor(() => expect(options().length).toBe(2));
+      key('Escape');
+
+      mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-3', name: 'Diwali top-ups', status: 'running' }]);
+      now.mockReturnValue(1_000_000 + SEARCH_CAMPAIGNS_FRESH_MS + 1);
+      fireEvent.click(trigger());
+      type('diwali');
+      expect(options()[0]!.textContent).toBe('Diwali renewalsCampaign');
+      await waitFor(() => expect(options()[0]!.textContent).toBe('Diwali top-upsCampaign'));
+      expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('are read again for another account', async () => {
+    renderShell();
+    fireEvent.click(trigger());
+    type('diwali');
+    await waitFor(() => expect(options().length).toBe(2));
+    cleanup();
+    mocks.accountId = 'account-2';
+    renderShell();
+    fireEvent.click(trigger());
+    await waitFor(() => expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(2));
+    expect(mocks.listAgencyCampaigns).toHaveBeenLastCalledWith('tenant-1', 'account-2');
+  });
+
+  it('find a campaign’s own pages by the names people learnt: call log, call attempts, history', async () => {
+    renderShell();
+    fireEvent.click(trigger());
+    type('diwali call attempts');
+    const option = await waitFor(() => within(dialog()).getByRole('option', { name: /^Diwali renewals › Call log/ }));
+    fireEvent.click(option);
+    expect(where()).toBe('/agency/campaigns/c-1/attempts');
+    fireEvent.click(trigger());
+    type('diwali history');
+    fireEvent.click(within(dialog()).getByRole('option', { name: /^Diwali renewals › Activity/ }));
+    expect(where()).toBe('/agency/campaigns/c-1/activity');
+  });
+
+  it('show a campaign named in digits, with no "Enter the full number" above it', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-26', name: '2026', status: 'running' }]);
+    renderShell();
+    fireEvent.click(trigger());
+    type('2026');
+    await waitFor(() => expect(options().map((o) => o.textContent)).toContain('2026Campaign'));
+    expect(screen.queryByTestId('global-search-number-note')).toBeNull();
   });
 
   it('say so when they could not be read', async () => {

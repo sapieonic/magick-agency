@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Check, ChevronDown, Copy, LogOut, Moon, Sun } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
 import styles from './ProfileMenu.module.css';
 
 export function initialsFor(name: string | null | undefined, email: string | null | undefined): string {
@@ -22,6 +23,11 @@ export function initialsFor(name: string | null | undefined, email: string | nul
  *
  * No Settings, "Credits & Billing" or "API Keys" items (decision #5); Settings is in the
  * sidebar.
+ *
+ * A disclosure, not a menu: the panel holds text, ids to copy and two buttons, reached with Tab
+ * in page order, so the trigger says `aria-expanded` and `aria-controls` and claims no popup
+ * role. Escape closes it and puts focus back on the trigger; Tab past its last control or a
+ * click outside closes it.
  */
 export function ProfileMenu() {
   const { user, logout } = useAuth();
@@ -31,6 +37,7 @@ export function ProfileMenu() {
   const [copiedId, setCopiedId] = useState<'tenant' | 'account' | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelId = `${useId()}-profile`;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -43,7 +50,8 @@ export function ProfileMenu() {
   useEffect(() => {
     if (!open) return;
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
+      // Search above it takes its own Escape (`defaultPrevented`): one layer per press.
+      if (e.key === 'Escape' && !e.defaultPrevented) {
         setOpen(false);
         triggerRef.current?.focus();
       }
@@ -72,14 +80,20 @@ export function ProfileMenu() {
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
 
   return (
-    <div className={styles.userMenu} ref={menuRef}>
+    <div
+      className={styles.userMenu}
+      ref={menuRef}
+      onBlur={(e) => {
+        if (open && shouldCloseSwitcherOnBlur(menuRef.current, e.relatedTarget)) setOpen(false);
+      }}
+    >
       <button
         ref={triggerRef}
         className={styles.userBtn}
         onClick={() => setOpen((prev) => !prev)}
         type="button"
         aria-expanded={open}
-        aria-haspopup="true"
+        aria-controls={open ? panelId : undefined}
         aria-label={`Profile menu for ${displayName}`}
         data-testid="profile-menu-trigger"
       >
@@ -91,7 +105,7 @@ export function ProfileMenu() {
       </button>
 
       {open && (
-        <div className={styles.dropdown} data-testid="profile-menu">
+        <div className={styles.dropdown} id={panelId} data-testid="profile-menu">
           <div className={styles.dropdownHeader}>
             <div className={styles.dropdownName}>{user?.display_name || 'User'}</div>
             <div className={styles.dropdownEmail}>{user?.email}</div>

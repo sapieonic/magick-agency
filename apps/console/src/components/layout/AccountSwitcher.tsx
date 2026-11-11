@@ -6,12 +6,11 @@ import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
 import styles from './AccountSwitcher.module.css';
 
 /**
- * `variant="context"` is the sidebar's context block (decision B28): no box, the tenant small
- * and muted, the account in bold, each the full width of the sidebar.
+ * The account line of the sidebar's context block (decision B28): no box, in bold under the tenant, the full
+ * width of the sidebar. A plain label with one to choose from, the switcher otherwise.
  */
-export function AccountSwitcher({ variant = 'bar' }: { variant?: 'bar' | 'context' } = {}) {
-  const ctx = variant === 'context';
-  const triggerClass = ctx ? `${styles.trigger} ${styles.contextTrigger}` : styles.trigger;
+export function AccountSwitcher() {
+  const triggerClass = styles.trigger;
   const { accounts, accountId, setActiveAccountId, accountResolution, reloadAccounts } =
     useTenant();
   const [open, setOpen] = useState(false);
@@ -104,7 +103,7 @@ export function AccountSwitcher({ variant = 'bar' }: { variant?: 'bar' | 'contex
   }
 
   return (
-    <div className={ctx ? `${styles.switcher} ${styles.contextSwitcher}` : styles.switcher} ref={ref} onBlur={handleBlur}>
+    <div className={styles.switcher} ref={ref} onBlur={handleBlur}>
       <button
         ref={triggerRef}
         className={triggerClass}

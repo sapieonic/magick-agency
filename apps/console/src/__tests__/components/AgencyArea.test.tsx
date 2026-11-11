@@ -59,12 +59,12 @@ describe('the section tab bar', () => {
     expect(screen.getByTestId('page')).toBeTruthy();
   });
 
-  it('groups Missed calls with Summary, and Analytics with Reports', async () => {
+  it('groups Missed calls with Summary, and Analytics with Exports', async () => {
     await renderAt('/agency/inbound/missed');
     expect(tabLabels()).toEqual(['Missed calls', 'Summary']);
     cleanup();
     await renderAt('/agency/reports');
-    expect(tabLabels()).toEqual(['Analytics', 'Reports']);
+    expect(tabLabels()).toEqual(['Analytics', 'Exports']);
   });
 
   it('shows no bar when only one tab is left, or on a page inside the section', async () => {

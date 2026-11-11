@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { CONSOLE_SECTIONS, SETTINGS_ENTRIES, type GateInput } from '../../utils/consoleNav';
 import {
+  CAMPAIGN_TAB_KEYWORDS,
   SETTINGS_SEARCH,
+  campaignPageResults,
   campaignResults,
   campaignSettingsResults,
   canSearchCampaigns,
@@ -15,11 +17,13 @@ import {
   searchPlaceholder,
   searchShortcutLabel,
   searchTokens,
+  searchableCampaignSections,
   settingsEntryMatches,
   settingsResults,
   type CampaignSettingsSection,
   type SearchInput,
 } from '../../utils/consoleSearch';
+import { CAMPAIGN_TABS } from '../../utils/agencyCampaignTabs';
 import type { Role } from '../../types/auth';
 
 /**
@@ -51,13 +55,15 @@ describe('the pages', () => {
       'Missed calls',
       'Inbound summary',
       'Analytics',
-      'Reports',
+      'Exports',
       'Do Not Call',
+      'Take calls',
+      'Customer history',
     ]);
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(9);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(10);
   });
 
   it('offers nothing under /agency without the dialer flag or the agency capability', () => {
@@ -66,13 +72,13 @@ describe('the pages', () => {
   });
 
   it('gates each page as its tab: a viewer reads campaigns, analytics, reports, DNC and missed calls only', () => {
-    expect(titles(pageResults([], ALL_ON('viewer')))).toEqual(['Campaigns', 'Missed calls', 'Analytics', 'Reports', 'Do Not Call']);
+    expect(titles(pageResults([], ALL_ON('viewer')))).toEqual(['Campaigns', 'Missed calls', 'Analytics', 'Exports', 'Do Not Call', 'Take calls', 'Customer history']);
   });
 
   it('hides Soft-phone calls without its flag, Reports without its flag, and Inbound without the missed rule', () => {
     const off = (flag: string) => ALL_ON('account_admin', { isFlagEnabled: (f) => f !== flag });
     expect(titles(pageResults([], off('agency_softphone_enabled')))).not.toContain('Soft-phone calls');
-    expect(titles(pageResults([], off('agency_reports_enabled')))).not.toContain('Reports');
+    expect(titles(pageResults([], off('agency_reports_enabled')))).not.toContain('Exports');
     const noMissed = titles(pageResults([], ALL_ON('account_admin', { missedAvailable: false })));
     expect(noMissed).not.toContain('Missed calls');
     expect(noMissed).not.toContain('Inbound summary');
@@ -85,8 +91,19 @@ describe('the pages', () => {
 
   it('finds pages by their section and their words', () => {
     expect(titles(pageResults(searchTokens('inbound'), ALL_ON('account_admin')))).toEqual(['Missed calls', 'Inbound summary']);
-    expect(titles(pageResults(searchTokens('pdf'), ALL_ON('account_admin')))).toEqual(['Reports']);
+    expect(titles(pageResults(searchTokens('pdf'), ALL_ON('account_admin')))).toEqual(['Exports']);
     expect(titles(pageResults(searchTokens('soft-phone'), ALL_ON('account_admin')))).toContain('Soft-phone calls');
+  });
+
+  it('still finds a renamed page by its old name: Exports was Reports', () => {
+    for (const q of ['reports', 'report', 'export']) {
+      expect(titles(pageResults(searchTokens(q), ALL_ON('viewer'))), q).toContain('Exports');
+    }
+  });
+
+  it('offers Customer history to whoever may search a number, found by "history"', () => {
+    expect(titles(pageResults(searchTokens('history'), ALL_ON('agent')))).toEqual(['Customer history']);
+    expect(titles(pageResults(searchTokens('history'), ALL_ON('agent', { isFlagEnabled: () => false })))).toEqual([]);
   });
 });
 
@@ -147,6 +164,14 @@ describe('the settings', () => {
     expect(settingsResults([], ALL_ON('tenant_owner')).map((r) => r.key)).toEqual(SETTINGS_ENTRIES.map((e) => `setting:${e.id}`));
     const noSoftphoneFlag = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_softphone_enabled' });
     expect(settingsResults(searchTokens('caller'), noSoftphoneFlag).map((r) => r.key)).not.toContain('setting:softphone');
+  });
+
+  it('offers a dedicated agent no Settings page while the dialer is on (AgentLanding sends them to /dialer)', () => {
+    expect(settingsResults([], ALL_ON('agent'))).toEqual([]);
+    expect(settingsResults(searchTokens('soft phone'), ALL_ON('agent'))).toEqual([]);
+    // With the dialer off they stay in the shell, so Settings is theirs.
+    const dialerOff = ALL_ON('agent', { isFlagEnabled: (f) => f !== 'agency_dialer_enabled' });
+    expect(settingsResults([], dialerOff).map((r) => r.key)).toContain('setting:profile');
   });
 
   it('feeds the sub-nav filter the same words', () => {
@@ -243,6 +268,73 @@ describe('campaigns', () => {
   });
 });
 
+describe('a campaign’s own pages', () => {
+  const CAMPAIGNS = [
+    { id: 'c-1', name: 'Diwali renewals' },
+    { id: 'c-2', name: 'Q4 collections' },
+  ];
+  const supervisor = ALL_ON('account_admin');
+
+  it('have words for every campaign screen', () => {
+    expect(Object.keys(CAMPAIGN_TAB_KEYWORDS).sort()).toEqual(CAMPAIGN_TABS.map((t) => t.id).sort());
+  });
+
+  it.each([
+    ['call log', 'Call log'],
+    ['call attempts', 'Call log'],
+    ['attempts', 'Call log'],
+    ['activity', 'Activity'],
+    ['history', 'Activity'],
+    ['roster', 'Contacts'],
+    ['callbacks', 'Callbacks'],
+  ])('“%s” finds each campaign’s %s', (query, label) => {
+    const rs = campaignPageResults(CAMPAIGNS, query, supervisor);
+    expect(rs.map((r) => r.title)).toEqual([`Diwali renewals › ${label}`, `Q4 collections › ${label}`]);
+  });
+
+  it('narrow to the campaign the query names, linking the screen’s own URL', () => {
+    expect(campaignPageResults(CAMPAIGNS, 'diwali history', supervisor).map((r) => [r.title, r.target])).toEqual([
+      ['Diwali renewals › Activity', { type: 'path', to: '/agency/campaigns/c-1/activity' }],
+    ]);
+    expect(campaignPageResults(CAMPAIGNS, 'q4 call log', supervisor).map((r) => r.target)).toEqual([
+      { type: 'path', to: '/agency/campaigns/c-2/attempts' },
+    ]);
+    // A campaign's name alone is the campaign, not every screen of it.
+    expect(campaignPageResults(CAMPAIGNS, 'diwali', supervisor)).toEqual([]);
+  });
+
+  it('are gated as their tabs: a viewer opens Agents only', () => {
+    expect(campaignPageResults(CAMPAIGNS, 'diwali call log', ALL_ON('viewer'))).toEqual([]);
+    expect(campaignPageResults(CAMPAIGNS, 'diwali agents', ALL_ON('viewer')).map((r) => r.title)).toEqual(['Diwali renewals › Agents']);
+    const noSoftphone = ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_softphone_enabled' });
+    expect(campaignPageResults(CAMPAIGNS, 'diwali manual calls', noSoftphone)).toEqual([]);
+    expect(campaignPageResults(CAMPAIGNS, 'diwali manual calls', supervisor).map((r) => r.title)).toEqual(['Diwali renewals › Soft-phone calls']);
+  });
+});
+
+describe('the campaign Settings sections search links to', () => {
+  const ids = (gate: GateInput) => searchableCampaignSections(gate).map((s) => s.id);
+
+  it('leave Agents out when contact assignment and inbound calls are both off: the page hides it', () => {
+    const off = ALL_ON('account_admin', {
+      isFlagEnabled: (f) => f !== 'agency_contact_assignment_enabled' && f !== 'agency_inbound_enabled',
+    });
+    expect(ids(off)).not.toContain('agents');
+    expect(ids(ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_inbound_enabled' }))).toContain('agents');
+    expect(ids(ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_contact_assignment_enabled' }))).toContain('agents');
+  });
+
+  it('are offered by searchConsole only as the page has them', () => {
+    const off = ALL_ON('account_admin', {
+      isFlagEnabled: (f) => f !== 'agency_contact_assignment_enabled' && f !== 'agency_inbound_enabled',
+    });
+    const input: SearchInput = { query: 'diwali assignment', gate: off, accountId: 'a-1', defaultCallingCode: '+91', campaigns: [{ id: 'c-1', name: 'Diwali renewals' }] };
+    expect(searchConsole(input).groups.flatMap((g) => g.results).map((r) => r.key)).not.toContain('campaign-section:c-1:agents');
+    expect(searchConsole({ ...input, gate: ALL_ON('account_admin') }).groups.flatMap((g) => g.results).map((r) => r.key))
+      .toContain('campaign-section:c-1:agents');
+  });
+});
+
 describe('everything together', () => {
   const base: SearchInput = {
     query: '',
@@ -250,7 +342,6 @@ describe('everything together', () => {
     accountId: 'a-1',
     defaultCallingCode: '+91',
     campaigns: [{ id: 'c-1', name: 'Diwali renewals' }],
-    campaignSections: [{ id: 'caller-ids', label: 'Caller IDs', keywords: ['caller'] }],
   };
   const groups = (input: Partial<SearchInput>) => searchConsole({ ...base, ...input }).groups.map((g) => g.id);
 
@@ -272,6 +363,25 @@ describe('everything together', () => {
     const answer = searchConsole({ ...base, query: 'diwali', gate: ALL_ON('viewer') });
     expect(answer.groups.flatMap((g) => g.results).map((r) => r.title)).toEqual(['Diwali renewals']);
     expect(groups({ query: 'caller', gate: ALL_ON('viewer') })).not.toContain('campaign-settings');
+  });
+
+  it('puts a campaign’s pages after the campaigns and before its settings sections', () => {
+    expect(groups({ query: 'diwali agents' })).toEqual(['campaign-pages', 'campaign-settings']);
+    expect(groups({ query: 'call log' })).toEqual(['campaign-pages']);
+  });
+
+  it('never shows "› Settings" twice for one campaign', () => {
+    const answer = searchConsole({ ...base, query: 'settings', campaigns: [{ id: 'c-9', name: 'Settings test' }] });
+    const keys = answer.groups.flatMap((g) => g.results).map((r) => r.key);
+    expect(keys.filter((k) => k === 'campaign:c-9:settings')).toHaveLength(1);
+  });
+
+  it('drops the number refusal when the digits are something else’s name, such as a campaign called 2026', () => {
+    const only = searchConsole({ ...base, query: '2026', campaigns: [] });
+    expect(only.numberNote).toMatch(/Enter the full number/);
+    const named = searchConsole({ ...base, query: '2026', campaigns: [{ id: 'c-7', name: '2026' }] });
+    expect(named.numberNote).toBeNull();
+    expect(named.groups.flatMap((g) => g.results).map((r) => r.title)).toContain('2026');
   });
 
   it('gives no number result, and no note, to a reader who may not search numbers', () => {

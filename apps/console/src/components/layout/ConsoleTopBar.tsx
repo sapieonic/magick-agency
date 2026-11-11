@@ -1,10 +1,9 @@
 import { Fragment } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, Search } from 'lucide-react';
+import { ArrowLeft, Menu, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { useGovernance } from '../../contexts/GovernanceContext';
-import { breadcrumbFor, settingsEntryForPath, type GateInput } from '../../utils/consoleNav';
+import { useGateReaders } from '../../hooks/useGateReaders';
+import { backCrumb, breadcrumbFor, settingsEntryForPath, type GateInput } from '../../utils/consoleNav';
 import { canSearchCampaigns, canSearchNumbers, searchPlaceholder, searchShortcutLabel } from '../../utils/consoleSearch';
 import { ProfileMenu } from './ProfileMenu';
 import { useSuppliedCrumbs } from './PageCrumbs';
@@ -18,23 +17,8 @@ interface Props {
   menuControls?: string;
   /** Opens the console's search (`GlobalSearch`). No field without it. */
   onSearchClick?: () => void;
-}
-
-/** Flags and capabilities, failing closed outside their providers (as the sidebar reads them). */
-function useGateReaders(): Pick<GateInput, 'isFlagEnabled' | 'isCapabilityEnabled'> {
-  let isFlagEnabled: (flag: string) => boolean = () => false;
-  let isCapabilityEnabled: (capability: string) => boolean = () => false;
-  try {
-    isFlagEnabled = useFeatureFlags().isEnabled;
-  } catch {
-    /* no provider: every flag off */
-  }
-  try {
-    isCapabilityEnabled = useGovernance().isEnabled;
-  } catch {
-    /* no provider: every capability off */
-  }
-  return { isFlagEnabled, isCapabilityEnabled };
+  /** Phone width: the breadcrumb is the current page, with a back arrow to the one above it. */
+  phone?: boolean;
 }
 
 /**
@@ -42,15 +26,17 @@ function useGateReaders(): Pick<GateInput, 'isFlagEnabled' | 'isCapabilityEnable
  * it, and the profile menu on the right. The field opens `GlobalSearch` (⌘K): pages, Settings,
  * campaigns and, for a reader who may search customer history, a phone number
  * (`docs/customer-history.md` §5). Its words say only what this reader can search. On a phone
- * the breadcrumb shows only the current page, the field is an icon button, and the menu button
- * opens the sidebar.
+ * the breadcrumb shows only the current page, after a back arrow to the crumb above it (when
+ * that is a link, `backCrumb`), the field is an icon button, and the menu button opens the
+ * sidebar. Pages leave their own breadcrumbs out and rely on this.
  */
-export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearchClick }: Props) {
+export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearchClick, phone = false }: Props) {
   const { pathname } = useLocation();
   const { role, accountId } = useTenant();
   const readers = useGateReaders();
   const gate: GateInput = { role, ...readers };
   const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label, useSuppliedCrumbs(pathname));
+  const back = phone ? backCrumb(crumbs) : null;
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
   const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');
 
@@ -66,6 +52,17 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearc
       >
         <Menu size={20} />
       </button>
+
+      {back && (
+        <Link
+          to={back.to}
+          className={styles.back}
+          aria-label={`Back to ${back.label}`}
+          data-testid="console-back"
+        >
+          <ArrowLeft size={20} aria-hidden="true" />
+        </Link>
+      )}
 
       {crumbs.length > 0 && (
         <nav className={styles.breadcrumb} aria-label="Breadcrumb" data-testid="console-breadcrumb">

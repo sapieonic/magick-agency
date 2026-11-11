@@ -176,7 +176,9 @@ describe('the agency entry points', () => {
       .map((file) => readFileSync(resolve(process.cwd(), file), 'utf8'))
       .join('\n');
     expect(search).not.toContain('/dialer/performance');
-    expect(searchPages().map((p) => p.to).filter((to) => to.startsWith('/dialer'))).toEqual([]);
+    // `/dialer` itself is offered ("Take calls"), but only to whoever takes calls without
+    // supervising (`withoutPermission: 'agency.supervise'`); no agent-scoped sub-page is.
+    expect(searchPages().map((p) => p.to).filter((to) => to.startsWith('/dialer/'))).toEqual([]);
   });
 
   it('keeps /dialer/attempts out of GlobalSearch for the same reason', () => {

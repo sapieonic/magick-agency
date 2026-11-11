@@ -66,7 +66,7 @@ import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { SettingsSectionNav, useSectionInView } from '../../components/agency/SettingsSectionNav';
 import { ComposerSection } from '../campaigns/components/ComposerSection';
-import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';
+import { CAMPAIGN_SETTINGS_SECTIONS, campaignHasAgentsSection } from '../../utils/campaignSettingsSections';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { CampaignHistory } from './campaign-detail/insights/CampaignFacts';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -381,7 +381,7 @@ export function AgencyCampaignSettingsPage() {
     uploads only at `agency.supervise`, the floor of both its reads.
   */
   const assignmentLeftovers = campaign && !assignmentEnabled ? storedAssignmentLeftovers(campaign) : [];
-  const agentsVisible = assignmentEnabled || inboundEnabled || assignmentLeftovers.length > 0;
+  const agentsVisible = campaignHasAgentsSection({ assignmentEnabled, inboundEnabled, assignmentLeftovers: assignmentLeftovers.length > 0 });
   const historyVisible = hasPermission(role, 'agency.supervise');
   const sections = CAMPAIGN_SETTINGS_SECTIONS.filter(
     (section) => (section.id !== 'agents' || agentsVisible)

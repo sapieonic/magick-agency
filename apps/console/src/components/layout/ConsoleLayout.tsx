@@ -40,6 +40,9 @@ export function ConsoleLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isMobile = useMediaQuery('(max-width: 768px)');
   const isDrawerOpen = isMobile && sidebarOpen;
+  /* Read by the drawer effect's cleanup, which runs after a resize has already re-rendered. */
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
   const mainRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -53,6 +56,9 @@ export function ConsoleLayout() {
   // One search (B28): the top bar's field and ⌘K open the same dialog.
   const [searchOpen, setSearchOpen] = useState(false);
   const handleSearchClick = useCallback(() => setSearchOpen(true), []);
+  /* Search opens above the drawer; while it is open its keys are its own (Escape closes it alone). */
+  const searchOpenRef = useRef(searchOpen);
+  searchOpenRef.current = searchOpen;
 
   const handleMenuClick = useCallback(() => setSidebarOpen((prev) => !prev), []);
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), []);
@@ -60,7 +66,11 @@ export function ConsoleLayout() {
   // A closed drawer is out of the phone's accessibility tree and tab order; an open one
   // isolates the background, traps focus, and closes on Escape. One effect rather than
   // composed hooks, so "un-isolate the background" always happens before "return focus to the
-  // toggle": focusing inside an inert subtree is a no-op.
+  // toggle": focusing inside an inert subtree is a no-op. Escape closes only the topmost layer:
+  // with search open over the drawer, the search takes it (and every other key).
+  // Widening past the phone breakpoint with the drawer open turns it back into the sidebar:
+  // nothing stays inert, and focus stays where it was inside it (the toggle it came from is
+  // hidden on a desktop, so focusing that would drop focus to the page).
   useEffect(() => {
     const drawer = sidebarRef.current;
     const main = mainRef.current;
@@ -82,6 +92,7 @@ export function ConsoleLayout() {
     previousFocusRef.current = document.activeElement as HTMLElement | null;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (searchOpenRef.current || e.defaultPrevented) return;
       if (e.key === 'Escape') {
         handleSidebarClose();
         return;
@@ -98,7 +109,10 @@ export function ConsoleLayout() {
       document.removeEventListener('keydown', handleKeyDown);
       clearTimeout(timer);
       if (main) main.inert = false;
-      previousFocusRef.current?.focus();
+      const widened = !isMobileRef.current;
+      if (widened && drawer) drawer.inert = false;
+      const keepFocus = widened && drawer !== null && drawer.contains(document.activeElement);
+      if (!keepFocus) previousFocusRef.current?.focus();
       previousFocusRef.current = null;
     };
   }, [isMobile, isDrawerOpen, handleSidebarClose]);
@@ -131,6 +145,7 @@ export function ConsoleLayout() {
               menuExpanded={sidebarOpen}
               menuControls={MOBILE_SIDEBAR_ID}
               onSearchClick={handleSearchClick}
+              phone={isMobile}
             />
           </div>
           <main id="main-content" className={styles.content}>

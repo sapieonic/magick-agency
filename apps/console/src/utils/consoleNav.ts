@@ -1,6 +1,8 @@
 import { hasPermission, type Permission } from './permissions';
 import { INBOUND_FLAG } from './inbound/inboundFlag';
 import { REPORTS_FLAG } from './reports/reportsFlag';
+import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
+import { isDedicatedAgent } from './agencyPersona';
 import type { Role } from '../types/auth';
 import type { ProductSurface } from '../analytics/posthog';
 
@@ -15,19 +17,27 @@ import type { ProductSurface } from '../analytics/posthog';
  */
 
 export const DIALER_FLAG = 'agency_dialer_enabled';
-export const SOFTPHONE_FLAG_KEY = 'agency_softphone_enabled';
 export const CALL_ANALYSIS_FLAG = 'agency_call_analysis';
 
 /**
  * What must hold for a destination to be offered. Every part is optional and all of them
  * must pass. `missed` is the Missed-calls rule (`useMissedCallsAccess().available`: inbound
  * on, or rows still to read with it off), used instead of the inbound flag.
+ *
+ * `withoutPermission` is a permission the reader must NOT hold (the dialler's own workspace is
+ * not offered to a supervisor, who joins a campaign as an agent from the campaign instead).
+ *
+ * `agentLanding` marks a route outside `/agency` inside the shell (Settings, `/app`), which
+ * `ConsoleShell` wraps in `AgentLanding`: a DEDICATED agent (`isDedicatedAgent`) is sent from it
+ * to `/dialer` whenever the dialer is on, so it is never offered to them then.
  */
 export interface Gate {
   permission?: Permission;
   flags?: readonly string[];
   capabilities?: readonly string[];
   missed?: boolean;
+  withoutPermission?: Permission;
+  agentLanding?: boolean;
 }
 
 export interface GateInput {
@@ -40,10 +50,17 @@ export interface GateInput {
 
 export function passesGate(gate: Gate, input: GateInput): boolean {
   if (gate.permission && !hasPermission(input.role, gate.permission)) return false;
+  if (gate.withoutPermission && hasPermission(input.role, gate.withoutPermission)) return false;
   if (gate.flags && !gate.flags.every((flag) => input.isFlagEnabled(flag))) return false;
   if (gate.capabilities && !gate.capabilities.every((cap) => input.isCapabilityEnabled(cap))) return false;
   if (gate.missed && input.missedAvailable !== true) return false;
+  if (gate.agentLanding && isDedicatedAgent(input.role) && dialerOn(input)) return false;
   return true;
+}
+
+/** The `agency` capability and the dialer flag: what every `/agency` route is behind. */
+export function dialerOn(input: Pick<GateInput, 'isFlagEnabled' | 'isCapabilityEnabled'>): boolean {
+  return input.isCapabilityEnabled('agency') && input.isFlagEnabled(DIALER_FLAG);
 }
 
 /**
@@ -51,7 +68,7 @@ export function passesGate(gate: Gate, input: GateInput): boolean {
  * the `agency_dialer_enabled` flag. The sidebar is no longer inside that gate (Settings is
  * not), so each work entry carries the two itself.
  */
-function agency(gate: Gate): Gate {
+export function agencyGate(gate: Gate): Gate {
   return {
     ...gate,
     capabilities: ['agency', ...(gate.capabilities ?? [])],
@@ -59,7 +76,10 @@ function agency(gate: Gate): Gate {
   };
 }
 
-export type ConsoleSectionId = 'home' | 'campaigns' | 'inbound' | 'reports' | 'dnc';
+export type ConsoleSectionId = 'home' | 'campaigns' | 'inbound' | 'reports' | 'dnc' | 'dialer';
+
+/** The agent's own workspace, outside the shell (a full-viewport surface): the campaigns to take calls on. */
+export const DIALER_PATH = '/dialer';
 
 /** The supervisor's Home page: what needs them, the floor, and today so far. */
 export const HOME_PATH = '/agency/home';
@@ -69,7 +89,7 @@ export const HOME_PATH = '/agency/home';
  * `/stats` floor, the insights allocation for overdue callbacks, the grouped stats for today).
  * The route, the sidebar entry, its badge and `AgencyHomeRedirect` all read this one gate.
  */
-export const HOME_GATE: Gate = agency({ permission: 'agency.supervise' });
+export const HOME_GATE: Gate = agencyGate({ permission: 'agency.supervise' });
 
 /** Whether the reader may open Home (and so lands there from `/agency`). */
 export function canSeeHome(input: GateInput): boolean {
@@ -111,14 +131,14 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     label: 'Campaigns',
     paths: ['/agency/campaigns', '/agency/softphone'],
     tabs: [
-      { id: 'campaigns', label: 'Campaigns', to: '/agency/campaigns', gate: agency({ permission: 'agency.campaigns.read' }) },
+      { id: 'campaigns', label: 'Campaigns', to: '/agency/campaigns', gate: agencyGate({ permission: 'agency.campaigns.read' }) },
       /* The server scopes `GET /softphone/calls` to the whole account only for
          `agency.supervise` (`docs/softphone.md` §7); behind the soft-phone flag. */
       {
         id: 'softphone',
         label: 'Soft-phone calls',
         to: '/agency/softphone',
-        gate: agency({ permission: 'agency.supervise', flags: [SOFTPHONE_FLAG_KEY] }),
+        gate: agencyGate({ permission: 'agency.supervise', flags: [SOFTPHONE_FLAG] }),
       },
     ],
   },
@@ -130,9 +150,9 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       /* `docs/inbound.md` §7: a supervisor reads the account's rows and anyone else their own.
          Floored at the workspace's floor because a dedicated agent has their own entry
          (`/dialer/missed`). */
-      { id: 'missed', label: 'Missed calls', to: '/agency/inbound/missed', gate: agency({ permission: 'agency.campaigns.read', missed: true }) },
+      { id: 'missed', label: 'Missed calls', to: '/agency/inbound/missed', gate: agencyGate({ permission: 'agency.campaigns.read', missed: true }) },
       /* `docs/inbound.md` §11: supervisors only. */
-      { id: 'summary', label: 'Summary', to: '/agency/inbound/summary', gate: agency({ permission: 'agency.supervise', missed: true }) },
+      { id: 'summary', label: 'Summary', to: '/agency/inbound/summary', gate: agencyGate({ permission: 'agency.supervise', missed: true }) },
     ],
   },
   {
@@ -141,16 +161,37 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     paths: ['/agency/analytics', '/agency/reports'],
     tabs: [
       /* Reads the campaign list plus one `/stats` each, both `agency.campaigns.read`. */
-      { id: 'analytics', label: 'Analytics', to: '/agency/analytics', gate: agency({ permission: 'agency.campaigns.read' }) },
+      { id: 'analytics', label: 'Analytics', to: '/agency/analytics', gate: agencyGate({ permission: 'agency.campaigns.read' }) },
       /* `docs/reports.md`: a supervisor's history and subscriptions, anyone else's own runs. */
-      { id: 'reports', label: 'Reports', to: '/agency/reports', gate: agency({ permission: 'agency.campaigns.read', flags: [REPORTS_FLAG] }) },
+      /* "Exports" in the bar, under the Reports section; the id and URL keep the old name. */
+      { id: 'reports', label: 'Exports', to: '/agency/reports', gate: agencyGate({ permission: 'agency.campaigns.read', flags: [REPORTS_FLAG] }) },
     ],
   },
   {
     id: 'dnc',
     label: 'Do Not Call',
     paths: ['/agency/dnc'],
-    tabs: [{ id: 'dnc', label: 'Do Not Call', to: '/agency/dnc', gate: agency({ permission: 'agency.dnc.read' }) }],
+    tabs: [{ id: 'dnc', label: 'Do Not Call', to: '/agency/dnc', gate: agencyGate({ permission: 'agency.dnc.read' }) }],
+  },
+  /*
+    The way out to the agent's workspace (`/dialer`, under the same capability and flag as
+    `/agency`) for a reader who takes calls but does not supervise: a viewer or operator lands in
+    the shell and holds `agency.station.connect`, and nothing else here links to the dialler. A
+    supervisor joins a campaign as an agent from the campaign, so is not offered it. A plain link
+    out: `/dialer` is not a page of the shell, so it is never active and has no tab bar.
+  */
+  {
+    id: 'dialer',
+    label: 'Take calls',
+    paths: [DIALER_PATH],
+    tabs: [
+      {
+        id: 'dialer',
+        label: 'Take calls',
+        to: DIALER_PATH,
+        gate: agencyGate({ permission: 'agency.station.connect', withoutPermission: 'agency.supervise' }),
+      },
+    ],
   },
 ];
 
@@ -232,11 +273,17 @@ export interface Crumb {
 
 /**
  * The top bar's breadcrumb: the section, then the page when it says something the section does
- * not. On a phone only the last crumb shows.
+ * not. On a phone only the last crumb shows, with a back arrow to the one before it when that
+ * one is a link (`backCrumb`).
  *
  * `pageCrumbs` are what a page supplied through `usePageCrumbs` (`components/layout/PageCrumbs`)
- * for what the URL cannot say, such as a campaign's name; they follow the section and replace
- * the generic page crumb. A section's own tab pages keep their crumbs.
+ * for what the URL cannot say, such as a campaign's name; they follow the section (and the tab,
+ * for a sub-page of a tab other than the section's first) and replace the generic page crumb.
+ * A section's own tab pages keep their crumbs.
+ *
+ * In Settings the "Settings" crumb is not a link: `/settings` reopens the last Settings page
+ * visited, which is the page the reader is on. A page below an entry (one inbound route) links
+ * back to the entry.
  */
 export function breadcrumbFor(
   pathname: string,
@@ -245,7 +292,12 @@ export function breadcrumbFor(
 ): Crumb[] {
   const path = trimTrailingSlash(pathname);
   if (pathWithin(path, '/settings')) {
-    return settingsLabel ? [{ label: 'Settings', to: '/settings' }, { label: settingsLabel }] : [{ label: 'Settings' }];
+    const entry = settingsEntryForPath(path);
+    const label = settingsLabel ?? entry?.label;
+    if (!label) return [{ label: 'Settings' }];
+    if (!entry || path === entry.path) return [{ label: 'Settings' }, { label }];
+    const below = pageCrumbs && pageCrumbs.length > 0 ? [...pageCrumbs] : [{ label: settingsSubPageLabel(path) }];
+    return [{ label: 'Settings' }, { label, to: entry.path }, ...below];
   }
   if (pathWithin(path, '/agency/customers')) return [{ label: 'Customer history' }];
 
@@ -255,13 +307,37 @@ export function breadcrumbFor(
 
   const tab = section.tabs.find((t) => t.to === path);
   if (tab) return tab.label === section.label ? [{ label: section.label }] : [home, { label: tab.label }];
-  if (pageCrumbs && pageCrumbs.length > 0) return [home, ...pageCrumbs];
 
-  if (path === '/agency/campaigns/new') return [home, { label: 'New campaign' }];
-  if (pathWithin(path, '/agency/campaigns')) return [home, { label: 'Campaign' }];
-  if (pathWithin(path, '/agency/softphone')) return [home, { label: 'Soft-phone call' }];
-  if (pathWithin(path, '/agency/reports')) return [home, { label: 'Report' }];
-  return [home];
+  /* A sub-page of a tab that is not the section's own name (one report under Exports). */
+  const parentTab = section.tabs.find((t) => pathWithin(path, t.to));
+  const trail: Crumb[] = parentTab && parentTab.label !== section.label
+    ? [home, { label: parentTab.label, to: parentTab.to }]
+    : [home];
+  if (pageCrumbs && pageCrumbs.length > 0) return [...trail, ...pageCrumbs];
+
+  if (path === '/agency/campaigns/new') return [...trail, { label: 'New campaign' }];
+  if (pathWithin(path, '/agency/campaigns')) return [...trail, { label: 'Campaign' }];
+  if (pathWithin(path, '/agency/softphone')) return [...trail, { label: 'Soft-phone call' }];
+  if (pathWithin(path, '/agency/reports')) return [...trail, { label: 'Report' }];
+  return trail;
+}
+
+/** The page below a Settings entry, for a page that does not name itself. */
+function settingsSubPageLabel(path: string): string {
+  if (path === '/settings/inbound/new') return 'New inbound route';
+  if (pathWithin(path, '/settings/inbound')) return 'Inbound route';
+  return 'Details';
+}
+
+/**
+ * Where the phone's back arrow goes: the crumb before the last, when it is a link. Null on a
+ * section's first page, in a Settings entry (the hub's own control moves between entries) and
+ * anywhere else with nothing above it to go back to.
+ */
+export function backCrumb(crumbs: readonly Crumb[]): (Crumb & { to: string }) | null {
+  if (crumbs.length < 2) return null;
+  const parent = crumbs[crumbs.length - 2]!;
+  return parent.to ? { label: parent.label, to: parent.to } : null;
 }
 
 /* ── Settings ────────────────────────────────────────────────────────────── */
@@ -278,22 +354,33 @@ export interface SettingsEntry {
 }
 
 /**
+ * The gate of `/settings` itself (the sidebar's Settings link): only `AgentLanding`, which sends
+ * a dedicated agent to `/dialer` from every Settings page while the dialer is on.
+ */
+export const SETTINGS_GATE: Gate = { agentLanding: true };
+
+function settingsGate(gate: Gate): Gate {
+  return { ...gate, ...SETTINGS_GATE };
+}
+
+/**
  * The Settings hub's entries, in sub-nav order. Each gate is the one its old sidebar entry had
- * (the union, where both shells listed it); the routes keep their own guards.
+ * (the union, where both shells listed it) plus {@link SETTINGS_GATE}; the routes keep their own
+ * guards.
  */
 export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
-  /* About the signed-in person, so nothing to gate. */
-  { id: 'profile', label: 'Profile and appearance', path: '/settings/profile', scope: 'you', gate: {} },
+  /* About the signed-in person, so nothing to gate beyond the hub's own. */
+  { id: 'profile', label: 'Profile and appearance', path: '/settings/profile', scope: 'you', gate: settingsGate({}) },
   /* The caller's own email subscriptions. Floored at `tenant.read` (viewer) for the link; the
      route itself is ungated, so nobody is locked out of their own unsubscribe. */
-  { id: 'notifications', label: 'Email notifications', path: '/settings/notifications', scope: 'you', gate: { permission: 'tenant.read' } },
+  { id: 'notifications', label: 'Email notifications', path: '/settings/notifications', scope: 'you', gate: settingsGate({ permission: 'tenant.read' }) },
   /* Read at the dial floor, edited with `agency.softphone.manage` (the page checks). */
   {
     id: 'softphone',
     label: 'Soft phone',
     path: '/settings/softphone',
     scope: 'account',
-    gate: { permission: 'agency.softphone.dial', flags: [SOFTPHONE_FLAG_KEY], capabilities: ['agency'] },
+    gate: settingsGate({ permission: 'agency.softphone.dial', flags: [SOFTPHONE_FLAG], capabilities: ['agency'] }),
   },
   /* `docs/inbound.md` §8.1: account admins; nobody below `agency.inbound.write` reads a route. */
   {
@@ -301,18 +388,18 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
     label: 'Inbound routing',
     path: '/settings/inbound',
     scope: 'account',
-    gate: { permission: 'agency.inbound.write', flags: [INBOUND_FLAG], capabilities: ['agency'] },
+    gate: settingsGate({ permission: 'agency.inbound.write', flags: [INBOUND_FLAG], capabilities: ['agency'] }),
   },
   {
     id: 'call-summaries',
     label: 'Call summaries',
     path: '/settings/call-summaries',
     scope: 'account',
-    gate: { permission: 'agency.analysis_profiles.read', flags: [CALL_ANALYSIS_FLAG], capabilities: ['agency.analytics'] },
+    gate: settingsGate({ permission: 'agency.analysis_profiles.read', flags: [CALL_ANALYSIS_FLAG], capabilities: ['agency.analytics'] }),
   },
-  { id: 'team', label: 'Team', path: '/settings/team', scope: 'tenant', gate: { permission: 'user.invite' } },
+  { id: 'team', label: 'Team', path: '/settings/team', scope: 'tenant', gate: settingsGate({ permission: 'user.invite' }) },
   /* The roles that can create accounts (decision AA1); everyone else uses the switcher. */
-  { id: 'accounts', label: 'Accounts', path: '/settings/accounts', scope: 'tenant', gate: { permission: 'account.create' } },
+  { id: 'accounts', label: 'Accounts', path: '/settings/accounts', scope: 'tenant', gate: settingsGate({ permission: 'account.create' }) },
 ];
 
 export const SETTINGS_SCOPES: readonly SettingsScope[] = ['you', 'account', 'tenant'];
@@ -335,9 +422,27 @@ export function settingsEntryForPath(pathname: string): SettingsEntry | null {
   return SETTINGS_ENTRIES.find((e) => pathWithin(path, e.path)) ?? null;
 }
 
+/**
+ * Where `/settings` opens: the entry this reader last visited, while they may still open it;
+ * otherwise Team for someone who manages people (the setting a supervisor comes for most), and
+ * the first entry they may open for everyone else. Null when they may open none.
+ */
+export function settingsLandingPath(input: GateInput, lastVisitedId: string | null): string | null {
+  const open = visibleSettingsGroups(input).flatMap((g) => g.entries);
+  const last = lastVisitedId ? open.find((e) => e.id === lastVisitedId) : undefined;
+  if (last) return last.path;
+  return (open.find((e) => e.id === 'team') ?? open[0])?.path ?? null;
+}
+
 export interface ScopeNames {
   accountName?: string | null;
   tenantName?: string | null;
+  /**
+   * Whether the reader holds a tenant-wide seat here. False for a seat scoped to one account,
+   * whose "people and access" settings reach only that account (the server confines them).
+   * Unknown is read as tenant-wide.
+   */
+  tenantWide?: boolean;
 }
 
 export function settingsGroupTitle(scope: SettingsScope, names: ScopeNames): string {
@@ -349,7 +454,7 @@ export function settingsGroupTitle(scope: SettingsScope, names: ScopeNames): str
 /** The "Applies to: …" a settings page shows, so nobody has to guess who a change reaches. */
 export function appliesTo(scope: SettingsScope, names: ScopeNames): string {
   if (scope === 'you') return 'only you';
-  if (scope === 'account') return names.accountName ?? 'this account';
+  if (scope === 'account' || names.tenantWide === false) return names.accountName ?? 'this account';
   return names.tenantName ? `all of ${names.tenantName}` : 'your whole organisation';
 }
 

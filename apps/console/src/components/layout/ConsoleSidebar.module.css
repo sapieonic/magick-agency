@@ -61,7 +61,14 @@
   flex-shrink: 0;
 }
 
+/* The main landmark: the work entries, then Settings pinned at its foot. */
 .nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.navWork {
   flex: 1;
   padding: 12px 0;
   display: flex;
@@ -69,10 +76,14 @@
   gap: 2px;
 }
 
-.footer {
+.navFoot {
   flex-shrink: 0;
   padding: 8px 0 0;
   border-top: 1px solid var(--border-light);
+}
+
+.footer {
+  flex-shrink: 0;
 }
 
 .navItem {
