@@ -221,11 +221,6 @@ class StationController extends Notifier<StationView?>
   );
 
 
-  late final InboundCallApi _inboundApi = InboundCallApi(
-    ref.read(apiClientProvider),
-    onUnauthorized: _reportUnauthorized,
-  );
-
   late final SoftphoneApi _softphoneApi = SoftphoneApi(
     ref.read(apiClientProvider),
     scopedTo: _scopedClient,
@@ -246,11 +241,16 @@ class StationController extends Notifier<StationView?>
   late WakeLock _wakeLock;
   late StationNotifier _notifier;
 
+  /// The inbound call routes. Made here, not on first use: the first use can be the notes'
+  /// flush in teardown (`_closeSession(disposing: true)`), inside `onDispose`.
+  late InboundCallApi _inboundApi;
+
   @override
   StationView? build() {
     _now = ref.read(stationNowProvider);
     _wakeLock = ref.read(wakeLockProvider);
     _notifier = ref.read(stationNotifierProvider);
+    _inboundApi = InboundCallApi(ref.read(apiClientProvider), onUnauthorized: _reportUnauthorized);
     ref.onDispose(() => unawaited(_closeSession(disposing: true)));
     return null;
   }

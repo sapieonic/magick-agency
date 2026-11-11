@@ -809,6 +809,22 @@ void main() {
       });
     });
 
+    test('the station torn down (the app closing) sends them, even when the call routes were never used', () {
+      fakeAsync((async) {
+        final app = _offered(async);
+        app.frame(stationFrame('inbound_call_connected'));
+        app.routes['PATCH $_call'] = (_) => json(200, {'call': inboundCallJson('inbound_call_connected')});
+        app.controller.updateNotes('Wants a callback');
+        async.elapse(const Duration(milliseconds: 200));
+        // Nothing has reached the inbound routes yet: teardown's flush is their first use.
+        expect(app.requests('PATCH', _call), isEmpty);
+        app.container.dispose();
+        async.elapse(const Duration(milliseconds: 100));
+        expect(app.requests('PATCH', _call).single.body, {'notes': 'Wants a callback'});
+        app.network.close();
+      });
+    });
+
     test('4404 sends them too', () {
       fakeAsync((async) {
         final app = _offered(async);
