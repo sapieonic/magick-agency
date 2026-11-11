@@ -99,7 +99,7 @@ export function AgencyCampaignAttemptsPage() {
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  useCampaignCrumbs(id, campaign?.name, [{ label: 'Call log' }]);
+  useCampaignCrumbs(id, campaign, [{ label: 'Call log' }]);
   const [rows, setRows] = useState<AgencyAttempt[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [total, setTotal] = useState<number | null>(null);

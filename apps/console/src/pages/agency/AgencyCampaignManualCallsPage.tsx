@@ -26,7 +26,7 @@ export default function AgencyCampaignManualCallsPage() {
   const { id } = useParams<{ id: string }>();
   const { tenantId, accountId, role } = useTenant();
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  useCampaignCrumbs(id, campaign?.name, [{ label: 'Call log' }]);
+  useCampaignCrumbs(id, campaign, [{ label: 'Call log' }]);
 
   useEffect(() => {
     if (!id || !tenantId || !accountId) return;

@@ -18,6 +18,7 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import {
   attemptOutcomeLabel,
   contactStateLabel,
@@ -82,6 +83,11 @@ export function AgencyContactDetailPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // "Campaigns / <name> / Contacts / <number>"; the number only once it is this contact's.
+  useCampaignCrumbs(id, campaign, [
+    { label: 'Contacts', to: `/agency/campaigns/${id}/contacts` },
+    { label: contact && contact.id === contactId ? contact.phone_e164 : 'Contact' },
+  ]);
   /**
    * Pagination failures are kept OUT of `error`, which is a whole-page state.
    *

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, within, fireEvent, act } from '@testing-library/react';
-import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 
 /**
  * A page naming itself in the top bar's breadcrumb (`components/layout/PageCrumbs`): the
@@ -20,7 +21,7 @@ import { PageCrumbsProvider } from '../../components/layout/PageCrumbs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 
 function CampaignPage({ name }: { name: string | null }) {
-  useCampaignCrumbs('camp-1', name, [{ label: 'Settings' }]);
+  useCampaignCrumbs('camp-1', name === null ? null : { id: 'camp-1', name }, [{ label: 'Settings' }]);
   return <Link to="/agency/campaigns/camp-2/overview">Another campaign</Link>;
 }
 
@@ -41,6 +42,34 @@ function renderAt(name: string | null, withProvider = true) {
   return render(
     <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
       {withProvider ? <PageCrumbsProvider>{routes}</PageCrumbsProvider> : routes}
+    </MemoryRouter>,
+  );
+}
+
+const NAMES: Record<string, string> = { 'camp-1': 'Q3 Renewals', 'camp-2': 'Diwali' };
+
+/** A campaign page as the real ones are: the URL's id, and whatever campaign state holds. */
+function LoadingCampaignPage() {
+  const { id } = useParams<{ id: string }>();
+  const [campaign, setCampaign] = useState<{ id: string; name: string } | null>({ id: 'camp-1', name: NAMES['camp-1']! });
+  useCampaignCrumbs(id, campaign, [{ label: 'Settings' }]);
+  return (
+    <>
+      <Link to="/agency/campaigns/camp-2/settings">Go to camp-2</Link>
+      <button type="button" onClick={() => setCampaign({ id: id!, name: NAMES[id!]! })}>Load</button>
+    </>
+  );
+}
+
+function renderStale() {
+  return render(
+    <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+      <PageCrumbsProvider>
+        <ConsoleTopBar />
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<LoadingCampaignPage />} />
+        </Routes>
+      </PageCrumbsProvider>
     </MemoryRouter>,
   );
 }
@@ -67,6 +96,24 @@ describe('the breadcrumb a page supplies', () => {
     renderAt(null);
     await act(async () => {});
     expect(crumbs()).toEqual(['Campaigns', 'Campaign']);
+  });
+
+  it('never names the previous campaign while the next one loads', async () => {
+    renderStale();
+    await act(async () => {});
+    expect(crumbs()).toEqual(['Campaigns', 'Q3 Renewals', 'Settings']);
+
+    // Same route, another campaign: the page stays mounted with the first one in state.
+    fireEvent.click(screen.getByRole('link', { name: 'Go to camp-2' }));
+    await act(async () => {});
+    expect(crumbs()).toEqual(['Campaigns', 'Campaign']);
+
+    // Its own name once it has loaded.
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }));
+    await act(async () => {});
+    expect(crumbs()).toEqual(['Campaigns', 'Diwali', 'Settings']);
+    expect(within(screen.getByTestId('console-breadcrumb')).getByRole('link', { name: 'Diwali' })
+      .getAttribute('href')).toBe('/agency/campaigns/camp-2');
   });
 
   it('drops a page’s crumbs once it has been left', async () => {

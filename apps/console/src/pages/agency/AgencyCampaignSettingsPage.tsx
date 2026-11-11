@@ -395,7 +395,7 @@ export function AgencyCampaignSettingsPage() {
     sections,
     !loading && campaign?.id === id && Boolean(config && recording),
   );
-  useCampaignCrumbs(id, campaign?.name, [{ label: 'Settings' }]);
+  useCampaignCrumbs(id, campaign, [{ label: 'Settings' }]);
 
   if (loading) return <LoadingSpinner />;
   if (loadError && !campaign) return <ErrorAlert message={loadError} onRetry={() => void load()} />;

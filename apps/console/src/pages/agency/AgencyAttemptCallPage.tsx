@@ -326,7 +326,7 @@ export default function AgencyAttemptCallPage() {
 
   const [detail, setDetail] = useState<AgencyAttemptCallDetail | null>(null);
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  useCampaignCrumbs(campaignId, campaign?.name, [
+  useCampaignCrumbs(campaignId, campaign, [
     { label: 'Call log', to: `/agency/campaigns/${campaignId}/attempts` },
     { label: 'Call' },
   ]);

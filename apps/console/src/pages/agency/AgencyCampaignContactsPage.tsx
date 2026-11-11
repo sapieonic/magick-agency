@@ -11,6 +11,7 @@ import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from './AgencyCampaignContactsPage.module.css';
 
@@ -43,6 +44,12 @@ export function AgencyCampaignContactsPage() {
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // "Campaigns / <name> / Contacts / Add contacts": back to the roster, where this page is
+  // reached from and where an operator who has finished uploading looks at what landed.
+  useCampaignCrumbs(id, campaign, [
+    { label: 'Contacts', to: `/agency/campaigns/${id}/contacts` },
+    { label: 'Add contacts' },
+  ]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canAdd = hasPermission(role, 'agency.campaigns.write');

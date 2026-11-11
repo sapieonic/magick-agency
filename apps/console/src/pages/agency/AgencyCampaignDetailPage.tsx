@@ -249,7 +249,7 @@ export function AgencyCampaignDetailPage() {
   }, [campaign, panel]);
 
   // "Campaigns / <name> / <tab>" in the top bar.
-  useCampaignCrumbs(campaign?.id, campaign?.name, [
+  useCampaignCrumbs(id, campaign, [
     { label: CAMPAIGN_TABS.find((tab) => tab.id === panel)?.label ?? 'Campaign' },
   ]);
 

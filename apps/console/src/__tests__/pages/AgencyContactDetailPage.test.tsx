@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { WithPageCrumbs, suppliedCrumbs } from '../helpers/pageCrumbs';
 import type { AgencyAttempt, AgencyContactDetail } from '../../types/agency-spine';
 
 /**
@@ -96,9 +97,11 @@ const ABANDONED: AgencyAttempt = {
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/agency/campaigns/camp-1/contacts/contact-1']}>
-      <Routes>
-        <Route path="/agency/campaigns/:id/contacts/:contactId" element={<ContactDetailPage />} />
-      </Routes>
+      <WithPageCrumbs>
+        <Routes>
+          <Route path="/agency/campaigns/:id/contacts/:contactId" element={<ContactDetailPage />} />
+        </Routes>
+      </WithPageCrumbs>
     </MemoryRouter>,
   );
 }
@@ -120,6 +123,16 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+describe('the breadcrumb', () => {
+  it('names the campaign and the contact in the top bar', async () => {
+    renderPage();
+    await screen.findByTestId('contact-context');
+    await waitFor(() => expect(suppliedCrumbs()).toBe(
+      'Q3 Renewals→/agency/campaigns/camp-1 / Contacts→/agency/campaigns/camp-1/contacts / +919876500001',
+    ));
+  });
+});
 
 describe('the uploaded CSV columns', () => {
   it('renders the columns the campaign shows', async () => {
