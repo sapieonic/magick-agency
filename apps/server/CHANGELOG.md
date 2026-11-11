@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.20.0](https://github.com/sapieonic/magick-agency/compare/server-v0.19.0...server-v0.20.0) (2026-11-11)
+
+
+### Features
+
+* **server,console,contracts,db:** combine up to three columns into one roster duplicate key ([#69](https://github.com/sapieonic/magick-agency/issues/69)) ([bd606ad](https://github.com/sapieonic/magick-agency/commit/bd606ad0b911c395ce254f1b4e3f2bb3f87ab326))
+* **server,mobile,contracts,console:** take inbound calls on the agent app's station ([#71](https://github.com/sapieonic/magick-agency/issues/71)) ([bff4694](https://github.com/sapieonic/magick-agency/commit/bff4694127b18ad53d41c873f3081c175196bf52))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.18.0
+    * @magick-agency/db bumped to 0.16.0
+    * @magick-agency/domain bumped to 0.9.0
+    * @magick-agency/observability bumped to 0.11.0
+  * devDependencies
+    * @magick-agency/report-renderer bumped to 0.3.2
+
 ## [0.19.0](https://github.com/sapieonic/magick-agency/compare/server-v0.18.0...server-v0.19.0) (2026-11-10)
 
 

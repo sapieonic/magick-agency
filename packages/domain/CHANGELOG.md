@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.8.0...domain-v0.9.0) (2026-11-11)
+
+
+### Features
+
+* **server,mobile,contracts,console:** take inbound calls on the agent app's station ([#71](https://github.com/sapieonic/magick-agency/issues/71)) ([bff4694](https://github.com/sapieonic/magick-agency/commit/bff4694127b18ad53d41c873f3081c175196bf52))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.18.0
+
 ## [0.8.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.7.1...domain-v0.8.0) (2026-11-10)
 
 

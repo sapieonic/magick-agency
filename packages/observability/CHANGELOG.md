@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.10.0...observability-v0.11.0) (2026-11-11)
+
+
+### Features
+
+* **server,mobile,contracts,console:** take inbound calls on the agent app's station ([#71](https://github.com/sapieonic/magick-agency/issues/71)) ([bff4694](https://github.com/sapieonic/magick-agency/commit/bff4694127b18ad53d41c873f3081c175196bf52))
+
 ## [0.10.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.9.0...observability-v0.10.0) (2026-11-10)
 
 
