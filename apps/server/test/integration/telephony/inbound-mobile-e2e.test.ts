@@ -34,7 +34,8 @@ const { env } = vi.hoisted(() => {
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { callCore } from '../../../src/api/core-dispatch.js';
 import { getAgencyRuntime } from '../../../src/bootstrap/agency.js';
-import { AGENCY_INBOUND_CONNECT_DELAY_MS, AGENCY_STATION_ALAW8_FRAME_BYTES } from '@magick-agency/contracts/agency';
+import { AGENCY_INBOUND_CONNECT_DELAY_MS, AGENCY_STATION_ALAW8_FRAME_BYTES, AGENCY_STATION_INBOUND_EVENTS } from '@magick-agency/contracts/agency';
+import { STATION_INBOUND_LET_GO_WAIT_MS } from '../../../src/agency/station-socket.js';
 import { ACCOUNT, PLIVO_E2E_ENV, TENANT, callRow, closePlivoDb, initPlivoDb, startPlivoRig, waitFor, type PlivoRig } from './plivo-rig.js';
 import {
   CALLER, CAPABLE_PHONE, CALLER_E164, OLD_PHONE, agentUser, busyAgent, callerScript, callers, campaign, clip, contact, finish,
@@ -68,8 +69,21 @@ afterAll(closePlivoDb);
 
 /** Binary A-law frames the leg received (the caller's audio on an `alaw8` station). */
 const alawFrames = (leg: StationLeg) => leg.frames.filter((f) => f.binary);
-/** Every inbound frame (`inbound_call`, `customer_waiting`) any of the agent's legs received. */
-const inboundFrames = (agent: FleetAgent) => agent.allFrames().filter((f) => f.frame?.['event'] === 'inbound_call' || f.frame?.['event'] === 'customer_waiting');
+const INBOUND_EVENTS: ReadonlySet<unknown> = new Set(AGENCY_STATION_INBOUND_EVENTS);
+/** Every inbound frame (`AGENCY_STATION_INBOUND_EVENTS`) any of the agent's legs received. */
+const inboundFrames = (agent: FleetAgent) => agent.allFrames().filter((f) => INBOUND_EVENTS.has(f.frame?.['event']));
+/** The inbound frames one leg received. */
+const inboundFramesOn = (leg: StationLeg) => leg.frames.filter((f) => INBOUND_EVENTS.has(f.frame?.['event']));
+
+/**
+ * How soon a caller whose offer was cancelled (the station lost, or let go for an older build) is
+ * offered to the next agent, measured on the wall clock across a close or an attach, the let-go
+ * and a new search. Generous for a loaded runner, and still well below every timer a caller left
+ * waiting would otherwise sit out: the 15 s rejoin grace and hand-over backstop, the route's
+ * maximum wait. That the cancel was the close's or the attach's own, not the bind's at
+ * `connects_at`, is pinned without the wall clock in `inbound-connector-races.test.ts`.
+ */
+const PROMPT_REOFFER_MS = 5_000;
 
 /** The phone sends `n` 20 ms A-law frames (the agent talking), as the app does: one binary message each. */
 function phoneTalks(agent: FleetAgent, n: number): void {
@@ -184,7 +198,7 @@ describe('a phone lost during an offer: the caller back at the head of the queue
     const taken = await spineWhen(call, 'connected to the desk', (r) => r.state === 'connected');
     expect(taken).toMatchObject({ session_id: desk.sessionId, offer_count: 2 });
     const secondOffer = Date.parse(String(inboundCalls(desk)[0]!['offered_at']));
-    expect(secondOffer - Date.parse(String(inboundCalls(phone)[0]!['offered_at']))).toBeLessThan(AGENCY_INBOUND_CONNECT_DELAY_MS);
+    expect(secondOffer - Date.parse(String(inboundCalls(phone)[0]!['offered_at']))).toBeLessThan(PROMPT_REOFFER_MS);
     expect(alawFrames(phone.leg!)).toEqual([]);
     await waitFor('the phone`s agent offline', async () => (await liveOf(phone.sessionId))?.state === 'offline');
     expect(await liveOf(phone.sessionId)).toMatchObject({ inboundCallId: null });
@@ -210,10 +224,11 @@ describe('a phone lost during an offer: the caller back at the head of the queue
     expect(oldLeg.ofEvent('agent_state').map((f) => f['state'])).not.toContain('reserved');
     const taken = await spineWhen(call, 'connected to the desk', (r) => r.state === 'connected');
     expect(taken).toMatchObject({ session_id: desk.sessionId, offer_count: 2 });
-    // Cancelled by the attach itself (`onStationCannotTakeInbound`), before the first offer's bind was due.
+    // Re-offered promptly (cancelled by the attach itself, `onStationCannotTakeInbound`, or at the
+    // latest by the bind's own check): see PROMPT_REOFFER_MS.
     const reOffered = Date.parse(String(inboundCalls(desk)[0]!['offered_at'])) - Date.parse(String(inboundCalls(phone)[0]!['offered_at']));
-    expect(reOffered).toBeLessThan(AGENCY_INBOUND_CONNECT_DELAY_MS);
-    expect(oldLeg.frames.filter((f) => f.frame?.['event'] === 'inbound_call' || f.frame?.['event'] === 'customer_waiting')).toEqual([]);
+    expect(reOffered).toBeLessThan(PROMPT_REOFFER_MS);
+    expect(inboundFramesOn(oldLeg)).toEqual([]);
     expect(alawFrames(oldLeg)).toEqual([]);
     await waitFor('the phone`s agent back in the pool', async () => (await liveOf(phone.sessionId))?.state === 'available');
     expect(await liveOf(phone.sessionId)).toMatchObject({ inboundCallId: null });
@@ -239,7 +254,7 @@ describe('an older build reattaching during an inbound wrap-up (IQ46)', () => {
     expect(oldLeg.ready).toMatchObject({ state: 'wrapup' });
     expect(await liveOf(phone.sessionId)).toMatchObject({ state: 'wrapup', inboundCallId: ended.id });
     await sleep(300);
-    expect(oldLeg.frames.filter((f) => f.frame?.['event'] === 'inbound_call' || f.frame?.['event'] === 'customer_waiting')).toEqual([]);
+    expect(inboundFramesOn(oldLeg)).toEqual([]);
     expect((await spineOf(call))!.settled_at).toBeNull();
 
     const saved = await finish('POST', `${ended.id}/disposition`, phone.agentUserId, { code: 'voicemail' });
@@ -249,7 +264,7 @@ describe('an older build reattaching during an inbound wrap-up (IQ46)', () => {
     // Alone and unable to take inbound calls: the next caller is overflowed, never offered to it.
     const next = ring(world, callerScript(() => false), '447700900779');
     expect(await spineWhen(next, 'overflowed', (r) => r.state === 'ended')).toMatchObject({ outcome: 'overflow', offer_count: 0 });
-    expect(oldLeg.frames.filter((f) => f.frame?.['event'] === 'inbound_call' || f.frame?.['event'] === 'customer_waiting')).toEqual([]);
+    expect(inboundFramesOn(oldLeg)).toEqual([]);
   });
 });
 
@@ -391,5 +406,96 @@ describe('the device-away break and inbound calls: queued behind the call, never
     const overflowed = await spineWhen(next, 'overflowed: nobody could take them', (r) => r.state === 'ended');
     expect(overflowed).toMatchObject({ outcome: 'overflow', offer_count: 0 });
     expect(inboundCalls(other)).toEqual([]);
+  });
+});
+
+describe('a capable phone reconnecting during an offer (the 1.5 s before connects_at)', () => {
+  it('the same build back inside the window: the call still reaches that phone, its audio on the new socket', async () => {
+    const campaignId = await campaign(world);
+    const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
+    let hangUp = false;
+    const call = ring(world, callerScript(() => hangUp));
+    await waitFor('the offer', () => inboundCalls(phone).length > 0);
+    const first = phone.leg!;
+    const leg = await phone.connectReady();
+    await waitFor('the first leg superseded', () => first.closed !== null);
+    expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ clientKind: 'mobile', canTakeInbound: true });
+    const connected = await spineWhen(call, 'connected to the phone', (r) => r.state === 'connected');
+    expect(connected.session_id).toBe(phone.sessionId);
+    await waitFor('A-law on the new socket', () => alawFrames(leg).length > 5);
+    await waitFor('the connected frame on the new socket',
+      () => leg.ofEvent('inbound_call').some((f) => (f['call'] as Record<string, unknown>)['state'] === 'connected'));
+    expect(await liveOf(phone.sessionId)).toMatchObject({ state: 'on_call', inboundCallId: connected.id });
+    hangUp = true;
+    await spineWhen(call, 'ended answered', (r) => r.state === 'ended' && r.outcome === 'answered');
+  });
+});
+
+describe('two callers sticky to one phone agent, a release, then an older build takes the session over', () => {
+  it('nobody is lost: the caller on offer goes back to the head and to the team, the other keeps waiting, and the agent is back in the pool, never reserved', async () => {
+    // `strict`: both callers wait for their busy sticky agent; once that agent is on an older build
+    // (not someone who can take inbound calls, IQ6 as amended by IQ46) they are the team's.
+    await setRoute(world, { sticky_mode: 'strict' });
+    const owner = await agentUser();
+    const campaignId = await campaign(world);
+    const SECOND = '447700900771';
+    const later = { assigned_user_id: owner, assigned_at: new Date(), next_attempt_at: new Date(Date.now() + 86_400_000) };
+    await contact(campaignId, later);
+    await contact(campaignId, { ...later, phone_e164: `+${SECOND}`, source_row_number: 2 });
+    const phone = await joinAgent(world, campaignId, { userId: owner, station: CAPABLE_PHONE, available: false });
+    await getAgencyRuntime()!.agents.set(phone.sessionId, 'on_call', { leaseMs: 120_000 }); // busy: their callers wait
+    const desk = await joinAgent(world, campaignId);
+    let hangUp = false;
+    const first = ring(world, callerScript(() => hangUp));
+    const queuedFirst = await spineWhen(first, 'the first caller waiting', (r) => r.state === 'queued');
+    const second = ring(world, callerScript(() => hangUp), SECOND);
+    const queuedSecond = await spineWhen(second, 'the second caller waiting', (r) => r.state === 'queued');
+    expect([queuedFirst.sticky_user_id, queuedSecond.sticky_user_id]).toEqual([owner, owner]);
+    expect(inboundCalls(desk)).toEqual([]);
+
+    // The phone's work ends: the release hook offers it its first caller (no `available` between).
+    await getAgencyRuntime()!.dialer.releaseAgent(phone.sessionId);
+    await waitFor('the first caller offered to the phone', () => inboundCalls(phone).some((c) => c['id'] === queuedFirst.id));
+    expect(await liveOf(phone.sessionId)).toMatchObject({ state: 'reserved', inboundCallId: queuedFirst.id });
+
+    // An older build takes the session over during that offer.
+    const capableLeg = phone.leg!;
+    phone.caps = null;
+    const oldLeg = await phone.connectReady();
+    await waitFor('the capable leg superseded', () => capableLeg.closed !== null);
+    expect(oldLeg.ready).toMatchObject({ state: 'available' });
+    expect(oldLeg.ofEvent('agent_state').map((f) => f['state'])).not.toContain('reserved');
+
+    // The first caller back at the head, now the team's: the desk takes them. The second still waits.
+    const taken = await spineWhen(first, 'the first caller connected to the desk', (r) => r.state === 'connected');
+    expect(taken).toMatchObject({ session_id: desk.sessionId, offer_count: 2 });
+    const waiting = await spineOf(second);
+    expect(waiting).toMatchObject({ state: 'queued', session_id: null, outcome: null });
+    expect(inboundFramesOn(oldLeg)).toEqual([]);
+    expect(await liveOf(phone.sessionId)).toMatchObject({ state: 'available', inboundCallId: null });
+    hangUp = true;
+    await spineWhen(first, 'the first ended', (r) => r.state === 'ended');
+    await spineWhen(second, 'the second ended', (r) => r.state === 'ended');
+  });
+});
+
+describe('an older build`s ready is held for the let-go no longer than STATION_INBOUND_LET_GO_WAIT_MS', () => {
+  it('a let-go that never settles: `ready` still goes out once the bound has passed', async () => {
+    const campaignId = await campaign(world);
+    const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
+    const spy = vi.spyOn(getAgencyRuntime()!.inbound!, 'onStationCannotTakeInbound').mockImplementation(() => new Promise<void>(() => {}));
+    try {
+      phone.caps = null;
+      const started = Date.now();
+      const leg = await phone.connectReady();
+      const waited = Date.now() - started;
+      expect(spy).toHaveBeenCalledWith(phone.sessionId);
+      expect(leg.ready).toMatchObject({ state: 'available' });
+      expect(waited).toBeGreaterThanOrEqual(STATION_INBOUND_LET_GO_WAIT_MS - 50);
+      // Generous above it: an attach on a loaded runner, not another timer.
+      expect(waited).toBeLessThan(STATION_INBOUND_LET_GO_WAIT_MS + 5_000);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

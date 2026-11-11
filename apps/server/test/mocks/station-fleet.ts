@@ -264,12 +264,12 @@ export class StationLeg {
 export class FleetAgent {
   readonly legs: StationLeg[] = [];
   readonly label: string;
-  /** The `client=` this agent's legs send, or null for none. */
-  readonly client: 'web' | 'mobile' | null;
   /**
-   * The `media=` and `caps=` this agent's NEXT leg sends (null: none). Mutable, so a test can
-   * reattach the same session as another app build (an older one with no caps, say).
+   * The `client=`, `media=` and `caps=` this agent's NEXT leg sends (null: none). Mutable, so a
+   * test can reattach the same session as another app build (an older one with no caps, say) or
+   * another app (a console's session continued on a phone).
    */
+  client: 'web' | 'mobile' | null;
   media: 'pcm16' | 'alaw8' | null;
   caps: string | null;
 

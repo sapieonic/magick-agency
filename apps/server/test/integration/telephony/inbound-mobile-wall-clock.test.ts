@@ -10,7 +10,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *    next station (caps=inbound) comes back on `break` with the call restored to write up.
  *  - An older app build (no `caps`) reattaching during a connected inbound call: the caller's audio
  *    is never re-adopted onto it and it is sent no inbound frame; the deferred hangup ends the call
- *    `answered`, owed, and the agent owes it in `wrapup` on that station.
+ *    `answered`, owed, and the agent owes it in `wrapup` on that station. Silent past its grace
+ *    meanwhile, it is dropped by the sweep's inbound arm (M1) and the call ends the same way.
+ *  - A console handing its connected inbound call to a capable phone (pcm16 → alaw8): re-adopted,
+ *    still connected past the deferred hangup the console's close armed.
  */
 
 const { env } = vi.hoisted(() => {
@@ -59,6 +62,7 @@ afterEach(async () => {
 afterAll(closePlivoDb);
 
 const alawFrames = (leg: StationLeg) => leg.frames.filter((f) => f.binary);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function sweepSilent(who: FleetAgent): number {
   return getAgencyRuntime()!.sweepSilentStations((e) => ((e as { sessionId?: string }).sessionId === who.sessionId ? -1 : 1e9));
@@ -110,5 +114,54 @@ describe('an older app build reattaching during a connected inbound call (IQ46)'
     await waitFor('the agent owes the outcome in wrap-up', async () => (await liveOf(phone.sessionId))?.state === 'wrapup');
     expect(await liveOf(phone.sessionId)).toMatchObject({ inboundCallId: ended.id });
     expect((await spineOf(call))!.bridged_at).not.toBeNull();
+  }, 40_000);
+});
+
+describe('a console handing a connected inbound call to a capable phone (continue on the phone)', () => {
+  it('re-adopted onto the phone as A-law (pcm16 → alaw8), restated after `ready`, and still connected past the deferred hangup', async () => {
+    const campaignId = await campaign(world);
+    const desk = await joinAgent(world, campaignId); // the console: client=web, pcm16
+    let hangUp = false;
+    const call = ring(world, callerScript(() => hangUp));
+    const connected = await spineWhen(call, 'connected to the console', (r) => r.state === 'connected');
+    const deskLeg = desk.leg!;
+    desk.client = 'mobile';
+    desk.media = 'alaw8';
+    desk.caps = 'inbound';
+    const leg = await desk.connectReady();
+    await waitFor('the console leg superseded', () => deskLeg.closed !== null);
+    expect(getAgencyRuntime()!.stations.get(desk.sessionId)).toMatchObject({ clientKind: 'mobile', canTakeInbound: true });
+    expect(leg.ready).toMatchObject({ state: 'on_call' });
+    await waitFor('the inbound_call frame after ready', () => leg.ofEvent('inbound_call').length > 0);
+    expect(leg.ofEvent('inbound_call')[0]).toMatchObject({ call: { id: connected.id, state: 'connected' } });
+    await waitFor('A-law on the phone', () => alawFrames(leg).length > 5);
+    expect(leg.ofEvent('media')).toEqual([]);
+    // Past the 8 s deferred hangup the console's close armed: re-adopted, so it was disarmed.
+    await sleep(DEFERRED_HANGUP_MS + 1_000);
+    expect(await spineOf(call)).toMatchObject({ state: 'connected', session_id: desk.sessionId });
+    expect(await liveOf(desk.sessionId)).toMatchObject({ state: 'on_call', inboundCallId: connected.id });
+    hangUp = true;
+    await spineWhen(call, 'ended answered', (r) => r.state === 'ended' && r.outcome === 'answered');
+  }, 40_000);
+});
+
+describe('an older app build silent past its grace while its session holds a bound inbound call (M1)', () => {
+  it('terminated by the sweep (the inbound arm); the call ends answered, its outcome owed', async () => {
+    const campaignId = await campaign(world);
+    const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
+    const call = ring(world, callerScript(() => false));
+    const connected = await spineWhen(call, 'connected', (r) => r.state === 'connected');
+    await waitFor('audio flowing', () => alawFrames(phone.leg!).length > 5);
+    phone.caps = null;
+    const oldLeg = await phone.connectReady();
+    expect(oldLeg.ready).toMatchObject({ state: 'on_call' });
+    // The bound call is not re-adopted onto it, but it is still the session's live call.
+    expect(getAgencyRuntime()!.inbound!.hasLiveCall(phone.sessionId)).toBe(true);
+    expect(sweepSilent(phone)).toBe(1);
+    await waitFor('the older build dropped', () => oldLeg.closed !== null);
+    const ended = await spineWhen(call, 'ended by the deferred hangup', (r) => r.state === 'ended', DEFERRED_HANGUP_MS + 10_000);
+    expect(ended).toMatchObject({ id: connected.id, outcome: 'answered', settled_at: null });
+    expect(ended.bridged_at).not.toBeNull();
+    expect(alawFrames(oldLeg)).toEqual([]);
   }, 40_000);
 });
