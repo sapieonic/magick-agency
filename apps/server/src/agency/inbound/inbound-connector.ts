@@ -4,6 +4,7 @@ import {
   type AgencyInboundCall,
   type AgencyInboundCallOutcome,
   type AgencyInboundClipSlot,
+  type AgencyClientKind,
   type AgencyInboundMissedReason,
   type AgencyInboundStickyReason,
   type AgencyStationCustomerWaitingFrame,
@@ -46,7 +47,7 @@ import {
 } from './eligibility.js';
 import { InboundQueue, accountKeyOfCall, summarizeWaiting, type InboundQueueRouteSnapshot } from './inbound-queue.js';
 import { inboundCallToWire, loadInboundPanelContext, type InboundPanelContext } from './inbound-call-wire.js';
-import { InboundHandovers, type HandoverHost } from './inbound-handover.js';
+import { InboundHandovers, type HandoverHost, type InboundOfferRefused } from './inbound-handover.js';
 
 const log = createChildLogger({ component: 'agency-inbound-connector' });
 
@@ -230,6 +231,8 @@ interface HeldCall {
   agentUserId: string | null;
   /** The station socket was bound to the call (the bind succeeded). */
   bound: boolean;
+  /** The client kind of the station the current offer went to (`agency_inbound_offers_total{client}`). */
+  offeredClient: AgencyClientKind;
   /**
    * When audio bridged, if the spine's `connect` write failed then (a database blip): the pair is
    * talking, so the call is connected in memory and the write is retried at its end, before the
@@ -293,6 +296,11 @@ export class InboundConnector {
   private readonly locks = new Map<string, Promise<void>>();
   /** Background releases and searches, so `drain` (tests, shutdown) can wait for them. */
   private readonly background = new Set<Promise<unknown>>();
+  /**
+   * sessionId → its returns in flight ({@link noteReturn}): reservations the search or the release
+   * hook holds for it until their offer or give-back, give-backs, returns to the pool.
+   */
+  private readonly returning = new Map<string, Promise<void>>();
   /** The in-flight clash's hand-overs (§5.4): calls promised to the agent of the dial they superseded. */
   private readonly handovers: InboundHandovers;
   /** Accounts whose last `inbound_waiting` said someone waits. */
@@ -546,6 +554,7 @@ export class InboundConnector {
       sessionId: null,
       agentUserId: null,
       bound: false,
+      offeredClient: 'web',
       connectOwed: null,
       bindTimer: null,
       lease: null,
@@ -602,8 +611,20 @@ export class InboundConnector {
     if (!station) return false;
     const key = accountKeyOfCall(station.tenantId, station.accountId);
     if (!this.handovers.hasPending(sessionId) && this.queue.waiting(key).length === 0) return false;
+    // Counted in the session's returns in flight until the hook has answered (an older build's
+    // attach meanwhile reads the agent after it; the `available` its caller writes on a false
+    // follows the answer, and is not counted).
+    const settle = this.holdReturn(sessionId);
+    try {
+      return await this.takeOnReleaseLocked(sessionId, station.agentUserId, key);
+    } finally {
+      settle();
+    }
+  }
+
+  private takeOnReleaseLocked(sessionId: string, agentUserId: string, key: string): Promise<boolean> {
     return this.withAccountLock(key, async () => {
-      if (this.handovers.hasPending(sessionId) && await this.handovers.take(sessionId, station.agentUserId)) return true;
+      if (this.handovers.hasPending(sessionId) && await this.handovers.take(sessionId, agentUserId)) return true;
       const callers = this.callerViews(key);
       if (callers.length === 0) return false;
       const views = await this.agentViews(key);
@@ -621,7 +642,7 @@ export class InboundConnector {
         await this.giveBack(sessionId, callId, 'call_gone');
         return false;
       }
-      const offered = await this.serial(callId, () => this.offer(held, sessionId));
+      const offered = await this.serial(callId, () => this.offer(held, sessionId)) ?? 'call_gone';
       if (offered === 'offered') return true;
       await this.giveBack(sessionId, callId, offered);
       return false;
@@ -727,9 +748,9 @@ export class InboundConnector {
    * A station socket that cannot take inbound calls (an app build that did not declare
    * `caps=inbound`) attached to this session: a reattach from another device or an older build
    * (the prior socket closed 4409). The station socket asks right after the attach, before it
-   * reads the agent's state for `ready`, and waits (bounded) for the answer, so the older build's
-   * `ready` never says `reserved` for an offer it cannot show. The capability belongs to the socket
-   * (IQ46), so what this session held on the prior one is handled as if that station were lost:
+   * reads the agent's state for `ready`, and waits for the answer, bounded by
+   * `STATION_INBOUND_LET_GO_WAIT_MS` (3 s). The capability belongs to the socket (IQ46), so what
+   * this session held on the prior one is handled as if that station were lost:
    *  - an offer whose audio has not bound: cancelled as a lost station's (`station_lost`: back at
    *    the head of the queue, `queued_at` kept, the next agent searched), and the agent, whose
    *    station is still open, returned to the pool (`releaseAgent`: a queued break applies first);
@@ -739,11 +760,35 @@ export class InboundConnector {
    *    the call ends `answered` with its outcome owed (IQ17), as for any station lost after the
    *    bind; the agent then owes it in `wrapup` on this station, which the outcome's lapse (or a
    *    supervisor's close, IQ33) returns. Until then the agent is still `on_call`.
-   * Each step runs on the call's chain; the promise settles once the step and the agent's return
-   * have run, and never rejects. The bind re-checks the capability anyway ({@link bind}), so an
-   * offer whose `connects_at` falls before this runs is cancelled the same way.
+   *
+   * What the promise guarantees when it settles: every return of this session to the pool that
+   * this connector had in flight when it was called, or started while it ran, has run
+   * ({@link noteReturn}): a reservation the search or the release hook held for the session,
+   * through its offer or its give-back; a give-back; the bind's cancel of an offer to this station
+   * (its timer may fire during the attach) and the agent's return; this method's own cancel and
+   * return. So the `ready` read after it never finds the session `reserved` for an inbound call
+   * the connector offered it, was offering it or held it for, unless the 3 s bound is hit first
+   * (then `ready` says what Redis says, and the `agent_state` frame of the return that is still
+   * running follows it). Not covered: the `available` that a caller of the release hook
+   * (`releaseAgent`) writes after the hook answered false, which is that caller's, with its own
+   * `agent_state` frame. Never rejects. The bind re-checks the capability anyway ({@link bind}),
+   * so an offer whose `connects_at` falls before this runs is cancelled the same way.
    */
   async onStationCannotTakeInbound(sessionId: string): Promise<void> {
+    try {
+      // First what was under way for the session as it attached: a reservation on its way to an
+      // offer is then found below as the offer.
+      await this.returnsSettled(sessionId);
+      await this.letGoForIncapableStation(sessionId);
+      // Then every return that started meanwhile, this method's own included.
+      await this.returnsSettled(sessionId);
+    } catch (err) {
+      log.error({ err, sessionId }, 'Could not let go of an inbound call for a station that cannot take one');
+    }
+  }
+
+  /** {@link onStationCannotTakeInbound}'s steps on what the session holds now. */
+  private async letGoForIncapableStation(sessionId: string): Promise<void> {
     const held = this.forSession(sessionId);
     if (!held) return;
     let returnAgent = false;
@@ -764,11 +809,9 @@ export class InboundConnector {
         'A station that cannot take inbound calls attached during an inbound call — not re-adopted; the deferred hangup ends it');
     }
     // Off the call's chain (the release hook may search the account, which offers on chains),
-    // and awaited, so the caller's `ready` reads the agent back in the pool.
-    if (returnAgent && this.deps.stations.get(sessionId)) {
-      await this.trackBackground(this.deps.releaseAgent(sessionId).catch((err: unknown) =>
-        log.error({ err, sessionId }, 'Could not return an agent after an inbound offer')));
-    }
+    // and awaited (with every other return in flight), so the caller's `ready` reads the agent
+    // back in the pool.
+    if (returnAgent && this.deps.stations.get(sessionId)) await this.releaseInBackground(sessionId);
   }
 
   /**
@@ -849,13 +892,22 @@ export class InboundConnector {
     const heldFor = this.handovers.takeHeld(held.id);
     if (heldFor !== null) {
       // The superseded dial's agent, held for this call through the preamble (§5.4): offered now.
+      // Counted in the session's returns in flight until offered or given back.
       const sessionId = heldFor;
+      const settle = this.holdReturn(sessionId);
       this.unseat(held, sessionId);
-      const offered = await this.offer(held, sessionId);
-      if (offered === 'offered') return;
-      // The session owes another call, or the call went: the reservation is given back, the
-      // agent returned, and the caller (if still here) searched for like any other.
-      void this.trackBackground(this.giveBack(sessionId, held.id, offered, { release: true }));
+      const offered = await this.offer(held, sessionId).catch((err: unknown) => {
+        settle();
+        throw err;
+      });
+      if (offered === 'offered') {
+        settle();
+        return;
+      }
+      // The session owes another call, its station can no longer take one, or the call went: the
+      // reservation is given back, the agent returned, and the caller (if still here) searched
+      // for like any other.
+      settle(this.trackBackground(this.giveBack(sessionId, held.id, offered, { release: true })));
     } else if (this.handovers.of(held.id)) {
       // Promised to the superseded dial's agent, whose release is on its way: kept for them.
       return;
@@ -929,7 +981,11 @@ export class InboundConnector {
    * Offer the call to `sessionId`, already reserved for it in Redis (see the header, step 3). On
    * the call's chain. `offered`, else why not (the caller gives the reservation back).
    */
-  private async offer(held: HeldCall, sessionId: string): Promise<'offered' | 'call_gone' | 'session_busy'> {
+  private async offer(held: HeldCall, sessionId: string): Promise<'offered' | InboundOfferRefused> {
+    if (this.stopped || held.phase !== 'queued' || this.queue.offeredTo(held.id) !== null) return 'call_gone';
+    // The panel first (read once while the preamble played: settled long since), so the spine's
+    // write below is the one await between the checks and the frames.
+    const ctx = await held.panel;
     if (this.stopped || held.phase !== 'queued' || this.queue.offeredTo(held.id) !== null) return 'call_gone';
     // Promised to the superseded dial's agent meanwhile (§5.4): not this session's to take.
     const handover = this.handovers.of(held.id);
@@ -938,29 +994,24 @@ export class InboundConnector {
     if (held.leaving) return 'call_gone';
     // The session's station can no longer take inbound calls (an older app build took it over
     // since the search: IQ46): never offered, so it is never told `reserved` for a call it
-    // cannot see.
-    if (this.deps.stations.get(sessionId)?.canTakeInbound === false) return 'session_busy';
+    // cannot see. Not a busy session (nothing is owed): the agent is returned, the next
+    // candidate tried.
+    if (this.deps.stations.get(sessionId)?.canTakeInbound === false) return 'station_incapable';
     const at = new Date(this.now());
     const res = await agencyInboundCallRepository.offer(held.id, sessionId, { at });
+    const station = this.deps.stations.get(sessionId);
+    const client = station?.clientKind ?? 'web';
     if (!res.ok) {
-      trackInboundOffer('refused');
+      trackInboundOffer('refused', client);
       return res.reason === 'session_busy' ? 'session_busy' : 'call_gone';
     }
-    const ctx = await held.panel;
-    const station = this.deps.stations.get(sessionId);
-    if (station?.canTakeInbound === false) {
-      // Taken over by such a station during the two awaits above: the spine goes back to
-      // queued before any frame is sent ({@link onStationCannotTakeInbound} found nothing held
-      // for the session yet), and the caller gives the reservation back.
-      await agencyInboundCallRepository.requeue(held.id, sessionId, { at: new Date(this.now()) });
-      log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls took the session during the offer — not offered');
-      return 'session_busy';
-    }
+    if (station?.canTakeInbound === false) return this.unwriteOffer(held, sessionId, client);
     // ── From here to the frames, no await (IB1) ─────────────────────────────
     held.record = res.call;
     held.phase = 'offered';
     held.sessionId = sessionId;
     held.agentUserId = station?.agentUserId ?? null;
+    held.offeredClient = client;
     held.bound = false;
     this.bySession.set(sessionId, held.id);
     this.queue.markOffered(held.id, sessionId);
@@ -982,6 +1033,36 @@ export class InboundConnector {
     return 'offered';
   }
 
+  /**
+   * {@link offer}'s spine write landed for a session a station that cannot take inbound calls took
+   * over during it (IQ46): the spine goes back to `queued` before any frame is sent
+   * ({@link onStationCannotTakeInbound} found nothing held for the session yet), counted `refused`
+   * (the spine counted an offer nobody saw). `station_incapable`: the caller gives the reservation
+   * back and the search tries its next candidate. A requeue that moved nothing (the call is no
+   * longer on offer to the session: it ended, and its `ended` is next on this chain) or that threw
+   * is `call_gone`: the search leaves this caller. After a throw the spine still reads `offered` to
+   * the session while the caller waits in memory, so every later offer of them is refused by the
+   * spine (`not_offerable`) and they leave at their maximum wait, whose settle ends the row.
+   */
+  private async unwriteOffer(held: HeldCall, sessionId: string, client: AgencyClientKind): Promise<'station_incapable' | 'call_gone'> {
+    trackInboundOffer('refused', client);
+    const requeued = await agencyInboundCallRepository.requeue(held.id, sessionId, { at: new Date(this.now()) })
+      .catch((err: unknown) => {
+        log.warn({ err, inboundCallId: held.id, sessionId },
+          'Could not requeue an inbound offer written for a station that cannot take inbound calls — the spine reads offered until the caller leaves');
+        return undefined;
+      });
+    if (requeued === undefined) return 'call_gone';
+    if (requeued === null) {
+      log.warn({ inboundCallId: held.id, sessionId },
+        'An inbound offer written for a station that cannot take inbound calls was no longer on offer to it — not requeued');
+      return 'call_gone';
+    }
+    held.record = requeued;
+    log.info({ inboundCallId: held.id, sessionId }, 'A station that cannot take inbound calls took the session during the offer — not offered');
+    return 'station_incapable';
+  }
+
   /** The bind, at `connects_at` (see the header, step 4). On the call's chain. */
   private async bind(held: HeldCall): Promise<void> {
     if (held.phase !== 'offered' || held.bound || !held.sessionId) return;
@@ -996,9 +1077,17 @@ export class InboundConnector {
       // The session's station was replaced, during the offer, by one that cannot take inbound calls
       // (an older app build: IQ46). Never bound: cancelled as a lost station's, and the agent, whose
       // station is still open, returned to the pool ({@link onStationCannotTakeInbound}).
+      // Counted in the session's returns in flight from this check to the agent's return, so the
+      // attach of that station, which may be running now, reads the agent after both.
       log.warn({ inboundCallId: held.id, sessionId }, 'Inbound bind found a station that cannot take inbound calls — the offer is cancelled');
-      const row = await this.cancelOffer(held, sessionId, 'station_lost');
-      if (row) this.releaseInBackground(sessionId);
+      const settle = this.holdReturn(sessionId);
+      let returned: Promise<void> | undefined;
+      try {
+        const row = await this.cancelOffer(held, sessionId, 'station_lost');
+        if (row) returned = this.releaseInBackground(sessionId);
+      } finally {
+        settle(returned);
+      }
       return;
     }
     if (!this.deps.bridge.bindBorrowedBrowserLeg(held.id, ws)) {
@@ -1046,7 +1135,7 @@ export class InboundConnector {
     }
     held.phase = 'connected';
     this.stopLease(held);
-    trackInboundOffer('connected');
+    trackInboundOffer('connected', held.offeredClient);
     trackInboundWait('connected', (at.getTime() - (held.record.queued_at ?? held.record.arrived_at).getTime()) / 1000);
     this.queue.remove(held.id);
     if (!await this.deps.agents.transition(sessionId, 'reserved', 'on_call', { leaseMs: AGENT_LEASE_MS.on_call })) {
@@ -1078,7 +1167,7 @@ export class InboundConnector {
     await this.deps.exits.settleCall(held.record, outcome);
     if (phase === 'offered' && held.sessionId) {
       const sessionId = held.sessionId;
-      trackInboundOffer('caller_left');
+      trackInboundOffer('caller_left', held.offeredClient);
       await this.deps.agents.releaseInbound(sessionId, held.id);
       const ended = await agencyInboundCallRepository.findByIdAnyTenant(held.id).catch(() => null);
       if (ended) held.record = ended;
@@ -1158,7 +1247,7 @@ export class InboundConnector {
       held.phase = 'queued';
       return null;
     }
-    trackInboundOffer(why);
+    trackInboundOffer(why, held.offeredClient);
     held.record = row;
     held.phase = 'queued';
     // The session's last frame of this call says it is no longer theirs (if the socket is still there).
@@ -1190,8 +1279,10 @@ export class InboundConnector {
   /** One search of the account's waiting callers (see the header, step 2). */
   private async search(accountKey: string): Promise<void> {
     if (this.stopped) return;
-    const giveBacks: Array<() => Promise<void>> = [];
-    await this.withAccountLock(accountKey, async () => {
+    const giveBacks: Array<{ settle: (after?: Promise<unknown>) => void; run: () => Promise<void> }> = [];
+    // The reservations still held are given back below whatever the locked part did (a failed
+    // read rejects the search, which the next republish retries).
+    const locked = this.withAccountLock(accountKey, async () => {
       const callers = this.callerViews(accountKey);
       if (callers.length === 0) return;
       const views = await this.agentViews(accountKey);
@@ -1204,25 +1295,42 @@ export class InboundConnector {
         if (!held || held.phase !== 'queued' || this.handovers.of(held.id) || held.leaving || this.queue.offeredTo(step.callId) !== null) continue;
         for (const sessionId of step.candidates) {
           if (taken.has(sessionId)) continue;
+          // Counted in the session's returns in flight from before the CAS to the offer or the
+          // give-back's end: an older build attaching meanwhile reads the agent after it.
+          const settle = this.holdReturn(sessionId);
           const reserved = await this.deps.agents.reserveForInbound(sessionId, step.callId, ['available']);
-          if (!reserved.ok) continue;
+          if (!reserved.ok) {
+            settle();
+            continue;
+          }
           taken.add(sessionId);
           // Re-checked after the CAS, and the offer queued with no await between (M4): a caller
           // marked leaving (or promised elsewhere) meanwhile is not waited for under the lock;
           // its chain may be playing a message or recording a voicemail for minutes.
           if (held.leaving || this.handovers.of(held.id)) {
-            giveBacks.push(() => this.giveBack(sessionId, step.callId, 'call_gone', { release: true }));
+            giveBacks.push({ settle, run: () => this.giveBack(sessionId, step.callId, 'call_gone', { release: true }) });
             break;
           }
-          const offered = await this.serial(step.callId, () => this.offer(held, sessionId));
-          if (offered === 'offered') break;
-          // Given back after the lock: `releaseAgent` runs the release hook, which takes it.
-          giveBacks.push(() => this.giveBack(sessionId, step.callId, offered, { release: true }));
+          const offered = await this.serial(step.callId, () => this.offer(held, sessionId)) ?? 'call_gone';
+          if (offered === 'offered') {
+            settle();
+            break;
+          }
+          // Given back after the lock: `releaseAgent` runs the release hook, which takes it. A
+          // station that cannot take inbound calls (`station_incapable`) or a busy session: the
+          // next candidate is tried; a caller gone: the search leaves them.
+          giveBacks.push({ settle, run: () => this.giveBack(sessionId, step.callId, offered, { release: true }) });
           if (offered === 'call_gone') break;
         }
       }
     });
-    for (const giveBack of giveBacks) await giveBack();
+    await locked.finally(async () => {
+      for (const { settle, run } of giveBacks) {
+        const done = run();
+        settle(done);
+        await done.catch((err: unknown) => log.error({ err, accountKey }, 'Could not give back an inbound reservation'));
+      }
+    });
   }
 
   /**
@@ -1251,9 +1359,16 @@ export class InboundConnector {
    * another unsettled inbound call (`session_busy`: its Redis field was lost) never goes to the
    * pool (SWE-M1): it is put on `break`, re-claimed for that call when its outcome is owed; the
    * same when the spine cannot be read (fails closed). The settle that follows never lifts that
-   * break (`InboundCallService.returnAgent`): the agent's own "Go available" does.
+   * break (`InboundCallService.returnAgent`): the agent's own "Go available" does. Every other
+   * refusal (`call_gone`, `station_incapable`: an older app build took the session over, which owes
+   * nothing for it) reads no spine: the field cleared and the agent returned. Counted in the
+   * session's returns in flight ({@link noteReturn}), which an older build's attach waits for.
    */
-  private async giveBack(sessionId: string, callId: string, why: 'call_gone' | 'session_busy', opts: { release?: boolean } = {}): Promise<void> {
+  private giveBack(sessionId: string, callId: string, why: InboundOfferRefused, opts: { release?: boolean } = {}): Promise<void> {
+    return this.noteReturn(sessionId, this.giveBackNow(sessionId, callId, why, opts));
+  }
+
+  private async giveBackNow(sessionId: string, callId: string, why: InboundOfferRefused, opts: { release?: boolean }): Promise<void> {
     await this.deps.agents.releaseInbound(sessionId, callId);
     if (why === 'session_busy') {
       const owed = await agencyInboundCallRepository.findUnsettledForSession(sessionId).catch(() => undefined);
@@ -1546,10 +1661,48 @@ export class InboundConnector {
     return session?.agent_user_id ?? '';
   }
 
-  /** Return an agent to the pool off the caller's chain (it may take an account's lock: the header). */
-  private releaseInBackground(sessionId: string): void {
-    void this.trackBackground(this.deps.releaseAgent(sessionId).catch((err: unknown) =>
-      log.error({ err, sessionId }, 'Could not return an agent after an inbound offer')));
+  /**
+   * Return an agent to the pool off the caller's chain (it may take an account's lock: the header).
+   * Counted in the session's returns in flight ({@link noteReturn}).
+   */
+  private releaseInBackground(sessionId: string): Promise<void> {
+    return this.noteReturn(sessionId, this.trackBackground(this.deps.releaseAgent(sessionId).then(() => undefined, (err: unknown) => {
+      log.error({ err, sessionId }, 'Could not return an agent after an inbound offer');
+    })));
+  }
+
+  /**
+   * Count `work` in the session's returns in flight until it settles: a reservation the search or
+   * the release hook holds for it (from the CAS to the offer, or to the give-back's end), a
+   * give-back, an agent's return to the pool. {@link onStationCannotTakeInbound} waits for them,
+   * so an older app build's `ready` reads the agent after them. Resolves (or rejects) as `work`.
+   */
+  private noteReturn<T>(sessionId: string, work: Promise<T>): Promise<T> {
+    const prev = this.returning.get(sessionId);
+    const mine: Promise<void> = Promise.allSettled(prev ? [prev, work] : [work]).then(() => undefined);
+    this.returning.set(sessionId, mine);
+    void mine.then(() => { if (this.returning.get(sessionId) === mine) this.returning.delete(sessionId); });
+    return work;
+  }
+
+  /**
+   * A reservation held for the session from now until the returned function is called (with the
+   * give-back that ends it, if any): counted in its returns in flight ({@link noteReturn}). Call it
+   * on every path, or the attach that waits on it waits out its bound.
+   */
+  private holdReturn(sessionId: string): (after?: Promise<unknown>) => void {
+    let settle!: (after?: Promise<unknown>) => void;
+    void this.noteReturn(sessionId, new Promise<unknown>((resolve) => { settle = resolve; }));
+    return (after) => settle(after);
+  }
+
+  /** Resolves once the session's returns in flight, and any they started meanwhile, have settled. Never rejects. */
+  private async returnsSettled(sessionId: string): Promise<void> {
+    for (let i = 0; i < 10; i++) {
+      const pending = this.returning.get(sessionId);
+      if (!pending) return;
+      await pending;
+    }
   }
 
   private trackBackground<T>(p: Promise<T>): Promise<T> {

@@ -201,8 +201,9 @@
   {
     "name": "agency_inbound_offers_total",
     "kind": "Counter",
-    "description": "Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent's socket)",
+    "description": "Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free, or the station could no longer take inbound calls), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent's socket); and by the station's client (web: the console, mobile: a phone that declared caps=inbound)",
     "attributes": [
+      "client",
       "result"
     ]
   },

@@ -930,8 +930,8 @@ export const agencyInboundWaitSeconds = histogram<'result'>(meter, 'agency_inbou
   buckets: [1, 5, 10, 20, 30, 60, 120, 300, 600],
 });
 
-export const agencyInboundOffersTotal = counter<'result'>(meter, 'agency_inbound_offers_total', {
-  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent\'s socket)',
+export const agencyInboundOffersTotal = counter<'result' | 'client'>(meter, 'agency_inbound_offers_total', {
+  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free, or the station could no longer take inbound calls), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent\'s socket); and by the station\'s client (web: the console, mobile: a phone that declared caps=inbound)',
 });
 
 export const agencyInboundOverflowsTotal = counter<'reason'>(meter, 'agency_inbound_overflows_total', {
@@ -958,8 +958,12 @@ export function trackInboundWait(result: InboundWaitResult, seconds: number): vo
 }
 
 /** One offer ended. */
-export function trackInboundOffer(result: InboundOfferResult): void {
-  agencyInboundOffersTotal.inc({ result });
+/**
+ * One offer's end, with the client of the station it went to (`web` or `mobile`): how many callers
+ * go to phones, beside the consoles (an app build without `caps=inbound` is never offered one).
+ */
+export function trackInboundOffer(result: InboundOfferResult, client: 'web' | 'mobile'): void {
+  agencyInboundOffersTotal.inc({ result, client });
 }
 
 // ─── Inbound operations (docs/inbound.md §3.2, §8.1; `telephony/credentials/inbound-monitor.ts`) ─

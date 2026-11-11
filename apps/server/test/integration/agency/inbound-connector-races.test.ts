@@ -600,11 +600,97 @@ describe('the P2 review fix pass: hand-overs only to a session that can take one
       expect(inboundFrames(first)).toEqual([]);
       expect(bridge.binds).toEqual([call.id]);
       await drain();
-      expect(await agents.get(first)).toMatchObject({ inboundCallId: null });
-      expect((await agents.get(first))?.state).not.toBe('reserved');
+      // Returned to the pool, never benched: a station that cannot take inbound calls owes nothing.
+      expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('a station that cannot take inbound calls refusing the offer is not a busy session: no spine read, so a failed read never benches its agent', async () => {
+    const c = connector({ connectDelayMs: 300 });
+    const first = await agent('available');
+    await sleep(5);
+    const second = await agent('available');
+    const realOffer = calls.offer.bind(calls);
+    const offerSpy = vi.spyOn(calls, 'offer').mockImplementation(async (...args: Parameters<typeof calls.offer>) => {
+      const res = await realOffer(...args);
+      if (args[1] === first) Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+      return res;
+    });
+    // SWE-M1's spine read fails closed (a busy session on `break`): it must not be asked here.
+    const readSpy = vi.spyOn(calls, 'findUnsettledForSession').mockRejectedValue(new Error('database unavailable'));
+    try {
+      const { call } = await caller(c);
+      await until('connected to the second agent', async () => (await row(call.id)).state === 'connected', 5000);
+      await drain();
+      expect(readSpy).not.toHaveBeenCalled();
+      expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
+      expect((stations.get(first)?.ws.sent ?? []).filter((f) => f['event'] === 'agent_state').map((f) => f['state'])).not.toContain('break');
+      expect(await row(call.id)).toMatchObject({ session_id: second });
+    } finally {
+      offerSpy.mockRestore();
+      readSpy.mockRestore();
+    }
+  });
+
+  it('onStationCannotTakeInbound waits for the give-back of a reservation the search made before the takeover (the offer refused after the spine`s write)', async () => {
+    const c: Connector = connector({
+      connectDelayMs: 300,
+      releaseAgent: async (id) => {
+        await sleep(150); // a slow return: settling before it has run would show
+        if (await c.takeOnRelease(id)) return;
+        await agents.set(id, 'available', { leaseMs: AGENT_LEASE_MS.available });
+      },
+    });
+    const first = await agent('available');
+    let letGo: Promise<void> | null = null;
+    const realOffer = calls.offer.bind(calls);
+    const spy = vi.spyOn(calls, 'offer').mockImplementation(async (...args: Parameters<typeof calls.offer>) => {
+      const res = await realOffer(...args);
+      if (args[1] === first && !letGo) {
+        // The older build's attach: the registry entry, then the station socket's let-go, with
+        // nothing yet held for the session (the search's give-back runs after the account's lock).
+        Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+        letGo = c.onStationCannotTakeInbound(first);
+      }
+      return res;
+    });
+    try {
+      await sleep(5);
+      await agent('available'); // someone who could take the caller, so they wait
+      const { call } = await caller(c);
+      await until('the let-go started', () => letGo !== null);
+      await letGo;
+      // The station socket reads `ready` now: the reservation is given back and the agent returned.
+      expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
+      expect((await row(call.id)).session_id).not.toBe(first);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('the bind first (its timer fired during the takeover`s attach), then onStationCannotTakeInbound: it settles only after the bind`s cancel has returned the agent', async () => {
+    const c: Connector = connector({
+      connectDelayMs: 100,
+      releaseAgent: async (id) => {
+        await sleep(200); // the bind's return still running when the let-go is asked
+        if (await c.takeOnRelease(id)) return;
+        await agents.set(id, 'available', { leaseMs: AGENT_LEASE_MS.available });
+      },
+    });
+    const first = await agent('available');
+    await sleep(5);
+    const { call } = await caller(c);
+    await until('offered to the first', async () => (await row(call.id)).state === 'offered');
+    await agent('available');
+    Object.assign(stations.get(first)!, { clientKind: 'mobile', canTakeInbound: false });
+    // The bind's own cancel: the spine requeued and the field cleared, the agent's return under way.
+    await until('the bind cancelled the offer', async () => (await row(call.id)).session_id !== first
+      && (await agents.get(first))?.inboundCallId === null && !c.findCallForSession(first));
+    expect((await agents.get(first))?.state).toBe('reserved'); // the return has not run yet
+    await c.onStationCannotTakeInbound(first);
+    expect(await agents.get(first)).toMatchObject({ state: 'available', inboundCallId: null });
   });
 
   it('onStationCannotTakeInbound: an unbound offer cancelled at once (requeued, the next agent offered before connects_at), a hand-over held through the preamble let go; each agent returned before it settles', async () => {

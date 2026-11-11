@@ -45,6 +45,18 @@ export interface Handover {
   timer: NodeJS.Timeout | null;
 }
 
+/**
+ * Why the connector's offer of a call to a session reserved for it was refused (the reservation is
+ * then given back, {@link HandoverHost.giveBack}):
+ *  - `call_gone`: the call is no longer the session's to take (it ended, is leaving, was promised
+ *    elsewhere, or the spine would not offer it);
+ *  - `session_busy`: the spine says the session holds another unsettled inbound call (SWE-M1);
+ *  - `station_incapable`: the session's station cannot take inbound calls (an app build without
+ *    `caps=inbound` took the session over, IQ46). Not a busy session: nothing is owed, so the agent
+ *    is simply returned, and the search moves on to its next candidate.
+ */
+export type InboundOfferRefused = 'call_gone' | 'session_busy' | 'station_incapable';
+
 /** What the hand-over reads of a call the connector holds (the live object: read after every await). */
 export interface HandoverCall {
   readonly id: string;
@@ -73,9 +85,9 @@ export interface HandoverHost {
   /** Clear the session's `inbound` field, by this call's id. */
   unreserve(sessionId: string, callId: string): Promise<unknown>;
   /** Offer the queued call to the session already reserved for it (the connector's `offer`). */
-  offer(callId: string, sessionId: string): Promise<'offered' | 'call_gone' | 'session_busy'>;
+  offer(callId: string, sessionId: string): Promise<'offered' | InboundOfferRefused>;
   /** Undo a reservation whose offer was refused (the connector's `giveBack`). */
-  giveBack(sessionId: string, callId: string, why: 'call_gone' | 'session_busy'): Promise<void>;
+  giveBack(sessionId: string, callId: string, why: InboundOfferRefused): Promise<void>;
   /** Search the account in the background. */
   search(accountKey: string): void;
   /** The session is held for the call through its preamble: the call names it, the agent is told `reserved`, the lease renewed, the state mirrored. */

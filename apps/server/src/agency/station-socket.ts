@@ -498,6 +498,10 @@ export async function handleStationSocket(
     return;
   }
 
+  // This socket's own answer, never the session's (IQ46): a console always, a phone only with
+  // `caps=inbound`. Decides whether it is sent the inbound frames and offered inbound callers, and
+  // whether what the session held of an inbound call is let go below.
+  const canTakeInbound = stationCanTakeInbound(upgrade);
   await runtime.stations.attach({
     sessionId,
     campaignId: session.campaign_id,
@@ -507,9 +511,7 @@ export async function handleStationSocket(
     ws: socket,
     // Picks the heartbeat grace and, for `mobile`, arms the protocol-ping probe.
     clientKind: upgrade.client,
-    // This socket's own answer, never the session's (IQ46): a console always, a phone only with
-    // `caps=inbound`. Decides whether it is sent the inbound frames and offered inbound callers.
-    canTakeInbound: stationCanTakeInbound(upgrade),
+    canTakeInbound,
   });
 
   // And the same question again, because `attach` has its own await (the ownership
@@ -535,12 +537,14 @@ export async function handleStationSocket(
   // ── A station that cannot take inbound calls (IQ46) ───────────────────────
   // An older app build (no `caps=inbound`) taking over a session that holds an inbound offer, or
   // is held for one through a caller's preamble: let go as a lost station's, the agent returned to
-  // the pool, BEFORE the rehydrate below reads the state `ready` reports, so that build is never
-  // told `reserved` for a call it cannot show. Bounded: a step stuck on the call's chain delays
-  // nobody's `ready` past {@link STATION_INBOUND_LET_GO_WAIT_MS}. A bound call is not re-adopted
-  // (below) and stays `on_call` until the bridge's deferred hangup ends it.
+  // the pool, BEFORE the rehydrate below reads the state `ready` reports. The connector also waits
+  // for every return of the session it had in flight (a reservation on its way to an offer or a
+  // give-back, the bind's own cancel), so that build's `ready` is not `reserved` for a call it
+  // cannot show (`onStationCannotTakeInbound` says exactly what is covered). Bounded: a step stuck
+  // on the call's chain delays nobody's `ready` past {@link STATION_INBOUND_LET_GO_WAIT_MS}; past
+  // it `ready` says what Redis says, and the return's own `agent_state` frame follows. A bound call
+  // is not re-adopted (below) and stays `on_call` until the bridge's deferred hangup ends it.
   const inbound = runtime.inbound;
-  const canTakeInbound = stationCanTakeInbound(upgrade);
   if (inbound && !canTakeInbound) {
     await withTimeoutOr(inbound.onStationCannotTakeInbound(sessionId), STATION_INBOUND_LET_GO_WAIT_MS, undefined);
   }
