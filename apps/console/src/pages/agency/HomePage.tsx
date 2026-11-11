@@ -10,6 +10,7 @@ import { useHomeBoard } from '../../hooks/useHomeBoard';
 import { useTodaySoFar } from '../../hooks/useTodaySoFar';
 import { homeAttentionKey, publishHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
 import { hasPermission } from '../../utils/permissions';
+import { canSeeHome } from '../../utils/consoleNav';
 import { homeAttention, homeFloor, HOME_CAMPAIGN_CAP, type HomeAttentionItem, type HomeFloorRow } from '../../utils/agency/home';
 import { formatCount, plural } from '../../utils/format/number';
 import { durationWords } from '../../utils/format/duration';
@@ -32,7 +33,8 @@ function when(iso: string, now: Date): string {
  */
 export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
-  const supervise = hasPermission(role, 'agency.supervise');
+  // `HOME_GATE`; the capability and flag are `/agency`'s route gates, already passed here.
+  const supervise = canSeeHome({ role, isFlagEnabled: () => true, isCapabilityEnabled: () => true });
   const board = useHomeBoard({ tenantId, accountId, enabled: supervise, mode: 'live' });
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
