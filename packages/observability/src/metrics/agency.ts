@@ -957,7 +957,6 @@ export function trackInboundWait(result: InboundWaitResult, seconds: number): vo
   agencyInboundWaitSeconds.observe({ result }, Math.max(0, seconds));
 }
 
-/** One offer ended. */
 /**
  * One offer's end, with the client of the station it went to (`web` or `mobile`): how many callers
  * go to phones, beside the consoles (an app build without `caps=inbound` is never offered one).

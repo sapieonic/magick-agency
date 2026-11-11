@@ -653,7 +653,7 @@ sent only to a station that can take inbound calls (every console, and a phone t
 eligibility rules that keep such a station out of the pool stay, as they decide who is
 offered a call. Metrics: `agency_inbound_queue_waiting{route_id}` (a route nobody waits on reports
 0 once and its series then goes), `agency_inbound_wait_seconds{result}`,
-`agency_inbound_offers_total{result}` (`declined`: the agent hung up the offer; `bind_refused`),
+`agency_inbound_offers_total{result,client}` (`declined`: the agent hung up the offer; `bind_refused`; `client`: `web` or `mobile`, the station the offer went to — an older build without `caps=inbound` is never offered one, so it shows up in neither),
 `agency_inbound_overflows_total{reason}` (`max_wait`, `over_cap`, `no_agents`). A caller who reaches nobody leaves through the router's
 `overflow`, which carries out the route's overflow action and answers how the call ends (an
 `InboundCallEnd`: the outcome and, for a voicemail, its recording, threaded to the spine's `end`):
@@ -705,8 +705,15 @@ paths:
   caller's preamble is a reservation too: a device-away queued during it waits behind that call.
 - **An older build's `ready`.** When such a build takes over a session holding an inbound offer or
   a hand-over held through the preamble, the offer is let go right after the attach and before the
-  rehydrate (bounded at 3 s), so its `ready` reports the agent back in the pool, not `reserved` for
-  a call it cannot show.
+  rehydrate (`InboundConnector.onStationCannotTakeInbound`, bounded at 3 s). It first waits for
+  every return of the session to the pool the connector has in flight (a reservation the search
+  or the release hook holds, through its offer or give-back; a give-back; the bind's cancel of an
+  offer to this station, whose timer may fire during the attach), then lets go of what is still
+  held and waits again. So its `ready` reports the agent back in the pool, not `reserved` for a
+  call it cannot show, unless the 3 s bound is hit (then `ready` says what Redis says and the
+  return's own `agent_state` frame follows). An offer refused because the station cannot take
+  inbound calls is `station_incapable`, never `session_busy`: the agent is returned with no read
+  of the call records, so a failed read can never put them on a break.
 - **The app's side (IQ47, built 2026-11-10;** [`mobile.md`](mobile.md) "Inbound calls", "Missed
   calls"). The app connects with `client=mobile&media=alaw8&caps=inbound` on every upgrade and
   follows the console's flow on its station: the offer with the chime once per offer, the call, the
