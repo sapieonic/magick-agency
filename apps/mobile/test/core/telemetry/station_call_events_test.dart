@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/telemetry/call_telemetry.dart';
 import 'package:magick_agency_agent/core/telemetry/telemetry.dart';
 
+import '../inbound/inbound_fixtures.dart';
 import '../softphone/manual_calls.dart';
 import '../station/controller_harness.dart';
 import 'fake_telemetry_sink.dart';
@@ -98,6 +99,81 @@ void main() {
       expect(ended, containsPair('talk_seconds', 29));
       expect(ended, containsPair('media_binary_in', 1));
       app.dispose();
+    });
+  });
+
+  group('inbound calls', () {
+    const reoffered = '2026-11-02T05:31:00.000Z';
+    List<String> inboundNames() => [for (final n in sink.names) if (n.startsWith('agency_inbound_')) n];
+
+    test('offer → connected → ended: offered, connected, ended, from the frames', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered'));
+        app.frame(stationFrame('inbound_call_offered')); // restated: not a second offer
+        app.frame(stationFrame('inbound_call_connected'));
+        app.socket.serverBinary(alaw);
+        app.frame(stationFrame('inbound_call_outcome_owed'));
+        app.frame(stationFrame('inbound_call_settled'));
+        expect(inboundNames(), ['agency_inbound_call_offered', 'agency_inbound_call_connected', 'agency_inbound_call_ended']);
+        expect(sink.last('agency_inbound_call_ended'), containsPair('retired', false));
+        expect(sink.last('agency_inbound_call_ended'), containsPair('media_binary_in', 1));
+        app.dispose();
+      });
+    });
+
+    test('offer → requeued → offered again → connected → ended: two whole funnels, in order', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered'));
+        app.frame(stationFrame('inbound_call_offered', call: {'state': 'queued', 'connects_at': null}));
+        app.frame(stationFrame('inbound_call_offered', call: {'offered_at': reoffered}));
+        app.frame(stationFrame('inbound_call_connected', call: {'offered_at': reoffered}));
+        app.frame(stationFrame('inbound_call_outcome_owed', call: {'offered_at': reoffered}));
+        expect(inboundNames(), [
+          'agency_inbound_call_offered',
+          'agency_inbound_call_ended',
+          'agency_inbound_call_offered',
+          'agency_inbound_call_connected',
+          'agency_inbound_call_ended',
+        ]);
+        expect(sink.last('agency_inbound_call_ended'), containsPair('was_connected', true));
+        app.dispose();
+      });
+    });
+
+    test('a copy the reconnect check retires reports its end, as retired', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered'));
+        app.frame(stationFrame('inbound_call_connected'));
+        app.routes['GET /proxy/agency/inbound/calls/$fixtureCallId'] =
+            (_) => json(404, inboundSample('refusal_call_not_found'));
+        app.socket.serverClose(1006);
+        async.elapse(const Duration(seconds: 5));
+        app.readyFrame('on_call');
+        async.elapse(const Duration(seconds: 3));
+        expect(app.view!.inbound, isNull);
+        expect(inboundNames(), ['agency_inbound_call_offered', 'agency_inbound_call_connected', 'agency_inbound_call_ended']);
+        expect(sink.last('agency_inbound_call_ended'), containsPair('retired', true));
+        expect(sink.last('agency_inbound_call_ended'), containsPair('state', 'connected'));
+        app.dispose();
+      });
+    });
+
+    test('a copy a campaign call drops reports its end, as retired', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered'));
+        app.onCall('att-1');
+        expect(inboundNames(), ['agency_inbound_call_offered', 'agency_inbound_call_ended']);
+        expect(sink.last('agency_inbound_call_ended'), containsPair('retired', true));
+        app.dispose();
+      });
     });
   });
 }

@@ -861,7 +861,7 @@ class StationController extends Notifier<StationView?>
     if (_redialPlacedFor != null && _redialPlacedFor != _station.currentAttemptId) _redialPlacedFor = null;
     if (_redialOverride != null && _redialOverride!.attemptId != _station.wrapup?.attemptId) _redialOverride = null;
     if (_dncOutcome != null && _dncOutcome!.attemptId != _station.currentAttemptId) _dncOutcome = null;
-    _inboundChanged(s);
+    _inboundChanged();
     // The ring's mute belongs to one call: the next one rings again.
     final callId = _station.manualCall?.id;
     if (callId != _ringCallId) {
@@ -1860,7 +1860,7 @@ class StationController extends Notifier<StationView?>
   DateTime get _serverNow => _now().add(Duration(milliseconds: _mapper.appliedOffsetMs));
 
   /// After every change: an inbound call arriving on the station, or leaving it.
-  void _inboundChanged(_Session s) {
+  void _inboundChanged() {
     final prev = _inboundShown;
     final now = _station.inboundOnScreen;
     if (prev?.id == now?.id) {
@@ -1874,6 +1874,9 @@ class StationController extends Notifier<StationView?>
       final held = _station.inboundCall;
       final last = held != null && held.id == prev.id ? held : prev;
       _calls.inboundChanged(last);
+      // Let go of without a copy that left the line (retired by the reconnect check, dropped
+      // by a campaign `reserved`, replaced by another caller's offer): its end, all the same.
+      if (held?.id != prev.id) _calls.inboundLetGo(last);
       final reason = inboundLeftReason(last, _serverNow, dueAt: prev.outcomeDueAt);
       if (reason != null) _setInboundNotice(inboundLeftCopy(reason));
       if (_inboundHangupFailure?.callId == prev.id) _inboundHangupFailure = null;
