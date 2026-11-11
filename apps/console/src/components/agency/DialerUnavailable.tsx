@@ -12,12 +12,12 @@ import styles from './DialerUnavailable.module.css';
  * from inside the product — the capability is a super-admin governance override
  * and the flag is the API's.
  *
- * With either off, `AgentLanding` deliberately falls through to `AppLayout`, and
+ * With either off, `AgentLanding` deliberately falls through to the console shell, and
  * its docstring is right about why: the full-viewport capability screen at
  * `/dialer` has no top bar and therefore no sign-out, so stranding an agent there
  * is worse than the shell. But an `agent` is hierarchy level 5 and inherits no
  * navigation, so what that shell rendered was an empty sidebar around a dashboard
- * of empty panels — **with nothing anywhere saying why**. Every agent we onboarded
+ * of empty panels (in the old `/app` shell) — **with nothing anywhere saying why**. Every agent we onboarded
  * before the tenant was switched on saw a product that looked broken, and the
  * supervisor who invited them had no way to tell that from a bug.
  *

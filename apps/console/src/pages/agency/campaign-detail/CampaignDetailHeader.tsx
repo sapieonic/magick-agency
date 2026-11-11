@@ -215,7 +215,7 @@ export function CampaignDetailHeader({
           reads `?campaign=` and refuses without it. This is the only place in
           the workspace where an id is in scope.
 
-          It leaves the agency shell for a full-viewport console with no way
+          It leaves the console shell for a full-viewport console with no way
           back, so it is styled as a secondary action and says what it does.
         */}
         {canJoinStation && (

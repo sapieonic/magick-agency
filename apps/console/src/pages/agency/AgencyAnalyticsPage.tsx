@@ -24,7 +24,7 @@ import styles from './AgencyAnalyticsPage.module.css';
  * another. The other half of the workspace, beside campaign setup.
  *
  * ── Why this exists, and why the sidebar's old note is now spent ────────────
- * `AgencySidebar` used to carry a comment explaining that the Supervisor
+ * The old agency sidebar used to carry a comment explaining that the Supervisor
  * Dashboard was "deliberately absent rather than present-and-empty", because
  * the API's stats payload produced no `pacing_state`, `stall_reason`, per-agent rows
  * or connect split — and "a health strip with no diagnosis in it is worse than no
@@ -240,8 +240,8 @@ export function AgencyAnalyticsPage() {
        * show the LAST account's campaigns and figures, which is worse than an empty
        * page because it looks like data about the account you are now in.
        *
-       * Unreachable through `AgencyLayout` today, which renders no `Outlet` at all
-       * without an account and keys it by `accountId` so a switch remounts this
+       * Unreachable through the console shell today, which renders no page at all
+       * without an account (`AgencyArea`) and keys it by `accountId` so a switch remounts this
        * page. That makes this defensive — but the correctness of a page should not
        * rest on a parent's gate, and the cost here is three setState calls on a path
        * that renders nothing.

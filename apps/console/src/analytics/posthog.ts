@@ -202,8 +202,9 @@ export function identifyUser(params: IdentifyParams): void {
 }
 
 /**
- * Which shell is mounted — `'ai'` for `AppLayout` (the `/app` zone), `'agency'`
- * for `AgencyLayout`.
+ * Which part of the console shell is open — `'agency'` for the work pages under
+ * `/agency`, `'ai'` for Settings and `/app` (`productSurfaceForPath`). The two
+ * values are the ones the two old shells sent, kept so the series carry on.
  */
 export type ProductSurface = 'ai' | 'agency';
 

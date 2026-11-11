@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
- * "Search a number" in the agency shell's top bar (`docs/customer-history.md` §5):
+ * "Search a number" in the console shell's top bar (`docs/customer-history.md` §5):
  * present for every role holding `agency.customer_history.read`, opening the full
  * box (helper text included) in a panel, closed by Escape with focus back on the
  * button, Tab kept inside while open, and the panel out of analytics' reach.
@@ -12,25 +12,29 @@ import { MemoryRouter } from 'react-router-dom';
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   memberships: [] as unknown[],
+  dialerOn: true,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ memberships: mocks.memberships }) }));
-vi.mock('../../analytics/useProductSurface', () => ({ useProductSurface: vi.fn() }));
-vi.mock('../../components/layout/AgencySidebar', () => ({ AgencySidebar: () => <nav data-testid="sidebar" /> }));
-vi.mock('../../components/layout/TenantSwitcher', () => ({ TenantSwitcher: () => null }));
-vi.mock('../../components/layout/AccountSwitcher', () => ({ AccountSwitcher: () => null }));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (f: string) => mocks.dialerOn && f === 'agency_dialer_enabled', status: 'ready' }),
+}));
+vi.mock('../../contexts/GovernanceContext', () => ({
+  useGovernance: () => ({ isEnabled: (c: string) => mocks.dialerOn && c === 'agency', loading: false }),
+}));
+vi.mock('../../components/layout/ProfileMenu', () => ({ ProfileMenu: () => null }));
 vi.mock('../../api/customerHistory', () => ({
   searchCustomers: vi.fn(),
   getCustomerSearchOptions: vi.fn().mockResolvedValue({ default_country_code: '+91' }),
 }));
 
-import { AgencyLayout } from '../../components/layout/AgencyLayout';
+import { ConsoleTopBar } from '../../components/layout/ConsoleTopBar';
 
-function renderLayout() {
+function renderLayout(path = '/agency/campaigns') {
   render(
-    <MemoryRouter initialEntries={['/agency/campaigns']}>
-      <AgencyLayout />
+    <MemoryRouter initialEntries={[path]}>
+      <ConsoleTopBar />
     </MemoryRouter>,
   );
 }
@@ -40,6 +44,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  mocks.dialerOn = true;
   mocks.useTenant.mockReturnValue({ tenantId: 't', accountId: 'a', accounts: [], role: 'account_admin' });
 });
 
@@ -122,6 +127,17 @@ describe('the top bar search', () => {
   it('is not offered when there is no account to search from', () => {
     mocks.useTenant.mockReturnValue({ tenantId: 't', accountId: null, accounts: [], role: 'account_admin' });
     renderLayout();
+    expect(screen.queryByTestId('customer-search-trigger')).toBeNull();
+  });
+
+  it('is offered on Settings pages too, the shell being one', () => {
+    renderLayout('/settings/notifications');
+    expect(screen.getByTestId('customer-search-trigger')).toBeTruthy();
+  });
+
+  it('is not offered without the dialer, whose account the search reads', () => {
+    mocks.dialerOn = false;
+    renderLayout('/settings/notifications');
     expect(screen.queryByTestId('customer-search-trigger')).toBeNull();
   });
 

@@ -5,7 +5,13 @@ import { SwitcherDropdown } from './SwitcherDropdown';
 import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
 import styles from './AccountSwitcher.module.css';
 
-export function AccountSwitcher() {
+/**
+ * `variant="context"` is the sidebar's context block (decision B28): no box, the tenant small
+ * and muted, the account in bold, each the full width of the sidebar.
+ */
+export function AccountSwitcher({ variant = 'bar' }: { variant?: 'bar' | 'context' } = {}) {
+  const ctx = variant === 'context';
+  const triggerClass = ctx ? `${styles.trigger} ${styles.contextTrigger}` : styles.trigger;
   const { accounts, accountId, setActiveAccountId, accountResolution, reloadAccounts } =
     useTenant();
   const [open, setOpen] = useState(false);
@@ -86,7 +92,7 @@ export function AccountSwitcher() {
   if (accounts.length <= 1) {
     return (
       <>
-        <div className={styles.trigger} style={{ cursor: 'default' }}>
+        <div className={triggerClass} style={{ cursor: 'default' }}>
           <Briefcase className={styles.triggerIcon} />
           <span className={styles.triggerName}>
             {activeAccount?.name ?? 'No account'}
@@ -98,10 +104,10 @@ export function AccountSwitcher() {
   }
 
   return (
-    <div className={styles.switcher} ref={ref} onBlur={handleBlur}>
+    <div className={ctx ? `${styles.switcher} ${styles.contextSwitcher}` : styles.switcher} ref={ref} onBlur={handleBlur}>
       <button
         ref={triggerRef}
-        className={styles.trigger}
+        className={triggerClass}
         onClick={() => setOpen(prev => !prev)}
         type="button"
         aria-expanded={open}

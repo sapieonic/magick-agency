@@ -7,7 +7,7 @@ import { CustomerSearchBox } from './CustomerSearchBox';
 import styles from './CustomerSearchPopover.module.css';
 
 /**
- * "Search a number" in the agency shell's top bar (`docs/customer-history.md` §5).
+ * "Search a number" in the console shell's top bar (`docs/customer-history.md` §5).
  *
  * A button that opens the full box in a panel rather than the box itself: the top
  * bar is one line high, and the box's helper text, live preview and recent

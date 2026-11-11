@@ -153,7 +153,7 @@ export interface AgencyAttemptCallDetail {
  * One attempt and its call — the agency's own call detail.
  *
  * **This is the endpoint that did not exist**, and whose absence is why the
- * agency workspace linked attempt rows out of `AgencyLayout` into the `/app` zone. It
+ * agency workspace linked attempt rows out of it into the old `/app` zone. It
  * is keyed on campaign + attempt rather than on a call id because the attempt is
  * what the reader clicked, it is campaign-scoped so the server can prove ownership from
  * the path, and it outlives the call.

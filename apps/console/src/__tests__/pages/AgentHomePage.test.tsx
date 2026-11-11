@@ -425,18 +425,18 @@ describe('AgentHomePage — who it is for', () => {
 /*
  * NEW in Magick Agency (decision B17): the exit for a viewer/operator on the
  * agent persona read a back link to the old platform; it now reads "Go to settings" and
- * still lands on `/app`, this console's own platform zone. A dedicated agent
+ * lands on the Settings hub in the console shell (decision B28). A dedicated agent
  * gets no exit at all (level 5 has nothing to return to).
  */
 describe('AgentHomePage — the way to settings (B17)', () => {
-  it('offers a viewer with nothing assigned "Go to settings" → /app', async () => {
+  it('offers a viewer with nothing assigned "Go to settings" → /settings', async () => {
     mocks.useTenant.mockReturnValue(tenant({ role: 'viewer' }));
     mocks.getMyAssignments.mockResolvedValue([]);
 
     renderAt();
 
     const link = await screen.findByRole('link', { name: 'Go to settings' });
-    expect(link.getAttribute('href')).toBe('/app');
+    expect(link.getAttribute('href')).toBe('/settings');
   });
 
   it('offers an operator with several campaigns the same exit', async () => {
@@ -449,7 +449,7 @@ describe('AgentHomePage — the way to settings (B17)', () => {
     renderAt();
 
     const link = await screen.findByRole('link', { name: 'Go to settings' });
-    expect(link.getAttribute('href')).toBe('/app');
+    expect(link.getAttribute('href')).toBe('/settings');
   });
 
   it('gives a dedicated agent no exit', async () => {

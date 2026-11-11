@@ -1,4 +1,4 @@
-/* Sized for the dashboard slot INSIDE `AppLayout`, deliberately not full-viewport.
+/* Sized for the page slot INSIDE the console shell, deliberately not full-viewport.
    This renders with the top bar above it — that is the whole reason it lives in
    the shell rather than at `/dialer` — so unlike `AgentHomePage.module.css` it
    must not claim `100vh` or centre itself vertically against a screen it does

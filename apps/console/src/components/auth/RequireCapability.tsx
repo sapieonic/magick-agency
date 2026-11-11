@@ -26,7 +26,7 @@ const KNOWN_CAPABILITY_GATES = new Set<KnownCapabilityGate>([
 
 /**
  * Route guard for a governed capability. Renders a NEUTRAL IN-PLACE screen
- * (inside AppLayout, URL preserved — never a redirect) when the active-context
+ * (inside the console shell, URL preserved — never a redirect) when the active-context
  * map has resolved and the capability is explicitly `false`. While the map is
  * still loading it shows a spinner (not the unavailable screen) to avoid a
  * flash-then-flip; an empty/failed map is fail-open (renders children), since

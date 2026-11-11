@@ -113,7 +113,7 @@ describe('isDedicatedAgent — the predicate that may take navigation away', () 
   /**
    * ── Why this is separate from `agencyPersona`, in one file ────────────────
    * A revision of `AgentLanding` used the persona to decide whether to redirect a
-   * user out of `AppLayout`. Because the agent permissions floor at level 5, that
+   * user out of the old `/app` shell. Because the agent permissions floor at level 5, that
    * sent `viewer` and `operator` to `/dialer` as well — and with the `agency`
    * capability defaulting to off, both landed on a full-viewport capability screen
    * with no navigation and no sign-out, in every tenant without the dialer.

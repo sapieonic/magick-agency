@@ -81,7 +81,7 @@ function useRecentCustomerSearches(store: Storage | undefined): RecentCustomerSe
 }
 
 export interface CustomerSearchBoxProps {
-  /** Where the results open: `/agency/customers` in the agency shell, `/dialer/customers` for an agent. */
+  /** Where the results open: `/agency/customers` in the console shell, `/dialer/customers` for an agent. */
   resultsPath: string;
   /** After a search opened its results (the topbar closes its panel). */
   onSearched?: () => void;

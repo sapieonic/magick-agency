@@ -6,9 +6,9 @@ import { STATION_HISTORY_LINKS } from '../../utils/agencyStationExit';
  * The agent's map, and the one thing that can silently un-map it.
  *
  * An `agent` is hierarchy level 5 and inherits no navigation, so all four agent
- * routes are full-viewport and outside both shells. That leaves this list as the
+ * routes are full-viewport and outside the console shell. That leaves this list as the
  * ONLY statement anywhere in the product of what an agent's screens are — there
- * is no sidebar to fall back on, and `GlobalSearch` lives inside `AppLayout`
+ * is no sidebar to fall back on, and `GlobalSearch` lives inside the console shell,
  * which a dedicated agent never renders.
  */
 

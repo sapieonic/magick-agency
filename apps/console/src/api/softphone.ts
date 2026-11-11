@@ -313,7 +313,7 @@ export async function getSoftphoneSettings(tenantId?: string, accountId?: string
  *
  * **Not in `docs/softphone.md` §6.** The campaign attempt's recording is served
  * by `GET /proxy/agency/campaigns/:id/attempts/:attemptId/recording`, keyed on the
- * attempt so the reader stays in the agency shell; this is the same shape keyed
+ * attempt so the reader stays in the console shell; this is the same shape keyed
  * on the manual call. Refusals read exactly as the attempt's do.
  */
 export async function fetchManualCallRecordingBlobUrl(

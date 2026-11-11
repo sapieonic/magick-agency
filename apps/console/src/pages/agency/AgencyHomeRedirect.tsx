@@ -22,10 +22,10 @@ import { agencyPersona } from '../../utils/agencyPersona';
  *    the way into each.
  *
  * ── Why the agent is sent OUT of this shell rather than served inside it ────
- * `AgencyLayout`'s three nav entries floor at `viewer` or above, so an agent
- * renders its chrome — sidebar, switchers, "Team & settings" — around nothing
- * at all. That is the same empty-shell problem `AgentLanding` exists to prevent at
- * `/app`, and the answer is the same: full-viewport, outside every shell. See
+ * The console shell's work entries floor at `viewer` or above, so an agent
+ * renders its chrome — sidebar, switchers, Settings — around nothing
+ * at all. That is the same empty-shell problem `AgentLanding` exists to prevent on
+ * Settings and `/app`, and the answer is the same: full-viewport, outside every shell. See
  * `AgentHomePage`.
  *
  * A redirect rather than rendering `AgentHomePage` here, so the agent home has ONE
@@ -65,8 +65,8 @@ export function AgencyHomeRedirect() {
    *     staleness window, or `/agency` losing the flag gate, is what would make
    *     this reachable.
    *  2. **It would not be a trap if it were.** This route is `<Route index>`
-   *     inside `AgencyLayout`, so the spinner renders in the shell's outlet, with
-   *     "Team & settings" beside it. That is the difference from the trap
+   *     inside the console shell, so the spinner renders in the shell's outlet, with
+   *     the sidebar and the profile menu's sign-out around it. That is the difference from the trap
    *     `HomeRedirect` had to bound: `/` renders no chrome at all, so a spinner
    *     there has no sign-out in it.
    *

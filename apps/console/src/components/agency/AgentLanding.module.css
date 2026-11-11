@@ -1,5 +1,5 @@
 /* Full-viewport and deliberately empty around the message: this screen renders
-   INSTEAD of `AppLayout`, so there is no sidebar, no top bar and nothing to
+   INSTEAD of the console shell, so there is no sidebar, no top bar and nothing to
    click on. An agent seeing this has one thing to do and it is not on screen. */
 
 .shell {

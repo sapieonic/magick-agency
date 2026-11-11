@@ -91,10 +91,10 @@ describe('agency campaign routes', () => {
 describe('customer history routes', () => {
   const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
 
-  /** The `/agency` block: its children are relative paths inside `AgencyLayout`. */
+  /** The `/agency` block: its children are relative paths inside the console shell's `/agency` route. */
   const agencyBlock = (() => {
     const start = app.indexOf('path="/agency"');
-    const end = app.indexOf('<Route path="/app"');
+    const end = app.indexOf('<Route path="/settings"');
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     return app.slice(start, end);
@@ -139,7 +139,7 @@ describe('customer history routes', () => {
  */
 describe('reports routes', () => {
   const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
-  const agencyBlock = app.slice(app.indexOf('path="/agency"'), app.indexOf('<Route path="/app"'));
+  const agencyBlock = app.slice(app.indexOf('path="/agency"'), app.indexOf('<Route path="/settings"'));
 
   /** The text of one flat route element: from its path to the next `<Route`. */
   const routeAt = (source: string, path: string) => {

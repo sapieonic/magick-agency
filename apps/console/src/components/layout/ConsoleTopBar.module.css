@@ -1,0 +1,93 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--topbar-height);
+  padding: 0 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.menuBtn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  min-height: auto;
+  flex-shrink: 0;
+  transition: color var(--transition);
+}
+
+.menuBtn:hover {
+  color: var(--text-primary);
+}
+
+.breadcrumb {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.crumb a {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.crumb a:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.separator {
+  color: var(--text-muted);
+}
+
+.crumbCurrent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.search {
+  flex-shrink: 0;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .topbar {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .menuBtn {
+    display: flex;
+  }
+
+  /* On a phone the breadcrumb collapses to the current page. */
+  .crumb,
+  .separator {
+    display: none;
+  }
+}

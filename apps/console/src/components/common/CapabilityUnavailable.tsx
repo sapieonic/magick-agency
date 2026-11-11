@@ -3,7 +3,7 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 
 /**
  * Calm, neutral in-place screen shown when a governed capability is turned off
- * for the active account. Rendered INSIDE AppLayout (sidebar intact, URL
+ * for the active account. Rendered INSIDE the console shell (sidebar intact, URL
  * preserved) — never a redirect. Deliberately not an error: no retry, no red
  * styling, and it never names the capability key or the word "governance".
  */

@@ -11,8 +11,8 @@ export interface StationIdentityUser {
 /**
  * Who is on this station, in the header.
  *
- * The console is full-viewport and outside every shell, so there is no TopBar
- * avatar to read. A shared seat, a supervisor covering a shift, or an agent
+ * The console is full-viewport and outside every shell, so there is no profile
+ * menu to read. A shared seat, a supervisor covering a shift, or an agent
  * who just sat down at the next desk all need the same fact: whose session
  * this is. Display-only — a button here would compete with the station menu
  * beside it, and one of those items ends the session.

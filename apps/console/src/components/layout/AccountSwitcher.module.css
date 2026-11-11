@@ -109,3 +109,38 @@
   height: 0.85rem;
   flex-shrink: 0;
 }
+
+/* The sidebar's context block (decision B28). */
+.contextSwitcher {
+  width: 100%;
+}
+
+.contextTrigger,
+.contextTrigger:hover {
+  width: 100%;
+  max-width: none;
+  background: none;
+  border-color: transparent;
+  padding: 2px 4px;
+}
+
+button.contextTrigger:hover {
+  background: var(--bg-tertiary);
+}
+
+.contextTrigger .triggerName {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.contextTrigger {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .contextTrigger {
+    max-width: none;
+  }
+}

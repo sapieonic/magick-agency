@@ -7,24 +7,18 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { hasPermission, type Permission } from '../../../utils/permissions';
-import { WorkspaceExit } from '../../../components/agency/WorkspaceExit';
 import styles from '../AgencyCampaignsPage.module.css';
 
 interface Shortcut {
   label: string;
   hint: string;
-  /** An in-shell path, or `exit` for the platform zone (see below). */
   to: string;
   icon: LucideIcon;
   permission: Permission;
 }
 
 /* Gated on the same floors as the sidebar entries they mirror, so the rail never
-   offers a destination whose first request 403s.
-
-   Team is the platform zone, so it leaves through `WorkspaceExit` with its default
-   destination: the platform home sends a `user.invite` holder, the only reader
-   shown this entry, straight to Team. */
+   offers a destination whose first request 403s. Team is in the Settings hub. */
 const SHORTCUTS: Shortcut[] = [
   {
     label: 'Analytics',
@@ -43,7 +37,7 @@ const SHORTCUTS: Shortcut[] = [
   {
     label: 'Team',
     hint: 'Invite agents and supervisors',
-    to: 'exit',
+    to: '/settings/team',
     icon: Users,
     permission: 'user.invite',
   },
@@ -73,13 +67,9 @@ export function Shortcuts({ role }: { role: Parameters<typeof hasPermission>[0] 
           );
           return (
             <li key={s.label}>
-              {s.to === 'exit' ? (
-                <WorkspaceExit className={styles.shortcut}>{body}</WorkspaceExit>
-              ) : (
-                <Link to={s.to} className={styles.shortcut}>
-                  {body}
-                </Link>
-              )}
+              <Link to={s.to} className={styles.shortcut}>
+                {body}
+              </Link>
             </li>
           );
         })}

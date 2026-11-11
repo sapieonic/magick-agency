@@ -41,9 +41,9 @@ import styles from '../../components/agency/customers/CustomerHistory.module.css
  * Customer history (`docs/customer-history.md`): one phone number, every
  * interaction with it in the accounts the caller can see.
  *
- * Served twice: at `/agency/customers` inside the agency shell, and at
+ * Served twice: at `/agency/customers` inside the console shell, and at
  * `/dialer/customers` in the agent's own frame (`AgentSurfaceShell`), because an
- * `agent` is below every entry of the agency shell (CH1: everyone can search).
+ * `agent` is below every entry of the console shell (CH1: everyone can search).
  *
  * ── The number is never in the URL (CH6) ───────────────────────────────────
  * The page's address carries no number and no query. The search box puts only

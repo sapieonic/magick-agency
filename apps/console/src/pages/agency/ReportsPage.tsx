@@ -17,9 +17,9 @@ import styles from '../../components/agency/reports/Reports.module.css';
  * Reports (`docs/reports.md`): the History of runs and, for supervisors, the
  * Subscriptions that produce them on a schedule.
  *
- * Served twice, like customer history: at `/agency/reports` in the agency shell, and
+ * Served twice, like customer history: at `/agency/reports` in the console shell, and
  * at `/dialer/reports` in a dedicated agent's own frame (`AgentSurfaceShell`),
- * because an `agent` is below every entry of the agency shell. A dedicated agent who
+ * because an `agent` is below every entry of the console shell. A dedicated agent who
  * opens the agency path (a shared link) is sent to their own.
  *
  * Both routes sit inside the dialer gate and the `agency_reports_enabled` flag gate;

@@ -24,6 +24,7 @@ const GATED_PATHS = [
   '/dialer/attempts',
   '/dialer/phone',
   '/agency',
+  '/settings',
   '/app',
   '*',
 ];

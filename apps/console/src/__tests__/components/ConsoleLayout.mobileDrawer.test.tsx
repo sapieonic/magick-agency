@@ -3,32 +3,33 @@ import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-libra
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 /**
- * AppLayout — mobile navigation drawer lifecycle. Covers: the closed
+ * ConsoleLayout (decision B28) — the mobile navigation drawer lifecycle, carried over from the
+ * old `/app` shell, which now applies to every page of the console. Covers: the closed
  * drawer being pulled out of the mobile focus/accessibility tree, the open drawer
  * isolating background content and trapping focus, Escape/overlay/close/route
  * selection all closing it and restoring focus, and the toggle reporting its
  * expanded/controlled state.
  */
 
+const layoutMocks = vi.hoisted(() => ({ useProductSurface: vi.fn() }));
+
 vi.mock('../../hooks/usePostHogIdentify', () => ({ usePostHogIdentify: () => {} }));
-vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'user-1', display_name: 'Test User', email: 't@example.com' }, loading: false }),
-}));
+vi.mock('../../analytics/useProductSurface', () => ({ useProductSurface: layoutMocks.useProductSurface }));
 vi.mock('../../contexts/TenantContext', () => ({
   useTenant: () => ({ tenantId: 'tenant-1', accountId: 'account-1' }),
 }));
-vi.mock('../../contexts/ThemeContext', () => ({
-  useTheme: () => ({ theme: 'dark', toggleTheme: vi.fn() }),
+vi.mock('../../components/layout/ConsoleTopBar', () => ({
+  ConsoleTopBar: ({ onMenuClick, menuExpanded, menuControls }: { onMenuClick?: () => void; menuExpanded?: boolean; menuControls?: string }) => (
+    <button type="button" aria-label="Toggle menu" aria-expanded={menuExpanded} aria-controls={menuControls} onClick={onMenuClick} />
+  ),
 }));
-vi.mock('../../components/layout/TenantSwitcher', () => ({ TenantSwitcher: () => null }));
-vi.mock('../../components/layout/AccountSwitcher', () => ({ AccountSwitcher: () => null }));
-vi.mock('../../components/common/GlobalSearch', () => ({ GlobalSearch: () => null }));
+vi.mock('../../components/common/GlobalSearch', () => ({ GlobalSearch: () => <div data-testid="global-search" /> }));
 
-// Sidebar's own contents (nav sections, permissions, governance...) aren't under
+// The sidebar's own contents (sections, permissions, governance...) aren't under
 // test here — stand in with two focusable controls so the drawer's focus trap
 // and "route selection closes it" behavior can be exercised generically.
-vi.mock('../../components/layout/Sidebar', () => ({
-  Sidebar: ({ onClose }: { onClose?: () => void }) => (
+vi.mock('../../components/layout/ConsoleSidebar', () => ({
+  ConsoleSidebar: ({ onClose }: { onClose?: () => void }) => (
     <div>
       <button type="button" onClick={onClose}>Close menu</button>
       <a href="#calls" onClick={onClose}>Calls</a>
@@ -36,7 +37,7 @@ vi.mock('../../components/layout/Sidebar', () => ({
   ),
 }));
 
-import { AppLayout } from '../../components/layout/AppLayout';
+import { ConsoleLayout } from '../../components/layout/ConsoleLayout';
 
 const MOBILE_MEDIA = '(max-width: 768px)';
 
@@ -49,12 +50,13 @@ function mockMatchMedia(isMobile: boolean) {
   }));
 }
 
-function renderLayout() {
+function renderLayout(path = '/settings/team') {
   return render(
-    <MemoryRouter initialEntries={['/app']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/app" element={<AppLayout />}>
-          <Route index element={<div>Dashboard content</div>} />
+        <Route element={<ConsoleLayout />}>
+          <Route path="/settings/team" element={<div>Dashboard content</div>} />
+          <Route path="/agency/campaigns" element={<div>Dashboard content</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -62,7 +64,7 @@ function renderLayout() {
 }
 
 function getDrawer() {
-  return document.getElementById('app-mobile-sidebar')!;
+  return document.getElementById('console-mobile-sidebar')!;
 }
 
 function getToggle() {
@@ -74,7 +76,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('AppLayout — mobile drawer', () => {
+describe('ConsoleLayout — mobile drawer', () => {
   beforeEach(() => mockMatchMedia(true));
 
   it('starts closed, inert, and out of the a11y tree, with the toggle reporting collapsed state', () => {
@@ -85,7 +87,7 @@ describe('AppLayout — mobile drawer', () => {
 
     const toggle = getToggle();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle.getAttribute('aria-controls')).toBe('app-mobile-sidebar');
+    expect(toggle.getAttribute('aria-controls')).toBe('console-mobile-sidebar');
   });
 
   it('opening isolates the background, un-inerts the drawer, and reports expanded', async () => {
@@ -170,7 +172,7 @@ describe('AppLayout — mobile drawer', () => {
   });
 });
 
-describe('AppLayout — desktop (no drawer semantics)', () => {
+describe('ConsoleLayout — desktop (no drawer semantics)', () => {
   beforeEach(() => mockMatchMedia(false));
 
   it('never marks the sidebar inert and does not apply dialog semantics', () => {
@@ -178,5 +180,25 @@ describe('AppLayout — desktop (no drawer semantics)', () => {
     const drawer = getDrawer();
     expect(drawer.inert).toBe(false);
     expect(drawer.getAttribute('role')).toBeNull();
+  });
+});
+
+describe('ConsoleLayout — one shell for both zones', () => {
+  beforeEach(() => mockMatchMedia(false));
+
+  it('mounts the ⌘K palette on every page, Settings and work alike', () => {
+    renderLayout('/settings/team');
+    expect(screen.getByTestId('global-search')).toBeTruthy();
+    cleanup();
+    renderLayout('/agency/campaigns');
+    expect(screen.getByTestId('global-search')).toBeTruthy();
+  });
+
+  it("claims 'agency' on the work pages and 'ai' on Settings, as the two old shells did", () => {
+    renderLayout('/agency/campaigns');
+    expect(layoutMocks.useProductSurface).toHaveBeenLastCalledWith('agency');
+    cleanup();
+    renderLayout('/settings/team');
+    expect(layoutMocks.useProductSurface).toHaveBeenLastCalledWith('ai');
   });
 });

@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { ListChecks, Phone, Plus, Upload, UserPlus, type LucideIcon } from 'lucide-react';
-import { WorkspaceExit } from '../../../components/agency/WorkspaceExit';
 import { Rules } from './Shortcuts';
 import styles from '../AgencyCampaignsPage.module.css';
 
@@ -48,12 +47,11 @@ export function GetStarted({ canCreate, canInvite }: { canCreate: boolean; canIn
               <Plus size={16} aria-hidden="true" />
               New campaign
             </Link>
-            {/* Lands on Team: see the note on `SHORTCUTS`. */}
             {canInvite && (
-              <WorkspaceExit className="btn-secondary">
+              <Link to="/settings/team" className="btn-secondary">
                 <UserPlus size={16} aria-hidden="true" />
                 Invite agents
-              </WorkspaceExit>
+              </Link>
             )}
           </div>
         )}

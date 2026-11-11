@@ -6,12 +6,13 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 
 /**
  * Where the app root goes: `/agency` when the agency dialer is switched on for
- * the account (`agency_dialer_enabled`), otherwise `/app`, the platform zone
- * (team, notifications, call summaries).
+ * the account (`agency_dialer_enabled`), otherwise `/app`, whose index
+ * (`AppHomeRedirect`) tells a dedicated agent the dialer is off and sends anyone
+ * else to Settings. Both are inside the one console shell (decision B28).
  *
  * ── Fail safe, and which way "safe" points ─────────────────────────────────
  * A wrong redirect strands a paying customer outside the workspace they opened; a
- * missing one leaves them on `/app`, which still has navigation. So only positive
+ * missing one leaves them on `/app`, which still has the shell and its navigation. So only positive
  * knowledge redirects. `/agency` is gated on `agency_dialer_enabled`, so
  * redirecting without it would land the reader on a plan-gate refusal with no
  * shell around it. `useFeatureFlags` fails closed, which makes that free.
@@ -27,7 +28,8 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
  * meet a bare full-viewport spinner with no top bar and so no way to sign out.
  *
  * Hence the bound: **no tenant means nothing to decide about**, so this lands on
- * `/app`, which renders `AppLayout`, which has a `TopBar` with a sign-out in it.
+ * `/settings` (Profile, which needs no tenant), inside the console shell, whose
+ * top bar has a sign-out in it. Not `/app`: its index waits on the same flags.
  * `tenants` comes from `useAuth` rather than from `TenantContext` because
  * `tenantId === null` is equally the state of a cold entry, for the one render
  * before the auto-select effect fires. `RequireAuth` renders this component only
@@ -49,11 +51,9 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
  * must keep doing so; the API's 403 is the real enforcement.
  *
  * ── Why the root and not `/app`'s index route ──────────────────────────────
- * `AgencyLayout` links back to `/app` for the platform zone, and that link has to
- * survive. A redirect on `/app` would bounce that exit straight back into
- * `/agency`, leaving the platform zone unreachable. The root is the only place the
- * decision can be made once, on arrival, without contradicting an intent the
- * reader has already expressed by clicking something.
+ * `/app` is where the workspace invite and the catch-all land, and its index
+ * keeps the dedicated agent's dialer-off notice. Deciding here, once, on arrival,
+ * keeps the two from contradicting each other.
  */
 
 export function HomeRedirect() {
@@ -68,7 +68,7 @@ export function HomeRedirect() {
    * `'loading'` for the whole session, on a page with no way to sign out.
    */
   if (tenants.length === 0) {
-    return <Navigate to="/app" replace />;
+    return <Navigate to="/settings" replace />;
   }
 
   if (loading || status === 'loading') {

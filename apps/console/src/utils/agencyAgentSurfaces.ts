@@ -2,9 +2,9 @@
  * The three screens a dedicated agent has, named in one place.
  *
  * ── Why this list exists ───────────────────────────────────────────────────
- * An `agent` is hierarchy level 5 and inherits NO navigation: `AppLayout`'s nav
- * floors at `viewer` and `AgencyLayout`'s entries floor higher still, so all four
- * agent routes are full-viewport and outside both shells. That is right — a
+ * An `agent` is hierarchy level 5 and inherits NO navigation: the console shell's
+ * entries floor at `viewer` or higher, so all four
+ * agent routes are full-viewport and outside the console shell. That is right — a
  * sidebar rendered around nothing is noise, and an escape hatch beside a live
  * call is a misclick that hangs up on a customer.
  *
@@ -79,7 +79,7 @@ export const SOFTPHONE_SURFACE: AgentSurface = { id: 'phone', to: '/dialer/phone
 /**
  * Customer history (`docs/customer-history.md`): search one number and see every
  * call to it. Every agent may search (CH1, `agency.customer_history.read` floors at
- * `agent`), and the agency shell's top-bar box is out of an agent's reach, so the
+ * `agent`), and the console shell's top-bar box is out of an agent's reach, so the
  * page is served here too. Kept out of {@link AGENT_SURFACES} for the soft phone's
  * reasons: it is gated by a permission, and it is a tool, not a "My …" history.
  * Last, after the agent's own screens.

@@ -500,13 +500,11 @@ describe('AgencyCampaignsPage — the rail', () => {
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([DRAFT]));
   });
 
-  it('gives an account admin the Team door, through the platform home', async () => {
+  it('gives an account admin the Team door, in Settings', async () => {
     renderPage();
     const team = await screen.findByRole('link', { name: /Team/ });
-    // `/app`, not `/app/team`: the agency shell may name the platform zone only
-    // through `WorkspaceExit`, and the platform home sends a `user.invite`
-    // holder to Team.
-    expect(team.getAttribute('href')).toBe('/app');
+    // Team is in the Settings hub, inside the same shell (decision B28).
+    expect(team.getAttribute('href')).toBe('/settings/team');
     expect(screen.getByRole('link', { name: /Analytics/ }).getAttribute('href')).toBe('/agency/analytics');
   });
 

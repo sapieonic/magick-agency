@@ -47,7 +47,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * ─── THE AGENCY'S OWN CALL DETAIL ───────────────────────────────────────────
  *
  * The page that did not exist. Clicking a call inside the agency workspace used
- * to navigate to `/app/calls/dialer/history/:id` — out of `AgencyLayout`, into the
+ * to navigate to `/app/calls/dialer/history/:id` — out of the agency workspace, into the
  * `/app` zone, gated on a `calls.dialer` capability, with the campaign context and the list the reader was reading both
  * gone. The link pointed there because that was the only place the endpoint
  * existed.

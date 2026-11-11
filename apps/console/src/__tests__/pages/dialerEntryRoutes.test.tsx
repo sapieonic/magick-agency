@@ -18,7 +18,7 @@ import { resolve } from 'node:path';
  * component itself:
  *
  *  1. the route EXISTS at that exact path — a rename breaks every bookmark;
- *  2. it sits OUTSIDE `AppLayout`, whose nav floors at `viewer`; an `agent` is
+ *  2. it sits OUTSIDE the console shell, whose nav floors at `viewer`; an `agent` is
  *     level 5 and would render the shell's chrome around nothing;
  *  3. it is gated exactly like `/station` — same capability, same flag, both
  *     default off — so it cannot become a way around the entitlement that hides
@@ -27,24 +27,26 @@ import { resolve } from 'node:path';
 describe('the agency entry points', () => {
   const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
 
-  /** The `/app` block, whose children are the ones inside `AppLayout`. */
+  /**
+   * The console shell's block (decision B28): the pathless layout route whose children are
+   * `/agency`, `/settings` and `/app`, up to the catch-all, the next top-level route.
+   */
   const appLayoutBlock = (() => {
-    const start = app.indexOf('<Route path="/app"');
+    const start = app.indexOf('<Route element={<RequireAuth><ConsoleShell /></RequireAuth>}>');
     expect(start).toBeGreaterThan(-1);
-    // Up to the super-admin section, which is the next top-level route group.
-    // The console has no super-admin section (it is
-    // its own app), so the `/app` block ends at the catch-all, the next
-    // top-level route.
-    const end = app.indexOf('<Route path="*"');
+    const end = app.indexOf('<Route path="*" element={<Navigate');
     expect(end).toBeGreaterThan(start);
-    return app.slice(start, end);
+    const block = app.slice(start, end);
+    // Not vacuous: the block really holds the shell's three children.
+    for (const path of ['/agency', '/settings', '/app']) expect(block).toContain(`path="${path}"`);
+    return block;
   })();
 
   it('declares /dialer', () => {
     expect(app).toContain('path="/dialer"');
   });
 
-  it('keeps /dialer OUT of AppLayout, where an agent would get an empty shell', () => {
+  it('keeps /dialer OUT of the console shell, where an agent would get an empty shell', () => {
     // The gate that would be invisible in review: nesting it under `/app` compiles,
     // renders, and hands every agent a sidebar with nothing in it.
     expect(appLayoutBlock).not.toContain('path="/dialer"');
@@ -89,12 +91,11 @@ describe('the agency entry points', () => {
     expect(app).toContain('path="/dialer/performance"');
   });
 
-  it('keeps /dialer/performance OUT of AppLayout too', () => {
+  it('keeps /dialer/performance OUT of the console shell too', () => {
     /**
      * Same defect as `/dialer`, same invisibility in review: nesting it under
-     * `/app` compiles, renders, and hands every `agent` a sidebar with nothing in
-     * it. `AgencyLayout` would be no better — its three nav entries also floor at
-     * `viewer` or above.
+     * the console shell compiles, renders, and hands every `agent` a sidebar with
+     * nothing in it: its work entries floor at `viewer` or above.
      */
     expect(appLayoutBlock).not.toContain('path="/dialer/performance"');
     expect(appLayoutBlock).not.toContain('path="dialer/performance"');
@@ -128,11 +129,11 @@ describe('the agency entry points', () => {
     expect(app).toContain('path="/dialer/attempts"');
   });
 
-  it('keeps /dialer/attempts OUT of AppLayout too', () => {
+  it('keeps /dialer/attempts OUT of the console shell too', () => {
     /**
      * Same defect as `/dialer` and `/dialer/performance`, and just as invisible in
-     * review: nesting it under `/app` compiles, renders, and hands every `agent` a
-     * sidebar with nothing in it. `AgencyLayout` would be no better — its nav
+     * review: nesting it under the console shell compiles, renders, and hands every
+     * `agent` a sidebar with nothing in it — its nav
      * entries also floor at `viewer` or above.
      */
     expect(appLayoutBlock).not.toContain('path="/dialer/attempts"');
@@ -164,7 +165,7 @@ describe('the agency entry points', () => {
     /**
      * The house rule is that a new page joins `GlobalSearch`'s list, and this is
      * the documented exception rather than a forgotten step. `GlobalSearch` lives
-     * in `TopBar`, inside `AppLayout` — so a dedicated `agent`, who never renders
+     * in the console shell — so a dedicated `agent`, who never renders
      * that shell, could never find the entry, while everyone who could is a
      * supervisor or above and must not be sent to their own agent numbers. The
      * link on `AgentHomePage` is the entry point instead.
@@ -181,7 +182,7 @@ describe('the agency entry points', () => {
      * `AgentPerformancePage` made this call first and pinned it; "My calls"
      * follows the precedent rather than re-litigating it. The reasoning is
      * unchanged and is not about this page's contents: `GlobalSearch` lives in
-     * `TopBar`, inside `AppLayout`, which a dedicated `agent` never renders — so
+     * the console shell, which a dedicated `agent` never renders — so
      * the entry would be invisible to the only audience it is for, while everybody
      * who COULD find it there is a supervisor or above and must not be sent to an
      * agent-scoped page. Their surface is the per-agent section on

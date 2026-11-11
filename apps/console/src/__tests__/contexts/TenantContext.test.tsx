@@ -376,7 +376,7 @@ describe('account resolution', () => {
   });
 
   it('treats an empty account list as resolved, not as a failure', async () => {
-    // A tenant can genuinely have no accounts, and `AgencyLayout` already has copy
+    // A tenant can genuinely have no accounts, and `AgencyArea` already has copy
     // for it. Reporting it as an error would put a Retry button in front of a
     // state that retrying cannot change.
     setupAuth([TENANT_A], [TENANT_MEMBERSHIP], []);

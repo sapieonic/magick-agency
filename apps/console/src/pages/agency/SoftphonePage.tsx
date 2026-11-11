@@ -44,7 +44,7 @@ export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
  * `/dialer/phone` — the soft phone for an agent who is not on a campaign
  * (`docs/softphone.md` §2, §7).
  *
- * Full-viewport and outside both shells, gated like `/station`; the page reads
+ * Full-viewport and outside the console shell, gated like `/station`; the page reads
  * `agency_softphone_enabled` itself rather than through `RequireFlag`, because
  * the flag turned off must not take a call away from the agent on it: with the
  * flag off it rehydrates only a soft-phone session that already exists in this

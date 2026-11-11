@@ -5,16 +5,16 @@ import { clearProductSurface, setProductSurface, type ProductSurface } from './p
  * Tag every event fired inside this shell with the product it belongs to.
  *
  * ── Why the shell and not the call sites ────────────────────────────────────
- * The event catalog is flat, so without a product axis the same event from the
- * `/app` zone and from the agency shell lands in one bucket with nothing to
+ * The event catalog is flat, so without a product axis the same event from
+ * Settings and from the agency work pages lands in one bucket with nothing to
  * separate them. The axis cannot be added at the call sites: there are around 200
  * of them, and autocapture, pageviews and error events have no call site at
  * all. The shell is the one place that knows the answer for everything mounted
  * under it, which is exactly what a super property is for.
  *
- * Used by `AppLayout` (`'ai'`), `AgencyLayout` (`'agency'`), and — through
- * `ProductSurface` — the four agency routes that are deliberately full-viewport
- * and OUTSIDE both shells (`/station`, `/dialer`, `/dialer/performance`,
+ * Used by `ConsoleLayout` (`'agency'` or `'ai'` by path, `productSurfaceForPath`),
+ * and — through `ProductSurface` — the agency routes that are deliberately
+ * full-viewport and OUTSIDE the console shell (`/station`, `/dialer`, `/dialer/performance`,
  * `/dialer/attempts`). Those are the reason a component form exists: they are
  * agency events with no layout to attribute them, so a strictly shell-set rule
  * left the agent station — dispositions, mid-call DNC marks — reporting no

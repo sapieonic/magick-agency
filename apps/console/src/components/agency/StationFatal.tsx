@@ -47,7 +47,7 @@ export function StationFatal({
         {/*
           ── This screen used to be a trap, and it is the common one ─────────
           It returns before the header, so there is no `StationMenu`, no nav,
-          and no sidebar (the console is full-viewport, outside `AppLayout`).
+          and no sidebar (the console is full-viewport, outside the console shell).
           An assigned agent whose campaign is paused or stopped is refused
           here — and every route back (`/app`, `/`, the catch-all) resolves
           their assignment and returns them to this same screen. The only

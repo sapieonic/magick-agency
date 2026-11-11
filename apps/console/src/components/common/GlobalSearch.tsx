@@ -19,38 +19,25 @@ interface PageEntry {
   permission?: Permission;
 }
 
-// The page directory: the agency workspace, Team, Accounts and Notifications, plus
-// `Call Summaries` for the analysis profiles page (gated on the
-// `agency_call_analysis` flag and `agency.analytics` capability, as its route is).
+// The page directory: the agency work pages and the Settings hub's entries, each gated as its
+// route or sidebar entry is. Mounted in the console shell, so ⌘K works on every page of it.
 const PAGES: PageEntry[] = [
-  // Agency Dialer. These live OUTSIDE `/app` in their own workspace shell, so
-  // selecting one leaves the main app — which is exactly what the sidebar's
-  // "Switch to Magick Agency" control does, and why they belong here rather
-  // than being unreachable by search. Gated identically to that control.
   { label: 'Agency Campaigns', path: '/agency/campaigns', section: 'Agency', keywords: ['agency', 'dialer', 'campaign', 'power dial', 'outbound', 'agent'], flag: 'agency_dialer_enabled', capability: 'agency' },
   { label: 'New Agency Campaign', path: '/agency/campaigns/new', section: 'Agency', keywords: ['agency', 'dialer', 'campaign', 'new', 'create', 'roster', 'upload'], flag: 'agency_dialer_enabled', capability: 'agency' },
-  // DNC suppresses agency dialing and nothing else. The label carries that scope
-  // because this result is reached from inside the `/app` zone, where no shell
-  // supplies it; and `compliance` / `opt out` are gone, because someone typing
-  // those is asking a wider question than this page answers. Offering it as the
-  // answer is the misreading.
-  //
-  // So this reads "Agency Do Not Call" while the page's own `<h1>` and the
-  // agency sidebar entry both say "Do Not Call". The divergence is a decision,
-  // not drift: inside `/agency` the shell IS the scope and repeating it in the
-  // heading is noise, whereas the command palette opens over any page in the
-  // `/app` zone, where a bare "Do Not Call" reads as tenant-wide.
+  // DNC suppresses agency dialling and nothing else. The label carries that scope because
+  // the palette opens over Settings too, where a bare "Do Not Call" reads as tenant-wide;
+  // `compliance` / `opt out` are left out because someone typing those is asking a wider
+  // question than this page answers.
   { label: 'Agency Do Not Call', path: '/agency/dnc', section: 'Agency', keywords: ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'agency', 'dialing'], flag: 'agency_dialer_enabled', capability: 'agency' },
-  { label: 'Team', path: '/app/team', section: 'Admin', keywords: ['team', 'member', 'invite'] },
-  // Gated like its sidebar entry: only the roles that can create accounts have anything
+  { label: 'Team', path: '/settings/team', section: 'Settings', keywords: ['team', 'member', 'invite'] },
+  // Gated like its Settings entry: only the roles that can create accounts have anything
   // to do there; everyone else moves between accounts with the switcher.
-  { label: 'Accounts', path: '/app/accounts', section: 'Admin', keywords: ['account', 'accounts', 'new account', 'create account'], permission: 'account.create' },
-  // No `capability` and no permission: the page manages the signed-in person's
-  // own email subscriptions. "unsubscribe" is in the keywords because that is
-  // the word somebody reaches for search with when a digest arrives they did
-  // not want.
-  { label: 'Notifications', path: '/app/notifications', section: 'Admin', keywords: ['notification', 'email', 'digest', 'summary', 'unsubscribe', 'alert'] },
-  { label: 'Call Summaries', path: '/app/call-summaries', section: 'Admin', keywords: ['summary', 'summaries', 'analysis', 'transcript', 'sentiment', 'profile'], flag: 'agency_call_analysis', capability: 'agency.analytics' },
+  { label: 'Accounts', path: '/settings/accounts', section: 'Settings', keywords: ['account', 'accounts', 'new account', 'create account'], permission: 'account.create' },
+  // No `capability` and no permission: the page manages the signed-in person's own email
+  // subscriptions. "unsubscribe" is in the keywords because that is the word somebody
+  // reaches for search with when a digest arrives they did not want.
+  { label: 'Email notifications', path: '/settings/notifications', section: 'Settings', keywords: ['notification', 'email', 'digest', 'summary', 'unsubscribe', 'alert'] },
+  { label: 'Call Summaries', path: '/settings/call-summaries', section: 'Settings', keywords: ['summary', 'summaries', 'analysis', 'transcript', 'sentiment', 'profile'], flag: 'agency_call_analysis', capability: 'agency.analytics' },
 ];
 
 export function GlobalSearch() {

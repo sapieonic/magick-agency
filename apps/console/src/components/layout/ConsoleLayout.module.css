@@ -1,6 +1,28 @@
+.skipLink {
+  position: absolute;
+  top: -100%;
+  left: 16px;
+  z-index: 10000;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: white;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+
+.skipLink:focus {
+  top: 8px;
+  color: white;
+}
+
 .layout {
   display: flex;
   height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   /* clip, not just hidden: an overflow: hidden box can still be scrolled by
      focus() or scrollIntoView, so a popover poking past the right edge would
      slide the whole page under the fixed sidebar. clip cannot be scrolled. */
@@ -13,6 +35,7 @@
   flex-shrink: 0;
   width: var(--sidebar-width);
   height: 100vh;
+  height: 100dvh;
   position: fixed;
   left: 0;
   top: 0;
@@ -24,63 +47,35 @@
   margin-left: var(--sidebar-width);
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden; /* clip: see .layout */
+  overflow: clip;
 }
 
 .topbar {
   flex-shrink: 0;
   height: var(--topbar-height);
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
-}
-
-.menuBtn {
-  display: none;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  padding: 6px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  min-height: auto;
-}
-
-.backLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: var(--radius);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  text-decoration: none;
-  transition: all var(--transition);
-}
-
-.backLink:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-}
-
-.topbarRight {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
 
 .content {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
   overflow-y: auto;
-  padding: 24px;
+  padding: 24px 24px max(24px, env(safe-area-inset-bottom));
+  scroll-padding-bottom: max(24px, env(safe-area-inset-bottom));
 }
 
+.overlay {
+  display: none;
+}
+
+/* An agency page with no account to scope it to (`AgencyArea`). */
 .noAccount {
   max-width: 520px;
   margin: 64px auto;
@@ -100,10 +95,6 @@
   color: var(--text-secondary);
 }
 
-.overlay {
-  display: none;
-}
-
 @media (max-width: 768px) {
   .sidebar {
     transform: translateX(-100%);
@@ -118,38 +109,32 @@
     margin-left: 0;
   }
 
-  .menuBtn {
-    display: flex;
-  }
-
   .content {
-    padding: 16px;
-  }
-
-  /* The label is the first thing to go — the icon stays, and the link keeps its aria-label. */
-  .backLink span {
-    display: none;
+    padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+    scroll-padding-bottom: max(16px, env(safe-area-inset-bottom));
   }
 
   .overlay {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 99;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 90;
+    backdrop-filter: blur(2px);
   }
 }
 
 /*
   Print (the campaign Insights tab's Print button, or the browser's own): the
   page without the shell. No sidebar, no top bar, and the fixed-height,
-  overflow-hidden frame released so the content runs onto as many pages as it
+  overflow-clipped frame released so the content runs onto as many pages as it
   needs instead of being clipped to one screen.
 */
 @media print {
   .sidebar,
   .topbar,
-  .overlay {
+  .overlay,
+  .skipLink {
     display: none !important;
   }
 

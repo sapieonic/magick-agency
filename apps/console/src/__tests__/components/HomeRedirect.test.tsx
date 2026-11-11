@@ -163,6 +163,8 @@ describe('HomeRedirect', () => {
     mocks.useGovernance.mockReturnValue({ map: agencyOnlyMap(), loading: false });
     mocks.useFeatureFlags.mockReturnValue({ isEnabled: () => false, status: 'ready' });
     renderRoot();
+    // `/app`'s index then tells a dedicated agent the dialer is off, and sends anyone else
+    // to Settings.
     expect(landsOn()).toBe('/app');
   });
 
@@ -186,12 +188,14 @@ describe('HomeRedirect', () => {
      * the life of the session — nothing can ever set the tenant that every other
      * exit needs. Waiting on that renders a full-viewport spinner at a URL with no
      * top bar, so no sign-out: a user whose only membership was revoked could not
-     * even leave. `/app` renders `AppLayout`, which has one.
+     * even leave. The console shell, which `/settings` renders, has one.
      */
     mocks.useAuth.mockReturnValue({ tenants: [] });
     mocks.useFeatureFlags.mockReturnValue({ isEnabled: () => true, status: 'loading' });
     renderRoot();
-    expect(landsOn()).toBe('/app');
+    // Settings (Profile needs no tenant), inside the console shell with its sign-out; not
+    // `/app`, whose index waits on the same flags.
+    expect(landsOn()).toBe('/settings');
     expect(screen.queryByRole('status')).toBeNull();
   });
 
@@ -204,7 +208,7 @@ describe('HomeRedirect', () => {
     mocks.useAuth.mockReturnValue({ tenants: [] });
     mocks.useGovernance.mockReturnValue({ map: agencyOnlyMap(), loading: true });
     renderRoot();
-    expect(landsOn()).toBe('/app');
+    expect(landsOn()).toBe('/settings');
     expect(screen.queryByRole('status')).toBeNull();
   });
 });

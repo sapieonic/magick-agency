@@ -24,17 +24,17 @@ describe('dialer call-analysis registration', () => {
     );
   });
 
-  it('requires both gates before Call Summaries appears in Sidebar and GlobalSearch', () => {
-    const sidebar = source('../../components/layout/Sidebar.tsx');
+  it('requires both gates before Call summaries appears in the Settings hub and GlobalSearch', () => {
+    const nav = source('../../utils/consoleNav.ts');
     const search = source('../../components/common/GlobalSearch.tsx');
 
-    expect(sidebar).toMatch(
-      /label:\s*'Call Summaries'[\s\S]*?flag:\s*'agency_call_analysis'[\s\S]*?capability:\s*'agency\.analytics'/,
+    expect(nav).toMatch(
+      /label:\s*'Call summaries'[\s\S]*?flags:\s*\[CALL_ANALYSIS_FLAG\][\s\S]*?capabilities:\s*\['agency\.analytics'\]/,
     );
+    expect(nav).toContain("export const CALL_ANALYSIS_FLAG = 'agency_call_analysis';");
     expect(search).toMatch(
       /label:\s*'Call Summaries'[\s\S]*?flag:\s*'agency_call_analysis'[\s\S]*?capability:\s*'agency\.analytics'/,
     );
-    expect(sidebar).toContain('&& (!item.flag || isFlagEnabled(item.flag))\n          && (!item.capability || isCapabilityEnabled(item.capability))');
     expect(search).toContain('(!page.flag || isEnabled(page.flag))\n      && (!page.capability || isCapabilityEnabled(page.capability))');
   });
 

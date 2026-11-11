@@ -116,7 +116,7 @@ export default function NotificationSettingsPage() {
    * Not defensive tidiness — without it this page could commit ANOTHER TENANT'S
    * preferences and then save them here. `load` is recreated when `tenantId`
    * changes and the effect re-fires, but nothing cancelled the request already
-   * out, and TopBar's tenant switcher is on this very page:
+   * out, and the sidebar's tenant switcher is on this very page:
    *
    *   1. GET for tenant A is in flight
    *   2. the person switches to tenant B, GET B starts
@@ -226,7 +226,7 @@ export default function NotificationSettingsPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Notifications"
+        title="Email notifications"
         actions={
           <div className={styles.headerActions}>
             {changed.length > 0 && (

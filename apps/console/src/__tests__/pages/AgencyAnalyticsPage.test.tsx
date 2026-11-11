@@ -308,7 +308,7 @@ describe('AgencyAnalyticsPage — the empty and terminal states', () => {
 
 describe('AgencyAnalyticsPage — context changes and unmount', () => {
   /**
-   * Both raised in review on PR #263. Neither is reachable through `AgencyLayout`
+   * Both raised in review on PR #263. Neither is reachable through the console shell
    * today — it renders no `Outlet` without an account and keys it by `accountId`, so
    * a switch remounts this page — but a page's correctness should not rest on its
    * parent's gate, and these are the two ways it would show something untrue.

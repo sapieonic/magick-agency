@@ -26,11 +26,9 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: mocks.us
 vi.mock('../../analytics/events', () => ({
   trackFeatureGateUnavailable: mocks.trackFeatureGateUnavailable,
 }));
-vi.mock('../../components/common/Logo', () => ({ Logo: () => <span data-testid="logo" /> }));
-vi.mock('../../brand', () => ({ brand: { name: 'TestBrand' } }));
 
 import RequireCapability from '../../components/auth/RequireCapability';
-import { Sidebar } from '../../components/layout/Sidebar';
+import SettingsLayout from '../../pages/settings/SettingsLayout';
 
 function gov(isEnabled: (k: string) => boolean, loading = false) {
   return { isEnabled, map: {}, loading, refresh: vi.fn() };
@@ -81,29 +79,27 @@ describe('RequireCapability', () => {
   });
 });
 
-describe('Sidebar — Call Summaries capability gating', () => {
-  function renderSidebar({ role = 'account_admin' as string, analytics = true } = {}) {
-    mocks.useTenant.mockReturnValue({ role });
+describe('Settings hub — Call summaries capability gating', () => {
+  function renderHub({ role = 'account_admin' as string, analytics = true } = {}) {
+    mocks.useTenant.mockReturnValue({ role, accounts: [], accountId: 'a-1', activeTenant: null });
     mocks.useFeatureFlags.mockReturnValue({ isEnabled: () => true, flags: {}, status: 'ready' as const, reload: vi.fn() });
     mocks.useGovernance.mockReturnValue(gov((k) => (k === 'agency.analytics' ? analytics : true)));
-    // Start on an admin path so the (collapsible) ADMIN section is expanded —
-    // otherwise its items aren't rendered regardless of gating.
     return render(
-      <MemoryRouter initialEntries={['/app/team']}>
-        <Sidebar />
+      <MemoryRouter initialEntries={['/settings/team']}>
+        <SettingsLayout />
       </MemoryRouter>,
     );
   }
 
-  it('shows Call Summaries when the agency.analytics capability is ON', () => {
-    renderSidebar({ analytics: true });
-    expect(screen.getByRole('link', { name: /Call Summaries/i })).toBeTruthy();
+  it('shows Call summaries when the agency.analytics capability is ON', () => {
+    renderHub({ analytics: true });
+    expect(screen.getByRole('link', { name: /Call summaries/i })).toBeTruthy();
     expect(screen.getByRole('link', { name: /Team/i })).toBeTruthy();
   });
 
-  it('hides Call Summaries when the agency.analytics capability is OFF', () => {
-    renderSidebar({ analytics: false });
-    expect(screen.queryByRole('link', { name: /Call Summaries/i })).toBeNull();
+  it('hides Call summaries when the agency.analytics capability is OFF', () => {
+    renderHub({ analytics: false });
+    expect(screen.queryByRole('link', { name: /Call summaries/i })).toBeNull();
     // A non-gated item still renders — the gate is capability-scoped, not global.
     expect(screen.getByRole('link', { name: /Team/i })).toBeTruthy();
   });

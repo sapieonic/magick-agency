@@ -73,9 +73,9 @@ const SPARE = clip({ id: 'clip-spare', name: 'Old notice', duration_seconds: 75 
 
 async function renderEditor() {
   render(
-    <MemoryRouter initialEntries={['/app/inbound/r-1']}>
+    <MemoryRouter initialEntries={['/settings/inbound/r-1']}>
       <Routes>
-        <Route path="/app/inbound/:routeId" element={<InboundRouteEditorPage />} />
+        <Route path="/settings/inbound/:routeId" element={<InboundRouteEditorPage />} />
       </Routes>
     </MemoryRouter>,
   );

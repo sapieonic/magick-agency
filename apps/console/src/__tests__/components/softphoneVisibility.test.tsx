@@ -18,7 +18,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 }));
 
 import { AgentNav } from '../../components/agency/AgentNav';
-import { AgencySidebar } from '../../components/layout/AgencySidebar';
+import { tabBarFor, visibleSettingsGroups, type GateInput } from '../../utils/consoleNav';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { agentSurfacesFor, AGENT_SURFACES } from '../../utils/agencyAgentSurfaces';
 import { visibleCampaignTabs } from '../../utils/agencyCampaignTabs';
@@ -73,27 +73,29 @@ describe('the agent nav', () => {
   });
 });
 
-describe('the agency sidebar', () => {
-  const labels = () => screen.queryAllByRole('link').map((a) => (a.textContent ?? '').trim());
+describe('the console navigation', () => {
+  const gates = (role: string | undefined, flagOn: boolean): GateInput => ({
+    role: role as GateInput['role'],
+    isFlagEnabled: (f) => f === 'agency_dialer_enabled' || (flagOn && f === 'agency_softphone_enabled'),
+    isCapabilityEnabled: () => true,
+  });
+  const campaignTabs = (role: string | undefined, flagOn: boolean) =>
+    tabBarFor('/agency/campaigns', gates(role, flagOn))?.tabs.map((t) => t.label) ?? [];
+  const settings = (role: string | undefined, flagOn: boolean) =>
+    visibleSettingsGroups(gates(role, flagOn)).flatMap((g) => g.entries.map((e) => e.label));
 
-  it('adds Soft-phone calls and the settings for an account admin with the flag on', () => {
-    as('account_admin', true);
-    render(<MemoryRouter><AgencySidebar /></MemoryRouter>);
-    expect(labels()).toContain('Soft-phone calls');
-    expect(labels()).toContain('Soft phone settings');
+  it('adds Soft-phone calls beside Campaigns and the Soft phone setting for an account admin with the flag on', () => {
+    expect(campaignTabs('account_admin', true)).toEqual(['Campaigns', 'Soft-phone calls']);
+    expect(settings('account_admin', true)).toContain('Soft phone');
   });
 
   it('adds nothing with the flag off', () => {
-    as('account_admin', false);
-    render(<MemoryRouter><AgencySidebar /></MemoryRouter>);
-    expect(labels()).not.toContain('Soft-phone calls');
-    expect(labels()).not.toContain('Soft phone settings');
+    expect(campaignTabs('account_admin', false)).toEqual([]);
+    expect(settings('account_admin', false)).not.toContain('Soft phone');
   });
 
-  it('offers an agent nothing here, flag or not', () => {
-    as('agent', true);
-    render(<MemoryRouter><AgencySidebar /></MemoryRouter>);
-    expect(labels()).toEqual([]);
+  it('offers an agent no Soft-phone calls, flag or not', () => {
+    expect(campaignTabs('agent', true)).toEqual([]);
   });
 });
 
@@ -125,7 +127,7 @@ describe('the routes', () => {
     return app.slice(start, app.indexOf('/>', start));
   };
 
-  it('gates /dialer/phone like /station, outside both shells; the page reads the soft-phone flag itself', () => {
+  it('gates /dialer/phone like /station, outside the console shell; the page reads the soft-phone flag itself', () => {
     const block = routeBlock('/dialer/phone');
     expect(block).toContain('<RequireAuth>');
     expect(block).toContain('capability="agency"');
@@ -136,15 +138,15 @@ describe('the routes', () => {
     expect(block).not.toContain('flag="agency_softphone_enabled"');
     const page = readFileSync(resolve(process.cwd(), 'src/pages/agency/SoftphonePage.tsx'), 'utf8');
     expect(page).toContain('useFeatureFlagEnabled(SOFTPHONE_FLAG)');
-    const appBlock = app.slice(app.indexOf('<Route path="/app"'), app.indexOf('<Route path="*"'));
-    expect(appBlock).not.toContain('dialer/phone');
+    const shellBlock = app.slice(app.indexOf('<ConsoleShell />'), app.indexOf('<Route path="*"'));
+    expect(shellBlock).not.toContain('dialer/phone');
   });
 
   it('puts every supervisor surface and the settings behind the flag', () => {
     for (const path of ['softphone', 'softphone/calls/:callId', 'campaigns/:id/manual-calls']) {
       expect(routeBlock(path)).toContain('flag="agency_softphone_enabled"');
     }
-    const settings = routeBlock('softphone', app.indexOf('<Route path="/app"'));
+    const settings = routeBlock('softphone', app.indexOf('<Route path="/settings"'));
     expect(settings).toContain('<SoftphoneSettingsPage');
     expect(settings).toContain('flag="agency_softphone_enabled"');
   });

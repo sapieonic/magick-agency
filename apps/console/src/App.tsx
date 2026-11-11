@@ -12,23 +12,23 @@ import RequireCapability from './components/auth/RequireCapability';
 import RequireFlag from './components/auth/RequireFlag';
 import HomeRedirect from './components/auth/HomeRedirect';
 import { ProductSurface } from './analytics/ProductSurface';
-import { AppLayout } from './components/layout/AppLayout';
-import { AgentLanding } from './components/agency/AgentLanding';
+import { ConsoleShell } from './components/layout/ConsoleLayout';
+import { AgencyArea } from './components/layout/AgencyArea';
 import { ScopedRouter } from './components/routing/ScopedRouter';
 import { ScopeGate } from './components/routing/ScopeGate';
 
 /*
  * Route table. Contents: the agency doors (`/agency/login`,
  * `/agency/join/:token`), the workspace invite page (`/join/:token`), the root
- * `HomeRedirect`, the four full-viewport agent
- * routes (`/station`, `/dialer`, `/dialer/performance`, `/dialer/attempts`), the
- * whole `/agency` tree, and the `/app` shell — the PLATFORM zone only: Team,
- * Notifications and Call Summaries. Notes:
+ * `HomeRedirect`, the full-viewport agent routes (`/station`, `/dialer/*`), and the
+ * console shell (`ConsoleShell`, decision B28) around the `/agency` work pages, the
+ * `/settings` hub and the legacy `/app` URLs, which redirect into it. Notes:
  *  - `/login` renders `AgencyLoginPage`. There is no marketing page, sign-up
  *    tab or `/onboarding`: agency has no self-serve sign-up (session path 4 is
  *    refused, plan).
- *  - `/app`'s index is `AppHomeRedirect`.
- *  - `call-summaries` is gated on agency's `agency.analytics` capability and
+ *  - `/app`'s index is `AppHomeRedirect`; every other `/app/<page>` is
+ *    `LegacyAppRedirect`, to `/settings/<page>`.
+ *  - `/settings/call-summaries` is gated on agency's `agency.analytics` capability and
  *    `agency_call_analysis` flag.
  *  - Providers: `GovernanceProvider` derives from the session's settings map.
  *    There is no metadata provider, and the super-admin console is its own app.
@@ -61,9 +61,6 @@ const AccountsPage = lazy(() => import('./pages/accounts/AccountsPage'));
 const NotificationSettingsPage = lazy(() => import('./pages/settings/NotificationSettingsPage'));
 const AnalysisProfilesPage = lazy(() => import('./pages/settings/AnalysisProfilesPage'));
 const AgencyCampaignBuilderPage = lazy(() => import('./pages/campaigns/agency/CampaignBuilderPage'));
-const AgencyLayout = lazy(() =>
-  import('./components/layout/AgencyLayout').then((m) => ({ default: m.AgencyLayout })),
-);
 const AgencyCampaignsPage = lazy(() => import('./pages/agency/AgencyCampaignsPage'));
 const AgencyAnalyticsPage = lazy(() => import('./pages/agency/AgencyAnalyticsPage'));
 const AgentHomePage = lazy(() => import('./pages/agency/AgentHomePage'));
@@ -104,6 +101,10 @@ const AgentMissedCallsPage = lazy(() =>
 const InboundSummaryPage = lazy(() => import('./pages/agency/InboundSummaryPage'));
 const InboundRoutesPage = lazy(() => import('./pages/settings/InboundRoutesPage'));
 const InboundRouteEditorPage = lazy(() => import('./pages/settings/InboundRouteEditorPage'));
+const SettingsLayout = lazy(() => import('./pages/settings/SettingsLayout'));
+const SettingsIndexRedirect = lazy(() => import('./pages/settings/SettingsIndexRedirect'));
+const ProfileSettingsPage = lazy(() => import('./pages/settings/ProfileSettingsPage'));
+const LegacyAppRedirect = lazy(() => import('./pages/LegacyAppRedirect'));
 
 export default function App() {
   return (
@@ -189,7 +190,7 @@ export default function App() {
                 path="/agency/join/:token"
                 element={
                   /*
-                    Outside both shells, like `/station` and `/dialer`, so the
+                    Outside the console shell, like `/station` and `/dialer`, so the
                     product dimension has no layout to come from — see
                     `analytics/ProductSurface`. Unlike those four it sits inside
                     no gate, because there is none to sit inside; that is safe
@@ -247,33 +248,16 @@ export default function App() {
               */}
               <Route element={<ScopeGate />}>
                 {/*
-                  The app root, routed on ENTITLEMENT rather than fixed at `/app`
-                  A pure-agency tenant used to sign in to an AI
-                  dashboard of numbers it does not generate; now the default shell
-                  follows what the tenant has. See `HomeRedirect` for the predicate,
-                  for why `calls` cannot be part of it, and for why the decision is
-                  made HERE rather than on `/app`'s index route — a redirect there
-                  would bounce `AgencyLayout`'s deliberate "Team & settings"
-                  exit straight back into `/agency` and put the platform zone out of
-                  reach.
-
-                  Declared explicitly rather than left to the catch-all below, and
-                  wrapped in `RequireAuth` so a signed-out visitor typing the bare
-                  domain gets `?next=/` and comes back through this decision after
-                  signing in — which is the path that matters, because it is how
-                  somebody arrives at the product in the morning. `LoginPage`
-                  falls back to `/` too when it is opened with no `next` at all, so
-                  that path reaches this decision rather than bypassing it — which
-                  was the point of changing it.
-
-                  The catch-all stays pointed at `/app`: an unrecognised URL is a
-                  404 being swallowed, not somebody asking to be taken home, and
-                  sending it through an entitlement decision would dress one up as
-                  the other.
+                  The app root, routed on ENTITLEMENT: `/agency` with the dialer on,
+                  `/app` otherwise (see `HomeRedirect`). Wrapped in `RequireAuth` so a
+                  signed-out visitor typing the bare domain gets `?next=/` and comes
+                  back through this decision after signing in. The catch-all stays
+                  pointed at `/app`: an unrecognised URL is a 404 being swallowed, not
+                  somebody asking to be taken home.
                 */}
                 <Route path="/" element={<RequireAuth><HomeRedirect /></RequireAuth>} />
 
-                {/* Full-viewport, OUTSIDE AppLayout. An `agent` is level 5 and
+                {/* Full-viewport, OUTSIDE the console shell. An `agent` is level 5 and
                     inherits no nav, and an escape route here is a hazard: clicking
                     away drops the station socket and hangs up on a customer. */}
                 <Route
@@ -282,7 +266,7 @@ export default function App() {
                     <RequireAuth>
                       <RequireCapability capability="agency">
                         <RequireFlag flag="agency_dialer_enabled">
-                          {/* Full-viewport and outside both shells, so the product
+                          {/* Full-viewport and outside the console shell, so the product
                               dimension has no layout to come from — see
                               `analytics/ProductSurface`. Inside the gates, so a
                               refused reader never registers a surface. */}
@@ -299,10 +283,9 @@ export default function App() {
                   bookmark. Short and memorable on purpose: it is the one address an
                   agency hands to staff who never see the rest of the platform.
 
-                  Full-viewport and OUTSIDE both shells, for the reason `/station`
-                  is. `AppLayout`'s nav floors at `viewer` and `AgencyLayout`'s three
-                  entries do too, so an `agent` (level 5) renders either shell's
-                  chrome around nothing.
+                  Full-viewport and OUTSIDE the console shell, for the reason `/station`
+                  is. The console shell's nav floors at `viewer`, so an `agent`
+                  (level 5) would render its chrome around nothing.
 
                   It resolves by PERSONA rather than serving one page: a supervisor
                   who opens it is asking for the dialer, and is sent to the campaigns
@@ -321,7 +304,7 @@ export default function App() {
                     <RequireAuth>
                       <RequireCapability capability="agency">
                         <RequireFlag flag="agency_dialer_enabled">
-                          {/* Full-viewport and outside both shells, so the product
+                          {/* Full-viewport and outside the console shell, so the product
                               dimension has no layout to come from — see
                               `analytics/ProductSurface`. Inside the gates, so a
                               refused reader never registers a surface. */}
@@ -339,10 +322,9 @@ export default function App() {
                   Beside `/dialer` rather than under `/agency`, and gated
                   identically: same `RequireAuth`, same `agency` capability, same
                   `agency_dialer_enabled` flag, both entitlements default off. It is
-                  full-viewport and OUTSIDE both shells for the reason `/dialer` is —
-                  an `agent` is level 5 and inherits no navigation, so `AppLayout`'s
-                  nav (floored at `viewer`) and `AgencyLayout`'s three entries would
-                  each render chrome around nothing.
+                  full-viewport and OUTSIDE the console shell for the reason `/dialer` is —
+                  an `agent` is level 5 and inherits no navigation, so the console
+                  shell's nav (floored at `viewer`) would render chrome around nothing.
 
                   Nothing was added to `RequireCapability`'s hand-maintained union:
                   `agency` is already in it, and this route needs no new capability.
@@ -359,7 +341,7 @@ export default function App() {
                     <RequireAuth>
                       <RequireCapability capability="agency">
                         <RequireFlag flag="agency_dialer_enabled">
-                          {/* Full-viewport and outside both shells, so the product
+                          {/* Full-viewport and outside the console shell, so the product
                               dimension has no layout to come from — see
                               `analytics/ProductSurface`. Inside the gates, so a
                               refused reader never registers a surface. */}
@@ -378,10 +360,10 @@ export default function App() {
                   Beside `/dialer` and `/dialer/performance` rather than under
                   `/agency`, and gated identically: same `RequireAuth`, same `agency`
                   capability, same `agency_dialer_enabled` flag, both entitlements
-                  default off. Full-viewport and OUTSIDE both shells for the reason
+                  default off. Full-viewport and OUTSIDE the console shell for the reason
                   the other three are — an `agent` is level 5 and inherits no
-                  navigation, so `AppLayout`'s nav (floored at `viewer`) and
-                  `AgencyLayout`'s entries would each render chrome around nothing.
+                  navigation, so the console shell's nav (floored at `viewer`) would
+                  render chrome around nothing.
 
                   Nothing was added to `RequireCapability`'s hand-maintained union:
                   `agency` is already in it, and this route needs no new capability.
@@ -405,7 +387,7 @@ export default function App() {
                     <RequireAuth>
                       <RequireCapability capability="agency">
                         <RequireFlag flag="agency_dialer_enabled">
-                          {/* Full-viewport and outside both shells, so the product
+                          {/* Full-viewport and outside the console shell, so the product
                               dimension has no layout to come from — see
                               `analytics/ProductSurface`. Inside the gates, so a
                               refused reader never registers a surface. */}
@@ -421,7 +403,7 @@ export default function App() {
                   `/dialer/phone` — the soft phone (`docs/softphone.md` §7): an agent
                   dials a typed number from the browser, outside campaign pacing.
 
-                  Full-viewport and OUTSIDE both shells for the reason `/station` is —
+                  Full-viewport and OUTSIDE the console shell for the reason `/station` is —
                   navigating away mid-call drops the socket and cuts the customer off —
                   and gated identically. `agency_softphone_enabled` (default off, SP4)
                   is the PAGE's to read, not a `RequireFlag` here: turned off while an
@@ -438,7 +420,7 @@ export default function App() {
                     <RequireAuth>
                       <RequireCapability capability="agency">
                         <RequireFlag flag="agency_dialer_enabled">
-                          {/* Full-viewport and outside both shells, so the product
+                          {/* Full-viewport and outside the console shell, so the product
                               dimension has no layout to come from — see
                               `analytics/ProductSurface`. Inside the gates, so a
                               refused reader never registers a surface. */}
@@ -453,7 +435,7 @@ export default function App() {
                 {/*
                   `/dialer/reports` and `/dialer/reports/:runId` — a dedicated agent's
                   own exported reviews (`docs/reports.md`, RP5). The same pages as
-                  `/agency/reports*`, in the agent's own frame, because the agency
+                  `/agency/reports*`, in the agent's own frame, because the console
                   shell renders nothing for an agent; the agency paths send a
                   dedicated agent here (the "report ready" email links to those).
                   Gated as their siblings are, plus the `agency_reports_enabled` flag.
@@ -493,7 +475,7 @@ export default function App() {
                 {/*
                   `/dialer/customers` — customer history for an agent
                   (`docs/customer-history.md` §5): every agent may search a number
-                  (CH1), and the agency shell, whose top bar carries the box, renders
+                  (CH1), and the console shell, whose top bar carries the box, renders
                   nothing for an agent. The same page as `/agency/customers`, in the
                   agent's own frame (`AgentSurfaceShell`). Gated as its siblings are;
                   the page checks `agency.customer_history.read` itself. The URL never
@@ -505,7 +487,7 @@ export default function App() {
                     <RequireAuth>
                       <RequireCapability capability="agency">
                         <RequireFlag flag="agency_dialer_enabled">
-                          {/* Full-viewport and outside both shells, so the product
+                          {/* Full-viewport and outside the console shell, so the product
                               dimension has no layout to come from — see
                               `analytics/ProductSurface`. */}
                           <ProductSurface product="agency">
@@ -537,22 +519,26 @@ export default function App() {
                     </RequireAuth>
                   }
                 />
-                {/* The Agency workspace — its own shell, same auth tree.
-                    Gated once here rather than per-route: `AgencyLayout` renders
-                    nothing but agency surfaces, so a per-child gate would repeat
-                    the same two checks four times and give four chances to forget
-                    one. Both default off, so this is invisible until the server grants
-                    the capability and the server enables the flag. */}
+                {/*
+                  The console shell (decision B28): one layout, one sidebar and one top
+                  bar around every signed-in page that is not an agent's full-viewport
+                  surface. `ConsoleShell` keeps a DEDICATED agent out of it on Settings
+                  and `/app` (`AgentLanding`, as the old `/app` shell did); the `/agency`
+                  pages send an agent to their own `/dialer/*` twins themselves.
+                */}
+                <Route element={<RequireAuth><ConsoleShell /></RequireAuth>}>
+                {/* The work pages. Gated once here rather than per route: every page
+                    below is an agency surface, so a per-child gate would repeat the same
+                    two checks and give each a chance to be forgotten. Both default off.
+                    `AgencyArea` adds a section's tab bar above a grouped page. */}
                 <Route
                   path="/agency"
                   element={
-                    <RequireAuth>
-                      <RequireCapability capability="agency">
-                        <RequireFlag flag="agency_dialer_enabled">
-                          <AgencyLayout />
-                        </RequireFlag>
-                      </RequireCapability>
-                    </RequireAuth>
+                    <RequireCapability capability="agency">
+                      <RequireFlag flag="agency_dialer_enabled">
+                        <AgencyArea />
+                      </RequireFlag>
+                    </RequireCapability>
                   }
                 >
                   {/*
@@ -713,42 +699,43 @@ export default function App() {
                 </Route>
 
                 {/*
-                  `AgentLanding` wraps the element rather than sitting on a child
-                  route, so it applies to every `/app/*` path an `agent` could
-                  reach — including the catch-all redirect at the bottom of this
-                  file, which is where a bare `/` lands them.
-
-                  It is a no-op for every role that has navigation of its own, which
-                  is every role above level 5. That scoping is load-bearing rather
-                  than incidental: a revision of the component gated on the agency
-                  PERSONA instead, which is also true of `viewer` and `operator`, and
-                  redirected both out of the product entirely — into a `/dialer` whose
-                  capability is off by default. See the component for the predicate
-                  and for why an agent must never render `AppLayout` at all.
+                  The Settings hub (decision B28), grouped by who a setting affects.
+                  Every entry keeps the guards its `/app` route had.
                 */}
-                <Route path="/app" element={<RequireAuth><AgentLanding><AppLayout /></AgentLanding></RequireAuth>}>
-                  <Route index element={<AppHomeRedirect />} />
-                  <Route path="team" element={<TeamPage />} />
-                  {/* The tenant's accounts. Linked from the sidebars and search for
-                      `account.create` only; the route itself is ungated (the list is
-                      `account.read`, which the server enforces), and the page offers "New
-                      account" only to a tenant-wide `account.create` seat, as the server
-                      requires. */}
-                  <Route path="accounts" element={<AccountsPage />} />
-                  {/* Per-user notification subscriptions. No RequireCapability and no
-                      permission guard: the page is about the signed-in person and the server
-                      takes no subject on any of its routes, so there is nobody else it
-                      could expose. Gating it would lock people out of their own
-                      unsubscribe. */}
+                <Route path="/settings" element={<SettingsLayout />}>
+                  <Route index element={<SettingsIndexRedirect />} />
+                  {/* About the signed-in person only: nothing to gate. */}
+                  <Route path="profile" element={<ProfileSettingsPage />} />
+                  {/* Per-user email subscriptions. No RequireCapability and no permission
+                      guard: the page is about the signed-in person and the server takes no
+                      subject on any of its routes, so there is nobody else it could expose.
+                      Gating it would lock people out of their own unsubscribe. */}
                   <Route path="notifications" element={<NotificationSettingsPage />} />
-                  <Route path="call-summaries" element={<RequireCapability capability="agency.analytics"><RequireFlag flag="agency_call_analysis"><AnalysisProfilesPage /></RequireFlag></RequireCapability>} />
-                  {/* Settings → Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
+                  {/* Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
                   <Route path="softphone" element={<RequireCapability capability="agency"><RequireFlag flag="agency_softphone_enabled"><SoftphoneSettingsPage /></RequireFlag></RequireCapability>} />
-                  {/* Settings → Inbound calls (`docs/inbound.md` §8.1): the account's routes. Account
+                  {/* Inbound routing (`docs/inbound.md` §8.1): the account's routes. Account
                       admins (`agency.inbound.write`, which the pages check) behind `agency_inbound_enabled`. */}
                   <Route path="inbound" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRoutesPage /></RequireFlag></RequireCapability>} />
                   <Route path="inbound/new" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRouteEditorPage /></RequireFlag></RequireCapability>} />
                   <Route path="inbound/:routeId" element={<RequireCapability capability="agency"><RequireFlag flag="agency_inbound_enabled"><InboundRouteEditorPage /></RequireFlag></RequireCapability>} />
+                  <Route path="call-summaries" element={<RequireCapability capability="agency.analytics"><RequireFlag flag="agency_call_analysis"><AnalysisProfilesPage /></RequireFlag></RequireCapability>} />
+                  <Route path="team" element={<TeamPage />} />
+                  {/* The tenant's accounts. Linked for `account.create` only; the route itself
+                      is ungated (the list is `account.read`, which the server enforces), and
+                      the page offers "New account" only to a tenant-wide `account.create` seat,
+                      as the server requires. */}
+                  <Route path="accounts" element={<AccountsPage />} />
+                </Route>
+                {/*
+                  `/app`: the console's home decision (`AppHomeRedirect`), kept at the URL
+                  the workspace invite, the session expiry and the catch-all land on. Its old
+                  pages moved to `/settings` and redirect there (`LegacyAppRedirect`, with
+                  `replace`, keeping the rest of the path, e.g. `/app/inbound/:routeId`).
+                */}
+                <Route path="/app">
+                  <Route index element={<AppHomeRedirect />} />
+                  <Route path="*" element={<LegacyAppRedirect />} />
+                </Route>
                 </Route>
 
                 <Route path="*" element={<Navigate to="/app" replace />} />

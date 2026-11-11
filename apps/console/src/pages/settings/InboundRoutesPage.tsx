@@ -78,7 +78,7 @@ export default function InboundRoutesPage() {
       <PageHeader
         title="Inbound calls"
         actions={
-          <Link to="/app/inbound/new" className={`btn-primary ${styles.iconLabel}`} data-testid="inbound-new-route">
+          <Link to="/settings/inbound/new" className={`btn-primary ${styles.iconLabel}`} data-testid="inbound-new-route">
             <Plus size={15} aria-hidden="true" />
             New route
           </Link>
@@ -122,7 +122,7 @@ export default function InboundRoutesPage() {
                 <p className={styles.routeMeta}>Their agent first: {STICKY_MODE_LABELS[route.sticky_mode].label}</p>
               </div>
               <div className={styles.buttonRow}>
-                <Link to={`/app/inbound/${route.id}`} className="btn-secondary" aria-label={`Edit ${route.name}`}>
+                <Link to={`/settings/inbound/${route.id}`} className="btn-secondary" aria-label={`Edit ${route.name}`}>
                   Edit
                 </Link>
                 <button

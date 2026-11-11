@@ -21,9 +21,9 @@ import styles from '../../components/agency/inbound/Inbound.module.css';
  * Missed calls (`docs/inbound.md` §7): inbound calls that reached nobody, each a follow-up
  * someone owns, with Call back and Mark handled.
  *
- * Served twice, like reports: at `/agency/inbound/missed` in the agency shell, and at
+ * Served twice, like reports: at `/agency/inbound/missed` in the console shell, and at
  * `/dialer/missed` in a dedicated agent's own frame (`AgentSurfaceShell`), because an `agent`
- * is below every entry of the agency shell. A dedicated agent who opens the agency path is sent
+ * is below every entry of the console shell. A dedicated agent who opens the agency path is sent
  * to their own. What the list holds is the server's rule (`agency.inbound.read`): an agent's
  * own rows, and (IQ49) a Team view of the account's rows nobody has, which they claim; with
  * `agency.supervise`, the account's, including the rows assigned to the account rather than a

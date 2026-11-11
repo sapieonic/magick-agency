@@ -7,17 +7,17 @@ import { isDedicatedAgent } from '../../utils/agencyPersona';
 import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStationExit';
 
 /**
- * Keeps a DEDICATED agent out of `AppLayout`, and sends them to the dialer.
+ * Keeps a DEDICATED agent out of the console shell (`ConsoleLayout`) on Settings and the
+ * legacy `/app` URLs, and sends them to the dialer.
  *
  * ── The problem this is the whole answer to ─────────────────────────────────
  * An `agent` is hierarchy level 5 and holds four `agency.*` permissions and
- * nothing else. Every nav entry in `AppLayout` floors at `viewer` or higher, so an
- * agent who reaches `/app` gets a shell with an empty sidebar around a dashboard
- * of empty panels. An `agent` inherits nothing, and a shell with no navigation is
+ * nothing else. Every console nav entry floors at `viewer` or higher, so an
+ * agent who reaches Settings or `/app` gets a shell with a near-empty sidebar. An `agent` inherits nothing, and a shell with no navigation is
  * noise.
  *
- * So this wraps `/app`'s element rather than adding a nav link, which is what
- * makes it apply to every `/app/*` path an agent could reach — including the
+ * So this wraps the shell (`ConsoleShell`, enabled off `/agency`) rather than adding a nav
+ * link, which is what makes it apply to every `/settings/*` and `/app/*` path an agent could reach — including the
  * catch-all redirect at the bottom of `App.tsx`, and `HomeRedirect` at `/`, which
  * is where a bare `/` now lands (it used to fall through to that catch-all). Both
  * ways in are covered because the wrapper is on the shell, not on a route.
@@ -29,7 +29,7 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  * `/dialer` is gated on the `agency` capability, which the API's frozen catalog
  * defaults to `false`, so in every tenant that had not bought the dialer those two
  * roles landed on a full-viewport "not available for your account" with no
- * sidebar, no link out, and (logout living only in `TopBar`, inside `AppLayout`)
+ * sidebar, no link out, and (logout living only in the shell's top bar)
  * no way to even sign out. Every route back re-entered this component. A `viewer`
  * holds around twenty read permissions; an `operator` runs calls and schedules.
  * Both lost the entire product.
@@ -44,14 +44,14 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  *
  * 2. **The dialer must actually be reachable before we send anyone to it.** Even
  *    for a dedicated agent, redirecting into a gate that will refuse produces a
- *    dead end rather than a landing page — and `AppLayout`, empty sidebar and all,
+ *    dead end rather than a landing page — and the console shell, empty sidebar and all,
  *    is strictly better than that: it has a top bar, so it has a sign-out. A
  *    redirect is only ever an improvement when there is something on the other
  *    side of it.
  *
- * Everyone else renders `AppLayout` untouched, and nothing here fetches for them.
+ * Everyone else renders the shell untouched, and nothing here fetches for them.
  */
-export function AgentLanding({ children }: { children: ReactNode }) {
+export function AgentLanding({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   const { role } = useTenant();
   const [params] = useSearchParams();
   const { isEnabled: capabilityEnabled, loading: governanceLoading } = useGovernance();
@@ -63,7 +63,14 @@ export function AgentLanding({ children }: { children: ReactNode }) {
    * Deliberately not gated on it: holding every user's first paint to spare an
    * agent a flash of an empty sidebar is the worse trade.
    */
-  if (!isDedicatedAgent(role)) return <>{children}</>;
+  /**
+   * `enabled` is false under `/agency`: those pages send a dedicated agent to their own
+   * `/dialer/*` twin themselves (a report link to `/dialer/reports/:runId`, and so on), which
+   * a blanket redirect to `/dialer` would throw away. The children render in the same place
+   * either way, so the console shell is not remounted when the reader crosses between
+   * `/agency` and `/settings`.
+   */
+  if (!enabled || !isDedicatedAgent(role)) return <>{children}</>;
 
   /**
    * Wait, rather than guess, while either gate is still resolving.
@@ -84,11 +91,11 @@ export function AgentLanding({ children }: { children: ReactNode }) {
    * an empty sidebar around a dashboard of empty panels with no explanation
    * anywhere — which reads as a broken product rather than an unbought one, and is
    * indistinguishable, to the agent and to the supervisor who invited them, from a
-   * bug. `DashboardPage` now recognises this exact state and renders
-   * `DialerUnavailable` in the dashboard's place.
+   * bug. `AppHomeRedirect` (`/app`'s index) now recognises this exact state and renders
+   * `DialerUnavailable` in its place.
    *
    * The check is repeated there rather than the message being rendered from here,
-   * and that is deliberate: the notice has to appear INSIDE `AppLayout` to keep the
+   * and that is deliberate: the notice has to appear INSIDE the shell to keep the
    * top bar this branch exists to preserve, and this component sits above the
    * layout wrapping it rather than filling it. Both predicates read the same two
    * gates through the same two contexts, so they cannot disagree about whether the

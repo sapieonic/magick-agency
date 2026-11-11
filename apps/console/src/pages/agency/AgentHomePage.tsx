@@ -4,7 +4,6 @@ import { useTenant } from '../../contexts/TenantContext';
 import { getMyAssignments } from '../../api/agency';
 import { AccountUnavailable } from '../../components/common/AccountUnavailable';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { WorkspaceExit } from '../../components/agency/WorkspaceExit';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import { AgentNav } from '../../components/agency/AgentNav';
 import { agencyPersona, isDedicatedAgent } from '../../utils/agencyPersona';
@@ -38,8 +37,8 @@ import styles from './AgentHomePage.module.css';
  * For the reason `/station` is and `AgentLanding` before it: an `agent` is
  * hierarchy level 5 and inherits no navigation, so a shell around this would be an
  * empty sidebar — "that is not navigation, it is noise". It is deliberately NOT
- * inside `AgencyLayout` for the same reason, even though it is an agency surface:
- * that shell's three nav entries all floor at `viewer` or above, so an agent would
+ * inside the console shell for the same reason, even though it is an agency surface:
+ * that shell's work entries all floor at `viewer` or above, so an agent would
  * render its chrome and none of its contents.
  *
  * ── Supervisors are sent away rather than served an empty list ──────────────
@@ -62,7 +61,7 @@ export function AgentHomePage() {
   /**
    * Whether to offer a way back to the rest of the product.
    *
-   * This page is full-viewport and outside both shells, which is right for a
+   * This page is full-viewport and outside the console shell, which is right for a
    * dedicated `agent` — level 5 has no navigation to return to, and an escape
    * route beside a live call is a misclick that hangs up on a customer.
    *
@@ -342,38 +341,18 @@ function SurfaceNav() {
 }
 
 /**
- * The way back for someone who has a platform to go back to.
- *
- * Decision B17: the wording is "Go to settings". `/app` here is this console's platform zone,
- * which for a `viewer` or `operator` opens on Notifications (and Call summaries
- * where analysis is on) — so "settings" says where the link goes. Kept rather
- * than replaced with a sign-out: these roles have a real in-product destination.
- *
- * Points at `/app` rather than `/agency`: the caller is a `viewer` or `operator`
- * whose own workspace is the main product, and `/agency` would put them one click
- * from being sent back here. `AgentLanding` will not bounce them — it gates on
- * `isDedicatedAgent`, which is false for exactly the roles that see this link.
- *
- * ── Why the destination goes through `WorkspaceExit` ───────────────────────
- * The `/app` above is deliberate and correct:
- * the platform zone — team and membership, credits, billing, the tenant audit
- * log, API keys, settings, tenant/account switching — is shared by every agency
- * surface by design, so an agency surface linking there is not a boundary violation. The
- * violation to avoid is the *other* kind of `/app` link, the call-shaped deep
- * link that dumps a supervisor out of `AgencyLayout` and loses the campaign they
- * were reading.
- *
- * Telling those two apart by review failed once already, so it is now mechanical:
- * `WorkspaceExit` is the single sanctioned home for the `/app` string in agency
- * code, and `src/__tests__/utils/agencyShellBoundary.test.ts` fails on any `/app`
- * route literal that appears under the agency roots outside it. Hence a component
- * for what is otherwise one `<Link>` — see its header for the full reasoning.
- *
- * `styles.exit` and the wording stay here rather than moving into the component,
- * which is purely presentational: this renders byte-for-byte what it did before.
+ * The way back for someone who has a console to go back to: a `viewer` or `operator`
+ * (decision B17's wording, "Go to settings"). It opens the Settings hub inside the console
+ * shell (decision B28), whose sidebar also carries their work pages. `AgentLanding` will not
+ * bounce them: it gates on `isDedicatedAgent`, which is false for exactly the roles that see
+ * this link.
  */
 function ExitToPlatform() {
-  return <WorkspaceExit className={styles.exit}>Go to settings</WorkspaceExit>;
+  return (
+    <Link className={styles.exit} to="/settings">
+      Go to settings
+    </Link>
+  );
 }
 
 /**
@@ -382,7 +361,7 @@ function ExitToPlatform() {
  * `/station` alone lands on `AgentConsolePage`'s "No campaign selected." refusal.
  * A station IS an agent joined to one campaign's pool, so there is no
  * campaign-less station to link to — the same reasoning that keeps a bare
- * `/station` link out of `AgencySidebar`.
+ * `/station` link out of the console sidebar.
  */
 function stationPath(campaignId: string): string {
   return `/station?campaign=${encodeURIComponent(campaignId)}`;

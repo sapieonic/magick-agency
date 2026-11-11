@@ -3,7 +3,8 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
- * `AgentLanding` — the guard that keeps a DEDICATED agent out of `AppLayout`.
+ * `AgentLanding` — the guard that keeps a DEDICATED agent out of the console shell on
+ * Settings and the legacy `/app` URLs (`ConsoleShell`, decision B28).
  *
  * ── What this file no longer tests, and where it went ──────────────────────
  * This component used to resolve `GET /my-assignment` and build the station
@@ -16,8 +17,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  * (10) and `operator` (20) — and it redirected them out of `/app` into `/dialer`,
  * whose `agency` capability defaults to `false`. In every tenant without the
  * dialer, those two roles got a full-viewport "not available for your account"
- * with no sidebar, no link out, and no sign-out (logout lives in `TopBar`, inside
- * `AppLayout`). Every route back re-entered this component.
+ * with no sidebar, no link out, and no sign-out (logout lived in the top bar, inside
+ * the shell). Every route back re-entered this component.
  *
  * Two properties therefore have teeth here, and both are asserted per role:
  *
@@ -41,7 +42,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: mocks.us
 
 import { AgentLanding } from '../../components/agency/AgentLanding';
 
-/** Stands in for `AppLayout` — the shell that IS the product for most roles. */
+/** Stands in for `ConsoleLayout` — the shell that IS the product for most roles. */
 function Shell() {
   return <div data-testid="app-shell">the whole platform UI</div>;
 }
@@ -51,14 +52,14 @@ function Where() {
   return <div data-testid="where">{`${location.pathname}${location.search}`}</div>;
 }
 
-function renderAt(entry = '/app') {
+function renderAt(entry = '/app', enabled = true) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route
           path="/app"
           element={
-            <AgentLanding>
+            <AgentLanding enabled={enabled}>
               <Shell />
             </AgentLanding>
           }
@@ -138,8 +139,8 @@ describe('AgentLanding — who may be redirected', () => {
 describe('AgentLanding — nobody is sent into a dialer that is off', () => {
   /**
    * The second half of the regression. Even for a dedicated agent, redirecting
-   * into a gate that will refuse produces a dead end — and `AppLayout`, empty
-   * sidebar and all, is strictly better: it has a top bar, so it has a sign-out.
+   * into a gate that will refuse produces a dead end — and the console shell,
+   * near-empty sidebar and all, is strictly better: it has a top bar, so it has a sign-out.
    */
   it('renders the shell when the agency capability is off', () => {
     mocks.useGovernance.mockReturnValue({ isEnabled: () => false, loading: false });
@@ -221,5 +222,15 @@ describe('AgentLanding — the arrival param', () => {
     renderAt('/app?left=banana');
 
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dialer'));
+  });
+});
+
+describe('AgentLanding — switched off under /agency', () => {
+  it('leaves a dedicated agent on the page, whose own redirect knows the /dialer twin', () => {
+    // `ConsoleShell` passes `enabled={false}` on `/agency/*`: `/agency/reports/:runId` sends an
+    // agent to `/dialer/reports/:runId`, which a blanket `/dialer` would throw away.
+    renderAt('/app', false);
+    expect(screen.getByTestId('app-shell')).toBeTruthy();
+    expect(screen.queryByTestId('where')).toBeNull();
   });
 });

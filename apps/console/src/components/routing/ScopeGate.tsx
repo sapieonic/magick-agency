@@ -94,7 +94,7 @@ export function ScopeGate() {
 /**
  * A shared link to a tenant or account the signed-in person cannot open.
  *
- * Full-viewport, outside both shells, so it carries its own way out: back to their
+ * Full-viewport, outside the console shell, so it carries its own way out: back to their
  * own workspace, or sign out — the link may simply have been meant for another of
  * their sign-ins. "Their own workspace" is a full load of the unscoped root, which
  * opens the tenant and account this browser last had (the refused link is never

@@ -92,7 +92,7 @@ export function agencyPersona(role: Role | undefined): AgencyPersona | null {
  * instead of silently rendering an empty shell.
  *
  * ── The one thing this may be used for ────────────────────────────────────
- * Deciding whether it is safe to redirect somebody AWAY from `AppLayout`. For a
+ * Deciding whether it is safe to redirect somebody AWAY from the console shell. For a
  * dedicated agent the shell is an empty sidebar around an empty dashboard —
  * *"that is not navigation, it is noise"*. For everybody else it is their product.
  *
