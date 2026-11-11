@@ -65,7 +65,37 @@ void main() {
     final count = await api.count();
     expect(count.badge, '100+');
     expect(count.hasRows, isTrue);
-    only('GET', '/proxy/agency/inbound/missed/count');
+    // IQ57: the agent's own rows, as the list shows them, a supervisor's too.
+    expect(only('GET', '/proxy/agency/inbound/missed/count').url.queryParameters, {'assignee': 'me'});
+  });
+
+  test('count since a moment (IQ50): the agent\'s rows that arrived at or after it', () async {
+    h.server.json('GET', '/proxy/agency/inbound/missed/count', {'open': 2, 'open_capped': false, 'has_rows': true});
+    final count = await api.count(since: DateTime.utc(2026, 11, 1, 9, 0, 5));
+    expect(count.open, 2);
+    expect(only('GET', '/proxy/agency/inbound/missed/count').url.queryParameters,
+        {'assignee': 'me', 'since': '2026-11-01T09:00:05.000Z'});
+  });
+
+  test('claim (IQ49): POST to the row\'s claim path, the answer is the row now the agent\'s', () async {
+    h.server.json('POST', '/proxy/agency/inbound/missed/m%201/claim', {'call': missedJson('m 1', {'assignee_user_id': 'u1'})});
+    final row = await api.claim('m 1');
+    expect(row.assigneeUserId, 'u1');
+    only('POST', '/proxy/agency/inbound/missed/m%201/claim');
+  });
+
+  test('a claimed row refusal carries its code', () async {
+    h.server.json(
+      'POST',
+      '/proxy/agency/inbound/missed/x/claim',
+      {'error': 'Conflict', 'code': 'inbound_missed_call_claimed', 'message': 'Claimed'},
+      status: 409,
+    );
+    await expectLater(
+      api.claim('x'),
+      throwsA(isA<ApiHttpError>().having((e) => ErrorBody.fromJson(e.body).inboundCode, 'inboundCode',
+          InboundErrorCode.inboundMissedCallClaimed)),
+    );
   });
 
   test('Mark handled and Reopen: POST to the row’s own path, the answer is the row', () async {

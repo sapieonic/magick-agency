@@ -90,7 +90,14 @@ class FakeMissedCallsApi implements MissedCallsApi {
   final List<Completer<InboundMissedPage>> pending = [];
   final List<String> handled = [];
   final List<String> reopened = [];
+  final List<String> claimed = [];
   int countReads = 0;
+
+  /// The `since` of each count read (null for the badge's).
+  final List<DateTime?> countSince = [];
+
+  /// What a `count(since: …)` answers, when set (else [countAnswer]).
+  Object? sinceAnswer;
 
   /// What `count()` answers: a response, or an error to throw.
   Object countAnswer = countOf(3);
@@ -101,6 +108,7 @@ class FakeMissedCallsApi implements MissedCallsApi {
   /// What the row actions answer; by default the row handled / reopened.
   Object? handledAnswer;
   Object? reopenAnswer;
+  Object? claimAnswer;
 
   Future<T> _answer<T>(Object a) => switch (a) {
         final Future<T> f => f,
@@ -118,9 +126,16 @@ class FakeMissedCallsApi implements MissedCallsApi {
   }
 
   @override
-  Future<InboundMissedCountResponse> count() {
+  Future<InboundMissedCountResponse> count({DateTime? since}) {
     countReads++;
-    return _answer(countAnswer);
+    countSince.add(since);
+    return _answer(since != null ? (sinceAnswer ?? countAnswer) : countAnswer);
+  }
+
+  @override
+  Future<InboundMissedCall> claim(String id) {
+    claimed.add(id);
+    return _answer(claimAnswer ?? missed(id));
   }
 
   @override
