@@ -1780,7 +1780,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | ~7 |
 | `apps/console/src/__tests__/components/CampaignAssignmentProgress.test.tsx` | 5 |
 | `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 23 |
-| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 13 |
+| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 19 |
@@ -1797,7 +1797,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/PriorAttemptsList.autoDisposition.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/DispositionPad.test.tsx` | 29 |
 | `apps/console/src/__tests__/components/DncControl.test.tsx` | 7 |
-| `apps/console/src/__tests__/components/GlobalSearchAccounts.test.tsx` | 6 |
+| `apps/console/src/__tests__/components/GlobalSearchAccounts.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/GlobalSearchDnc.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 43 |
@@ -1823,7 +1823,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/agentSurfacesVersion.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/joinDoor.test.ts` | 12 |
 | `apps/console/src/__tests__/components/layoutOverflowClipCss.test.ts` | 2 |
-| `apps/console/src/__tests__/components/softphoneVisibility.test.tsx` | 12 |
+| `apps/console/src/__tests__/components/softphoneVisibility.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/switcherDropdownScrollCss.test.ts` | 4 |
 | `apps/console/src/components/common/DateRangeFilter.test.tsx` | 25 |
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
@@ -1853,7 +1853,6 @@ Files: `CustomerCallLink.tsx`, `CustomerHistory.module.css`, `CustomerHistorySum
 |---|---|
 | `apps/console/src/__tests__/api/customerHistory.test.ts` | 12 |
 | `apps/console/src/__tests__/components/CustomerSearchBox.test.tsx` | 29 |
-| `apps/console/src/__tests__/components/CustomerSearchPopover.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/CustomerHistoryPage.test.tsx` | 45 |
 | `apps/console/src/__tests__/utils/customerSearchRecent.test.ts` | 9 |
 
@@ -1868,6 +1867,10 @@ Files: `ExportReportButton.tsx`, `ExportReportDialog.tsx`, `ReportDownloads.tsx`
 | `apps/console/src/__tests__/components/ExportReportDialog.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/reportEntryPoints.test.tsx` | 24 |
 | `apps/console/src/__tests__/components/SubscriptionsPanel.test.tsx` | 18 |
+| `apps/console/src/__tests__/components/GlobalSearch.test.tsx` | 20 |
+| `apps/console/src/__tests__/components/homeNavBadge.test.tsx` | 6 |
+| `apps/console/src/__tests__/components/missedNavBadge.test.tsx` | 2 |
+| `apps/console/src/__tests__/components/pageCrumbs.test.tsx` | 4 |
 | `apps/console/src/__tests__/hooks/useReportRun.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/ReportRunPage.test.tsx` | 10 |
 | `apps/console/src/__tests__/pages/ReportsPage.test.tsx` | 11 |
@@ -1935,7 +1938,7 @@ Files: `CustomerWaitingPill.tsx` (+ `.module.css`), `Inbound.module.css`, `Inbou
 | `apps/console/src/__tests__/hooks/useMissedCallsCount.test.tsx` (one shared read, the poll only with inbound on, one poll a minute for the tab, the re-read, a failed read, another account, the badge text) | 7 |
 | `apps/console/src/__tests__/components/missedNavBadge.test.tsx` (the badge in the agent's nav, the entry with the flag off; the console sidebar's in `ConsoleSidebar.test.tsx`) | 2 |
 | `apps/console/src/__tests__/components/AgentFloorInboundWrapup.test.tsx` (the inbound wrap-up's label, Close and make available, its confirm and refusal; an agent on a break owing the outcome; the row's control) | 7 |
-| `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 8 |
+| `apps/console/src/__tests__/pages/InboundRoutes.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` (both actions offered, the voicemail saved; the route's warnings beside their fields, advisory; the hours' zone named, the sticky wait's own label, withheld/DNC callers hearing the busy message in opening hours) | 8 |
 | `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` (the recordings panel: listed with lengths and routes, delete only of one nothing uses or chose, upload and the selects offering it, refusals, the size limit, delete and the in-use reload, no storage; each message's Play of what its choice means, a new choice from Play again, the list's Play and a gone recording) | 11 |
 | `apps/console/src/__tests__/api/inboundRecordings.test.ts` (the multipart body, name first; refusals read; the preview's paths, blob URL and refusals) | 9 |
@@ -2009,16 +2012,16 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AccountsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyAnalyticsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyAttemptCallPage.test.tsx` | 22 |
-| `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 43 |
-| `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 34 |
+| `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 45 |
+| `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 36 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` | 6 |
-| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | ~91 |
+| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 94 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.carrier.test.tsx` | ~7 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 48 |
-| `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 56 |
+| `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 25 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgencyHomeRedirect.test.tsx` | 7 |
 | `apps/console/src/__tests__/pages/AgencyJoinPage.test.tsx` | 57 |
@@ -2033,7 +2036,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/AgentConsolePage.renders.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` | 27 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 43 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 47 |
 | `apps/console/src/__tests__/pages/AgentHomePage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgentPerformancePage.test.tsx` | 51 |
@@ -2049,7 +2052,7 @@ Files: `AppHomeRedirect.tsx`, `LegacyAppRedirect.tsx`, `accounts/AccountsPage.mo
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
-| `apps/console/src/__tests__/pages/SettingsHub.test.tsx` | 19 |
+| `apps/console/src/__tests__/pages/SettingsHub.test.tsx` | 24 |
 | `apps/console/src/__tests__/pages/SoftphonePage.audio.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/SoftphonePage.test.tsx` | 24 |
 | `apps/console/src/__tests__/pages/SoftphoneSettingsPage.test.tsx` | 8 |
@@ -2078,6 +2081,9 @@ Files: `SoftphoneCallDetailPage.tsx`, `SoftphoneCallsPage.tsx`, `closeSoftphoneS
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/pages/SoftphoneSupervisor.test.tsx` | 18 |
+| `apps/console/src/__tests__/pages/HomePage.test.tsx` | 13 |
+| `apps/console/src/__tests__/pages/InboundRecordings.test.tsx` | 11 |
+| `apps/console/src/__tests__/pages/InboundRouteEditor.voicemail.test.tsx` | 8 |
 
 ### `apps/console/src/types/`
 
@@ -2107,7 +2113,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyCarriers.test.ts` | ~6 |
 | `apps/console/src/__tests__/utils/agencyReservedBreakReason.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/agencyAgentRoster.test.ts` | 82 |
-| `apps/console/src/__tests__/utils/agencyAgentSurfaces.test.ts` | 7 |
+| `apps/console/src/__tests__/utils/agencyAgentSurfaces.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/agencyAssignmentEntry.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyAttemptFilters.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
@@ -2120,7 +2126,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/agencyCampaignOverview.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/agencyCampaignPerformance.test.ts` | 65 |
 | `apps/console/src/__tests__/utils/agencyCampaignRecording.test.ts` | 35 |
-| `apps/console/src/__tests__/utils/agencyCampaignTabs.test.ts` | 22 |
+| `apps/console/src/__tests__/utils/agencyCampaignTabs.test.ts` | 31 |
 | `apps/console/src/__tests__/utils/agencyCampaignsHome.test.ts` | ~22 |
 | `apps/console/src/__tests__/utils/agencyCatalogSync.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyClock.test.ts` | 20 |
@@ -2166,7 +2172,7 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
-| `apps/console/src/__tests__/utils/consoleNav.test.ts` | 51 |
+| `apps/console/src/__tests__/utils/consoleNav.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/format.test.ts` | 17 |
 | `apps/console/src/__tests__/utils/insightsDrilldowns.test.tsx` | 81 |
 | `apps/console/src/__tests__/utils/insightsHelpers.test.ts` | 22 |
@@ -2203,6 +2209,9 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | `apps/console/src/__tests__/utils/softphonePhoneInput.test.ts` | 31 |
 | `apps/console/src/__tests__/utils/softphoneCallLabels.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/softphoneRingback.test.ts` | 4 |
+| `apps/console/src/__tests__/utils/agencyHome.test.ts` | 30 |
+| `apps/console/src/__tests__/utils/campaignSettingsSections.test.ts` | 4 |
+| `apps/console/src/__tests__/utils/consoleSearch.test.ts` | 55 |
 
 `softphoneCallState.test.ts` also covers the station reducer's `manual_call` action (`utils/agencyStationReducer.ts`); `softphoneFields.test.ts` covers `callFields`, `fieldSettings`, `settingsForm`, the override note, `refusalCopy` and `callStats`.
 

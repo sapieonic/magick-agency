@@ -87,6 +87,7 @@ export interface SearchGroup {
  * question.
  */
 const PAGE_KEYWORDS: Record<string, readonly string[]> = {
+  'home:home': ['attention', 'today', 'floor', 'stalled', 'paused', 'overdue'],
   'campaigns:campaigns': ['campaign', 'dialler', 'dialer', 'power dial', 'outbound'],
   'campaigns:softphone': ['soft phone', 'softphone', 'manual calls', 'calls'],
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],

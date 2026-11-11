@@ -44,6 +44,7 @@ describe('the pages', () => {
     for (const section of CONSOLE_SECTIONS) for (const tab of section.tabs) expect(tos).toContain(tab.to);
     expect(tos).toContain('/agency/campaigns/new');
     expect(searchPages().map((p) => p.title)).toEqual([
+      'Home',
       'Campaigns',
       'New campaign',
       'Soft-phone calls',
@@ -56,7 +57,7 @@ describe('the pages', () => {
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(8);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(9);
   });
 
   it('offers nothing under /agency without the dialer flag or the agency capability', () => {
