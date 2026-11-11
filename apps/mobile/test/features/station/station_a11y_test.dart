@@ -52,6 +52,21 @@ void main() {
       expect(h.actions.count('hangUp'), 0);
     });
 
+    testWidgets('a hold the call ends under lets go without an error', (tester) async {
+      // The customer hangs up first: the stage moves to wrap-up and the bar
+      // leaves the screen with the agent's finger still on it. Reduced motion,
+      // so the old stage leaves on the next frame instead of fading over the hold.
+      final h = await pumpStation(tester, onCall(), disableAnimations: true);
+      final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
+      await tester.pump(const Duration(milliseconds: 100));
+      await h.endCall();
+      expect(find.byKey(const Key('hang-up')), findsNothing);
+      await gesture.up();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(h.actions.count('hangUp'), 0);
+    });
+
     testWidgets('works while ringing', (tester) async {
       final h = await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(countdown: 3)));
       final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
