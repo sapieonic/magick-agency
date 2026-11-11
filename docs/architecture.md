@@ -843,20 +843,29 @@ a rate-limit key and never an auth input.
 - **One console shell** (decision B28). Every signed-in page outside the agent's full-viewport
   surfaces (`/station`, `/dialer/*`) renders in `ConsoleLayout` (`components/layout/`), mounted
   by `ConsoleShell` in `App.tsx`. The sidebar has the tenant and account context block (the
-  existing switchers), Home, the work sections Campaigns, Inbound, Reports and Do Not Call, then
-  Settings and the version; the top bar has a breadcrumb, one search field and the profile menu
-  (name, email, ids, theme, sign out). The field and ⌘K open `GlobalSearch` on every page: pages,
-  Settings, campaigns, campaign settings sections and a phone number's customer history, each
-  offered under its destination's gate (`utils/consoleSearch.ts`, which reads `consoleNav.ts`). A section
-  that groups pages shows an in-page tab bar (`AgencyArea`, `SectionTabs`): Campaigns and
-  Soft-phone calls, Missed calls and Summary, Analytics and Reports, each tab gated as its page.
-  The navigation model, with every entry's gate, is `utils/consoleNav.ts`. Settings is a hub at
-  `/settings/*` grouped by who a setting affects (you, this account, people and access), with an
-  "Applies to" line per page. The old `/app/<page>` URLs redirect to `/settings/<page>`
-  (`LegacyAppRedirect`); `/app` itself is the home decision (`AppHomeRedirect`). `AgentLanding`
-  keeps a dedicated agent out of the shell on Settings and `/app`; the `/agency` pages send an
-  agent to their own `/dialer/*` twin. PostHog's `product` stays `'agency'` on `/agency` and
-  `'ai'` elsewhere (`productSurfaceForPath`).
+  existing switchers), Home, the work sections Campaigns, Inbound, Reports and Do Not Call, Take
+  calls (a link out to `/dialer` for whoever takes calls without supervising), then Settings at
+  the foot of the same Main landmark, and the version; the top bar has a breadcrumb (on a phone
+  the current page with a back arrow to the crumb above it), one search field and the profile
+  menu (a disclosure: name, email, ids, theme, sign out). The field and ⌘K open `GlobalSearch` on
+  every page: pages, Settings, campaigns, each campaign's own pages (its tabs, Activity, Soft-phone
+  calls), the campaign Settings sections its page has and a phone number's customer history, each
+  offered under its destination's gate (`utils/consoleSearch.ts`, which reads `consoleNav.ts`;
+  the campaign list is kept per tenant and account for the session, `hooks/useSearchCampaigns.ts`).
+  Escape closes only the topmost layer (search, then the phone's drawer). A section that groups
+  pages shows an in-page tab bar (`AgencyArea`, `SectionTabs`): Campaigns and Soft-phone calls,
+  Missed calls and Summary, Analytics and Exports, each tab gated as its page. The navigation
+  model, with every entry's gate, is `utils/consoleNav.ts`; `navRouteGates.test.ts` checks every
+  offer against the route it opens, for every role and flag. Settings is a hub at `/settings/*`
+  grouped by who a setting affects (you, this account, people and access), with an "Applies to"
+  line per page (people and access says the account for a seat scoped to one); `/settings`
+  reopens the page last visited (per viewer, `utils/settingsLastVisited.ts`), else Team for whoever
+  has it, else the first entry, and on a phone the sub-nav is one picker. The old `/app/<page>`
+  URLs redirect to `/settings/<page>` (`LegacyAppRedirect`); `/app` itself is the home decision
+  (`AppHomeRedirect`). `AgentLanding` keeps a dedicated agent out of the shell on Settings and
+  `/app` while the dialer is on, so neither the sidebar nor search offers them Settings then; the
+  `/agency` pages send an agent to their own `/dialer/*` twin. PostHog's `product` stays
+  `'agency'` on `/agency` and `'ai'` elsewhere (`productSurfaceForPath`).
 - **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
   (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
   switch lands there too) and the first sidebar entry, with a badge counting what needs them.
