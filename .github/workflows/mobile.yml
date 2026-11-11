@@ -121,6 +121,13 @@ jobs:
           flutter build apk --debug --flavor dev
           --dart-define-from-file=env/dev.json
           --build-number=${{ github.run_number }}
+      # agent_audio's Kotlin unit tests (pure JVM: A-law, the decimator, the jitter buffer and
+      # its Dart trace, ringback, the inbound chime, framing, focus recovery, the phone-call
+      # tracker). The build above wrote gradlew and local.properties; the plugin is the app's
+      # `:agent_audio` project.
+      - name: agent_audio Kotlin unit tests
+        working-directory: apps/mobile/android
+        run: ./gradlew :agent_audio:testDebugUnitTest --no-daemon
 
   ios:
     name: iOS build (no signing)

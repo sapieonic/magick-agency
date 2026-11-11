@@ -735,8 +735,8 @@ packages/
 
 - **Toolchain:** Flutter 3.47.7, pinned in `.github/workflows/mobile.yml`.
 - **CI:**
-  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart only: the Kotlin unit tests, `./gradlew :agent_audio:testDebugUnitTest`, are not run).
-  - A debug Android build on every pull request touching the app or the contracts.
+  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart).
+  - A debug Android build on every pull request touching the app or the contracts, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`).
   - An unsigned iOS build on `main`.
 - **Android:**
   - minSdk 28, compileSdk 37 (`permission_handler_android` requires it), targetSdk Flutter's default.
@@ -760,9 +760,10 @@ packages/
   `inbound-mobile-wall-clock`), nor on a phone or a carrier. Of the chime, the Dart reference and
   its vectors run in CI (`flutter test` in `agent_audio`). Its Kotlin (`Chime.kt`, the `EngineSlot`
   and `VoiceEngine` changes) was compiled and `ChimeTest.kt` passed offline on a JVM during review;
-  CI compiles it again in the debug Android build but never runs the Android unit tests
-  (`ChimeTest.kt`, `RingbackTest.kt`: only `./gradlew :agent_audio:testDebugUnitTest` from
-  `apps/mobile/android`, run by hand). Its Swift (`Chime.swift`, the `Playout` and `VoiceEngine`
+  CI compiles it again in the debug Android build and, since 2026-11-11, runs the Kotlin unit
+  tests after it (`./gradlew :agent_audio:testDebugUnitTest`; all 44 passed on a JVM with Gradle
+  9.3.1 and Kotlin 2.4.0 when the step was added, outside AGP: the step's first CI run is its first
+  run under the Android Gradle plugin). Its Swift (`Chime.swift`, the `Playout` and `VoiceEngine`
   changes) has never been compiled, like the rest of the iOS engine (iOS does not compile yet,
   above). Ringing a phone whose app is in the background (push) is parked, not started.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.

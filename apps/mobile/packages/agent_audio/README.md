@@ -329,8 +329,8 @@ jitter buffer (replaying the Dart trace), the ringback tone (the Dart vectors, c
 mixing, the request kept across arm and cleared by stop), the inbound chime (the Dart vectors,
 played once frame by frame, a request before the engine runs, dropped by stop), framing, the uplink encoder, the
 level meter, the interruption tracker and the phone-call tracker; they need no Android or Flutter classes. They run with the app's Gradle
-build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`), by hand: CI builds the
-Android app but does not run them.
+build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`, after a `flutter build
+apk` has written `gradlew`); CI runs them after its debug Android build (`.github/workflows/mobile.yml`).
 
 The Swift sources cannot be compiled on Linux. `ALaw.swift` documents the same checksums;
 the trace format is documented in `test/support/jitter_trace.dart` for a Swift replay test,
