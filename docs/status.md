@@ -963,8 +963,8 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
   calls, a search (summary and first page) takes 15.1 ms median / 17.6 ms p95 for a tenant-level
   owner and 6.3 / 10.2 ms for an account-scoped supervisor; a later page 4–5 ms; no full scan in
   any plan (`customer-history.md` §4, `apps/server/scripts/bench-customer-history.ts`).
-- **Console**: a "Search a number" box in the agency top bar, and a "Search a number" entry in the
-  agent navigation; the page at `/agency/customers` and `/dialer/customers`.
+- **Console**: a phone number typed into the console's search (top bar field or ⌘K, B28), and a
+  "Search a number" entry in the agent navigation; the page at `/agency/customers` and `/dialer/customers`.
 - **Agent app**: the search and the page from My calls, with every console filter (the channel and
   connected-only on the page, the rest in a sheet) and a copy button; no CSV export (CH13). First
   run under Dart and Flutter by the mobile CI job on PR #50 (`flutter analyze`, `flutter test`,

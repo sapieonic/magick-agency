@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { AGENT_SURFACES } from '../../utils/agencyAgentSurfaces';
+import { searchPages } from '../../utils/consoleSearch';
 import { resolve } from 'node:path';
 
 /**
@@ -170,11 +171,12 @@ describe('the agency entry points', () => {
      * supervisor or above and must not be sent to their own agent numbers. The
      * link on `AgentHomePage` is the entry point instead.
      */
-    const search = readFileSync(
-      resolve(process.cwd(), 'src/components/common/GlobalSearch.tsx'),
-      'utf8',
-    );
+    // The search's pages come from `utils/consoleSearch.ts` (B28); read both files.
+    const search = ['src/components/common/GlobalSearch.tsx', 'src/utils/consoleSearch.ts']
+      .map((file) => readFileSync(resolve(process.cwd(), file), 'utf8'))
+      .join('\n');
     expect(search).not.toContain('/dialer/performance');
+    expect(searchPages().map((p) => p.to).filter((to) => to.startsWith('/dialer'))).toEqual([]);
   });
 
   it('keeps /dialer/attempts out of GlobalSearch for the same reason', () => {
@@ -191,10 +193,9 @@ describe('the agency entry points', () => {
      * The entry points are the links on `AgentHomePage` — the one screen every
      * agent passes through — and the cross-link in `AgentPerformancePage`'s header.
      */
-    const search = readFileSync(
-      resolve(process.cwd(), 'src/components/common/GlobalSearch.tsx'),
-      'utf8',
-    );
+    const search = ['src/components/common/GlobalSearch.tsx', 'src/utils/consoleSearch.ts']
+      .map((file) => readFileSync(resolve(process.cwd(), file), 'utf8'))
+      .join('\n');
     expect(search).not.toContain('/dialer/attempts');
   });
 

@@ -844,8 +844,10 @@ a rate-limit key and never an auth input.
   surfaces (`/station`, `/dialer/*`) renders in `ConsoleLayout` (`components/layout/`), mounted
   by `ConsoleShell` in `App.tsx`. The sidebar has the tenant and account context block (the
   existing switchers), the work sections Campaigns, Inbound, Reports and Do Not Call, then
-  Settings and the version; the top bar has a breadcrumb, "Search a number" and the profile menu
-  (name, email, ids, theme, sign out); `GlobalSearch` (⌘K) is mounted on every page. A section
+  Settings and the version; the top bar has a breadcrumb, one search field and the profile menu
+  (name, email, ids, theme, sign out). The field and ⌘K open `GlobalSearch` on every page: pages,
+  Settings, campaigns, campaign settings sections and a phone number's customer history, each
+  offered under its destination's gate (`utils/consoleSearch.ts`, which reads `consoleNav.ts`). A section
   that groups pages shows an in-page tab bar (`AgencyArea`, `SectionTabs`): Campaigns and
   Soft-phone calls, Missed calls and Summary, Analytics and Reports, each tab gated as its page.
   The navigation model, with every entry's gate, is `utils/consoleNav.ts`. Settings is a hub at
