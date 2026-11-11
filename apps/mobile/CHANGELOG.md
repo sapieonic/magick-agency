@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/sapieonic/magick-agency/compare/mobile-v0.9.0...mobile-v0.9.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **mobile:** ignore a finger lifted after the hold-to-confirm bar has gone ([#72](https://github.com/sapieonic/magick-agency/issues/72)) ([2e934c5](https://github.com/sapieonic/magick-agency/commit/2e934c52f0efd8d4296835fde2fe8fcd349376cc))
+
 ## [0.9.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.8.0...mobile-v0.9.0) (2026-11-11)
 
 
