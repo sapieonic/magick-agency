@@ -6,7 +6,7 @@ import { AccountUnavailable } from '../../components/common/AccountUnavailable';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import { AgentNav } from '../../components/agency/AgentNav';
-import { agencyPersona, isDedicatedAgent } from '../../utils/agencyPersona';
+import { CAMPAIGNS_LANDING_PATH, agencyPersona, isDedicatedAgent } from '../../utils/agencyPersona';
 import { assignmentEntry } from '../../utils/agencyAssignmentEntry';
 import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStationExit';
 import type { AgencyAssignment } from '../../types/agency-campaign';
@@ -66,11 +66,11 @@ export function AgentHomePage() {
    * route beside a live call is a misclick that hangs up on a customer.
    *
    * It is wrong for a `viewer` or `operator`. They resolve to the agent persona
-   * (they hold every agent permission and no supervisory one) and are sent here on
-   * purpose, but they also own a populated platform — calls, schedules, contact
-   * lists — and stranding them on a page with no link is how an earlier revision
-   * of this feature locked them out of it. So: they get a way back, and a
-   * dedicated agent does not.
+   * (they hold every agent permission and no supervisory one) and may come here to
+   * take calls, but they land in the console (`agencyLandingPath`) and have
+   * campaigns to read there, and stranding them on a page with no link is how an
+   * earlier revision of this feature locked them out of it. So: they get a way
+   * back, and a dedicated agent does not.
    */
   const canLeaveDialer = !isDedicatedAgent(role) && persona === 'agent';
   /** `null` for an ordinary visit; otherwise why the auto-redirect must not fire. */
@@ -341,16 +341,17 @@ function SurfaceNav() {
 }
 
 /**
- * The way back for someone who has a console to go back to: a `viewer` or `operator`
- * (decision B17's wording, "Go to settings"). It opens the Settings hub inside the console
- * shell (decision B28), whose sidebar also carries their work pages. `AgentLanding` will not
- * bounce them: it gates on `isDedicatedAgent`, which is false for exactly the roles that see
- * this link.
+ * The way back for someone who has a console to go back to: a `viewer` or `operator`.
+ * It opens the campaign list, which is where `/agency` lands them (`agencyLandingPath`),
+ * inside the console shell (decision B28). It used to read "Go to settings" (B17's
+ * wording) and open Profile and appearance, which is not where anybody leaving the
+ * dialler wants to be. `AgentLanding` will not bounce them: it gates on
+ * `isDedicatedAgent`, which is false for exactly the roles that see this link.
  */
 function ExitToPlatform() {
   return (
-    <Link className={styles.exit} to="/settings">
-      Go to settings
+    <Link className={styles.exit} to={CAMPAIGNS_LANDING_PATH}>
+      Open the console
     </Link>
   );
 }

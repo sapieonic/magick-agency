@@ -859,7 +859,8 @@ a rate-limit key and never an auth input.
   `'ai'` elsewhere (`productSurfaceForPath`).
 - **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
   (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
-  switch lands there too) and the first sidebar entry, with a badge counting what needs them.
+  switch lands there too; a dedicated agent lands on `/dialer`, a viewer or operator on the campaign
+  list, `agencyLandingPath` in `utils/agencyPersona.ts`) and the first sidebar entry, with a badge counting what needs them.
   Three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
   abandonment from 80% of its ceiling on a running campaign, a campaign's overdue callbacks, the
   account's open missed calls), each linking to the campaign tab or page that fixes it, derived on

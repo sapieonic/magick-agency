@@ -110,7 +110,7 @@ import styles from './AgentAttemptsPanel.module.css';
  *
  * It used to be absent on both surfaces, for a reason that is only true of one of
  * them. The agency-native call detail lives under `/agency`, and
- * `AgencyHomeRedirect` bounces a non-supervisor persona to `/dialer` — so an
+ * `AgencyHomeRedirect` sends a dedicated agent to `/dialer` — so an
  * `agent` (hierarchy level 5) cannot reach it, and a row link that lands them
  * somewhere they are bounced out of is the same trap `/dialer` exists to avoid,
  * one shell along. That still holds for `subject.kind === 'me'` at
