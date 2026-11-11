@@ -22,7 +22,12 @@ export async function assertRedisRangeFree(): Promise<void> {
     assertSafeTestRedisUrl(redisUrl);
     dbs.add(Number(new URL(redisUrl).pathname.slice(1)));
   }
-  const redis = new Redis(base.redisUrl, { maxRetriesPerRequest: 2, lazyConnect: true });
+  await assertRedisDbsFree(base.redisUrl, dbs);
+}
+
+/** Throws, naming them, when any client but this check's own is connected to one of `dbs`. */
+export async function assertRedisDbsFree(redisUrl: string, dbs: ReadonlySet<number>): Promise<void> {
+  const redis = new Redis(redisUrl, { maxRetriesPerRequest: 2, lazyConnect: true });
   try {
     await redis.connect();
     const own = String(await redis.client('ID'));
