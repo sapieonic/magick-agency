@@ -149,7 +149,7 @@ void main() {
       ]);
       expect(inRow('dnc', find.byKey(const Key('missed-dnc'))), findsOneWidget);
       expect(inRow('plain', find.byKey(const Key('missed-dnc'))), findsNothing);
-      expect(inRow('vm', find.text('Left a voicemail · Listen on the console')), findsOneWidget);
+      expect(inRow('vm', find.text('Left a voicemail · Listen on the web console')), findsOneWidget);
       expect(inRow('plain', find.byKey(const Key('missed-voicemail'))), findsNothing);
     });
 

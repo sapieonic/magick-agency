@@ -358,6 +358,13 @@ void main() {
     });
   });
 
+  test('the inbound words that must match the console\'s', () {
+    expect(InboundCopy.sticky(InboundSticky.lastFromNumber, isYou: true),
+        'Your customer: you last called them from this number');
+    expect(InboundCopy.customerWaitingHint,
+        'A customer who usually speaks to you has rung in and is on hold. Finish this call’s work soon to take them.');
+  });
+
   group('above whatever the station shows', () {
     final waiting = CustomerWaitingView(callId: 'ib-2', since: t0, name: 'Rahul Deshpande', fromE164: '+918765432109');
 

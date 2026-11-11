@@ -16,7 +16,8 @@ abstract final class MissedCopy {
   static const segmentShort = 'Missed';
 
   /// The console agent page's subtitle.
-  static const subtitle = 'Your customers who rang when nobody could answer. Call them back, then mark each one handled.';
+  static const subtitle = 'Your customers who rang when nobody could answer. Call them back. Reaching them closes the '
+      'row on its own; mark it handled only if you dealt with it another way.';
 
   /// The status tabs (the console's "To follow up" / "Handled").
   static const openTab = 'To follow up';
@@ -52,11 +53,11 @@ abstract final class MissedCopy {
 
   /// A voicemail: the app does not play it in this build (no audio player).
   static const voicemail = 'Left a voicemail';
-  static const voicemailOnConsole = 'Listen on the console';
+  static const voicemailOnConsole = 'Listen on the web console';
 
   /// After Call back, while the soft phone is not open here yet (it waits
   /// five minutes: `callBackWaitsFor`).
-  static const callBackWaits = 'Open the soft phone within 5 minutes and the number will be ready on the pad. '
+  static const callBackWaits = 'Switch to the soft phone within 5 minutes and the number will be on the pad. '
       'Nothing is dialled until you press Call.';
 
   /// After Call back, with a call on the soft phone: the number waits for it.

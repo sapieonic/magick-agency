@@ -16,7 +16,7 @@ import '../softphone/call_state.dart' show newerCall;
 ///
 /// Two additions the app needs and the console does not, both kept narrow:
 /// * `campaignMessage`: the `campaign_state` frame's sentence while the
-///   campaign is not dialling ("no calls will come through").
+///   campaign is not dialling ("no campaign calls for now": inbound callers still come through).
 /// * `ready` drops `agentStateSince` / `breakReasonCode` when it reports a
 ///   DIFFERENT state from the one they were stated for. Those two describe a
 ///   transition, and `ready` carries no `since`; a phone whose socket died

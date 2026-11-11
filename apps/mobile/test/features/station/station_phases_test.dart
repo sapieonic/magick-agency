@@ -18,9 +18,13 @@ void main() {
       expect(find.text('Running'), findsOneWidget);
     });
 
-    testWidgets('a paused campaign says no calls will come through', (tester) async {
+    testWidgets('a paused campaign says no campaign calls come, and that callers can still ring in', (tester) async {
       await pumpStation(tester, station(dialing: false));
-      expect(find.text('Campaign paused — no calls will come through'), findsOneWidget);
+      expect(find.text('Campaign paused — no campaign calls for now'), findsOneWidget);
+      expect(
+        find.text('Customers who ring in can still reach you. Campaign calls start again when it’s running.'),
+        findsOneWidget,
+      );
       expect(find.text('Paused'), findsOneWidget);
       expect(find.text('Waiting for a call'), findsNothing);
     });

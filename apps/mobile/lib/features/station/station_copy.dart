@@ -47,8 +47,10 @@ abstract final class StationCopy {
   // ── Waiting ──
   static const waitingHeadline = 'Waiting for a call';
   static const waitingHint = 'Keep this screen open so the next customer reaches you. Their details appear before they pick up.';
-  static const pausedHeadline = 'Campaign paused — no calls will come through';
-  static const pausedHint = 'Nothing will be sent to you until the campaign is running again.';
+  // A paused campaign stops campaign calls only: the inbound router does not read campaign
+  // status, so customers who ring in still reach an available agent.
+  static const pausedHeadline = 'Campaign paused — no campaign calls for now';
+  static const pausedHint = 'Customers who ring in can still reach you. Campaign calls start again when it’s running.';
   static String availableFor(String clock) => 'Available for $clock';
 
   // ── Nothing due (contact assignment: a strict or preferred campaign) ──
@@ -330,7 +332,7 @@ abstract final class InboundCopy {
     if (!isYou) return 'Usually speaks to another agent, who isn’t free';
     return switch (reason) {
       InboundSticky.owner => 'Your customer: their contact is assigned to you',
-      InboundSticky.lastFromNumber => 'Your customer: you took their last call',
+      InboundSticky.lastFromNumber => 'Your customer: you last called them from this number',
       InboundSticky.lastConnected => 'Your customer: you last spoke to them',
       InboundSticky.lastDialled => 'Your customer: you last called them',
       InboundSticky.other => 'Your customer',
@@ -408,8 +410,10 @@ abstract final class InboundCopy {
 
   // ── "Your customer is waiting" ──
   static String customerWaiting(String? who) => who == null ? 'Your customer is waiting' : 'Your customer is waiting: $who';
+  // Not a promise to put them through: under the default `loose` mode a teammate takes them
+  // after 30 s.
   static const customerWaitingHint =
-      'A customer who usually speaks to you has rung in. You’ll be put through when this call’s work is done.';
+      'A customer who usually speaks to you has rung in and is on hold. Finish this call’s work soon to take them.';
 
   // ── Announcements ──
   static String offerAnnouncement(String who) => 'Incoming call from $who';

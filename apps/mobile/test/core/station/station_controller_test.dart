@@ -731,7 +731,7 @@ void main() {
         expect(app.requests('POST', '/proxy/agency/attempts/att-1/dnc').single.body, {'scope': 'campaign', 'reason': 'asked'});
         expect(app.view!.actionError, isNull);
         expect(app.view!.dncOutcome,
-            '+919876543210 won’t be dialed again by this campaign. It’s on this campaign’s Do Not Call list.');
+            '+919876543210 won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.');
         app.routes['POST /proxy/agency/attempts/att-1/dnc'] = (_) => json(403, {'code': 'not_your_attempt', 'message': 'x'});
         app.run(app.controller.markDnc());
         expect(app.view!.actionError, 'This call has moved on — it isn’t yours to mark any more.');

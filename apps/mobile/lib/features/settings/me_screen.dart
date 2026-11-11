@@ -42,7 +42,7 @@ String? signOutBlockedReason(StationSignals signals, {AgentPhase? phase}) {
 
 const signOutBlockedOnCall = 'Finish this call first — this call is still on your screen.';
 const signOutBlockedAvailable =
-    'You’re still in the dialing pool — leave the station first, or a call could be sent to an empty screen.';
+    'You’re still in the dialling pool — leave the station first, or a call could be sent to an empty screen.';
 const signOutBlockedOnBreak = 'You’re on a break, but your station is still open on this phone — leave the station first, then sign out.';
 const signOutBlockedOpen = 'Your station is still open on this phone — leave the station first, then sign out.';
 const signOutBlockedSoftphone = 'Your soft phone is still open on this phone — close the soft phone first, then sign out.';

@@ -37,4 +37,13 @@ void main() {
     expect(MissedCopy.emptyTitle(open: false, filtered: false), 'No handled missed calls');
     expect(MissedCopy.emptyTitle(open: true, filtered: true), 'Nothing matches that filter');
   });
+
+  test('the list\'s own sentences, word for word as the console has them', () {
+    expect(MissedCopy.subtitle,
+        'Your customers who rang when nobody could answer. Call them back. Reaching them closes the row on its own; '
+        'mark it handled only if you dealt with it another way.');
+    expect(MissedCopy.voicemailOnConsole, 'Listen on the web console');
+    expect(MissedCopy.callBackWaits,
+        'Switch to the soft phone within 5 minutes and the number will be on the pad. Nothing is dialled until you press Call.');
+  });
 }

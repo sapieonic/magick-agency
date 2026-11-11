@@ -622,7 +622,8 @@ class StationView {
   /// When [phase] started (break timers, "Available for 01:42").
   final DateTime? phaseSince;
 
-  /// False while the campaign is paused or not dialling: "no calls will come through".
+  /// False while the campaign is paused or not dialling: "no campaign calls for now" (customers
+  /// who ring in can still reach the agent: the inbound router does not read campaign status).
   final bool campaignDialing;
   final String? campaignMessage;
 
