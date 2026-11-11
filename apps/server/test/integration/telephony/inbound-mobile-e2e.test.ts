@@ -410,7 +410,7 @@ describe('the device-away break and inbound calls: queued behind the call, never
 });
 
 describe('a capable phone reconnecting during an offer (the 1.5 s before connects_at)', () => {
-  it('the same build back inside the window: the call still reaches that phone, its audio on the new socket', async () => {
+  it('the same build back inside the window: the offer stands (restated after `ready`) and the call reaches that phone, its audio on the new socket', async () => {
     const campaignId = await campaign(world);
     const phone = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
     let hangUp = false;
@@ -422,6 +422,11 @@ describe('a capable phone reconnecting during an offer (the 1.5 s before connect
     expect(getAgencyRuntime()!.stations.get(phone.sessionId)).toMatchObject({ clientKind: 'mobile', canTakeInbound: true });
     const connected = await spineWhen(call, 'connected to the phone', (r) => r.state === 'connected');
     expect(connected.session_id).toBe(phone.sessionId);
+    // The offer stood across the reconnect (never cancelled and re-offered): `ready` says
+    // `reserved` and the offer is restated on the new socket after it.
+    expect(connected.offer_count).toBe(1);
+    expect(leg.ready).toMatchObject({ state: 'reserved' });
+    expect(leg.ofEvent('inbound_call')[0]).toMatchObject({ call: { id: connected.id, state: 'offered' } });
     await waitFor('A-law on the new socket', () => alawFrames(leg).length > 5);
     await waitFor('the connected frame on the new socket',
       () => leg.ofEvent('inbound_call').some((f) => (f['call'] as Record<string, unknown>)['state'] === 'connected'));
