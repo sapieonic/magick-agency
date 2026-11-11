@@ -339,15 +339,15 @@ describe('readiness', () => {
     await seedRoster(id, floor, [agent(0).id, null]);
     await q(`INSERT INTO dnc_entries (tenant_id, account_id, phone_e164, source)
              SELECT tenant_id, NULL, phone_e164, 'api' FROM agency_contacts WHERE campaign_id = $1 AND state = 'pending' LIMIT 2`, [id]);
-    await q(`INSERT INTO agency_ingest_jobs (tenant_id, campaign_id, s3_key, file_name, phone_column, status, rows_read, accepted, rejected, duplicates, dedupe_column)
-             VALUES ($1, $2, 'k', 'roster.csv', 'Mobile', 'completed', 70, 60, 10, 4, 'Loan No')`, [floor.tenant, id]);
+    await q(`INSERT INTO agency_ingest_jobs (tenant_id, campaign_id, s3_key, file_name, phone_column, status, rows_read, accepted, rejected, duplicates, dedupe_columns)
+             VALUES ($1, $2, 'k', 'roster.csv', 'Mobile', 'completed', 70, 60, 10, 4, ARRAY['Loan No', 'Branch'])`, [floor.tenant, id]);
     const body = await ok('readiness', id);
     const by = Object.fromEntries(body.checks.map((c: { code: string }) => [c.code, c]));
     expect(body.checks.map((c: { code: string }) => c.code)).toEqual([
       'roster_uploaded', 'phone_column_mapped', 'outcomes_configured', 'caller_ids_present', 'calling_hours_set',
       'agents_staffed', 'contacts_allocated', 'abandonment_clip', 'contacts_on_dnc',
     ]);
-    expect(by.roster_uploaded).toEqual({ code: 'roster_uploaded', result: 'pass', count: 60, detail: { rejected: 10, duplicates: 4, dedupe_column: 'Loan No' } });
+    expect(by.roster_uploaded).toEqual({ code: 'roster_uploaded', result: 'pass', count: 60, detail: { rejected: 10, duplicates: 4, dedupe_column: 'Loan No + Branch' } });
     expect(by.phone_column_mapped).toMatchObject({ result: 'pass', detail: { phone_column: 'Mobile' } });
     expect(by.outcomes_configured).toMatchObject({ result: 'pass', count: 5, detail: { overrides: 0 } });
     expect(by.caller_ids_present).toMatchObject({ result: 'fail', count: 0 });
@@ -434,7 +434,7 @@ describe('uploads', () => {
     const body = await ok('uploads', C(6));
     expect(body.uploads).toEqual([expect.objectContaining({
       file_name: 'a.csv', uploaded_by: { user_id: sup().id, name: 'account_admin 0.0' }, status: 'completed', mode: 'append',
-      rows_read: 13, accepted: 10, rejected: 3, rejected_by_reason: { invalid_phone: 3 }, duplicates: 0, dedupe_column: null,
+      rows_read: 13, accepted: 10, rejected: 3, rejected_by_reason: { invalid_phone: 3 }, duplicates: 0, dedupe_columns: [],
       has_rejected_export: false,
     })]);
   });

@@ -102,3 +102,26 @@
   max-width: 420px;
   margin: 0;
 }
+
+/* Keys 2 and 3 of a combined duplicate check, under the first select. */
+.dedupeKey {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dedupeKey select {
+  flex: 1;
+  min-width: 0;
+}
+
+.dedupeAnd {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dedupeAdd {
+  align-self: flex-start;
+  margin-top: 8px;
+}

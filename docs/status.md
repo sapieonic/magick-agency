@@ -464,6 +464,38 @@ phone number (the default, unchanged), any kept column, or none.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
   duplicate column".
 
+### Roster upload: combining up to three duplicate columns 2026-11-10
+
+One column is not always a unique key: a loan number can repeat across branches, and deduping on it
+alone dropped the second branch's loan. "Check duplicates on" now combines up to three columns
+("Combine with another column"); a row is dropped only when every chosen column matches an earlier
+accepted row, and a row with any of them blank is kept.
+
+- Migration `0031_ingest_dedupe_columns.sql` (`agency_ingest_jobs.dedupe_columns TEXT[]`, 1 to 3,
+  backfilled from 0007's `dedupe_column`, which is no longer read but is still written for a
+  one-column key, so a server rolled back past 0031 keeps that key; the Down fails a pending or
+  running job whose key combines columns, `interrupted`, rather than run it on one column). Contract:
+  `dedupe_columns` on the ingest request (the single `dedupe_column` is still accepted, as one key)
+  and on the job, the insights summary and the uploads list (replacing `dedupe_column` there);
+  `AGENCY_MAX_DEDUPE_COLUMNS`. The readiness check's `detail.dedupe_column` names the key as one
+  label (`Loan No + Branch`). A phone-only upload sends the same request as before.
+- Rule and defaults: [`decisions.md`](decisions.md) §4, "Combined duplicate key".
+- Mapping screen: keys 2 and 3 under the first select, each removable while two or more remain.
+  Moving the phone role onto a column that is a key swaps the two keys rather than merging them,
+  so the key never loses a column (a smaller key drops more rows). A key column made the phone
+  remembers itself and is that column again when the phone moves off it, so undoing a mis-set
+  Phone role keeps the key. "Combine with another column" adds a column, and the phone number
+  only when no other column is left. `POST /ingest/jobs` records the
+  phone column named alone as the phone dedupe, not a column key.
+- A fresh-context review found two existing paths that can still drop a row the operator meant to
+  keep, both now stated in `decisions.md` §4 and neither changed, both kept by Manas's ruling of
+  2026-11-11: a DNC-suppressed row still claims its key (pinned as ruled), and rows differing only
+  in an ignored column collapse at the roster insert (the console's notes now say so).
+- `REPORT_DATASET_VERSION` stays 1: the campaign dataset embeds `AgencyInsightsSummary`, whose
+  `dedupe_column` became `dedupe_columns`, and the renderer reads neither. Insights still say
+  "duplicates on phone" for an upload sent with no duplicate check (`dedupe_phones: false` is not on
+  the uploads read); unchanged by this work.
+
 ### Wrap-up redial 2026-11-03
 
 A connected call can drop for reasons on any side. With the campaign setting "Allow redial from
@@ -1160,7 +1192,39 @@ and the server's integration lanes (no Postgres on this machine at the time).
 
 ## Test counts
 
-Latest run, 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
+Latest run, 2026-11-10, the combined duplicate key and its review fixes (`29f66d7`), one after
+another from inside each package on `magick_agency_test` and Redis db 1, nothing else sharing them.
+`pnpm lint` clean; `pnpm build` green; `test:grafana`, `test:release` 10 and `test:tooling` 16 pass.
+`agency_wire`'s `dart test` was not run (no Dart SDK on that machine); the change reaches no type it
+models and no literal the extractor reads.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9636 passed + 2 expected fail (488 files) | rest lane: 1 failure, `load/voicelink-media-ws-load.test.ts` "start negotiation failures and garbage frames" (below); every other file passed. Wall-clock lane 19 (4 files) |
+| `packages/db` | 428 (25 files) | 737 (74 files) |
+| `apps/console` | 6136 (325 files) | — |
+| `apps/super-admin` | 506 (37 files) | — |
+| `packages/contracts` | 372 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `packages/web-ui` | 240 (20 files) | — |
+| `apps/report-renderer` | 90 passed + 2 skipped (12 files + 1 skipped) | — |
+| `packages/observability` | 18 (4 files) | — |
+
+The console's first full run in this sequence failed `AgencyCampaignRosterAssignment.test.tsx`
+("Escape closes the dialog, but not while a preview is in flight"), which passed alone three times
+and in the full rerun counted above.
+
+**Open defect, found in this run: a carrier `start` lost behind early media.** The VoiceLink load
+case `media_before_bad_start` failed in both full rest-lane runs of this branch (plans 24 and 17,
+seed 24301: `provider_start_timeout` where `unsupported_media_format` is expected) and passes alone
+(3 of 3); the parent commit `cc40c1d`'s rest lane passed once. This branch does not touch the voice
+path. Cause: `PSTN_EARLY_FRAME_CAP` (16, `src/core/webrtc-bridge-manager.ts`) bounds the frames held
+while the provider token is checked, and this case sends a burst of media before its `start`; under
+a full lane's load the check outlasts the burst, the `start` lands past the cap and is dropped, and
+the call times out. A fix holds a `start` frame whatever the cap (dropping only media past it).
+Not changed here; it needs a ruling on the seam.
+
+Run of 2026-11-09, inbound calls after the fix pass (both rounds, IQ25–IQ45; `inbound.md`
 §12), on the merged branch:
 
 Run one after another from inside each package on the default test database
@@ -1673,7 +1737,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
-| Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected` |
+| Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected`. The combined key's rules, its phone-only default and "DNC row claims its key" were ruled 2026-11-11 (`decisions.md` §4) |
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |

@@ -85,7 +85,7 @@ function job(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
     status: 'completed',
     dry_run: false,
     file_name: 'collections_aug.csv',
-    dedupe_column: null,
+    dedupe_columns: [],
     progress_pct: 100,
     rows_read: 12_481,
     accepted: 11_712,
@@ -157,7 +157,7 @@ beforeEach(() => {
   mocks.uploadRosterCsv.mockResolvedValue({
     s3_key: 'agency-ingest/t1/u1/collections_aug.csv',
     file_name: 'collections_aug.csv',
-    dedupe_column: null,
+    dedupe_columns: [],
     file_size_bytes: 4096,
   });
   mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);

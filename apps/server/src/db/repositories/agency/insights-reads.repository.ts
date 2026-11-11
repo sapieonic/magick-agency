@@ -386,7 +386,8 @@ export interface InsightsUploadRow {
   rejected: number;
   rejected_by_reason: Record<string, unknown> | null;
   duplicates: number;
-  dedupe_column: string | null;
+  /** The upload's duplicate key, in order; empty = phone (or no check). */
+  dedupe_columns: string[];
   has_rejected_export: boolean;
 }
 
@@ -555,7 +556,7 @@ export class AgencyInsightsReadRepository {
   ): Promise<InsightsUploadRow[]> {
     const { rows } = await getPool().query<Record<string, unknown>>(
       `SELECT j.id, j.file_name, j.created_by, j.created_at, j.finished_at, j.status, j.mode, j.phone_column,
-              j.rows_read, j.accepted, j.rejected, j.rejected_by_reason, j.duplicates, j.dedupe_column,
+              j.rows_read, j.accepted, j.rejected, j.rejected_by_reason, j.duplicates, j.dedupe_columns,
               (j.rejected_s3_key IS NOT NULL) AS has_rejected_export
          FROM agency_ingest_jobs j
         WHERE j.campaign_id = $1::uuid AND j.tenant_id = $2::uuid AND NOT j.dry_run
@@ -578,7 +579,7 @@ export class AgencyInsightsReadRepository {
       rejected: num(r['rejected']),
       rejected_by_reason: (r['rejected_by_reason'] as Record<string, unknown> | null) ?? null,
       duplicates: num(r['duplicates']),
-      dedupe_column: (r['dedupe_column'] as string | null) ?? null,
+      dedupe_columns: (r['dedupe_columns'] as string[] | null) ?? [],
       has_rejected_export: r['has_rejected_export'] === true,
     }));
   }

@@ -26,7 +26,7 @@ function job(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
     status: 'completed',
     dry_run: false,
     file_name: 'collections_aug.csv',
-    dedupe_column: null,
+    dedupe_columns: [],
     progress_pct: 100,
     rows_read: 0,
     accepted: 0,
@@ -192,7 +192,7 @@ describe('rejection groups', () => {
 
   it('names the duplicate column the operator chose', () => {
     const summary = buildIngestSummary(
-      job({ rows_read: 2, accepted: 1, rejected: 1, duplicates: 1, dedupe_column: 'Loan No', rejected_by_reason: { duplicate_key: 1 } }),
+      job({ rows_read: 2, accepted: 1, rejected: 1, duplicates: 1, dedupe_columns: ['Loan No'], rejected_by_reason: { duplicate_key: 1 } }),
     );
     expect(summary.groups[0]!.label).toBe('Duplicate Loan No of an earlier row');
     expect(summary.duplicateMeaning).toBe('a Loan No value that already appeared earlier in the file.');
@@ -200,6 +200,16 @@ describe('rejection groups', () => {
     expect(buildIngestSummary(job({ rows_read: 1, rejected: 1, rejected_by_reason: { duplicate_key: 1 } })).groups[0]!.label)
       .toBe(REJECTION_LABELS.duplicate_key);
     expect(buildIngestSummary(job()).duplicateMeaning).toBe('a number that already appeared earlier in the file.');
+  });
+
+  it('names every column of a combined key', () => {
+    const summary = buildIngestSummary(
+      job({ rows_read: 2, accepted: 1, rejected: 1, duplicates: 1, dedupe_columns: ['Loan No', 'Branch', 'EMI Month'], rejected_by_reason: { duplicate_key: 1 } }),
+    );
+    expect(summary.groups[0]!.label).toBe('Duplicate Loan No + Branch + EMI Month of an earlier row');
+    expect(summary.duplicateMeaning).toBe('a row whose Loan No, Branch and EMI Month all match an earlier row in the file.');
+    expect(buildIngestSummary(job({ dedupe_columns: ['Loan No', 'Branch'] })).duplicateMeaning)
+      .toBe('a row whose Loan No and Branch both match an earlier row in the file.');
   });
 
   it('drops zero-count reasons', () => {

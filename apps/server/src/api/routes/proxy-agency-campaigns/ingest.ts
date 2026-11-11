@@ -11,12 +11,14 @@ import { createChildLogger } from '@magick-agency/observability';
 // `GetObjectCommand` on the agency bucket, returning the whole object as a Buffer. The alias
 // names what the call sites want back.
 import { uploadFile, getFileStream, getFile as getFileBuffer } from '../../../storage/s3.js';
+import { AGENCY_MAX_DEDUPE_COLUMNS } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { analyzeAgencyCsvColumns } from '../../../agency/agency-column-analysis.js';
 import {
   AgencyIngestError,
   AGENCY_MAX_COLUMNS,
   AGENCY_MAX_ROWS,
   AGENCY_MAX_CELL_BYTES,
+  sameHeader,
 } from '../../../agency/agency-csv-ingest.js';
 import { agencyIngestJobRepository } from '../../../agency/agency-ingest-job.repository.js';
 import { isTenantUploadKey, uploadKey } from '../../../agency/agency-ingest-keys.js';
@@ -33,6 +35,8 @@ const log = createChildLogger({ component: 'proxy-agency-campaigns' });
 
 const CSV_MAX_BYTES = 512 * 1024 * 1024;
 
+const dedupeColumnName = z.string().trim().min(1).max(200);
+
 const columnMappingSchema = z.object({
   phone_column: z.string().min(1).max(200),
   timezone_column: z.string().min(1).max(200).optional(),
@@ -41,11 +45,13 @@ const columnMappingSchema = z.object({
   // numbers would otherwise silently normalise to +91 and get dialed.
   default_country_code: z.string().regex(/^\+?\d{1,3}$/).optional(),
   dedupe_phones: z.boolean().optional(),
-  // The column whose value marks a duplicate row (a loan number, a policy
-  // number). Checked against the file's headers when the ingest reads them,
-  // like `phone_column`: a name the file does not have fails the job
-  // `dedupe_column_missing`.
-  dedupe_column: z.string().trim().min(1).max(200).optional(),
+  // The columns whose values together mark a duplicate row (a loan number; a
+  // loan number and its branch). Checked against the file's headers when the
+  // ingest reads them, like `phone_column`: a name the file does not have fails
+  // the job `dedupe_column_missing`.
+  dedupe_columns: z.array(dedupeColumnName).min(1).max(AGENCY_MAX_DEDUPE_COLUMNS).optional(),
+  // The single-column form from before `dedupe_columns`; one key column.
+  dedupe_column: dedupeColumnName.optional(),
 });
 
 /**
@@ -252,29 +258,51 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
         message: 'campaign_id is required unless dry_run is true.',
       });
     }
-    // "Check duplicates on Loan No" and "do not check duplicates" cannot both be
-    // what the operator meant, and guessing either way changes which rows are dialled.
-    if (input.dedupe_column !== undefined && input.dedupe_phones === false) {
+    // One duplicate key, said one way: the list, or the single-column form.
+    if (input.dedupe_column !== undefined && input.dedupe_columns !== undefined) {
       return reply.code(400).send({
         error: 'Validation Error',
-        message: 'dedupe_column cannot be combined with dedupe_phones: false.',
+        message: 'Send dedupe_columns or dedupe_column, not both.',
+      });
+    }
+    const dedupeColumns =
+      input.dedupe_columns ?? (input.dedupe_column !== undefined ? [input.dedupe_column] : undefined);
+    // A column named twice is not a combination; refusing it keeps the key the
+    // operator sees the key that runs.
+    const repeated = dedupeColumns?.find((column, i) => dedupeColumns.findIndex((c) => sameHeader(c, column)) !== i);
+    if (repeated !== undefined) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: `'${repeated}' is named more than once in the columns used to find duplicates.`,
+      });
+    }
+    // "Check duplicates on Loan No" and "do not check duplicates" cannot both be
+    // what the operator meant, and guessing either way changes which rows are dialled.
+    if (dedupeColumns !== undefined && input.dedupe_phones === false) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: 'dedupe_columns cannot be combined with dedupe_phones: false.',
       });
     }
     // An ignored column is not in the contact's `context`, so it is not in the
     // roster's `row_fingerprint` either: two rows that differ only there (one
     // borrower, two loan numbers) pass this check and then collapse into one
     // contact at the roster insert. Refused rather than half-honoured.
-    if (
-      input.dedupe_column !== undefined &&
-      (input.ignore_columns ?? []).some(
-        (column) => column.trim().toLowerCase() === input.dedupe_column!.trim().toLowerCase(),
-      )
-    ) {
+    const ignoredKey = dedupeColumns?.find((key) => (input.ignore_columns ?? []).some((column) => sameHeader(column, key)));
+    if (ignoredKey !== undefined) {
       return reply.code(400).send({
         error: 'Validation Error',
-        message: `'${input.dedupe_column}' is used to find duplicates, so it cannot also be ignored.`,
+        message: `'${ignoredKey}' is used to find duplicates, so it cannot also be ignored.`,
       });
     }
+    // The phone column alone is the phone dedupe (on the normalised number,
+    // `duplicate_phone`), which is what a job with no key records. Stored as a
+    // column key, the job, its activity row and Insights would describe a text
+    // comparison that never ran.
+    const keyColumns =
+      dedupeColumns?.length === 1 && sameHeader(dedupeColumns[0]!, input.phone_column)
+        ? undefined
+        : dedupeColumns;
 
     if (input.mode === 'replace') {
       /**
@@ -355,7 +383,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       ignore_columns: input.ignore_columns ?? [],
       default_country_code: input.default_country_code?.replace(/^\+/, '') ?? null,
       dedupe_phones: input.dedupe_phones ?? true,
-      ...(input.dedupe_column !== undefined ? { dedupe_column: input.dedupe_column } : {}),
+      ...(keyColumns !== undefined ? { dedupe_columns: keyColumns } : {}),
       dry_run: input.dry_run ?? false,
       ...(input.mode ? { mode: input.mode } : {}),
       // A person, or nobody. `sessionMiddleware` has no API-key branch, so
@@ -859,7 +887,7 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
      */
     replace_superseded_uncertain: Boolean(job.replace_superseded_uncertain ?? false),
     file_name: job.file_name,
-    dedupe_column: job.dedupe_column ?? null,
+    dedupe_columns: job.dedupe_columns ?? [],
     // Determinate where the file size is known, and honestly 100 only when the
     // job is actually terminal — a progress bar that sits at 100% while work
     // continues is worse than one that sits at 97%.

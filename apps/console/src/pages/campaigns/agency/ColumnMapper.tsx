@@ -1,20 +1,28 @@
+import { useRef } from 'react';
 import {
   MAPPING_BLOCK_COPY,
   ROLE_LABELS,
+  addDedupeKey,
+  canAddDedupeKey,
+  combinationLine,
   countryCodeError,
-  dedupeColumnOptions,
+  dedupeKeyLabel,
+  dedupeKeyOptions,
+  dedupeKeys,
   heroLimitReached,
   mappingBlockReason,
   phoneColumn,
   phoneUniquenessLine,
   phoneValidityLine,
+  removeDedupeKey,
   setDedupe,
+  setDedupeKey,
   setDefaultCountryCode,
   setRole,
   timezoneColumn,
   uniquenessLine,
   type ColumnRole,
-  type DedupeChoice,
+  type DedupeKey,
   type MappingState,
 } from '../../../utils/agencyColumnMapping';
 import type { AgencyColumnAnalysis } from '../../../types/agency-campaign';
@@ -34,36 +42,37 @@ import styles from './ColumnMapper.module.css';
 const ROLES: ColumnRole[] = ['phone', 'timezone', 'hero', 'detail', 'ignore'];
 
 /**
- * The duplicate select's option values. A column is prefixed so a header that is
- * literally called `phone` or `none` cannot be mistaken for the other two choices.
+ * The duplicate selects' option values. A column is prefixed so a header that is
+ * literally called `phone` or `none` cannot be mistaken for those two choices.
  */
 const COLUMN_PREFIX = 'column:';
 
-function dedupeValue(choice: DedupeChoice): string {
-  return choice.mode === 'column' ? `${COLUMN_PREFIX}${choice.column}` : choice.mode;
+function keyValue(key: DedupeKey): string {
+  return key.kind === 'column' ? `${COLUMN_PREFIX}${key.column}` : 'phone';
 }
 
-function dedupeChoice(value: string): DedupeChoice {
-  if (value.startsWith(COLUMN_PREFIX)) return { mode: 'column', column: value.slice(COLUMN_PREFIX.length) };
-  return value === 'none' ? { mode: 'none' } : { mode: 'phone' };
+function keyOf(value: string): DedupeKey {
+  return value.startsWith(COLUMN_PREFIX) ? { kind: 'column', column: value.slice(COLUMN_PREFIX.length) } : { kind: 'phone' };
 }
 
-/** Why the choice matters, under the select. */
+const NEVER_TWICE = 'The dialler never calls one number twice at the same time.';
+
+/** Why the choice matters, under the selects: what the sample shows, then what the rule keeps. */
 function dedupeNote(analysis: AgencyColumnAnalysis, state: MappingState, phone: string | null): string {
-  switch (state.dedupe.mode) {
-    case 'phone':
-      return [
-        phoneUniquenessLine(analysis, phone),
-        'A row whose number already appeared earlier in the file is dropped. If one person can have several rows (two loans, two policies), check duplicates on that number instead.',
-      ].filter(Boolean).join(' ');
-    case 'column':
-      return [
-        uniquenessLine(analysis, state.dedupe.column),
-        'Rows that share a phone number are all kept. The dialler never calls one number twice at the same time.',
-      ].filter(Boolean).join(' ');
-    case 'none':
-      return 'Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row is skipped. The dialler never calls one number twice at the same time.';
+  if (state.dedupe.mode === 'none') {
+    return `Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row (the same number and the same value in every column not set to Ignore) is skipped. ${NEVER_TWICE}`;
   }
+  const keys = state.dedupe.keys;
+  const onPhone = keys.some((key) => key.kind === 'phone');
+  const lead = keys.length > 1
+    ? combinationLine(analysis, state)
+    : onPhone ? phoneUniquenessLine(analysis, phone) : uniquenessLine(analysis, dedupeKeyLabel(keys[0]!, phone));
+  const tail = !onPhone
+    ? `Rows that share a phone number are all kept. ${NEVER_TWICE}`
+    : keys.length > 1
+      ? `Rows on one number are kept when the other columns differ. ${NEVER_TWICE}`
+      : 'A row whose number already appeared earlier in the file is dropped. If one person can have several rows (two loans, two policies), check duplicates on that number instead, or combine columns.';
+  return [lead, tail].filter(Boolean).join(' ');
 }
 
 export interface ColumnMapperProps {
@@ -86,7 +95,33 @@ export function ColumnMapper({
   const validity = phoneValidityLine(analysis, phone);
   const heroFull = heroLimitReached(state);
   const countryError = countryCodeError(state.defaultCountryCode);
-  const dedupeOptions = dedupeColumnOptions(analysis, state);
+  const keys = dedupeKeys(state.dedupe);
+  const canAddKey = canAddDedupeKey(analysis, state);
+  // The options name the phone key "Phone number", not its column.
+  const optionLabel = (key: DedupeKey) => dedupeKeyLabel(key, null);
+  const renderOptions = (options: DedupeKey[]) => options.map((option) => (
+    <option key={keyValue(option)} value={keyValue(option)}>
+      {optionLabel(option)}
+    </option>
+  ));
+  const firstSelect = useRef<HTMLSelectElement>(null);
+  // A removed key's select leaves the page; focus moves to the first select
+  // rather than dropping to the document.
+  const removeKey = (index: number) => {
+    onChange(removeDedupeKey(state, index));
+    firstSelect.current?.focus();
+  };
+  const removeButton = (key: DedupeKey, index: number) => (
+    <button
+      type="button"
+      className="btn-secondary"
+      disabled={disabled}
+      aria-label={`Remove ${optionLabel(key)} from the duplicate check`}
+      onClick={() => removeKey(index)}
+    >
+      Remove
+    </button>
+  );
 
   return (
     <div className={styles.mapper}>
@@ -214,24 +249,64 @@ export function ColumnMapper({
         What counts as a duplicate. Phone by default, which is what every upload
         did before this control. A loan book needs the loan number: one borrower
         with two loans is two rows on one number, and both loans must be called.
+        Up to three columns combine when no one column is unique on its own.
       */}
       <div className={`form-group ${styles.dedupe}`}>
         <label htmlFor="ingest-dedupe">Check duplicates on</label>
+        <div className={styles.dedupeKey}>
         <select
+          ref={firstSelect}
           id="ingest-dedupe"
           aria-describedby="ingest-dedupe-note"
-          value={dedupeValue(state.dedupe)}
+          value={keys.length > 0 ? keyValue(keys[0]!) : 'none'}
           disabled={disabled}
-          onChange={(event) => onChange(setDedupe(state, dedupeChoice(event.target.value)))}
+          onChange={(event) => {
+            const value = event.target.value;
+            onChange(value === 'none' ? setDedupe(state, { mode: 'none' }) : setDedupeKey(state, 0, keyOf(value)));
+          }}
         >
-          <option value="phone">Phone number</option>
-          {dedupeOptions.map((name) => (
-            <option key={name} value={`${COLUMN_PREFIX}${name}`}>
-              {name}
-            </option>
-          ))}
+          {/* The current first key is always listed, so the select can show it. */}
+          {renderOptions(dedupeKeyOptions(analysis, state, 0))}
           <option value="none">Don&apos;t remove duplicates</option>
         </select>
+        {/* Any key can go while two or more remain; the last one goes by "Don't remove duplicates". */}
+        {keys.length > 1 ? removeButton(keys[0]!, 0) : null}
+        </div>
+        {/*
+          Keys 2 and 3: a combination. A row is a duplicate only when every key
+          matches, so a loan number repeated across branches is checked together
+          with the branch rather than dropping the second branch's loan.
+        */}
+        {keys.slice(1).map((key, offset) => {
+          const index = offset + 1;
+          return (
+            // Keyed by position, not by value: a changed value must not remount
+            // the row, or keyboard focus drops out of the select mid-choice.
+            <div key={index} className={styles.dedupeKey}>
+              <span className={styles.dedupeAnd} aria-hidden="true">and</span>
+              <select
+                aria-label={`Duplicate check column ${index + 1}`}
+                aria-describedby="ingest-dedupe-note"
+                value={keyValue(key)}
+                disabled={disabled}
+                onChange={(event) => onChange(setDedupeKey(state, index, keyOf(event.target.value)))}
+              >
+                {renderOptions(dedupeKeyOptions(analysis, state, index))}
+              </select>
+              {removeButton(key, index)}
+            </div>
+          );
+        })}
+        {canAddKey ? (
+          <button
+            type="button"
+            className={`btn-secondary ${styles.dedupeAdd}`}
+            disabled={disabled}
+            onClick={() => onChange(addDedupeKey(analysis, state))}
+          >
+            Combine with another column
+          </button>
+        ) : null}
         <p id="ingest-dedupe-note" className={styles.dedupeNote} data-testid="dedupe-note">
           {dedupeNote(analysis, state, phone)}
         </p>

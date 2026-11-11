@@ -817,7 +817,7 @@ a rate-limit key and never an auth input.
   and the numbered migrations after it (0002: the two telephony-credential tables; 0003: the
   dialer's attempt and contact indexes; 0004: the in-flight contacts index the reaper's
   stranded-contact sweep reads; 0005: the soft phone; 0006: `agency_agent_sessions.client_kind`;
-  0007: `agency_ingest_jobs.dedupe_column`; 0008: wrap-up redial, `agency_campaigns.allow_wrapup_redial`
+  0007: `agency_ingest_jobs.dedupe_column` (superseded by 0031's `dedupe_columns`); 0008: wrap-up redial, `agency_campaigns.allow_wrapup_redial`
   and the attempt's `redial_of_attempt_id` / `redial_number`; 0009: contact assignment, the
   campaign's assignment and agent-retry settings, the contact's owner and override columns,
   `agency_contact_assignment_events`, and the attempt's `agent_manual` / `override_applied` /

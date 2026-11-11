@@ -94,8 +94,14 @@ export interface AgencyIngestJobRecord {
   ignore_columns: string[];
   default_country_code: string | null;
   dedupe_phones: boolean;
-  /** 0007. NULL (or absent on a row read before it): `dedupe_phones` decides. */
-  dedupe_column?: string | null;
+  /**
+   * 0031: the columns that together mark a duplicate row, in the operator's
+   * order. NULL (or absent on a row read before it): `dedupe_phones` decides.
+   * 0007's single `dedupe_column` is superseded: 0031 copied it here and nothing
+   * reads it. `create()` still writes it for a one-column key, so a server
+   * rolled back past 0031 (which reads only `dedupe_column`) keeps that key.
+   */
+  dedupe_columns?: string[] | null;
   dry_run: boolean;
   /**
    * `undefined` — not merely `'append'` — on a row read back from a schema
@@ -175,8 +181,8 @@ export interface CreateIngestJobInput {
   ignore_columns?: string[];
   default_country_code?: string | null;
   dedupe_phones?: boolean;
-  /** The column that marks a duplicate row; wins over `dedupe_phones`. */
-  dedupe_column?: string | null;
+  /** The columns (1 to 3) that together mark a duplicate row; win over `dedupe_phones`. */
+  dedupe_columns?: string[] | null;
   dry_run?: boolean;
   /** Omitted means `append` — the column's own default, and the safe one. */
   mode?: AgencyIngestMode;
@@ -291,12 +297,24 @@ export class AgencyIngestJobRepository {
       input.created_by ?? null,
     ];
     // Optional columns are named only when they carry a value, for the reason
-    // above: `mode` for a replace, `dedupe_column` (0007) when the operator chose
-    // one. A job that asks for neither inserts exactly as it did before them, and
+    // above: `mode` for a replace, `dedupe_columns` (0031) when the operator chose
+    // a duplicate key. A job that asks for neither inserts exactly as it did before them, and
     // one that does fails loudly on a schema that cannot record what it asked.
+    //
+    // A one-column key is also written to 0007's `dedupe_column`, which nothing here
+    // reads: a rollback does not undo a migration, and the server before 0031 reads
+    // only that column, so without it a job created here and run (or shown) by a
+    // rolled-back server would dedupe on the phone. A combination is not written
+    // there: one of its columns alone is a stricter rule than the operator chose
+    // (the 0031 Down fails a combined-key job that has not finished instead).
     const optional: [string, unknown][] = [];
     if (input.mode === 'replace') optional.push(['mode', input.mode]);
-    if (input.dedupe_column) optional.push(['dedupe_column', input.dedupe_column]);
+    if (input.dedupe_columns?.length) {
+      optional.push(['dedupe_columns', input.dedupe_columns]);
+      if (input.dedupe_columns.length === 1) {
+        optional.push(['dedupe_column', input.dedupe_columns[0]]);
+      }
+    }
     for (const [, value] of optional) values.push(value);
     const extraColumns = optional.map(([column]) => `, ${column}`).join('');
     const extraParams = optional.map((_, i) => `,$${14 + i}`).join('');

@@ -5,6 +5,7 @@ import { useTenant } from '../../../../contexts/TenantContext';
 import { getInsightsSummary, getInsightsUploads } from '../../../../api/agencyInsights';
 import type { AgencyInsightsSummary, AgencyInsightsTransition, AgencyInsightsUploads } from '../../../../types/agency-insights';
 import { formatCount } from '../../../../utils/format/number';
+import { dedupeKeyName } from '../../../../types/agency-campaign';
 import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../utils/agency/insights/copy';
 import { Panel, SectionBody } from './InsightsParts';
 import { UploadsSection } from './UploadsSection';
@@ -30,7 +31,7 @@ export function CampaignMeta({ summary }: { summary: AgencyInsightsSummary }) {
       : `created ${formatZoned(summary.created_at, zone)}`,
   );
   parts.push(`assignment ${ASSIGNMENT_MODE_LABELS[summary.settings.assignment_mode].toLowerCase()}`);
-  parts.push(`duplicates checked on ${summary.dedupe_column ?? 'phone'}`);
+  parts.push(`duplicates checked on ${dedupeKeyName(summary.dedupe_columns) ?? 'phone'}`);
   return (
     <p className={styles.muted} data-testid="insights-meta">
       {parts.join(' · ')}
