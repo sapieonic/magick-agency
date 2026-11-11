@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Upload } from 'lucide-react';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ColumnMapper } from './ColumnMapper';
 import { IngestSummary } from './IngestSummary';
 import { CampaignBehaviourSection } from './CampaignBehaviourSection';
@@ -424,13 +423,6 @@ export default function CampaignBuilderPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          { label: 'New campaign' },
-        ]}
-      />
-
       <header className={styles.header}>
         <h1 className={styles.title}>New campaign</h1>
         <p className={styles.subtitle}>
