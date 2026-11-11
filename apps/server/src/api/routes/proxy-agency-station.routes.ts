@@ -100,7 +100,7 @@ export async function proxyAgencyStationRoutes(
   app: FastifyInstance,
   opts: ProxyAgencyStationRouteOptions,
 ): Promise<void> {
-  app.get<{ Params: { sessionId: string }; Querystring: { token?: string; client?: string; media?: string } }>(
+  app.get<{ Params: { sessionId: string }; Querystring: { token?: string; client?: string; media?: string; caps?: string | string[] } }>(
     '/:sessionId',
     // With media workers, the primary hands this upgrade to the session's worker
     // (`docs/scaling.md` §2.1); in one process the key is unused.
@@ -141,7 +141,7 @@ export async function proxyAgencyStationRoutes(
         return;
       }
 
-      log.info({ sessionId, client: upgrade.query.client, media: upgrade.query.media },
+      log.info({ sessionId, client: upgrade.query.client, media: upgrade.query.media, caps: upgrade.query.caps },
         'Station proxy: handing the socket to the station handler');
       disableNagle(clientSocket, log, { sessionId, leg: 'agent' });
 

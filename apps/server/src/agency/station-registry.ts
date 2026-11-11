@@ -10,6 +10,7 @@ import {
 import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
 import { closeForSendBacklog, sendVerdict, STATION_PCM16_LIMITS } from '../utils/ws-backpressure.js';
+import { stationCanTakeInbound } from './station-upgrade.js';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -54,8 +55,8 @@ export type StationDetached = Readonly<Pick<StationEntry, 'sessionId' | 'campaig
 
 /**
  * What `attach` takes: the entry, with the client kind defaulting to `web` and the inbound
- * capability to "a console can, a phone cannot" (a phone that declared `caps=inbound` is attached
- * with it true).
+ * capability to `stationCanTakeInbound` of a station that declared nothing (a console can, a phone
+ * cannot; the station socket passes its upgrade's own answer).
  */
 export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind' | 'canTakeInbound'> & {
   clientKind?: AgencyClientKind;
@@ -127,7 +128,8 @@ export class StationRegistry {
   async attach(input: StationAttachInput): Promise<void> {
     const clientKind = input.clientKind ?? 'web';
     const entry: Omit<StationEntry, 'lastSeen'> = {
-      ...input, clientKind, canTakeInbound: input.canTakeInbound ?? clientKind !== 'mobile',
+      // With no answer given, the upgrade's rule for a station that declared nothing.
+      ...input, clientKind, canTakeInbound: input.canTakeInbound ?? stationCanTakeInbound({ client: clientKind, caps: [] }),
     };
     // Supersede any prior socket for this session (a reconnect that raced the old
     // socket's close). The prior socket is closed so it cannot go on relaying.
@@ -571,14 +573,16 @@ export class StationRegistry {
    * `caps=inbound`), whoever asks: an app build that did not declare it has no wire type for them
    * (docs/inbound.md §4.3, §6; IQ43, IQ46). Enforced here, the one send path, so the rule does not
    * rest on every inbound caller of `send` having already ruled such a station out. Dropped,
-   * logged, and answered false (not delivered).
+   * logged at `debug`, and answered false (not delivered).
    */
   send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
     const entry = this.stations.get(sessionId);
     const ws = entry?.ws;
     if (!ws || ws.readyState !== 1 /* OPEN */) return false;
     if (!entry.canTakeInbound && isInboundEvent(frame.event)) {
-      log.warn({ sessionId, event: frame.event, clientKind: entry.clientKind },
+      // `debug`: an expected path (e.g. a cancelled offer's closing `inbound_call` to the older app
+      // build that took the session over), not a fault.
+      log.debug({ sessionId, event: frame.event, clientKind: entry.clientKind },
         'Inbound station frame not sent to a station that cannot take inbound calls');
       return false;
     }
