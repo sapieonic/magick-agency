@@ -41,8 +41,7 @@ import {
   agencyInsightsRollupRepository,
 } from '../../db/repositories/agency.repository.js';
 import { agentNamesOrNone } from '../agency-agent-identity.js';
-import { computeAllocation } from './allocation.js';
-import { insightsCache, insightsCacheKey } from './cache.js';
+import { cachedAllocation } from './allocation.js';
 import { campaignZone, rangeWire, type ServedInsightsRange } from './range.js';
 import { InsightsCampaignGone, overrideCodes, successCodes, userIdOf } from './shared.js';
 
@@ -65,7 +64,7 @@ export async function computeActivity(
     agencyInsightsReadRepository.softphoneCalls(q),
     agencyInsightsReadRepository.dncMarked(q),
     agencyCampaignAgentRepository.listActiveForCampaign(campaign.id, campaign.tenant_id),
-    insightsCache.get(insightsCacheKey('allocation', campaign), () => computeAllocation(campaign)),
+    cachedAllocation(campaign),
   ]);
   if (!rollup || !freshness || !callbacks) throw new InsightsCampaignGone();
 

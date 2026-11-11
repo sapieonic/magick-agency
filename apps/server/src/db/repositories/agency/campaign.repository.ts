@@ -362,6 +362,39 @@ export class AgencyCampaignRepository {
   }
 
   /**
+   * Home's campaigns (decision B28a, `GET /proxy/agency/home`): the account's campaigns in
+   * `statuses`, ordered by their place in that list and then newest first (the Campaigns page's
+   * order: an active campaign has no `ended_at`, so its tie-break is the list's own newest
+   * first), the first `cap` of them; how many there were before the cap; and whether the account
+   * has any campaign at all, in any status. Three reads in parallel, each bounded.
+   */
+  async listForHome(
+    tenantId: string,
+    accountId: string,
+    statuses: readonly string[],
+    cap: number,
+  ): Promise<{ rows: AgencyCampaignRecord[]; activeTotal: number; anyCampaign: boolean }> {
+    const pool = getPool();
+    const only = [...statuses];
+    const [list, counts] = await Promise.all([
+      pool.query<AgencyCampaignRecord>(
+        `SELECT * FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2
+          AND status = ANY($3::text[])
+          ORDER BY array_position($3::text[], status::text), created_at DESC, id DESC LIMIT $4`,
+        [tenantId, accountId, only, cap],
+      ),
+      pool.query<{ active: string; any: boolean }>(
+        `SELECT (SELECT COUNT(*) FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2
+                   AND status = ANY($3::text[]))::text AS active,
+                EXISTS (SELECT 1 FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2) AS any`,
+        [tenantId, accountId, only],
+      ),
+    ]);
+    const row = counts.rows[0];
+    return { rows: list.rows, activeTotal: Number(row?.active ?? 0), anyCampaign: row?.any === true };
+  }
+
+  /**
    * The campaigns a soft-phone call may be logged to (docs/softphone.md §6, bootstrap):
    * the account's campaigns in `statuses`, and — with `staffedUserId` — only those the
    * user is actively staffed on, newest first, at most `limit`. The staffing filter is

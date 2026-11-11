@@ -1,12 +1,16 @@
-import type { AgencyCampaign, AgencyCampaignStats, AgencyStallCode } from '../../types/agency-campaign';
+import type { AgencyStallCode } from '../../types/agency-campaign';
 import type { AgencyInboundMissedCountResponse } from '../../types/inbound';
 import type { AgencyGroupPage } from '../../types/agency-stats';
+import {
+  AGENCY_HOME_CAMPAIGN_CAP,
+  type AgencyHomeActiveStatus,
+  type AgencyHomeCampaignStats,
+} from '@magick-agency/contracts/api/agency/home';
 import { AGENCY_STALL_LABELS, stallCopy } from '../agencyHealthStrip';
 import { campaignTabHref, type CampaignTabId } from '../agencyCampaignTabs';
-import { sortCampaigns } from '../agencyCampaignsHome';
 import { plural } from '../format/number';
 import { abandonmentTone, ceilingPctText } from './abandonmentCeiling';
-import { abandonmentRate, rateText, type InsightsRate } from './insights/rates';
+import { abandonmentRate, rateText, successRate, type InsightsRate } from './insights/rates';
 
 /**
  * The Home page's rules (decision B28, Home): what needs a supervisor now, the floor of each
@@ -25,8 +29,8 @@ import { abandonmentRate, rateText, type InsightsRate } from './insights/rates';
  * the Missed list's subtitle.
  */
 
-/** At most this many active campaigns get per-campaign reads (stats and the allocation). */
-export const HOME_CAMPAIGN_CAP = 25;
+/** At most this many active campaigns are on Home's board (the server applies it). */
+export const HOME_CAMPAIGN_CAP = AGENCY_HOME_CAMPAIGN_CAP;
 
 export type HomeTone = 'danger' | 'warning' | 'info';
 
@@ -45,13 +49,26 @@ export interface HomeAttentionItem {
   action: string;
   /** Where the fix is. */
   to: string;
+  /**
+   * Whether the sidebar's Home badge counts it: a danger or a warning about a campaign. Never an
+   * information row (nothing is wrong), and never the missed calls, which the Inbound entry's
+   * own badge already counts.
+   */
+  badge: boolean;
+}
+
+/** The campaign a read is about: what the board says of it. */
+export interface HomeCampaignRef {
+  id: string;
+  name: string;
+  status: AgencyHomeActiveStatus;
 }
 
 /** One active campaign and what Home has read for it. */
 export interface HomeCampaignRead {
-  campaign: AgencyCampaign;
-  /** Null until its `/stats` answers (or when it failed and nothing was read before). */
-  stats: AgencyCampaignStats | null;
+  campaign: HomeCampaignRef;
+  /** Null until its stats answer (or when that read failed and nothing was read before). */
+  stats: AgencyHomeCampaignStats | null;
   /** The callbacks overdue now (the allocation's totals), null until known. */
   overdue: number | null;
 }
@@ -90,7 +107,7 @@ const STALL_ROUTE: Record<AgencyStallCode, { tone: HomeTone; tab: CampaignTabId;
  * answered calls): under it the rate is withheld, so a campaign three calls in never reads as
  * "close to the ceiling".
  */
-export function statsAbandonmentRate(stats: AgencyCampaignStats): InsightsRate {
+export function statsAbandonmentRate(stats: AgencyHomeCampaignStats): InsightsRate {
   // Optional on the console's type: a payload without them has no rate to show.
   if (stats.abandoned_24h === undefined || stats.answered_24h === undefined) return { kind: 'none' };
   return abandonmentRate({ abandoned: stats.abandoned_24h, answered: stats.answered_24h });
@@ -101,7 +118,7 @@ export function statsAbandonmentRate(stats: AgencyCampaignStats): InsightsRate {
  * starts at 80% of the ceiling (`abandonmentTone`: `warn` from 80% up to the ceiling, `bad`
  * above it). Null when it does not, or there are too few answered calls to say.
  */
-export function abandonmentAttention(stats: AgencyCampaignStats): 'near' | 'over' | null {
+export function abandonmentAttention(stats: AgencyHomeCampaignStats): 'near' | 'over' | null {
   const rate = statsAbandonmentRate(stats);
   if (rate.kind !== 'value' || stats.abandonment_ceiling_pct === undefined) return null;
   const tone = abandonmentTone(rate.pct, stats.abandonment_ceiling_pct);
@@ -109,14 +126,18 @@ export function abandonmentAttention(stats: AgencyCampaignStats): 'near' | 'over
 }
 
 /**
- * The "Needs your attention" list, most urgent first (danger, warning, information), campaigns
- * in their Campaigns-page order within a tone. One row per live condition:
+ * Every condition Home shows, most urgent first (danger, warning, information), campaigns in
+ * their Campaigns-page order within a tone. One row per live condition:
  *
  *  - a campaign's stall: its top one, as the health strip shows it (one diagnosis, not five);
  *  - abandonment in the meter's warning band or over the ceiling, on a running campaign (a
  *    paused one dials nothing; an automatic abandonment pause is already its stall row);
  *  - a campaign's overdue callbacks;
- *  - the account's open missed inbound calls, when the reader gets the Missed list.
+ *  - the account's open missed inbound calls, when the reader gets the Missed list (a warning:
+ *    someone should call them back; not counted by the Home badge, see `badge`).
+ *
+ * The page splits it ({@link homeNeeds}, {@link homeWaiting}); the badge counts
+ * {@link homeBadgeCount}.
  */
 export function homeAttention(
   reads: readonly HomeCampaignRead[],
@@ -140,6 +161,7 @@ export function homeAttention(
         at: 'paused_at' in stall ? stall.paused_at : null,
         action: route.action,
         to: campaignTabHref(route.tab, campaign.id),
+        badge: route.tone !== 'info',
       });
     }
 
@@ -159,6 +181,7 @@ export function homeAttention(
           at: null,
           action: 'Open Health',
           to: campaignTabHref('health', campaign.id),
+          badge: true,
         });
       }
     }
@@ -173,6 +196,7 @@ export function homeAttention(
         at: null,
         action: 'Open callbacks',
         to: campaignTabHref('callbacks', campaign.id),
+        badge: true,
       });
     }
   }
@@ -182,7 +206,7 @@ export function homeAttention(
     const many = open.open_capped || open.open > 99;
     items.push({
       id: 'missed',
-      tone: 'info',
+      tone: 'warning',
       campaign: null,
       title: many
         ? 'More than 99 missed inbound calls to follow up'
@@ -191,6 +215,9 @@ export function homeAttention(
       at: null,
       action: 'Open missed calls',
       to: '/agency/inbound/missed',
+      // The Inbound entry's badge counts these already; counting them here too would show the
+      // same calls twice in the sidebar.
+      badge: false,
     });
   }
 
@@ -199,6 +226,21 @@ export function homeAttention(
     .map((item, index) => ({ item, index }))
     .sort((a, b) => TONE_ORDER[a.item.tone] - TONE_ORDER[b.item.tone] || a.index - b.index)
     .map(({ item }) => item);
+}
+
+/** "Needs your attention": the dangers and the warnings. */
+export function homeNeeds(items: readonly HomeAttentionItem[]): HomeAttentionItem[] {
+  return items.filter((item) => item.tone !== 'info');
+}
+
+/** "Waiting, nothing wrong": a campaign waiting for its calling hours or a scheduled retry. */
+export function homeWaiting(items: readonly HomeAttentionItem[]): HomeAttentionItem[] {
+  return items.filter((item) => item.tone === 'info');
+}
+
+/** What the sidebar's Home badge counts: the rows with `badge` (dangers and warnings, no missed calls). */
+export function homeBadgeCount(items: readonly HomeAttentionItem[]): number {
+  return items.filter((item) => item.badge).length;
 }
 
 /** The sidebar badge's text: the count, "99+" past it, nothing for none or not yet known. */
@@ -215,19 +257,10 @@ export function attentionBadgeLabel(count: number | null): string | null {
   return count === 1 ? '1 needs your attention' : `${text} need your attention`;
 }
 
-/**
- * The active campaigns Home reads, and how many there were before the cap: the Campaigns page's
- * order (running, then stopping, then paused), so the cap drops the paused ones first.
- */
-export function homeCampaigns(active: readonly AgencyCampaign[]): { campaigns: AgencyCampaign[]; total: number } {
-  const sorted = sortCampaigns(active);
-  return { campaigns: sorted.slice(0, HOME_CAMPAIGN_CAP), total: sorted.length };
-}
-
 // ── The floor ─────────────────────────────────────────────────────────────────
 
 export interface HomeFloorRow {
-  campaign: AgencyCampaign;
+  campaign: HomeCampaignRef;
   /** Null when the stats carried no per-state counts: the row then shows agents live alone. */
   onCall: number | null;
   available: number | null;
@@ -241,7 +274,7 @@ export interface HomeFloorRow {
 
 /**
  * The floor: one row per running campaign, and per paused or stopping one that still has
- * agents on it (they are on the floor whatever the campaign is doing). From `/stats`
+ * agents on it (they are on the floor whatever the campaign is doing). From the stats'
  * `agents_by_state`; `reserved` (a call being connected to them) counts as on a call.
  */
 export function homeFloor(reads: readonly HomeCampaignRead[]): HomeFloorRow[] {
@@ -273,6 +306,7 @@ export function todayWindow(now: Date): { from: string; to: string } {
 
 export interface TodayTotals {
   dials: number;
+  /** Connected calls (the grouped read's `connected`). */
   conversations: number;
   successes: number;
   talkSeconds: number;
@@ -297,4 +331,26 @@ export function todayTotals(page: AgencyGroupPage): TodayTotals | null {
     }),
     { dials: 0, conversations: 0, successes: 0, talkSeconds: 0, campaigns: 0 },
   );
+}
+
+/**
+ * Today's success rate: successes over conversations, the grouped read's own definition
+ * (`success_rate_pct` is successes over connected), under the Insights rate rules (no rate with
+ * no conversations; "Not enough calls yet" under 25). The account's connect rate is not derived:
+ * it divides by placed first dials, which the grouped rows do not carry, and a rate over every
+ * dial would be a second, different number under the same name.
+ */
+export function todaySuccessRate(totals: Pick<TodayTotals, 'successes' | 'conversations'>): InsightsRate {
+  return successRate(totals.successes, totals.conversations);
+}
+
+/**
+ * The Successes tile's line: "Success rate 12.5% of conversations", in the Insights tab's words,
+ * or why there is none yet. Null with no conversations at all.
+ */
+export function todaySuccessLine(totals: Pick<TodayTotals, 'successes' | 'conversations'>): string | null {
+  const rate = todaySuccessRate(totals);
+  if (rate.kind === 'none') return null;
+  if (rate.kind === 'withheld') return 'Success rate: not enough calls yet';
+  return `Success rate ${rateText(rate)} of conversations`;
 }

@@ -24,7 +24,7 @@ import {
   publishHomeAttentionCount,
   useHomeAttentionCount,
 } from '../../hooks/useHomeAttentionCount';
-import { attentionBadgeLabel, attentionBadgeText, homeAttention, type HomeMissed } from '../../utils/agency/home';
+import { attentionBadgeLabel, attentionBadgeText, homeAttention, homeBadgeCount, type HomeMissed } from '../../utils/agency/home';
 import {
   DIALER_FLAG,
   activeNavId,
@@ -113,21 +113,24 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
 }
 
 /**
- * The Home entry's badge: how many things need the supervisor, the same list the Home page
- * shows (`homeAttention`). Rendered only beside the Home entry, so only for a reader who
- * passes Home's gate. On Home the page publishes the count on every refresh and this reads it;
- * anywhere else this reads the same data itself on the slow tick (`useHomeBoard` background
- * mode), skipping a read while the shared count is fresh. In the attention tone, apart from the
- * missed-calls count.
+ * The Home entry's badge: how many dangers and warnings need the supervisor, counted from the
+ * list the Home page shows (`homeAttention`, `homeBadgeCount`): never a "waiting, nothing wrong"
+ * row, and never the missed calls, which the Inbound entry's badge already counts. Rendered only
+ * beside the Home entry, so only for a reader who passes Home's gate. On Home the page publishes
+ * the count on every refresh and this reads it; anywhere else this reads the board itself
+ * (`useHomeBoard` background mode: one request a minute, none while the tab is hidden or the
+ * shared count is fresh) and publishes on every read, so the freshness check holds. In the
+ * attention tone, apart from the missed-calls count.
  */
 function HomeNavBadge({ onHome, missed }: { onHome: boolean; missed: HomeMissed }) {
   const { tenantId, accountId } = useTenant();
   const key = homeAttentionKey(tenantId, accountId);
   const board = useHomeBoard({ tenantId, accountId, enabled: !onHome, mode: 'background', attentionKey: key });
-  const count = board.status === 'ready' && !onHome ? homeAttention(board.reads, missed, () => '').length : null;
+  const count = board.status === 'ready' && !onHome ? homeBadgeCount(homeAttention(board.reads, missed, () => '')) : null;
+  // `refreshedAt` is a dependency so a read that changed nothing still stamps the shared count.
   useEffect(() => {
     if (key && count !== null) publishHomeAttentionCount(key, count);
-  }, [key, count]);
+  }, [key, count, board.refreshedAt]);
   const shared = useHomeAttentionCount(key);
   const text = attentionBadgeText(shared);
   const label = attentionBadgeLabel(shared);

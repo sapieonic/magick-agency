@@ -859,20 +859,24 @@ a rate-limit key and never an auth input.
   `'ai'` elsewhere (`productSurfaceForPath`).
 - **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
   (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
-  switch lands there too) and the first sidebar entry, with a badge counting what needs them.
+  switch lands there too) and the first sidebar entry, with a badge counting the dangers and
+  warnings on its list (not a waiting campaign, and not the missed calls the Inbound badge carries).
   Three sections: **Needs your attention**, one row per live condition (a campaign's top stall,
   abandonment from 80% of its ceiling on a running campaign, a campaign's overdue callbacks, the
   account's open missed calls), each linking to the campaign tab or page that fixes it, derived on
-  every refresh with no read state (`utils/agency/home.ts`, `homeAttention`); **Floor right now**,
-  a row per running campaign (and per paused one with agents on it) from `/stats`
-  `agents_by_state`, linking to its Agents tab; **Today so far**, one grouped read
-  (`grouped-stats`, `group_by=campaign`, the viewer's local midnight to now) summed into dials,
-  conversations, successes and talk time. Reads (`hooks/useHomeBoard.ts`): the active campaigns
-  (one list read), then `/stats` and the insights allocation for at most 25 of them
-  (`HOME_CAMPAIGN_CAP`, running first); the list and the moving campaigns' stats every 10 s (the
-  campaigns home's poll), everything every 60 s and on return. The sidebar badge reads the count
-  the page publishes (`hooks/useHomeAttentionCount.ts`); away from Home it does the same reads
-  itself every 60 s, skipped while the published count is fresh.
+  every refresh with no read state (`utils/agency/home.ts`, `homeAttention`), with a campaign that
+  is only waiting for its hours or a retry shown apart as "Waiting, nothing wrong"; **Floor right
+  now**, a row per running campaign (and per paused one with agents on it) from the stats'
+  `agents_by_state`, linking to its Agents tab; **Today so far**, one grouped read (`grouped-stats`,
+  `group_by=campaign`, the viewer's local midnight to now) summed into dials, conversations,
+  successes (with the success rate) and talk time. Reads (`hooks/useHomeBoard.ts`): one request,
+  `GET /proxy/agency/home` (`api/agencyHome.ts`; the server's `agency/home-board.ts`, served from
+  the insights route family), answering the active campaigns, at most 25 running first, each with
+  the fields of `/stats` Home reads and the insights allocation's overdue callbacks; every 10 s and
+  on return. The server reuses a still campaign's stats and every overdue count for a minute. The
+  sidebar badge reads the count the page publishes on every refresh
+  (`hooks/useHomeAttentionCount.ts`); away from Home it asks for the board itself once a minute,
+  never while the tab is hidden or the published count is fresh.
 - **Console URLs carry the tenant and account** (decision B26). Signed-in pages live under
   `/t/:tenantId/a/:accountId/…`, so a copied link opens the same tenant and account for whoever
   receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;

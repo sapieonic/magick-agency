@@ -3,8 +3,9 @@ import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { registerInsightsAsOfNowRoutes } from './proxy-agency-insights/as-of-now.js';
 import { registerInsightsRangeRoutes } from './proxy-agency-insights/range.js';
+import { registerHomeBoardRoutes } from './proxy-agency-insights/home.js';
 
-export { registerInsightsAsOfNowRoutes, registerInsightsRangeRoutes };
+export { registerInsightsAsOfNowRoutes, registerInsightsRangeRoutes, registerHomeBoardRoutes };
 
 /**
  * The campaign insights page (docs/insights.md; the wire is
@@ -29,10 +30,16 @@ export { registerInsightsAsOfNowRoutes, registerInsightsRangeRoutes };
  * probe (tenant AND account; its 404 forwarded). The routes validate their own ids, so the family
  * gets no wrapper id guard. The contact-assignment flag is NOT checked: the allocation is served
  * in every mode (a pool campaign's table is all unassigned).
+ *
+ * Home's board (`./proxy-agency-insights/home.ts`, `GET /proxy/agency/home`, decision B28a) lives
+ * here too: it reads the allocation through the same cache and the stats strip through the same
+ * hop as the summary. It is account-wide, so it has no `:id`: `agency.supervise`, then the account
+ * scope (`400 account_scope_required`), then the dialer flag.
  */
 export async function proxyAgencyInsightsRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
   await registerInsightsAsOfNowRoutes(app);
   await registerInsightsRangeRoutes(app);
+  await registerHomeBoardRoutes(app);
 }

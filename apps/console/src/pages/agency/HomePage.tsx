@@ -11,7 +11,17 @@ import { useTodaySoFar } from '../../hooks/useTodaySoFar';
 import { homeAttentionKey, publishHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
 import { hasPermission } from '../../utils/permissions';
 import { canSeeHome } from '../../utils/consoleNav';
-import { homeAttention, homeFloor, HOME_CAMPAIGN_CAP, type HomeAttentionItem, type HomeFloorRow } from '../../utils/agency/home';
+import {
+  homeAttention,
+  homeBadgeCount,
+  homeFloor,
+  homeNeeds,
+  homeWaiting,
+  todaySuccessLine,
+  HOME_CAMPAIGN_CAP,
+  type HomeAttentionItem,
+  type HomeFloorRow,
+} from '../../utils/agency/home';
 import { formatCount, plural } from '../../utils/format/number';
 import { durationWords } from '../../utils/format/duration';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
@@ -44,12 +54,17 @@ export default function HomePage() {
     () => homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate),
     [board.reads, missed.available, missed.count],
   );
+  const needs = homeNeeds(items);
+  const waiting = homeWaiting(items);
+  const badgeCount = homeBadgeCount(items);
   const floor = useMemo(() => homeFloor(board.reads), [board.reads]);
 
-  // The sidebar badge counts the same list: publish it whenever this page has read it.
+  // The sidebar badge counts the same list (its dangers and warnings, not the missed calls the
+  // Inbound badge carries). Published on every refresh, `refreshedAt` included, so the badge's
+  // "fresh enough not to read again" holds while this page is open.
   useEffect(() => {
-    if (key && board.status === 'ready') publishHomeAttentionCount(key, items.length);
-  }, [key, board.status, items.length]);
+    if (key && board.status === 'ready') publishHomeAttentionCount(key, badgeCount);
+  }, [key, board.status, badgeCount, board.refreshedAt]);
 
   if (role === undefined) return <LoadingSpinner />;
   if (!supervise) return <Navigate to="/agency" replace />;
@@ -91,13 +106,13 @@ export default function HomePage() {
             <div className={styles.cardHead}>
               <h2 id="home-attention-heading" className={styles.cardTitle}>
                 Needs your attention
-                {items.length > 0 && <span className={styles.count}>{` · ${formatCount(items.length)}`}</span>}
+                {needs.length > 0 && <span className={styles.count}>{` · ${formatCount(needs.length)}`}</span>}
               </h2>
               <p className={styles.cardNote}>Each item clears itself once it’s fixed</p>
             </div>
-            {items.length > 0 ? (
+            {needs.length > 0 ? (
               <ul className={styles.attentionList} data-testid="home-attention">
-                {items.map((item) => (
+                {needs.map((item) => (
                   <AttentionRow key={item.id} item={item} now={now} />
                 ))}
               </ul>
@@ -106,6 +121,16 @@ export default function HomePage() {
                 <CircleCheck size={18} aria-hidden="true" />
                 Nothing needs you right now
               </p>
+            )}
+            {waiting.length > 0 && (
+              <div className={styles.waiting} data-testid="home-waiting">
+                <h3 className={styles.waitingTitle}>Waiting, nothing wrong</h3>
+                <ul className={styles.attentionList}>
+                  {waiting.map((item) => (
+                    <AttentionRow key={item.id} item={item} now={now} />
+                  ))}
+                </ul>
+              </div>
             )}
           </section>
 
@@ -165,10 +190,13 @@ export default function HomePage() {
                 <dl className={styles.tiles} data-testid="home-today">
                   <Tile label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
                   <Tile label="Conversations" value={formatCount(today.totals.conversations)} />
-                  <Tile label="Successes" value={formatCount(today.totals.successes)} />
+                  <Tile label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals) ?? undefined} />
                   <Tile label="Talk time" value={durationWords(today.totals.talkSeconds)} />
                 </dl>
-                <p className={styles.cardNote}>Since midnight your time, every campaign in this account.</p>
+                <p className={styles.cardNote}>
+                  Since midnight your time, every campaign in this account. A success is a call whose outcome
+                  the campaign marks ‘Counts as a success’.
+                </p>
               </>
             )}
           </section>

@@ -5,8 +5,11 @@ import {
   attentionBadgeLabel,
   attentionBadgeText,
   homeAttention,
-  homeCampaigns,
+  homeBadgeCount,
   homeFloor,
+  homeNeeds,
+  homeWaiting,
+  todaySuccessLine,
   todayTotals,
   todayWindow,
   type HomeCampaignRead,
@@ -15,6 +18,7 @@ import {
 import { AGENCY_STALL_LABELS, AGENCY_STALL_PRIORITY } from '../../utils/agencyHealthStrip';
 import type { AgencyStall, AgencyStallCode } from '../../types/agency-campaign';
 import type { AgencyGroupPage, AgencyGroupRow } from '../../types/agency-stats';
+import type { AgencyHomeActiveStatus } from '@magick-agency/contracts/api/agency/home';
 import { campaign, stats } from '../helpers/home';
 
 /**
@@ -26,7 +30,7 @@ import { campaign, stats } from '../helpers/home';
 const NO_MISSED: HomeMissed = { available: false, count: null };
 const fmt = (iso: string) => `at ${iso}`;
 
-function read(id: string, over: Partial<HomeCampaignRead> & { status?: string } = {}): HomeCampaignRead {
+function read(id: string, over: Partial<HomeCampaignRead> & { status?: AgencyHomeActiveStatus } = {}): HomeCampaignRead {
   return { campaign: campaign(id, over.status ?? 'running'), stats: 'stats' in over ? (over.stats ?? null) : stats(), overdue: over.overdue ?? null };
 }
 
@@ -147,7 +151,9 @@ describe('missed inbound calls', () => {
 
   it('is a row when the reader gets the Missed list and calls are open', () => {
     const [item] = homeAttention([], { available: true, count: count(3) }, fmt);
-    expect(item).toMatchObject({ id: 'missed', title: '3 missed inbound calls to follow up', to: '/agency/inbound/missed', campaign: null });
+    expect(item).toMatchObject({
+      id: 'missed', tone: 'warning', title: '3 missed inbound calls to follow up', to: '/agency/inbound/missed', campaign: null,
+    });
     expect(homeAttention([], { available: true, count: count(150, true) }, fmt)[0]!.title).toBe(
       'More than 99 missed inbound calls to follow up',
     );
@@ -165,7 +171,7 @@ describe('the list', () => {
     expect(homeAttention([read('c1'), read('c2', { status: 'paused' })], NO_MISSED, fmt)).toEqual([]);
   });
 
-  it('puts danger first, then warnings, then information, keeping campaign order within a tone', () => {
+  it('puts danger first, then warnings (missed calls last among them), then information, keeping campaign order within a tone', () => {
     const items = homeAttention(
       [
         read('a', { stats: stats({ stall: STALLS.outside_calling_hours }) }),
@@ -175,7 +181,55 @@ describe('the list', () => {
       { available: true, count: { open: 1, open_capped: false, has_rows: true } },
       fmt,
     );
-    expect(items.map((i) => i.id)).toEqual(['callbacks:b', 'stall:c', 'stall:b', 'stall:a', 'missed']);
+    expect(items.map((i) => i.id)).toEqual(['callbacks:b', 'stall:c', 'stall:b', 'missed', 'stall:a']);
+  });
+
+  it('splits into what needs the reader and what is only waiting (nothing wrong)', () => {
+    const items = homeAttention(
+      [
+        read('a', { stats: stats({ stall: STALLS.outside_calling_hours }) }),
+        read('b', { stats: stats({ stall: STALLS.list_exhausted_retries_pending }) }),
+        read('c', { stats: stats({ stall: STALLS.no_agents_available }) }),
+      ],
+      { available: true, count: { open: 2, open_capped: false, has_rows: true } },
+      fmt,
+    );
+    expect(homeNeeds(items).map((i) => i.id)).toEqual(['stall:c', 'missed']);
+    expect(homeWaiting(items).map((i) => i.id)).toEqual(['stall:a', 'stall:b']);
+  });
+});
+
+describe('what the Home badge counts', () => {
+  const missed = { available: true, count: { open: 5, open_capped: false, has_rows: true } };
+
+  it.each(AGENCY_STALL_PRIORITY)('%s counts only when it is a danger or a warning', (code) => {
+    const items = homeAttention([read('c1', { stats: stats({ stall: STALLS[code] }) })], NO_MISSED, fmt);
+    expect(homeBadgeCount(items)).toBe(EXPECTED[code].tone === 'info' ? 0 : 1);
+  });
+
+  it('counts dangers and warnings, never a waiting row, never the missed calls (the Inbound badge has them)', () => {
+    const items = homeAttention(
+      [
+        read('a', { stats: stats({ stall: STALLS.outside_calling_hours }) }),
+        read('b', { stats: stats({ stall: STALLS.no_agents_available }), overdue: 2 }),
+        read('c', { stats: stats({ stall: STALLS.auto_paused_carrier, abandoned_24h: 4, answered_24h: 100 }) }),
+        read('d', { stats: stats({ abandoned_24h: 3, answered_24h: 100 }) }),
+      ],
+      missed,
+      fmt,
+    );
+    // callbacks:b, stall:b, stall:c, abandonment:c, abandonment:d — not stall:a, not missed.
+    expect(items).toHaveLength(7);
+    expect(homeBadgeCount(items)).toBe(5);
+    expect(items.filter((i) => i.badge).map((i) => i.id).sort()).toEqual(
+      ['abandonment:c', 'abandonment:d', 'callbacks:b', 'stall:b', 'stall:c'],
+    );
+  });
+
+  it('is zero when only missed calls and waiting campaigns are on the list', () => {
+    const items = homeAttention([read('a', { stats: stats({ stall: STALLS.outside_calling_hours }) })], missed, fmt);
+    expect(items).toHaveLength(2);
+    expect(homeBadgeCount(items)).toBe(0);
   });
 });
 
@@ -196,14 +250,8 @@ describe('the sidebar badge', () => {
 });
 
 describe('the request bound', () => {
-  it(`reads at most ${HOME_CAMPAIGN_CAP} campaigns, running first, and says how many there were`, () => {
-    const paused = Array.from({ length: 20 }, (_, i) => campaign(`p${i}`, 'paused'));
-    const running = Array.from({ length: 10 }, (_, i) => campaign(`r${i}`, 'running'));
-    const { campaigns, total } = homeCampaigns([...paused, ...running]);
+  it('is the board\'s own cap (the server applies it)', () => {
     expect(HOME_CAMPAIGN_CAP).toBe(25);
-    expect(total).toBe(30);
-    expect(campaigns).toHaveLength(25);
-    expect(campaigns.slice(0, 10).every((c) => c.status === 'running')).toBe(true);
   });
 });
 
@@ -269,11 +317,16 @@ describe('today so far', () => {
     expect(todayTotals(page([row('a')], 2))).toBeNull();
   });
 
-  it('asks from the viewer’s local midnight up to now', () => {
-    const now = new Date(2026, 10, 11, 14, 30);
-    expect(todayWindow(now)).toEqual({
-      from: new Date(2026, 10, 11).toISOString(),
-      to: now.toISOString(),
+  it('asks from midnight up to now (UTC here; other zones in agencyHome.timezone.test.ts)', () => {
+    expect(todayWindow(new Date('2026-11-11T14:30:00.000Z'))).toEqual({
+      from: '2026-11-11T00:00:00.000Z',
+      to: '2026-11-11T14:30:00.000Z',
     });
+  });
+
+  it('gives a success rate over conversations, with the Insights floor', () => {
+    expect(todaySuccessLine({ successes: 10, conversations: 80 })).toBe('Success rate 12.5% of conversations');
+    expect(todaySuccessLine({ successes: 3, conversations: 24 })).toBe('Success rate: not enough calls yet');
+    expect(todaySuccessLine({ successes: 0, conversations: 0 })).toBeNull();
   });
 });
