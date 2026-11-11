@@ -836,10 +836,25 @@ a rate-limit key and never an auth input.
 
 - **Console** (`apps/console`). Firebase web sign-in (`VITE_FIREBASE_*`), `AgencyLoginPage` and
   `AgencyJoinPage` (no self sign-up), the agent station, campaigns, roster, activity, DNC, analysis
-  profiles, team, accounts and notification settings. Permissions come from `packages/contracts/src/rbac.ts`.
+  profiles, team, accounts, email notifications and the other settings. Permissions come from `packages/contracts/src/rbac.ts`.
   Brand pack `brands/magick-agency/` (B17); a branding guard test
   (`src/__tests__/branding/noParentBrand.test.ts`). In dev, Vite proxies every API prefix to `:3021`
   (`vite.config.ts`), and `devProxyPrefixes.test.ts` fails for any API segment the proxy misses.
+- **One console shell** (decision B28). Every signed-in page outside the agent's full-viewport
+  surfaces (`/station`, `/dialer/*`) renders in `ConsoleLayout` (`components/layout/`), mounted
+  by `ConsoleShell` in `App.tsx`. The sidebar has the tenant and account context block (the
+  existing switchers), the work sections Campaigns, Inbound, Reports and Do Not Call, then
+  Settings and the version; the top bar has a breadcrumb, "Search a number" and the profile menu
+  (name, email, ids, theme, sign out); `GlobalSearch` (⌘K) is mounted on every page. A section
+  that groups pages shows an in-page tab bar (`AgencyArea`, `SectionTabs`): Campaigns and
+  Soft-phone calls, Missed calls and Summary, Analytics and Reports, each tab gated as its page.
+  The navigation model, with every entry's gate, is `utils/consoleNav.ts`. Settings is a hub at
+  `/settings/*` grouped by who a setting affects (you, this account, people and access), with an
+  "Applies to" line per page. The old `/app/<page>` URLs redirect to `/settings/<page>`
+  (`LegacyAppRedirect`); `/app` itself is the home decision (`AppHomeRedirect`). `AgentLanding`
+  keeps a dedicated agent out of the shell on Settings and `/app`; the `/agency` pages send an
+  agent to their own `/dialer/*` twin. PostHog's `product` stays `'agency'` on `/agency` and
+  `'ai'` elsewhere (`productSurfaceForPath`).
 - **Console URLs carry the tenant and account** (decision B26). Signed-in pages live under
   `/t/:tenantId/a/:accountId/…`, so a copied link opens the same tenant and account for whoever
   receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;

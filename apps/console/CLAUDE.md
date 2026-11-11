@@ -21,6 +21,11 @@ profiles, team, invites and settings. Detail: `docs/architecture.md` "UIs", `doc
   `TenantContext` setters (a switch is a full page load at the new account's home, or at a
   `path` the caller names); react-router cannot leave its basename. `/t` and `/a`, not `/tenants`
   and `/accounts`: those are API prefixes in nginx and the Vite proxy.
+- One shell (B28): every signed-in page except `/station` and `/dialer/*` renders in
+  `components/layout/ConsoleLayout` (via `ConsoleShell`). Sidebar entries, section tab bars,
+  breadcrumbs and Settings entries, each with its gate, are tables in `utils/consoleNav.ts`; add a
+  page there, gated as its route is. Settings pages live under `/settings/*`; `/app/<page>` only
+  redirects there (`LegacyAppRedirect`), so never link to `/app/...` (`agencyShellBoundary.test.ts`).
 - PostHog analytics in `src/analytics/`: anything carrying a token or PII in a URL is redacted in
   `redact.ts`, which also turns the URL scope into `/t/:tenant/a/:account`. The mobile app sends
   the same event names, so rename events on both sides.

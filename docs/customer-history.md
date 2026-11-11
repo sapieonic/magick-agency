@@ -223,8 +223,8 @@ bench database first (from `packages/db`, `DATABASE_URL` the bench's).
 
 ## 5. Clients
 
-- **Console**: a "Search a number" box with a country picker in the agency top bar
-  (`CustomerSearchPopover` in `AgencyLayout`), and for agents a "Search a number" entry in
+- **Console**: a "Search a number" box with a country picker in the console top bar
+  (`CustomerSearchPopover` in `ConsoleTopBar`, decision B28), and for agents a "Search a number" entry in
   `AgentNav` that opens `/dialer/customers`; both open the Customer history page
   (`/agency/customers`, and `/dialer/customers` for agents). The country picker starts on the
   answer of `GET /proxy/agency/customers/options`, read once per page load
