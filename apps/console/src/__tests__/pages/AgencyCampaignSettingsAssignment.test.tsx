@@ -58,6 +58,7 @@ vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
 }));
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
+import { saveSettings } from '../helpers/settingsForm';
 
 function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   return {
@@ -101,7 +102,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 function save() {
-  fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+  saveSettings();
 }
 
 describe('the mode gate', () => {
@@ -154,7 +155,7 @@ describe('the mode gate', () => {
     renderPage();
     await screen.findByTestId('assignment-mode');
     fireEvent.change(screen.getByLabelText('Minutes a due callback waits for its agent'), { target: { value: '20000' } });
-    expect((screen.getByRole('button', { name: 'Save settings' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -199,7 +200,7 @@ describe('with the flag off', () => {
     mocks.flag.mockReturnValue(false);
     mocks.getAgencyCampaign.mockResolvedValue(campaign(LEFT_OVER));
     renderPage();
-    await screen.findByRole('button', { name: 'Save settings' });
+    await screen.findByLabelText(/campaign name/i);
     save();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     const body = mocks.updateAgencyCampaign.mock.calls[0]![1];
@@ -261,7 +262,7 @@ describe('with the flag off', () => {
   it('shows no notice for a campaign at the defaults, nor with the flag on', async () => {
     mocks.flag.mockReturnValue(false);
     renderPage();
-    await screen.findByRole('button', { name: 'Save settings' });
+    await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByTestId('assignment-off-notice')).toBeNull();
     cleanup();
     mocks.flag.mockReturnValue(true);
@@ -275,7 +276,7 @@ describe('with the flag off', () => {
     mocks.flag.mockReturnValue(false);
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ assignment_mode: 'strict' }));
     renderPage();
-    await screen.findByRole('button', { name: 'Save settings' });
+    await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByTestId('assignment-mode')).toBeNull();
     expect(screen.queryByTestId('override-group-0')).toBeNull();
     save();
@@ -293,7 +294,7 @@ describe('a caller ID dedicated to an agent', () => {
       details: { caller_ids: ['+912200000009'] },
     }));
     renderPage();
-    await screen.findByRole('button', { name: 'Save settings' });
+    await screen.findByLabelText(/campaign name/i);
     save();
     expect(await screen.findByText(
       '+91 22000 00009 is dedicated to an agent. Release it on the Agents tab first (“Use shared rotation”).',
@@ -307,7 +308,7 @@ describe('a caller ID dedicated to an agent', () => {
       details: { caller_ids: ['+912200000009'] },
     }));
     renderPage();
-    await screen.findByRole('button', { name: 'Save settings' });
+    await screen.findByLabelText(/campaign name/i);
     save();
     expect(await screen.findByText(
       '+91 22000 00009 is dedicated to an agent. Release it on the Agents tab first (“Use shared rotation”).',
@@ -324,7 +325,7 @@ describe('a caller ID dedicated to an agent', () => {
         error: 'Conflict', code: 'caller_id_dedicated', message: 'Dedicated.',
       }));
     renderPage();
-    await screen.findByRole('button', { name: 'Save settings' });
+    await screen.findByLabelText(/campaign name/i);
     save();
     expect(await screen.findByText(
       '+91 22000 00008 and +91 22000 00009 are dedicated to agents. Release them on the Agents tab first (“Use shared rotation”).',

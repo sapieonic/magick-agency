@@ -71,6 +71,7 @@ vi.mock('../../api/agencyCampaigns', () => ({
 }));
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
+import { saveSettings } from '../helpers/settingsForm';
 
 const SERVICE: AgencyCarrier = { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' };
 const OWN_A: AgencyCarrier = { telephony_provider: 'plivo', telephony_credential_id: CRED_A, label: 'Acme main', status: 'active' };
@@ -111,7 +112,6 @@ function renderPage() {
 
 const carrierSelect = () => screen.queryByLabelText(/^Carrier/) as HTMLSelectElement | null;
 const numberBox = (phone: RegExp) => screen.queryByRole('checkbox', { name: phone }) as HTMLInputElement | null;
-const saveButton = () => screen.getByRole('button', { name: /save settings/i });
 const sentBody = () => mocks.updateAgencyCampaign.mock.calls[0]![1] as Record<string, unknown>;
 
 /** Shaped like the `ApiError` the client throws. */
@@ -144,7 +144,7 @@ describe('campaign settings — a stored caller ID no longer available', () => {
     expect(screen.getByText(/^2 selected\./)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText(/campaign name/i), { target: { value: 'Renamed' } });
-    fireEvent.click(saveButton());
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody()).toMatchObject({ name: 'Renamed' });
     expect(sentBody()).not.toHaveProperty('caller_ids');
@@ -156,7 +156,7 @@ describe('campaign settings — a stored caller ID no longer available', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove +14155550199' }));
     expect(screen.queryByTestId('caller-id-unavailable')).toBeNull();
     expect(screen.getByText(/^1 selected\./)).toBeTruthy();
-    fireEvent.click(saveButton());
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody().caller_ids).toEqual(['+14155550102']);
   });
@@ -169,7 +169,7 @@ describe('campaign settings — carrier', () => {
     await screen.findByRole('checkbox', { name: /\+912200000001/ });
     expect(carrierSelect()).toBeNull();
 
-    fireEvent.click(saveButton());
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody()).not.toHaveProperty('telephony_provider');
     expect(sentBody()).not.toHaveProperty('telephony_credential_id');
@@ -196,12 +196,12 @@ describe('campaign settings — carrier', () => {
 
     expect(numberBox(/\+912200000001/)).toBeNull();
     // The old pool is cleared, so a save now is refused before the API is called.
-    fireEvent.click(saveButton());
+    saveSettings();
     await waitFor(() => expect(screen.getByText(/needs at least one caller id/i)).toBeTruthy());
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
 
     fireEvent.click(numberBox(/\+14155550102/)!);
-    fireEvent.click(saveButton());
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody()).toMatchObject({
       caller_ids: ['+14155550102'],
@@ -218,7 +218,7 @@ describe('campaign settings — carrier', () => {
     await screen.findByRole('checkbox', { name: /\+14155550102/ });
     fireEvent.change(carrierSelect()!, { target: { value: 'voicelink:' } });
     fireEvent.click(numberBox(/\+912200000001/)!);
-    fireEvent.click(saveButton());
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(sentBody()).toMatchObject({
       caller_ids: ['+912200000001'],
@@ -241,7 +241,7 @@ describe('campaign settings — carrier', () => {
     expect(screen.getByText('This campaign’s Pravah carrier account is not active.')).toBeTruthy();
     expect(screen.queryByText(/are assigned to this account/)).toBeNull();
 
-    fireEvent.click(saveButton());
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     // Naming the carrier would make the server re-check the account and refuse the save.
     expect(sentBody()).not.toHaveProperty('telephony_provider');
@@ -292,7 +292,7 @@ describe('campaign settings — carrier', () => {
     await screen.findByRole('checkbox', { name: /\+912200000001/ });
     fireEvent.change(carrierSelect()!, { target: { value: `plivo:${CRED_A}` } });
     fireEvent.click(numberBox(/\+14155550102/)!);
-    fireEvent.click(saveButton());
+    saveSettings();
     expect(await screen.findByText(copy)).toBeTruthy();
     expect(screen.queryByText('server words')).toBeNull();
   });

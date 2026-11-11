@@ -95,15 +95,3 @@
   text-decoration: underline;
   cursor: pointer;
 }
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-}
-
-.blockCopy {
-  font-size: 12px;
-  color: var(--text-muted);
-}
