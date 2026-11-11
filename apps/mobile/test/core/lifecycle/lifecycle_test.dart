@@ -412,7 +412,7 @@ void main() {
     const availablePath = '/proxy/agency/sessions/sess-1/available';
 
     test('the window is 30 s, and the away card says so', () {
-      expect(deviceAwayAutoReturnWithin, const Duration(seconds: 30));
+      expect(deviceAwayReturnGrace, const Duration(seconds: 30));
       expect(autoReturnsFromAway(const Duration(seconds: 29, milliseconds: 999)), isTrue);
       expect(autoReturnsFromAway(const Duration(seconds: 30)), isFalse);
     });

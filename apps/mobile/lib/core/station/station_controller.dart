@@ -1301,7 +1301,7 @@ class StationController extends Notifier<StationView?>
       _cancelAutoReturn();
       _autoReturn = (back: _now(), asked: askedAt);
       // Bounded: a station that says nothing for this long is left to the tap.
-      _autoReturnExpiry = Timer(deviceAwayAutoReturnWithin, _cancelAutoReturn);
+      _autoReturnExpiry = Timer(deviceAwayReturnGrace, _cancelAutoReturn);
     }
     if (queuedFor != null &&
         _pendingBreakCode == ReservedBreakCode.deviceAway.wire &&
@@ -1354,7 +1354,7 @@ class StationController extends Notifier<StationView?>
     _autoReturnExpiry = null;
   }
 
-  /// IQ50: back in the app within [deviceAwayAutoReturnWithin] of the app's own
+  /// IQ50: back in the app within [deviceAwayReturnGrace] of the app's own
   /// `device_away` pause, the agent is returned to the pool as "Resume taking
   /// calls" returns them ([endBreak]); a longer absence keeps the away card and
   /// its tap. Decided once the station says where the agent stands: the socket
@@ -1410,7 +1410,7 @@ class StationController extends Notifier<StationView?>
 
   /// On the `phone_call` break: the pause a cellular call put the agent on.
   bool get _onPhoneCallBreak =>
-      _station.effectiveState == AgentState.onBreak && _station.breakReasonCode == phoneCallBreakReason;
+      _station.effectiveState == AgentState.onBreak && _station.breakReasonCode == ReservedBreakCode.phoneCall.wire;
 
   /// The audio engine's report: a phone call not the app's own (a cellular
   /// call) started or ended.
@@ -1458,14 +1458,14 @@ class StationController extends Notifier<StationView?>
   void _askPhoneCallPause(_Session s) {
     _phoneCallInFlight = true;
     _log.info('a phone call while available: pausing');
-    unawaited(_api.takeBreak(s.id, phoneCallBreakReason, timeout: const Duration(seconds: 5)).then((response) {
+    unawaited(_api.takeBreak(s.id, ReservedBreakCode.phoneCall.wire, timeout: const Duration(seconds: 5)).then((response) {
       _phoneCallInFlight = false;
       if (!identical(_s, s)) return;
       if (response != null) {
         if (response.pendingState != null) {
           // A call was reserved meanwhile: the pause waits behind it.
           _phoneCallQueued = true;
-          _writeQueue(response.breakReason ?? phoneCallBreakReason);
+          _writeQueue(response.breakReason ?? ReservedBreakCode.phoneCall.wire);
         } else {
           _phoneCallApplied = true;
         }
@@ -1504,7 +1504,7 @@ class StationController extends Notifier<StationView?>
   /// The cellular call ended. A pause still on its way is decided when it
   /// lands; one queued behind a call is withdrawn; one that applied is
   /// returned from ([_maybeReturnFromPhoneCall]) once the app is on screen,
-  /// within [deviceAwayAutoReturnWithin], and only while the agent is still on
+  /// within [deviceAwayReturnGrace], and only while the agent is still on
   /// that `phone_call` break: a break taken meanwhile, or a supervisor's
   /// change, is never undone.
   void _phoneCallEnded(_Session s) {
@@ -1514,7 +1514,7 @@ class StationController extends Notifier<StationView?>
     _phoneCallAsked = false;
     if (_phoneCallQueued) {
       _phoneCallQueued = false;
-      if (_pendingBreakCode != phoneCallBreakReason) return;
+      if (_pendingBreakCode != ReservedBreakCode.phoneCall.wire) return;
       unawaited(_api.cancelBreak(s.id).then((r) {
         if (!identical(_s, s)) return;
         _writeQueue(r?.pendingState != null ? r?.breakReason : null);
@@ -1522,7 +1522,7 @@ class StationController extends Notifier<StationView?>
       }, onError: (Object e) => _log.warn('cancelling the phone_call pause failed', {'error': e.runtimeType.toString()})));
       return;
     }
-    _phoneCallReturnBy = _now().add(deviceAwayAutoReturnWithin);
+    _phoneCallReturnBy = _now().add(deviceAwayReturnGrace);
   }
 
   void _maybeReturnFromPhoneCall(_Session s) {

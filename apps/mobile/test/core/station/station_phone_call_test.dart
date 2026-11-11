@@ -1,10 +1,10 @@
 import 'dart:async';
 
+import 'package:agency_wire/agency_wire.dart' show ReservedBreakCode, deviceAwayReturnGrace;
 import 'package:agent_audio/agent_audio.dart' show PhoneCallChanged;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:magick_agency_agent/core/lifecycle/lifecycle_policy.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart' show StationController;
 import 'package:magick_agency_agent/core/station/station_copy.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
@@ -24,7 +24,7 @@ void main() {
     final app = App(async)..start();
     app.readyFrame('available');
     app.agentStateFrame('available');
-    app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: phoneCallBreakReason));
+    app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: ReservedBreakCode.phoneCall.wire));
     app.routes['POST $_availablePath'] = (_) => json(200, stateBody('available'));
     return app;
   }
@@ -50,8 +50,8 @@ void main() {
     fakeAsync((async) {
       final app = waiting(async);
       phoneCall(app, true);
-      expect(pauses(app), [phoneCallBreakReason]);
-      app.agentStateFrame('break', breakReason: phoneCallBreakReason, since: '2026-11-01T09:00:01.000Z');
+      expect(pauses(app), [ReservedBreakCode.phoneCall.wire]);
+      app.agentStateFrame('break', breakReason: ReservedBreakCode.phoneCall.wire, since: '2026-11-01T09:00:01.000Z');
       expect(app.view!.phase, AgentPhase.onBreak);
       expect(app.view!.onBreak!.label, phoneCallBreakLabel);
       async.elapse(const Duration(seconds: 5));
@@ -67,7 +67,7 @@ void main() {
   test('a call already ringing when the agent becomes available pauses them too', () {
     fakeAsync((async) {
       final app = App(async)..start();
-      app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: phoneCallBreakReason));
+      app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: ReservedBreakCode.phoneCall.wire));
       app.readyFrame('break');
       app.agentStateFrame('break', breakReason: 'tea');
       expect(app.engine.phoneCallMonitoring, isFalse);
@@ -75,7 +75,7 @@ void main() {
       expect(app.engine.phoneCallMonitoring, isTrue);
       // Turning the reports on states the call in progress.
       phoneCall(app, true);
-      expect(pauses(app), [phoneCallBreakReason]);
+      expect(pauses(app), [ReservedBreakCode.phoneCall.wire]);
       app.dispose();
     });
   });
@@ -84,7 +84,7 @@ void main() {
     fakeAsync((async) {
       final app = waiting(async);
       phoneCall(app, true);
-      app.agentStateFrame('break', breakReason: phoneCallBreakReason);
+      app.agentStateFrame('break', breakReason: ReservedBreakCode.phoneCall.wire);
       app.agentStateFrame('break', breakReason: 'lunch', since: '2026-11-01T09:01:00.000Z');
       phoneCall(app, false);
       async.elapse(const Duration(seconds: 5));
@@ -98,7 +98,7 @@ void main() {
     fakeAsync((async) {
       final app = waiting(async);
       phoneCall(app, true);
-      app.agentStateFrame('break', breakReason: phoneCallBreakReason);
+      app.agentStateFrame('break', breakReason: ReservedBreakCode.phoneCall.wire);
       app.agentStateFrame('offline', since: '2026-11-01T09:01:00.000Z');
       phoneCall(app, false);
       async.elapse(const Duration(seconds: 5));
@@ -111,7 +111,7 @@ void main() {
     fakeAsync((async) {
       final app = waiting(async);
       phoneCall(app, true);
-      app.agentStateFrame('break', breakReason: phoneCallBreakReason);
+      app.agentStateFrame('break', breakReason: ReservedBreakCode.phoneCall.wire);
       app.run(app.controller.endBreak());
       app.agentStateFrame('available', since: '2026-11-01T09:01:00.000Z');
       async.elapse(const Duration(seconds: 5));
@@ -144,9 +144,9 @@ void main() {
       app.routes['POST $_breakPath/cancel'] = (_) => json(200, stateBody('on_call'));
       phoneCall(app, true);
       app.reserved('att-1');
-      answer.complete(json(200, stateBody('reserved', breakReason: phoneCallBreakReason, pending: 'break')));
+      answer.complete(json(200, stateBody('reserved', breakReason: ReservedBreakCode.phoneCall.wire, pending: 'break')));
       async.flushMicrotasks();
-      expect(app.view!.queuedBreak?.code, phoneCallBreakReason);
+      expect(app.view!.queuedBreak?.code, ReservedBreakCode.phoneCall.wire);
       app.bridged('att-1');
       phoneCall(app, false);
       expect(app.requests('POST', '$_breakPath/cancel'), hasLength(1));
@@ -192,11 +192,11 @@ void main() {
       // Answered: the phone's call screen comes up over the app while the pause is on its way.
       app.lifecycle.hide();
       async.flushMicrotasks();
-      expect(pauses(app), [phoneCallBreakReason], reason: 'no device_away while the call’s pause is on its way');
-      answer.complete(json(200, stateBody('break', breakReason: phoneCallBreakReason)));
+      expect(pauses(app), [ReservedBreakCode.phoneCall.wire], reason: 'no device_away while the call’s pause is on its way');
+      answer.complete(json(200, stateBody('break', breakReason: ReservedBreakCode.phoneCall.wire)));
       async.flushMicrotasks();
-      expect(pauses(app), [phoneCallBreakReason], reason: 'nor once it applied');
-      app.agentStateFrame('break', breakReason: phoneCallBreakReason);
+      expect(pauses(app), [ReservedBreakCode.phoneCall.wire], reason: 'nor once it applied');
+      app.agentStateFrame('break', breakReason: ReservedBreakCode.phoneCall.wire);
       async.elapse(const Duration(minutes: 3));
       phoneCall(app, false);
       expect(app.requests('POST', _availablePath), isEmpty, reason: 'never made available while away');
@@ -212,15 +212,15 @@ void main() {
     fakeAsync((async) {
       final app = waiting(async);
       phoneCall(app, true);
-      app.agentStateFrame('break', breakReason: phoneCallBreakReason);
+      app.agentStateFrame('break', breakReason: ReservedBreakCode.phoneCall.wire);
       app.lifecycle.hide();
       async.flushMicrotasks();
       phoneCall(app, false);
-      async.elapse(deviceAwayAutoReturnWithin + const Duration(seconds: 1));
+      async.elapse(deviceAwayReturnGrace + const Duration(seconds: 1));
       app.lifecycle.show();
       async.flushMicrotasks();
       expect(app.requests('POST', _availablePath), isEmpty);
-      expect(app.view!.onBreak!.code, phoneCallBreakReason);
+      expect(app.view!.onBreak!.code, ReservedBreakCode.phoneCall.wire);
       app.dispose();
     });
   });
