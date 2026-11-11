@@ -20,8 +20,8 @@ import {
   useMissedCallsCount,
 } from '../../hooks/useMissedCallsCount';
 
-function Reader({ id, poll = true, enabled = true, account = 'a-1' }: { id: string; poll?: boolean; enabled?: boolean; account?: string }) {
-  const { count, settled } = useMissedCallsCount({ tenantId: 't-1', accountId: account, enabled, poll });
+function Reader({ id, poll = true, enabled = true, account = 'a-1', assignee }: { id: string; poll?: boolean; enabled?: boolean; account?: string; assignee?: string }) {
+  const { count, settled } = useMissedCallsCount({ tenantId: 't-1', accountId: account, assignee, enabled, poll });
   return <span data-testid={id}>{`${count ? `${count.open}/${count.has_rows}` : 'none'}:${settled}`}</span>;
 }
 
@@ -43,9 +43,28 @@ describe('the shared count', () => {
     render(<><Reader id="a" /><Reader id="b" /></>);
     await act(async () => {});
     expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(1);
-    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1');
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', {});
     expect(text('a')).toBe('3/true:true');
     expect(text('b')).toBe('3/true:true');
+  });
+
+  it('asks for the reader’s assignee (IQ57), keeps each scope’s answer apart, and re-reads it with that scope', async () => {
+    mocks.getMissedInboundCount.mockImplementation(async (_t: string, _a: string, q: { assignee?: string }) => (
+      q.assignee === 'me' ? { open: 1, open_capped: false, has_rows: true } : { open: 9, open_capped: false, has_rows: true }
+    ));
+    const { unmount } = render(<Reader id="mine" assignee="me" />);
+    await act(async () => {});
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', { assignee: 'me' });
+    expect(text('mine')).toBe('1/true:true');
+    mocks.getMissedInboundCount.mockClear();
+    await act(async () => { refreshMissedCallsCount(); });
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', { assignee: 'me' });
+    unmount();
+    // Another scope of the same account is never shown the first one's answer.
+    render(<Reader id="all" />);
+    await act(async () => {});
+    expect(mocks.getMissedInboundCount).toHaveBeenLastCalledWith('t-1', 'a-1', {});
+    expect(text('all')).toBe('9/true:true');
   });
 
   it('polls while inbound is on, and not while it is off', async () => {

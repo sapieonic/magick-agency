@@ -25,8 +25,9 @@ import styles from '../../components/agency/inbound/Inbound.module.css';
  * `/dialer/missed` in a dedicated agent's own frame (`AgentSurfaceShell`), because an `agent`
  * is below every entry of the agency shell. A dedicated agent who opens the agency path is sent
  * to their own. What the list holds is the server's rule (`agency.inbound.read`): an agent's
- * own rows; with `agency.supervise`, the account's — including the rows assigned to the
- * account rather than a person, which only supervisors work.
+ * own rows, and (IQ49) a Team view of the account's rows nobody has, which they claim; with
+ * `agency.supervise`, the account's, including the rows assigned to the account rather than a
+ * person.
  *
  * Hidden entirely (`CapabilityUnavailable`) without `agency.inbound.read`, and when
  * `agency_inbound_enabled` is off with no rows to read. With the flag off and rows there, the list
@@ -94,7 +95,9 @@ export default function MissedCallsPage({ surface = 'agency' }: { surface?: 'age
           'Call back opens the soft phone with the number ready and the customer’s campaign picked; nothing is dialled until you press Call.',
           'A caller on a Do Not Call list is marked DNC. The soft phone asks for a reason before it calls them.',
           'Reopen, on the Handled tab, puts a call back on the list: one marked by mistake, or closed when the customer wasn’t really reached.',
-          ...(supervise ? ['Reassign hands a call to someone else in the account. A call whose agent has left says “Former member”: reassign it.'] : []),
+          supervise
+            ? 'Reassign hands a call to someone else in the account. A call whose agent has left says “Former member”: reassign it.'
+            : 'Team lists the callers nobody owns. Claim one and it moves to your missed calls.',
         ]}
       />
       {switchedOff}

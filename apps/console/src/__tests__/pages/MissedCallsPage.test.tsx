@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act, cleanup } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { AgencyInboundMissedCall } from '@magick-agency/contracts/api/agency/inbound';
+import { formatDialNumber } from '../../utils/softphone/phoneInput';
 
 /**
  * Missed calls (`docs/inbound.md` §7): a supervisor reads the account's rows with an assignee
@@ -28,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   fetchVoicemailBlobUrl: vi.fn(),
   assignMissedInboundCall: vi.fn(),
   getMissedInboundCount: vi.fn(),
+  claimMissedInboundCall: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -56,6 +58,7 @@ vi.mock('../../api/inbound', async () => {
     fetchVoicemailBlobUrl: mocks.fetchVoicemailBlobUrl,
     assignMissedInboundCall: mocks.assignMissedInboundCall,
     getMissedInboundCount: mocks.getMissedInboundCount,
+    claimMissedInboundCall: mocks.claimMissedInboundCall,
   };
 });
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
@@ -68,7 +71,7 @@ function missed(o: Partial<AgencyInboundMissedCall> = {}): AgencyInboundMissedCa
     id: 'm-1', account_id: 'account-1', route_id: 'r-1', route_name: 'Main line', from_e164: '+447700900123',
     to_e164: '+441632960001', arrived_at: '2026-11-08T09:30:00Z', ended_at: '2026-11-08T09:31:00Z', reason: 'closed',
     closed_cause: 'hours', outcome: 'closed', caller_dnc: false, matched_contact_id: 'c-1', matched_campaign_id: 'camp-1',
-    matched_campaign_name: 'Renewals', callback_due_at: null, has_voicemail: false, assignee_user_id: 'me-1',
+    matched_campaign_name: 'Renewals', match_name: null, callback_due_at: null, has_voicemail: false, assignee_user_id: 'me-1',
     assignee_name: 'Asha', assignee_departed: false, status: 'open', handled_reason: null, handled_by_user_id: null,
     handled_by_name: null, handled_at: null, ...o,
   };
@@ -515,5 +518,127 @@ describe('why a closed call was closed, and the words of the guide', () => {
     expect(guide).not.toMatch(/too long/);
     expect(guide).toContain('saves an outcome other than voicemail');
     expect(guide).toContain('Reopen, on the Handled tab, puts a call back on the list');
+  });
+});
+
+describe('IQ54: the caller’s name above the number', () => {
+  it('shows the matched contact’s name above the number, for a supervisor and an agent, and names the caller in the actions', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({
+      rows: [missed({ match_name: '  Priya Shah ' }), missed({ id: 'm-2', match_name: null })], next_cursor: null, limit: 50,
+    });
+    for (const [path, role] of [['/agency/inbound/missed', 'account_admin'], ['/dialer/missed', 'agent']] as const) {
+      await renderAt(path, role);
+      const named = screen.getByTestId('missed-row-m-1');
+      const caller = named.querySelector('td[data-label="Caller"]')!;
+      const name = within(named).getByTestId('missed-caller-name');
+      expect(name.textContent).toBe('Priya Shah');
+      // Above the number: the name comes first in the cell, the number still shown.
+      expect(caller.firstElementChild).toBe(name);
+      expect(caller.textContent).toContain(formatDialNumber('+447700900123'));
+      expect(within(named).getByRole('button', { name: 'Mark the call from Priya Shah as handled' })).toBeTruthy();
+      // Call back still names the number it fills in.
+      expect(within(named).getByRole('button', { name: `Call back ${formatDialNumber('+447700900123')}` })).toBeTruthy();
+      // No name: the row reads as before.
+      const plain = screen.getByTestId('missed-row-m-2');
+      expect(within(plain).queryByTestId('missed-caller-name')).toBeNull();
+      expect(within(plain).getByRole('button', { name: `Mark the call from ${formatDialNumber('+447700900123')} as handled` })).toBeTruthy();
+      cleanup();
+    }
+  });
+});
+
+describe('IQ49: the Team view and Claim (agents); IQ57: the badge', () => {
+  const unassigned = (o: Partial<AgencyInboundMissedCall> = {}) =>
+    missed({ id: 't-1', assignee_user_id: null, assignee_name: null, matched_contact_id: null, matched_campaign_id: null, matched_campaign_name: null, ...o });
+
+  it('an agent switches to Team: the account’s open rows nobody has, with Claim and nothing else', async () => {
+    await renderAt('/dialer/missed', 'agent');
+    expect(screen.getByTestId('missed-view-mine').getAttribute('aria-selected')).toBe('true');
+    expect(mocks.listMissedInboundCalls).toHaveBeenLastCalledWith({ status: 'open', limit: 50 }, 'tenant-1', 'account-1');
+    expect(screen.queryByTestId('missed-claim')).toBeNull();
+    // The badge counts their own rows.
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('tenant-1', 'account-1', { assignee: 'me' });
+
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [unassigned()], next_cursor: null, limit: 50 });
+    await act(async () => { fireEvent.click(screen.getByTestId('missed-view-team')); });
+    expect(mocks.listMissedInboundCalls).toHaveBeenLastCalledWith({ status: 'open', assignee: 'unassigned', limit: 50 }, 'tenant-1', 'account-1');
+    expect(screen.getByTestId('missed-view-team').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('missed-team-lead').textContent).toBe(
+      'Callers nobody owns: unknown or withheld numbers nobody answered. Claim a call to make it yours; it moves to your missed calls.',
+    );
+    // Team rows are claimed, not worked: no status tabs, no Call back, no Mark handled.
+    expect(screen.queryByTestId('missed-tab-handled')).toBeNull();
+    const row = within(screen.getByTestId('missed-row-t-1'));
+    expect(row.getByRole('button', { name: `Claim the call from ${formatDialNumber('+447700900123')}` }).textContent).toBe('Claim');
+    expect(row.queryByTestId('missed-call-back')).toBeNull();
+    expect(row.queryByTestId('missed-mark-handled')).toBeNull();
+    expect(screen.queryByTestId('missed-no-softphone')).toBeNull();
+  });
+
+  it('Claim moves the row to their own list: it leaves Team, is said, the badge re-reads, and Yours lists it', async () => {
+    await renderAt('/dialer/missed', 'agent');
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [unassigned({ match_name: 'Priya Shah' })], next_cursor: null, limit: 50 });
+    await act(async () => { fireEvent.click(screen.getByTestId('missed-view-team')); });
+    mocks.claimMissedInboundCall.mockResolvedValue({ ok: true, value: unassigned({ match_name: 'Priya Shah', assignee_user_id: 'me-1', assignee_name: 'Asha' }) });
+    const reads = mocks.getMissedInboundCount.mock.calls.length;
+    await act(async () => { fireEvent.click(screen.getByTestId('missed-claim')); });
+    expect(mocks.claimMissedInboundCall).toHaveBeenCalledWith('t-1', 'tenant-1', 'account-1');
+    expect(screen.queryByTestId('missed-row-t-1')).toBeNull();
+    expect(screen.getByTestId('missed-claimed-note').textContent).toContain('You claimed the call from Priya Shah. It’s in your missed calls now.');
+    expect(screen.getByRole('status').textContent).toBe('You claimed the call from Priya Shah. It’s in your missed calls now.');
+    expect(mocks.getMissedInboundCount.mock.calls.length).toBeGreaterThan(reads);
+    expect(mocks.getMissedInboundCount).toHaveBeenLastCalledWith('tenant-1', 'account-1', { assignee: 'me' });
+
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [unassigned({ assignee_user_id: 'me-1', assignee_name: 'Asha' })], next_cursor: null, limit: 50 });
+    await act(async () => { fireEvent.click(screen.getByTestId('missed-claimed-show')); });
+    expect(screen.getByTestId('missed-view-mine').getAttribute('aria-selected')).toBe('true');
+    expect(mocks.listMissedInboundCalls).toHaveBeenLastCalledWith({ status: 'open', limit: 50 }, 'tenant-1', 'account-1');
+    expect(within(screen.getByTestId('missed-row-t-1')).getByTestId('missed-mark-handled')).toBeTruthy();
+  });
+
+  it('a claim someone beat them to stays on the row, in words; so do the other refusals', async () => {
+    await renderAt('/dialer/missed', 'agent');
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [unassigned()], next_cursor: null, limit: 50 });
+    await act(async () => { fireEvent.click(screen.getByTestId('missed-view-team')); });
+    const cases: Array<[string, string]> = [
+      ['inbound_missed_call_claimed', 'Someone else has already taken this missed call.'],
+      ['inbound_missed_call_handled', 'This call has already been handled, so there’s nothing to claim.'],
+      ['inbound_missed_call_not_found', 'This missed call is no longer here. Refresh the list.'],
+      ['unknown', 'We couldn’t claim this call. Try again in a moment.'],
+    ];
+    for (const [code, words] of cases) {
+      mocks.claimMissedInboundCall.mockResolvedValue({
+        ok: false, refusal: { code, status: 409, message: 'x', details: [], phoneNumberId: null, routeId: null, inboundCallId: null, allowedCodes: null, reason: null },
+      });
+      await act(async () => { fireEvent.click(screen.getByTestId('missed-claim')); });
+      const row = within(screen.getByTestId('missed-row-t-1'));
+      expect(row.getByRole('alert').textContent, code).toBe(words);
+    }
+    expect(screen.queryByTestId('missed-claimed-note')).toBeNull();
+  });
+
+  it('an empty Team view says what it is for', async () => {
+    await renderAt('/dialer/missed', 'agent');
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 50 });
+    await act(async () => { fireEvent.click(screen.getByTestId('missed-view-team')); });
+    expect(screen.getByText('No missed calls waiting to be claimed')).toBeTruthy();
+    expect(screen.getByText('When a caller nobody owns rings and nobody answers, the call appears here for anyone in the team to claim.')).toBeTruthy();
+  });
+
+  it('a non-supervisor on the agency path gets Team too, and the guide says what it is', async () => {
+    await renderAt('/agency/inbound/missed', 'viewer');
+    expect(screen.getByTestId('missed-view-team')).toBeTruthy();
+    expect(screen.getByTestId('page-description').textContent).toContain('Team lists the callers nobody owns. Claim one and it moves to your missed calls.');
+  });
+
+  it('a supervisor keeps the account’s whole list: no Team view, no Claim, and the badge counts the account’s rows', async () => {
+    mocks.listMissedInboundCalls.mockResolvedValue({ rows: [unassigned()], next_cursor: null, limit: 50 });
+    await renderAt('/agency/inbound/missed', 'account_admin');
+    expect(screen.queryByTestId('missed-view-team')).toBeNull();
+    expect(screen.queryByTestId('missed-claim')).toBeNull();
+    expect(mocks.listMissedInboundCalls).toHaveBeenCalledWith({ status: 'open', limit: 50 }, 'tenant-1', 'account-1');
+    expect(within(screen.getByTestId('missed-row-t-1')).getByText('The account')).toBeTruthy();
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('tenant-1', 'account-1', {});
+    expect(mocks.getMissedInboundCount).not.toHaveBeenCalledWith('tenant-1', 'account-1', { assignee: 'me' });
   });
 });

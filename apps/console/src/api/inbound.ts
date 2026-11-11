@@ -18,6 +18,8 @@ import {
   type AgencyInboundMissedCall,
   type AgencyInboundMissedAssignRequest,
   type AgencyInboundMissedAssignResponse,
+  type AgencyInboundMissedClaimResponse,
+  type AgencyInboundMissedCountQuery,
   type AgencyInboundMissedCountResponse,
   type AgencyInboundMissedListQuery,
   type AgencyInboundSummary,
@@ -45,6 +47,7 @@ import {
  *   POST   /proxy/agency/inbound/missed/:id/handled    → the row, handled
  *   POST   /proxy/agency/inbound/missed/:id/reopen     → the row, open again
  *   POST   /proxy/agency/inbound/missed/:id/assign     → the row, reassigned (supervisors)
+ *   POST   /proxy/agency/inbound/missed/:id/claim      → the row, now the caller's (the Team view, IQ49)
  *   GET    /proxy/agency/inbound/missed/count          → the nav badge's count
  *   GET    /proxy/agency/inbound/summary               → the inbound summary (supervisors)
  *   GET    <voicemail_url> (the Missed row's)          → the voicemail's audio
@@ -62,7 +65,7 @@ import {
  *
  * Every route is account-scoped and behind `agency_inbound_enabled` (`403 inbound_disabled`),
  * except the five call routes, which finish a call the flag may have been turned off under (the
- * soft phone's rule), and the Missed list's count, reassign, reopen and the summary: the follow-up of
+ * soft phone's rule), and the Missed list's count, reassign, claim, reopen and the summary: the follow-up of
  * calls that already came in, which turning inbound off does not stop.
  * Reads throw like the rest of the console's clients (their failure is a page state). The
  * writes resolve to an {@link InboundResult}: a refusal is something the admin acts on (a
@@ -86,6 +89,7 @@ export const INBOUND_PATHS = {
   missedCount: `${API_BASE}/proxy/agency/inbound/missed/count`,
   missedAssign: (callId: string) => `${API_BASE}/proxy/agency/inbound/missed/${enc(callId)}/assign`,
   missedReopen: (callId: string) => `${API_BASE}/proxy/agency/inbound/missed/${enc(callId)}/reopen`,
+  missedClaim: (callId: string) => `${API_BASE}/proxy/agency/inbound/missed/${enc(callId)}/claim`,
   summary: `${API_BASE}/proxy/agency/inbound/summary`,
 } as const;
 
@@ -215,7 +219,7 @@ export function listInboundClips(tenantId?: string, accountId?: string): Promise
 // ─── The Missed inbound list ────────────────────────────────────────────────
 
 /** The query string of a Missed page; absent and empty values are left out. */
-export function missedQueryString(query: AgencyInboundMissedListQuery): string {
+export function missedQueryString(query: AgencyInboundMissedListQuery | AgencyInboundMissedCountQuery): string {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && value !== null && value !== '') qs.set(key, String(value));
@@ -282,9 +286,34 @@ export function assignMissedInboundCall(
   });
 }
 
-/** `GET /inbound/missed/count`: the nav badge (the caller's scope). A read; throws. */
-export function getMissedInboundCount(tenantId?: string, accountId?: string): Promise<AgencyInboundMissedCountResponse> {
-  return apiFetch<AgencyInboundMissedCountResponse>(INBOUND_PATHS.missedCount, {}, tenantId, accountId);
+/**
+ * `POST /inbound/missed/:id/claim`, no body (IQ49): take an open row nobody has from the Team view;
+ * it becomes the caller's and moves to their own list. Idempotent for the caller (a row already
+ * theirs comes back as it is). Refusals: `inbound_missed_call_claimed` (someone else has it),
+ * `inbound_missed_call_handled`, `inbound_missed_call_not_found`.
+ */
+export function claimMissedInboundCall(
+  callId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<InboundResult<AgencyInboundMissedCall>> {
+  return result(async () => {
+    const body = await apiFetch<AgencyInboundMissedClaimResponse>(INBOUND_PATHS.missedClaim(callId), { method: 'POST' }, tenantId, accountId);
+    return body.call;
+  });
+}
+
+/**
+ * `GET /inbound/missed/count`: the nav badge. `query.assignee` is the list's (IQ57): `me` for the
+ * caller's own rows, `unassigned` for the Team view's; absent, the caller's default scope (an
+ * agent's own rows; with `agency.supervise`, the account's). A read; throws.
+ */
+export function getMissedInboundCount(
+  tenantId?: string,
+  accountId?: string,
+  query: AgencyInboundMissedCountQuery = {},
+): Promise<AgencyInboundMissedCountResponse> {
+  return apiFetch<AgencyInboundMissedCountResponse>(`${INBOUND_PATHS.missedCount}${missedQueryString(query)}`, {}, tenantId, accountId);
 }
 
 // ─── The inbound summary (supervisors) ──────────────────────────────────────

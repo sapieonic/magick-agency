@@ -1,6 +1,7 @@
 import { useTenant } from '../contexts/TenantContext';
 import { hasPermission } from '../utils/permissions';
 import { INBOUND_FLAG } from '../utils/inbound/inboundFlag';
+import { AGENCY_INBOUND_MISSED_ASSIGNEE_ME } from '../types/inbound';
 import { useFeatureFlagEnabled } from './useFeatureFlagEnabled';
 import { useMissedCallsCount } from './useMissedCallsCount';
 import type { AgencyInboundMissedCountResponse } from '../types/inbound';
@@ -24,7 +25,11 @@ export interface MissedCallsAccess {
   available: boolean;
   /** `agency_inbound_enabled`: off, the list is read-only history (the kill switch). */
   inboundOn: boolean;
-  /** The caller's open Missed calls and whether they have any (null until the first answer). */
+  /**
+   * The badge's count (null until the first answer): what the caller's list shows (IQ57). An
+   * agent's own rows (`assignee=me`); a supervisor's list opens on the account's rows, so their
+   * badge counts those (no `assignee`).
+   */
   count: AgencyInboundMissedCountResponse | null;
   /** Whether {@link available} is final: with inbound off it waits on the count's first answer. */
   settled: boolean;
@@ -41,7 +46,8 @@ export function useMissedCallsAccess(): MissedCallsAccess {
   const { role, tenantId, accountId } = useTenantOrNone();
   const inboundOn = useFeatureFlagEnabled(INBOUND_FLAG);
   const permitted = hasPermission(role, 'agency.inbound.read');
-  const { count, settled } = useMissedCallsCount({ tenantId, accountId, enabled: permitted, poll: inboundOn });
+  const assignee = hasPermission(role, 'agency.supervise') ? undefined : AGENCY_INBOUND_MISSED_ASSIGNEE_ME;
+  const { count, settled } = useMissedCallsCount({ tenantId, accountId, assignee, enabled: permitted, poll: inboundOn });
   return {
     available: permitted && (inboundOn || count?.has_rows === true),
     inboundOn,
