@@ -23,6 +23,42 @@ abstract final class MissedCopy {
   static const openTab = 'To follow up';
   static const handledTab = 'Handled';
 
+  /// Whose rows (IQ49): the agent's own, or the account's nobody owns.
+  static const mineTab = 'Mine';
+  static const teamTab = 'Team';
+
+  /// Above the Team view's rows.
+  static const teamHint = 'Missed calls nobody owns yet: callers who weren’t matched to a customer, or withheld '
+      'their number. Claim one to make it yours.';
+
+  static const claim = 'Claim';
+  static const claiming = 'Claiming…';
+  static String claimLabel(InboundMissedCall call) => 'Claim the call from ${callerInSentence(call)}';
+  static String claimedAnnouncement(InboundMissedCall call) =>
+      'The call from ${callerInSentence(call)} is yours now. It’s on your list to follow up.';
+
+  /// The console's words for a row someone else has (`inbound_missed_call_claimed`).
+  static const claimTaken = 'Someone else has already taken this missed call.';
+  static const claimHandled = 'This missed call has already been handled.';
+  static const claimNotFound = 'This missed call is no longer here. Refresh the list.';
+
+  /// A Claim that did not go through.
+  static String claimRefusal(Object error) => switch (_code(error)) {
+        InboundErrorCode.inboundMissedCallClaimed => claimTaken,
+        InboundErrorCode.inboundMissedCallHandled => claimHandled,
+        InboundErrorCode.inboundMissedCallNotFound => claimNotFound,
+        _ => _fallback(error, 'We couldn’t claim this call. Try again in a moment.'),
+      };
+
+  /// The refusal says the row is no longer there to claim.
+  static bool claimGone(Object error) => switch (_code(error)) {
+        InboundErrorCode.inboundMissedCallClaimed ||
+        InboundErrorCode.inboundMissedCallHandled ||
+        InboundErrorCode.inboundMissedCallNotFound =>
+          true,
+        _ => false,
+      };
+
   static const anyReason = 'Any reason';
   static const reasonFilter = 'Why it was missed';
 
@@ -180,17 +216,21 @@ abstract final class MissedCopy {
   /// Under a reached row: why it closed without anyone marking it.
   static const reachedNote = 'Closed on its own: an agent spoke to the customer after this call.';
 
-  static String emptyTitle({required bool open, required bool filtered}) => filtered
+  static String emptyTitle({required bool open, required bool filtered, bool team = false}) => filtered
       ? 'Nothing matches that filter'
-      : open
-          ? 'No missed calls to follow up'
-          : 'No handled missed calls';
+      : team
+          ? 'No missed calls to claim'
+          : open
+              ? 'No missed calls to follow up'
+              : 'No handled missed calls';
 
-  static String emptyBody({required bool open, required bool filtered}) => filtered
+  static String emptyBody({required bool open, required bool filtered, bool team = false}) => filtered
       ? 'Clear the filter to see every call.'
-      : open
-          ? 'When one of your customers rings and nobody answers, the call appears here for you to call them back.'
-          : 'Calls marked handled appear here.';
+      : team
+          ? 'When a caller nobody owns rings and nobody answers, the call appears here for anyone on the team to claim.'
+          : open
+              ? 'When one of your customers rings and nobody answers, the call appears here for you to call them back.'
+              : 'Calls marked handled appear here.';
 
   /// "Showing 12 calls — there are more".
   static String countLine(int count, {required bool more}) =>

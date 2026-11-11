@@ -19,7 +19,8 @@ import 'missed_calls_controller.dart';
 import 'missed_calls_copy.dart';
 import 'missed_count_controller.dart' show missedClockProvider;
 
-/// "Missed calls", a segment of My calls (and, on duty on a campaign, the
+/// "Missed calls", a segment of My calls, with the agent's own rows (Mine) and
+/// the account's nobody owns (Team, IQ49: each row's one action is Claim) (and, on duty on a campaign, the
 /// station's sheet: `missed_on_duty.dart`): the status tabs and the reason
 /// filter, the notices, then the agent's rows ([MissedCallTile]), with pull
 /// to refresh and the next page fetched before the end.
@@ -104,6 +105,11 @@ class _MissedCallsListState extends ConsumerState<MissedCallsList> {
     if (result.ok) _announce(result.message);
   }
 
+  Future<void> _claim(InboundMissedCall call) async {
+    final result = await ref.read(missedCallsControllerProvider.notifier).claim(call);
+    if (result.ok) _announce(result.message);
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<String?>(agentWorkspaceProvider, (prev, next) {
@@ -126,7 +132,14 @@ class _MissedCallsListState extends ConsumerState<MissedCallsList> {
     final header = <Widget>[
       _Filters(filters: filters, onChanged: (f) => unawaited(controller.applyFilters(f))),
       if (!inboundOn) const _Notice(key: Key('missed-inbound-off'), message: MissedCopy.inboundOff),
-      if (filters.open && !offered) const _Notice(key: Key('missed-no-softphone'), message: MissedCopy.noSoftphone),
+      if (filters.team)
+        Padding(
+          key: const Key('missed-team-hint'),
+          padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.sm),
+          child: Text(MissedCopy.teamHint, style: text.bodySmall),
+        ),
+      if (!filters.team && filters.open && !offered)
+        const _Notice(key: Key('missed-no-softphone'), message: MissedCopy.noSoftphone),
     ];
 
     final List<Widget> body;
@@ -169,13 +182,13 @@ class _MissedCallsListState extends ConsumerState<MissedCallsList> {
                     Icon(Icons.phone_missed_outlined, size: 32, color: t.textMuted),
                     const SizedBox(height: Space.md),
                     Text(
-                      MissedCopy.emptyTitle(open: filters.open, filtered: filters.isFiltered),
+                      MissedCopy.emptyTitle(open: filters.open, filtered: filters.isFiltered, team: filters.team),
                       textAlign: TextAlign.center,
                       style: text.titleMedium,
                     ),
                     const SizedBox(height: Space.xs),
                     Text(
-                      MissedCopy.emptyBody(open: filters.open, filtered: filters.isFiltered),
+                      MissedCopy.emptyBody(open: filters.open, filtered: filters.isFiltered, team: filters.team),
                       textAlign: TextAlign.center,
                       style: text.bodySmall,
                     ),
@@ -212,6 +225,9 @@ class _MissedCallsListState extends ConsumerState<MissedCallsList> {
                 onReopen: state.reopening == null ? () => unawaited(_reopen(call)) : null,
                 marking: state.marking == call.id,
                 reopening: state.reopening == call.id,
+                team: filters.team,
+                onClaim: state.claiming == null && !state.taken.contains(call.id) ? () => unawaited(_claim(call)) : null,
+                claiming: state.claiming == call.id,
                 error: error != null && error.id == call.id ? error.message : null,
               );
             },
@@ -258,13 +274,26 @@ class _Filters extends StatelessWidget {
         runSpacing: Space.xs,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          for (final status in const [InboundFollowUpStatus.open, InboundFollowUpStatus.handled])
-            ChoiceChip(
-              key: Key('missed-tab-${status.wire}'),
-              label: Text(status == InboundFollowUpStatus.open ? MissedCopy.openTab : MissedCopy.handledTab),
-              selected: filters.status == status,
-              onSelected: (_) => onChanged(filters.withStatus(status)),
-            ),
+          // Whose rows (IQ49): the agent's own, or the account's nobody owns. Team lists open
+          // rows only, so the status tabs are Mine's.
+          SegmentedButton<MissedScope>(
+            key: const Key('missed-scope'),
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: MissedScope.mine, label: Text(MissedCopy.mineTab, key: Key('missed-scope-mine'))),
+              ButtonSegment(value: MissedScope.team, label: Text(MissedCopy.teamTab, key: Key('missed-scope-team'))),
+            ],
+            selected: {filters.scope},
+            onSelectionChanged: (picked) => onChanged(filters.withScope(picked.single)),
+          ),
+          if (!filters.team)
+            for (final status in const [InboundFollowUpStatus.open, InboundFollowUpStatus.handled])
+              ChoiceChip(
+                key: Key('missed-tab-${status.wire}'),
+                label: Text(status == InboundFollowUpStatus.open ? MissedCopy.openTab : MissedCopy.handledTab),
+                selected: filters.status == status,
+                onSelected: (_) => onChanged(filters.withStatus(status)),
+              ),
           // Keyed by the wire string ('' for any reason): a menu item whose value
           // is null reads as dismissed, so "Any reason" could never be picked.
           PopupMenuButton<String>(

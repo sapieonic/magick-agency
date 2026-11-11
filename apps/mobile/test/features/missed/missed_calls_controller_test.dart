@@ -298,4 +298,94 @@ void main() {
       expect(api.handled, ['m1']);
     });
   });
+
+  group('the Team view and Claim (IQ49)', () {
+    Future<void> toTeam(List<InboundMissedCall> rows) async {
+      await loadFirst([missed('mine-1')]);
+      final f = ctl().applyFilters(st().filters.withScope(MissedScope.team));
+      api.answer(api.queries.length - 1, missedPage(rows));
+      await f;
+    }
+
+    test('Team asks for the account\'s unassigned open rows, whatever the status tab was', () async {
+      await loadFirst([missed('mine-1')]);
+      final handled = ctl().applyFilters(st().filters.withStatus(InboundFollowUpStatus.handled));
+      api.answer(1, missedPage([]));
+      await handled;
+      final team = ctl().applyFilters(st().filters.withScope(MissedScope.team));
+      api.answer(2, missedPage([missed('t1', {'assignee_user_id': null})]));
+      await team;
+      expect(api.queries.last.toQuery(), {'status': 'open', 'assignee': 'unassigned', 'limit': '50'});
+      expect(st().rows.single.id, 't1');
+      // Back to Mine: its own tab again.
+      final mine = ctl().applyFilters(st().filters.withScope(MissedScope.mine));
+      api.answer(3, missedPage([]));
+      await mine;
+      expect(api.queries.last.toQuery(), {'status': 'handled', 'assignee': 'me', 'limit': '50'});
+    });
+
+    test('a claimed row leaves Team (it is on Mine now), and the badge is re-read', () async {
+      await toTeam([missed('t1', {'assignee_user_id': null}), missed('t2', {'assignee_user_id': null})]);
+      final before = api.countReads;
+      api.claimAnswer = missed('t1', {'assignee_user_id': 'u1'});
+      final result = await ctl().claim(st().rows.first);
+      await settle();
+      expect(result.ok, isTrue);
+      expect(result.message, 'The call from +91 87654 32109 is yours now. It’s on your list to follow up.');
+      expect(api.claimed, ['t1']);
+      expect(st().rows.map((r) => r.id), ['t2']);
+      expect(st().claiming, isNull);
+      expect(api.countReads, before + 1);
+      // Mine reads it from the server.
+      final mine = ctl().applyFilters(st().filters.withScope(MissedScope.mine));
+      api.answer(api.queries.length - 1, missedPage([missed('t1'), missed('mine-1')]));
+      await mine;
+      expect(st().rows.map((r) => r.id), ['t1', 'mine-1']);
+    });
+
+    for (final (code, status, words) in [
+      ('inbound_missed_call_claimed', 409, 'Someone else has already taken this missed call.'),
+      ('inbound_missed_call_handled', 409, 'This missed call has already been handled.'),
+      ('inbound_missed_call_not_found', 404, 'This missed call is no longer here. Refresh the list.'),
+    ]) {
+      test('$code: said on the row, its Claim off until the next read drops it', () async {
+        await toTeam([missed('t1', {'assignee_user_id': null})]);
+        final before = api.countReads;
+        api.claimAnswer = inboundRefusal(code, status: status);
+        final result = await ctl().claim(st().rows.single);
+        expect(result.ok, isFalse);
+        expect(st().rowError, (id: 't1', message: words));
+        expect(st().taken, {'t1'});
+        expect(st().claiming, isNull);
+        expect(api.countReads, before, reason: 'nothing of the agent\'s changed');
+        final reload = ctl().reload();
+        api.answer(api.queries.length - 1, missedPage([]));
+        await reload;
+        expect(st().rows, isEmpty);
+        expect(st().taken, isEmpty);
+      });
+    }
+
+    test('no answer: said on the row, and Claim stays on to try again', () async {
+      await toTeam([missed('t1', {'assignee_user_id': null})]);
+      api.claimAnswer = const ApiNetworkError('offline');
+      await ctl().claim(st().rows.single);
+      expect(st().rowError?.id, 't1');
+      expect(st().taken, isEmpty);
+    });
+
+    test('one Claim at a time', () async {
+      await toTeam([missed('t1', {'assignee_user_id': null}), missed('t2', {'assignee_user_id': null})]);
+      final gate = Completer<InboundMissedCall>();
+      api.claimAnswer = gate.future;
+      final first = ctl().claim(st().rows.first);
+      final second = await ctl().claim(st().rows.last);
+      expect(second.ok, isFalse);
+      expect(api.claimed, ['t1']);
+      expect(st().claiming, 't1');
+      gate.complete(missed('t1'));
+      await first;
+      expect(st().claiming, isNull);
+    });
+  });
 }

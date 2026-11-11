@@ -152,6 +152,17 @@ void main() {
       expect(find.text('at /home/station/camp-1'), findsOneWidget);
     });
 
+    testWidgets('the Team view opens on duty too, and Claim works there', (tester) async {
+      await pumpSheet(tester, st.station());
+      await tester.tap(find.byKey(const Key('missed-scope-team')));
+      await tester.pumpAndSettle();
+      expect(api.queries.last.assignee, 'unassigned');
+      await tester.tap(find.byKey(const Key('missed-claim')));
+      await tester.pumpAndSettle();
+      expect(api.claimed, ['m1']);
+      expect(sheet, findsOneWidget, reason: 'a claim keeps the agent where they are');
+    });
+
     testWidgets('a call reaching the agent closes it: the call takes the screen', (tester) async {
       await pumpSheet(tester, st.station());
       await setView(tester, st.station(phase: AgentPhase.reserved, call: st.call()));

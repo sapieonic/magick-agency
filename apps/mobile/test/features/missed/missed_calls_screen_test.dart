@@ -423,6 +423,48 @@ void main() {
     });
   });
 
+  group('the Team view (IQ49)', () {
+    testWidgets('Mine / Team: Team lists the unassigned rows, each with Claim alone', (tester) async {
+      await open(tester, [missed('t1', {'assignee_user_id': null, 'from_e164': null, 'has_voicemail': true})]);
+      expect(find.byKey(const Key('missed-tab-open')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('missed-scope-team')));
+      await flush(tester);
+      expect(api.queries.last.assignee, 'unassigned');
+      expect(find.byKey(const Key('missed-team-hint')), findsOneWidget);
+      expect(find.byKey(const Key('missed-tab-open')), findsNothing, reason: 'Team is open rows only');
+      expect(inRow('t1', find.byKey(const Key('missed-claim'))), findsOneWidget);
+      expect(inRow('t1', find.byKey(const Key('missed-call-back'))), findsNothing);
+      expect(inRow('t1', find.byKey(const Key('missed-mark-handled'))), findsNothing);
+      expect(inRow('t1', find.byKey(const Key('missed-withheld-note'))), findsNothing);
+      expect(inRow('t1', find.textContaining(MissedCopy.voicemailOnConsole)), findsOneWidget);
+    });
+
+    testWidgets('Claim: the row leaves Team and the badge is re-read', (tester) async {
+      await open(tester, [missed('t1', {'assignee_user_id': null})]);
+      await tester.tap(find.byKey(const Key('missed-scope-team')));
+      await flush(tester);
+      api.autoPage = missedPage([]);
+      final reads = api.countReads;
+      await tester.tap(inRow('t1', find.byKey(const Key('missed-claim'))));
+      await flush(tester);
+      expect(api.claimed, ['t1']);
+      expect(find.byKey(const ValueKey('missed-row-t1')), findsNothing);
+      expect(api.countReads, greaterThan(reads));
+    });
+
+    testWidgets('someone else took it: said on the row in the console’s words, Claim off', (tester) async {
+      await open(tester, [missed('t1', {'assignee_user_id': null})]);
+      await tester.tap(find.byKey(const Key('missed-scope-team')));
+      await flush(tester);
+      api.claimAnswer = inboundRefusal('inbound_missed_call_claimed', status: 409);
+      await tester.tap(inRow('t1', find.byKey(const Key('missed-claim'))));
+      await flush(tester);
+      expect(textOf(tester, 't1', 'missed-row-error'), 'Someone else has already taken this missed call.');
+      final claim = tester.widget<ButtonStyleButton>(inRow('t1', find.byKey(const Key('missed-claim'))));
+      expect(claim.onPressed, isNull);
+    });
+  });
+
   group('kept fresh mid-shift', () {
     testWidgets('My calls coming back to the front after a minute reads the rows and the badge again', (tester) async {
       await setPhoneSize(tester);

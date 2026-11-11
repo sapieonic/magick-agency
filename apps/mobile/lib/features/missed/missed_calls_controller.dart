@@ -11,7 +11,8 @@ import 'missed_calls_api.dart';
 import 'missed_calls_copy.dart';
 import 'missed_count_controller.dart';
 
-/// "My calls" → "Missed calls": the agent's own Missed rows (`assignee=me`:
+/// "My calls" → "Missed calls": the agent's own Missed rows (Mine), and the
+/// account's rows nobody owns (Team, IQ49), claimed one at a time. Mine: (`assignee=me`:
 /// the server forces it without `agency.supervise`, and a supervisor using the
 /// app sees their own too), newest first, keyset-paged, To
 /// follow up or Handled, with a reason filter, and per row Mark handled or
@@ -25,39 +26,55 @@ import 'missed_count_controller.dart';
 /// One page, the console's size.
 const missedCallsPageSize = 50;
 
-/// The applied filters: To follow up (`open`) or Handled, and the reason.
+/// Whose rows the list shows: the agent's own, or the account's that nobody
+/// owns (the Team view, IQ49: an unmatched or withheld caller nobody answered),
+/// which any agent who sees the account may claim.
+enum MissedScope { mine, team }
+
+/// The applied filters: whose rows ([scope]), To follow up (`open`) or
+/// Handled, and the reason. The Team view lists open rows only: a handled row
+/// has nothing left to claim, so its status is always `open`.
 @immutable
 class MissedFilters {
-  const MissedFilters({this.status = InboundFollowUpStatus.open, this.reason});
+  const MissedFilters({this.scope = MissedScope.mine, this._status = InboundFollowUpStatus.open, this.reason});
 
   static const initial = MissedFilters();
 
-  final InboundFollowUpStatus status;
+  final MissedScope scope;
+  final InboundFollowUpStatus _status;
   final InboundMissedReason? reason;
+
+  bool get team => scope == MissedScope.team;
+
+  /// The status asked for: the tab's in Mine, always open in Team.
+  InboundFollowUpStatus get status => team ? InboundFollowUpStatus.open : _status;
 
   bool get open => status == InboundFollowUpStatus.open;
 
   /// A filter beyond the status tab (the console counts the same).
   bool get isFiltered => reason != null;
 
-  MissedFilters withStatus(InboundFollowUpStatus status) => MissedFilters(status: status, reason: reason);
-  MissedFilters withReason(InboundMissedReason? reason) => MissedFilters(status: status, reason: reason);
+  MissedFilters withScope(MissedScope scope) => MissedFilters(scope: scope, status: _status, reason: reason);
+  MissedFilters withStatus(InboundFollowUpStatus status) => MissedFilters(scope: scope, status: status, reason: reason);
+  MissedFilters withReason(InboundMissedReason? reason) => MissedFilters(scope: scope, status: _status, reason: reason);
 
-  /// Always the caller's own rows: without an assignee the server widens a
-  /// supervisor's list to the whole account.
+  /// Mine is always the caller's own rows (without an assignee the server
+  /// widens a supervisor's list to the whole account); Team is the
+  /// account's unassigned rows.
   InboundMissedQuery toQuery({String? cursor}) => InboundMissedQuery(
         status: status,
-        assignee: InboundMissedQuery.assigneeMe,
+        assignee: team ? InboundMissedQuery.assigneeUnassigned : InboundMissedQuery.assigneeMe,
         reason: reason,
         cursor: cursor,
         limit: missedCallsPageSize,
       );
 
   @override
-  bool operator ==(Object other) => other is MissedFilters && other.status == status && other.reason == reason;
+  bool operator ==(Object other) =>
+      other is MissedFilters && other.scope == scope && other.status == status && other.reason == reason;
 
   @override
-  int get hashCode => Object.hash(status, reason);
+  int get hashCode => Object.hash(scope, status, reason);
 }
 
 enum MissedListStatus { loading, ready, error }
@@ -75,8 +92,11 @@ class MissedCallsState {
     this.refreshing = false,
     this.marking,
     this.reopening,
+    this.claiming,
+    Set<String> taken = const {},
     this.rowError,
-  }) : rows = List.unmodifiable(rows);
+  })  : rows = List.unmodifiable(rows),
+        taken = Set.unmodifiable(taken);
 
   /// The APPLIED filters.
   final MissedFilters filters;
@@ -96,6 +116,14 @@ class MissedCallsState {
 
   /// The row a Reopen is in flight for; kept through a reload, as [marking].
   final String? reopening;
+
+  /// The Team row a Claim is in flight for (one at a time).
+  final String? claiming;
+
+  /// Team rows a Claim was refused for because they are no longer there to
+  /// claim (someone else took it, it was handled, or it is gone): they stay
+  /// on screen with the refusal, Claim off, until the next read drops them.
+  final Set<String> taken;
 
   /// The last row action's refusal, shown on its row.
   final ({String id, String message})? rowError;
@@ -117,6 +145,9 @@ class MissedCallsState {
     bool clearMarking = false,
     String? reopening,
     bool clearReopening = false,
+    String? claiming,
+    bool clearClaiming = false,
+    Set<String>? taken,
     ({String id, String message})? rowError,
     bool clearRowError = false,
   }) =>
@@ -131,6 +162,8 @@ class MissedCallsState {
         refreshing: refreshing ?? this.refreshing,
         marking: clearMarking ? null : (marking ?? this.marking),
         reopening: clearReopening ? null : (reopening ?? this.reopening),
+        claiming: clearClaiming ? null : (claiming ?? this.claiming),
+        taken: taken ?? this.taken,
         rowError: clearRowError ? null : (rowError ?? this.rowError),
       );
 
@@ -147,11 +180,13 @@ class MissedCallsState {
       other.refreshing == refreshing &&
       other.marking == marking &&
       other.reopening == reopening &&
+      other.claiming == claiming &&
+      setEquals(other.taken, taken) &&
       other.rowError == rowError;
 
   @override
   int get hashCode => Object.hash(filters, status, identityHashCode(rows), nextCursor, error, loadingMore, moreError,
-      refreshing, marking, reopening, rowError);
+      refreshing, marking, reopening, claiming, Object.hashAllUnordered(taken), rowError);
 }
 
 /// How a row action ended: what to announce, or the refusal (also on the row).
@@ -180,6 +215,7 @@ class MissedCallsController extends Notifier<MissedCallsState> {
   int _actionSeq = 0;
   int? _markingAction;
   int? _reopeningAction;
+  int? _claimingAction;
 
   MissedCallsApi get _api => ref.read(missedCallsApiProvider);
   DateTime _now() => ref.read(missedClockProvider)();
@@ -193,6 +229,7 @@ class MissedCallsController extends Notifier<MissedCallsState> {
     _settledSince = false;
     _markingAction = null;
     _reopeningAction = null;
+    _claimingAction = null;
     ref.listen<int>(missedCallsSettledProvider, (_, _) => _settledSince = true);
     return MissedCallsState();
   }
@@ -242,7 +279,7 @@ class MissedCallsController extends Notifier<MissedCallsState> {
     final mine = ++_generation;
     state = keepRows
         ? state.copyWith(refreshing: true, loadingMore: false, clearMoreError: true)
-        : MissedCallsState(filters: filters, marking: state.marking, reopening: state.reopening);
+        : MissedCallsState(filters: filters, marking: state.marking, reopening: state.reopening, claiming: state.claiming);
     try {
       final page = await _api.list(filters.toQuery());
       if (!ref.mounted || mine != _generation) return;
@@ -254,6 +291,7 @@ class MissedCallsController extends Notifier<MissedCallsState> {
         nextCursor: page.nextCursor,
         marking: state.marking,
         reopening: state.reopening,
+        claiming: state.claiming,
       );
     } on Exception catch (e) {
       if (!ref.mounted || mine != _generation) return;
@@ -267,6 +305,7 @@ class MissedCallsController extends Notifier<MissedCallsState> {
               error: message,
               marking: state.marking,
               reopening: state.reopening,
+              claiming: state.claiming,
             );
     }
   }
@@ -354,6 +393,43 @@ class MissedCallsController extends Notifier<MissedCallsState> {
       if (owns()) {
         _reopeningAction = null;
         state = state.copyWith(clearReopening: true, rowError: (id: call.id, message: message));
+      }
+      return MissedActionResult(ok: false, message: message);
+    }
+  }
+
+  /// Claim (IQ49): a Team row becomes the agent's own. It leaves the Team
+  /// view (it is on Mine's To follow up now) and the badge is re-read. A
+  /// refusal is said on the row; one that says the row is no longer there to
+  /// claim (someone else took it, it was handled, it is gone) also turns its
+  /// Claim off until the next read drops it.
+  Future<MissedActionResult> claim(InboundMissedCall call) async {
+    if (state.claiming != null) return const MissedActionResult(ok: false, message: MissedCopy.claiming);
+    final action = _claimingAction = ++_actionSeq;
+    state = state.copyWith(claiming: call.id, clearRowError: true);
+    final mine = _generation;
+    bool owns() => ref.mounted && _claimingAction == action;
+    try {
+      final updated = await _api.claim(call.id);
+      if (!ref.mounted) return MissedActionResult(ok: true, message: MissedCopy.claimedAnnouncement(call));
+      if (owns()) {
+        _claimingAction = null;
+        state = state.copyWith(clearClaiming: true);
+      }
+      if (mine == _generation) _settleRow(call.id, updated, keep: !state.filters.team);
+      unawaited(ref.read(missedCountControllerProvider.notifier).refresh());
+      return MissedActionResult(ok: true, message: MissedCopy.claimedAnnouncement(call));
+    } on Exception catch (e) {
+      final message = MissedCopy.claimRefusal(e);
+      if (!ref.mounted) return MissedActionResult(ok: false, message: message);
+      _refused('claim', e);
+      if (owns()) {
+        _claimingAction = null;
+        state = state.copyWith(
+          clearClaiming: true,
+          rowError: (id: call.id, message: message),
+          taken: MissedCopy.claimGone(e) && mine == _generation ? {...state.taken, call.id} : null,
+        );
       }
       return MissedActionResult(ok: false, message: message);
     }

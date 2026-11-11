@@ -24,6 +24,9 @@ class MissedCallTile extends StatelessWidget {
     this.onReopen,
     this.marking = false,
     this.reopening = false,
+    this.team = false,
+    this.onClaim,
+    this.claiming = false,
     this.error,
   });
 
@@ -42,6 +45,15 @@ class MissedCallTile extends StatelessWidget {
   final VoidCallback? onReopen;
   final bool marking;
   final bool reopening;
+
+  /// A Team row (IQ49): nobody's yet, so its one action is Claim (no Call
+  /// back, no Mark handled until it is the agent's own).
+  final bool team;
+
+  /// Null while another row's Claim is in flight, or once this row's was
+  /// refused as no longer there to claim.
+  final VoidCallback? onClaim;
+  final bool claiming;
 
   /// This row's last refusal.
   final String? error;
@@ -169,7 +181,20 @@ class MissedCallTile extends StatelessWidget {
             Wrap(
               spacing: Space.sm,
               runSpacing: Space.xs,
-              children: call.isOpen
+              children: team
+                  ? [
+                      FilledButton.tonalIcon(
+                        key: const Key('missed-claim'),
+                        onPressed: onClaim,
+                        icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                        label: Semantics(
+                          label: MissedCopy.claimLabel(call),
+                          excludeSemantics: true,
+                          child: Text(claiming ? MissedCopy.claiming : MissedCopy.claim),
+                        ),
+                      ),
+                    ]
+                  : call.isOpen
                   ? [
                       if (callBackOffered)
                         OutlinedButton.icon(
@@ -198,11 +223,11 @@ class MissedCallTile extends StatelessWidget {
                       ),
                     ],
             ),
-            if (call.isOpen && callBackOffered && call.isWithheld)
+            if (!team && call.isOpen && callBackOffered && call.isWithheld)
               Text(MissedCopy.withheldCallBack, key: const Key('missed-withheld-note'), style: small.copyWith(color: t.textMuted)),
             // IQ55: calling a DNC number back still goes through the soft phone's DNC note
             // and override (SP1), and the row says so before the agent presses Call back.
-            if (call.isOpen && callBackOffered && call.callerDnc && !call.isWithheld)
+            if (!team && call.isOpen && callBackOffered && call.callerDnc && !call.isWithheld)
               Padding(
                 padding: const EdgeInsets.only(top: Space.xs),
                 child: Text(
