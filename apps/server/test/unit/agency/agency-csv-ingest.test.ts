@@ -332,6 +332,12 @@ describe('dedupeColumns — duplicates decided by a column the operator picks', 
     expect(summary.rejected_by_reason).toEqual({ duplicate_phone: 1 });
   });
 
+  it('the phone column named alone stays the phone dedupe even with dedupePhones false', async () => {
+    // The route refuses this pair; the ingest still runs the key it was given.
+    const { summary } = await run(twoLoans, { phoneColumn: 'Mobile', dedupeColumns: ['Mobile'], dedupePhones: false });
+    expect(summary.rejected_by_reason).toEqual({ duplicate_phone: 1 });
+  });
+
   it('wins over dedupePhones', async () => {
     const { summary } = await run(twoLoans, { phoneColumn: 'Mobile', dedupeColumns: ['Loan No'], dedupePhones: true });
     expect(summary).toMatchObject({ accepted: 2, duplicates: 0 });
