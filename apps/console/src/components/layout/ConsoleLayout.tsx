@@ -1,12 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
-import { AgentLanding } from '../agency/AgentLanding';
 import { GlobalSearch } from '../common/GlobalSearch';
 import { usePostHogIdentify } from '../../hooks/usePostHogIdentify';
 import { useProductSurface } from '../../analytics/useProductSurface';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
-import { isAgencyPath, productSurfaceForPath } from '../../utils/consoleNav';
+import { productSurfaceForPath } from '../../utils/consoleNav';
 import { FOCUSABLE_SELECTOR, trapTab } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import { ConsoleSidebar } from './ConsoleSidebar';
 import { ConsoleTopBar } from './ConsoleTopBar';
@@ -141,21 +140,5 @@ export function ConsoleLayout() {
       {/* ⌘K / Ctrl+K, on every page of the shell. */}
       <GlobalSearch />
     </div>
-  );
-}
-
-/**
- * The shell as `App.tsx` mounts it: `ConsoleLayout` behind `AgentLanding`, which sends a
- * DEDICATED agent from Settings and the legacy `/app` URLs to `/dialer` (as it did for the old
- * `/app` shell). It is switched off under `/agency`, whose pages send an agent to their own
- * `/dialer/*` twin. The layout renders in the same place either way, so crossing between
- * `/agency` and `/settings` does not remount it.
- */
-export function ConsoleShell() {
-  const { pathname } = useLocation();
-  return (
-    <AgentLanding enabled={!isAgencyPath(pathname)}>
-      <ConsoleLayout />
-    </AgentLanding>
   );
 }

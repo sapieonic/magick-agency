@@ -12,7 +12,7 @@ import RequireCapability from './components/auth/RequireCapability';
 import RequireFlag from './components/auth/RequireFlag';
 import HomeRedirect from './components/auth/HomeRedirect';
 import { ProductSurface } from './analytics/ProductSurface';
-import { ConsoleShell } from './components/layout/ConsoleLayout';
+import { ConsoleShell } from './components/layout/ConsoleShell';
 import { AgencyArea } from './components/layout/AgencyArea';
 import { ScopedRouter } from './components/routing/ScopedRouter';
 import { ScopeGate } from './components/routing/ScopeGate';
