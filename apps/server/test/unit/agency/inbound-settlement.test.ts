@@ -100,11 +100,16 @@ describe('inboundCallToWire', () => {
     expect(inboundCallToWire(base, ctx, 'u-team').sticky).toEqual({ reason: 'owner', is_you: false });
     expect(inboundCallToWire({ ...base, sticky_user_id: null, sticky_reason: null }, { ...ctx, stickyCandidates: [] }, 'u-team').sticky).toBeNull();
   });
-  it('ended after a bridge with no outcome: owed until the lapse; once settled, nothing owed', () => {
-    const ended = { ...base, state: 'ended', outcome: 'answered', bridged_at: new Date('2026-11-09T11:59:42Z'), ended_at: new Date('2026-11-09T12:05:00Z'), talk_seconds: 318 } as AgencyInboundCallRecord;
+  it('ended after a bridge with no outcome: owed until the route`s window ends (IQ52); once settled, nothing owed', () => {
+    const ended = {
+      ...base, state: 'ended', outcome: 'answered', bridged_at: new Date('2026-11-09T11:59:42Z'), ended_at: new Date('2026-11-09T12:05:00Z'),
+      talk_seconds: 318, wrapup_seconds: 90,
+    } as AgencyInboundCallRecord;
     expect(inboundCallToWire(ended, ctx, 'u-owner')).toMatchObject({
-      connects_at: null, talk_seconds: 318, outcome_due_at: '2026-11-09T12:35:00.000Z',
+      connects_at: null, talk_seconds: 318, outcome_due_at: '2026-11-09T12:06:30.000Z',
     });
+    // A call that captured no window: the default, 30 s.
+    expect(inboundCallToWire({ ...ended, wrapup_seconds: null }, ctx, 'u-owner').outcome_due_at).toBe('2026-11-09T12:05:30.000Z');
     expect(inboundCallToWire({ ...ended, settled_at: new Date() }, ctx, 'u-owner').outcome_due_at).toBeNull();
   });
 });
