@@ -75,6 +75,32 @@ abstract final class MissedCopy {
   static const callBackElsewhere = 'Your soft phone is open on another device or in another account. '
       'Bring it to this phone, then press Call back again.';
 
+  // ── On duty (IQ48) ──
+
+  /// The station's quiet line while waiting and in wrap-up: the agent's own open rows, as the
+  /// badge counts them ([badge] is `InboundMissedCountResponse.badge`: "3", or "100+" past the cap).
+  static String toCallBack(String badge) => '$badge customer${badge == '1' ? '' : 's'} to call back';
+
+  /// The line's screen-reader label: what it says, and what a tap does.
+  static String toCallBackLabel(String badge) => '${toCallBack(badge)}. Opens your missed calls.';
+
+  /// My calls' tooltip on duty on a campaign: only the Missed list opens there.
+  static const onDutyTab = 'Missed calls. The rest of My calls opens when you take a break or leave the station.';
+
+  static const close = 'Close';
+
+  /// After Call back on duty, with the switch to the soft phone queued behind the station's
+  /// call or wrap-up (SP7): the number goes on the pad once it applies.
+  static const callBackSwitchQueued = 'Switching to the soft phone after this call. The number goes on the pad then; '
+      'nothing is dialled until you press Call.';
+
+  /// After Call back on duty, with the switch refused: why, and that the number still waits.
+  static String callBackSwitchRefused(String why) {
+    final reason = why.trim();
+    final sentence = reason.isEmpty || '.!?'.contains(reason[reason.length - 1]) ? reason : '$reason.';
+    return [if (sentence.isNotEmpty) sentence, callBackWaits].join(' ');
+  }
+
   static const loadFailed = 'We couldn’t load the missed calls.';
   static const moreFailed = 'We couldn’t load older missed calls.';
   static const loading = 'Loading your missed calls';

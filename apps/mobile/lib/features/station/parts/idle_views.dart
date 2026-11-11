@@ -11,6 +11,7 @@ import '../../../core/flags/feature_flags.dart' show contactAssignmentEnabledPro
 import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
+import '../../missed/missed_on_duty.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
@@ -70,6 +71,8 @@ class WaitingView extends ConsumerWidget {
                   ),
                 ),
         ),
+        // IQ48: the customers waiting to be called back, a tap from the list.
+        const MissedToCallBackLine(),
       ],
       // Leave is plain HTTP: it stays offered while the socket is down.
       actions: Column(

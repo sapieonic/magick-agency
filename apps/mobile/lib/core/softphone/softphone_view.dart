@@ -641,8 +641,10 @@ enum CallBackWaiting {
   /// Nothing waiting: none asked for, already on the pad, or lapsed.
   none,
 
-  /// Behind a call on the soft phone (live or owing its outcome), or behind the refusal of the
-  /// dial it waited for: on the pad once the call settles, or the agent dismisses the refusal.
+  /// Behind a call on the soft phone (live or owing its outcome), behind the refusal of the
+  /// dial it waited for, or behind the station's call or wrap-up with a switch to the soft phone
+  /// queued (SP7): on the pad once the call settles (the switch applies), or the agent
+  /// dismisses the refusal.
   afterCall,
 
   /// The soft phone is not open here (or the campaign is not switched to it): on the pad if it

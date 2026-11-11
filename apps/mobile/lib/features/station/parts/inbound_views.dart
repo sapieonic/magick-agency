@@ -5,6 +5,7 @@ import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
+import '../../missed/missed_on_duty.dart';
 import '../logic/disposition_form.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
@@ -142,6 +143,8 @@ class _InboundOutcomeViewState extends ConsumerState<InboundOutcomeView> {
         if (dnc != null) ...[const SizedBox(height: Space.sm), _DncOutcomeLine(text: dnc)],
         const SizedBox(height: Space.md),
         const LinkGate(child: QueuedBreakChip(offer: false)),
+        // IQ48: the customers waiting to be called back, a tap from the list.
+        const MissedToCallBackLine(),
       ],
       bottom: LinkGate(child: _InboundSaveArea(form: _form, notes: widget.notes, onSave: _save)),
     );

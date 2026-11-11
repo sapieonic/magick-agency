@@ -1571,6 +1571,14 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       return;
     }
     if (host.kind == SessionKind.campaign && !host.onSoftphone) {
+      // A switch queued behind the station's call or wrap-up (IQ48's one-step Call back on
+      // duty): the number waits for that call as for one on the soft phone, and its wait
+      // starts once the switch applies.
+      if (host.switchQueued) {
+        pending.behindCall = true;
+        wait(CallBackWaiting.afterCall);
+        return;
+      }
       wait(CallBackWaiting.onceOpen);
       return;
     }

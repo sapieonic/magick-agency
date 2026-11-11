@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../core/station/station_signals.dart';
 import '../features/missed/missed_access.dart';
+import '../features/missed/missed_calls_copy.dart' show MissedCopy;
+import '../features/missed/missed_on_duty.dart';
 import 'routes.dart';
 
 /// The shell's branches, in the router's order (`routerProvider`). The set is
@@ -70,7 +72,10 @@ bool tabLabelFits(String label, {required double width, required TextStyle? styl
 ///   list, which says the soft phone is open.
 ///
 /// My calls carries the open Missed calls as a badge (`missedCallsAccessProvider`):
-/// the Missed list is a segment of that tab, not a tab of its own.
+/// the Missed list is a segment of that tab, not a tab of its own. Held on the
+/// station, My calls stays open while the Missed list shows (IQ48): it opens
+/// that list in a sheet over the station (`missed_on_duty.dart`), never the
+/// tab's other segments, and moves the agent nowhere.
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.shell});
 
@@ -95,6 +100,9 @@ class AppShell extends ConsumerWidget {
     final held = campaign && signals.holdsStation;
     final owed = signals.outcomeOwed;
     final missedBadge = ref.watch(missedCallsAccessProvider.select((a) => a.badge));
+    final missedShown = ref.watch(missedCallsAccessProvider.select((a) => a.visible));
+    // Held on the station, My calls opens only the Missed list, over the station (IQ48).
+    final missedOnDuty = held && missedShown;
 
     // The tabs that lead to the session's own screen: the only ones open while
     // an owed outcome holds the agent. On the soft phone, Phone leads to the station.
@@ -106,7 +114,7 @@ class AppShell extends ConsumerWidget {
 
     String? closedBecause(int branch) {
       if (owed && home != null) return leadsHome(branch) ? null : owedReason;
-      if (held) return branch == ShellBranch.station ? null : heldReason;
+      if (held) return branch == ShellBranch.station || (missedOnDuty && branch == ShellBranch.calls) ? null : heldReason;
       return null;
     }
 
@@ -133,7 +141,7 @@ class AppShell extends ConsumerWidget {
         selectedIcon: badged(selected),
         label: label,
         enabled: reason == null,
-        tooltip: reason,
+        tooltip: reason ?? (missedOnDuty && branch == ShellBranch.calls ? MissedCopy.onDutyTab : null),
       );
     }
 
@@ -148,6 +156,10 @@ class AppShell extends ConsumerWidget {
               onDestinationSelected: (i) {
                 final branch = branches[i];
                 if (closedBecause(branch) != null) return;
+                if (missedOnDuty && branch == ShellBranch.calls) {
+                  ref.read(missedOnDutyOpenerProvider)(context);
+                  return;
+                }
                 final campaignId = signals.campaignId;
                 final toStation = campaign &&
                     signals.onDuty &&

@@ -397,6 +397,24 @@ void main() {
       expect(h.view.focusCallToken, 0);
     });
 
+    softphoneTest('a switch queued behind the station’s call (IQ48): the number waits as after a call, from the switch', (h) {
+      h.host.view = campaignHost(onSoftphone: false);
+      h.pump();
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.callBackWaiting, CallBackWaiting.onceOpen);
+      h.host.view = copyHost(h.host.view!, switchQueued: true);
+      h.pump();
+      expect(h.view.callBackWaiting, CallBackWaiting.afterCall);
+      // A wrap-up (or a call) longer than the wait: its time does not count.
+      h.async.elapse(callBackWaitsFor + const Duration(minutes: 1));
+      h.host.view = campaignHost();
+      h.pump();
+      expect(h.view.number, '+918765432109');
+      expect(h.view.tagCampaignId, 'camp-1');
+      expect(h.view.callBackWaiting, CallBackWaiting.none);
+      expect(h.dials, isEmpty);
+    });
+
     softphoneTest('a session another device takes drops it', (h) {
       h.host.view = campaignHost(onSoftphone: false);
       h.pump();

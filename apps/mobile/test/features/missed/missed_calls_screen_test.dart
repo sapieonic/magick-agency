@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/features/calls/calls_screen.dart';
@@ -342,6 +343,83 @@ void main() {
       expect(view.focusCallToken, 1);
       await tester.pump(const Duration(seconds: 30));
       expect(dials(), 0);
+    });
+
+    // IQ48: on duty on a campaign, Call back switches the campaign to the soft phone (SP7) in
+    // the same step, so the number lands on the station's pad. It never dials.
+    const waiting = StationSignals(onDuty: true, campaignId: 'camp-1');
+
+    testWidgets('on duty and waiting: one step switches the campaign to the soft phone, the number on its pad',
+        (tester) async {
+      await openReal(tester);
+      host.view = campaignHost(onSoftphone: false);
+      container.read(testSignalsProvider.notifier).set(waiting);
+      await flush(tester);
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(host.log, ['switch'], reason: 'the station is switched, no confirmation (as its own button)');
+      expect(find.text('at /home/station/camp-1'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing, reason: 'applied: the number lands on the pad');
+      // The `agent_state` frame applying the switch puts the station on the soft phone.
+      host.view = campaignHost();
+      await flush(tester);
+      final view = container.read(softphoneViewProvider);
+      expect(view.number, '+918765432109');
+      expect(view.tagCampaignId, 'camp-1');
+      expect(view.focusCallToken, 1);
+      await tester.pump(const Duration(seconds: 30));
+      expect(dials(), 0);
+    });
+
+    testWidgets('in a wrap-up: the switch is queued behind it and the number waits for it, then lands', (tester) async {
+      await openReal(tester);
+      host.view = campaignHost(onSoftphone: false);
+      host.switchResult = const SoftphoneSwitchQueued();
+      container.read(testSignalsProvider.notifier).set(waiting);
+      await flush(tester);
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(host.log, ['switch']);
+      expect(find.byKey(const Key('missed-call-back-switch-queued')), findsOneWidget);
+      expect(find.text(MissedCopy.callBackSwitchQueued), findsOneWidget);
+      host.view = copyHost(host.view!, switchQueued: true);
+      await flush(tester);
+      expect(container.read(softphoneViewProvider).callBackWaiting, CallBackWaiting.afterCall);
+      // A long wrap-up does not count against the wait: it starts when the switch applies.
+      await tester.pump(const Duration(minutes: 6));
+      host.view = campaignHost();
+      await flush(tester);
+      expect(container.read(softphoneViewProvider).number, '+918765432109');
+      expect(dials(), 0);
+    });
+
+    testWidgets('a refused switch is said, with the number still waiting for a switch', (tester) async {
+      await openReal(tester);
+      host.view = campaignHost(onSoftphone: false);
+      host.switchResult = const SoftphoneSwitchRefused('The soft phone isn’t on for this account');
+      container.read(testSignalsProvider.notifier).set(waiting);
+      await flush(tester);
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('missed-call-back-switch-refused')), findsOneWidget);
+      expect(
+        find.text('The soft phone isn’t on for this account. ${MissedCopy.callBackWaits}'),
+        findsOneWidget,
+      );
+      expect(container.read(softphoneViewProvider).callBackWaiting, CallBackWaiting.onceOpen);
+      expect(dials(), 0);
+    });
+
+    testWidgets('off duty, or a campaign already on the soft phone: nothing is switched', (tester) async {
+      await openReal(tester);
+      host.view = campaignHost();
+      container.read(testSignalsProvider.notifier).set(
+            const StationSignals(onDuty: true, onBreak: true, campaignId: 'camp-1', onSoftphone: true),
+          );
+      await flush(tester);
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(host.log, isNot(contains('switch')));
     });
   });
 

@@ -19,11 +19,15 @@ import 'missed_calls_controller.dart';
 import 'missed_calls_copy.dart';
 import 'missed_count_controller.dart' show missedClockProvider;
 
-/// "Missed calls", a segment of My calls: the status tabs and the reason
+/// "Missed calls", a segment of My calls (and, on duty on a campaign, the
+/// station's sheet: `missed_on_duty.dart`): the status tabs and the reason
 /// filter, the notices, then the agent's rows ([MissedCallTile]), with pull
 /// to refresh and the next page fetched before the end.
 class MissedCallsList extends ConsumerStatefulWidget {
-  const MissedCallsList({super.key});
+  const MissedCallsList({super.key, this.onLeave});
+
+  /// Runs before Call back moves the app (the on-duty sheet closes itself with it).
+  final VoidCallback? onLeave;
 
   /// Start fetching the next page this many rows before the end.
   static const prefetchRows = 10;
@@ -203,7 +207,7 @@ class _MissedCallsListState extends ConsumerState<MissedCallsList> {
                 now: now,
                 userId: userId,
                 callBackOffered: offered,
-                onCallBack: () => startCallBack(context, ref, call),
+                onCallBack: () => unawaited(startCallBack(context, call, onLeave: widget.onLeave)),
                 onMarkHandled: state.marking == null ? () => unawaited(_markHandled(call)) : null,
                 onReopen: state.reopening == null ? () => unawaited(_reopen(call)) : null,
                 marking: state.marking == call.id,
