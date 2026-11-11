@@ -55,7 +55,7 @@ export const AGENCY_STALL_LABELS: Record<AgencyStallCode, string> = {
   no_carrier_capacity: 'No call capacity on this carrier',
   dnc_unavailable: 'Do Not Call check unavailable',
   no_agents_available: 'No agents available',
-  concurrency_saturated: 'At the concurrency limit',
+  concurrency_saturated: 'All lines in use',
   outside_calling_hours: 'Outside calling hours',
   list_exhausted_retries_pending: 'Waiting on scheduled retries',
   elevated_failure_rate: 'Unusually many failed calls',
@@ -275,7 +275,7 @@ export function stallCopy(
 
     case 'concurrency_saturated':
       return diagnosis({
-        headline: `At your concurrency limit — ${stall.in_use} of ${stall.limit} lines in use.`,
+        headline: `All your lines are in use: ${stall.in_use} of ${stall.limit}.`,
         facts: [
           { text: 'The limit is account-wide, so other calls in this workspace count against it too.' },
         ],
