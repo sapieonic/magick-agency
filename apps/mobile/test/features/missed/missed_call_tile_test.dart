@@ -30,7 +30,7 @@ void main() {
     }
   });
 
-  Future<void> pumpTile(WidgetTester tester, Map<String, Object?> over, {double textScale = 1}) async {
+  Future<void> pumpTile(WidgetTester tester, Map<String, Object?> over, {double textScale = 1, bool offered = true}) async {
     tester.view.physicalSize = const Size(1080, 1920);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
@@ -46,7 +46,7 @@ void main() {
             call: missed('m1', over),
             now: fixedNow,
             userId: 'u1',
-            callBackOffered: true,
+            callBackOffered: offered,
             onCallBack: () {},
             onMarkHandled: () {},
           ),
@@ -99,5 +99,19 @@ void main() {
     await pumpTile(tester, {'from_e164': null});
     expect(find.bySemanticsLabel(MissedCopy.callBackWithheldLabel), findsOneWidget);
     handle.dispose();
+  });
+
+  testWidgets('IQ55: an open DNC row says calling back asks for a reason; nothing else does', (tester) async {
+    await pumpTile(tester, {'caller_dnc': true});
+    expect(find.text(MissedCopy.dncCallBackNote), findsOneWidget);
+    for (final (over, offered, why) in <(Map<String, Object?>, bool, String)>[
+      ({'caller_dnc': false}, true, 'not on DNC'),
+      ({'caller_dnc': true, 'status': 'handled', 'handled_reason': 'marked', 'handled_at': '2026-10-14T04:30:00.000Z'}, true, 'handled'),
+      ({'caller_dnc': true}, false, 'no Call back offered'),
+      ({'caller_dnc': true, 'from_e164': null}, true, 'withheld: nothing to call'),
+    ]) {
+      await pumpTile(tester, over, offered: offered);
+      expect(find.byKey(const Key('missed-dnc-note')), findsNothing, reason: why);
+    }
   });
 }

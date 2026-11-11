@@ -38,6 +38,12 @@ abstract final class MissedCopy {
   static const withheldCallBack = 'The caller withheld their number.';
   static const dncBadge = 'DNC';
   static const dncHint = 'This number is on a Do Not Call list. The soft phone asks for a reason before calling it.';
+
+  /// Under an open DNC row's Call back (IQ55): a missed call is not consent, so Call back
+  /// keeps the soft phone's DNC check (SP1). "Why it has to go ahead" is the override
+  /// prompt's own question (`describeDncRefusal`'s note label).
+  static const dncCallBackNote = 'On Do Not Call: a missed call isn’t consent. Before the call goes through, '
+      'you’ll be asked why it has to go ahead.';
   static const notMatched = 'Not matched';
 
   static const callBack = 'Call back';

@@ -450,6 +450,24 @@ void main() {
       expect(h.dials, hasLength(1), reason: 'only the agent\'s own dial');
     });
 
+    softphoneTest('a DNC caller called back (IQ55): Call meets the SP1 refusal, and the override note goes with the redial', (h) {
+      h.host.view = campaignHost();
+      h.pump();
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.number, '+918765432109');
+      final replies = [json(409, dncRefusal), json(201, manualCallJson())];
+      h.routes['POST $callsPath'] = (_) => replies.removeAt(0);
+      h.run(h.actions.dial());
+      expect(h.dials.single.json['to'], '+918765432109');
+      expect(h.dials.single.json.containsKey('overrides'), isFalse, reason: 'a missed call is not consent');
+      final prompt = h.view.overridePrompt!;
+      expect(prompt.kind, SoftphoneOverrideKind.dnc);
+      expect(prompt.noteLabel, 'Why does this call have to go ahead?');
+      h.run(h.actions.confirmOverride('Customer rang us about their renewal'));
+      expect(h.dials[1].json['to'], '+918765432109');
+      expect(h.dials[1].json['overrides'], {'dnc_note': 'Customer rang us about their renewal'});
+    });
+
     softphoneTest('a dial refused for DNC while it waited: the override prompt stays until the agent closes it', (h) {
       h.openWith();
       final answer = Completer<http.Response>();

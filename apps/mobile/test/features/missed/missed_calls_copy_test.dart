@@ -1,5 +1,6 @@
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/softphone/overrides.dart' show describeDncRefusal;
 import 'package:magick_agency_agent/features/missed/missed_calls_copy.dart';
 
 import 'support.dart';
@@ -45,5 +46,20 @@ void main() {
     expect(MissedCopy.voicemailOnConsole, 'Listen on the web console');
     expect(MissedCopy.callBackWaits,
         'Switch to the soft phone within 5 minutes and the number will be on the pad. Nothing is dialled until you press Call.');
+  });
+
+  test('IQ55: the DNC row asks the question the soft phone’s override prompt (SP1) asks', () {
+    final prompt = describeDncRefusal(
+      SoftphoneDncListedRefusal(
+        entry: DncEntry.fromJson({'id': 'd1', 'scope': 'account', 'reason': null, 'created_at': '2026-10-12T09:00:00.000Z'}),
+        message: 'Listed',
+      ),
+      number: '+918765432109',
+    );
+    expect(prompt.title, contains('Do Not Call'));
+    expect(prompt.noteLabel, 'Why does this call have to go ahead?');
+    expect(MissedCopy.dncCallBackNote, startsWith('On Do Not Call'));
+    expect(MissedCopy.dncCallBackNote, contains('why it has to go ahead'));
+    expect(MissedCopy.dncCallBackNote, contains('isn’t consent'));
   });
 }

@@ -6,8 +6,8 @@ import '../../app/theme/tokens.dart';
 import '../../ui/primitives.dart';
 import 'missed_calls_copy.dart';
 
-/// One Missed row: who rang (their number, or "Number withheld"), a DNC badge,
-/// why it was missed, when and which number they rang (and the route), the
+/// One Missed row: who rang (their number, or "Number withheld"), a DNC badge
+/// (and, under Call back, that calling back asks for a reason: IQ55), why it was missed, when and which number they rang (and the route), the
 /// matched campaign and any callback it booked, a voicemail, and the row's
 /// actions: Call back and Mark handled while open, Reopen once handled. The
 /// console's row, stacked as its phone-width card is.
@@ -186,6 +186,17 @@ class MissedCallTile extends StatelessWidget {
             ),
             if (call.isOpen && callBackOffered && call.isWithheld)
               Text(MissedCopy.withheldCallBack, key: const Key('missed-withheld-note'), style: small.copyWith(color: t.textMuted)),
+            // IQ55: calling a DNC number back still goes through the soft phone's DNC note
+            // and override (SP1), and the row says so before the agent presses Call back.
+            if (call.isOpen && callBackOffered && call.callerDnc && !call.isWithheld)
+              Padding(
+                padding: const EdgeInsets.only(top: Space.xs),
+                child: Text(
+                  MissedCopy.dncCallBackNote,
+                  key: const Key('missed-dnc-note'),
+                  style: small.copyWith(color: t.textSecondary),
+                ),
+              ),
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(top: Space.xs),
