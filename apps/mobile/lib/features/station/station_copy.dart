@@ -34,6 +34,11 @@ abstract final class StationCopy {
   };
   static const onTheSoftphone = 'On the soft phone';
 
+  /// Reserved with no call on the station yet (`StationStage.incoming`): the moment before an
+  /// inbound offer lands, or a reconnect's `ready` saying `reserved` before the call (inbound,
+  /// or a campaign dial) is restated. Words for either direction, on screen and said aloud.
+  static const callComingThrough = 'A call is coming through';
+
   // ── Header ──
   static const running = 'Running';
   static const paused = 'Paused';

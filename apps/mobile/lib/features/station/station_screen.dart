@@ -37,8 +37,10 @@ enum StationStage {
 
   /// Reserved with no call on the station yet: the server reserves the agent for an inbound
   /// caller (`agent_state: reserved`) just before the `inbound_call` frame that names them, and
-  /// a reconnect's `ready` can say `reserved` before the call is restated. A neutral screen,
-  /// not the campaign's ringing pop: there is no contact to show and no call to hang up.
+  /// a reconnect's `ready` can say `reserved` before the call (inbound, or a campaign dial) is
+  /// restated. A neutral screen in words that fit either direction ("A call is coming
+  /// through"), not the campaign's ringing pop: there is no contact to show and no call to
+  /// hang up. "Incoming call" is said only once an inbound offer is held.
   incoming,
   reserved,
   onCall,
@@ -246,8 +248,10 @@ class _StageTransition extends StatelessWidget {
 ///
 /// An inbound offer is said when it lands, whatever the phase did before it: the server sends
 /// `agent_state: reserved` just before the `inbound_call` frame, so the phase is already
-/// reserved when the caller becomes known. Reserved with no call yet says nothing: the caller's
-/// name follows at once, and "Ringing" for a call with nobody on it would be the wrong word.
+/// reserved when the caller becomes known. Reserved with no call yet says "A call is coming
+/// through" (politely, once): it fits an inbound caller and a campaign dial being restated
+/// after a reconnect alike, where "Ringing" for a call with nobody on it would be the wrong
+/// word. The call that follows is said in its own words.
 class PhaseAnnouncer extends ConsumerStatefulWidget {
   const PhaseAnnouncer({super.key});
 
@@ -282,7 +286,11 @@ class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
       ),
       (prev, next) {
         final phase = next.phase;
-        if (phase == null || next.callless) return;
+        if (phase == null) return;
+        if (next.callless) {
+          if (!(prev?.callless ?? false)) _announce(StationCopy.callComingThrough);
+          return;
+        }
         // A break switched to the soft phone (or back) stays on break: still said. Coming out of
         // reserved-with-no-call is news even when the phase stays reserved: the caller is known.
         final samePhase = prev?.phase == phase &&

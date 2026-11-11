@@ -131,7 +131,9 @@ void main() {
         switch (step) {
           case 'reserved':
             expect(find.byKey(const Key('station-incoming')), findsOneWidget);
-            expect(find.text(InboundCopy.incomingCall), findsOneWidget);
+            expect(find.text(StationCopy.callComingThrough), findsOneWidget);
+            expect(find.text(InboundCopy.connecting), findsOneWidget);
+            expect(find.text(InboundCopy.incomingCall), findsNothing, reason: 'no inbound offer is held yet');
             expect(find.byKey(const Key('hang-up')), findsNothing, reason: 'no call to hang up yet');
             expect(find.byKey(const Key('call-headline')), findsNothing, reason: 'not the campaign\'s ringing pop');
             expect(h.announcements, isEmpty, reason: '"Ringing" for nobody would be the wrong word');
@@ -146,6 +148,7 @@ void main() {
             expect(find.text(StationCopy.waitingHeadline), findsOneWidget);
         }
       }
+      expect(saidAt['reserved'], StationCopy.callComingThrough, reason: 'politely, in words for either direction');
       expect(saidAt['offered'], 'Incoming call from Rahul Deshpande');
       expect(h.announcements, hasLength(1), reason: 'the offer, assertively, once');
       expect((h.announcements.single! as Map)['data'], containsPair('message', 'Incoming call from Rahul Deshpande'));
@@ -155,6 +158,34 @@ void main() {
       expect(saidAt['settled'], 'Available. Waiting for a call');
       semantics.dispose();
     });
+  });
+
+  testWidgets('a campaign dial after a reconnect: ready says reserved first, in words that fit an outbound call',
+      (tester) async {
+    late StationView idle, callless, ringing;
+    fakeAsync((async) {
+      final app = core.App(async)..start();
+      app.readyFrame('available');
+      idle = app.view!;
+      app.readyFrame('reserved');
+      callless = app.view!;
+      app.reserved('att-1');
+      ringing = app.view!;
+      app.dispose();
+    });
+    final semantics = tester.ensureSemantics();
+    final h = await pumpStation(tester, idle, campaignId: 'camp-1', supportsAnnounce: true);
+    String said() => tester.getSemantics(find.byKey(const Key('phase-live-region'))).label;
+    await h.setView(callless);
+    expect(find.text(StationCopy.callComingThrough), findsOneWidget);
+    expect(find.text(InboundCopy.incomingCall), findsNothing, reason: 'it is not an inbound call');
+    expect(said(), StationCopy.callComingThrough);
+    await h.setView(callless);
+    expect(h.announcements, isEmpty, reason: 'said politely, once');
+    await h.setView(ringing);
+    expect(find.byKey(const Key('station-incoming')), findsNothing);
+    expect(said(), 'Ringing');
+    semantics.dispose();
   });
 
   group('the offer', () {

@@ -14,7 +14,9 @@ import 'layouts.dart';
 
 /// Reserved with no call on the station yet ([StationStage.incoming]): the server's
 /// `agent_state: reserved` for an inbound caller lands a moment before the frame that names
-/// them. Nothing here acts on a call (there is none yet): no Hang up, no break, no leaving.
+/// them, and a reconnect's `ready` can say `reserved` before a campaign dial is restated. So
+/// the words fit either direction. Nothing here acts on a call (there is none yet): no Hang up,
+/// no break, no leaving.
 class IncomingView extends StatelessWidget {
   const IncomingView({super.key});
 
@@ -40,7 +42,7 @@ class IncomingView extends StatelessWidget {
                 children: [
                   const LiveDot(size: 12),
                   const SizedBox(height: Space.md),
-                  Text(InboundCopy.incomingCall, style: text.titleMedium, textAlign: TextAlign.center),
+                  Text(StationCopy.callComingThrough, style: text.titleMedium, textAlign: TextAlign.center),
                   const SizedBox(height: Space.xs),
                   Text(InboundCopy.connecting, style: text.bodyMedium, textAlign: TextAlign.center),
                 ],
