@@ -2,6 +2,7 @@ import { formatDate } from '@magick-agency/web-ui/format';
 import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { carrierAccountPauseCopy } from './agencyCarriers';
+import { dedupeKeyName } from '../types/agency-campaign';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that
@@ -274,9 +275,14 @@ export function activityDetailSummary(row: ActivityRow): string | null {
     const file = str(detail['file_name']);
     if (!file) return null;
     const mode = detail['mode'] === 'replace' ? 'replacing the roster' : 'adding to the roster';
-    const dedupe = str(detail['dedupe_column']);
+    // `dedupe_columns` since 0031; a row written before it carries one `dedupe_column`.
+    const columns = Array.isArray(detail['dedupe_columns'])
+      ? detail['dedupe_columns'].map(str).filter((c): c is string => c !== null)
+      : [];
+    const legacy = str(detail['dedupe_column']);
+    const dedupe = dedupeKeyName((columns.length > 0 ? columns : legacy ? [legacy] : []).map((c) => `“${c}”`));
     const rule = dedupe
-      ? `duplicates found on “${dedupe}”`
+      ? `duplicates found on ${dedupe}`
       : detail['dedupe_phones'] === false ? 'no duplicate check' : 'duplicates found on the phone number';
     return `Uploaded “${file}”, ${mode}, ${rule}.`;
   }

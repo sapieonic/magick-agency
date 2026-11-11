@@ -5,7 +5,7 @@
  *
  * `uploaded_by` is the job's `created_by` (the uploading user's id, `ingest.ts`), named from the
  * tenant's directory; a label that is not a user id is null. `duplicates` is the in-file breakdown
- * of `rejected` the job counts (accepted + rejected = rows read). `dedupe_column` null = phone.
+ * of `rejected` the job counts (accepted + rejected = rows read). `dedupe_columns` empty = phone.
  */
 import type { AgencyInsightsUploads } from '@magick-agency/contracts/api/agency/insights';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
@@ -40,7 +40,7 @@ export async function computeUploads(campaign: Pick<AgencyCampaignRecord, 'id' |
       rejected: r.rejected,
       rejected_by_reason: reasonCounts(r.rejected_by_reason),
       duplicates: r.duplicates,
-      dedupe_column: r.dedupe_column,
+      dedupe_columns: r.dedupe_columns,
       has_rejected_export: r.has_rejected_export,
     })),
     generated_at: new Date().toISOString(),

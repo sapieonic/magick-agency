@@ -140,7 +140,7 @@ export async function computeSummary(campaign: AgencyCampaignRecord, deps: Summa
     started_at: iso(campaign.started_at),
     ended_at: iso(campaign.ended_at),
     transitions,
-    dedupe_column: upload?.dedupe_column ?? null,
+    dedupe_columns: upload?.dedupe_columns ?? [],
     parent_campaign: parent ? { id: parent.id, name: parent.name } : null,
     child_campaigns: lineageRows
       .filter((c) => c.parent_campaign_id === campaign.id)

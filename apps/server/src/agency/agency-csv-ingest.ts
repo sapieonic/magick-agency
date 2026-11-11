@@ -1,6 +1,7 @@
 import { parse, type Info } from 'csv-parse';
 import { Transform, type Readable } from 'node:stream';
 import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
+import { dedupeKeyName } from '@magick-agency/contracts/api/agency/agency-campaign';
 
 /**
  * Streaming CSV ingest for Agency Dialer campaign rosters.
@@ -247,7 +248,10 @@ export interface AgencyIngestContact {
  */
 export interface AgencyIngestRejection {
   row_number: number;
-  /** The mapped column the rejection is about; null for whole-row problems. */
+  /**
+   * The mapped column the rejection is about; null for whole-row problems. A
+   * `duplicate_key` over several columns names them all, joined ` + `.
+   */
   column: string | null;
   raw_value: string;
   reason_code: AgencyIngestErrorCode;
@@ -333,17 +337,22 @@ export interface AgencyIngestOptions {
    */
   dedupePhones?: boolean;
   /**
-   * Dedupe on this column instead of the phone: a later row whose value here
-   * repeats an earlier ACCEPTED row's is rejected `duplicate_key`. Takes
-   * precedence over `dedupePhones`. For a loan book, the loan number: one
+   * Dedupe on these columns instead of the phone: a later row whose values in
+   * ALL of them repeat an earlier row accepted here is rejected `duplicate_key`.
+   * Takes precedence over `dedupePhones`. For a loan book, the loan number: one
    * borrower with two loans is two rows on one number, and both must be called.
+   * Up to `AGENCY_MAX_DEDUPE_COLUMNS` columns combine into one key when no single
+   * column is unique (a loan number repeated across branches: loan + branch).
+   * Every column must match for a row to be a duplicate, so each column added
+   * can only drop fewer rows, never more.
    *
-   * Values are compared by {@link dedupeKey} (trimmed, case-insensitive), and a
-   * blank value is never a duplicate: the row is kept, unchecked, because a
-   * missing loan number is not evidence that two rows are the same loan.
-   * Naming the phone column means the phone dedupe, on the normalised number.
+   * Values are compared by {@link dedupeKey} (trimmed, case-insensitive); the
+   * phone column, when it is one of them, by its normalised number. A row with
+   * ANY key blank is never a duplicate: it is kept, unchecked, because a missing
+   * loan number is not evidence that two rows are the same loan. Naming only the
+   * phone column means the phone dedupe (`duplicate_phone`).
    *
-   * The column must be RETAINED, not ignored. The roster dedupes again at insert
+   * The columns must be RETAINED, not ignored. The roster dedupes again at insert
    * on `row_fingerprint` (phone, `context`, timezone), and an ignored column is
    * not in `context`, so two rows differing only in an ignored key would pass
    * here and collapse into one contact there. `POST /ingest/jobs` refuses the
@@ -353,7 +362,7 @@ export interface AgencyIngestOptions {
    * `AgencyContactRepository.claimDialable` never has two calls live to one
    * number in a campaign.
    */
-  dedupeColumn?: string;
+  dedupeColumns?: string[];
   batchSize?: number;
   maxRows?: number;
   maxColumns?: number;
@@ -454,6 +463,15 @@ function normalizeHeader(header: string): string {
 }
 
 /**
+ * Whether two header names resolve to the same column here. The ingest route
+ * refuses a key named twice or ignored by this same rule, so its checks hold for
+ * what the ingest resolves.
+ */
+export function sameHeader(a: string, b: string): boolean {
+  return normalizeHeader(a) === normalizeHeader(b);
+}
+
+/**
  * Resolve a mapped column name to its index. Matching is case-insensitive and
  * trim-tolerant because the operator picks the name from a dropdown we populated
  * from these same headers, but the file may round-trip through a spreadsheet
@@ -489,7 +507,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     defaultCountryCode,
     rowLimit,
     dedupePhones = true,
-    dedupeColumn,
+    dedupeColumns,
   } = options;
 
   const parser = parse({
@@ -516,8 +534,10 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
   let retainedHeaders: string[] = [];
   let phoneIndex = -1;
   let timezoneIndex = -1;
-  /** The duplicate column's index, or -1 for the phone dedupe (or none). */
-  let keyIndex = -1;
+  /** The duplicate key's column indexes, in the operator's order; empty for the phone dedupe (or none). */
+  let keyIndexes: number[] = [];
+  /** How a `duplicate_key` rejection names the key: `Loan No`, or `Loan No + Branch`. */
+  let keyLabel = '';
   const ignored = new Set(ignoreColumns.map(normalizeHeader));
 
   let rowsRead = 0;
@@ -531,8 +551,8 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
   const rejectedByReason: Record<string, number> = {};
 
   // See the module header: O(distinct phones), and deliberately so. Holds
-  // normalised numbers for the phone dedupe, or `dedupeKey` values for a
-  // duplicate column: O(distinct keys) either way, and empty with dedupe off.
+  // normalised numbers for the phone dedupe, or the key built by `rowKey` for
+  // duplicate columns: O(distinct keys) either way, and empty with dedupe off.
   const seen = new Set<string>();
   let batch: AgencyIngestContact[] = [];
 
@@ -543,6 +563,22 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
 
   // Settled with the header row. `none` until then, which no data row can see.
   let dedupeMode: 'phone' | 'column' | 'none' = 'none';
+
+  /**
+   * The row's duplicate key over `keyIndexes`, or null when any part is blank
+   * (never a duplicate). One column keys on its value alone, as before keys could
+   * combine; several key on their JSON array, so `["a,b","c"]` and `["a","b,c"]`
+   * stay apart where a joined string would not.
+   */
+  function rowKey(record: string[], phoneE164: string): string | null {
+    const parts: string[] = [];
+    for (const i of keyIndexes) {
+      const part = i === phoneIndex ? phoneE164 : dedupeKey(record[i] ?? '');
+      if (part === '') return null;
+      parts.push(part);
+    }
+    return parts.length === 1 ? parts[0]! : JSON.stringify(parts);
+  }
 
   async function reject(rejection: AgencyIngestRejection): Promise<void> {
     rejected += 1;
@@ -625,20 +661,28 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
           }
         }
 
-        if (dedupeColumn !== undefined) {
-          keyIndex = resolveColumn(headers, dedupeColumn);
-          if (keyIndex === -1) {
+        for (const column of dedupeColumns ?? []) {
+          const index = resolveColumn(headers, column);
+          if (index === -1) {
             throw new AgencyIngestError(
               'dedupe_column_missing',
-              `The column chosen to find duplicates, '${dedupeColumn}', is not in the file.`,
+              `The column chosen to find duplicates, '${column}', is not in the file.`,
             );
           }
-          // The phone column chosen by name is the phone dedupe, on the
-          // normalised number rather than the raw text.
-          if (keyIndex === phoneIndex) keyIndex = -1;
+          // A column named twice is one key part; the route refuses it, this
+          // module does not depend on that.
+          if (!keyIndexes.includes(index)) keyIndexes.push(index);
         }
-        const phoneDedupe = dedupeColumn !== undefined ? keyIndex === -1 : dedupePhones;
-        dedupeMode = keyIndex !== -1 ? 'column' : phoneDedupe ? 'phone' : 'none';
+        // The phone column chosen alone is the phone dedupe, on the normalised
+        // number rather than the raw text. In a combination it is one part,
+        // still compared as the normalised number (`rowKey`).
+        if (keyIndexes.length === 1 && keyIndexes[0] === phoneIndex) keyIndexes = [];
+        keyLabel = dedupeKeyName(keyIndexes.map((i) => headers[i]!)) ?? '';
+        // A key that came down to the phone alone is the phone dedupe whatever
+        // `dedupePhones` says (the route refuses a key with `dedupe_phones: false`).
+        dedupeMode = keyIndexes.length > 0
+          ? 'column'
+          : (dedupeColumns?.length ?? 0) > 0 || dedupePhones ? 'phone' : 'none';
 
         retainedHeaders = headers.filter(
           (h, i) => i !== phoneIndex && !ignored.has(normalizeHeader(h)),
@@ -767,22 +811,26 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
         seen.add(phoneE164);
       }
 
-      // Dedupe on the operator's column. Checked after the phone, like the phone
-      // dedupe, so only an ACCEPTED row claims its key: a first row rejected for
-      // a bad number does not cost a later, good row with the same loan number.
-      // The reason names the column and never its value, which may sit in an
+      // Dedupe on the operator's columns. Checked after the phone, like the phone
+      // dedupe, so a row this module rejects never claims its key: a first row
+      // rejected for a bad number does not cost a later, good row with the same
+      // loan number. A row the DNC check later suppresses DOES claim it (that
+      // check runs in the service's `onBatch`, after this one), so a later row
+      // with the same key on another, callable number is dropped as a duplicate:
+      // kept by ruling, docs/decisions.md §4, "DNC row claims its key".
+      // The reason names the columns and never their values, which may sit in an
       // ignored column the rejected-rows export must not leak.
       if (dedupeMode === 'column') {
-        const key = dedupeKey(record[keyIndex] ?? '');
-        if (key !== '') {
+        const key = rowKey(record, phoneE164);
+        if (key !== null) {
           if (seen.has(key)) {
             duplicates += 1;
             await reject({
               row_number: startLine,
-              column: headers[keyIndex]!,
+              column: keyLabel,
               raw_value: rawPhone,
               reason_code: 'duplicate_key',
-              reason: `Duplicate ${headers[keyIndex]} of an earlier row in this file.`,
+              reason: `Duplicate ${keyLabel} of an earlier row in this file.`,
               context,
             });
             continue;

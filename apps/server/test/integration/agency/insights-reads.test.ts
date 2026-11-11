@@ -488,18 +488,18 @@ describe('the upload history', () => {
     const id = await campaign();
     const job = (o: Record<string, unknown>) => getTestPool().query(
       `INSERT INTO agency_ingest_jobs (tenant_id, campaign_id, s3_key, file_name, phone_column, dry_run, status, created_at,
-                                       rows_read, accepted, rejected, duplicates, rejected_by_reason, dedupe_column, rejected_s3_key, created_by)
+                                       rows_read, accepted, rejected, duplicates, rejected_by_reason, dedupe_columns, rejected_s3_key, created_by)
        VALUES ($1, $2, 'k', $3, 'Mobile', $4, $5, $6, 10, 8, 2, 1, '{"invalid_phone": 1, "duplicate": 1}'::jsonb, $7, $8, $9)`,
       [DEFAULTS.tenantId, id, o['file'], o['dry'] ?? false, o['status'] ?? 'completed', o['at'], o['dedupe'] ?? null, o['rej'] ?? null, o['by'] ?? null]);
-    await job({ file: 'first.csv', at: at(-3 * HOUR), dedupe: 'Loan No' });
+    await job({ file: 'first.csv', at: at(-3 * HOUR), dedupe: ['Loan No', 'Branch'] });
     await job({ file: 'dry.csv', at: at(-2 * HOUR), dry: true });
     await job({ file: 'failed.csv', at: at(-HOUR), status: 'failed', rej: 's3/rejected' });
 
     const list = await repo.agencyInsightsReadRepository.listUploads(DEFAULTS.tenantId, id);
     expect(list.map((u) => u.file_name)).toEqual(['failed.csv', 'first.csv']);
-    expect(list[0]).toMatchObject({ status: 'failed', has_rejected_export: true, rows_read: 10, accepted: 8, rejected: 2, duplicates: 1 });
+    expect(list[0]).toMatchObject({ status: 'failed', has_rejected_export: true, rows_read: 10, accepted: 8, rejected: 2, duplicates: 1, dedupe_columns: [] });
     const latest = await repo.agencyInsightsReadRepository.latestCompletedUpload(DEFAULTS.tenantId, id);
-    expect(latest).toMatchObject({ file_name: 'first.csv', dedupe_column: 'Loan No', phone_column: 'Mobile' });
+    expect(latest).toMatchObject({ file_name: 'first.csv', dedupe_columns: ['Loan No', 'Branch'], phone_column: 'Mobile' });
     expect(await repo.agencyInsightsReadRepository.listUploads(OTHER_TENANT, id)).toEqual([]);
   });
 });

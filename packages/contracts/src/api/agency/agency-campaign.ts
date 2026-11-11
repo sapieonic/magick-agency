@@ -61,8 +61,8 @@ export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'faile
  *
  * `duplicate_phone`, `duplicate_key` and `dnc_suppressed` are **breakdowns of
  * `rejected`**, not separate outcomes — see `AgencyIngestJob` below.
- * `duplicate_key` is a repeat in the operator's chosen duplicate column
- * (`AgencyIngestRequest.dedupe_column`); `duplicate_phone` a repeat of the number.
+ * `duplicate_key` is a repeat of the operator's chosen duplicate key, one column or
+ * several (`AgencyIngestRequest.dedupe_columns`); `duplicate_phone` a repeat of the number.
  */
 export type AgencyIngestReasonCode =
   | 'missing_phone_value'
@@ -135,6 +135,23 @@ export interface AgencyColumnAnalysis {
   phone_column_candidates: string[];
 }
 
+/**
+ * The most columns one duplicate key may combine (`AgencyIngestRequest.dedupe_columns`).
+ * The server's request schema and the console's mapping screen both read it.
+ */
+export const AGENCY_MAX_DEDUPE_COLUMNS = 3;
+
+/**
+ * A duplicate key's columns as one name: `Loan No + Branch`. The one place the
+ * separator is chosen: the ingest writes it into a `duplicate_key` rejection's
+ * `column` (and so the rejected-rows export), Insights readiness into its detail,
+ * and the console into its notes and summaries. `null` for no key (the phone
+ * dedupe, or none).
+ */
+export function dedupeKeyName(columns: readonly string[]): string | null {
+  return columns.length > 0 ? columns.join(' + ') : null;
+}
+
 /** `POST /proxy/agency/ingest/jobs` request. */
 export interface AgencyIngestRequest {
   s3_key: string;
@@ -144,16 +161,29 @@ export interface AgencyIngestRequest {
   ignore_columns?: string[];
   default_country_code?: string;
   /**
-   * `false` keeps every row (no duplicate check). Ignored when `dedupe_column` is
+   * `false` keeps every row (no duplicate check). Ignored when `dedupe_columns` is
    * set. Omitted means `true`: dedupe on the normalised phone number.
    */
   dedupe_phones?: boolean;
   /**
-   * The header (as `AgencyColumnAnalysis.headers` names it) whose value marks a
-   * duplicate row, for example a loan number. Trimmed, case-insensitive; a blank
-   * value is never a duplicate. Naming the phone column dedupes on the normalised
-   * number. Omitted: `dedupe_phones` decides. Not combinable with
-   * `dedupe_phones: false` (400).
+   * The headers (as `AgencyColumnAnalysis.headers` names them) that together mark
+   * a duplicate row: one column (a loan number) or a combination of up to
+   * {@link AGENCY_MAX_DEDUPE_COLUMNS} (loan number + branch). A later row is a
+   * duplicate only when EVERY key matches an earlier accepted row's, so adding a
+   * column can only drop fewer rows, never more.
+   *
+   * Each value is compared trimmed and case-insensitive; the phone column, when
+   * named, by its normalised number. A row with ANY key blank is never a
+   * duplicate: it is kept, unchecked. Naming only the phone column is the phone
+   * dedupe. Names must be distinct (case-insensitive), must not be ignored
+   * columns, and are not combinable with `dedupe_phones: false` (400 each).
+   * Omitted: `dedupe_phones` decides.
+   */
+  dedupe_columns?: string[];
+  /**
+   * The single-column form, from before `dedupe_columns`: `dedupe_column: 'X'` is
+   * `dedupe_columns: ['X']`. Not combinable with `dedupe_columns` (400).
+   * @deprecated Send `dedupe_columns`.
    */
   dedupe_column?: string;
   campaign_id?: string;
@@ -180,8 +210,12 @@ export interface AgencyIngestJob {
   status: AgencyIngestJobStatus;
   dry_run: boolean;
   file_name: string;
-  /** The request's `dedupe_column`, so the summary can name it. Null: phone or none. */
-  dedupe_column: string | null;
+  /**
+   * The request's duplicate key, so the summary can name it: the
+   * `dedupe_columns` (or the deprecated `dedupe_column`) it was started with, in
+   * the operator's order. Empty: the phone number, or no check (`dedupe_phones`).
+   */
+  dedupe_columns: string[];
   /** Byte-based; null when the file size is unknown. 100 only when terminal. */
   progress_pct: number | null;
   rows_read: number;

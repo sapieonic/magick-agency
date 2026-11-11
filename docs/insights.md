@@ -244,7 +244,8 @@ holds for the agent, then the newest `dialed_at` among that one bucket's dials
 (`idx_agency_attempts_campaign_dialed`, walked backwards).
 
 **Readiness `detail` keys:** `roster_uploaded` `{ rejected, duplicates, dedupe_column }` (the
-latest completed non-dry-run upload; nulls without one); `phone_column_mapped` `{ phone_column }`;
+latest completed non-dry-run upload; nulls without one; `dedupe_column` is the upload's duplicate
+key as one label, its columns joined ` + `, null for the phone); `phone_column_mapped` `{ phone_column }`;
 `outcomes_configured` `{ overrides }` (catalog entries carrying one); `calling_hours_set`
 `{ window: 'HH:MM–HH:MM', timezone }`; every other check `{}`. Results: roster, phone column,
 outcomes, caller IDs and staffed agents fail at none; calling hours warn while the window and the

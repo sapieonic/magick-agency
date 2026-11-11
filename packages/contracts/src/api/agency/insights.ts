@@ -221,8 +221,11 @@ export interface AgencyInsightsSummary {
   ended_at: string | null;
   /** Every lifecycle transition still in the audit window, oldest first. */
   transitions: AgencyInsightsTransition[];
-  /** Duplicate column of the latest committed upload; null = phone (the default). */
-  dedupe_column: string | null;
+  /**
+   * Duplicate key of the latest committed upload: its column, or the columns that
+   * together mark a duplicate, in the operator's order. Empty = phone (the default).
+   */
+  dedupe_columns: string[];
   parent_campaign: { id: string; name: string } | null;
   child_campaigns: Array<{ id: string; name: string; status: AgencyCampaignStatus }>;
   settings: AgencyInsightsSettings;
@@ -599,8 +602,8 @@ export interface AgencyInsightsUpload {
   rejected: number;
   rejected_by_reason: Record<string, number>;
   duplicates: number;
-  /** Null = phone. */
-  dedupe_column: string | null;
+  /** The columns that together marked a duplicate. Empty = phone. */
+  dedupe_columns: string[];
   has_rejected_export: boolean;
 }
 
