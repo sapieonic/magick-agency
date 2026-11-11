@@ -54,48 +54,61 @@ class MissedCallTile extends StatelessWidget {
     final caller = MissedCopy.caller(call);
     return DecoratedBox(
       key: ValueKey('missed-row-${call.id}'),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: t.border))),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: t.border)),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    caller,
-                    key: const Key('missed-caller'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: call.isWithheld
-                        ? text.titleSmall!.copyWith(color: t.textMuted)
-                        : monoStyle(context, size: 15, color: t.textPrimary),
+            // The caller, the DNC badge and the reason pill share a line when
+            // they fit, the pill at the line's end; when they do not (a 360 dp
+            // phone with DNC and a long reason, or large text) the pill, then
+            // the badge, go below, so the number is never cut short to make
+            // room for them.
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                key: const Key('missed-head'),
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: Space.sm,
+                runSpacing: Space.xs,
+                children: [
+                  Wrap(
+                    spacing: Space.sm,
+                    runSpacing: Space.xs,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        caller,
+                        key: const Key('missed-caller'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: call.isWithheld
+                            ? text.titleSmall!.copyWith(color: t.textMuted)
+                            : monoStyle(context, size: 15, color: t.textPrimary),
+                      ),
+                      if (call.callerDnc)
+                        Tooltip(
+                          message: MissedCopy.dncHint,
+                          child: Semantics(
+                            label: MissedCopy.dncHint,
+                            excludeSemantics: true,
+                            child: const StatusPill(MissedCopy.dncBadge, key: Key('missed-dnc'), tone: Tone.danger),
+                          ),
+                        ),
+                    ],
                   ),
-                ),
-                if (call.callerDnc) ...[
-                  const SizedBox(width: Space.sm),
-                  Tooltip(
-                    message: MissedCopy.dncHint,
-                    child: Semantics(
-                      label: MissedCopy.dncHint,
-                      excludeSemantics: true,
-                      child: const StatusPill(MissedCopy.dncBadge, key: Key('missed-dnc'), tone: Tone.danger),
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                const SizedBox(width: Space.sm),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 170),
-                  child: StatusPill(
+                  StatusPill(
                     MissedCopy.whyMissed(call),
                     key: const Key('missed-reason'),
                     tone: call.isOpen ? Tone.warn : Tone.neutral,
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
             const SizedBox(height: Space.xs),
             Text(
@@ -145,17 +158,14 @@ class MissedCallTile extends StatelessWidget {
               children: call.isOpen
                   ? [
                       if (callBackOffered)
-                        Tooltip(
-                          message: call.isWithheld ? MissedCopy.withheldCallBack : '',
-                          child: OutlinedButton.icon(
-                            key: const Key('missed-call-back'),
-                            onPressed: call.isWithheld ? null : onCallBack,
-                            icon: const Icon(Icons.call, size: 18),
-                            label: Semantics(
-                              label: call.isWithheld ? 'Call back (number withheld)' : 'Call back $caller',
-                              excludeSemantics: true,
-                              child: const Text(MissedCopy.callBack),
-                            ),
+                        OutlinedButton.icon(
+                          key: const Key('missed-call-back'),
+                          onPressed: call.isWithheld ? null : onCallBack,
+                          icon: const Icon(Icons.call, size: 18),
+                          label: Semantics(
+                            label: call.isWithheld ? MissedCopy.callBackWithheldLabel : MissedCopy.callBackLabel(caller),
+                            excludeSemantics: true,
+                            child: const Text(MissedCopy.callBack),
                           ),
                         ),
                       OutlinedButton.icon(

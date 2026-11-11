@@ -40,6 +40,11 @@ abstract final class MissedCopy {
   static const notMatched = 'Not matched';
 
   static const callBack = 'Call back';
+
+  /// Call back's label for a screen reader: whom it calls, or why it is off
+  /// (the withheld note under the row says the same on screen).
+  static String callBackLabel(String caller) => 'Call back $caller';
+  static const callBackWithheldLabel = 'Call back (number withheld)';
   static const markHandled = 'Mark handled';
   static const marking = 'Marking…';
   static const reopen = 'Reopen';
