@@ -33,6 +33,7 @@ import { AGENT_LEASE_MS, type AgentLiveState, type AgentStateMachine } from '../
 import { publishPacingInvalidation, type PacingInvalidationEvent } from '../pacing/invalidation-bus.js';
 import {
   COULD_TAKE_STATES,
+  INBOUND_DEVICE_AWAY_GRACE_MS,
   RELEASE_STATES,
   anyoneCouldTake,
   callerForReleasedAgent,
@@ -141,6 +142,16 @@ const log = createChildLogger({ component: 'agency-inbound-connector' });
  * never offered), and when it ends the account is searched again, so a caller held only by an
  * agent who never came back is overflowed then, not at the maximum wait.
  *
+ * ── A phone that just left the app (IQ50) ────────────────────────────────────────
+ * An agent on a `device_away` pause applied less than {@link INBOUND_DEVICE_AWAY_GRACE_MS} ago is
+ * counted the same way (an `awayGrace` view: could take, never offered), because the app returns
+ * them by itself when they come back within it. The source is the session row (`break_reason`
+ * `device_away` and `state_since`, written when the pause applied; Redis holds no break reason),
+ * read only for the sessions Redis says are on a break that began inside the grace, so a floor
+ * with no fresh break reads nothing more. When a pause's grace ends the account is searched again
+ * (its own timer, as for the rejoin grace): a caller held only by an agent who did not come back
+ * is overflowed then (`no_agents`). A read that fails counts nobody as in the grace.
+ *
  * ── Voicemail (§7) ───────────────────────────────────────────────────────────────
  * A caller who reaches nobody leaves through {@link InboundCallExits.overflow}, the router's,
  * which carries out the route's overflow action (the call-back message, or a voicemail) and
@@ -208,6 +219,13 @@ export interface InboundConnectorDeps {
   republishMs?: number;
   /** {@link INBOUND_STATION_REJOIN_GRACE_MS} (tests: shorter). */
   rejoinGraceMs?: number;
+  /** IQ50: {@link INBOUND_DEVICE_AWAY_GRACE_MS} (tests: shorter). */
+  deviceAwayGraceMs?: number;
+  /**
+   * IQ50: of `sessionIds`, those on a `device_away` pause younger than `withinMs`, with its age in
+   * ms. Default: the repository's `deviceAwayPauseAges` (the session row).
+   */
+  awayPauses?: (sessionIds: readonly string[], withinMs: number) => Promise<Map<string, number>>;
 }
 
 /** What the router knows of a call it hands over. */
@@ -317,6 +335,10 @@ export class InboundConnector {
   /** Stations closed within the rejoin grace, by session (see the header). */
   private readonly rejoining = new Map<string, RejoiningStation>();
   private readonly rejoinGraceMs: number;
+  private readonly deviceAwayGraceMs: number;
+  private readonly awayPauses: NonNullable<InboundConnectorDeps['awayPauses']>;
+  /** IQ50: sessionId → the timer that searches its account again when its `device_away` grace ends. */
+  private readonly awayTimers = new Map<string, NodeJS.Timeout>();
   /** {@link stop} ran: no new work; the listener stays for the calls still held. */
   private stopped = false;
   private republishTimer: NodeJS.Timeout | null = null;
@@ -326,6 +348,8 @@ export class InboundConnector {
     this.connectDelayMs = deps.connectDelayMs ?? AGENCY_INBOUND_CONNECT_DELAY_MS;
     this.publish = deps.publish ?? publishPacingInvalidation;
     this.rejoinGraceMs = deps.rejoinGraceMs ?? INBOUND_STATION_REJOIN_GRACE_MS;
+    this.deviceAwayGraceMs = deps.deviceAwayGraceMs ?? INBOUND_DEVICE_AWAY_GRACE_MS;
+    this.awayPauses = deps.awayPauses ?? ((ids, withinMs) => agencyAgentSessionRepository.deviceAwayPauseAges(ids, withinMs));
     this.members = deps.members ?? ((tenantId, accountId, userIds) =>
       agencyInboundAnswerRepository.filterAccountMembers(tenantId, accountId, userIds));
     this.queue = new InboundQueue({
@@ -375,6 +399,8 @@ export class InboundConnector {
     this.unsubscribeDetach = null;
     for (const r of this.rejoining.values()) clearTimeout(r.timer);
     this.rejoining.clear();
+    for (const t of this.awayTimers.values()) clearTimeout(t);
+    this.awayTimers.clear();
     this.handovers.clearTimers();
     this.queue.clear();
     this.unsubscribeWhenIdle();
@@ -1452,7 +1478,45 @@ export class InboundConnector {
     const back = rejoining.map((r, i) => viewOf(r.station, false, true,
       rejoinState(states[stations.length + i] ?? null, atClose[i] ?? null)));
     // Open stations first: a user's open session is the one `stickyAgentOf` finds.
-    return [...open, ...back];
+    const views = [...open, ...back];
+    await this.markAwayGrace(accountKey, views, now);
+    return views;
+  }
+
+  /**
+   * IQ50 (see the header): mark the views on a `device_away` pause younger than the grace
+   * (`awayGrace`), and arm a search of the account for when each one's grace ends. Only the
+   * sessions Redis says are on a break that began inside the grace are read (the session row);
+   * a failed read marks none.
+   */
+  private async markAwayGrace(accountKey: string, views: InboundAgentView[], now: number): Promise<void> {
+    const fresh = views.filter((v) => v.live?.state === 'break' && v.campaignId !== null
+      && (v.live.since === null || now - v.live.since < this.deviceAwayGraceMs));
+    if (fresh.length === 0) return;
+    const ages = await Promise.resolve()
+      .then(() => this.awayPauses(fresh.map((v) => v.sessionId), this.deviceAwayGraceMs))
+      .catch((err: unknown) => {
+        log.warn({ err, accountKey }, 'inbound: could not read the device_away pauses; none counted as able to take callers');
+        return new Map<string, number>();
+      });
+    for (const v of fresh) {
+      const age = ages.get(v.sessionId);
+      if (age === undefined || age >= this.deviceAwayGraceMs) continue;
+      v.awayGrace = true;
+      this.armAwayGraceEnd(accountKey, v.sessionId, this.deviceAwayGraceMs - age);
+    }
+  }
+
+  /** Search the account again when a `device_away` pause's grace ends (once per session at a time). */
+  private armAwayGraceEnd(accountKey: string, sessionId: string, inMs: number): void {
+    if (this.stopped || this.awayTimers.has(sessionId)) return;
+    const timer = setTimeout(() => {
+      this.awayTimers.delete(sessionId);
+      if (this.stopped) return;
+      if (this.queue.waiting(accountKey).length > 0) this.searchInBackground(accountKey);
+    }, Math.max(0, Math.ceil(inMs)) + 50);
+    timer.unref?.();
+    this.awayTimers.set(sessionId, timer);
   }
 
   /** "Your customer is waiting" to each busy sticky agent not yet told (§4.3). */

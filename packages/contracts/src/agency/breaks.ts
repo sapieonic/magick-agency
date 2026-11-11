@@ -43,6 +43,17 @@ export const DEVICE_AWAY_BREAK_REASON = 'device_away' as const;
 export const DEVICE_AWAY_BREAK_REASON_LABEL = 'Away (app in background)';
 
 /**
+ * IQ50: how long a {@link DEVICE_AWAY_BREAK_REASON} pause stays "brief". The app returns the
+ * agent to the pool by itself (the ordinary `/available`) when they come back within it of the
+ * pause; a longer absence still needs the tap. While a pause is younger than this the server
+ * counts the agent as one who COULD take a waiting inbound caller (never offered one: they are on
+ * a break), as a station in its rejoin grace is, so callers queue for them instead of
+ * overflowing at once; when it ends the queue is asked again. Measured from when the pause was
+ * applied (the session's `state_since`).
+ */
+export const DEVICE_AWAY_RETURN_GRACE_MS = 30_000;
+
+/**
  * IQ51: the break the agent mobile app requests when a CELLULAR call starts while the agent
  * is `available` (the phone rings or the agent dials out on it), for the length of that
  * call; the app returns the agent with the ordinary `POST /sessions/:id/available` when the

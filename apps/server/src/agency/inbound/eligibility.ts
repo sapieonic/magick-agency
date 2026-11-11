@@ -1,4 +1,4 @@
-import type { AgencyAgentState, AgencyInboundStickyMode } from '@magick-agency/contracts/agency';
+import { DEVICE_AWAY_RETURN_GRACE_MS, type AgencyAgentState, type AgencyInboundStickyMode } from '@magick-agency/contracts/agency';
 
 /**
  * ─── WHO MAY TAKE A WAITING INBOUND CALLER (docs/inbound.md §4.3, §5.1; P2) ────────────────────
@@ -58,6 +58,13 @@ import type { AgencyAgentState, AgencyInboundStickyMode } from '@magick-agency/c
  * the one agent who could take the callers does not overflow every one of them at once. The
  * connector asks again when the grace ends.
  *
+ * A phone that left the app moments ago counts too (IQ50): a session on a `device_away` pause
+ * applied less than {@link INBOUND_DEVICE_AWAY_GRACE_MS} ago ({@link InboundAgentView.awayGrace})
+ * is one who could take the caller, because the app returns the agent by itself when they come
+ * back within it. Never offered (they are on a break), only counted; the connector asks again when
+ * the pause's grace ends, and callers then overflow if nobody else could take them. Any other
+ * break (`phone_call` included: the agent is on another call) never counts.
+ *
  * ── Order ───────────────────────────────────────────────────────────────────────
  * Callers are served FIFO by when they queued, a requeued caller (its station lost before audio
  * bound) back at the head (`inbound-queue.ts`). For each caller the agents are tried: in its
@@ -67,6 +74,12 @@ import type { AgencyAgentState, AgencyInboundStickyMode } from '@magick-agency/c
  * pass, every caller whose sticky agent is available now is matched to them: an agent who frees
  * takes their own customer before anyone else's (§2 step 4).
  */
+
+/**
+ * IQ50: how long a `device_away` pause counts as "could take" a waiting caller (the app's own
+ * return grace, `DEVICE_AWAY_RETURN_GRACE_MS`, 30 s).
+ */
+export const INBOUND_DEVICE_AWAY_GRACE_MS = DEVICE_AWAY_RETURN_GRACE_MS;
 
 /** The states the release hook may take an agent from: the agent `releaseAgent` would return to the pool. */
 export const RELEASE_STATES = ['reserved', 'on_call', 'wrapup'] as const satisfies readonly AgencyAgentState[];
@@ -92,6 +105,12 @@ export interface InboundAgentView {
    * {@link couldTakeLater} as if its station were open, and is never offered a caller.
    */
   rejoining?: boolean;
+  /**
+   * IQ50: the agent is on a `device_away` pause applied less than {@link INBOUND_DEVICE_AWAY_GRACE_MS}
+   * ago (`live.state` is `break`): the session counts for {@link couldTakeLater} as if it were
+   * `available`, and is never offered a caller.
+   */
+  awayGrace?: boolean;
   /**
    * The agent is an active user with an active membership that can see the account (tenant-wide
    * or this account), as of the connector's last read: false for one removed or deactivated.
@@ -175,8 +194,11 @@ export const COULD_TAKE_STATES = ['available', ...RELEASE_STATES] as const satis
  * soft-phone call already held (it ends). A session in soft-phone mode does not qualify.
  */
 export function couldTakeLater(agent: InboundAgentView, caller: InboundCallerView): boolean {
-  // A station back in a moment counts as open here, and here only (see the header).
-  const why = inboundIneligibility(agent.rejoining ? { ...agent, stationOpen: true } : agent, caller, COULD_TAKE_STATES);
+  // A station back in a moment counts as open here, and here only; so does an agent whose phone
+  // left the app moments ago, as if available (IQ50; see the header).
+  let judged = agent.rejoining ? { ...agent, stationOpen: true } : agent;
+  if (agent.awayGrace && agent.live?.state === 'break') judged = { ...judged, live: { ...agent.live, state: 'available' } };
+  const why = inboundIneligibility(judged, caller, COULD_TAKE_STATES);
   return why === null || (why === 'holds_call' && agent.live !== null && !agent.live.softphone);
 }
 

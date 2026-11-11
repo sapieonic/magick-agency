@@ -18,6 +18,7 @@ import {
   AGENCY_STATION_MEDIA_FORMATS,
   DEVICE_AWAY_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON_LABEL,
+  DEVICE_AWAY_RETURN_GRACE_MS,
   RESERVED_BREAK_REASONS,
   RESERVED_BREAK_REASON_LABELS,
   AGENCY_CAMPAIGN_STATS_FIELDS,
@@ -229,6 +230,8 @@ describe('package surface', () => {
     // IQ51: the app's own pauses, each run by the device-away rules.
     expect([...AgencyApi.APP_PAUSE_BREAK_REASONS]).toEqual(['device_away', 'phone_call']);
     expect(AgencyApi.PHONE_CALL_BREAK_REASON).toBe('phone_call');
+    // IQ50: the app's return grace, which the server's could-take count shares.
+    expect(DEVICE_AWAY_RETURN_GRACE_MS).toBe(30_000);
     expect(Object.isFrozen(RESERVED_BREAK_REASON_LABELS)).toBe(true);
     expect([...AGENCY_CLIENT_KINDS]).toEqual(['web', 'mobile']);
     // The console wire layer re-exports the same values rather than copies.

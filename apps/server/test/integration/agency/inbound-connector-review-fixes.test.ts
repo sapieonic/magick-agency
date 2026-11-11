@@ -33,7 +33,13 @@ type RouteRecord = import('../../../src/db/repositories/agency.repository.js').A
  *    nothing abandoned);
  *  - SWE-m4: a bind the bridge refuses for a reason other than the call ending cancels the offer;
  *  - SWE-m1/m8: the hang-up asks the connector whether the call is live, and waits on its end;
- *  - QA-F5 and the tile's `no_agents_available`: who the supervisor's tile counts.
+ *  - QA-F5 and the tile's `no_agents_available`: who the supervisor's tile counts;
+ *  - IQ50: a `device_away` pause younger than its grace counts as could take (callers queue), and
+ *    the queue is asked again when the grace ends (callers overflow `no_agents`).
+ *
+ * IQ50 mutation-checked: `couldTakeLater` without its `awayGrace` arm overflows the lone paused
+ * agent's caller at once (red); the connector without the grace-end timer leaves the caller queued
+ * until the next republish (red).
  */
 
 const T = DEFAULTS.tenantId;
@@ -54,7 +60,7 @@ const router = () => new AgencyInboundCallRouter({
   dnc: { check: async () => 'clear', checkEntry: async () => ({ result: 'clear' }) } as never,
 });
 
-function connector(opts: { connectDelayMs?: number; republishMs?: number; rejoinGraceMs?: number } = {}): Connector {
+function connector(opts: { connectDelayMs?: number; republishMs?: number; rejoinGraceMs?: number; deviceAwayGraceMs?: number } = {}): Connector {
   const c: Connector = new InboundConnector({
     bridge: bridge as never,
     stations: stations as never,
@@ -68,6 +74,7 @@ function connector(opts: { connectDelayMs?: number; republishMs?: number; rejoin
     publish: () => {},
     republishMs: opts.republishMs ?? 60_000,
     ...(opts.rejoinGraceMs !== undefined ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
+    ...(opts.deviceAwayGraceMs !== undefined ? { deviceAwayGraceMs: opts.deviceAwayGraceMs } : {}),
   });
   c.start();
   connectors.push(c);
@@ -624,5 +631,68 @@ describe('PM-M6 / SWE-N4: nobody could take the caller — decided at the answer
     const b = arrive(e164);
     expect(await r.answer(b)).toMatchObject({ kind: 'stream' });
     expect(c.holds((await byCarrierId(b.carrierCallId)).id)).toBe(true);
+  });
+});
+
+describe('IQ50: a phone that left the app moments ago (a device_away pause younger than its grace)', () => {
+  /** The app's pause, as `runDeviceAway` writes it: Redis `break`, the session row `break/<reason>` at `startedAgoMs`. */
+  async function paused(sessionId: string, reason: 'device_away' | 'phone_call' | 'lunch' = 'device_away', startedAgoMs = 0): Promise<void> {
+    await agents.set(sessionId, 'break', { leaseMs: 60_000 });
+    await pool().query(
+      `UPDATE agency_agent_sessions SET state = 'break', break_reason = $2, state_since = now() - make_interval(secs => $3::double precision / 1000) WHERE id = $1`,
+      [sessionId, reason, startedAgoMs]);
+  }
+
+  it('the lone agent who just backgrounded: the caller queues (never offered); when the grace ends, overflow at once, no_agents (its own timer, no republish)', async () => {
+    const c = connector({ deviceAwayGraceMs: 1200 }); // republish every minute: only the grace's timer can tell
+    const phone = await agent('available', { clientKind: 'mobile', canTakeInbound: true });
+    await paused(phone);
+    const pausedAt = Date.now();
+    expect(await c.couldAnyoneTake({ tenantId: T, accountId: A, route })).toBe(true);
+    expect((await c.routeAgents(route)).noneCouldTake).toBe(false);
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    await sleep(400);
+    expect(await row(call.id)).toMatchObject({ state: 'queued', offer_count: 0 });
+    expect(offersTo(phone)).toBe(0);
+    await until('overflowed', async () => (await row(call.id)).state === 'ended', 4000);
+    expect(Date.now() - pausedAt).toBeGreaterThanOrEqual(1200);
+    expect(Date.now() - pausedAt).toBeLessThan(3500);
+    expect(await row(call.id)).toMatchObject({ outcome: 'overflow', follow_up_reason: 'overflow', offer_count: 0 });
+    expect(await c.couldAnyoneTake({ tenantId: T, accountId: A, route })).toBe(false);
+  });
+
+  it('back within the grace (the app`s own return): offered the waiting caller', async () => {
+    const c = connector({ deviceAwayGraceMs: 5000 });
+    const phone = await agent('available', { clientKind: 'mobile', canTakeInbound: true });
+    await paused(phone);
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    await agents.set(phone, 'available', { leaseMs: 60_000 });
+    await pool().query(`UPDATE agency_agent_sessions SET state = 'available', break_reason = NULL, state_since = now() WHERE id = $1`, [phone]);
+    c.onAgentAvailable(phone);
+    await until('offered', async () => offersTo(phone) > 0, 3000);
+    expect((await row(call.id)).session_id).toBe(phone);
+  });
+
+  it('a pause older than the grace, a phone_call pause (on another call), a chosen break: nobody, overflowed at once', async () => {
+    const c = connector({ deviceAwayGraceMs: 1500 });
+    for (const [reason, ago] of [['device_away', 2000], ['phone_call', 0], ['lunch', 0]] as const) {
+      const s = await agent('available', { clientKind: 'mobile', canTakeInbound: true });
+      await paused(s, reason, ago);
+      expect(await c.couldAnyoneTake({ tenantId: T, accountId: A, route }), reason).toBe(false);
+      const startedAt = Date.now();
+      const { call } = await caller(c);
+      await overflowedAtOnce(call.id, startedAt);
+      await agents.set(s, 'offline', { leaseMs: 60_000 });
+      await stations.close(s);
+    }
+  });
+
+  it('an older app build (no caps=inbound) in the grace never counts', async () => {
+    const c = connector({ deviceAwayGraceMs: 5000 });
+    const old = await agent('available', { clientKind: 'mobile', canTakeInbound: false });
+    await paused(old);
+    expect(await c.couldAnyoneTake({ tenantId: T, accountId: A, route })).toBe(false);
   });
 });

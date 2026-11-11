@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import {
+  INBOUND_DEVICE_AWAY_GRACE_MS,
   RELEASE_STATES,
   anyoneCouldTake,
   callerForReleasedAgent,
@@ -293,5 +294,37 @@ describe('the rejoin grace (SWE-F1): a station closed moments ago still counts, 
     expect(rejoinState(live('break'), live('available'))).toEqual(live('break'));
     expect(rejoinState(live('offline'), null)).toEqual(live('offline'));
     expect(rejoinState(null, null)).toBeNull();
+  });
+});
+
+describe('IQ50: a device_away pause less than 30 s old counts as could take, and is never offered', () => {
+  it('the grace is the app`s own return grace, 30 s', () => {
+    expect(INBOUND_DEVICE_AWAY_GRACE_MS).toBe(30_000);
+  });
+
+  it('an agent on break in the grace could take the caller; never a candidate, never the sticky agent`s `available`', () => {
+    const c = caller('1');
+    const away = agent('a', { state: 'break', awayGrace: true });
+    expect(couldTakeLater(away, c)).toBe(true);
+    expect(anyoneCouldTake(c, [away])).toBe(true);
+    expect(inboundIneligibility(away, c)).toBe('wrong_state');
+    expect(candidatesFor(c, [away], NOW)).toEqual([]);
+    expect(stickyAgentStatus(away, { ...c, stickyUserId: 'u-a' })).toBe('away');
+    // Past the grace (the connector no longer marks it): nobody.
+    expect(anyoneCouldTake(c, [agent('a', { state: 'break' })])).toBe(false);
+  });
+
+  it('only on a break: the mark never widens another state (offline, a lapsed lease)', () => {
+    expect(couldTakeLater(agent('a', { state: 'offline', awayGrace: true }), caller('1'))).toBe(false);
+    expect(couldTakeLater({ ...agent('a', { awayGrace: true }), live: null }, caller('1'))).toBe(false);
+  });
+
+  it.each([
+    ['on an app build that cannot take inbound calls', agent('a', { state: 'break', awayGrace: true, canTakeInbound: false })],
+    ['outside the pool', agent('a', { state: 'break', awayGrace: true, campaignId: 'camp-2' })],
+    ['no longer a member', agent('a', { state: 'break', awayGrace: true, member: false })],
+    ['in another account', agent('a', { state: 'break', awayGrace: true, accountId: 'account-2' })],
+  ] as const)('an agent in the grace %s does not count', (_what, a) => {
+    expect(couldTakeLater(a, caller('1', { poolCampaignIds: ['camp-1'] }))).toBe(false);
   });
 });

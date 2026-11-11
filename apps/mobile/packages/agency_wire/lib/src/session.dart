@@ -548,6 +548,13 @@ final class StationTokenResponse {
   int get hashCode => Object.hash(sessionId, stationWsUrl, expiresAt);
 }
 
+/// IQ50: how long a `device_away` pause stays brief
+/// (`DEVICE_AWAY_RETURN_GRACE_MS`). Back within it, the app returns the agent
+/// by itself (the ordinary `/available`); meanwhile the server counts them as
+/// one who could take a waiting inbound caller, so callers queue rather than
+/// overflow at once.
+const deviceAwayReturnGrace = Duration(seconds: 30);
+
 /// `POST /proxy/agency/sessions/:id/break`.
 ///
 /// Contract: `AgencySessionBreakRequest`.

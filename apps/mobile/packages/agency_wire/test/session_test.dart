@@ -241,6 +241,10 @@ void main() {
       expect(const SessionBreakRequest('lunch').toJson(), fixture('session.json', 'break_request'));
     });
 
+    test('IQ50: the device-away return grace is the contract`s 30 s', () {
+      expect(deviceAwayReturnGrace, const Duration(milliseconds: 30000));
+    });
+
     test('IQ51: the phone-call pause uses its reserved code, and decodes on the session state', () {
       expect(SessionBreakRequest.phoneCall().toJson(), fixture('session.json', 'break_request_phone_call'));
       expect(ReservedBreakCode.tryFromWire('phone_call'), ReservedBreakCode.phoneCall);
