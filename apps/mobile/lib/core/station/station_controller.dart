@@ -207,6 +207,16 @@ class StationController extends Notifier<StationView?>
 
   /// The pause never landed, so the station socket was closed (parked) instead.
   bool _awayClosed = false;
+
+  /// When (device clock) the `device_away` pause of this away period was asked
+  /// for at once; null for none, or for one the server queued behind a call.
+  DateTime? _awayAskedNowAt;
+
+  /// IQ50: back in the app after asking for that pause, a return waiting to be
+  /// decided ([_maybeAutoReturn]) once the station says where the agent stands:
+  /// when they came back and when the pause was asked for (device clock).
+  ({DateTime back, DateTime asked})? _autoReturn;
+  Timer? _autoReturnExpiry;
   int _awayRetries = 0;
   Timer? _awayRetry;
   Timer? _awayDeadline;
@@ -577,7 +587,9 @@ class StationController extends Notifier<StationView?>
     _awayQueueFailed = false;
     _awayLanded = false;
     _awayClosed = false;
+    _awayAskedNowAt = null;
     _cancelAwayTimers();
+    _cancelAutoReturn();
     _upgradeRefused = false;
     _readySeen = false;
     _mapper = StationViewMapper();
@@ -656,7 +668,10 @@ class StationController extends Notifier<StationView?>
         if (frame.state == AgentState.onBreak) _breakOverride = null;
         // Available again: whatever pause was asked for is over (and is asked
         // for afresh below if the app is still away).
-        if (frame.state == AgentState.available) _awayPauseRequested = false;
+        if (frame.state == AgentState.available) {
+          _awayPauseRequested = false;
+          _awayAskedNowAt = null;
+        }
         _dispatch(AgentStateAction(frame));
       case WrapupFrame(:final wrapup):
         // A redial that failed before it rang: its wrap-up is the first the station hears of it.
@@ -815,6 +830,7 @@ class StationController extends Notifier<StationView?>
   /// are sent. [dismiss] or the next start closes the rest.
   void _letGo(_Session s, {required bool keepSocket}) {
     _cancelAwayTimers();
+    _cancelAutoReturn();
     _cancelHeldCallCheck();
     _setWakeLock(false);
     _setNotice(AwayNotice.none, null);
@@ -899,6 +915,7 @@ class StationController extends Notifier<StationView?>
     final inbound = _station.inboundOnScreen;
     s.inboundNotes.callChanged(inbound?.id, serverNotes: inbound?.notes, accepting: inbound != null);
     _applyLifecycle(s);
+    _maybeAutoReturn(s);
     _emit();
   }
 
@@ -1222,6 +1239,8 @@ class StationController extends Notifier<StationView?>
 
   void _onHide() {
     _foreground = false;
+    // Gone again before the return was decided: the next return decides afresh.
+    _cancelAutoReturn();
     // First, before anything else: the pause must leave while the OS still lets it.
     _maybeSendAway();
     final s = _s;
@@ -1245,6 +1264,16 @@ class StationController extends Notifier<StationView?>
     _awayKey = null;
     _awayClosed = false;
     _awayRetries = 0;
+    // IQ50: the pause asked for at once in this away period may return the agent on its own,
+    // once the station says it applied (decided in [_maybeAutoReturn]).
+    final askedAt = _awayAskedNowAt;
+    _awayAskedNowAt = null;
+    if (askedAt != null && !s.hosted.isSoftphone) {
+      _cancelAutoReturn();
+      _autoReturn = (back: _now(), asked: askedAt);
+      // Bounded: a station that says nothing for this long is left to the tap.
+      _autoReturnExpiry = Timer(deviceAwayAutoReturnWithin, _cancelAutoReturn);
+    }
     if (queuedFor != null &&
         _pendingBreakCode == ReservedBreakCode.deviceAway.wire &&
         isCallPhase(_station.effectiveState)) {
@@ -1275,6 +1304,7 @@ class StationController extends Notifier<StationView?>
   void _cancelAwayQueue(_Session s) {
     _awayQueuedFor = null;
     _awayPauseRequested = false;
+    _awayAskedNowAt = null;
     unawaited(_api.cancelBreak(s.id).then((r) {
       if (!identical(_s, s)) return;
       _writeQueue(r?.pendingState != null ? r?.breakReason : null);
@@ -1288,6 +1318,57 @@ class StationController extends Notifier<StationView?>
     _awayDeadline?.cancel();
     _awayDeadline = null;
   }
+
+  void _cancelAutoReturn() {
+    _autoReturn = null;
+    _autoReturnExpiry?.cancel();
+    _autoReturnExpiry = null;
+  }
+
+  /// IQ50: back in the app within [deviceAwayAutoReturnWithin] of the app's own
+  /// `device_away` pause, the agent is returned to the pool as "Resume taking
+  /// calls" returns them ([endBreak]); a longer absence keeps the away card and
+  /// its tap. Decided once the station says where the agent stands: the socket
+  /// open and no pause still in flight. Only a `device_away` break that applied
+  /// qualifies: a break of another reason (the agent's, the soft phone's), one
+  /// still queued behind a call (cancelled on return, [_onShow]) or a call on
+  /// screen drops it. `available` waits (the pause may still land), up to the
+  /// bound. The pause's age is read on the server's clock (`agent_state.since`
+  /// against the return), else on this phone's (when it was asked for).
+  void _maybeAutoReturn(_Session s) {
+    final pending = _autoReturn;
+    if (pending == null) return;
+    if (!_foreground || _terminal || s.hosted.isSoftphone) {
+      _cancelAutoReturn();
+      return;
+    }
+    if (_station.connection != StationConnection.open || _awayInFlight) return;
+    final st = _station.effectiveState;
+    if (st == AgentState.available) return;
+    if (st != AgentState.onBreak ||
+        _station.breakReasonCode != ReservedBreakCode.deviceAway.wire ||
+        _pendingBreakCode != null) {
+      _cancelAutoReturn();
+      return;
+    }
+    _cancelAutoReturn();
+    final since = _station.agentStateSince;
+    final pausedFor = since != null
+        ? pending.back.add(Duration(milliseconds: _mapper.appliedOffsetMs)).difference(since)
+        : pending.back.difference(pending.asked);
+    _onBackFromAway(since ?? pending.asked);
+    if (!autoReturnsFromAway(pausedFor)) return;
+    _log.info('back within the away window: returning to the pool', {'paused_ms': pausedFor.inMilliseconds});
+    // Not inside the frame or change that decided it.
+    scheduleMicrotask(() {
+      if (identical(_s, s)) unawaited(endBreak());
+    });
+  }
+
+  /// The agent came back to a `device_away` pause that began at [pausedAt].
+  // TODO(IQ50 phase 2): "N customers rang while you were away" reads the agent's own Missed
+  // rows since [pausedAt] once the count route takes a `since`; the station says it on return.
+  void _onBackFromAway(DateTime pausedAt) {}
 
   void _applyLifecycle(_Session s) {
     // A campaign call reads as one from its own frames (`effectiveState`).
@@ -1368,6 +1449,7 @@ class StationController extends Notifier<StationView?>
         _awayDeadline?.cancel();
         _awayDeadline = Timer(awayPauseBound, () => _awayOverdue(s));
       }
+      _awayAskedNowAt ??= _now();
       _awayPauseRequested = true;
       _awayLanded = false;
     } else {
@@ -1391,6 +1473,8 @@ class StationController extends Notifier<StationView?>
           // queued when a call was reserved meanwhile): coming back cancels it.
           _awayQueuedFor = _callOnStationId ?? '';
           _awayQueueFailed = false;
+          // A pause behind a call is never returned from on its own (IQ50).
+          _awayAskedNowAt = null;
         }
         _lastStateResponse = response;
       }

@@ -1,3 +1,4 @@
+import '../../core/lifecycle/lifecycle_policy.dart' show deviceAwayAutoReturnWithin;
 import '../../core/station/station_view.dart';
 import '../softphone/softphone_copy.dart';
 import 'logic/disposition_form.dart';
@@ -95,6 +96,9 @@ abstract final class StationCopy {
   static String awayDetail(String? at) => at == null
       ? 'You switched to another app, so we paused you. No customer was connected to an empty line.'
       : 'At $at you switched to another app, so we paused you. No customer was connected to an empty line.';
+  /// IQ50: under the away card's detail. The window is the controller's own.
+  static final awayAutoReturnHint = 'Come back within ${deviceAwayAutoReturnWithin.inSeconds} seconds and you’re '
+      'returned to calls without a tap.';
   static const awayFor = 'Paused for';
   static const awayCountsAs = 'Counts as';
   static const awayCountsAsValue = 'Away (not a break)';

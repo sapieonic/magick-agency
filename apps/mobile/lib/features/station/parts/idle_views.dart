@@ -297,6 +297,12 @@ class AwayView extends ConsumerWidget {
                 StationCopy.awayDetail(since == null ? null : formatTime(since)),
                 style: text.bodyMedium!.copyWith(color: t.textSecondary),
               ),
+              const SizedBox(height: Space.sm),
+              Text(
+                StationCopy.awayAutoReturnHint,
+                key: const Key('away-auto-return'),
+                style: text.bodySmall!.copyWith(color: t.textMuted),
+              ),
             ],
           ),
         ),

@@ -200,6 +200,8 @@ void main() {
       expect(find.textContaining('At 11:19 you switched to another app'), findsOneWidget);
       expect(find.text('00:51'), findsOneWidget);
       expect(find.text('Away (not a break)'), findsOneWidget);
+      // IQ50: the window is said with the controller's own number.
+      expect(find.text('Come back within 30 seconds and you’re returned to calls without a tap.'), findsOneWidget);
       await tester.tap(find.byKey(const Key('resume')));
       expect(h.actions.calls, ['endBreak']);
       await tester.tap(find.byKey(const Key('break-instead')));

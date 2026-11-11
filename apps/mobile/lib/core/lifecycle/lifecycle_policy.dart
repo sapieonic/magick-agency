@@ -16,6 +16,18 @@ import 'package:agency_wire/agency_wire.dart';
 /// rules that keep a call alive in the background are also asked about the
 /// manual call: live, or ended and owing its outcome (wrap-up's twin).
 
+/// IQ50: an agent back in the app within this of their `device_away` pause is
+/// returned to the pool on their own, as if they had pressed "Resume taking
+/// calls"; a longer absence still needs the tap. The away card says the same
+/// (`StationCopy.awayAutoReturnHint`).
+const deviceAwayAutoReturnWithin = Duration(seconds: 30);
+
+/// Whether a `device_away` pause that had lasted [pausedFor] when the agent
+/// came back returns them on its own ([deviceAwayAutoReturnWithin]). Only the
+/// app's own pause asked for at once qualifies, never a break of another
+/// reason or one queued behind a call: the station controller decides that.
+bool autoReturnsFromAway(Duration pausedFor) => pausedFor < deviceAwayAutoReturnWithin;
+
 /// What to ask the server for while the app is in the background.
 enum AwayAction {
   none,
