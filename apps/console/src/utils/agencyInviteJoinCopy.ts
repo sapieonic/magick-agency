@@ -21,7 +21,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   agent: 'Agent',
   viewer: 'Viewer',
   operator: 'Operator',
-  account_admin: 'Account admin',
+  account_admin: 'Supervisor',
   tenant_admin: 'Workspace admin',
   tenant_owner: 'Workspace owner',
 };

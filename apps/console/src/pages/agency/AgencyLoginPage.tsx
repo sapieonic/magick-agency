@@ -231,8 +231,9 @@ export default function AgencyLoginPage() {
    * that suits it.
    *
    * ── The fallback is `/agency`, not `/dialer` and not `/` ───────────────────
-   * `/agency` is `AgencyHomeRedirect`, which resolves the persona from the RBAC
-   * role and sends a supervisor to `/agency/campaigns` and an agent to `/dialer`.
+   * `/agency` is `AgencyHomeRedirect`, which resolves the landing from the RBAC
+   * role (`agencyLandingPath`): a supervisor to Home, a dedicated agent to
+   * `/dialer`, a viewer or operator to the campaign list.
    * So the landing path lives in ONE place for every entrance into the product,
    * and this page does not become a second copy of a rule that has already moved
    * once.

@@ -105,12 +105,13 @@ function InviteStateBadge({ member }: { member: TenantMember }) {
 /* ── Team Page ────────────────────────────────── */
 
 /**
- * The Account cell: the account's name once a tenant can hold several, falling back
+ * The Account cell: "All accounts" for a tenant-wide seat (the invite form's words for
+ * it), else the account's name once a tenant can hold several, falling back
  * to the id's first eight characters for an account the switcher's list does not
  * carry (an account-scoped viewer sees only their own).
  */
 export function accountLabel(accountId: string | null, names: ReadonlyMap<string, string>): string {
-  if (!accountId) return 'Tenant-level';
+  if (!accountId) return 'All accounts';
   return names.get(accountId) ?? accountId.slice(0, 8);
 }
 
@@ -199,7 +200,7 @@ export default function TeamPage() {
               onClick={() => setShowInvite(true)}
             >
               <UserPlus size={14} />
-              Invite Member
+              Invite member
             </button>
           ) : undefined
         }
@@ -208,7 +209,7 @@ export default function TeamPage() {
         pageKey="team"
         description="Manage your team members and their access levels. Invite new users by email, assign roles to control what they can see and do, and remove members when needed."
         tips={[
-          'Roles control access: Viewers can only see data, Operators can make calls, Admins can manage the account.',
+          'Roles control access: viewers can only see data, operators can also take calls, supervisors run an account, and admins run the whole workspace.',
           'Invited users will receive an email with instructions to join your workspace.',
         ]}
       />
@@ -232,7 +233,7 @@ export default function TeamPage() {
                 onClick={() => setShowInvite(true)}
               >
                 <UserPlus size={14} />
-                Invite Member
+                Invite member
               </button>
             ) : undefined
           }
@@ -344,7 +345,7 @@ export default function TeamPage() {
 
       <ConfirmDialog
         open={!!confirmRemove}
-        title="Remove Team Member"
+        title="Remove team member"
         message={`Are you sure you want to remove ${confirmRemove?.user.display_name || confirmRemove?.user.email}? They will lose access to this workspace.`}
         confirmLabel={removing ? 'Removing...' : 'Remove'}
         danger

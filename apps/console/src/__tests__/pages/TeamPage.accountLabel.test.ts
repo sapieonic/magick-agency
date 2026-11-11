@@ -10,7 +10,7 @@ describe('accountLabel', () => {
   const names = new Map([['acct-1111-2222', 'Renewals']]);
 
   it('names a tenant-wide membership', () => {
-    expect(accountLabel(null, names)).toBe('Tenant-level');
+    expect(accountLabel(null, names)).toBe('All accounts');
   });
 
   it('shows the account name when it is known', () => {

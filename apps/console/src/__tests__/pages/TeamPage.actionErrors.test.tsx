@@ -97,7 +97,7 @@ describe('TeamPage — failed member actions are reported', () => {
     renderPage();
 
     fireEvent.click(screen.getByRole('button', { name: 'Member actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /Change Role/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Operator' }));
 
     const alert = await screen.findByTestId('team-action-error');
@@ -127,7 +127,7 @@ describe('TeamPage — failed member actions are reported', () => {
 
     const changeTo = (name: string) => {
       fireEvent.click(screen.getByRole('button', { name: 'Member actions' }));
-      fireEvent.click(screen.getByRole('menuitem', { name: /Change Role/i }));
+      fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
       fireEvent.click(screen.getByRole('menuitem', { name }));
     };
     changeTo('Operator');

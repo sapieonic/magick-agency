@@ -21,6 +21,11 @@ vi.mock('../../hooks/useTeam', () => ({ useTeam: mocks.useTeam }));
 vi.mock('../../hooks/useAccounts', () => ({ useAccounts: mocks.useAccounts }));
 vi.mock('../../hooks/usePermission', () => ({ usePermission: mocks.usePermission }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    memberships: [{ tenant_id: 'tenant-1', account_id: null, role: 'tenant_admin', status: 'active' }],
+  }),
+}));
 vi.mock('../../api/users', () => ({
   inviteUser: mocks.inviteUser,
   updateUserRole: mocks.updateUserRole,
@@ -110,7 +115,7 @@ describe('TeamPage — member actions menu (overflow clip regression)', () => {
     const menu = screen.getByRole('menu', { name: 'Member actions' });
     expect(menu).toBeTruthy();
     expect(menu.parentElement).toBe(document.body);
-    expect(screen.getByRole('menuitem', { name: /Change Role/i })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /Change role/i })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: /^Remove$/i })).toBeTruthy();
 
     // Fixed positioning is applied so the menu escapes overflow containers.
@@ -193,7 +198,7 @@ describe('TeamPage — the agent role is offered in both pickers', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Member actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: /Change Role/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Change role/i }));
 
     expect(screen.getByRole('menuitem', { name: /^Agent$/i })).toBeTruthy();
   });

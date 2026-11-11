@@ -1,8 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { agencyPersona } from '../../utils/agencyPersona';
-import { HOME_PATH, canSeeHome } from '../../utils/consoleNav';
+import { agencyLandingPath } from '../../utils/agencyPersona';
 
 /**
  * Where `/agency` goes — which depends on who opened it.
@@ -14,15 +13,19 @@ import { HOME_PATH, canSeeHome } from '../../utils/consoleNav';
  * `agent` is level 5 and 403s on it, so the one role the dialer was built for
  * opened the dialer's own workspace and got a permission error.
  *
- * Now the two personas land where their job is:
+ * Now each lands where their job is (`agencyLandingPath`):
  *
  *  - **supervisor** → Home (`/agency/home`, B28): what needs them now, the floor
  *    and today so far, across every live campaign. Whoever passes Home's gate
  *    (`canSeeHome`, `agency.supervise`) lands there, so an account switch, which is a
- *    full page load at the new account's home, lands there too. A supervisor who
- *    somehow fails it keeps the old landing, the campaign list.
- *  - **agent** → `/dialer`, the agent home: the campaigns they are staffed on and
- *    the way into each.
+ *    full page load at the new account's home, lands there too.
+ *  - **dedicated agent** (`agent`) → `/dialer`, the agent home: the campaigns they
+ *    are staffed on and the way into each.
+ *  - **viewer and operator** → the campaign list, inside the console. They read it
+ *    (`agency.campaigns.read` floors at `viewer`) and hold no `agency.supervise`, so
+ *    Home is not theirs. They used to land on `/dialer`, outside the shell, whose
+ *    only way out opened Profile and appearance; `/dialer` still serves them, and a
+ *    campaign page's "Join as agent" opens its station.
  *
  * ── Why the agent is sent OUT of this shell rather than served inside it ────
  * The console shell's work entries floor at `viewer` or above, so an agent
@@ -38,7 +41,7 @@ import { HOME_PATH, canSeeHome } from '../../utils/consoleNav';
  */
 export function AgencyHomeRedirect() {
   const { role } = useTenant();
-  const persona = agencyPersona(role);
+  const landing = agencyLandingPath(role);
 
   /**
    * `role` is `undefined` for the moment `TenantContext` takes to resolve a
@@ -78,13 +81,8 @@ export function AgencyHomeRedirect() {
    * no demonstrated path to it, and a redirect out of this shell on an
    * unresolvable role would be a new behaviour justified by nothing.
    */
-  if (persona === null) return <LoadingSpinner />;
-
-  // This route renders only inside `/agency`'s capability and flag gates, so Home's gate
-  // comes down to its permission here.
-  const home = canSeeHome({ role, isFlagEnabled: () => true, isCapabilityEnabled: () => true });
-  if (home) return <Navigate to={HOME_PATH} replace />;
-  return <Navigate to={persona === 'supervisor' ? '/agency/campaigns' : '/dialer'} replace />;
+  if (landing === null) return <LoadingSpinner />;
+  return <Navigate to={landing} replace />;
 }
 
 export default AgencyHomeRedirect;

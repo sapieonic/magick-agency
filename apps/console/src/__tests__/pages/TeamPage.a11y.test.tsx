@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-/** TeamPage — Invite Team Member dialog accessible naming. */
+/** TeamPage — Invite team member dialog accessible naming. */
 const mocks = vi.hoisted(() => ({
   useTeam: vi.fn(),
   useAccounts: vi.fn(),
@@ -15,6 +15,11 @@ vi.mock('../../hooks/useTeam', () => ({ useTeam: mocks.useTeam }));
 vi.mock('../../hooks/useAccounts', () => ({ useAccounts: mocks.useAccounts }));
 vi.mock('../../hooks/usePermission', () => ({ usePermission: mocks.usePermission }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    memberships: [{ tenant_id: 'tenant-1', account_id: null, role: 'tenant_admin', status: 'active' }],
+  }),
+}));
 vi.mock('../../api/users', () => ({
   inviteUser: mocks.inviteUser,
   updateUserRole: vi.fn(),
@@ -36,13 +41,13 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('TeamPage — Invite Team Member dialog accessible naming', () => {
+describe('TeamPage — Invite team member dialog accessible naming', () => {
   it('names the dialog by its visible heading and gives the close button an accessible name', () => {
     render(<MemoryRouter><TeamPage /></MemoryRouter>);
-    fireEvent.click(screen.getAllByText('Invite Member')[0]!);
+    fireEvent.click(screen.getAllByText('Invite member')[0]!);
 
-    const dialog = screen.getByRole('dialog', { name: 'Invite Team Member' });
-    const heading = screen.getByRole('heading', { name: 'Invite Team Member' });
+    const dialog = screen.getByRole('dialog', { name: 'Invite team member' });
+    const heading = screen.getByRole('heading', { name: 'Invite team member' });
     expect(dialog.getAttribute('aria-labelledby')).toBe(heading.id);
     expect(heading.id).toBeTruthy();
 

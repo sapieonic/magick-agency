@@ -26,6 +26,14 @@ export function getRoleColor(role: Role): string {
 }
 
 /**
+ * `account_admin` where a role is picked: "Supervisor", the console's word for
+ * whoever runs an account, with the access level beside it so nobody picks it
+ * thinking it is a dialler-only seat (it can also invite people and change
+ * settings for the account). Lists say just "Supervisor" (`config.ts` `ROLES`).
+ */
+export const SUPERVISOR_PICK_LABEL = 'Supervisor (account admin)';
+
+/**
  * `agent` is offered here.
  *
  * It used to be display-metadata only — `ROLES` carried it so an existing
@@ -42,7 +50,7 @@ export function getRoleColor(role: Role): string {
  * all. The server's validators already accept it on both routes.
  */
 export const INVITE_ROLES: Array<{ value: Role; label: string }> = [
-  { value: 'account_admin', label: 'Account Admin' },
+  { value: 'account_admin', label: SUPERVISOR_PICK_LABEL },
   { value: 'operator', label: 'Operator' },
   { value: 'viewer', label: 'Viewer' },
   { value: 'agent', label: 'Agent' },
@@ -50,7 +58,7 @@ export const INVITE_ROLES: Array<{ value: Role; label: string }> = [
 
 export const CHANGE_ROLES: Array<{ value: Role; label: string }> = [
   { value: 'tenant_admin', label: 'Admin' },
-  { value: 'account_admin', label: 'Account Admin' },
+  { value: 'account_admin', label: SUPERVISOR_PICK_LABEL },
   { value: 'operator', label: 'Operator' },
   { value: 'viewer', label: 'Viewer' },
   { value: 'agent', label: 'Agent' },
