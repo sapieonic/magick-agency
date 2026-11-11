@@ -28,7 +28,7 @@ describe('StationDirectory', () => {
     d.workerUp(0, 'h:mw0:1');
     d.attached(0, 's1', 'c1', 'h:mw0:1');
     expect(d.isLocallyOwned('s1')).toBe(true);
-    expect(d.get('s1')).toEqual({ campaignId: 'c1' });
+    expect(d.get('s1')).toEqual({ campaignId: 'c1', canTakeInbound: false }); // IB8: never held back for an inbound caller
     d.workerDown(0);
     expect(d.isLocallyOwned('s1')).toBe(false);
     expect(d.get('s1')).toBeUndefined();

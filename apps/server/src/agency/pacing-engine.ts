@@ -29,10 +29,10 @@ export interface PacingStations {
   /**
    * The station's campaign, and whether it can take inbound calls (`StationRegistry`'s
    * `canTakeInbound`, IQ46): only such a station is held back for a waiting inbound caller
-   * (`pacing/inbound-hold-back.ts`). Absent: not known here (the media workers' directory, where
-   * no inbound caller is put through to an agent, IB8), so never held back.
+   * (`pacing/inbound-hold-back.ts`). The media workers' directory answers false: with media
+   * workers no inbound caller is put through to an agent (IB8, IQ13), so holding one back is moot.
    */
-  get(sessionId: string): { campaignId: string | null; canTakeInbound?: boolean } | undefined;
+  get(sessionId: string): { campaignId: string | null; canTakeInbound: boolean } | undefined;
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number;
   send(sessionId: string, frame: AgencyStationServerFrame): boolean;
 }
@@ -1335,10 +1335,12 @@ export class PacingEngine {
     return typeof stations.get === 'function' ? stations.get.call(this.stations, sessionId)?.campaignId ?? null : null;
   }
 
-  /** Whether the session's station is known to take inbound calls (see {@link PacingStations.get}). */
-  private stationCanTakeInbound(sessionId: string): boolean {
-    const stations = this.stations as Partial<Pick<PacingStations, 'get'>>;
-    return typeof stations.get === 'function' && stations.get.call(this.stations, sessionId)?.canTakeInbound === true;
+  /**
+   * Whether the session's station may be held back for a waiting inbound caller: one that can take
+   * inbound calls (see {@link PacingStations.get}).
+   */
+  private holdableForInbound(sessionId: string): boolean {
+    return this.stations.get(sessionId)?.canTakeInbound === true;
   }
 
   private markDirty(campaignId: string): void {
@@ -1643,7 +1645,7 @@ export class PacingEngine {
     // only stations that can take inbound calls (IQ46), so an older app build is dialled meanwhile.
     const inboundHeld = holdBackForInbound(
       candidates, this.inboundHolds.get(accountKeyOf(campaign.tenant_id, campaign.account_id)), campaign.id, this.now(),
-      (sessionId) => this.stationCanTakeInbound(sessionId));
+      (sessionId) => this.holdableForInbound(sessionId));
     if (inboundHeld.length !== candidates.length) {
       candidates.splice(0, candidates.length, ...inboundHeld);
       if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };
