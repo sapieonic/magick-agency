@@ -150,7 +150,7 @@ describe('resending an invitation', () => {
       renderTeam(role);
       openMenu();
 
-      expect(screen.getByRole('menuitem', { name: /Resend Invite/i })).toBeTruthy();
+      expect(screen.getByRole('menuitem', { name: /Resend invite/i })).toBeTruthy();
     },
   );
 
@@ -160,7 +160,7 @@ describe('resending an invitation', () => {
     renderTeam('agent', ['user.update_role', 'user.remove'], 'pending');
     openMenu();
 
-    expect(screen.queryByRole('menuitem', { name: /Resend Invite/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Resend invite/i })).toBeNull();
   });
 
   it.each(['viewer', 'operator'] as const)(
@@ -171,7 +171,7 @@ describe('resending an invitation', () => {
       renderTeam(role, undefined, 'active');
       openMenu();
 
-      expect(screen.queryByRole('menuitem', { name: /Resend Invite/i })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: /Resend invite/i })).toBeNull();
     },
   );
 
@@ -192,7 +192,7 @@ describe('resending an invitation', () => {
     renderTeam('agent', undefined, 'active');
     openMenu();
 
-    expect(screen.queryByRole('menuitem', { name: /Resend Invite/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Resend invite/i })).toBeNull();
   });
 
   it('is STILL offered for an agent when `invite_state` is absent (older server build)', () => {
@@ -211,7 +211,7 @@ describe('resending an invitation', () => {
     renderTeam('agent', undefined, 'absent');
     openMenu();
 
-    expect(screen.getByRole('menuitem', { name: /Resend Invite/i })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /Resend invite/i })).toBeTruthy();
   });
 
   it('asks before it sends, because sending INVALIDATES the link they already have', async () => {
@@ -223,7 +223,7 @@ describe('resending an invitation', () => {
     */
     renderTeam('agent');
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend invite/i }));
 
     expect(await screen.findByText(/any earlier link stops working/i)).toBeTruthy();
     expect(mocks.resendInvite).not.toHaveBeenCalled();
@@ -238,7 +238,7 @@ describe('resending an invitation', () => {
   it('reports what the API said about the email, rather than assuming', async () => {
     renderTeam('agent');
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend invite/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     const told = await screen.findByTestId('resend-emailed');
@@ -253,7 +253,7 @@ describe('resending an invitation', () => {
     });
     renderTeam('agent');
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend invite/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     expect(await screen.findByTestId('resend-handoff')).toBeTruthy();
@@ -269,7 +269,7 @@ describe('resending an invitation', () => {
     });
     renderTeam('operator');
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend invite/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     expect(await screen.findByTestId('resend-handoff')).toBeTruthy();
@@ -290,7 +290,7 @@ describe('resending an invitation', () => {
     });
     renderTeam('viewer');
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend invite/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     expect(await screen.findByTestId('resend-handoff')).toBeTruthy();
@@ -311,7 +311,7 @@ describe('resending an invitation', () => {
     });
     renderTeam('agent');
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend invite/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     expect(await screen.findByTestId('resend-no-link')).toBeTruthy();
@@ -322,7 +322,7 @@ describe('resending an invitation', () => {
     mocks.resendInvite.mockRejectedValue(new Error('Membership not found'));
     renderTeam('agent');
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend invite/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     expect(await screen.findByText('Membership not found')).toBeTruthy();

@@ -53,6 +53,11 @@ vi.mock('../../hooks/useTeam', () => ({ useTeam: mocks.useTeam }));
 vi.mock('../../hooks/useAccounts', () => ({ useAccounts: mocks.useAccounts }));
 vi.mock('../../hooks/usePermission', () => ({ usePermission: mocks.usePermission }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    memberships: [{ tenant_id: 'tenant-1', account_id: null, role: 'tenant_admin', status: 'active' }],
+  }),
+}));
 vi.mock('../../contexts/GovernanceContext', () => ({ useGovernance: mocks.useGovernance }));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: mocks.useFeatureFlags }));
 vi.mock('../../api/users', () => ({
@@ -73,15 +78,17 @@ vi.mock('@magick-agency/web-ui/components/EmptyState', () => ({
 vi.mock('@magick-agency/web-ui/components/ConfirmDialog', () => ({ ConfirmDialog: () => null }));
 
 import TeamPage, { inviteSignInUrl } from '../../pages/team/TeamPage';
+import { ALL_ACCOUNTS } from '../../pages/team/inviteScope';
 
 /** Drive the modal from the Invite button through to a settled hand-off panel. */
 async function invite(role: string, email: string) {
   render(<MemoryRouter><TeamPage /></MemoryRouter>);
 
-  fireEvent.click(screen.getAllByText('Invite Member')[0]!);
+  fireEvent.click(screen.getAllByText('Invite member')[0]!);
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: email } });
   fireEvent.change(screen.getByLabelText('Role'), { target: { value: role } });
-  fireEvent.click(screen.getByRole('button', { name: 'Create Invite' }));
+  fireEvent.change(screen.getByLabelText('Account'), { target: { value: ALL_ACCOUNTS } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
   await waitFor(() => {
     expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy();
@@ -174,10 +181,10 @@ describe('inviteSignInUrl', () => {
 describe('the invite modal does not claim to send anything', () => {
   it('labels the submit button as creating, not sending', () => {
     render(<MemoryRouter><TeamPage /></MemoryRouter>);
-    fireEvent.click(screen.getAllByText('Invite Member')[0]!);
+    fireEvent.click(screen.getAllByText('Invite member')[0]!);
 
-    expect(screen.getByRole('button', { name: 'Create Invite' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Send Invite' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Send invite' })).toBeNull();
   });
 
   it('says outright that no email went out', async () => {
@@ -511,9 +518,10 @@ describe('a failed invite shows no hand-off at all', () => {
     mocks.inviteUser.mockRejectedValueOnce(new Error('already a member'));
 
     render(<MemoryRouter><TeamPage /></MemoryRouter>);
-    fireEvent.click(screen.getAllByText('Invite Member')[0]!);
+    fireEvent.click(screen.getAllByText('Invite member')[0]!);
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dupe@example.com' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create Invite' }));
+    fireEvent.change(screen.getByLabelText('Account'), { target: { value: ALL_ACCOUNTS } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
     await waitFor(() => {
       expect(screen.getByText(/already a member/i)).toBeTruthy();

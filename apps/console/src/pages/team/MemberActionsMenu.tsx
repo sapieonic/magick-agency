@@ -163,7 +163,7 @@ export function MemberActionsMenu({
                   onClick={() => setRoleMenuOpen(!roleMenuOpen)}
                 >
                   <Shield size={14} />
-                  Change Role
+                  Change role
                   <ChevronDown size={12} className={styles.actionsChevron} />
                 </button>
                 {roleMenuOpen && (
@@ -199,7 +199,7 @@ export function MemberActionsMenu({
                 onClick={() => { onResendClick(member); closeMenu(); }}
               >
                 <Send size={14} />
-                Resend Invite
+                Resend invite
               </button>
             )}
             {canRemove && (

@@ -165,10 +165,10 @@ describe('reading a workspace invitation', () => {
     expect(screen.getByText('Workspace invitation')).toBeTruthy();
   });
 
-  it('labels an account admin as one', async () => {
+  it('labels an account admin as a supervisor, the console\'s word for the role', async () => {
     await renderInvitation({ ...INVITE, role: 'account_admin', inviter_name: null });
 
-    expect(screen.getByText(/you have been set up as account admin at/i)).toBeTruthy();
+    expect(screen.getByText(/you have been set up as supervisor at/i)).toBeTruthy();
   });
 
   it('labels a new workspace owner as one, and reports the role as itself', async () => {

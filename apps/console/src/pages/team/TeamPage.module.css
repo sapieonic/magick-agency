@@ -221,6 +221,14 @@
   margin-top: 8px;
 }
 
+/* Under a form field: what the field decides, at caption size. */
+.fieldHint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 /* ── Invite hand-off panel ───────────────────── */
 
 /* The sentence that says no email was sent. Sized as body copy rather than as a

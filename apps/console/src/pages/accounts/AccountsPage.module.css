@@ -81,3 +81,65 @@
   gap: 10px;
   margin-top: 8px;
 }
+
+/* ── After a new account: invite the person who'll run it ── */
+
+.readyPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  background: var(--bg-secondary);
+  border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
+  border-radius: var(--radius-lg);
+}
+
+.readyHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.readyIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--success);
+}
+
+.readyTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.readyLead {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.readyForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.readyFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.readyFields :global(.form-group) {
+  margin-bottom: 0;
+}
+
+.readyActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
