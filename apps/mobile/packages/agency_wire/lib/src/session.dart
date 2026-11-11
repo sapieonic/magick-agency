@@ -559,6 +559,11 @@ final class SessionBreakRequest {
   /// `available` (`DEVICE_AWAY_BREAK_REASON`).
   SessionBreakRequest.deviceAway() : reason = ReservedBreakCode.deviceAway.wire;
 
+  /// IQ51: the reserved break the app takes for the length of a cellular call
+  /// that starts while `available` (`PHONE_CALL_BREAK_REASON`); the same
+  /// server rules as [SessionBreakRequest.deviceAway].
+  SessionBreakRequest.phoneCall() : reason = ReservedBreakCode.phoneCall.wire;
+
   /// A `code` from the bootstrap's `break_reasons`, or a reserved code.
   final String reason;
 

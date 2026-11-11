@@ -12,7 +12,7 @@ import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { onSoftphoneBreak, owedInboundCallId, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import type { AgencyInboundCallLiveRefusal } from '@magick-agency/contracts/api/agency/inbound';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
-import { DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
   AgencyActionErrorResponse,
   AgencyAgentState,
@@ -31,7 +31,7 @@ import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/ag
 import { accountNameInTenant, mintStationTokenOr503, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 import { INBOUND_CLOSE_AUDIT_KEY, type InboundCloseAudit } from './inbound-close-audit.js';
-import { runDeviceAway } from './device-away.js';
+import { isAppPauseBreakReason, runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
 import { readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 
@@ -604,11 +604,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/break', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
-    // The mobile app's device-away break: no catalog lists it, and it has its own rules
-    // (it never replaces a break the agent chose, and answers 200 with the current state
-    // when there is nothing to protect, a soft-phone session included). `device-away.ts`.
-    if ((request.body as { reason?: unknown } | undefined)?.reason === DEVICE_AWAY_BREAK_REASON) {
-      const result = await runDeviceAway(runtime, session);
+    // The mobile app's own pauses, device-away and (IQ51) phone-call: no catalog lists
+    // them, and they have their own rules (never replacing a break the agent chose, and
+    // answering 200 with the current state when there is nothing to protect, a soft-phone
+    // session included). `device-away.ts`.
+    const asked = (request.body as { reason?: unknown } | undefined)?.reason;
+    if (isAppPauseBreakReason(asked)) {
+      const result = await runDeviceAway(runtime, session, asked);
       if (result.ok) return reply.send(result.body);
       // Every pass lost its compare-and-swap to a reservation or a release: a conflict
       // with the state, not a fault, so a 409 the error mask passes unchanged.

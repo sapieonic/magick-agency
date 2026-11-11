@@ -112,7 +112,7 @@ final Map<String, List<WireEnum>> appSends = {
     for (final o in AttemptOutcome.values)
       if (!o.isUnknown) o,
   ],
-  'reserved_break_codes': [ReservedBreakCode.deviceAway],
+  'reserved_break_codes': [ReservedBreakCode.deviceAway, ReservedBreakCode.phoneCall],
   // `ManualCallsQuery.status` can filter on any of them.
   'manual_call_list_statuses': [
     for (final s in ManualCallListStatus.values)

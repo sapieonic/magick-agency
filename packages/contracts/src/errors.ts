@@ -153,7 +153,7 @@ export type AgencyActionErrorCode =
    */
   | 'not_staffed'
   /**
-   * `POST /sessions/:id/break` with the mobile app's `device_away` reason refused (409):
+   * `POST /sessions/:id/break` with the mobile app's `device_away` or `phone_call` reason refused (409):
    * the agent's state kept changing under the request (every compare-and-swap lost to a
    * reservation or a release, re-decided and lost again). Nothing changed; retry. A
    * concurrency refusal, not a fault, so it is a 4xx the error mask passes unchanged.

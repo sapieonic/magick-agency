@@ -215,5 +215,16 @@
     "state": "break",
     "since": "2026-11-01T06:52:03.100Z",
     "break_reason": "device_away"
+  },
+  "break_request_phone_call": {
+    "reason": "phone_call"
+  },
+  "session_state_phone_call": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "break",
+    "since": "2026-11-01T07:14:40.200Z",
+    "break_reason": "phone_call"
   }
 }

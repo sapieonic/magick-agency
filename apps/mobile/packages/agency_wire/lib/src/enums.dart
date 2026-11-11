@@ -260,11 +260,18 @@ enum SessionKind implements WireEnum {
 /// offered in a campaign's `break_reasons`.
 ///
 /// Contract: `RESERVED_BREAK_REASONS` (`agency/breaks.ts`): `soft_phone`
-/// (`SOFTPHONE_BREAK_REASON`) and `device_away` (`DEVICE_AWAY_BREAK_REASON`, the
-/// break the app takes when it leaves the foreground while `available`).
+/// (`SOFTPHONE_BREAK_REASON`), `device_away` (`DEVICE_AWAY_BREAK_REASON`, the
+/// break the app takes when it leaves the foreground while `available`) and
+/// `phone_call` (`PHONE_CALL_BREAK_REASON`, IQ51: the break the app takes for
+/// the length of a cellular call that starts while `available`).
 enum ReservedBreakCode implements WireEnum {
   softPhone('soft_phone'),
   deviceAway('device_away'),
+
+  /// IQ51: on a cellular call. Asked like [deviceAway] (the server's same
+  /// rules), lifted by the ordinary `/available` when the call ends; supervisors
+  /// see "On a phone call".
+  phoneCall('phone_call'),
   unknown('');
 
   const ReservedBreakCode(this.wire);

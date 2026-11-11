@@ -173,6 +173,7 @@
     "source": "packages/contracts/src/agency/breaks.ts#RESERVED_BREAK_REASONS",
     "values": [
       "device_away",
+      "phone_call",
       "soft_phone"
     ]
   },

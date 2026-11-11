@@ -75,6 +75,8 @@ final Map<String, Map<String, Decoder>> decoders = {
     'session_state_left': SessionStateResponse.fromJson,
     'break_request_device_away': (j) => SessionBreakRequest(j['reason']! as String),
     'session_state_device_away': SessionStateResponse.fromJson,
+    'break_request_phone_call': (j) => SessionBreakRequest(j['reason']! as String),
+    'session_state_phone_call': SessionStateResponse.fromJson,
     'conflict_other_campaign': (j) => ErrorBody.fromJson(j).campaignConflict ?? (throw StateError('no conflict')),
     'conflict_softphone': (j) => ErrorBody.fromJson(j).softphoneConflict ?? (throw StateError('no conflict')),
   },
