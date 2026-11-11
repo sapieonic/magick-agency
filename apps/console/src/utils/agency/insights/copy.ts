@@ -83,7 +83,7 @@ export const ASSIGNMENT_MODE_LABELS: Record<AgencyAssignmentMode, string> = {
 
 export const IDLE_REASON_LABELS: Record<AgencyPacingIdleReason | 'outside_calling_hours', string> = {
   no_agents: 'No agents free',
-  no_slots: 'At the concurrency limit',
+  no_slots: 'All lines in use',
   no_contacts: 'No contacts left to dial',
   no_reservations: 'Could not reserve an agent',
   no_caller_ids: 'No caller ID available',
