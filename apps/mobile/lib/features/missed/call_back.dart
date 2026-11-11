@@ -32,38 +32,16 @@ String callBackRoute(StationSignals signals) {
   return onStation ? Routes.station(campaignId) : Routes.phone;
 }
 
-/// Where a Call back's number lands, for what the agent is told.
-enum CallBackLanding {
-  /// On the pad at once: nothing is said.
-  now,
-
-  /// The soft phone is open here with a call on it: the number waits for that
-  /// call to settle.
-  afterCall,
-
-  /// The soft phone is not open here yet: the number waits five minutes for it.
-  onceOpen,
-
-  /// The soft phone is open on another device or in another account: the
-  /// number is not kept (the soft phone drops it), and nothing is promised.
-  elsewhere,
-}
-
-/// Where the number lands, from the soft phone's view and the station's
-/// signals (the seams; the soft phone decides the same from its own state).
-CallBackLanding callBackLanding(StationSignals signals, SoftphoneView view) {
-  if (callBackRoute(signals) == Routes.phone) {
-    final screen = view.screen;
-    if (screen is SoftphoneScreenOtherDevice ||
-        screen is SoftphoneScreenElsewhere ||
-        screen is SoftphoneScreenOffStranded ||
-        screen is SoftphoneScreenOff) {
-      return CallBackLanding.elsewhere;
-    }
-    if (screen is! SoftphoneScreenActive) return CallBackLanding.onceOpen;
-  }
-  return view.callId != null || view.placing ? CallBackLanding.afterCall : CallBackLanding.now;
-}
+/// What the agent is told after pressing Call back, from where the soft phone says the number
+/// stands ([SoftphoneView.callBackWaiting], the soft phone's one decision): nothing when it is
+/// on the pad or lands in a moment; why it waits otherwise; that it was not kept when the soft
+/// phone is open elsewhere.
+(String key, String text)? callBackNotice(CallBackWaiting waiting) => switch (waiting) {
+      CallBackWaiting.none || CallBackWaiting.setup => null,
+      CallBackWaiting.afterCall => ('missed-call-back-after-call', MissedCopy.callBackAfterCall),
+      CallBackWaiting.onceOpen => ('missed-call-back-waits', MissedCopy.callBackWaits),
+      CallBackWaiting.notKept => ('missed-call-back-elsewhere', MissedCopy.callBackElsewhere),
+    };
 
 /// Hands the number to the soft phone and goes to it, and says when the
 /// number is not on the pad at once. A withheld caller has nothing to call
@@ -72,15 +50,10 @@ void startCallBack(BuildContext context, WidgetRef ref, InboundMissedCall call) 
   final number = call.fromE164;
   if (number == null) return;
   final signals = ref.read(stationSignalsProvider);
-  final landing = callBackLanding(signals, ref.read(softphoneViewProvider));
   ref.read(softphoneActionsProvider).callBack(number, campaignId: call.matchedCampaignId);
+  // Read after the hand-off: the soft phone has decided where the number stands.
+  final notice = callBackNotice(ref.read(softphoneViewProvider).callBackWaiting);
   final messenger = ScaffoldMessenger.maybeOf(context);
   context.go(callBackRoute(signals));
-  final (key, text) = switch (landing) {
-    CallBackLanding.now => (null, null),
-    CallBackLanding.afterCall => ('missed-call-back-after-call', MissedCopy.callBackAfterCall),
-    CallBackLanding.onceOpen => ('missed-call-back-waits', MissedCopy.callBackWaits),
-    CallBackLanding.elsewhere => ('missed-call-back-elsewhere', MissedCopy.callBackElsewhere),
-  };
-  if (key != null && text != null) messenger?.showSnackBar(SnackBar(key: Key(key), content: Text(text)));
+  if (notice case (final key, final text)) messenger?.showSnackBar(SnackBar(key: Key(key), content: Text(text)));
 }

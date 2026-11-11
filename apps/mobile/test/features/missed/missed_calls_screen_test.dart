@@ -186,7 +186,7 @@ void main() {
     });
 
     testWidgets('with the soft phone not open yet, the agent is told it waits five minutes for it', (tester) async {
-      await open(tester, [missed('m1')]);
+      await open(tester, [missed('m1')], view: const SoftphoneView(callBackWaiting: CallBackWaiting.onceOpen));
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
       expect(find.text('at /phone'), findsOneWidget);
@@ -212,7 +212,7 @@ void main() {
         tester,
         [missed('m1')],
         signals: const StationSignals(onDuty: true, onBreak: true, campaignId: 'c1', onSoftphone: true, outcomeOwed: true),
-        view: const SoftphoneView(phase: SoftphonePhase.outcome, callId: 'mc-1'),
+        view: const SoftphoneView(phase: SoftphonePhase.outcome, callId: 'mc-1', callBackWaiting: CallBackWaiting.afterCall),
       );
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
@@ -222,13 +222,29 @@ void main() {
     });
 
     testWidgets('with the soft phone open on another device, nothing is promised', (tester) async {
-      await open(tester, [missed('m1')], view: const SoftphoneView(screen: SoftphoneScreenOtherDevice()));
+      await open(
+        tester,
+        [missed('m1')],
+        view: const SoftphoneView(screen: SoftphoneScreenOtherDevice(), callBackWaiting: CallBackWaiting.notKept),
+      );
       await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
       await tester.pumpAndSettle();
       expect(find.text('at /phone'), findsOneWidget, reason: 'where "Use it on this phone" is');
       expect(find.byKey(const Key('missed-call-back-elsewhere')), findsOneWidget);
       expect(find.byKey(const Key('missed-call-back-waits')), findsNothing);
       expect(MissedCopy.callBackElsewhere, isNot(contains('ready')));
+    });
+
+    testWidgets('the soft phone open, its setup still being read: nothing is said, the number lands in a moment',
+        (tester) async {
+      await open(
+        tester,
+        [missed('m1')],
+        view: const SoftphoneView(screen: SoftphoneScreenActive(), callBackWaiting: CallBackWaiting.setup),
+      );
+      await tester.tap(inRow('m1', find.byKey(const Key('missed-call-back'))));
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsNothing);
     });
 
     testWidgets('not offered where the soft phone is not on (hidden, or finish mode), and the note says why', (tester) async {

@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:magick_agency_agent/core/softphone/call_fields.dart' show fieldRequiredCopy;
 import 'package:magick_agency_agent/core/softphone/refusal_copy.dart';
-import 'package:magick_agency_agent/core/softphone/softphone_controller.dart' show callBackWaitsFor, resumeRereadAfter;
+import 'package:magick_agency_agent/core/softphone/softphone_controller.dart' show resumeRereadAfter;
 import 'package:magick_agency_agent/core/softphone/softphone_copy.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
@@ -413,12 +413,106 @@ void main() {
       (h) {
         expect(h.view.screen, const SoftphoneScreenOtherDevice(canClose: true));
         h.actions.callBack('+918765432109', campaignId: 'camp-1');
+        expect(h.view.callBackWaiting, CallBackWaiting.notKept);
         h.run(h.actions.open()); // "Use it on this phone"
         expect(h.view.screen, const SoftphoneScreenActive());
         expect(h.view.number, '');
         expect(h.view.focusCallToken, 0);
       },
       before: (h) => h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'session': sessionSummary()})),
+    );
+
+    softphoneTest('pressed while a dial is in flight: that dial\'s refusal stays, and the number waits for it', (h) {
+      h.openWith();
+      final answer = Completer<http.Response>();
+      h.routes['POST $callsPath'] = (_) => answer.future;
+      fire(h.actions.dial());
+      h.pump();
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      expect(h.view.callBackWaiting, CallBackWaiting.afterCall);
+      answer.complete(json(409, {'error': 'Conflict', 'code': 'contact_assigned_elsewhere', 'message': 'no'}));
+      h.pump();
+      final refused = h.view.dialError;
+      expect(refused, isNotNull);
+      expect(h.view.number, '9820461733', reason: 'the refused number stays with its refusal');
+      expect(h.view.callBackWaiting, CallBackWaiting.afterCall);
+      h.pump();
+      expect(h.view.dialError, refused, reason: 'never erased by the waiting number');
+      // Time spent on the refusal does not count against the wait.
+      h.async.elapse(const Duration(minutes: 6));
+      h.pump();
+      expect(h.view.dialError, refused);
+      h.actions.dismissDialError();
+      expect(h.view.number, '+918765432109');
+      expect(h.view.tagCampaignId, 'camp-1');
+      expect(h.view.focusCallToken, 1);
+      expect(h.view.callBackWaiting, CallBackWaiting.none);
+      expect(h.dials, hasLength(1), reason: 'only the agent\'s own dial');
+    });
+
+    softphoneTest('a dial refused for DNC while it waited: the override prompt stays until the agent closes it', (h) {
+      h.openWith();
+      final answer = Completer<http.Response>();
+      h.routes['POST $callsPath'] = (_) => answer.future;
+      fire(h.actions.dial());
+      h.pump();
+      h.actions.callBack('+918765432109', campaignId: 'camp-1');
+      answer.complete(json(409, dncRefusal));
+      h.pump();
+      expect(h.view.overridePrompt, isNotNull, reason: 'the agent\'s own refusal, to answer');
+      expect(h.view.number, '9820461733');
+      h.actions.cancelOverride();
+      expect(h.view.overridePrompt, isNull);
+      expect(h.view.number, '+918765432109');
+    });
+
+    softphoneTest('a dial that went through while it waited: on the pad once that call settles', (h) {
+      h.openWith();
+      final answer = Completer<http.Response>();
+      h.routes['POST $callsPath'] = (_) => answer.future;
+      fire(h.actions.dial());
+      h.pump();
+      h.actions.callBack('+918765432109');
+      answer.complete(json(201, manualCallJson()));
+      h.pump();
+      expect(h.view.callId, isNotNull);
+      expect(h.view.callBackWaiting, CallBackWaiting.afterCall);
+      h.host.view = copyHost(h.host.view!, clearCall: true);
+      h.pump();
+      expect(h.view.number, '+918765432109');
+    });
+
+    softphoneTest('where it stands, on the view: the soft phone\'s one decision', (h) {
+      // Not open here yet.
+      h.actions.callBack('+918765432109');
+      expect(h.view.callBackWaiting, CallBackWaiting.onceOpen);
+      // Open here, its setup for this session not read yet: in a moment.
+      final bootstrap = Completer<http.Response>();
+      h.routes[bootstrapPath] = (_) => bootstrap.future;
+      h.host.view = hostView(sessionId: 'sess-sp-2');
+      h.pump();
+      expect(h.view.screen, isA<SoftphoneScreenActive>());
+      expect(h.view.callBackWaiting, CallBackWaiting.setup);
+      expect(h.view.number, '');
+      bootstrap.complete(json(200, bootstrapJson()));
+      h.pump();
+      expect(h.view.number, '+918765432109');
+      expect(h.view.callBackWaiting, CallBackWaiting.none);
+      // Behind a call.
+      h.host.view = copyHost(h.host.view!, call: ringing({'id': 'mc-9'}));
+      h.pump();
+      h.actions.callBack('+919822001144');
+      expect(h.view.callBackWaiting, CallBackWaiting.afterCall);
+    });
+
+    softphoneTest(
+      'a campaign station not switched to the soft phone: waits for the switch',
+      (h) {
+        h.host.view = campaignHost(onSoftphone: false);
+        h.pump();
+        h.actions.callBack('+918765432109');
+        expect(h.view.callBackWaiting, CallBackWaiting.onceOpen);
+      },
     );
 
     softphoneTest('an open override prompt goes: "Call anyway" never dials the old number under the new tag', (h) {

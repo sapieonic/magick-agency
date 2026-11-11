@@ -144,11 +144,6 @@ final class _Override {
   final String to;
 }
 
-/// How long a Missed call's Call back waits for the soft phone to take it
-/// ([SoftphoneController.callBack]). Time spent behind a call on screen does
-/// not count: the clock starts again when that call settles.
-const callBackWaitsFor = Duration(minutes: 5);
-
 /// A Missed call's Call back waiting for the pad.
 final class _CallBack {
   _CallBack(this.number, this.campaignId, this.askedAt, this.sessionId);
@@ -164,6 +159,10 @@ final class _CallBack {
 
   /// A call on screen held it at the last look.
   bool behindCall = false;
+
+  /// It waited for a soft-phone dial in flight: a refusal of that dial holds it too, until a
+  /// call settles or the agent dismisses the refusal (it never erases the refusal).
+  bool behindDial = false;
 }
 
 class SoftphoneController extends Notifier<SoftphoneCoreState> implements SoftphoneActions {
@@ -228,6 +227,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   /// A Missed call's Call back waiting for the soft phone ([callBack]).
   _CallBack? _pendingCallBack;
 
+  /// Where the last Call back stands ([SoftphoneView.callBackWaiting]).
+  CallBackWaiting _callBackWaiting = CallBackWaiting.none;
+
   /// How the number got onto the pad, for `agency_softphone_call_placed`
   /// (the console's `entry`): `typed`, `pasted`, `redial` or `inbound_callback`.
   String _entry = 'typed';
@@ -237,6 +239,11 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   // ── Dial ──
   bool _placing = false;
   String? _dialError;
+
+  /// A call this phone just placed, until the host shows it: the dial's answer lands before
+  /// the station's copy reaches this controller, and a waiting Call back must not take the pad
+  /// in between (the call's settle would then clear it).
+  String? _placedNotShown;
 
   /// The call an `outcome_pending` / `manual_call_live` refusal named: its
   /// arrival on screen keeps the refusal's sentence.
@@ -339,9 +346,11 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _tagDraft = null;
     _presetFor = null;
     _pendingCallBack = null;
+    _callBackWaiting = CallBackWaiting.none;
     _disabledSeen = false;
     _disabledAtSeq = null;
     _placing = false;
+    _placedNotShown = null;
     _dialError = null;
     _override = null;
     _overrideError = null;
@@ -508,6 +517,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void _onHost(SoftphoneHostView? next) {
     final prev = _host;
     _host = next;
+    if (_placedNotShown != null &&
+        (next == null || next.sessionId != prev?.sessionId || next.call?.id == _placedNotShown)) {
+      _placedNotShown = null;
+    }
     _trackHostedHere(next);
     if (prev?.sessionId != next?.sessionId) {
       // A waiting Call back is for the session hosted when it was asked for,
@@ -640,10 +653,12 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     }
   }
 
-  void _adopt(ManualCall call) {
+  /// The dial's answer to the host; false when it is not this session's call.
+  bool _adopt(ManualCall call) {
     final host = _host;
-    if (host == null || call.sessionId != host.sessionId) return;
+    if (host == null || call.sessionId != host.sessionId) return false;
     _actions.adoptManualCall(call);
+    return true;
   }
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -1342,7 +1357,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       if (epoch != _epoch) return;
       _placing = false;
       _override = null;
-      _adopt(call);
+      if (_adopt(call)) _placedNotShown = call.id;
     } on ApiError catch (e) {
       if (epoch != _epoch) return;
       _placing = false;
@@ -1484,6 +1499,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   @override
   void callBack(String number, {String? campaignId}) {
     _pendingCallBack = _CallBack(number, campaignId, _now(), _host?.sessionId);
+    _callBackWaiting = CallBackWaiting.none;
     _emit();
   }
 
@@ -1491,7 +1507,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   /// a session open here (the soft phone's own, or a campaign switched to it)
   /// whose bootstrap was read for it, nothing on screen, not in finish mode.
   /// A call live or owing its outcome keeps the screen: the number waits until
-  /// it settles (the console's `presetNumber`). Run before every emit.
+  /// it settles (the console's `presetNumber`). So does a dial in flight, and
+  /// then that dial's refusal (its words, or its override prompt): the number
+  /// waits until a call settles or the agent dismisses the refusal, and never
+  /// erases it. Run before every emit; [_callBackWaiting] says where it stands.
   ///
   /// It lapses: [callBackWaitsFor] after it was asked for (or after the call
   /// it waited behind settled), on a session change ([_onHost]), when the
@@ -1500,18 +1519,35 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   /// take it.
   void _applyCallBack() {
     final pending = _pendingCallBack;
-    if (pending == null) return;
-    if (_call != null || _placing) {
-      pending.behindCall = true;
+    if (pending == null) {
+      if (_callBackWaiting != CallBackWaiting.notKept) _callBackWaiting = CallBackWaiting.none;
       return;
     }
+    void wait(CallBackWaiting why) => _callBackWaiting = why;
+    void drop({bool kept = true}) {
+      _pendingCallBack = null;
+      _callBackWaiting = kept ? CallBackWaiting.none : CallBackWaiting.notKept;
+    }
+
+    if (_call != null || _placing || _placedNotShown != null) {
+      pending.behindCall = true;
+      if (_placing && _call == null) pending.behindDial = true;
+      wait(CallBackWaiting.afterCall);
+      return;
+    }
+    // The dial it waited for was refused: the refusal is the agent's to read and act on.
+    if (pending.behindDial && (_dialError != null || _override != null)) {
+      wait(CallBackWaiting.afterCall);
+      return;
+    }
+    pending.behindDial = false;
     final now = _now();
     if (pending.behindCall) {
       pending.behindCall = false;
       pending.askedAt = now;
     }
     if (now.difference(pending.askedAt) >= callBackWaitsFor) {
-      _pendingCallBack = null;
+      drop();
       return;
     }
     final host = _host;
@@ -1521,19 +1557,30 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
           screen is SoftphoneScreenElsewhere ||
           screen is SoftphoneScreenOffStranded ||
           screen is SoftphoneScreenOff) {
-        _pendingCallBack = null;
+        drop(kept: false);
+      } else {
+        wait(CallBackWaiting.onceOpen);
       }
       return;
     }
     if (host.link == StationLink.superseded) {
-      _pendingCallBack = null;
+      drop(kept: false);
+      return;
+    }
+    if (host.kind == SessionKind.campaign && !host.onSoftphone) {
+      wait(CallBackWaiting.onceOpen);
       return;
     }
     final b = _bootstrap;
-    if (b == null || _bootstrapFor != host.sessionId) return;
-    if (host.kind == SessionKind.campaign && !host.onSoftphone) return;
-    if (_finishOnly) return;
-    _pendingCallBack = null;
+    if (b == null || _bootstrapFor != host.sessionId) {
+      wait(CallBackWaiting.setup);
+      return;
+    }
+    if (_finishOnly) {
+      wait(CallBackWaiting.onceOpen);
+      return;
+    }
+    drop();
     _number = sanitiseDialInput(pending.number);
     final tag = pending.campaignId;
     // The matched campaign is "Log to" only where the agent may log to it;
@@ -2056,6 +2103,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       bootstrapError: _bootstrapError,
       announcement: _announcement,
       announcementSeq: _announcementSeq,
+      callBackWaiting: _callBackWaiting,
     );
     return SoftphoneCoreState(view: view, availability: _availability());
   }
