@@ -191,11 +191,11 @@ export interface AgencyInboundRouteConfig {
    * with auto-return: the outcome lapses `no_disposition` and the agent is returned when it ends
    * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS} stays the backstop). Captured on the call when it
    * arrives, so editing or deleting the route never moves a countdown already shown. Always stored
-   * and served (30 by default, `0032_inbound_route_wrapup.sql`); optional in this type only so a
-   * client written before it still typechecks, and a create or PATCH that leaves it out keeps the
-   * default or the stored value.
+   * and served (30 by default, `0032_inbound_route_wrapup.sql`). A create or PATCH that leaves it
+   * out keeps the default or the stored value (the request types make every field but the name
+   * and zone optional).
    */
-  wrapup_seconds?: number;
+  wrapup_seconds: number;
 }
 
 /**

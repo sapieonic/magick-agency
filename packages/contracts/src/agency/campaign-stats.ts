@@ -161,13 +161,12 @@ export interface AgencySupervisorAgent {
    * — never offered an inbound caller nor counted as one who could take one — which the floor marks
    * "App can't take inbound calls — update the app". `null`: no live station held by the process
    * that served this read (none at all, or, with media workers, one a worker holds: such a
-   * deployment never puts inbound callers through, IB8, so the question does not arise). Optional
-   * on the wire like `inbound_outcome_owed`: absent from a server that predates it.
+   * deployment never puts inbound callers through, IB8, so the question does not arise).
    *
    * **Composed by the ROUTE** ({@link AGENCY_AGENT_ROUTE_FIELDS}): the capability lives on the
    * live socket (`StationRegistry`), never the session row.
    */
-  can_take_inbound?: boolean | null;
+  can_take_inbound: boolean | null;
 }
 
 /**

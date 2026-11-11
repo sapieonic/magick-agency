@@ -519,10 +519,9 @@ export interface AgencyInboundMissedCall {
    * IQ54: the matched contact's display name (the roster's `name`, `full_name`, `customer_name` or
    * `first_name` column, the first that has one, trimmed, at most 100 characters: the name the
    * "customer is waiting" notice shows); null when the caller matched no contact, withheld their
-   * number, or the contact has no name. Shown above the number. Always sent by this build;
-   * optional only so a client written before it still typechecks.
+   * number, or the contact has no name. Shown above the number.
    */
-  match_name?: string | null;
+  match_name: string | null;
   matched_contact_id: string | null;
   matched_campaign_id: string | null;
   matched_campaign_name: string | null;

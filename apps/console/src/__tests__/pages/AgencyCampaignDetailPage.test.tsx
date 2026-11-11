@@ -156,6 +156,7 @@ function wrappingAgent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervi
     calls_handled: 7,
     client_kind: 'web',
     on_inbound_call: false,
+    can_take_inbound: true,
     ...over,
   };
 }
