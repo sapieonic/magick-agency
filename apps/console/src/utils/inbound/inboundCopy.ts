@@ -77,7 +77,7 @@ export const STICKY_MODE_LABELS: Record<AgencyInboundStickyMode, { label: string
   },
   strict: {
     label: 'Wait for their agent',
-    hint: 'While their agent is on a call or finishing one, the caller waits for them, up to the longest wait; if nobody answers, the follow-up is theirs. If their agent is offline, on a break or on the phone app, the team answers at once.',
+    hint: 'While their agent is on a call or finishing one, the caller waits for them, up to the longest wait; if nobody answers, the follow-up is theirs. If their agent is offline, on a break or on an older version of the phone app, the team answers at once.',
   },
   off: { label: 'Off', hint: 'Every caller goes to the team, longest idle agent first.' },
 };

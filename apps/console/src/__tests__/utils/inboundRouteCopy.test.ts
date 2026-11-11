@@ -34,7 +34,7 @@ describe('what each clip slot plays with no recording of the account’s', () =>
 describe('the sticky modes', () => {
   it('“Wait for their agent” says an agent who is away sends the caller to the team at once', () => {
     expect(STICKY_MODE_LABELS.strict.label).toBe('Wait for their agent');
-    expect(STICKY_MODE_LABELS.strict.hint).toMatch(/offline, on a break or on the phone app, the team answers at once/);
+    expect(STICKY_MODE_LABELS.strict.hint).toMatch(/offline, on a break or on an older version of the phone app, the team answers at once/);
     expect(STICKY_MODE_LABELS.strict.label).not.toMatch(/Only/);
   });
 });

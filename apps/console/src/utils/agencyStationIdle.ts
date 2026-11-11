@@ -18,7 +18,7 @@ export const IDLE_WAITING_HINT =
   'Stay on this screen so the next customer reaches you.';
 
 export const IDLE_PAUSED_HINT =
-  'Nothing will be sent to you until the campaign is running again.';
+  'Customers who ring in can still reach you. Campaign calls start again when it’s running.';
 
 export const IDLE_GUIDE_HEADING = 'When a call connects';
 

@@ -134,7 +134,7 @@ export const INBOUND_DNC_ENQUIRY_COPY =
 /** Why the panel calls the caller "your customer" (`sticky.is_you`). */
 export const STICKY_REASON_COPY: Record<AgencyInboundStickyReason, string> = {
   owner: 'Your customer: their contact is assigned to you',
-  last_from_number: 'Your customer: you took their last call',
+  last_from_number: 'Your customer: you last called them from this number',
   last_connected: 'Your customer: you last spoke to them',
   last_dialled: 'Your customer: you last called them',
 };
@@ -277,7 +277,7 @@ export function customerWaitingLine(frame: AgencyStationCustomerWaitingFrame): s
 
 /** The pill's title: what happens next. */
 export const CUSTOMER_WAITING_HINT =
-  'A customer who usually speaks to you has rung in. You’ll be put through when this call’s work is done.';
+  'A customer who usually speaks to you has rung in and is on hold. Finish this call’s work soon to take them.';
 
 function capitalise(text: string): string {
   return text ? text[0]!.toUpperCase() + text.slice(1) : text;
