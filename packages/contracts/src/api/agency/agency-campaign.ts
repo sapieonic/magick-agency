@@ -141,6 +141,17 @@ export interface AgencyColumnAnalysis {
  */
 export const AGENCY_MAX_DEDUPE_COLUMNS = 3;
 
+/**
+ * A duplicate key's columns as one name: `Loan No + Branch`. The one place the
+ * separator is chosen: the ingest writes it into a `duplicate_key` rejection's
+ * `column` (and so the rejected-rows export), Insights readiness into its detail,
+ * and the console into its notes and summaries. `null` for no key (the phone
+ * dedupe, or none).
+ */
+export function dedupeKeyName(columns: readonly string[]): string | null {
+  return columns.length > 0 ? columns.join(' + ') : null;
+}
+
 /** `POST /proxy/agency/ingest/jobs` request. */
 export interface AgencyIngestRequest {
   s3_key: string;

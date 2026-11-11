@@ -2,7 +2,7 @@ import { formatDate } from '@magick-agency/web-ui/format';
 import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import { carrierAccountPauseCopy } from './agencyCarriers';
-import { dedupeKeyName } from './agencyColumnMapping';
+import { dedupeKeyName } from '../types/agency-campaign';
 
 /**
  * The copy decisions for the campaign Activity view, kept pure so the ones that

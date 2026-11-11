@@ -5,7 +5,7 @@ import { useTenant } from '../../../../contexts/TenantContext';
 import { getInsightsSummary, getInsightsUploads } from '../../../../api/agencyInsights';
 import type { AgencyInsightsSummary, AgencyInsightsTransition, AgencyInsightsUploads } from '../../../../types/agency-insights';
 import { formatCount } from '../../../../utils/format/number';
-import { dedupeKeyName } from '../../../../utils/agencyColumnMapping';
+import { dedupeKeyName } from '../../../../types/agency-campaign';
 import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../utils/agency/insights/copy';
 import { Panel, SectionBody } from './InsightsParts';
 import { UploadsSection } from './UploadsSection';

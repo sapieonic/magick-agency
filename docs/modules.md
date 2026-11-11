@@ -185,7 +185,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
-| `apps/server/test/unit/agency/agency-ingest.service.test.ts` | 52 + 1 `it.fails` (a DNC row claims its key) |
+| `apps/server/test/unit/agency/agency-ingest.service.test.ts` | 53 (a DNC row claims its key, as ruled) |
 | `apps/server/test/unit/agency/agency-internal-ingest-ownership.test.ts` | 16 |
 | `apps/server/test/unit/agency/agency-join-result.test.ts` | 7 |
 | `apps/server/test/unit/agency/agency-proxy-path-traversal.test.ts` | 83 |

@@ -3,7 +3,7 @@ import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import type { AgencyInsightsUpload, AgencyInsightsUploads } from '../../../../types/agency-insights';
 import { downloadRejectedRows } from '../../../../api/agencyCampaigns';
 import { formatCount } from '../../../../utils/format/number';
-import { dedupeKeyName } from '../../../../utils/agencyColumnMapping';
+import { dedupeKeyName } from '../../../../types/agency-campaign';
 import { actorName, formatZoned, rejectReasonLabel } from '../../../../utils/agency/insights/copy';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import { outcomeReportFilename } from '../../../../api/exportCsv';

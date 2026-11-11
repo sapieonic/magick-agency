@@ -467,17 +467,19 @@ describe('AgencyIngestService', () => {
     expect(progress).toMatchObject({ accepted: 2, rejected: 1, duplicates: 1 });
   });
 
-  // Open defect, pinned (docs/decisions.md §4, "DNC row claims its key"): the key is
-  // claimed in the CSV pass, the DNC check runs later per batch, so a suppressed row
-  // still holds its key and a later row with the same key on a callable number is
-  // dropped as a duplicate. Flip to `it` when the DNC check runs before the claim.
-  it.fails('a DNC-suppressed row does not take its duplicate key from a later, callable row', async () => {
+  // Ruled 2026-11-11 (docs/decisions.md §4, "DNC row claims its key"): kept as built.
+  // The key is claimed in the CSV pass and the DNC check runs later per batch, so a
+  // suppressed row still holds its key and a later row with the same key, even on a
+  // callable number, is dropped as a duplicate.
+  it('a DNC-suppressed row keeps its duplicate key: a later row with the same key is a duplicate', async () => {
     mocks.filterSuppressed.mockResolvedValue(new Set(['+919876543210']));
     csvStream('Mobile,Loan No,Branch\n+919876543210,LN-1,Pune\n+919800000002,LN-1,Pune\n');
     await service.run({ job: job({ dedupe_columns: ['Loan No', 'Branch'] }) });
 
     const sent = mocks.sendRosterChunk.mock.calls.flatMap((call) => (call[0] as { contacts: Array<{ phone_e164: string }> }).contacts);
-    expect(sent.map((c) => c.phone_e164)).toEqual(['+919800000002']);
+    expect(sent).toEqual([]);
+    const { progress } = mocks.repo.complete.mock.calls[0]![1];
+    expect(progress).toMatchObject({ duplicates: 1 });
   });
 
   // ── DNC suppression at ingest ──────────────────────────────

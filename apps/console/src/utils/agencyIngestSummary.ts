@@ -1,8 +1,9 @@
-import type {
-  AgencyIngestJob,
-  AgencyIngestReasonCode,
+import {
+  dedupeKeyName,
+  type AgencyIngestJob,
+  type AgencyIngestReasonCode,
 } from '../types/agency-campaign';
-import { combinationMatch, dedupeKeyName } from './agencyColumnMapping';
+import { combinationMatch } from './agencyColumnMapping';
 
 /**
  * The ingest summary, as arithmetic (requirement: *the counts

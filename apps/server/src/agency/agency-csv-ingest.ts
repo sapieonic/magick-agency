@@ -1,6 +1,7 @@
 import { parse, type Info } from 'csv-parse';
 import { Transform, type Readable } from 'node:stream';
 import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
+import { dedupeKeyName } from '@magick-agency/contracts/api/agency/agency-campaign';
 
 /**
  * Streaming CSV ingest for Agency Dialer campaign rosters.
@@ -676,7 +677,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
         // number rather than the raw text. In a combination it is one part,
         // still compared as the normalised number (`rowKey`).
         if (keyIndexes.length === 1 && keyIndexes[0] === phoneIndex) keyIndexes = [];
-        keyLabel = keyIndexes.map((i) => headers[i]!).join(' + ');
+        keyLabel = dedupeKeyName(keyIndexes.map((i) => headers[i]!)) ?? '';
         // A key that came down to the phone alone is the phone dedupe whatever
         // `dedupePhones` says (the route refuses a key with `dedupe_phones: false`).
         dedupeMode = keyIndexes.length > 0
@@ -816,7 +817,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
       // loan number. A row the DNC check later suppresses DOES claim it (that
       // check runs in the service's `onBatch`, after this one), so a later row
       // with the same key on another, callable number is dropped as a duplicate:
-      // open in docs/decisions.md §4, "DNC row claims its key".
+      // kept by ruling, docs/decisions.md §4, "DNC row claims its key".
       // The reason names the columns and never their values, which may sit in an
       // ignored column the rejected-rows export must not leak.
       if (dedupeMode === 'column') {
