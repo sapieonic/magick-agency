@@ -205,12 +205,19 @@ describe('ProfileMenu — who, theme and sign out', () => {
   });
 
   it('leaves an Escape another layer took (search above it) alone', () => {
-    renderTopBar();
-    openMenu();
-    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-    event.preventDefault();
-    document.dispatchEvent(event);
-    expect(screen.getByTestId('profile-menu')).toBeTruthy();
+    // The layer above handles the Escape first and marks it handled.
+    const above = (e: KeyboardEvent) => e.preventDefault();
+    document.addEventListener('keydown', above, { capture: true });
+    try {
+      renderTopBar();
+      openMenu();
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(screen.getByTestId('profile-menu')).toBeTruthy();
+    } finally {
+      document.removeEventListener('keydown', above, { capture: true });
+    }
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByTestId('profile-menu')).toBeNull();
   });
 
   it('makes initials from a name, or the email without one', () => {
