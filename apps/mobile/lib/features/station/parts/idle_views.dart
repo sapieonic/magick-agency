@@ -12,6 +12,7 @@ import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityP
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../../missed/missed_on_duty.dart';
+import '../../missed/rang_while_away.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
@@ -45,6 +46,8 @@ class WaitingView extends ConsumerWidget {
 
     return IdleLayout(
       body: [
+        // IQ50, IQ51: who rang while the agent was paused.
+        const RangWhileAwayNotice(),
         const RecentReleaseCard(),
         _StateCard(
           key: Key(nothingDue ? 'nothing-due-card' : 'waiting-card'),
@@ -224,6 +227,7 @@ class BreakView extends ConsumerWidget {
 
     return IdleLayout(
       body: [
+        const RangWhileAwayNotice(),
         _StateCard(
           key: const Key('break-card'),
           pill: StatusPill(
@@ -282,6 +286,7 @@ class AwayView extends ConsumerWidget {
 
     return IdleLayout(
       body: [
+        const RangWhileAwayNotice(),
         AppCard(
           key: const Key('away-card'),
           borderColor: t.warning.withValues(alpha: 0.35),

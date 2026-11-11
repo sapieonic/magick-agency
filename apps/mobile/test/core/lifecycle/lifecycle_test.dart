@@ -5,6 +5,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:magick_agency_agent/core/lifecycle/lifecycle_policy.dart';
+import 'package:magick_agency_agent/core/station/away_return.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
 import '../station/controller_harness.dart';
@@ -530,6 +531,38 @@ void main() {
         expect(app.requests('POST', availablePath), isEmpty);
         expect(app.view!.onBreak!.isDeviceAway, isTrue);
         app.dispose();
+      });
+    });
+
+    test('who rang while away (IQ50): every return from the pause is published, with when it began', () {
+      fakeAsync((async) {
+        final quick = pausedThenBack(async, const Duration(seconds: 29));
+        expect(quick.container.read(awayReturnProvider), AwayReturn(since: DateTime.utc(2026, 11, 1, 9), kind: AwayKind.app, seq: 1));
+        quick.dispose();
+        final slow = pausedThenBack(async, const Duration(minutes: 5));
+        expect(slow.container.read(awayReturnProvider)?.since, DateTime.utc(2026, 11, 1, 9), reason: 'not returned, still told');
+        slow.dispose();
+      });
+    });
+
+    test('a pause queued behind a call that applied while away is published too; a break of another reason is not',
+        () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inWrapup('att-1');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('wrapup', breakReason: 'device_away', pending: 'break'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'device_away', since: '2026-11-01T09:00:05.000Z');
+        async.elapse(const Duration(seconds: 10));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.container.read(awayReturnProvider)?.since, DateTime.utc(2026, 11, 1, 9, 0, 5));
+        app.dispose();
+
+        final other = pausedThenBackWithBreak(async);
+        expect(other.container.read(awayReturnProvider), isNull);
+        other.dispose();
       });
     });
 

@@ -127,6 +127,12 @@ abstract final class MissedCopy {
 
   static const close = 'Close';
 
+  /// IQ50, IQ51: back from a pause, the agent's own Missed rows that arrived meanwhile.
+  static String rangWhileAway(String badge, {bool phoneCall = false}) =>
+      '$badge customer${badge == '1' ? '' : 's'} rang while you were ${phoneCall ? 'on your phone call' : 'away'}';
+  static const seeMissedCalls = 'See missed calls';
+  static const dismiss = 'Dismiss';
+
   /// After Call back on duty, with the switch to the soft phone queued behind the station's
   /// call or wrap-up (SP7): the number goes on the pad once it applies.
   static const callBackSwitchQueued = 'Switching to the soft phone after this call. The number goes on the pad then; '

@@ -5,6 +5,7 @@ import 'package:agent_audio/agent_audio.dart' show PhoneCallChanged;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:magick_agency_agent/core/station/away_return.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart' show StationController;
 import 'package:magick_agency_agent/core/station/station_copy.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
@@ -57,6 +58,11 @@ void main() {
       async.elapse(const Duration(seconds: 5));
       phoneCall(app, false);
       expect(app.requests('POST', _availablePath), hasLength(1));
+      // Who rang meanwhile (IQ50's rule for the phone call): from when the pause began.
+      expect(
+        app.container.read(awayReturnProvider),
+        AwayReturn(since: DateTime.utc(2026, 11, 1, 9, 0, 1), kind: AwayKind.phoneCall, seq: 1),
+      );
       app.agentStateFrame('available', since: '2026-11-01T09:00:06.000Z');
       expect(app.view!.phase, AgentPhase.available);
       expect(pauses(app), hasLength(1));
@@ -90,6 +96,7 @@ void main() {
       async.elapse(const Duration(seconds: 5));
       expect(app.requests('POST', _availablePath), isEmpty);
       expect(app.view!.onBreak!.code, 'lunch');
+      expect(app.container.read(awayReturnProvider), isNull, reason: 'not the call\'s pause');
       app.dispose();
     });
   });
@@ -221,6 +228,7 @@ void main() {
       async.flushMicrotasks();
       expect(app.requests('POST', _availablePath), isEmpty);
       expect(app.view!.onBreak!.code, ReservedBreakCode.phoneCall.wire);
+      expect(app.container.read(awayReturnProvider)?.kind, AwayKind.phoneCall, reason: 'still told who rang');
       app.dispose();
     });
   });

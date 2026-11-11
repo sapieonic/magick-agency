@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
+import '../missed/rang_while_away.dart';
 import '../softphone/softphone_panel.dart';
 import 'parts/idle_views.dart';
 import 'parts/inbound_views.dart';
@@ -151,6 +152,8 @@ class _StationScreenState extends ConsumerState<StationScreen> {
     // The call on screen, campaign or inbound: a new call gets a new notes controller.
     final attemptId = ref.watch(stationViewProvider.select((v) => v?.callId));
     ref.listen<AgentPhase?>(stationViewProvider.select((v) => v?.phase), _onPhase);
+    // Built while the station is: a return from a pause is then asked about (IQ50).
+    ref.listen(rangWhileAwayProvider, (_, _) {});
 
     final notes = _notesController(attemptId);
     final still = MediaQuery.disableAnimationsOf(context);

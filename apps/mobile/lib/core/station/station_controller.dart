@@ -25,6 +25,7 @@ import '../softphone/softphone_host.dart';
 import '../softphone/softphone_view.dart' show SoftphonePhase;
 import '../telemetry/call_telemetry.dart';
 import '../telemetry/log.dart';
+import 'away_return.dart';
 import 'call_autosave.dart';
 import 'close_softphone.dart';
 import 'contact_context.dart';
@@ -218,6 +219,11 @@ class StationController extends Notifier<StationView?>
   ({DateTime back, DateTime asked})? _autoReturn;
   Timer? _autoReturnExpiry;
 
+  /// Back in the app: once the station says the agent is on a `device_away`
+  /// pause (asked at once or queued behind a call), that return is published
+  /// ([_maybeAnnounceReturn]).
+  bool _announceOnReturn = false;
+
   // IQ51: a cellular call while available.
   /// A phone call not the app's own is in progress (the audio engine's report,
   /// while it is asked for).
@@ -227,6 +233,7 @@ class StationController extends Notifier<StationView?>
   /// call, so a pause the agent ended themselves is not asked for again.
   bool _phoneCallAsked = false;
   bool _phoneCallInFlight = false;
+  DateTime? _phoneCallAskedAt;
 
   /// The server queued it behind a call reserved meanwhile: cancelled when the
   /// cellular call ends, as the away pause is on return.
@@ -616,6 +623,7 @@ class StationController extends Notifier<StationView?>
     _cancelAwayTimers();
     _cancelAutoReturn();
     _resetPhoneCall();
+    _announceOnReturn = false;
     _upgradeRefused = false;
     _readySeen = false;
     _mapper = StationViewMapper();
@@ -943,6 +951,7 @@ class StationController extends Notifier<StationView?>
     final inbound = _station.inboundOnScreen;
     s.inboundNotes.callChanged(inbound?.id, serverNotes: inbound?.notes, accepting: inbound != null);
     _applyLifecycle(s);
+    _maybeAnnounceReturn(s);
     _maybeAutoReturn(s);
     _syncPhoneCall(s);
     _emit();
@@ -1268,6 +1277,7 @@ class StationController extends Notifier<StationView?>
 
   void _onHide() {
     _foreground = false;
+    _announceOnReturn = false;
     // Gone again before the return was decided: the next return decides afresh.
     _cancelAutoReturn();
     // First, before anything else: the pause must leave while the OS still lets it.
@@ -1297,6 +1307,7 @@ class StationController extends Notifier<StationView?>
     // once the station says it applied (decided in [_maybeAutoReturn]).
     final askedAt = _awayAskedNowAt;
     _awayAskedNowAt = null;
+    _announceOnReturn = !s.hosted.isSoftphone;
     if (askedAt != null && !s.hosted.isSoftphone) {
       _cancelAutoReturn();
       _autoReturn = (back: _now(), asked: askedAt);
@@ -1385,7 +1396,6 @@ class StationController extends Notifier<StationView?>
     final pausedFor = since != null
         ? pending.back.add(Duration(milliseconds: _mapper.appliedOffsetMs)).difference(since)
         : pending.back.difference(pending.asked);
-    _onBackFromAway(since ?? pending.asked);
     if (!autoReturnsFromAway(pausedFor)) return;
     _log.info('back within the away window: returning to the pool', {'paused_ms': pausedFor.inMilliseconds});
     // Not inside the frame or change that decided it.
@@ -1406,6 +1416,7 @@ class StationController extends Notifier<StationView?>
     _phoneCallRetry?.cancel();
     _phoneCallRetry = null;
     _phoneCallReturnBy = null;
+    _phoneCallAskedAt = null;
   }
 
   /// On the `phone_call` break: the pause a cellular call put the agent on.
@@ -1451,6 +1462,7 @@ class StationController extends Notifier<StationView?>
     if (_station.effectiveState != AgentState.available || _pendingBreakCode != null) return;
     if (_station.inboundOnScreen != null || isCallUnsettled(_station.manualCall)) return;
     _phoneCallAsked = true;
+    _phoneCallAskedAt = _now();
     _phoneCallRetries = 0;
     _askPhoneCallPause(s);
   }
@@ -1528,13 +1540,22 @@ class StationController extends Notifier<StationView?>
   void _maybeReturnFromPhoneCall(_Session s) {
     final by = _phoneCallReturnBy;
     if (by == null) return;
-    if (!_now().isBefore(by) || _cellularCall) {
+    if (_cellularCall) {
       _phoneCallReturnBy = null;
+      return;
+    }
+    if (!_now().isBefore(by)) {
+      _phoneCallReturnBy = null;
+      // Back long after the call: still paused (the tap is theirs), and told who rang.
+      if (_foreground && _station.connection == StationConnection.open && _onPhoneCallBreak) {
+        _onBackFromAway(_phoneCallPausedAt(), AwayKind.phoneCall);
+      }
       return;
     }
     if (!_foreground || _station.connection != StationConnection.open || _phoneCallInFlight) return;
     if (_onPhoneCallBreak && _pendingBreakCode == null) {
       _phoneCallReturnBy = null;
+      _onBackFromAway(_phoneCallPausedAt(), AwayKind.phoneCall);
       _log.info('the phone call ended: returning to the pool');
       scheduleMicrotask(() {
         if (identical(_s, s)) unawaited(endBreak());
@@ -1545,10 +1566,43 @@ class StationController extends Notifier<StationView?>
     if (_station.effectiveState != AgentState.available) _phoneCallReturnBy = null;
   }
 
-  /// The agent came back to a `device_away` pause that began at [pausedAt].
-  // TODO(IQ50 phase 2): "N customers rang while you were away" reads the agent's own Missed
-  // rows since [pausedAt] once the count route takes a `since`; the station says it on return.
-  void _onBackFromAway(DateTime pausedAt) {}
+  /// [deviceInstant] (this phone's clock) on the server's clock.
+  DateTime _serverInstant(DateTime deviceInstant) => deviceInstant.add(Duration(milliseconds: _mapper.appliedOffsetMs));
+
+  /// Back in the app on a `device_away` pause, whatever asked for it and
+  /// whether or not it returns them on its own: published once, before the
+  /// return ([_maybeAutoReturn]) moves the agent on. Decided as the return is:
+  /// the socket open and no pause in flight; `available` waits while a return
+  /// is pending (the pause may still land); anything else drops it.
+  void _maybeAnnounceReturn(_Session s) {
+    if (!_announceOnReturn) return;
+    if (!_foreground || _terminal) {
+      _announceOnReturn = false;
+      return;
+    }
+    if (_station.connection != StationConnection.open || _awayInFlight) return;
+    final st = _station.effectiveState;
+    if (st == AgentState.onBreak && _station.breakReasonCode == ReservedBreakCode.deviceAway.wire) {
+      _announceOnReturn = false;
+      _onBackFromAway(_station.agentStateSince ?? _serverInstant(_autoReturn?.asked ?? _now()), AwayKind.app);
+      return;
+    }
+    if (st == AgentState.available && _autoReturn != null) return;
+    _announceOnReturn = false;
+  }
+
+  /// The agent came back from a pause that began at [pausedAt] (server clock),
+  /// returned on their own or not: published for the Missed feature, which
+  /// says how many customers rang meanwhile (IQ50, `rang_while_away.dart`).
+  void _onBackFromAway(DateTime pausedAt, AwayKind kind) {
+    if (!ref.mounted) return;
+    ref.read(awayReturnProvider.notifier).announce(pausedAt, kind);
+  }
+
+  /// When the `phone_call` pause began: the station's `since` while it shows,
+  /// else when it was asked for.
+  DateTime _phoneCallPausedAt() =>
+      (_onPhoneCallBreak ? _station.agentStateSince : null) ?? _serverInstant(_phoneCallAskedAt ?? _now());
 
   void _applyLifecycle(_Session s) {
     // A campaign call reads as one from its own frames (`effectiveState`).

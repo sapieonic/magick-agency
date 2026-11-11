@@ -7,11 +7,13 @@ import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
+import 'package:magick_agency_agent/core/station/away_return.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/missed/missed_access.dart';
 import 'package:magick_agency_agent/features/missed/missed_calls_copy.dart';
 import 'package:magick_agency_agent/features/missed/missed_on_duty.dart';
+import 'package:magick_agency_agent/features/missed/rang_while_away.dart';
 
 import '../../core/auth/support/harness.dart' show testSignalsProvider;
 import '../../core/softphone/fake_softphone_host.dart' show FakeSoftphoneHost;
@@ -78,6 +80,22 @@ void main() {
       await pumpWaiting(tester, three, view: st.station(phase: AgentPhase.onCall, call: st.call(bridgedAt: st.t0)));
       expect(find.byKey(const Key('missed-to-call-back')), findsNothing);
     });
+  });
+
+  group('who rang while away, on the station (IQ50)', () {
+    for (final (name, view) in [
+      ('waiting', st.station()),
+      ('the away card', st.station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'device_away', label: 'Away'))),
+      ('a break (the phone call\'s)', st.station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'phone_call', label: 'Phone call'))),
+    ]) {
+      testWidgets('$name: the notice above the state', (tester) async {
+        await st.pumpStation(tester, view, extra: [
+          missedCallsAccessProvider.overrideWithValue(three),
+          rangWhileAwayProvider.overrideWith(_Rang.new),
+        ]);
+        expect(find.text('2 customers rang while you were away'), findsOneWidget);
+      });
+    }
   });
 
   group('the sheet over the station', () {
@@ -189,4 +207,9 @@ void main() {
       expect(find.text('at /home/station/camp-1'), findsOneWidget);
     });
   });
+}
+
+class _Rang extends RangWhileAwayController {
+  @override
+  RangWhileAway? build() => const RangWhileAway(badge: '2', kind: AwayKind.app);
 }
