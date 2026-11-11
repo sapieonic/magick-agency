@@ -471,6 +471,21 @@
   color: var(--warning);
 }
 
+/* IQ56: a phone on an app build that cannot take inbound calls. A warning: someone must act. */
+.updateAppTag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* Neutral, not a warning: working from the mobile app is a fact, not a risk. */
 .mobileIcon {
   flex-shrink: 0;

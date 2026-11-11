@@ -303,6 +303,24 @@ export const AGENCY_FLOOR_STATE_LABELS: Record<AgencyAgentLiveState, string> = {
 
 /** The floor's label for an agent on an inbound call (P2). */
 export const INBOUND_CALL_FLOOR_LABEL = 'Inbound call';
+
+/**
+ * IQ56: what the floor says of an agent whose phone's station did not declare `caps=inbound`
+ * (an app build older than inbound calls): never offered a caller, never counted as one who
+ * could take one. The tag's short text and its full label (tooltip, screen reader).
+ */
+export const APP_CANNOT_TAKE_INBOUND_LABEL = 'App can’t take inbound calls — update the app';
+export const APP_CANNOT_TAKE_INBOUND_TAG = 'Update app';
+
+/**
+ * Whether the floor marks the agent with {@link APP_CANNOT_TAKE_INBOUND_LABEL}: a phone
+ * (`client_kind: 'mobile'`) whose live station said it cannot take inbound calls
+ * (`can_take_inbound: false`). Nothing for `true`, and nothing for `null` (no live station this
+ * process holds: nothing is known, so nothing is claimed).
+ */
+export function cannotTakeInbound(agent: Pick<AgencySupervisorAgent, 'client_kind' | 'can_take_inbound'>): boolean {
+  return agent.client_kind === 'mobile' && agent.can_take_inbound === false;
+}
 /** The floor's label for an agent who owes an ended inbound call's outcome (`inbound_outcome_owed`). */
 export const INBOUND_WRAPUP_FLOOR_LABEL = 'Wrapping up an inbound call';
 

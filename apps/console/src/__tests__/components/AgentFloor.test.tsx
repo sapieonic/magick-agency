@@ -594,6 +594,21 @@ describe('the floor as a table', () => {
     expect(screen.queryByTestId('floor-mobile-desk')).toBeNull();
   });
 
+  it('IQ56: marks a phone that cannot take inbound calls, accessibly, and nothing for true, null or a console', () => {
+    renderFloor({ stats: stats([
+      agent({ session_id: 'old', agent_name: 'Meera', client_kind: 'mobile', can_take_inbound: false }),
+      agent({ session_id: 'new', agent_name: 'Ravi', client_kind: 'mobile', can_take_inbound: true }),
+      agent({ session_id: 'unknown', agent_name: 'Sana', client_kind: 'mobile', can_take_inbound: null }),
+      agent({ session_id: 'desk', agent_name: 'Omar', client_kind: 'web', can_take_inbound: false }),
+    ]) });
+    const tag = screen.getByTestId('floor-update-app-old');
+    expect(tag.getAttribute('title')).toBe('App can’t take inbound calls — update the app');
+    // The short words are seen; the whole sentence is what a screen reader hears.
+    expect(tag.textContent).toBe('Update appApp can’t take inbound calls — update the app');
+    expect(within(screen.getByTestId('floor-row-old')).getByText('App can’t take inbound calls — update the app')).toBeTruthy();
+    for (const id of ['new', 'unknown', 'desk']) expect(screen.queryByTestId(`floor-update-app-${id}`), id).toBeNull();
+  });
+
   it('keeps the break reason beside the state', () => {
     renderFloor({ stats: stats([agent({ session_id: 'brk', state: 'break', break_reason: 'Lunch' })]) });
     expect(screen.getByTestId('floor-row-brk').textContent).toContain('On break · Lunch');

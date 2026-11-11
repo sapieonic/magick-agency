@@ -8,6 +8,9 @@ import {
   floorStateLabel,
   AGENCY_FLOOR_TICK_MS,
   agentInitials,
+  APP_CANNOT_TAKE_INBOUND_LABEL,
+  APP_CANNOT_TAKE_INBOUND_TAG,
+  cannotTakeInbound,
   canForceAvailable,
   owesInboundOutcome,
   floorRiskSummary,
@@ -313,6 +316,24 @@ function AgentRow({
               data-testid={`floor-mobile-${agent.session_id}`}
             >
               <Smartphone size={13} role="img" aria-label="On the mobile app" />
+            </span>
+          )}
+          {/*
+            IQ56: a phone whose station did not declare `caps=inbound` (an app build
+            older than inbound calls) is never offered a caller. A warning, not a fact
+            like the phone glyph: the fix is the agent's, and the supervisor tells them.
+            The short words are shown; the whole sentence is the tooltip and what a
+            screen reader hears. Nothing for `null` (no live station known here).
+          */}
+          {cannotTakeInbound(agent) && (
+            <span
+              className={styles.updateAppTag}
+              title={APP_CANNOT_TAKE_INBOUND_LABEL}
+              data-testid={`floor-update-app-${agent.session_id}`}
+            >
+              <AlertTriangle size={11} aria-hidden="true" />
+              <span aria-hidden="true">{APP_CANNOT_TAKE_INBOUND_TAG}</span>
+              <span className={styles.srOnly}>{APP_CANNOT_TAKE_INBOUND_LABEL}</span>
             </span>
           )}
           {agent.connected === false && (

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   AGENCY_FLOOR_RISK_CLAUSE,
+  APP_CANNOT_TAKE_INBOUND_LABEL,
+  cannotTakeInbound,
   AGENCY_FLOOR_RISK_FLAG,
   AGENCY_FLOOR_RISK_NOTE,
   AGENCY_FLOOR_RISK_ORDER,
@@ -655,6 +657,16 @@ describe('the Agents tab counts who is on shift as the API does', () => {
     */
     expect(totals.handled).toBe(19);
     expect(totals.perAgent).toBeCloseTo(19 / 2);
+  });
+});
+
+describe('cannotTakeInbound (IQ56)', () => {
+  it('is a phone whose station said false; never true, null, or a console', () => {
+    expect(cannotTakeInbound({ client_kind: 'mobile', can_take_inbound: false })).toBe(true);
+    expect(cannotTakeInbound({ client_kind: 'mobile', can_take_inbound: true })).toBe(false);
+    expect(cannotTakeInbound({ client_kind: 'mobile', can_take_inbound: null })).toBe(false);
+    expect(cannotTakeInbound({ client_kind: 'web', can_take_inbound: false })).toBe(false);
+    expect(APP_CANNOT_TAKE_INBOUND_LABEL).toBe('App can’t take inbound calls — update the app');
   });
 });
 
