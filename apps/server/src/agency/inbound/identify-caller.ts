@@ -29,7 +29,11 @@ import {
  *  1. `owner`: the matched contact's owner (`assigned_user_id`);
  *  2. `last_from_number`: the agent of the latest call to the number inside the lookback that
  *     went out FROM the number rung (an attempt's `caller_id`, a soft-phone call's);
- *  3. `last_connected`: the agent of the latest connected call inside the lookback.
+ *  3. `last_connected`: the agent of the latest connected call inside the lookback, in EITHER
+ *     direction (IQ49): an outbound call put through, or an inbound call of theirs an agent
+ *     answered (`answered_by_user_id`). An inbound call never names `last_from_number` (it went out
+ *     from nobody's number: its `caller_id` is null). The copy ("Your customer: you last spoke to
+ *     them") reads the same either way, so no wire value was added.
  * One entry per agent, at their best rank. A campaign may opt out (`inbound_sticky_enabled`
  * false): its owner and its calls name no one. Only agents active in the tenant are read (the
  * repository's filter); the dedicated caller ID is deliberately not a signal (DN3).

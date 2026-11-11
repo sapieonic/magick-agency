@@ -15,6 +15,10 @@
  *  - the calls to the number inside the lookback: the attempts of those roster rows (by contact),
  *    and the soft-phone calls dialled to it, `idx_agency_manual_calls_destination (tenant_id,
  *    account_id, destination_e164, created_at DESC, id DESC)`, the newest
+ *    {@link INBOUND_CALLS_PER_ACCOUNT} per account;
+ *  - the caller's ANSWERED inbound calls inside the lookback (IQ49: bridged to an agent, who is
+ *    then a `last_connected` signal), `idx_agency_inbound_calls_answered_from (tenant_id,
+ *    account_id, from_e164, arrived_at DESC, id DESC)` (0033), the newest
  *    {@link INBOUND_CALLS_PER_ACCOUNT} per account.
  * What the rows MEAN (which contact is matched, which agent is sticky and why) is decided in
  * `agency/inbound/identify-caller.ts`, a pure function over these rows.
@@ -59,19 +63,28 @@ export interface InboundRouteSchedule {
   holidays: AgencyInboundHoliday[];
 }
 
-/** One call to the caller's number inside the lookback, by an agent who may still be assigned work. */
+/**
+ * One call with the caller's number inside the lookback, by an agent who may still be assigned
+ * work: an outbound call to it (a campaign attempt, a soft-phone call) or, IQ49, an inbound call
+ * from it that an agent answered.
+ */
 export interface InboundCallSignalRow {
-  channel: 'campaign' | 'softphone';
-  /** The attempt or soft-phone call id. */
+  channel: 'campaign' | 'softphone' | 'inbound';
+  /** The attempt, soft-phone call or inbound call id. */
   call_id: string;
   account_id: string;
+  /** The tagged campaign (an inbound call: its matched campaign), or null. */
   campaign_id: string | null;
   contact_id: string | null;
+  /** The agent who placed it, or who answered the inbound call. */
   agent_user_id: string;
-  caller_id: string;
+  /** The number an outbound call went out from; null for an inbound call (it went out from nobody's). */
+  caller_id: string | null;
+  /** Put through to the customer: always true for an inbound call (only answered ones are read). */
   connected: boolean;
+  /** When it was placed (an inbound call: when it arrived). */
   at: Date;
-  /** The tagged campaign's `inbound_sticky_enabled`; true for an untagged soft-phone call. */
+  /** The tagged (inbound: matched) campaign's `inbound_sticky_enabled`; true with none. */
   sticky_enabled: boolean;
 }
 
@@ -161,10 +174,11 @@ export class AgencyInboundAnswerRepository {
   }
 
   /**
-   * The calls to `fromE164` placed since `since` that name an agent still active in the tenant:
-   * the campaign attempts of the number's roster rows (agent = the reserved session's user) and the
-   * soft-phone calls dialled to the number. Newest first, at most
-   * {@link INBOUND_CALLS_PER_ACCOUNT} of each kind per account.
+   * The calls with `fromE164` since `since` that name an agent still active in the tenant: the
+   * campaign attempts of the number's roster rows (agent = the reserved session's user), the
+   * soft-phone calls dialled to the number, and (IQ49) the inbound calls from it that an agent
+   * answered (agent = `answered_by_user_id`; its matched campaign's opt-out applies). Newest first,
+   * at most {@link INBOUND_CALLS_PER_ACCOUNT} of each kind per account.
    */
   async findCallSignals(
     input: { tenantId: string; fromE164: string; since: Date },
@@ -200,8 +214,23 @@ export class AgencyInboundAnswerRepository {
                AND m.created_at >= $3::timestamptz
              ORDER BY m.created_at DESC, m.id DESC
              LIMIT ${INBOUND_CALLS_PER_ACCOUNT}) w
+       ),
+       answered AS (
+         SELECT w.* FROM acc
+          CROSS JOIN LATERAL (
+            SELECT 'inbound'::text AS channel, i.id AS call_id, i.account_id, i.matched_campaign_id AS campaign_id,
+                   i.matched_contact_id AS contact_id, i.answered_by_user_id AS agent_user_id, NULL::varchar AS caller_id,
+                   true AS connected, i.arrived_at AS at,
+                   COALESCE((SELECT cam.inbound_sticky_enabled FROM agency_campaigns cam WHERE cam.id = i.matched_campaign_id), true)
+                     AS sticky_enabled
+              FROM agency_inbound_calls i
+             WHERE i.tenant_id = $1::uuid AND i.account_id = acc.id AND i.from_e164 = $2::text
+               AND i.bridged_at IS NOT NULL AND i.from_e164 IS NOT NULL
+               AND i.arrived_at >= $3::timestamptz
+             ORDER BY i.arrived_at DESC, i.id DESC
+             LIMIT ${INBOUND_CALLS_PER_ACCOUNT}) w
        )
-       SELECT x.* FROM (SELECT * FROM attempts UNION ALL SELECT * FROM manual) x
+       SELECT x.* FROM (SELECT * FROM attempts UNION ALL SELECT * FROM manual UNION ALL SELECT * FROM answered) x
         WHERE ${activeInTenant('x.agent_user_id')}
         ORDER BY x.at DESC, x.call_id DESC`,
       [input.tenantId, input.fromE164, input.since],

@@ -90,7 +90,8 @@ export type AgencyInboundClosedCause = (typeof AGENCY_INBOUND_CLOSED_CAUSES)[num
 /**
  * Which signal named the sticky agent (`sticky_reason`, §4.1, IB2): the contact's `owner`; the
  * agent whose latest call to the number went out from the number rung (`last_from_number`); the
- * last agent who spoke to the customer (`last_connected`); the last agent who dialled them,
+ * last agent who spoke to the customer (`last_connected`: the latest connected call in either
+ * direction, an inbound call of theirs an agent answered included, IQ49); the last agent who dialled them,
  * unanswered (`last_dialled`, off by default).
  */
 export const AGENCY_INBOUND_STICKY_REASONS = ['owner', 'last_from_number', 'last_connected', 'last_dialled'] as const;

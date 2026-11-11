@@ -1311,6 +1311,20 @@ inventory suite, and the server's `test/integration/agency/inbound-agent-return.
 at each call's window, the campaign's rule ignored), `inbound-closed-cause.test.ts` (the router's
 capture) and `test/integration/api/inbound-routes.test.ts` (validation and audit).
 
+### 0033 — `migrations/0033_inbound_answered_from_index.sql`
+
+An answered inbound call is a sticky signal (IQ49). **`idx_agency_inbound_calls_answered_from`**
+`(tenant_id, account_id, from_e164, arrived_at DESC, id DESC) WHERE bridged_at IS NOT NULL AND
+from_e164 IS NOT NULL`: the caller identification's inbound arm
+(`AgencyInboundAnswerRepository.findCallSignals`), one walk per account of the tenant, newest first,
+stopped at `INBOUND_CALLS_PER_ACCOUNT`. The agent who answered (`answered_by_user_id`) of the latest
+such call inside the lookback is a `last_connected` candidate ("the latest connected call, in either
+direction"); the matched campaign's `inbound_sticky_enabled` applies. Exact `from_e164` (the answer
+webhook's normalised form, which the read is given). **Down** drops it. **Tests**:
+`test/integration/db/inbound-answered-from-index-migration.test.ts` (the definition, down then up),
+the down → up inventory suite, and the server's `test/integration/agency/inbound-follow-up.test.ts`
+(the read and the plan).
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

@@ -362,6 +362,68 @@ describe('the identification reads', () => {
     ].sort());
   });
 
+  it('IQ49: the caller`s ANSWERED inbound calls inside the lookback, by agents still active, each account walked; the matched campaign`s opt-out carried', async () => {
+    await account(A);
+    await account(OTHER_ACCOUNT);
+    const took = randomUUID();
+    const gone = randomUUID();
+    await activeAgent(took);
+    await activeAgent(gone, false);
+    const optedOut = await campaign({ inbound_sticky_enabled: false });
+    const inbound = async (o: Record<string, unknown>) => {
+      const answered = o['answered_by_user_id'] !== undefined;
+      const cols: Record<string, unknown> = {
+        tenant_id: T, account_id: A, provider_call_id: `CA-${randomUUID()}`, from_e164: '+919812345678', to_e164: RUNG,
+        state: 'ended', outcome: answered ? 'answered' : 'abandoned_in_queue', arrived_at: minutes(-60 * 24 * 2), ended_at: minutes(-60 * 24 * 2),
+        ...(answered ? { bridged_at: minutes(-60 * 24 * 2) } : { follow_up_status: 'open', follow_up_reason: 'abandoned_in_queue' }),
+        ...o,
+      };
+      const keys = Object.keys(cols);
+      const { rows } = await pool().query<{ id: string }>(
+        `INSERT INTO agency_inbound_calls (${keys.join(', ')}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`,
+        keys.map((k) => cols[k]));
+      return rows[0]!.id;
+    };
+    const mine = await inbound({ answered_by_user_id: took });
+    const otherAccount = await inbound({ answered_by_user_id: took, account_id: OTHER_ACCOUNT, arrived_at: minutes(-60 * 24 * 3) });
+    const optOut = await inbound({
+      answered_by_user_id: took, matched_campaign_id: optedOut, matched_contact_id: randomUUID(), arrived_at: minutes(-60 * 24 * 4),
+    });
+    await inbound({ answered_by_user_id: gone });                                         // deactivated since
+    await inbound({});                                                                    // nobody answered it
+    await inbound({ answered_by_user_id: took, arrived_at: minutes(-60 * 24 * 40) });     // outside the lookback
+    await inbound({ answered_by_user_id: took, from_e164: '+919800000000' });             // another caller
+    const rows = await answers.findCallSignals({ tenantId: T, fromE164: '+919812345678', since: minutes(-60 * 24 * 30) });
+    expect(rows.map((r) => ({ id: r.call_id, channel: r.channel, agent: r.agent_user_id, connected: r.connected, caller_id: r.caller_id, sticky: r.sticky_enabled, account: r.account_id }))).toEqual([
+      { id: mine, channel: 'inbound', agent: took, connected: true, caller_id: null, sticky: true, account: A },
+      { id: otherAccount, channel: 'inbound', agent: took, connected: true, caller_id: null, sticky: true, account: OTHER_ACCOUNT },
+      { id: optOut, channel: 'inbound', agent: took, connected: true, caller_id: null, sticky: false, account: A },
+    ]);
+    // The whole identification: the agent who took the latest is the caller's agent, `last_connected`.
+    const { identifyInboundCaller } = await import('../../../src/agency/inbound/identify-caller.js');
+    const identity = await identifyInboundCaller({
+      tenantId: T, fromE164: '+919812345678', numberRungE164: RUNG, phoneNumberId: randomUUID(), lookbackDays: 30, at: new Date(),
+    });
+    expect(identity).toEqual({ match: null, candidates: [{ userId: took, reason: 'last_connected', accountId: A, at: expect.any(Date) }] });
+  });
+
+  it('IQ49: the inbound arm walks idx_agency_inbound_calls_answered_from (0033)', async () => {
+    const client = await pool().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL enable_seqscan = off');
+      const { rows } = await client.query<{ 'QUERY PLAN': string }>(
+        `EXPLAIN (COSTS OFF) SELECT i.id FROM agency_inbound_calls i
+          WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.from_e164 = $3::text
+            AND i.bridged_at IS NOT NULL AND i.from_e164 IS NOT NULL AND i.arrived_at >= $4::timestamptz
+          ORDER BY i.arrived_at DESC, i.id DESC LIMIT 50`, [T, A, '+919812345678', new Date()]);
+      expect(rows.map((r) => r['QUERY PLAN']).join('\n')).toContain('idx_agency_inbound_calls_answered_from');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
   it('filterAccountMembers: active users with a tenant-level or this account\'s membership', async () => {
     await account(A);
     await account(OTHER_ACCOUNT);
