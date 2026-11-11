@@ -20,7 +20,8 @@ import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
-import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
+import { CAMPAIGN_TABS, campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import {
   trackAgencyCampaignLifecycleAction,
   trackAgencyCampaignLifecycleFailed,
@@ -247,6 +248,11 @@ export function AgencyCampaignDetailPage() {
     });
   }, [campaign, panel]);
 
+  // "Campaigns / <name> / <tab>" in the top bar.
+  useCampaignCrumbs(campaign?.id, campaign?.name, [
+    { label: CAMPAIGN_TABS.find((tab) => tab.id === panel)?.label ?? 'Campaign' },
+  ]);
+
   if (loading) return <LoadingSpinner />;
 
   if (error && !campaign) {
@@ -315,6 +321,7 @@ export function AgencyCampaignDetailPage() {
         canRetry={canRetry}
         onRetry={() => setRetryOpen(true)}
         canJoinStation={canJoinStation}
+        role={role}
         onRefresh={() => {
           void load();
           /*

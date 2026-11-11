@@ -72,7 +72,16 @@ import { InboundStickyField } from './InboundStickyField';
  *    makes it unreachable rather than being shown as a control that does nothing.
  */
 
-export type BehaviourSectionId = 'hours' | 'behaviour';
+/**
+ * Which editors to render. `hours` and `behaviour` are the builder's two steps. The
+ * campaign settings page splits `behaviour` into its own sections
+ * (`utils/campaignSettingsSections.ts`): `retries` (the retry policy and the abandonment
+ * limit), `outcomes` (the outcome catalog, the automatic outcomes for unanswered calls and
+ * wrap-up) and `agents` (contact assignment and putting inbound callers through to their
+ * agent, each only while its flag is on). The catalog and the unanswered-call map share a
+ * group because a code edit in one is followed into the other.
+ */
+export type BehaviourSectionId = 'hours' | 'behaviour' | 'retries' | 'outcomes' | 'agents';
 
 export interface CampaignBehaviourSectionProps {
   state: CampaignConfigState;
@@ -86,7 +95,7 @@ export interface CampaignBehaviourSectionProps {
    * builder step body — the page already supplies the title.
    */
   layout?: 'sections' | 'plain';
-  /** Which editors to render. Defaults to both, so the settings page is unchanged. */
+  /** Which editors to render (`BehaviourSectionId`). Defaults to the builder's two steps. */
   include?: readonly BehaviourSectionId[];
   /**
    * Contact assignment: present only while the `agency_contact_assignment_enabled`
@@ -136,62 +145,89 @@ export function CampaignBehaviourSection({
     />
   );
 
+  const catalog = (
+    <DispositionCatalogEditor
+      dispositions={state.dispositions}
+      // A mapped row's code edits are followed into the automatic-outcome mapping;
+      // a removed row is left for the mapping's row to report.
+      onChange={(dispositions, edit) => {
+        const followed = followCatalogEdit(state.dispositions, edit, dispositions, {
+          mapping: state.outcomeDispositions,
+          rows: mappedRows.current,
+        });
+        mappedRows.current = followed.rows;
+        onChange({ ...state, dispositions, outcomeDispositions: followed.mapping });
+      }}
+      errors={errors}
+      overrides={assignment !== undefined}
+    />
+  );
+  const retryTable = (
+    <RetryPolicyTable
+      retryPolicy={state.retryPolicy}
+      onChange={(retryPolicy) => onChange({ ...state, retryPolicy })}
+      errors={errors}
+    />
+  );
+  const outcomeMap = (
+    <OutcomeDispositionMap
+      mapping={state.outcomeDispositions}
+      dispositions={state.dispositions}
+      onChange={(outcomeDispositions) => onChange({ ...state, outcomeDispositions })}
+      fieldErrors={fieldErrors}
+    />
+  );
+  const wrapup = (
+    <WrapupFields
+      wrapupSeconds={state.wrapupSeconds}
+      autoReturn={state.autoReturn}
+      allowRedial={state.allowWrapupRedial}
+      onChange={(patch) => onChange({ ...state, ...patch })}
+      errors={errors}
+    />
+  );
+  const sticky = inbound ? (
+    <InboundStickyField
+      checked={state.inboundSticky}
+      onChange={(inboundSticky) => onChange({ ...state, inboundSticky })}
+    />
+  ) : null;
+  const ceiling = (
+    <AbandonmentCeilingFields
+      ceilingPct={state.abandonmentCeilingPct}
+      storedPct={state.abandonmentCeilingStoredPct}
+      onChange={(abandonmentCeilingPct) => onChange({ ...state, abandonmentCeilingPct })}
+      errors={errors}
+      readOnly={readOnly}
+    />
+  );
+  const assignmentFields = assignment ? (
+    <AssignmentFields
+      assignment={state.assignment}
+      onChange={(next) => onChange({ ...state, assignment: next })}
+      errors={errors}
+      modeLocked={assignment.modeLocked}
+    />
+  ) : null;
+
   const behaviour = (
     <>
-      <DispositionCatalogEditor
-        dispositions={state.dispositions}
-        // A mapped row's code edits are followed into the automatic-outcome mapping;
-        // a removed row is left for the mapping's row to report.
-        onChange={(dispositions, edit) => {
-          const followed = followCatalogEdit(state.dispositions, edit, dispositions, {
-            mapping: state.outcomeDispositions,
-            rows: mappedRows.current,
-          });
-          mappedRows.current = followed.rows;
-          onChange({ ...state, dispositions, outcomeDispositions: followed.mapping });
-        }}
-        errors={errors}
-        overrides={assignment !== undefined}
-      />
-      <RetryPolicyTable
-        retryPolicy={state.retryPolicy}
-        onChange={(retryPolicy) => onChange({ ...state, retryPolicy })}
-        errors={errors}
-      />
-      <OutcomeDispositionMap
-        mapping={state.outcomeDispositions}
-        dispositions={state.dispositions}
-        onChange={(outcomeDispositions) => onChange({ ...state, outcomeDispositions })}
-        fieldErrors={fieldErrors}
-      />
-      <WrapupFields
-        wrapupSeconds={state.wrapupSeconds}
-        autoReturn={state.autoReturn}
-        allowRedial={state.allowWrapupRedial}
-        onChange={(patch) => onChange({ ...state, ...patch })}
-        errors={errors}
-      />
-      {inbound ? (
-        <InboundStickyField
-          checked={state.inboundSticky}
-          onChange={(inboundSticky) => onChange({ ...state, inboundSticky })}
-        />
-      ) : null}
-      <AbandonmentCeilingFields
-        ceilingPct={state.abandonmentCeilingPct}
-        storedPct={state.abandonmentCeilingStoredPct}
-        onChange={(abandonmentCeilingPct) => onChange({ ...state, abandonmentCeilingPct })}
-        errors={errors}
-        readOnly={readOnly}
-      />
-      {assignment ? (
-        <AssignmentFields
-          assignment={state.assignment}
-          onChange={(next) => onChange({ ...state, assignment: next })}
-          errors={errors}
-          modeLocked={assignment.modeLocked}
-        />
-      ) : null}
+      {catalog}
+      {retryTable}
+      {outcomeMap}
+      {wrapup}
+      {sticky}
+      {ceiling}
+      {assignmentFields}
+    </>
+  );
+
+  // The settings page's sections, each a slice of `behaviour` (`BehaviourSectionId`).
+  const groups = (
+    <>
+      {include.includes('retries') ? <>{retryTable}{ceiling}</> : null}
+      {include.includes('outcomes') ? <>{catalog}{outcomeMap}{wrapup}</> : null}
+      {include.includes('agents') ? <>{assignmentFields}{sticky}</> : null}
     </>
   );
 
@@ -200,6 +236,7 @@ export function CampaignBehaviourSection({
       <>
         {showHours ? hours : null}
         {showBehaviour ? behaviour : null}
+        {groups}
       </>
     );
   }

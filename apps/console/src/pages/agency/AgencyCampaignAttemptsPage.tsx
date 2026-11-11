@@ -13,6 +13,7 @@ import {
   User,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignAttempts } from '../../api/agencySpine';
@@ -32,6 +33,7 @@ import {
 } from '../../utils/agencySpineCopy';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CallLogViews } from '../../components/agency/CallLogViews';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -97,6 +99,7 @@ export function AgencyCampaignAttemptsPage() {
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(id, campaign?.name, [{ label: 'Call log' }]);
   const [rows, setRows] = useState<AgencyAttempt[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -323,7 +326,7 @@ export function AgencyCampaignAttemptsPage() {
         items={[
           { label: 'Campaigns', href: '/agency/campaigns' },
           ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Call attempts' },
+          { label: 'Call log' },
         ]}
       />
 
@@ -338,10 +341,13 @@ export function AgencyCampaignAttemptsPage() {
         <CampaignTabs campaignId={id} active="attempts" role={role} campaignStatus={campaign?.status} />
       )}
 
+      {/* Dialler calls | Soft-phone calls (decision IN14); nothing when only this view is open. */}
+      {id && <CallLogViews campaignId={id} active="attempts" role={role} />}
+
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><PhoneOutgoing size={20} /></span>
-          <h1 className={spine.title}>Call attempts</h1>
+          <h1 className={spine.title}>Call log</h1>
           {campaign && <AgencyCampaignStatusBadge status={campaign.status} />}
         </div>
         <div className={spine.actions}>

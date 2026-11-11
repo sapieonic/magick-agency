@@ -27,9 +27,13 @@ const mocks = vi.hoisted(() => ({
   // then fails to typecheck (vitest does not typecheck, so only `tsc`
   // catches it).
   isEnabled: vi.fn((_capability: string) => true),
+  flags: new Set<string>(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flags.has(flag) }),
+}));
 // The tab bar's overdue-callbacks badge reads the allocation; never answered here, so no badge and no network.
 vi.mock('../../api/agencyInsights', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/agencyInsights')>()),
@@ -118,6 +122,7 @@ function renderPage(initialPath = '/agency/campaigns/camp-1/attempts') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.flags = new Set();
   mocks.isEnabled.mockReturnValue(true);
   mocks.useTenant.mockReturnValue({
     tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin',
@@ -447,14 +452,40 @@ describe('the recording link stays inside the agency workspace', () => {
  * whole reason this test exists.
  */
 describe('the campaign section bar', () => {
-  it('renders the bar and marks Call attempts as the current section', async () => {
+  it('renders the bar and marks Call log as the current section', async () => {
     renderPage();
 
     const tab = await screen.findByTestId('campaign-tab-attempts');
     expect(tab.getAttribute('aria-current')).toBe('page');
+    expect(tab.textContent).toBe('Call log');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Call log');
+  });
+
+  /*
+    Call log's views (IN14): Dialler calls here, Soft-phone calls at `…/manual-calls`,
+    the second only behind the soft phone's flag, as its route is.
+  */
+  it('offers Dialler calls | Soft-phone calls with the soft phone on, this view current', async () => {
+    mocks.flags = new Set(['agency_softphone_enabled']);
+    renderPage();
+
+    const dialler = await screen.findByTestId('call-log-view-attempts');
+    expect(dialler.getAttribute('aria-current')).toBe('page');
+    expect(dialler.textContent).toBe('Dialler calls');
+    const softphone = screen.getByTestId('call-log-view-manual');
+    expect(softphone.getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
+    expect(softphone.getAttribute('aria-current')).toBeNull();
+    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
+  });
+
+  it('offers no views with the soft phone off', async () => {
+    renderPage();
+
+    await screen.findByTestId('campaign-tab-attempts');
+    expect(screen.queryByTestId('call-log-views')).toBeNull();
   });
 });
 

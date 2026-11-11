@@ -104,7 +104,7 @@ function detail(over: Partial<AgencyAttemptCallDetail> = {}): AgencyAttemptCallD
 /**
  * The breadcrumb trail, scoped.
  *
- * "Call attempts" is a link in BOTH the trail and the section bar, to the same
+ * "Call log" (once "Call attempts") is a link in BOTH the trail and the section bar, to the same
  * path — which is exactly what this page was missing, so both are asserted, each
  * within its own landmark rather than by a name lookup that finds two.
  */
@@ -330,7 +330,7 @@ describe('every state keeps the way back to the campaign', () => {
     renderPage();
 
     // The trail back exists before the call does.
-    const back = await trail().findByRole('link', { name: 'Call attempts' });
+    const back = await trail().findByRole('link', { name: 'Call log' });
     expect(back.getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
     expect(screen.getByTestId('campaign-tabs')).toBeTruthy();
 
@@ -366,7 +366,7 @@ describe('every state keeps the way back to the campaign', () => {
     expect(screen.getByText(/Attempt not found on this campaign/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry loading' })).toBeNull();
     // The way back is on the one state that most needs it.
-    expect(trail().getByRole('link', { name: 'Call attempts' })).toBeTruthy();
+    expect(trail().getByRole('link', { name: 'Call log' })).toBeTruthy();
     expect(screen.getByTestId('campaign-tabs')).toBeTruthy();
   });
 
@@ -377,7 +377,7 @@ describe('every state keeps the way back to the campaign', () => {
     renderPage();
 
     expect(await screen.findByRole('button', { name: 'Retry loading' })).toBeTruthy();
-    expect(trail().getByRole('link', { name: 'Call attempts' })).toBeTruthy();
+    expect(trail().getByRole('link', { name: 'Call log' })).toBeTruthy();
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
@@ -103,11 +103,15 @@ function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   };
 }
 
-function renderPage() {
+function HashProbe() {
+  return <span data-testid="location-hash">{useLocation().hash}</span>;
+}
+
+function renderPage(path = '/agency/campaigns/camp-1/settings') {
   return render(
-    <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        <Route path="/agency/campaigns/:id/settings" element={<><SettingsPage /><HashProbe /></>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -891,5 +895,127 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].inbound_sticky_enabled).toBe(false);
+  });
+});
+
+/**
+ * ── The page's sections (decision IN14) ──────────────────────────────────────
+ * `CAMPAIGN_SETTINGS_SECTIONS` is the list a section nav, a link (`…/settings#id`) and search
+ * all name; the page must have a section for every entry it lists, list every section it has,
+ * and open at the one a link names.
+ */
+describe('the settings sections', () => {
+  const navIds = () => screen.getAllByTestId(/^settings-section-link-/)
+    .map((link) => link.getAttribute('href'));
+  const current = () => screen.getAllByTestId(/^settings-section-link-/)
+    .filter((link) => link.getAttribute('aria-current') === 'true')
+    .map((link) => link.textContent);
+
+  let scrolled: string[] = [];
+  beforeEach(() => {
+    scrolled = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+      scrolled.push(this.id);
+    };
+  });
+  afterEach(() => {
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+    vi.unstubAllGlobals();
+  });
+
+  it('lists the sections the page has, in page order, each an anchor on the page', async () => {
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    expect(navIds()).toEqual([
+      '#general', '#caller-ids', '#calling-hours', '#dialling-retries', '#wrap-up', '#recording', '#roster-uploads',
+    ]);
+    for (const href of navIds()) {
+      expect(document.getElementById(href!.slice(1)), href!).toBeTruthy();
+    }
+    // Agents has nothing in it with contact assignment and inbound both off, so it is not offered.
+    expect(document.getElementById('agents')).toBeNull();
+    // The nav and the page agree on order: each anchor follows the one before it.
+    const anchors = navIds().map((href) => document.getElementById(href!.slice(1))!);
+    for (let i = 1; i < anchors.length; i += 1) {
+      expect(anchors[i - 1]!.compareDocumentPosition(anchors[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(current()).toEqual(['General']);
+  });
+
+  it('adds Agents with inbound on, holding its field', async () => {
+    mocks.flags = new Set(['agency_inbound_enabled']);
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    expect(navIds()).toContain('#agents');
+    expect(document.getElementById('agents')?.querySelector('[data-testid="inbound-sticky-enabled"]')).toBeTruthy();
+  });
+
+  it('puts each field in its section', async () => {
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    const inSection = (id: string, selector: string) => document.getElementById(id)?.querySelector(selector);
+    expect(inSection('general', '#campaign-name')).toBeTruthy();
+    expect(inSection('caller-ids', 'label[for="campaign-caller-ids"]')).toBeTruthy();
+    expect(inSection('roster-uploads', '[data-testid="campaign-history"]')).toBeTruthy();
+  });
+
+  it('leaves Lifecycle and uploads out below `agency.supervise`', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'operator' });
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    expect(navIds()).not.toContain('#roster-uploads');
+    expect(document.getElementById('roster-uploads')).toBeNull();
+  });
+
+  it('opens at the section a link names, and highlights it', async () => {
+    renderPage('/agency/campaigns/camp-1/settings#calling-hours');
+    await screen.findByTestId('settings-section-nav');
+
+    await waitFor(() => expect(scrolled).toEqual(['calling-hours']));
+    expect(current()).toEqual(['Calling hours']);
+  });
+
+  it('ignores a hash that names no section', async () => {
+    renderPage('/agency/campaigns/camp-1/settings#nonsense');
+    await screen.findByTestId('settings-section-nav');
+
+    expect(scrolled).toEqual([]);
+    expect(current()).toEqual(['General']);
+  });
+
+  it('scrolls to a picked section, highlights it and puts it in the URL', async () => {
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    fireEvent.click(screen.getByTestId('settings-section-link-recording'));
+
+    expect(scrolled).toEqual(['recording']);
+    expect(current()).toEqual(['Recording']);
+    expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
+  });
+
+  it('highlights the section scrolled into view', async () => {
+    let report: (entries: Array<{ target: Element; isIntersecting: boolean }>) => void = () => {};
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: typeof report) { report = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    renderPage();
+    await screen.findByTestId('settings-section-nav');
+
+    act(() => report([
+      { target: document.getElementById('general')!, isIntersecting: false },
+      { target: document.getElementById('wrap-up')!, isIntersecting: true },
+    ]));
+    expect(current()).toEqual(['Wrap-up and outcomes']);
+
+    // Two in the band: the upper one is the one being read.
+    act(() => report([{ target: document.getElementById('dialling-retries')!, isIntersecting: true }]));
+    expect(current()).toEqual(['Dialling and retries']);
   });
 });

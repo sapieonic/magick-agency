@@ -765,7 +765,7 @@ describe('accessibility', () => {
     renderPage();
 
     const table = await screen.findByRole('table', { name: /Q3 collections/ });
-    // Visually hidden, not absent: sighted users already have the "Activity"
+    // Visually hidden, not absent: sighted users already have the "History"
     // heading and the campaign badge, so the caption must not duplicate that
     // on screen while still being the table's accessible name.
     expect(table.querySelector('caption')?.className).toMatch(/srOnly/);
@@ -902,14 +902,32 @@ describe('accessibility', () => {
  * whole reason this test exists.
  */
 describe('the campaign section bar', () => {
-  it('renders the bar and marks Activity as the current section', async () => {
+  it('renders the bar with no tab current: this is the header’s History, not a tab (IN14)', async () => {
     renderPage();
 
-    const tab = await screen.findByTestId('campaign-tab-activity');
-    expect(tab.getAttribute('aria-current')).toBe('page');
+    await screen.findByTestId('campaign-tabs');
+    expect(screen.queryByTestId('campaign-tab-activity')).toBeNull();
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
     expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tabs').querySelector('[aria-current="page"]')).toBeNull();
+  });
+
+  it('marks the History button as the current page and titles the page History', async () => {
+    renderPage();
+
+    const history = await screen.findByTestId('campaign-history-link');
+    expect(history.getAttribute('aria-current')).toBe('page');
+    expect(history.getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('History');
+  });
+
+  it('offers a way back to Overview, where a supervisor’s campaign opens', async () => {
+    renderPage();
+
+    const back = await screen.findByTestId('campaign-history-back');
+    expect(back.getAttribute('href')).toBe('/agency/campaigns/camp-1/overview');
+    expect(back.textContent).toBe('Back to Overview');
   });
 });
 

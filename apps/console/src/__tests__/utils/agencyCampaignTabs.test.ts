@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+  barTabFor,
   campaignTabHref,
   CAMPAIGN_TABS,
   campaignLandingPath,
   campaignPanelFromPath,
+  canOpenCampaignScreen,
+  visibleCallLogViews,
+  visibleCampaignTabGroups,
   visibleCampaignTabs,
 } from '../../utils/agencyCampaignTabs';
 import type { Role } from '../../types/auth';
@@ -37,7 +41,8 @@ describe('campaign tabs — what each role can reach', () => {
     }
   });
 
-  it('gives an account_admin — the floor of both gates — every section, Overview first', () => {
+  it('gives an account_admin — the floor of both gates — every tab, Overview first', () => {
+    // Activity and Soft-phone calls are not tabs since IN14 (History and a Call log view).
     expect(idsFor('account_admin')).toEqual([
       'overview',
       'calls',
@@ -46,7 +51,6 @@ describe('campaign tabs — what each role can reach', () => {
       'health',
       'contacts',
       'attempts',
-      'activity',
       'settings',
     ]);
   });
@@ -154,5 +158,80 @@ describe('campaignTabHref', () => {
       expect(href).toBe(CAMPAIGN_TABS.indexOf(tab) < 5 ? `${tab.path('camp-1')}?range=7d` : tab.path('camp-1'));
     }
     expect(campaignTabHref('calls', 'camp-1')).toBe('/agency/campaigns/camp-1/calls');
+  });
+});
+
+/**
+ * ── Grouped, still one tab per question (decision IN14) ──────────────────────
+ * Three labelled groups over the same flat tabs: grouping must not hide a tab,
+ * nest one, or change any tab's gate.
+ */
+describe('campaign tabs — the groups', () => {
+  const shape = (role: Role | undefined, flags: (flag: string) => boolean = () => false) =>
+    visibleCampaignTabGroups(role, flags).map((g) => [g.label, g.tabs.map((t) => t.label)]);
+
+  it('groups a supervisor’s tabs as Monitor, Data and Set up, in bar order', () => {
+    expect(shape('account_admin')).toEqual([
+      ['Monitor', ['Overview', 'Calls', 'Agents', 'Callbacks', 'Health']],
+      ['Data', ['Contacts', 'Call log']],
+      ['Set up', ['Settings']],
+    ]);
+  });
+
+  it('drops a group with nothing left in it, so a viewer sees Monitor with Agents alone', () => {
+    for (const role of ['agent', 'viewer', 'operator', undefined] as Array<Role | undefined>) {
+      expect(shape(role, () => true)).toEqual([['Monitor', ['Agents']]]);
+    }
+  });
+
+  it('flattens back to exactly the visible tabs, so grouping hides none', () => {
+    for (const role of ['viewer', 'account_admin', 'tenant_owner'] as Role[]) {
+      expect(visibleCampaignTabGroups(role).flatMap((g) => g.tabs)).toEqual(visibleCampaignTabs(role));
+    }
+  });
+
+  it('keeps Soft-phone calls and Activity out of the bar whatever the flags', () => {
+    const ids = visibleCampaignTabs('tenant_owner', () => true).map((t) => t.id);
+    expect(ids).not.toContain('manual');
+    expect(ids).not.toContain('activity');
+  });
+
+  it('marks Call log on both its views, and no tab on History', () => {
+    expect(barTabFor('attempts')).toBe('attempts');
+    expect(barTabFor('manual')).toBe('attempts');
+    expect(barTabFor('activity')).toBeNull();
+    expect(barTabFor('settings')).toBe('settings');
+  });
+
+  it('names Call attempts Call log, still at /attempts', () => {
+    const tab = CAMPAIGN_TABS.find((t) => t.id === 'attempts');
+    expect(tab?.label).toBe('Call log');
+    expect(tab?.path('camp-1')).toBe('/agency/campaigns/camp-1/attempts');
+  });
+});
+
+describe('Call log’s views', () => {
+  const flagOn = (flag: string) => flag === 'agency_softphone_enabled';
+
+  it('offers Soft-phone calls after Dialler calls only with the soft phone’s flag on', () => {
+    expect(visibleCallLogViews('account_admin').map((v) => v.label)).toEqual(['Dialler calls']);
+    expect(visibleCallLogViews('account_admin', flagOn).map((v) => v.label)).toEqual([
+      'Dialler calls',
+      'Soft-phone calls',
+    ]);
+  });
+
+  it('offers neither below `agency.supervise`, flag or not', () => {
+    for (const role of ['agent', 'viewer', 'operator'] as Role[]) {
+      expect(visibleCallLogViews(role, flagOn)).toEqual([]);
+    }
+  });
+});
+
+describe('History (the activity trail)', () => {
+  it('opens on `audit.read`, as the page does', () => {
+    expect(canOpenCampaignScreen('activity', 'account_admin')).toBe(true);
+    expect(canOpenCampaignScreen('activity', 'operator')).toBe(false);
+    expect(campaignTabHref('activity', 'camp-1', '?range=7d')).toBe('/agency/campaigns/camp-1/activity');
   });
 });

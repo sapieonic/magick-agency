@@ -7,6 +7,7 @@ import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { DIALER_FLAG, breadcrumbFor, settingsEntryForPath } from '../../utils/consoleNav';
 import { ProfileMenu } from './ProfileMenu';
+import { useSuppliedCrumbs } from './PageCrumbs';
 import styles from './ConsoleTopBar.module.css';
 
 interface Props {
@@ -36,7 +37,7 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls }: Props
   const agencyCapability = useCapability('agency');
   const dialerFlag = useFeatureFlagEnabled(DIALER_FLAG);
   const dialerOn = agencyCapability && dialerFlag;
-  const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label);
+  const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label, useSuppliedCrumbs(pathname));
 
   return (
     <div className={styles.topbar}>

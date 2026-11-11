@@ -3,10 +3,12 @@ import { useParams } from 'react-router-dom';
 import { Phone } from 'lucide-react';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { AGENCY_ANALYTICS_CAPABILITY } from '../../utils/agencyCampaignRecording';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CallLogViews } from '../../components/agency/CallLogViews';
 import { SoftphoneCallsList } from '../../components/softphone/SoftphoneCallsList';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import type { AgencyCampaign } from '../../types/agency-campaign';
@@ -24,6 +26,7 @@ export default function AgencyCampaignManualCallsPage() {
   const { id } = useParams<{ id: string }>();
   const { tenantId, accountId, role } = useTenant();
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(id, campaign?.name, [{ label: 'Call log' }]);
 
   useEffect(() => {
     if (!id || !tenantId || !accountId) return;
@@ -41,16 +44,18 @@ export default function AgencyCampaignManualCallsPage() {
         items={[
           { label: 'Campaigns', href: '/agency/campaigns' },
           ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Soft-phone calls' },
+          { label: 'Call log' },
         ]}
       />
       <CampaignTabs campaignId={id} active="manual" role={role} campaignStatus={campaign?.status} />
+      {/* Call log's second view (decision IN14): the bar marks Call log, this marks the view. */}
+      <CallLogViews campaignId={id} active="manual" role={role} />
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true">
             <Phone size={20} />
           </span>
-          <h1 className={spine.title}>Soft-phone calls</h1>
+          <h1 className={spine.title}>Call log</h1>
           {campaign ? <AgencyCampaignStatusBadge status={campaign.status} /> : null}
         </div>
       </header>

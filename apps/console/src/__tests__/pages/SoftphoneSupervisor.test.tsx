@@ -265,7 +265,12 @@ describe('a campaign’s Manual calls', () => {
     await act(async () => {});
     expect(mocks.listManualCalls.mock.calls[0]![0]).toMatchObject({ campaign_id: 'camp-1' });
     expect(screen.queryByTestId('filter-campaign')).toBeNull();
-    expect(screen.getByTestId('campaign-tab-manual').getAttribute('aria-current')).toBe('page');
+    // A view of Call log since IN14: the bar marks Call log, the views mark this one.
+    expect(screen.getByTestId('campaign-tab-attempts').getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByTestId('campaign-tab-manual')).toBeNull();
+    expect(screen.getByTestId('call-log-view-manual').getAttribute('aria-current')).toBe('page');
+    expect(screen.getByTestId('call-log-view-attempts').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Call log');
   });
 });
 

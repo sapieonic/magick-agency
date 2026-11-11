@@ -8,7 +8,8 @@ import { resolve } from 'node:path';
  * Who is offered the soft phone, and where (`docs/softphone.md` §7, SP4):
  * nothing anywhere while `agency_softphone_enabled` is off; with it on, every
  * agent gets "Soft phone" in their screens, supervisors get "Soft-phone calls"
- * and each campaign's "Manual calls", and the settings sit with the account's.
+ * and each campaign's Call log gains its "Soft-phone calls" view (IN14), and the
+ * settings sit with the account's.
  */
 
 const mocks = vi.hoisted(() => ({ useTenant: vi.fn(), flags: new Set<string>() }));
@@ -19,9 +20,9 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 
 import { AgentNav } from '../../components/agency/AgentNav';
 import { tabBarFor, visibleSettingsGroups, type GateInput } from '../../utils/consoleNav';
-import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CallLogViews } from '../../components/agency/CallLogViews';
 import { agentSurfacesFor, AGENT_SURFACES } from '../../utils/agencyAgentSurfaces';
-import { visibleCampaignTabs } from '../../utils/agencyCampaignTabs';
+import { visibleCallLogViews } from '../../utils/agencyCampaignTabs';
 
 function as(role: string | undefined, flagOn: boolean) {
   mocks.useTenant.mockReturnValue({ role });
@@ -99,22 +100,30 @@ describe('the console navigation', () => {
   });
 });
 
-describe('the campaign tabs', () => {
-  it('show Manual calls to a supervisor only with the flag on, after Call attempts', () => {
-    expect(visibleCampaignTabs('account_admin').map((t) => t.id)).not.toContain('manual');
-    const on = visibleCampaignTabs('account_admin', (flag) => flag === 'agency_softphone_enabled').map((t) => t.id);
-    expect(on.indexOf('manual')).toBe(on.indexOf('attempts') + 1);
-    expect(visibleCampaignTabs('viewer', () => true).map((t) => t.id)).not.toContain('manual');
+describe('a campaign’s Call log', () => {
+  it('offers Soft-phone calls to a supervisor only with the flag on, after Dialler calls', () => {
+    expect(visibleCallLogViews('account_admin').map((v) => v.id)).not.toContain('manual');
+    const on = visibleCallLogViews('account_admin', (flag) => flag === 'agency_softphone_enabled').map((v) => v.id);
+    expect(on).toEqual(['attempts', 'manual']);
+    expect(visibleCallLogViews('viewer', () => true).map((v) => v.id)).not.toContain('manual');
   });
 
-  it('render it as a link to the campaign’s manual calls', () => {
+  it('renders it as a view linking to the campaign’s manual calls', () => {
     as('account_admin', true);
-    render(<MemoryRouter><CampaignTabs campaignId="camp-1" active="manual" role="account_admin" /></MemoryRouter>);
-    const tab = screen.getByTestId('campaign-tab-manual');
+    render(<MemoryRouter><CallLogViews campaignId="camp-1" active="manual" role="account_admin" /></MemoryRouter>);
+    const view = screen.getByTestId('call-log-view-manual');
     // Named as the sidebar names the same calls.
-    expect(tab.textContent).toContain('Soft-phone calls');
-    expect(tab.getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
-    expect(tab.getAttribute('aria-current')).toBe('page');
+    expect(view.textContent).toBe('Soft-phone calls');
+    expect(view.getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
+    expect(view.getAttribute('aria-current')).toBe('page');
+    expect(screen.getByTestId('call-log-view-attempts').getAttribute('href')).toBe('/agency/campaigns/camp-1/attempts');
+    expect(screen.getByTestId('call-log-view-attempts').getAttribute('aria-current')).toBeNull();
+  });
+
+  it('renders no views with the flag off: Dialler calls alone is nothing to choose', () => {
+    as('account_admin', false);
+    render(<MemoryRouter><CallLogViews campaignId="camp-1" active="attempts" role="account_admin" /></MemoryRouter>);
+    expect(screen.queryByTestId('call-log-views')).toBeNull();
   });
 });
 

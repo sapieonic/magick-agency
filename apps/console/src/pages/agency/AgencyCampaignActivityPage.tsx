@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, Calendar, Download, History, ListChecks, RefreshCw } from 'lucide-react';
+import { Link, useParams } from 'react-router-dom';
+import { AlertCircle, AlertTriangle, ArrowLeft, Calendar, Download, History, ListChecks, RefreshCw } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agencyActivity';
@@ -28,6 +29,8 @@ import {
 } from '../../utils/agencyActivityCopy';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
+import { CampaignHistoryLink } from '../../components/agency/CampaignHistoryLink';
+import { CAMPAIGN_TABS, campaignLandingPath } from '../../utils/agencyCampaignTabs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -129,6 +132,7 @@ export function AgencyCampaignActivityPage() {
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(id, campaign?.name, [{ label: 'History' }]);
   const [page, setPage] = useState<ActivityPage | null>(null);
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -380,7 +384,7 @@ export function AgencyCampaignActivityPage() {
           ...(campaign
             ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }]
             : []),
-          { label: 'Activity' },
+          { label: 'History' },
         ]}
       />
 
@@ -395,13 +399,27 @@ export function AgencyCampaignActivityPage() {
         <CampaignTabs campaignId={id} active="activity" role={role} campaignStatus={campaign?.status} />
       )}
 
+      {/*
+        History is the header's button, not a tab (decision IN14), so no tab
+        above is current here: this link is the way back to where a campaign
+        opens for this role (Overview for a supervisor).
+      */}
+      {id && (
+        <Link to={campaignLandingPath(id, role)} className={styles.backLink} data-testid="campaign-history-back">
+          <ArrowLeft size={15} aria-hidden="true" />
+          {`Back to ${landingLabel(id, role)}`}
+        </Link>
+      )}
+
       <header className={spine.header}>
         <div className={spine.headerCopy}>
           <span className={spine.titleIcon} aria-hidden="true"><History size={20} /></span>
-          <h1 className={spine.title}>Activity</h1>
+          <h1 className={spine.title}>History</h1>
           {campaign && <AgencyCampaignStatusBadge status={campaign.status} />}
         </div>
         <div className={spine.actions}>
+          {/* The header's History button, marked as where you are. */}
+          {id && <CampaignHistoryLink campaignId={id} role={role} current />}
           <button
             type="button"
             className={`${spine.actionButton} btn-secondary`}
@@ -840,3 +858,9 @@ function RawDetail({ detail }: { detail: Record<string, unknown> }) {
 }
 
 export default AgencyCampaignActivityPage;
+
+/** The tab a campaign opens on for this role, named for the way-back link. */
+function landingLabel(campaignId: string, role: Parameters<typeof campaignLandingPath>[1]): string {
+  const landing = campaignLandingPath(campaignId, role);
+  return CAMPAIGN_TABS.find((tab) => tab.path(campaignId) === landing)?.label ?? 'the campaign';
+}
