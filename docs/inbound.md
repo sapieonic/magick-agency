@@ -731,8 +731,9 @@ paths:
   of the call records, so a failed read can never put them on a break.
 - **Older builds on the floor (IQ56).** `GET /campaigns/:id/stats` `agents[].can_take_inbound`
   (`StationRegistry.inboundCapabilityBySession`, process-local): `false` for a phone station that
-  did not declare `caps=inbound`, which the supervisor floor marks "App can't take inbound calls —
-  update the app"; `null` when this process holds no live station for the session (with media
+  did not declare `caps=inbound`, which the supervisor floor marks "Update app" ("App can't take
+  inbound calls — update the app" as its tooltip and what a screen reader hears) on an account with
+  `agency_inbound_enabled` on; `null` when this process holds no live station for the session (with media
   workers, a station a worker holds; such a deployment puts no caller through anyway). When the
   pilot starts, `MOBILE_MIN_SUPPORTED_VERSION` is raised to the first release that declares it, so
   every older build blocks on "Update required" (a deployment setting, not code).

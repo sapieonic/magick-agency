@@ -87,6 +87,31 @@ customer to nobody. So:
   closes the station socket itself: the server's close handler (`releaseStationOnClose`) writes the
   agent `offline` at once, and the app reconnects on return (the agent then goes available by
   hand). A local notification says "You're paused. Open the app to take calls again."
+- **A short absence returns on its own (IQ50).** Back in the app with the app's own `device_away`
+  pause applied (not queued behind a call) and begun less than `deviceAwayReturnGrace` (30 s,
+  contracts `DEVICE_AWAY_RETURN_GRACE_MS`) before, by the server's `since` (the phone's clock as
+  the fallback), the agent is returned with the ordinary `/available`, decided once the socket is
+  open and no pause request is in flight. A longer absence, another break taken meanwhile, or a
+  refused return keeps the away card and its tap. Meanwhile the server counts the paused agent as
+  one who could take a caller (`inbound.md` §5.1), so callers queue for them. On every return from a
+  `device_away` pause (and when a `phone_call` pause ends) the station publishes the pause's start
+  (`away_return.dart`), and the Missed feature (`rang_while_away.dart`) asks once,
+  `GET /inbound/missed/count?assignee=me&since=…`: "N customers rang while you were away" (or "…on
+  your phone call"), politely announced, with "See missed calls" and Dismiss, until dismissed or
+  opened, a call reaches the agent, or they leave the station. Nothing for 0 or a failed read.
+- **A cellular call while available (IQ51)** pauses the agent with the reserved break `phone_call`
+  ("Phone call"; the server's rules are `device_away`'s, `inbound.md` §6) for the length of the
+  call, and returns them when it ends, only while they are still on that pause (a break taken
+  meanwhile, or a supervisor's change, is kept). A pause the server queued behind a reservation is
+  withdrawn when the cellular call ends; a failed pause is retried on the away delays, then the
+  agent is told "We couldn’t pause you for your phone call. Take a break, or a customer may be put
+  through while you’re on it." A call that ends while the app is away returns them only if they
+  come back within 30 s. During a station call nothing changes (the audio interruption). Detection
+  is `agent_audio`'s `PhoneCallChanged`, asked for only while it can matter, with no runtime
+  permission: Android reads the audio mode (ringtone, in call, call screening, call redirect; the
+  app's own `MODE_IN_COMMUNICATION` is not a phone call; `OnModeChangedListener` on API 31+, a
+  1 s read below), iOS CallKit's `CXCallObserver` without the app's own calls
+  (`packages/agent_audio/README.md`). Not run on a phone; the Swift has never been compiled.
 - **Leaving during `reserved`, `on_call` or `wrapup`**: the call keeps going (the audio session,
   CallKit on iOS and the on-duty foreground service on Android keep the process alive), and
   `device_away` is QUEUED behind it, so the agent is paused after the call rather than made
@@ -365,8 +390,12 @@ Code: `lib/features/missed/`.
 - **Where it is.** A third segment of My calls ("Missed calls", or "Missed" beside two others),
   with the open count as a badge on the segment and on the My calls tab ("100+" past the server's
   cap, `InboundMissedCountResponse.badge`). Not a sixth tab: five already leave about 72 dp each
-  on a 360 dp phone, and Material's bar holds three to five. On duty on a campaign the tab is
-  disabled like the others (M4).
+  on a 360 dp phone, and Material's bar holds three to five. On duty on a campaign the tab opens
+  only the Missed list (IQ48; the other segments stay off duty only, M4), in a sheet over the
+  station (`missed_on_duty.dart`) that changes nothing on it (no pause, no switch) and closes when
+  another call reaches the agent. The station's waiting, campaign wrap-up and inbound outcome
+  screens show "N customers to call back" (the agent's own open rows; hidden at 0, unknown or
+  forbidden), a 48 dp row that opens the same sheet.
 - **When it shows** (the console's `useMissedCallsAccess`, with the server's answer in place of a
   role check, as for the Phone tab): `GET /inbound/missed/count` answered 200 (the agent holds
   `agency.inbound.read`), and `agency_inbound_enabled` is on or the agent has rows (`has_rows`).
@@ -391,22 +420,34 @@ Code: `lib/features/missed/`.
     are a minute old or a call has settled since; the rows stay on screen until the new page lands.
   An answer from a previous workspace never touches this one's (a generation guards the read in
   flight).
-- **The list.** The agent's rows only: every page asks for `assignee=me` (the server forces it
-  without `agency.supervise`, and without it would widen a supervisor's list to the whole account),
-  and there is no Reassign. The count route takes no assignee and counts a supervisor's whole
-  account, so for a supervisor using the app the badge (and `has_rows`) can count rows their list
-  does not show; agents, the app's users, are unaffected. Fixing it needs the count route to
-  accept `assignee=me`. "To follow up" / "Handled" and the reason
+- **The list.** "Mine" and "Team" (IQ49). Mine is the agent's rows: every page asks for
+  `assignee=me` (the server forces it without `agency.supervise`, and without it would widen a
+  supervisor's list to the whole account), and there is no Reassign; the count asks for
+  `assignee=me` too (IQ57), so the badge counts what the list shows, a supervisor's included. Team
+  is the account's open rows nobody owns (`assignee=unassigned`: callers who were not matched or
+  withheld their number), with Claim as the only action (`POST /inbound/missed/:id/claim`, one at a
+  time): a claimed row leaves Team, the badge is re-read and the claim announced; a refusal
+  (someone else took it, handled, gone) is said on the row and its Claim switched off until the
+  next read drops it; no answer leaves Claim on. Team has no badge. In Mine, "To follow up" / "Handled" and the reason
   filter (the console's dates are not offered), newest first, keyset pages of 50, the next page
   fetched ten rows before the end, pull to refresh. Rows are cards of varying height (the
-  actions), not the fixed-height rows of the other lists. Each row: the caller's number (the row
-  carries no contact name) or "Number withheld", a DNC badge, why it was missed in the console's
+  actions), not the fixed-height rows of the other lists. Each row: the matched contact's name
+  (`match_name`, IQ54) when there is one, above the caller's number (the name is cut short, the
+  number never), or "Number withheld"; a DNC badge, why it was missed in the console's
   words ("Out of hours", or the closed cause: "Inbound switched off", "Number not on a route",
   "Phone line not active"; "Hung up while waiting", "Nobody free to answer", "All lines busy",
   "Couldn't be answered"), when, the number rung and the route, the matched campaign and any
   callback the call booked (the number is never cut short: the number and the DNC badge, then the
   reason, wrap onto a second line when they do not fit, at any text size); on a handled row who handled it ("You", "Customer reached by …") and
   the reached note.
+- **Call back on duty (IQ48).** On duty on a campaign that is not on the soft phone, Call back
+  hands the number to the soft phone, goes to the station and switches the campaign to the soft
+  phone (SP7's `switchToSoftphone`, unconfirmed as the station's own switch is): applied, the number
+  lands on the pad; queued behind a call or wrap-up, it waits as `afterCall` (the 5-minute wait
+  starts when the switch applies: "Switching to the soft phone after this call…"); refused, the
+  reason is said and the number keeps waiting for a switch. It never dials. A DNC row's Call back
+  says that a missed call isn't consent and that the agent will be asked why the call has to go
+  ahead (IQ55): the soft phone's SP1 note and override, as for a typed number.
 - **Call back** (shown where the soft phone may start a call: the Phone tab shows and the soft
   phone is not in finish mode; otherwise the console's note says to call another way and mark the
   call handled). It hands the number and the matched campaign to the soft phone
