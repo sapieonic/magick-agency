@@ -2469,7 +2469,7 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 | `apps/mobile/test/core/session/account_choice_test.dart` | ~8 |
 | `apps/mobile/test/core/session/local_preferences_test.dart` | ~1 |
 | `apps/mobile/test/core/session/session_api_test.dart` | ~6 |
-| `apps/mobile/test/core/telemetry/call_telemetry_test.dart` | ~10 |
+| `apps/mobile/test/core/telemetry/call_telemetry_test.dart` (each inbound offer's own funnel, a re-offer after a requeue, a let-go copy's `retired` end) | ~15 |
 | `apps/mobile/test/core/telemetry/gate_telemetry_test.dart` | ~3 |
 | `apps/mobile/test/core/telemetry/posthog_sink_test.dart` | ~4 |
 | `apps/mobile/test/core/telemetry/softphone_dial_events_test.dart` (with `entry` and `surface`) | ~7 |
@@ -2656,6 +2656,7 @@ Files: `call_back.dart`, `missed_access.dart`, `missed_call_tile.dart`, `missed_
 | `apps/mobile/test/features/missed/missed_calls_controller_test.dart` | ~19 |
 | `apps/mobile/test/features/missed/missed_calls_copy_test.dart` | ~3 |
 | `apps/mobile/test/features/missed/missed_calls_screen_test.dart` (the rows, Call back through the real soft phone, the segment and its badge on My calls, the flag-off notice, Mark handled and Reopen, kept fresh mid-shift) | ~20 |
+| `apps/mobile/test/features/missed/missed_call_tile_test.dart` (the caller's number never cut short at 360 dp, at 1× and 2× text, with every reason and the DNC badge, with the app's real fonts loaded; the Call back labels) | ~34 |
 | `apps/mobile/test/features/missed/missed_count_controller_test.dart` (the visibility rule, when the count is read, the poll, a settle, a workspace change) | ~16 |
 
 ### `apps/mobile/lib/features/` (`preflight/`, `station/`)
@@ -2663,7 +2664,7 @@ Files: `call_back.dart`, `missed_access.dart`, `missed_call_tile.dart`, `missed_
 Pre-flight (pure grading apart from the device measurements) and the station screens: one
 screen per phase, the call band, contact details, notes, wrap-up and dispositions, sheets and
 link-state screens; the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading
-only `StationView.inbound`), the neutral "Incoming call · Connecting…" screen, and the banners
+only `StationView.inbound`), the neutral "A call is coming through · Connecting…" screen, and the banners
 above every layout ("Your customer is waiting", why the last inbound call left).
 
 Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_copy.dart`, `logic/*`, `parts/*`, `widgets/*`)

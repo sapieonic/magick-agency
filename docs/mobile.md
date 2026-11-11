@@ -404,7 +404,8 @@ Code: `lib/features/missed/`.
   words ("Out of hours", or the closed cause: "Inbound switched off", "Number not on a route",
   "Phone line not active"; "Hung up while waiting", "Nobody free to answer", "All lines busy",
   "Couldn't be answered"), when, the number rung and the route, the matched campaign and any
-  callback the call booked; on a handled row who handled it ("You", "Customer reached by …") and
+  callback the call booked (the number is never cut short: the number and the DNC badge, then the
+  reason, wrap onto a second line when they do not fit, at any text size); on a handled row who handled it ("You", "Customer reached by …") and
   the reached note.
 - **Call back** (shown where the soft phone may start a call: the Phone tab shows and the soft
   phone is not in finish mode; otherwise the console's note says to call another way and mark the
@@ -416,9 +417,15 @@ Code: `lib/features/missed/`.
   prompt goes (it was for another number, and "Call anyway" redials that one), as it does on a
   redial. It waits while the soft phone cannot take it (not open here yet, its bootstrap not read,
   a call on screen, finish mode) and fills the pad when it can, and the agent is told why it
-  waits: with the soft phone not open, that the number will be ready if it is opened within
-  5 minutes; with a call on the soft phone (on the Phone tab or the station's), that the number
-  goes on the pad once the call is finished. A waiting number lapses after 5 minutes (time behind
+  waits: with the soft phone not open, that the number will be on the pad if the agent switches
+  to the soft phone within 5 minutes; with a call on the soft phone (on the Phone tab or the
+  station's), that the number goes on the pad once the call is finished; with the soft phone open
+  here and its setup still being read, nothing (it lands in a moment). The feature reads where the
+  number stands from the soft phone itself (`SoftphoneView.callBackWaiting`: `none`, `afterCall`,
+  `onceOpen`, `setup`, `notKept`), never from its own reading of the screen. A dial already placed
+  when Call back is pressed keeps its own answer: the number waits until that call is on screen
+  and settles, and a refusal (or an override prompt) of that dial stays on the pad until a call
+  settles or the agent dismisses it; Call back never erases it. A waiting number lapses after 5 minutes (time behind
   a call on screen does not count: the wait starts again when the call settles), on any session
   change but the first session to open after it (so it never fills a later session's pad or sets
   its "Log to"), when another device takes the session, and on a workspace change. With the soft
@@ -435,7 +442,7 @@ Code: `lib/features/missed/`.
   console fetches it into a blob URL. The app has no player that can send those headers (the
   `agent_audio` engine plays 8 kHz A-law station frames, not a 16 kHz WAV file), and adding a pub
   dependency for playback is left for later (iOS does not build yet). A row with a voicemail says
-  "Left a voicemail · Listen on the console". The wire row carries no voicemail length, so none is
+  "Left a voicemail · Listen on the web console". The wire row carries no voicemail length, so none is
   shown.
 - **Telemetry.** The console sends no event of its own for the Missed list, so neither does the
   app. A call placed after Call back carries `entry: 'inbound_callback'` on
@@ -472,9 +479,10 @@ agent's Missed calls (above).
   `agent_state` around the call's frames (`reserved` just before the offer, `on_call` before the
   connected call, `wrapup` before the ended one, `available` before the settled one); the call
   still decides. Reserved with no call on the station (before the offer lands, or for the moment
-  between an offer leaving and the agent being returned) shows a neutral "Incoming call ·
-  Connecting…" screen (not the campaign's ringing pop, no Hang up) and says nothing; the offer is
-  announced ("Incoming call from …") when it lands, though the phase did not change. Everything
+  between an offer leaving and the agent being returned, or a campaign reconnect before its dial
+  is restated) shows a neutral "A call is coming through · Connecting…" screen (not the campaign's
+  ringing pop, no Hang up), said once politely by the live region; "Incoming call" is only for a
+  held inbound offer, which is announced ("Incoming call from …") when it lands, though the phase did not change. Everything
   that reads the phase treats a live inbound call as a call: the shell's `callActive` (the call
   takes the screen, the bar hides), the away rules (leaving the app during an offer, the call or an owed outcome
   QUEUES `device_away`, never closes the socket, and the pause is cancelled on return; while the
@@ -513,7 +521,9 @@ agent's Missed calls (above).
   `hangup`, `disposition`, `dnc` under `/proxy/agency/inbound/calls/:id`, every refusal a typed
   `InboundRefusal`). Hang up only once connected (a CallKit or notification hang-up while offered is
   ignored and the call reported to CallKit again); a refused hang-up says so and keeps the call.
-  Notes autosave 700 ms after the last keystroke (the soft phone's `CallAutosave`), are kept on the
+  Notes autosave 700 ms after the last keystroke (the soft phone's `CallAutosave`: a 403 or a call
+  gone gives up, a 401 is retried after 4, 8, 16, then every 30 s through the token refresh, and
+  a save that goes through resets it), are kept on the
   phone under `inbound:<id>` until the server has them, reach a field the agent has not typed in
   when the server comes to hold others (text restored from the phone after a restart, which no
   save has carried yet, is never replaced by the server's older copy), and go with the outcome:
@@ -532,7 +542,14 @@ agent's Missed calls (above).
   API client has forced one token refresh, and each retry refreshes again) and a 403: retiring on
   a guess could take a connected call or an owed outcome off the screen. An answer for this
   session is adopted; one for another session, or `inbound_call_not_found`, retires the copy held
-  when it asked (a newer frame survives).
+  when it asked (a newer frame survives). An OFFER is not left waiting on that read: the server
+  states `reserved` for as long as it holds an offer for the station (IQ46), so a `ready` that says
+  `available`, `break` or `offline` retires a held offer at once, as a requeue (a `ready` that
+  says `on_call` or `wrapup` leaves it to the read: the offer may have connected). As a backstop
+  an offer still on offer 10 s past its `connects_at` on the server's clock, and at least 10 s
+  after it reached the phone, with no frame having replaced it, is retired as a requeue, so the
+  microphone, CallKit, the notification and the away rules stop holding a call that is not
+  there. A connected call or an owed outcome is never retired without the server's answer.
 - **Why a call left.** When a call leaves the station without the agent's outcome the station
   says why for 30 s, or until the next call of any kind (campaign or inbound): the caller hung up before they were connected; it
   went back to the queue (also when a reconnect finds an offer no longer this station's); the time
@@ -543,7 +560,10 @@ agent's Missed calls (above).
   leaving reserved / on a call / wrap-up.
 - **Telemetry.** The console sends no inbound call events, so the app's follow the soft phone's
   names: `agency_inbound_call_offered` (once per chimed offer), `_connected`, `_ended` (with the
-  call's audio counts), `agency_inbound_outcome_saved` and `_refused`. Ids, codes and flags only:
+  call's audio counts, and `retired: true` when the station let go of the copy without the call's
+  own end: a reconnect check, a campaign `reserved`, a newer offer), `agency_inbound_outcome_saved`
+  and `_refused`. Each offer is tracked on its own (the call id and `offered_at`), so a re-offer
+  after a requeue reports its own whole funnel. Ids, codes and flags only:
   never the number, a name or the notes.
 
 ## Inside the app
