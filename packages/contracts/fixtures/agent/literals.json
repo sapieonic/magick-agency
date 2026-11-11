@@ -173,6 +173,7 @@
     "source": "packages/contracts/src/agency/breaks.ts#RESERVED_BREAK_REASONS",
     "values": [
       "device_away",
+      "phone_call",
       "soft_phone"
     ]
   },
@@ -247,6 +248,12 @@
     "values": [
       "pcm16",
       "alaw8"
+    ]
+  },
+  "station_capabilities": {
+    "source": "packages/contracts/src/agency/station.ts#AGENCY_STATION_CAPABILITIES",
+    "values": [
+      "inbound"
     ]
   },
   "stats_bucket_units": {
@@ -550,6 +557,115 @@
       "invalid_search_request",
       "invalid_cursor",
       "search_expired"
+    ]
+  },
+  "inbound_call_states": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_CALL_STATES",
+    "values": [
+      "arrived",
+      "greeting",
+      "queued",
+      "offered",
+      "connected",
+      "ended"
+    ]
+  },
+  "inbound_call_outcomes": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_CALL_OUTCOMES",
+    "values": [
+      "answered",
+      "abandoned_in_queue",
+      "overflow",
+      "overflow_no_capacity",
+      "closed",
+      "voicemail",
+      "rejected",
+      "failed"
+    ]
+  },
+  "inbound_sticky_reasons": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_STICKY_REASONS",
+    "values": [
+      "owner",
+      "last_from_number",
+      "last_connected",
+      "last_dialled"
+    ]
+  },
+  "inbound_catalog_sources": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_CATALOG_SOURCES",
+    "values": [
+      "campaign",
+      "route",
+      "builtin"
+    ]
+  },
+  "inbound_missed_reasons": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_MISSED_REASONS",
+    "values": [
+      "closed",
+      "abandoned_in_queue",
+      "overflow",
+      "overflow_no_capacity",
+      "failed"
+    ]
+  },
+  "inbound_follow_up_statuses": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_FOLLOW_UP_STATUSES",
+    "values": [
+      "open",
+      "handled"
+    ]
+  },
+  "inbound_handled_reasons": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_HANDLED_REASONS",
+    "values": [
+      "marked",
+      "reached"
+    ]
+  },
+  "inbound_closed_causes": {
+    "source": "packages/contracts/src/agency/inbound.ts#AGENCY_INBOUND_CLOSED_CAUSES",
+    "values": [
+      "hours",
+      "switched_off",
+      "no_route",
+      "credential_inactive"
+    ]
+  },
+  "inbound_error_codes": {
+    "source": "packages/contracts/src/errors.ts#AGENCY_INBOUND_ERROR_CODES",
+    "values": [
+      "inbound_disabled",
+      "inbound_route_invalid",
+      "inbound_route_not_found",
+      "inbound_route_name_taken",
+      "inbound_number_not_found",
+      "inbound_number_not_linked",
+      "inbound_number_in_use",
+      "inbound_missed_call_not_found",
+      "inbound_call_live",
+      "inbound_call_not_found",
+      "inbound_call_not_dispositionable",
+      "inbound_disposition_invalid",
+      "inbound_outcome_already_saved",
+      "inbound_clip_not_found",
+      "inbound_clip_in_use",
+      "inbound_clip_invalid",
+      "inbound_clip_name_taken",
+      "inbound_clip_storage_unavailable",
+      "inbound_missed_call_handled",
+      "inbound_assignee_invalid",
+      "inbound_missed_call_claimed"
+    ]
+  },
+  "inbound_disposition_rules": {
+    "source": "packages/contracts/src/api/agency/inbound.ts#AgencyInboundErrorResponse.reason",
+    "values": [
+      "unknown_code",
+      "note_required",
+      "datetime_required",
+      "invalid_callback_at"
     ]
   }
 }

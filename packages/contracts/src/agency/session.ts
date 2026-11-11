@@ -216,7 +216,7 @@ export interface AgencySessionBootstrap {
   state: AgencyAgentState;
   /**
    * The break's code when `state` is `break`, as on {@link AgencyStationAgentStateFrame}:
-   * a campaign's `break_reasons` code or a reserved one (`device_away`, `soft_phone`).
+   * a campaign's `break_reasons` code or a reserved one (`device_away`, `phone_call`, `soft_phone`).
    * Absent when not on break, or on a break that has no recorded reason (a rehydrate
    * after a restart). It is what lets a client that was killed while paused (the mobile
    * app, backgrounded: `device_away`) say why when it comes back.

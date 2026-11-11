@@ -78,7 +78,7 @@ void main() {
       fakeAsync((async) {
         final app = _softphone(async);
         expect(app.requests('POST', '/proxy/agency/softphone/sessions'), hasLength(1));
-        expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=sp&client=mobile&media=alaw8');
+        expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=sp&client=mobile&media=alaw8&caps=inbound');
         expect(app.mints, 0, reason: 'the URL carries its token');
         expect(app.view, isNull, reason: 'a soft-phone session has no campaign view');
         final host = app.hostView!;

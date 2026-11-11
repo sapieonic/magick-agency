@@ -35,7 +35,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
   return {
     session_id: 'sess-in', agent_user_id: 'usr_person', agent_name: 'Ravi', state: 'wrapup',
     state_since: new Date(NOW - 300_000).toISOString(), connected: true, break_reason: null, calls_handled: 1,
-    client_kind: 'web', on_inbound_call: false, inbound_outcome_owed: true, ...over,
+    client_kind: 'web', on_inbound_call: false, inbound_outcome_owed: true, can_take_inbound: true, ...over,
   };
 }
 

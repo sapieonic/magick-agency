@@ -221,6 +221,11 @@ const VOCABULARIES = {
     'agency/station.ts#AGENCY_STATION_MEDIA_FORMATS',
     () => constList('agency/station.ts', 'AGENCY_STATION_MEDIA_FORMATS'),
   ],
+  // `caps=` on the station upgrade: the app sends `caps=inbound` to be offered inbound calls (IQ46).
+  station_capabilities: [
+    'agency/station.ts#AGENCY_STATION_CAPABILITIES',
+    () => constList('agency/station.ts', 'AGENCY_STATION_CAPABILITIES'),
+  ],
   stats_bucket_units: ['primitives.ts#STATS_BUCKET_UNITS', () => constList('primitives.ts', 'STATS_BUCKET_UNITS')],
   // The soft phone's refusals: the Dart `SoftphoneErrorCode` mirrors them one to one.
   softphone_error_codes: [
@@ -323,6 +328,42 @@ const VOCABULARIES = {
   customer_history_error_codes: [
     'api/agency/customer-history.ts#CUSTOMER_HISTORY_ERROR_CODES',
     () => constList('api/agency/customer-history.ts', 'CUSTOMER_HISTORY_ERROR_CODES'),
+  ],
+  // Inbound calls (docs/inbound.md §6, §7): the call the station is offered and the Missed list.
+  inbound_call_states: ['agency/inbound.ts#AGENCY_INBOUND_CALL_STATES', () => constList('agency/inbound.ts', 'AGENCY_INBOUND_CALL_STATES')],
+  inbound_call_outcomes: [
+    'agency/inbound.ts#AGENCY_INBOUND_CALL_OUTCOMES',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_CALL_OUTCOMES'),
+  ],
+  inbound_sticky_reasons: [
+    'agency/inbound.ts#AGENCY_INBOUND_STICKY_REASONS',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_STICKY_REASONS'),
+  ],
+  inbound_catalog_sources: [
+    'agency/inbound.ts#AGENCY_INBOUND_CATALOG_SOURCES',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_CATALOG_SOURCES'),
+  ],
+  inbound_missed_reasons: [
+    'agency/inbound.ts#AGENCY_INBOUND_MISSED_REASONS',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_MISSED_REASONS'),
+  ],
+  inbound_follow_up_statuses: [
+    'agency/inbound.ts#AGENCY_INBOUND_FOLLOW_UP_STATUSES',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_FOLLOW_UP_STATUSES'),
+  ],
+  inbound_handled_reasons: [
+    'agency/inbound.ts#AGENCY_INBOUND_HANDLED_REASONS',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_HANDLED_REASONS'),
+  ],
+  inbound_closed_causes: [
+    'agency/inbound.ts#AGENCY_INBOUND_CLOSED_CAUSES',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_CLOSED_CAUSES'),
+  ],
+  inbound_error_codes: ['errors.ts#AGENCY_INBOUND_ERROR_CODES', () => constList('errors.ts', 'AGENCY_INBOUND_ERROR_CODES')],
+  // Which rule refused an outcome (`inbound_disposition_invalid`'s `reason`).
+  inbound_disposition_rules: [
+    'api/agency/inbound.ts#AgencyInboundErrorResponse.reason',
+    () => fieldUnion('api/agency/inbound.ts', 'AgencyInboundErrorResponse', 'reason'),
   ],
 };
 

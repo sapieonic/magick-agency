@@ -207,6 +207,153 @@ describe('GET /inbound/missed/count: the nav badge', () => {
   });
 });
 
+describe('GET /inbound/missed/count?assignee&since (IQ57, IQ50)', () => {
+  it('takes the list`s assignee: a supervisor`s `me` is only theirs, `unassigned` anyone`s Team view; an agent`s other values are their own', async () => {
+    await q('DELETE FROM agency_inbound_calls');
+    await missed({ assignee: agent(0).id });
+    await missed({ assignee: agent(0).id });
+    await missed({ assignee: sup().id });
+    await missed({ assignee: null });
+    await missed({ assignee: null });
+    await missed({ assignee: null });
+    await missed({ account: accountB, assignee: null });
+    const count = async (actor: Actor, query: string) => {
+      const res = await call('GET', `/missed/count${query}`, actor);
+      expect(res.statusCode, res.body).toBe(200);
+      return res.json().open as number;
+    };
+    // A supervisor: the account's (today's default), their own, the unassigned, one person's.
+    expect(await count(sup(), '')).toBe(6);
+    expect(await count(sup(), '?assignee=me')).toBe(1);
+    expect(await count(sup(), '?assignee=unassigned')).toBe(3);
+    expect(await count(sup(), `?assignee=${agent(0).id}`)).toBe(2);
+    // An agent: their own whatever they ask, except the Team view.
+    expect(await count(agent(0), '')).toBe(2);
+    expect(await count(agent(0), '?assignee=me')).toBe(2);
+    expect(await count(agent(0), `?assignee=${sup().id}`)).toBe(2);
+    expect(await count(agent(0), '?assignee=unassigned')).toBe(3);
+    expect(await count(agent(2), '?assignee=unassigned')).toBe(3);
+    // A malformed value is the surface's ordinary 400, before anything is read.
+    for (const bad of ['?assignee=team', '?since=yesterday']) {
+      expect((await call('GET', `/missed/count${bad}`, agent(0))).statusCode, bad).toBe(400);
+    }
+  });
+
+  it('`since`: only the rows whose call arrived at or after it (the customers who rang while the agent was away)', async () => {
+    await q('DELETE FROM agency_inbound_calls');
+    const pause = new Date(Date.now() - 10 * 60_000);
+    await missed({ assignee: agent(0).id, at: new Date(pause.getTime() - 60_000) });
+    await missed({ assignee: agent(0).id, at: pause });
+    await missed({ assignee: agent(0).id, at: new Date(pause.getTime() + 60_000) });
+    await missed({ assignee: agent(1).id, at: new Date(pause.getTime() + 60_000) });
+    const since = encodeURIComponent(pause.toISOString());
+    expect((await call('GET', `/missed/count?since=${since}`, agent(0))).json()).toEqual({ open: 2, open_capped: false, has_rows: true });
+    expect((await call('GET', '/missed/count', agent(0))).json()).toMatchObject({ open: 3 });
+    expect((await call('GET', `/missed/count?since=${encodeURIComponent(new Date().toISOString())}`, agent(0))).json())
+      .toEqual({ open: 0, open_capped: false, has_rows: false });
+    expect((await call('GET', `/missed/count?assignee=me&since=${since}`, sup())).json()).toMatchObject({ open: 0 });
+  });
+});
+
+describe('IQ49: the Team view (`assignee=unassigned`) and POST /inbound/missed/:id/claim', () => {
+  it('an agent reads the account`s unassigned rows (with their voicemails), claims one: theirs, off the Team view, audited once', async () => {
+    await q('DELETE FROM agency_inbound_calls');
+    const team = await missed({ assignee: null, voicemail: `vm/${randomUUID()}.wav` });
+    const second = await missed({ assignee: null });
+    const someoneElses = await missed({ assignee: agent(1).id });
+    await missed({ account: accountB, assignee: null });
+    bucket.files.set((await q('SELECT voicemail_key FROM agency_inbound_calls WHERE id = $1', [team])).rows[0]!.voicemail_key, Buffer.from('RIFF'));
+
+    const view = await call('GET', '/missed?assignee=unassigned', agent(0));
+    expect(view.statusCode, view.body).toBe(200);
+    expect(idsOf(view).sort()).toEqual([team, second].sort());
+    // Without the Team view an agent still reads only their own.
+    expect(idsOf(await call('GET', '/missed', agent(0)))).toEqual([]);
+    // The Team view's voicemail plays for the agent who may claim it; another agent's row does not.
+    expect((await call('GET', `/missed/${team}/voicemail`, agent(0))).statusCode).toBe(200);
+    expect((await call('GET', `/missed/${someoneElses}/voicemail`, agent(0))).json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+
+    const claimed = await call('POST', `/missed/${team}/claim`, agent(0));
+    expect(claimed.statusCode, claimed.body).toBe(200);
+    expect(claimed.json().call).toMatchObject({ id: team, assignee_user_id: agent(0).id, assignee_name: 'agent 0.0', status: 'open' });
+    expect(idsOf(await call('GET', '/missed', agent(0)))).toEqual([team]);
+    expect(idsOf(await call('GET', '/missed?assignee=unassigned', agent(2)))).toEqual([second]);
+    // Again: answered as it is, not audited twice.
+    const again = await call('POST', `/missed/${team}/claim`, agent(0));
+    expect(again.statusCode).toBe(200);
+    expect(again.json().call).toMatchObject({ assignee_user_id: agent(0).id });
+    expect(await audits('agency_inbound_call.claimed', team)).toEqual([
+      expect.objectContaining({ user_id: agent(0).id, account_id: floor.account, details: { from: null, to: agent(0).id } }),
+    ]);
+    // Now it is theirs, the ordinary rules apply: they can mark it handled.
+    expect((await call('POST', `/missed/${team}/handled`, agent(0))).statusCode).toBe(200);
+  });
+
+  it('only while unassigned: another`s row (claimed first or given) is inbound_missed_call_claimed; a handled one inbound_missed_call_handled; nothing changes', async () => {
+    const taken = await missed({ assignee: null });
+    expect((await call('POST', `/missed/${taken}/claim`, agent(1))).statusCode).toBe(200);
+    const late = await call('POST', `/missed/${taken}/claim`, agent(0));
+    expect(late.statusCode).toBe(409);
+    expect(late.json()).toMatchObject({ code: 'inbound_missed_call_claimed', message: 'Someone else has already taken this missed call.' });
+    const given = await missed({ assignee: agent(2).id });
+    expect((await call('POST', `/missed/${given}/claim`, agent(0))).json()).toMatchObject({ code: 'inbound_missed_call_claimed' });
+    // A supervisor claims by the same rule (their reassign is the way to move another's row).
+    expect((await call('POST', `/missed/${given}/claim`, sup())).json()).toMatchObject({ code: 'inbound_missed_call_claimed' });
+    const done = await missed({ assignee: null });
+    await call('POST', `/missed/${done}/handled`, sup());
+    const handled = await call('POST', `/missed/${done}/claim`, agent(0));
+    expect(handled.statusCode).toBe(409);
+    expect(handled.json()).toMatchObject({ code: 'inbound_missed_call_handled' });
+    const rows = await q('SELECT id, follow_up_assignee_user_id AS a FROM agency_inbound_calls WHERE id = ANY($1::uuid[])', [[taken, given, done]]);
+    expect(Object.fromEntries(rows.rows.map((r) => [r.id, r.a]))).toEqual({ [taken]: agent(1).id, [given]: agent(2).id, [done]: null });
+    expect(await audits('agency_inbound_call.claimed', given)).toEqual([]);
+  });
+
+  it('two agents claiming at once: exactly one wins, the other is told who has it', async () => {
+    for (let round = 0; round < 5; round++) {
+      const id = await missed({ assignee: null });
+      const [a, b] = await Promise.all([call('POST', `/missed/${id}/claim`, agent(0)), call('POST', `/missed/${id}/claim`, agent(1))]);
+      expect([a.statusCode, b.statusCode].sort()).toEqual([200, 409]);
+      const winner = a.statusCode === 200 ? agent(0).id : agent(1).id;
+      expect((await agencyInboundCallRepository.findMissed(floor.tenant, floor.account, id))!.follow_up_assignee_user_id).toBe(winner);
+    }
+  });
+
+  it('another account`s or tenant`s row, a malformed id: not found; served with the flag off', async () => {
+    const inB = await missed({ account: accountB, assignee: null });
+    expect((await call('POST', `/missed/${inB}/claim`, agent(0))).json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+    const theirs = await missed({ tenant: other.tenant, account: other.account, assignee: null });
+    expect((await call('POST', `/missed/${theirs}/claim`, agent(0))).json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+    expect((await call('POST', '/missed/not-a-uuid/claim', agent(0))).json()).toMatchObject({ code: 'inbound_missed_call_not_found' });
+    const id = await missed({ assignee: null });
+    await withFlagOff(async () => {
+      const res = await call('POST', `/missed/${id}/claim`, agent(0));
+      expect(res.statusCode, res.body).toBe(200);
+    });
+  });
+});
+
+describe('IQ54: match_name on a Missed row', () => {
+  it('the matched contact`s name on the list and on every single-row answer; null unmatched, withheld or nameless', async () => {
+    await q('DELETE FROM agency_inbound_calls');
+    const campaignId = floor.campaigns[0]!;
+    const contact = async (context: Record<string, unknown>) => (await q(
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context) VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`,
+      [campaignId, floor.tenant, floor.account, '+447700900123', JSON.stringify(context)])).rows[0]!.id as string;
+    const named = await missed({ assignee: agent(0).id, contact: { contactId: await contact({ full_name: ' Asha Rao ', city: 'Pune' }), campaignId } });
+    const nameless = await missed({ assignee: agent(0).id, contact: { contactId: await contact({ city: 'Pune' }), campaignId } });
+    const unmatched = await missed({ assignee: agent(0).id });
+    const withheld = await missed({ assignee: null, from: null });
+    const list = (await call('GET', '/missed', agent(0))).json().rows as Array<{ id: string; match_name: string | null }>;
+    expect(Object.fromEntries(list.map((r) => [r.id, r.match_name]))).toEqual({ [named]: 'Asha Rao', [nameless]: null, [unmatched]: null });
+    expect((await call('GET', '/missed?assignee=unassigned', agent(0))).json().rows).toEqual([expect.objectContaining({ id: withheld, match_name: null })]);
+    expect((await call('POST', `/missed/${named}/handled`, agent(0))).json().call).toMatchObject({ match_name: 'Asha Rao' });
+    expect((await call('POST', `/missed/${named}/reopen`, agent(0))).json().call).toMatchObject({ match_name: 'Asha Rao' });
+    expect((await call('POST', `/missed/${named}/assign`, sup(), { assignee_user_id: null })).json().call).toMatchObject({ match_name: 'Asha Rao' });
+    expect((await call('POST', `/missed/${named}/claim`, agent(1))).json().call).toMatchObject({ match_name: 'Asha Rao' });
+  });
+});
+
 describe('POST /inbound/missed/:id/assign: a supervisor`s reassign', () => {
   it('moves an open row to a member or to the account, audits each change once, and the new assignee sees it', async () => {
     const id = await missed({ assignee: agent(0).id });

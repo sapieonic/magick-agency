@@ -1,8 +1,8 @@
 # Magick Agency agent app
 
 The agent-only mobile app: one Flutter project that builds the Android and the iOS app. Agents
-sign in, go on duty on a campaign, take power-dialled calls, dial numbers themselves on the soft
-phone, write up each call and see their own numbers. There is nothing for supervisors or admins here; those stay in the web consoles.
+sign in, go on duty on a campaign, take power-dialled calls and customers who ring in, dial
+numbers themselves on the soft phone, write up each call and see their own numbers. There is nothing for supervisors or admins here; those stay in the web consoles.
 
 It is a second client of the same server the web console uses: the public API under `/auth`,
 `/accounts`, `/proxy/agency/*`, and the station WebSocket `/proxy/agency/station/:sessionId`, which
@@ -23,21 +23,25 @@ apps/mobile/
       station/          station socket, state machine, actions; station_view.dart is the UI seam;
                         hosts a campaign station or a soft-phone session
       softphone/        the soft phone's API client and controller; softphone_view.dart is its UI seam
+      inbound/          the inbound call's API client, rules (newerInboundCall) and copy; the
+                        station holds the call (docs/mobile.md "Inbound calls")
       audio/            AudioEngine facade over packages/agent_audio
       lifecycle/        foreground/background rules (the device_away pause), wake lock
       telemetry/        PII-masking log
       flags/            the client flag map (`GET /feature-flags`), per workspace, fail-closed
     features/           one folder per screen family: auth, join, accounts, campaigns, preflight,
-                        station, softphone (the Phone tab), performance, calls, contacts
-                        (My contacts: contact assignment), customers (Customer history: search
-                        one number from the Calls tab, docs/customer-history.md), settings
+                        station (inbound calls' screens included), softphone (the Phone tab),
+                        performance, calls, missed (My calls' Missed calls segment, with Call
+                        back into the soft phone), contacts (My contacts: contact assignment),
+                        customers (Customer history: search one number from the Calls tab,
+                        docs/customer-history.md), settings
     ui/                 shared primitives (pills, cards, the live dot)
   packages/
     agency_wire/        wire types for the API and the station socket, hand-written against
                         packages/contracts and checked by its fixtures (packages/contracts/fixtures/agent)
     agent_audio/        the native voice engine: capture, playback, echo cancellation, routes,
-                        the soft phone's ringback, CallKit (iOS) and the on-duty foreground
-                        service (Android)
+                        the soft phone's ringback, the inbound chime, CallKit (iOS) and the
+                        on-duty foreground service (Android)
   android/  ios/        the platform hosts
   env/                  dev.json, staging.json, prod.json: build-time config (no secrets);
                         your own copies go in *.local.json (git-ignored)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import {
+  INBOUND_DEVICE_AWAY_GRACE_MS,
   RELEASE_STATES,
   anyoneCouldTake,
   callerForReleasedAgent,
@@ -32,7 +33,7 @@ function agent(id: string, over: Partial<InboundAgentView> & { state?: AgencyAge
     tenantId: T,
     accountId: A,
     campaignId: 'camp-1',
-    clientKind: 'web',
+    canTakeInbound: true,
     stationOpen: true,
     member: true,
     live: { state, since, manualCallId: null, softphone: false, inboundCallId: null },
@@ -60,11 +61,21 @@ describe('inboundIneligibility (§4.3)', () => {
   it('an available console campaign agent of the call`s account may take it', () => {
     expect(inboundIneligibility(agent('a'), c)).toBeNull();
   });
+  it('a phone that declared caps=inbound may take it exactly as a console may, in every rule (IQ46)', () => {
+    // The view carries the capability, not the client kind: a capable phone is indistinguishable
+    // here. The same agent with and without it, so the capability alone decides this assertion.
+    expect([true, false].map((canTakeInbound) => inboundIneligibility(agent('a', { canTakeInbound }), c)))
+      .toEqual([null, 'no_inbound_capability']);
+    expect(candidatesFor(c, [agent('a', { canTakeInbound: false }), agent('b', { canTakeInbound: true })], NOW)).toEqual(['s-b']);
+    expect(couldTakeLater(agent('a', { canTakeInbound: true, state: 'on_call' }), c)).toBe(true);
+    expect(couldTakeLater(agent('a', { canTakeInbound: false, state: 'on_call' }), c)).toBe(false);
+    expect(stickyAgentStatus(agent('s', { canTakeInbound: true, state: 'wrapup' }), c)).toBe('busy');
+  });
   it.each([
     ['another account', agent('a', { accountId: 'account-2' }), 'other_account'],
     ['another tenant', agent('a', { tenantId: 'tenant-2' }), 'other_account'],
     ['a soft-phone session', agent('a', { campaignId: null }), 'not_campaign_session'],
-    ['the mobile app (IQ20)', agent('a', { clientKind: 'mobile' }), 'mobile'],
+    ['an app build that cannot take inbound calls (no caps=inbound: IQ20, IQ46)', agent('a', { canTakeInbound: false }), 'no_inbound_capability'],
     ['no open station here', agent('a', { stationOpen: false }), 'no_station'],
     ['no lease (offline, lapsed)', { ...agent('a'), live: null }, 'wrong_state'],
     ['offline', agent('a', { state: 'offline' }), 'wrong_state'],
@@ -105,7 +116,7 @@ describe('the sticky agent`s status and phase (§4.2, §4.3, IQ6)', () => {
     expect(stickyAgentStatus(undefined, c)).toBe('away');
     expect(stickyAgentStatus(agent('s', { state: 'break' }), c)).toBe('away');
     expect(stickyAgentStatus(agent('s', { state: 'offline' }), c)).toBe('away');
-    expect(stickyAgentStatus(agent('s', { clientKind: 'mobile' }), c)).toBe('away');
+    expect(stickyAgentStatus(agent('s', { canTakeInbound: false }), c)).toBe('away');
     expect(stickyAgentStatus(agent('s', { accountId: 'account-2' }), c)).toBe('away');
     expect(stickyAgentStatus(agent('s', { campaignId: null, state: 'break' }), c)).toBe('away');
     const onSoftphone = agent('s', { state: 'on_call' });
@@ -187,11 +198,14 @@ describe('callerForReleasedAgent: the release hook`s choice', () => {
     expect(callerForReleasedAgent(me, [{ ...theirs, stickyMode: 'strict' }], [me, other], NOW)).toBeNull();
     expect(callerForReleasedAgent(me, [{ ...theirs, stickyMode: 'strict' }], [me, agent('other', { state: 'break' })], NOW)).toBe('c-1');
   });
-  it('nothing outside their reach: another account, a pool they are not on, the mobile app', () => {
+  it('nothing outside their reach: another account, a pool they are not on, an app build that cannot take inbound calls', () => {
     expect(callerForReleasedAgent(me, [caller('1', { accountId: 'account-2', routeAccountId: 'account-2' })], [me], NOW)).toBeNull();
     expect(callerForReleasedAgent(me, [caller('1', { poolCampaignIds: ['camp-9'] })], [me], NOW)).toBeNull();
-    const phone = agent('me', { state: 'wrapup', clientKind: 'mobile' });
+    const phone = agent('me', { state: 'wrapup', canTakeInbound: false });
     expect(callerForReleasedAgent(phone, [caller('1')], [phone], NOW)).toBeNull();
+    // A phone that declared caps=inbound is taken from wrap-up as a console is.
+    const capable = agent('me', { state: 'wrapup', canTakeInbound: true });
+    expect(callerForReleasedAgent(capable, [caller('1')], [capable], NOW)).toBe('c-1');
   });
 });
 
@@ -228,7 +242,7 @@ describe('the review fix pass: membership, a declined offer, and whether anyone 
     ['no lease', { ...agent('a'), live: null }],
     ['the soft phone (a session in soft-phone mode)', { ...agent('a'), live: { ...agent('a').live!, softphone: true } }],
     ['a soft-phone session', agent('a', { campaignId: null })],
-    ['the phone app', agent('a', { clientKind: 'mobile' })],
+    ['an app build that cannot take inbound calls', agent('a', { canTakeInbound: false })],
     ['a station not open', agent('a', { stationOpen: false })],
     ['outside the pool', agent('a', { campaignId: 'camp-2' })],
     ['another account', agent('a', { accountId: 'account-2' })],
@@ -264,7 +278,7 @@ describe('the rejoin grace (SWE-F1): a station closed moments ago still counts, 
   it.each([
     ['on a break', agent('a', { state: 'break', stationOpen: false, rejoining: true })],
     ['offline', agent('a', { state: 'offline', stationOpen: false, rejoining: true })],
-    ['on the phone app', agent('a', { clientKind: 'mobile', stationOpen: false, rejoining: true })],
+    ['on an app build that cannot take inbound calls', agent('a', { canTakeInbound: false, stationOpen: false, rejoining: true })],
     ['outside the pool', agent('a', { campaignId: 'camp-2', stationOpen: false, rejoining: true })],
     ['no longer a member', agent('a', { member: false, stationOpen: false, rejoining: true })],
   ] as const)('a rejoining session %s does not count', (_what, a) => {
@@ -280,5 +294,37 @@ describe('the rejoin grace (SWE-F1): a station closed moments ago still counts, 
     expect(rejoinState(live('break'), live('available'))).toEqual(live('break'));
     expect(rejoinState(live('offline'), null)).toEqual(live('offline'));
     expect(rejoinState(null, null)).toBeNull();
+  });
+});
+
+describe('IQ50: a device_away pause less than 30 s old counts as could take, and is never offered', () => {
+  it('the grace is the app`s own return grace, 30 s', () => {
+    expect(INBOUND_DEVICE_AWAY_GRACE_MS).toBe(30_000);
+  });
+
+  it('an agent on break in the grace could take the caller; never a candidate, never the sticky agent`s `available`', () => {
+    const c = caller('1');
+    const away = agent('a', { state: 'break', awayGrace: true });
+    expect(couldTakeLater(away, c)).toBe(true);
+    expect(anyoneCouldTake(c, [away])).toBe(true);
+    expect(inboundIneligibility(away, c)).toBe('wrong_state');
+    expect(candidatesFor(c, [away], NOW)).toEqual([]);
+    expect(stickyAgentStatus(away, { ...c, stickyUserId: 'u-a' })).toBe('away');
+    // Past the grace (the connector no longer marks it): nobody.
+    expect(anyoneCouldTake(c, [agent('a', { state: 'break' })])).toBe(false);
+  });
+
+  it('only on a break: the mark never widens another state (offline, a lapsed lease)', () => {
+    expect(couldTakeLater(agent('a', { state: 'offline', awayGrace: true }), caller('1'))).toBe(false);
+    expect(couldTakeLater({ ...agent('a', { awayGrace: true }), live: null }, caller('1'))).toBe(false);
+  });
+
+  it.each([
+    ['on an app build that cannot take inbound calls', agent('a', { state: 'break', awayGrace: true, canTakeInbound: false })],
+    ['outside the pool', agent('a', { state: 'break', awayGrace: true, campaignId: 'camp-2' })],
+    ['no longer a member', agent('a', { state: 'break', awayGrace: true, member: false })],
+    ['in another account', agent('a', { state: 'break', awayGrace: true, accountId: 'account-2' })],
+  ] as const)('an agent in the grace %s does not count', (_what, a) => {
+    expect(couldTakeLater(a, caller('1', { poolCampaignIds: ['camp-1'] }))).toBe(false);
   });
 });

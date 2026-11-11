@@ -132,6 +132,30 @@ class AgentAudio {
   /// clear a request made after it. Turning it on again starts a fresh ring.
   Future<void> setRingback(bool on) => _queued(() => _invoke<void>('setRingback', {'on': on}));
 
+  /// Plays the inbound chime once (an inbound caller has been offered to the agent): the
+  /// console's `inbound_ring` cue, a two-note bell rung twice, about 0.84 s, made on the device
+  /// and mixed into the call's playout, never into the uplink. See `lib/src/tone/chime.dart`.
+  ///
+  /// Asked for before the engine runs (between [armMicrophone] and CallKit activating the
+  /// session on iOS), it plays when the engine starts; [stop] drops a request not yet played
+  /// and silences one playing. Asked for again while it plays, it starts over. Never during a
+  /// loopback test. Like [setRingback] it does not change the phase and is queued behind
+  /// pending lifecycle calls.
+  Future<void> playChime() => _queued(() => _invoke<void>('playChime'));
+
+  /// Turns [PhoneCallChanged] events on or off: whether a phone call that is not this app's
+  /// own (a cellular call, ringing or active) is in progress. Turning it on reports the state
+  /// at once; off stops the reports. Independent of the call lifecycle (no phase needed) and
+  /// idempotent. No runtime permission is asked for:
+  ///
+  /// * Android: the audio mode (RINGTONE, IN_CALL, CALL_SCREENING, CALL_REDIRECT; never the
+  ///   app's own `MODE_IN_COMMUNICATION`), from `OnModeChangedListener` on API 31+ and by
+  ///   reading it once a second below that, while monitoring is on. Not `READ_PHONE_STATE`.
+  /// * iOS: CallKit's `CXCallObserver`, the app's own CallKit calls excluded. Off (no events)
+  ///   while CallKit is turned off ([configureCallSystem]).
+  Future<void> setPhoneCallMonitoring(bool enabled) =>
+      _invoke<void>('setPhoneCallMonitoring', {'enabled': enabled});
+
   /// Routes available now. Earpiece is absent on devices without one.
   Future<List<AudioRoute>> routes() async {
     final raw = await _invoke<List<Object?>>('routes');

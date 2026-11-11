@@ -71,6 +71,19 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'customer_callback_statuses': CustomerCallbackStatus.values,
   'customer_search_number_errors': CustomerSearchNumberError.values,
   'customer_history_error_codes': CustomerHistoryErrorCode.values,
+  // The station upgrade's `caps=` (`agency/station.ts#AGENCY_STATION_CAPABILITIES`).
+  'station_capabilities': StationCapability.values,
+  // Inbound calls (`agency/inbound.ts`, `errors.ts` and `api/agency/inbound.ts`).
+  'inbound_call_states': InboundCallState.values,
+  'inbound_call_outcomes': InboundCallOutcome.values,
+  'inbound_sticky_reasons': InboundStickyReason.values,
+  'inbound_catalog_sources': InboundCatalogSource.values,
+  'inbound_missed_reasons': InboundMissedReason.values,
+  'inbound_follow_up_statuses': InboundFollowUpStatus.values,
+  'inbound_handled_reasons': InboundHandledReason.values,
+  'inbound_closed_causes': InboundClosedCause.values,
+  'inbound_error_codes': InboundErrorCode.values,
+  'inbound_disposition_rules': InboundDispositionRule.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
@@ -99,7 +112,7 @@ final Map<String, List<WireEnum>> appSends = {
     for (final o in AttemptOutcome.values)
       if (!o.isUnknown) o,
   ],
-  'reserved_break_codes': [ReservedBreakCode.deviceAway],
+  'reserved_break_codes': [ReservedBreakCode.deviceAway, ReservedBreakCode.phoneCall],
   // `ManualCallsQuery.status` can filter on any of them.
   'manual_call_list_statuses': [
     for (final s in ManualCallListStatus.values)
@@ -121,6 +134,17 @@ final Map<String, List<WireEnum>> appSends = {
   'customer_timeline_channels': [
     for (final c in CustomerTimelineChannel.values)
       if (!c.isUnknown) c,
+  ],
+  // The station upgrade's `caps=`, and the Missed list's `status=` and
+  // `reason=` filters.
+  'station_capabilities': [StationCapability.inbound],
+  'inbound_follow_up_statuses': [
+    for (final v in InboundFollowUpStatus.values)
+      if (!v.isUnknown) v,
+  ],
+  'inbound_missed_reasons': [
+    for (final v in InboundMissedReason.values)
+      if (!v.isUnknown) v,
   ],
 };
 
@@ -146,7 +170,9 @@ void main() {
 
   List<String> ts(String name) => (vocabularies[name]!['values']! as List<Object?>).cast<String>();
 
-  for (final MapEntry(key: name, value: dartValues) in dartVocabularies.entries) {
+  final checked = dartVocabularies;
+
+  for (final MapEntry(key: name, value: dartValues) in checked.entries) {
     test('$name: every TypeScript literal is a known Dart value', () {
       final ts = (vocabularies[name]!['values']! as List<Object?>).cast<String>();
       expect(ts, isNotEmpty);
@@ -162,7 +188,7 @@ void main() {
     });
   }
 
-  for (final MapEntry(key: name, value: dartValues) in dartVocabularies.entries) {
+  for (final MapEntry(key: name, value: dartValues) in checked.entries) {
     if (notOneToOne.contains(name)) continue;
     test('$name: every Dart value is still a TypeScript literal', () {
       final declared = ts(name).toSet();

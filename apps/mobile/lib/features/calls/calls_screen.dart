@@ -10,6 +10,10 @@ import '../../app/routes.dart';
 import '../../app/theme/tokens.dart';
 import '../../ui/primitives.dart';
 import '../customers/customer_history_copy.dart' show CustomerHistoryCopy;
+import '../missed/missed_access.dart';
+import '../missed/missed_calls_controller.dart';
+import '../missed/missed_calls_copy.dart';
+import '../missed/missed_calls_list.dart';
 import '../performance/agent_workspace.dart';
 import '../performance/campaign_names.dart';
 import 'calls_controller.dart';
@@ -29,6 +33,11 @@ import 'widgets/filter_bar.dart';
 /// manual call is not an attempt: no try number, its own outcome catalog and
 /// call details), shown where the Phone tab shows or where the agent has
 /// soft-phone calls to look back on ([softphoneCallsVisibleProvider]).
+///
+/// Missed calls (inbound calls that reached nobody, the agent's to call back)
+/// are a third segment, shown by [missedCallsAccessProvider], with the open
+/// count as a badge (the Calls tab carries it too). A segment rather than a
+/// sixth tab: the bar holds at most five on a 360 dp phone.
 class CallsScreen extends ConsumerStatefulWidget {
   const CallsScreen({super.key});
 
@@ -41,7 +50,7 @@ class CallsScreen extends ConsumerStatefulWidget {
 }
 
 /// Which list My calls shows.
-enum CallsView { campaign, softphone }
+enum CallsView { campaign, softphone, missed }
 
 class _CallsScreenState extends ConsumerState<CallsScreen> {
   /// The segment the agent picked; reads as [CallsView.campaign] whenever the
@@ -68,7 +77,11 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       });
     });
     final softphone = ref.watch(softphoneCallsVisibleProvider);
-    final view = softphone ? _picked : CallsView.campaign;
+    final missed = ref.watch(missedCallsAccessProvider);
+    final shown = [CallsView.campaign, if (softphone) CallsView.softphone, if (missed.visible) CallsView.missed];
+    final view = shown.contains(_picked) ? _picked : CallsView.campaign;
+    // Three segments on a 360 dp phone leave about 105 dp each: the short labels.
+    final short = shown.length > 2;
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 64,
@@ -95,27 +108,44 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (softphone)
+          if (shown.length > 1)
             Padding(
               padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.sm),
               child: SegmentedButton<CallsView>(
                 key: const Key('calls-view'),
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: CallsView.campaign,
-                    label: Text('Campaign calls', key: Key('calls-view-campaign'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    label: Text(short ? 'Campaign' : 'Campaign calls',
+                        key: const Key('calls-view-campaign'), maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
-                  ButtonSegment(
-                    value: CallsView.softphone,
-                    label: Text('Soft-phone calls', key: Key('calls-view-softphone'), maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ),
+                  if (softphone)
+                    ButtonSegment(
+                      value: CallsView.softphone,
+                      label: Text(short ? 'Soft phone' : 'Soft-phone calls',
+                          key: const Key('calls-view-softphone'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  if (missed.visible)
+                    ButtonSegment(
+                      value: CallsView.missed,
+                      label: Badge(
+                        key: const Key('calls-view-missed-badge'),
+                        isLabelVisible: missed.badge.isNotEmpty,
+                        label: Text(missed.badge),
+                        offset: const Offset(14, -6),
+                        child: Text(short ? MissedCopy.segmentShort : MissedCopy.segment,
+                            key: const Key('calls-view-missed'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    ),
                 ],
                 selected: {view},
                 showSelectedIcon: false,
                 onSelectionChanged: (s) => setState(() => _picked = s.first),
               ),
             ),
-          if (view == CallsView.softphone) ...const [
+          if (view == CallsView.missed)
+            const Expanded(child: MissedCallsList())
+          else if (view == CallsView.softphone) ...const [
             SoftphoneCallsFilterBar(),
             SizedBox(height: Space.sm),
             Expanded(child: SoftphoneCallsList()),
@@ -140,7 +170,9 @@ class _CountLine extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final String line;
-    if (view == CallsView.softphone) {
+    if (view == CallsView.missed) {
+      line = ref.watch(missedCallsControllerProvider.select(missedCountLine));
+    } else if (view == CallsView.softphone) {
       line = ref.watch(softphoneCallsControllerProvider.select(softphoneCallsCountLine));
     } else {
       final (count, more, ready) = ref.watch(

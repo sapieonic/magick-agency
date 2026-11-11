@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:agent_audio/agent_audio.dart' as audio;
@@ -22,10 +23,12 @@ class _Rig {
       sendUplink: uplink.add,
       onChanged: () => changes++,
       onSystemHangUp: () => hangUps++,
+      onPhoneCall: phoneCalls.add,
     );
   }
 
   final FakeAsync async;
+  final phoneCalls = <bool>[];
   final engine = FakeAudioEngine();
   final uplink = <Uint8List>[];
   late final AudioOrchestrator orchestrator;
@@ -47,6 +50,28 @@ const _reserved = AudioTarget(attemptId: 'att-1', displayName: 'Asha Rao', handl
 const _bridged = AudioTarget(attemptId: 'att-1', bridged: true, displayName: 'Asha Rao', handle: '+919876543210');
 
 void main() {
+  group('phone calls outside the app (IQ51)', () {
+    test('reported only while asked for; repeats dropped; off at close', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.event(const audio.PhoneCallChanged(active: true));
+        expect(r.phoneCalls, isEmpty, reason: 'not asked for');
+        r.orchestrator.setPhoneCallMonitoring(true);
+        r.orchestrator.setPhoneCallMonitoring(true);
+        async.flushMicrotasks();
+        expect(r.engine.phoneCallMonitoring, isTrue);
+        r.event(const audio.PhoneCallChanged(active: true));
+        r.event(const audio.PhoneCallChanged(active: false));
+        expect(r.phoneCalls, [true, false]);
+        expect(r.engine.calls, ['fgs.start', 'prepare'], reason: 'no lifecycle call of its own');
+        unawaited(r.orchestrator.close());
+        async.flushMicrotasks();
+        expect(r.engine.phoneCallMonitoring, isFalse);
+      });
+    });
+  });
+
   group('orchestration order', () {
     test('prepare at open → CallKit + arm at reserved → uplink + connected at bridged → endCall + stop at released', () {
       fakeAsync((async) {

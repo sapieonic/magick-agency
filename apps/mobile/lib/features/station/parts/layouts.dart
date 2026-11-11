@@ -27,7 +27,7 @@ class IdleLayout extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [const IdleLinkBanner(), const MicProblemBanner(), const MissedReleaseCard(), ...body],
+              children: [const StationTopNotices(), const IdleLinkBanner(), const MicProblemBanner(), const MissedReleaseCard(), ...body],
             ),
           ),
         ),
@@ -55,7 +55,7 @@ class CallLayout extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [const MicProblemBanner(), const MissedReleaseCard(), ...body],
+              children: [const StationTopNotices(), const MicProblemBanner(), const MissedReleaseCard(), ...body],
             ),
           ),
         ),

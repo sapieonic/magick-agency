@@ -64,8 +64,8 @@ export type PacingInvalidationEvent =
   | { type: 'dedications_changed'; campaignId: string }
   /**
    * Inbound callers wait for the account's agents (docs/inbound.md §5.2, P2): pacing should leave
-   * them room. `n` callers are queued; `preferredSessionIds` are the sessions they are sticky to
-   * (pacing drops them from its candidates); the hold applies to the campaigns in
+   * them room. `n` callers are queued; `preferredSessionIds` are the sessions they are sticky to,
+   * stations that can take inbound calls only (IQ46; pacing drops them from its candidates); the hold applies to the campaigns in
    * `poolCampaignIds` (null: every campaign of the account; the route's agent pool), and lapses
    * `ttlMs` after it arrives unless republished (a hint, never an authority: see the module note).
    * `n = 0` with no ids lifts it. Bounded by {@link parsePacingInvalidationEvent}.

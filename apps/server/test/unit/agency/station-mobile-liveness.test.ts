@@ -19,13 +19,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //  * the probe's timer and listeners go with the socket — detach, supersede or close —
 //    so nothing leaks;
 //  * the mid-attempt rule holds for a phone with one exception (decision M1): silent past
-//    its grace on a call the agent can see, campaign or soft phone, it is dropped and the
-//    bridge's close rule decides the call.
+//    its grace on a call the agent can see, campaign, soft phone or inbound, it is dropped
+//    and the bridge's close rule decides the call.
 // ---------------------------------------------------------------------------
 
+// One `warn` for every logger, so a test can read why the sweep dropped a phone (`during`).
+const { warn } = vi.hoisted(() => ({ warn: vi.fn() }));
 vi.mock('@magick-agency/observability', () => ({
-  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
-  createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  logger: { warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  createChildLogger: () => ({ warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 vi.mock('../../../src/config/index.js', () => ({
   config: {
@@ -393,6 +395,37 @@ describe('the sweep, per station (AgencyRuntime)', () => {
     const browser = new FakeWs();
     await runtime.stations.attach({ sessionId: 'web', ws: browser as never, ...ENTRY });
     vi.spyOn(runtime.manualDialer, 'hasLiveCall').mockReturnValue(true);
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS * 10)).toBe(0);
+    expect(browser.terminated).toBe(0);
+    expect(browser.closeArgs).toEqual([]);
+    expect(runtime.stations.isLocallyOwned('web')).toBe(true);
+  });
+
+  // A live inbound call (bound to this socket, IQ46): the campaign call's M1 exception for a phone,
+  // rule 1 as written for the web.
+  it('drops a phone silent past its 10s grace on a live inbound call (M1), and only then, as on_inbound_call', async () => {
+    const phone = new FakeWs();
+    phone.autoPong = false;
+    await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile', canTakeInbound: true });
+    runtime.inbound = { hasLiveCall: (sessionId: string) => sessionId === 'phone' } as never;
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS)).toBe(0);
+    expect(phone.terminated).toBe(0);
+
+    warn.mockClear();
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS + 1)).toBe(1);
+    // terminate, not close: the bridge's 8 s deferred hangup starts now, not after ws's 30 s closing timeout.
+    expect(phone.terminated).toBe(1);
+    expect(phone.closeArgs).toEqual([]);
+    // Dropped by the inbound arm, not the idle one.
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'phone', during: 'on_inbound_call' }), expect.any(String));
+  });
+
+  it('a silent web console on a live inbound call is never acted on: neither closed nor detached (rule 1 unchanged for the web)', async () => {
+    const browser = new FakeWs();
+    await runtime.stations.attach({ sessionId: 'web', ws: browser as never, ...ENTRY });
+    runtime.inbound = { hasLiveCall: () => true } as never;
 
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS * 10)).toBe(0);
     expect(browser.terminated).toBe(0);

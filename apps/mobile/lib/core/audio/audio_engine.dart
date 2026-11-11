@@ -29,6 +29,10 @@ abstract interface class AudioEngine {
   /// mixed into playout). [stop] clears it.
   Future<void> setRingback(bool on);
 
+  /// The inbound chime, once (an inbound caller was offered), mixed into playout. [stop]
+  /// drops one not yet played.
+  Future<void> playChime();
+
   Future<void> startCall({required String callId, required String displayName, required String handle});
   Future<void> reportConnected(String callId);
   Future<void> endCall(String callId, {CallEndReason reason = CallEndReason.local});
@@ -36,6 +40,10 @@ abstract interface class AudioEngine {
   Future<void> startOnDutyService(OnDutyNotification notification);
   Future<void> updateOnDutyService(OnDutyNotification notification);
   Future<void> stopOnDutyService();
+
+  /// [PhoneCallChanged] events on [events]: a phone call not the app's own (a
+  /// cellular call) started or ended. On reports the state at once.
+  Future<void> setPhoneCallMonitoring(bool enabled);
 }
 
 /// The real engine: the `agent_audio` plugin.
@@ -78,6 +86,9 @@ final class PluginAudioEngine implements AudioEngine {
   Future<void> setRingback(bool on) => _audio.setRingback(on);
 
   @override
+  Future<void> playChime() => _audio.playChime();
+
+  @override
   Future<void> startCall({required String callId, required String displayName, required String handle}) =>
       _audio.startCall(callId: callId, displayName: displayName, handle: handle);
 
@@ -96,4 +107,7 @@ final class PluginAudioEngine implements AudioEngine {
 
   @override
   Future<void> stopOnDutyService() => _audio.stopOnDutyService();
+
+  @override
+  Future<void> setPhoneCallMonitoring(bool enabled) => _audio.setPhoneCallMonitoring(enabled);
 }

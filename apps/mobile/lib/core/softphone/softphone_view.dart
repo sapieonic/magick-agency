@@ -635,6 +635,36 @@ final class SoftphoneScreenError extends SoftphoneScreenState {
   int get hashCode => message.hashCode;
 }
 
+/// Where a Missed call's Call back stands ([SoftphoneActions.callBack]): the soft phone's one
+/// decision of where the number lands, read by whatever tells the agent so.
+enum CallBackWaiting {
+  /// Nothing waiting: none asked for, already on the pad, or lapsed.
+  none,
+
+  /// Behind a call on the soft phone (live or owing its outcome), behind the refusal of the
+  /// dial it waited for, or behind the station's call or wrap-up with a switch to the soft phone
+  /// queued (SP7): on the pad once the call settles (the switch applies), or the agent
+  /// dismisses the refusal.
+  afterCall,
+
+  /// The soft phone is not open here (or the campaign is not switched to it): on the pad if it
+  /// is opened within [callBackWaitsFor].
+  onceOpen,
+
+  /// The soft phone is open here and its setup for this session is still being read: on the
+  /// pad in a moment.
+  setup,
+
+  /// The last Call back could not be kept: the soft phone is open on another device or in
+  /// another account, where nothing here can take it. Until the next Call back.
+  notKept,
+}
+
+/// How long a Missed call's Call back waits for the soft phone to take it
+/// ([SoftphoneActions.callBack]). Time spent behind a call on screen does
+/// not count: the clock starts again when that call settles.
+const callBackWaitsFor = Duration(minutes: 5);
+
 // ─── The view ───────────────────────────────────────────────────────────────
 
 /// Everything the Phone screen and the soft-phone panel render.
@@ -707,6 +737,7 @@ class SoftphoneView {
     this.bootstrapError,
     this.announcement = '',
     this.announcementSeq = 0,
+    this.callBackWaiting = CallBackWaiting.none,
   });
 
   // ── Screen and connection ──
@@ -914,6 +945,9 @@ class SoftphoneView {
   /// Bumped with every [announcement], so the same sentence twice is announced twice.
   final int announcementSeq;
 
+  /// Where the last Missed call's Call back stands: what the agent is told when they press it.
+  final CallBackWaiting callBackWaiting;
+
   // ── Derived ──
 
   /// A call is on screen (live or owing its outcome).
@@ -1028,7 +1062,8 @@ class SoftphoneView {
       other.sessionError == sessionError &&
       other.bootstrapError == bootstrapError &&
       other.announcement == announcement &&
-      other.announcementSeq == announcementSeq;
+      other.announcementSeq == announcementSeq &&
+      other.callBackWaiting == callBackWaiting;
 
   @override
   int get hashCode => Object.hashAll([
@@ -1055,6 +1090,7 @@ class SoftphoneView {
     recent.length,
     sessionBusy,
     announcementSeq,
+    callBackWaiting,
   ]);
 }
 
@@ -1166,8 +1202,23 @@ abstract interface class SoftphoneActions {
   Future<void> dial();
 
   /// Fills the pad from a recent call (number, its tag while still taggable,
-  /// its caller ID) and bumps [SoftphoneView.focusCallToken]. Never dials.
+  /// its caller ID) and bumps [SoftphoneView.focusCallToken]. Never dials,
+  /// and closes any open override prompt (it was for another number).
   void redial(String recentCallId);
+
+  /// A Missed inbound call's **Call back** (`docs/inbound.md` §7): puts
+  /// [number] (E.164) on the pad, and [campaignId] (the matched campaign) as
+  /// "Log to" when it is taggable, as [redial] does, and bumps
+  /// [SoftphoneView.focusCallToken]. Never dials: the agent presses Call, and
+  /// every soft-phone rule (the DNC check and its note) applies as to a typed
+  /// number. Held until the soft phone can take it (a session open here whose
+  /// bootstrap has been read, no call on screen, not in finish mode), so it
+  /// can be asked before the soft phone is open; a later one replaces it. A
+  /// held one lapses after five minutes (time behind a call on screen does
+  /// not count), on any session change but the first session to open after
+  /// it, and when the soft phone is open on another device or account. Either
+  /// way any open override prompt goes: it was for another number.
+  void callBack(String number, {String? campaignId});
 
   // ── Setup ──
 

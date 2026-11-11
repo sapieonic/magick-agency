@@ -99,4 +99,28 @@ describe('the sticky candidates (signals 1–3)', () => {
   it('no owner signal without a match', () => {
     expect(rank([contact({ assigned_user_id: 'u-owner', account_may_use: false })]).candidates).toEqual([]);
   });
+
+  it('IQ49: an answered inbound call is a last_connected signal, the latest connected call in either direction', () => {
+    const inbound = (o: Partial<InboundCallSignalRow> = {}) => call({
+      channel: 'inbound', caller_id: null, connected: true, campaign_id: null, contact_id: null, ...o,
+    });
+    // An unmatched caller nobody dialled: the agent who took their last call is theirs.
+    expect(rank([], [inbound({ call_id: 'i-1', agent_user_id: 'u-took', at: daysAgo(2) })]).candidates)
+      .toEqual([{ userId: 'u-took', reason: 'last_connected', accountId: 'a-1', at: daysAgo(2) }]);
+    // Newer than the last outbound conversation: the inbound call's agent.
+    expect(rank([], [
+      call({ call_id: 'x-out', agent_user_id: 'u-out', connected: true, at: daysAgo(5) }),
+      inbound({ call_id: 'i-in', agent_user_id: 'u-in', at: daysAgo(1) }),
+    ]).candidates.map((c) => [c.userId, c.reason])).toEqual([['u-in', 'last_connected']]);
+    // Older: the outbound one's.
+    expect(rank([], [
+      call({ call_id: 'x-out', agent_user_id: 'u-out', connected: true, at: daysAgo(1) }),
+      inbound({ call_id: 'i-in', agent_user_id: 'u-in', at: daysAgo(5) }),
+    ]).candidates.map((c) => [c.userId, c.reason])).toEqual([['u-out', 'last_connected']]);
+    // Never a last_from_number (it went out from nobody's number), whatever the number rung.
+    expect(rank([], [inbound({ agent_user_id: 'u-in' })]).candidates.map((c) => c.reason)).toEqual(['last_connected']);
+    // Outside the lookback, or its matched campaign opted out: nobody.
+    expect(rank([], [inbound({ at: daysAgo(31) })]).candidates).toEqual([]);
+    expect(rank([], [inbound({ sticky_enabled: false })]).candidates).toEqual([]);
+  });
 });

@@ -96,9 +96,14 @@ export class StationDirectory implements PacingStations {
     return owner !== null && this.liveReplicas.has(owner) ? owner : null;
   }
 
-  get(sessionId: string): { campaignId: string | null } | undefined {
+  /**
+   * The station's campaign. `canTakeInbound` is always false here: with media workers no inbound
+   * caller is put through to an agent (IB8; IQ13: every open route answers with the call-back
+   * message), so pacing never holds a worker's station back for one.
+   */
+  get(sessionId: string): { campaignId: string | null; canTakeInbound: boolean } | undefined {
     const e = this.entries.get(sessionId);
-    return e ? { campaignId: e.campaignId } : undefined;
+    return e ? { campaignId: e.campaignId, canTakeInbound: false } : undefined;
   }
 
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number {

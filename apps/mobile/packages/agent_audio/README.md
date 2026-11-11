@@ -49,7 +49,8 @@ Lifecycle calls are serialised in call order and checked against `AgentAudioPhas
 sides enforce the same table. `stop` is safe in any phase and repeatable. Every platform
 failure is an `AgentAudioException` with an `AgentAudioErrorCode`.
 
-Also: `setRingback` (the ringback tone on a ringing soft-phone call; see below), `setMuted`
+Also: `setRingback` (the ringback tone on a ringing soft-phone call; see below), `playChime`
+(the inbound chime, once, when an inbound caller is offered; see below), `setMuted`
 (uplink keeps flowing as encoded silence, so the far end keeps its timing),
 `routes` / `currentRoute` / `setRoute`, `setInputLevelMetering` (≈10 `InputLevel` events/s),
 `loopbackTest` (pre-flight), `configureCallSystem(useCallKit:)`, `startOnDutyService` /
@@ -172,6 +173,31 @@ answered or ends.
   not load. The Swift engine follows the same rules (`ringbackWanted` in `VoiceEngine.swift`)
   with no test here.
 
+## Inbound chime
+
+When an inbound caller is offered to the agent (the station's `inbound_call` frame, `offered`),
+the app calls `playChime()` once, right after arming the microphone for the call, so the agent
+hears the offer before the caller's audio binds at `connects_at` (about 1.5 s later).
+
+- It is the console's `inbound_ring` cue (`CUE_SPECS.inbound_ring`): 784, 587, 784, 587 Hz,
+  each with an 8 ms linear attack, 120 ms hold and 25 ms linear release, gaps of 30, 160 and
+  30 ms, after a 5 ms lead, peaking at 0.12 of full scale; about 0.84 s, then silence.
+- Specification: `lib/src/tone/chime.dart`, written like the ringback's (each tone's phase from
+  the integer index within the tone, floor(x + 0.5)). Golden vectors
+  (`test/support/chime_vectors.dart`: the lead, the edges, a gap, the end, a checksum and the
+  energy, at 8 and 16 kHz) are asserted by `test/chime_test.dart` and by `ChimeTest.kt`;
+  `Chime.swift` is written to them.
+- Mixed into each 20 ms playout frame after the ringback, at the wire rate, with a saturating
+  add (Kotlin `VoiceEngine.playbackLoop`, Swift `Playout.render`), so it is heard only on the
+  phone, never sent to the caller.
+- One-shot: a request made before the engine runs (iOS starts it when CallKit activates the
+  session, after `armMicrophone` returns) plays when it starts; `stop` drops one not yet played
+  and silences one playing; a restart after a device error does not replay it; a loopback test
+  never chimes. On Android the request goes through `EngineSlot` (`chimePending`), checked by
+  `ChimeTest.kt` with a fake engine; Swift keeps `chimePending` in `VoiceEngine.swift`.
+- The app decides when (once per offer: the call id and `offered_at`) and whether (the Sounds
+  setting); this package only plays it.
+
 ## Codec and resampling
 
 - G.711 A-law, table-based (4096-entry encode on the 13-bit magnitude, 256-entry decode),
@@ -201,6 +227,7 @@ types it does not know.
 | `session`      | `active` (iOS: CallKit activated / deactivated the audio session)                                   |
 | `callReset`    | — (iOS: CallKit provider reset)                                                                     |
 | `service`      | `running`: false (Android: the on-duty service stopped without `stopOnDutyService`)                 |
+| `phoneCall`    | `active` (a phone call not the app's own, ringing or active; while `setPhoneCallMonitoring` is on)  |
 
 Route `name` is the headset's product name; built-in earpiece and speaker have an empty name
 (the app labels them by `kind`). Audio never moves to the loudspeaker on its own: when the
@@ -226,6 +253,22 @@ screen-off is held only for a call on the earpiece, never during the loopback te
   closed with an `ended` event; a `.began` for a suspended app (`appWasSuspended`) is ignored.
 - **Android**, a permanent focus loss gets no GAIN back: while a call runs the plugin asks for
   focus again (at once when a cellular call ends, otherwise after 1, 2, 5, then every 10 s).
+
+## Phone calls outside the app
+
+`setPhoneCallMonitoring(true)` reports whether a phone call that is not the app's own (a
+cellular call, ringing or active) is in progress: `PhoneCallChanged` once at once, then on each
+change. The app uses it to pause an agent waiting for calls while they take a cellular call.
+No runtime permission is asked for:
+
+- **Android**: the audio mode, never `READ_PHONE_STATE`. A cellular call sets a telephony mode
+  (RINGTONE, IN_CALL, CALL_SCREENING, CALL_REDIRECT); the app's own calls use
+  `MODE_IN_COMMUNICATION`, which is not one. API 31+: `OnModeChangedListener`; below that the
+  mode is read once a second while monitoring is on (`PhoneCallMonitor`, the dedupe in
+  `PhoneCallTracker`).
+- **iOS**: CallKit's `CXCallObserver`, the app's own CallKit calls excluded by UUID
+  (`PhoneCallMonitor.swift`). Nothing is reported while CallKit is turned off
+  (`configureCallSystem(useCallKit: false)`).
 
 ## What the app must add
 
@@ -276,19 +319,23 @@ lock-screen call controls.
 ```bash
 cd apps/mobile/packages/agent_audio
 flutter test                      # API layer (mocked channels), events, phases, A-law, resampler,
-                                  # jitter buffer + trace fixture, ringback vectors, loopback analysis
+                                  # jitter buffer + trace fixture, ringback and chime vectors,
+                                  # loopback analysis
 flutter analyze .
 ```
 
 Kotlin unit tests (`android/src/test`) cover A-law, the decimator (shared checksum), the
 jitter buffer (replaying the Dart trace), the ringback tone (the Dart vectors, cadence,
-mixing, the request kept across arm and cleared by stop), framing, the uplink encoder, the
-level meter and the interruption tracker; they need no Android or Flutter classes. They run with the app's Gradle
-build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`).
+mixing, the request kept across arm and cleared by stop), the inbound chime (the Dart vectors,
+played once frame by frame, a request before the engine runs, dropped by stop), framing, the uplink encoder, the
+level meter, the interruption tracker and the phone-call tracker; they need no Android or Flutter classes. They run with the app's Gradle
+build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`, after a `flutter build
+apk` has written `gradlew`); CI runs them after its debug Android build (`.github/workflows/mobile.yml`).
 
 The Swift sources cannot be compiled on Linux. `ALaw.swift` documents the same checksums;
 the trace format is documented in `test/support/jitter_trace.dart` for a Swift replay test,
-and `Ringback.swift` is written to the vectors in `test/support/ringback_vectors.dart`.
+`Ringback.swift` is written to the vectors in `test/support/ringback_vectors.dart`, and
+`Chime.swift` to those in `test/support/chime_vectors.dart`.
 
 ## Known limits
 

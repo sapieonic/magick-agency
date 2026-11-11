@@ -2549,6 +2549,13 @@
       "reason": "a supervisor's reassign of a Missed row, served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
     },
     {
+      "method": "POST",
+      "path": "/proxy/agency/inbound/missed/:id/claim",
+      "source": "apps/console/src/api/inbound.ts",
+      "status": "served",
+      "reason": "an agent's claim of an unassigned Missed row from the Team view (IQ49), served by the public API layer at the console path (docs/inbound.md §7, decision B16)"
+    },
+    {
       "method": "GET",
       "path": "/proxy/agency/inbound/summary",
       "source": "apps/console/src/api/inbound.ts",

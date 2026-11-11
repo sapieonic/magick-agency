@@ -96,7 +96,7 @@ describe('create and update', () => {
     expect(created).toMatchObject({
       tenant_id: T, account_id: A, sticky_mode: 'loose', sticky_wait_seconds: 30, sticky_lookback_days: 30,
       queue_max_wait_seconds: 120, max_waiting: 10, max_concurrent: 30, after_hours_action: 'callback',
-      record_calls: false, recording_notice: true, pool_campaign_ids: [], deleted_at: null,
+      record_calls: false, recording_notice: true, pool_campaign_ids: [], deleted_at: null, wrapup_seconds: 30,
     });
     const read = await repo.findById(T, A, created.id);
     const wire = inboundRouteToWire(read!);
@@ -156,11 +156,13 @@ describe('the validator and the table agree', () => {
       sticky_wait_seconds: L.STICKY_WAIT_SECONDS.max, sticky_lookback_days: L.STICKY_LOOKBACK_DAYS.max,
       pool_campaign_ids: Array.from({ length: L.POOL_CAMPAIGNS_MAX }, () => randomUUID()),
       queue_max_wait_seconds: L.QUEUE_MAX_WAIT_SECONDS.max, max_waiting: L.MAX_WAITING.max, max_concurrent: L.MAX_CONCURRENT.max,
+      wrapup_seconds: L.WRAPUP_SECONDS.max,
     });
     await expect(repo.create({ tenantId: T, accountId: A, createdBy: null, config: highs })).resolves.toMatchObject({ ok: true });
     const lows = config({
       sticky_wait_seconds: L.STICKY_WAIT_SECONDS.min, sticky_lookback_days: L.STICKY_LOOKBACK_DAYS.min,
       queue_max_wait_seconds: L.QUEUE_MAX_WAIT_SECONDS.min, max_waiting: L.MAX_WAITING.min, max_concurrent: L.MAX_CONCURRENT.min,
+      wrapup_seconds: L.WRAPUP_SECONDS.min,
     });
     await expect(repo.create({ tenantId: T, accountId: A, createdBy: null, config: lows })).resolves.toMatchObject({ ok: true });
   });

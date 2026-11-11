@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   AGENCY_FLOOR_RISK_CLAUSE,
+  APP_CANNOT_TAKE_INBOUND_LABEL,
+  cannotTakeInbound,
   AGENCY_FLOOR_RISK_FLAG,
   AGENCY_FLOOR_RISK_NOTE,
   AGENCY_FLOOR_RISK_ORDER,
@@ -63,6 +65,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
     calls_handled: 3,
     client_kind: 'web',
     on_inbound_call: false,
+    can_take_inbound: true,
     ...over,
   };
 }
@@ -171,6 +174,12 @@ describe('floorRisk — the thresholds', () => {
     const away = agent({ state: 'break', break_reason: 'device_away', client_kind: 'mobile', state_since: ago(LONG_BREAK_SECONDS + 1) });
     expect(floorRisk(away, NOW, THRESHOLDS)).toBe('long_break');
     expect(floorRisk({ ...away, state_since: ago(LONG_BREAK_SECONDS - 1) }, NOW, THRESHOLDS)).toBe('none');
+  });
+
+  it('rank 3 fires for the app\'s phone-call pause too (IQ51): an ordinary break, not the soft phone', () => {
+    const onPhone = agent({ state: 'break', break_reason: 'phone_call', client_kind: 'mobile', state_since: ago(LONG_BREAK_SECONDS + 1) });
+    expect(floorRisk(onPhone, NOW, THRESHOLDS)).toBe('long_break');
+    expect(floorRisk({ ...onPhone, state_since: ago(LONG_BREAK_SECONDS - 1) }, NOW, THRESHOLDS)).toBe('none');
   });
 
   it('rank 4 fires on `connected: false`', () => {
@@ -651,6 +660,16 @@ describe('the Agents tab counts who is on shift as the API does', () => {
   });
 });
 
+describe('cannotTakeInbound (IQ56)', () => {
+  it('is a phone whose station said false; never true, null, or a console', () => {
+    expect(cannotTakeInbound({ client_kind: 'mobile', can_take_inbound: false })).toBe(true);
+    expect(cannotTakeInbound({ client_kind: 'mobile', can_take_inbound: true })).toBe(false);
+    expect(cannotTakeInbound({ client_kind: 'mobile', can_take_inbound: null })).toBe(false);
+    expect(cannotTakeInbound({ client_kind: 'web', can_take_inbound: false })).toBe(false);
+    expect(APP_CANNOT_TAKE_INBOUND_LABEL).toBe('App can’t take inbound calls — update the app');
+  });
+});
+
 describe('floorStateLabel — the state as a supervisor reads it', () => {
   it('names the soft phone for what it is, not as an idle break with a raw code', () => {
     expect(floorStateLabel({ state: 'break', break_reason: 'soft_phone' })).toBe('Soft phone');
@@ -658,6 +677,8 @@ describe('floorStateLabel — the state as a supervisor reads it', () => {
 
   it('names the mobile app\'s device-away break, never as "On break · device_away"', () => {
     expect(floorStateLabel({ state: 'break', break_reason: 'device_away' })).toBe('Away (app in background)');
+    // IQ51: the app's cellular-call pause, named the same way.
+    expect(floorStateLabel({ state: 'break', break_reason: 'phone_call' })).toBe('On a phone call');
     // Only while on break: a stale reason beside another state is not read.
     expect(floorStateLabel({ state: 'available', break_reason: 'device_away' })).toBe(AGENCY_FLOOR_STATE_LABELS.available);
   });

@@ -7,8 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
+import '../missed/rang_while_away.dart';
 import '../softphone/softphone_panel.dart';
 import 'parts/idle_views.dart';
+import 'parts/inbound_views.dart';
 import 'parts/link_screens.dart';
 import 'parts/on_call_view.dart';
 import 'parts/ringing_view.dart';
@@ -33,9 +35,24 @@ enum StationStage {
   onBreak,
   away,
   softphone,
+
+  /// Reserved with no call on the station yet: the server reserves the agent for an inbound
+  /// caller (`agent_state: reserved`) just before the `inbound_call` frame that names them, and
+  /// a reconnect's `ready` can say `reserved` before the call (inbound, or a campaign dial) is
+  /// restated. A neutral screen in words that fit either direction ("A call is coming
+  /// through"), not the campaign's ringing pop: there is no contact to show and no call to
+  /// hang up. "Incoming call" is said only once an inbound offer is held.
+  incoming,
   reserved,
   onCall,
   wrapup,
+
+  /// An inbound caller (`docs/inbound.md` §6): offered, on the call, owing the outcome. The
+  /// phase reads reserved / on a call / wrap-up for them too; these stages pick the caller's
+  /// screens over the campaign call's.
+  inboundOffered,
+  inboundOnCall,
+  inboundOutcome,
 }
 
 /// The `soft_phone` break: the station is on the soft phone.
@@ -60,11 +77,21 @@ StationStage stationStageOf(StationView? v, String campaignId) {
     default:
       break;
   }
+  final inbound = v.inbound;
+  if (inbound != null) {
+    return switch (inbound.stage) {
+      InboundStage.offered => StationStage.inboundOffered,
+      InboundStage.connected => StationStage.inboundOnCall,
+      InboundStage.outcome => StationStage.inboundOutcome,
+    };
+  }
   return switch (v.phase) {
     AgentPhase.offline => StationStage.offline,
     AgentPhase.available => StationStage.available,
     AgentPhase.onBreak when onSoftphoneBreak(v) => StationStage.softphone,
     AgentPhase.onBreak => (v.onBreak?.isDeviceAway ?? false) ? StationStage.away : StationStage.onBreak,
+    // The campaign's ringing pop needs its call; reserved without one is a call on its way.
+    AgentPhase.reserved when v.call == null => StationStage.incoming,
     AgentPhase.reserved => StationStage.reserved,
     AgentPhase.onCall => StationStage.onCall,
     AgentPhase.wrapup => StationStage.wrapup,
@@ -122,8 +149,11 @@ class _StationScreenState extends ConsumerState<StationScreen> {
   @override
   Widget build(BuildContext context) {
     final stage = ref.watch(stationViewProvider.select((v) => stationStageOf(v, widget.campaignId)));
-    final attemptId = ref.watch(stationViewProvider.select((v) => v?.call?.attemptId));
+    // The call on screen, campaign or inbound: a new call gets a new notes controller.
+    final attemptId = ref.watch(stationViewProvider.select((v) => v?.callId));
     ref.listen<AgentPhase?>(stationViewProvider.select((v) => v?.phase), _onPhase);
+    // Built while the station is: a return from a pause is then asked about (IQ50).
+    ref.listen(rangWhileAwayProvider, (_, _) {});
 
     final notes = _notesController(attemptId);
     final still = MediaQuery.disableAnimationsOf(context);
@@ -141,15 +171,23 @@ class _StationScreenState extends ConsumerState<StationScreen> {
       // Its own header (Return to campaign), rail, announcer and pinned action;
       // it needs the bounded height the stage gives it.
       StationStage.softphone => const SoftphonePanel(surface: SoftphoneSurface.station),
+      StationStage.incoming => const IncomingView(),
       StationStage.reserved => const RingingView(),
       StationStage.onCall => OnCallView(notes: notes),
       StationStage.wrapup => WrapupPhaseView(key: ValueKey('wrapup-$attemptId'), notes: notes),
+      StationStage.inboundOffered => const InboundOfferView(),
+      StationStage.inboundOnCall => InboundOnCallView(notes: notes),
+      StationStage.inboundOutcome => InboundOutcomeView(key: ValueKey('inbound-outcome-$attemptId'), notes: notes),
     };
 
     final softphoneCall = ref.watch(softphoneViewProvider.select((v) => v.callOnScreen));
-    final onCall = stage == StationStage.reserved ||
+    final onCall = stage == StationStage.incoming ||
+        stage == StationStage.reserved ||
         stage == StationStage.onCall ||
         stage == StationStage.wrapup ||
+        stage == StationStage.inboundOffered ||
+        stage == StationStage.inboundOnCall ||
+        stage == StationStage.inboundOutcome ||
         (stage == StationStage.softphone && softphoneCall);
     // Mid-call the system back gesture must not take the call screen away;
     // the way off it is finishing the call (a soft-phone call included, until
@@ -210,6 +248,13 @@ class _StageTransition extends StatelessWidget {
 /// TalkBack and VoiceOver say "Ringing", "On call", "Wrap-up" as they happen
 /// (polite). Ringing is also sent as an assertive announcement where the
 /// platform supports one, because it is time-critical.
+///
+/// An inbound offer is said when it lands, whatever the phase did before it: the server sends
+/// `agent_state: reserved` just before the `inbound_call` frame, so the phase is already
+/// reserved when the caller becomes known. Reserved with no call yet says "A call is coming
+/// through" (politely, once): it fits an inbound caller and a campaign dial being restated
+/// after a reconnect alike, where "Ringing" for a call with nobody on it would be the wrong
+/// word. The call that follows is said in its own words.
 class PhaseAnnouncer extends ConsumerStatefulWidget {
   const PhaseAnnouncer({super.key});
 
@@ -233,14 +278,36 @@ class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
   Widget build(BuildContext context) {
     ref.listen(
       stationViewProvider.select(
-        (v) => (phase: v?.phase, away: v?.onBreak?.isDeviceAway ?? false, softphone: onSoftphoneBreak(v), label: v?.onBreak?.label),
+        (v) => (
+          phase: v?.phase,
+          away: v?.onBreak?.isDeviceAway ?? false,
+          softphone: onSoftphoneBreak(v),
+          label: v?.onBreak?.label,
+          inbound: v?.inbound == null ? null : InboundCopy.who(v!.inbound!),
+          callless: v?.phase == AgentPhase.reserved && v?.call == null && v?.inbound == null,
+        ),
       ),
       (prev, next) {
         final phase = next.phase;
-        // A break switched to the soft phone (or back) stays on break: still said.
-        if (phase == null || (prev?.phase == phase && prev?.away == next.away && prev?.softphone == next.softphone)) return;
+        if (phase == null) return;
+        if (next.callless) {
+          if (!(prev?.callless ?? false)) _announce(StationCopy.callComingThrough);
+          return;
+        }
+        // A break switched to the soft phone (or back) stays on break: still said. Coming out of
+        // reserved-with-no-call is news even when the phase stays reserved: the caller is known.
+        final samePhase = prev?.phase == phase &&
+            prev?.away == next.away &&
+            prev?.softphone == next.softphone &&
+            !(prev?.callless ?? false);
+        if (samePhase) return;
+        final inbound = next.inbound;
         _announce(
-          StationCopy.announce(phase, breakLabel: next.label, deviceAway: next.away, softphone: next.softphone),
+          inbound != null && phase == AgentPhase.reserved
+              ? InboundCopy.offerAnnouncement(inbound)
+              : inbound != null && phase == AgentPhase.wrapup
+                  ? InboundCopy.outcomeAnnouncement
+                  : StationCopy.announce(phase, breakLabel: next.label, deviceAway: next.away, softphone: next.softphone),
           assertive: phase == AgentPhase.reserved,
         );
       },

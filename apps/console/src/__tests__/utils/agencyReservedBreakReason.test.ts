@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
 
 describe('reservedBreakReasonLabel', () => {
-  it('labels the two reserved codes from the contract', () => {
+  it('labels the reserved codes from the contract', () => {
     expect(reservedBreakReasonLabel('soft_phone')).toBe('Soft phone');
     expect(reservedBreakReasonLabel('device_away')).toBe('Away (app in background)');
+    // IQ51: the agent app's pause for a cellular call.
+    expect(reservedBreakReasonLabel('phone_call')).toBe('On a phone call');
   });
 
   it('is null for every other code, so the catalog label applies', () => {

@@ -96,6 +96,7 @@ class AgentAudioPlugin :
 
     private var sink: EventChannel.EventSink? = null
     private var session: AudioSessionController? = null
+    private var phoneCalls: PhoneCallMonitor? = null
     private var activity: Activity? = null
 
     /** The running engine and the ringback request; engines start and stop only through it. */
@@ -159,6 +160,8 @@ class AgentAudioPlugin :
         stopEngine(keepRingback = false)
         session?.release()
         session = null
+        phoneCalls?.release()
+        phoneCalls = null
         phase = Phase.IDLE
         format = null
         pendingServiceStart = null
@@ -301,6 +304,17 @@ class AgentAudioPlugin :
             // Kept until stop, so it also applies to an engine started (or restarted) later.
             "setRingback" -> {
                 engines.setRingback(call.argument<Boolean>("on") ?: false)
+                result.success(null)
+            }
+            // One-shot; kept for a call engine not yet running, until stop.
+            "playChime" -> {
+                engines.playChime()
+                result.success(null)
+            }
+            // Permission-free: the audio mode, never READ_PHONE_STATE (PhoneCallMonitor).
+            "setPhoneCallMonitoring" -> {
+                val monitor = phoneCalls ?: PhoneCallMonitor(context, main, ::emit).also { phoneCalls = it }
+                monitor.setEnabled(call.argument<Boolean>("enabled") ?: false)
                 result.success(null)
             }
             "setInputLevelMetering" -> {

@@ -280,10 +280,10 @@ void main() {
         'Finish this call first — this call is still on your screen.'); // EXIT_BLOCKED_COPY
     // EXIT_AVAILABLE_BLOCKED_COPY, without "or go on break": a break does not end the station here.
     expect(signOutBlockedReason(const StationSignals(onDuty: true), phase: AgentPhase.available),
-        'You’re still in the dialing pool — leave the station first, or a call could be sent to an empty screen.');
+        'You’re still in the dialling pool — leave the station first, or a call could be sent to an empty screen.');
     final onBreak = signOutBlockedReason(const StationSignals(onDuty: true), phase: AgentPhase.onBreak)!;
     expect(onBreak, contains('on a break'));
-    expect(onBreak, isNot(contains('dialing pool')));
+    expect(onBreak, isNot(contains('dialling pool')));
   });
 
   test('signOutBlockedReason: the soft phone\'s own sentences; an owed outcome before the open session', () {

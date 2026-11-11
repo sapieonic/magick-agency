@@ -112,6 +112,24 @@ describe('parseInboundRouteCreate', () => {
     expect(at({ max_waiting: 21 })).toEqual(['max_waiting']);
   });
 
+  it('IQ52: the wrap-up window, 30 s by default, 10–600 whole seconds', () => {
+    expect(L.WRAPUP_SECONDS).toEqual({ min: 10, max: 600 });
+    const ok = (o: object) => { const out = parseInboundRouteCreate({ ...MIN, ...o }); if (!out.ok) throw new Error(JSON.stringify(out.issues)); return out.config; };
+    expect(ok({}).wrapup_seconds).toBe(30);
+    expect(ok({ wrapup_seconds: L.WRAPUP_SECONDS.min }).wrapup_seconds).toBe(10);
+    expect(ok({ wrapup_seconds: L.WRAPUP_SECONDS.max }).wrapup_seconds).toBe(600);
+    const at = (o: object) => paths({ ...MIN, ...o });
+    expect(at({ wrapup_seconds: L.WRAPUP_SECONDS.min - 1 })).toEqual(['wrapup_seconds']);
+    expect(at({ wrapup_seconds: L.WRAPUP_SECONDS.max + 1 })).toEqual(['wrapup_seconds']);
+    expect(at({ wrapup_seconds: 30.5 })).toEqual(['wrapup_seconds']);
+    expect(at({ wrapup_seconds: '30' })).toEqual(['wrapup_seconds']);
+    expect(at({ wrapup_seconds: null })).toEqual(['wrapup_seconds']);
+    const current = ok({ wrapup_seconds: 45 });
+    const patched = parseInboundRouteUpdate({ wrapup_seconds: 90 }, current);
+    expect(patched).toMatchObject({ ok: true, patch: { wrapup_seconds: 90 }, changed: ['wrapup_seconds'], config: { wrapup_seconds: 90 } });
+    expect(parseInboundRouteUpdate({ wrapup_seconds: 5 }, current)).toMatchObject({ ok: false, issues: [{ path: 'wrapup_seconds' }] });
+  });
+
   it('refuses unknown values, unknown fields, malformed ids and a catalog the campaign rules refuse', () => {
     expect(paths({ ...MIN, sticky_mode: 'sticky' })).toEqual(['sticky_mode']);
     expect(paths({ ...MIN, overflow_action: 'hangup' })).toEqual(['overflow_action']);

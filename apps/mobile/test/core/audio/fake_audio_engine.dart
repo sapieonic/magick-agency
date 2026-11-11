@@ -30,6 +30,12 @@ class FakeAudioEngine implements AudioEngine {
   final List<({String callId, String displayName, String handle})> startedCalls = [];
   final List<({String callId, CallEndReason reason})> endedCalls = [];
 
+  /// Phone-call reports as the native side holds them (not logged in [calls]).
+  bool phoneCallMonitoring = false;
+
+  @override
+  Future<void> setPhoneCallMonitoring(bool enabled) async => phoneCallMonitoring = enabled;
+
   Future<void> _record(String name) async {
     calls.add(name);
     final error = fail.remove(name);
@@ -85,6 +91,15 @@ class FakeAudioEngine implements AudioEngine {
   Future<void> setRingback(bool on) {
     ringback = on;
     return _record(on ? 'ringback.on' : 'ringback.off');
+  }
+
+  /// Chimes played ([playChime]), counted.
+  int chimes = 0;
+
+  @override
+  Future<void> playChime() {
+    chimes++;
+    return _record('chime');
   }
 
   @override

@@ -18,8 +18,10 @@ import type { AllListed } from '../primitives';
  * mobile app (`mobile`).
  *
  * Declared by the client, never verified, so it is NEVER an auth input or a
- * rate-limit key. It tunes liveness only (a mobile station is probed with protocol
- * pings and given `MOBILE_STATION_HEARTBEAT_GRACE_MS`), labels logs and marks the
+ * rate-limit key. It tunes liveness (a mobile station is probed with protocol
+ * pings and given `MOBILE_STATION_HEARTBEAT_GRACE_MS`), sets the station's inbound
+ * default (a `web` station can always take inbound calls, a `mobile` one only when it
+ * declares `caps=inbound`: {@link AgencyStationCapability}), labels logs and marks the
  * supervisor's floor. Over HTTP it is read from `X-Client`
  * (`magick-agency-mobile/<semver>+<build> (<ios|android> <osver>; <model>)`; anything
  * else, or no header, is `web`); on the station socket from the upgrade query
@@ -32,6 +34,31 @@ export const AGENCY_CLIENT_KINDS = ['web', 'mobile'] as const satisfies readonly
 
 const _allClientKindsListed: AllListed<AgencyClientKind, typeof AGENCY_CLIENT_KINDS> = true;
 void _allClientKindsListed;
+
+/**
+ * What a station socket says it can do beyond the dialer's own frames, declared on the upgrade
+ * query as `caps=<capability>[,<capability>…]` (comma-separated; a repeated `caps` parameter is
+ * the union). Absent or empty: none. A value this server does not know is IGNORED, never
+ * refused: an app newer than the server must still get a station (a 1008 is terminal for the
+ * app), so a capability is only ever something a client offers, never something it demands.
+ *
+ *  - `inbound`: the station decodes the inbound call frames ({@link AGENCY_STATION_INBOUND_EVENTS})
+ *    and can be put through to an inbound caller (docs/inbound.md §4.3). A console station
+ *    (`client=web`) can always take inbound calls, whatever it sends; a mobile station
+ *    (`client=mobile`) only when it declares `caps=inbound`, so every older app build stays out
+ *    of the inbound pool and is never sent the frames.
+ *
+ * Like {@link AgencyClientKind}, declared by the client and never verified: it decides which frames
+ * the socket is sent and whether it is offered a caller, never anything security-relevant. It
+ * belongs to the socket, not the session: a reattach (from another device, or an older build)
+ * states its own.
+ */
+export type AgencyStationCapability = 'inbound';
+
+export const AGENCY_STATION_CAPABILITIES = ['inbound'] as const satisfies readonly AgencyStationCapability[];
+
+const _allStationCapabilitiesListed: AllListed<AgencyStationCapability, typeof AGENCY_STATION_CAPABILITIES> = true;
+void _allStationCapabilitiesListed;
 
 // ─── The station socket envelope ────────────────────────────────────────────
 //
@@ -179,17 +206,19 @@ export type AgencyStationServerFrame =
   // Contact assignment: this agent's own queue (strict / preferred campaigns).
   | AgencyStationQueueFrame
   // Inbound calls (P2, docs/inbound.md §6): the call offered to or connected with this agent,
-  // and a sticky caller waiting for them (`./inbound.ts`). Console stations only.
+  // and a sticky caller waiting for them (`./inbound.ts`). Only to a station that can take inbound
+  // calls (`AGENCY_STATION_INBOUND_EVENTS`).
   | AgencyStationInboundCallFrame
   | AgencyStationCustomerWaitingFrame;
 
 /**
- * Server frames never sent to a MOBILE station (`client=mobile`): an inbound call is offered to
- * console stations only until the app's wire types land (docs/inbound.md §4.3, P3). The mobile
- * app's enums still know the events (`fixtures/agent/literals.json`), but the agent fixtures
- * (`fixtures/agent/station.json`) carry no sample of them and the app decodes none.
+ * The inbound call frames: sent only to a station that can take inbound calls
+ * ({@link AgencyStationCapability} `inbound`): every console station, and a mobile station that
+ * declared `caps=inbound` on its upgrade (docs/inbound.md §4.3, §6). The server drops them for any
+ * other station in one place (`StationRegistry.send`), whoever asks, so an app build that cannot
+ * decode them is never sent one.
  */
-export const AGENCY_STATION_CONSOLE_ONLY_EVENTS = [
+export const AGENCY_STATION_INBOUND_EVENTS = [
   'inbound_call',
   'customer_waiting',
 ] as const satisfies readonly AgencyStationServerFrame['event'][];

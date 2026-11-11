@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart' show ManualCall;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
@@ -275,6 +276,7 @@ Future<StationHarness> pumpStation(
   SoftphoneAvailability availability = SoftphoneAvailability.hidden,
   SoftphoneView softphone = const SoftphoneView(),
   bool contactAssignment = false,
+  List<Override> extra = const [],
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
@@ -311,6 +313,7 @@ Future<StationHarness> pumpStation(
       softphoneViewProvider.overrideWith((ref) => ref.watch(softphoneHolder)),
       softphoneAvailabilityProvider.overrideWith((ref) => ref.watch(availabilityHolder)),
       contactAssignmentEnabledProvider.overrideWithValue(contactAssignment),
+      ...extra,
     ],
   );
   addTearDown(container.dispose);

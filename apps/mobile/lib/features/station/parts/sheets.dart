@@ -34,19 +34,20 @@ typedef StationModalScope = bool Function(StationView? view);
 bool noCallOnScreen(StationView? view) => !(view?.callActive ?? false);
 
 /// About one call in one phase: holds while [attemptId] is still the call on
-/// screen and the agent is still in one of [phases]. Another call, the end of
-/// this one or leaving the station closes it.
+/// screen (a campaign attempt or an inbound call, [StationView.callId]) and the
+/// agent is still in one of [phases]. Another call, the end of this one or
+/// leaving the station closes it.
 StationModalScope sameCall(String? attemptId, Set<AgentPhase> phases) =>
-    (v) => v != null && v.call?.attemptId == attemptId && phases.contains(v.phase);
+    (v) => v != null && v.callId == attemptId && phases.contains(v.phase);
 
 /// [sameCall] for the call and phase on screen right now.
-StationModalScope thisCallNow(StationView? view) => sameCall(view?.call?.attemptId, {if (view != null) view.phase});
+StationModalScope thisCallNow(StationView? view) => sameCall(view?.callId, {if (view != null) view.phase});
 
 /// "After this call": holds through the rest of this call (on call, wrap-up)
 /// and the moments after it, and closes when another call reaches the agent or
 /// the station closes.
 StationModalScope untilNextCall(String? attemptId) =>
-    (v) => v != null && (v.call == null || v.call!.attemptId == attemptId);
+    (v) => v != null && (v.callId == null || v.callId == attemptId);
 
 /// A yes/no dialog. [danger] paints the confirm action as destructive. With a
 /// [scope] the dialog closes itself, answered "no", once the scope no longer

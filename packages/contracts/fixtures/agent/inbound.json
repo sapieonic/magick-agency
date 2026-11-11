@@ -1,0 +1,625 @@
+{
+  "call_response": {
+    "call": {
+      "id": "3a9e1c7b-2f4d-4b8a-9c6e-5d7f0a1b2c3d",
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "state": "connected",
+      "outcome": null,
+      "from_e164": "+918765432109",
+      "to_e164": "+912071234500",
+      "route": {
+        "id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "name": "Pune customer line"
+      },
+      "caller_dnc": false,
+      "sticky": {
+        "reason": "owner",
+        "is_you": true
+      },
+      "match": {
+        "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "contact_state": "pending",
+        "context": {
+          "Name": "Rahul Deshpande",
+          "Policy No": "PL-2023-099120",
+          "Renewal Due": "2026-11-04",
+          "Premium (INR)": 22100.5,
+          "Notes from branch": "Prefers Marathi. <b>not markup</b>",
+          "Opted in": true,
+          "Alt phone": null
+        },
+        "context_display": {
+          "hero": [
+            "Name",
+            "Policy No",
+            "Renewal Due"
+          ],
+          "hidden": [
+            "Alt phone"
+          ]
+        },
+        "prior_attempts": [
+          {
+            "attempt_number": 2,
+            "outcome": "connected",
+            "disposition_code": "callback",
+            "notes": "Asked us to call after 6pm.",
+            "ended_at": "2026-10-31T09:40:11.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-31T09:37:58.300Z"
+          },
+          {
+            "attempt_number": 1,
+            "outcome": "no_answer",
+            "disposition_code": null,
+            "notes": null,
+            "ended_at": "2026-10-29T06:12:40.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-29T06:12:02.100Z"
+          }
+        ]
+      },
+      "catalog_source": "campaign",
+      "disposition_catalog": [
+        {
+          "code": "interested",
+          "label": "Interested",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Call back later",
+          "requires_datetime": true
+        },
+        {
+          "code": "query_resolved",
+          "label": "Query resolved",
+          "is_success": true,
+          "terminal": true
+        },
+        {
+          "code": "complaint",
+          "label": "Complaint",
+          "requires_note": true
+        },
+        {
+          "code": "do_not_call",
+          "label": "Do not call",
+          "suppress": true
+        }
+      ],
+      "recording": true,
+      "waited_seconds": 14,
+      "offered_at": "2026-11-02T05:30:14.200Z",
+      "connects_at": null,
+      "bridged_at": "2026-11-02T05:30:15.712Z",
+      "ended_at": null,
+      "talk_seconds": null,
+      "outcome_due_at": null,
+      "disposition_code": null,
+      "notes": "Wants the renewal quote by email.",
+      "callback_at": null,
+      "dispositioned_by_user_id": null,
+      "dispositioned_on_behalf": false,
+      "settled_at": null
+    }
+  },
+  "call_update_request": {
+    "notes": "Wants the renewal quote by email."
+  },
+  "call_hangup_response": {
+    "call": {
+      "id": "3a9e1c7b-2f4d-4b8a-9c6e-5d7f0a1b2c3d",
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "state": "ended",
+      "outcome": "answered",
+      "from_e164": "+918765432109",
+      "to_e164": "+912071234500",
+      "route": {
+        "id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "name": "Pune customer line"
+      },
+      "caller_dnc": false,
+      "sticky": {
+        "reason": "owner",
+        "is_you": true
+      },
+      "match": {
+        "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "contact_state": "pending",
+        "context": {
+          "Name": "Rahul Deshpande",
+          "Policy No": "PL-2023-099120",
+          "Renewal Due": "2026-11-04",
+          "Premium (INR)": 22100.5,
+          "Notes from branch": "Prefers Marathi. <b>not markup</b>",
+          "Opted in": true,
+          "Alt phone": null
+        },
+        "context_display": {
+          "hero": [
+            "Name",
+            "Policy No",
+            "Renewal Due"
+          ],
+          "hidden": [
+            "Alt phone"
+          ]
+        },
+        "prior_attempts": [
+          {
+            "attempt_number": 2,
+            "outcome": "connected",
+            "disposition_code": "callback",
+            "notes": "Asked us to call after 6pm.",
+            "ended_at": "2026-10-31T09:40:11.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-31T09:37:58.300Z"
+          },
+          {
+            "attempt_number": 1,
+            "outcome": "no_answer",
+            "disposition_code": null,
+            "notes": null,
+            "ended_at": "2026-10-29T06:12:40.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-29T06:12:02.100Z"
+          }
+        ]
+      },
+      "catalog_source": "campaign",
+      "disposition_catalog": [
+        {
+          "code": "interested",
+          "label": "Interested",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Call back later",
+          "requires_datetime": true
+        },
+        {
+          "code": "query_resolved",
+          "label": "Query resolved",
+          "is_success": true,
+          "terminal": true
+        },
+        {
+          "code": "complaint",
+          "label": "Complaint",
+          "requires_note": true
+        },
+        {
+          "code": "do_not_call",
+          "label": "Do not call",
+          "suppress": true
+        }
+      ],
+      "recording": true,
+      "waited_seconds": 14,
+      "offered_at": "2026-11-02T05:30:14.200Z",
+      "connects_at": null,
+      "bridged_at": "2026-11-02T05:30:15.712Z",
+      "ended_at": "2026-11-02T05:34:02.500Z",
+      "talk_seconds": 227,
+      "outcome_due_at": "2026-11-02T06:04:02.500Z",
+      "disposition_code": null,
+      "notes": "Wants the renewal quote by email.",
+      "callback_at": null,
+      "dispositioned_by_user_id": null,
+      "dispositioned_on_behalf": false,
+      "settled_at": null
+    }
+  },
+  "call_disposition_request": {
+    "code": "callback",
+    "notes": "Wants the renewal quote by email. Call back Thursday.",
+    "callback_at": "2026-11-05T09:30:00.000Z"
+  },
+  "call_disposition_response": {
+    "call": {
+      "id": "3a9e1c7b-2f4d-4b8a-9c6e-5d7f0a1b2c3d",
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "state": "ended",
+      "outcome": "answered",
+      "from_e164": "+918765432109",
+      "to_e164": "+912071234500",
+      "route": {
+        "id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "name": "Pune customer line"
+      },
+      "caller_dnc": false,
+      "sticky": {
+        "reason": "owner",
+        "is_you": true
+      },
+      "match": {
+        "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "contact_state": "pending",
+        "context": {
+          "Name": "Rahul Deshpande",
+          "Policy No": "PL-2023-099120",
+          "Renewal Due": "2026-11-04",
+          "Premium (INR)": 22100.5,
+          "Notes from branch": "Prefers Marathi. <b>not markup</b>",
+          "Opted in": true,
+          "Alt phone": null
+        },
+        "context_display": {
+          "hero": [
+            "Name",
+            "Policy No",
+            "Renewal Due"
+          ],
+          "hidden": [
+            "Alt phone"
+          ]
+        },
+        "prior_attempts": [
+          {
+            "attempt_number": 2,
+            "outcome": "connected",
+            "disposition_code": "callback",
+            "notes": "Asked us to call after 6pm.",
+            "ended_at": "2026-10-31T09:40:11.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-31T09:37:58.300Z"
+          },
+          {
+            "attempt_number": 1,
+            "outcome": "no_answer",
+            "disposition_code": null,
+            "notes": null,
+            "ended_at": "2026-10-29T06:12:40.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-29T06:12:02.100Z"
+          }
+        ]
+      },
+      "catalog_source": "campaign",
+      "disposition_catalog": [
+        {
+          "code": "interested",
+          "label": "Interested",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Call back later",
+          "requires_datetime": true
+        },
+        {
+          "code": "query_resolved",
+          "label": "Query resolved",
+          "is_success": true,
+          "terminal": true
+        },
+        {
+          "code": "complaint",
+          "label": "Complaint",
+          "requires_note": true
+        },
+        {
+          "code": "do_not_call",
+          "label": "Do not call",
+          "suppress": true
+        }
+      ],
+      "recording": true,
+      "waited_seconds": 14,
+      "offered_at": "2026-11-02T05:30:14.200Z",
+      "connects_at": null,
+      "bridged_at": "2026-11-02T05:30:15.712Z",
+      "ended_at": "2026-11-02T05:34:02.500Z",
+      "talk_seconds": 227,
+      "outcome_due_at": null,
+      "disposition_code": "callback",
+      "notes": "Wants the renewal quote by email. Call back Thursday.",
+      "callback_at": "2026-11-05T09:30:00.000Z",
+      "dispositioned_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "dispositioned_on_behalf": false,
+      "settled_at": "2026-11-02T05:35:40.118Z"
+    },
+    "contact_state": "pending",
+    "next_attempt_at": "2026-11-05T09:30:00.000Z",
+    "callback_requested_at": "2026-11-05T09:30:00.000Z"
+  },
+  "call_dnc_request": {
+    "reason": "Asked not to be called again"
+  },
+  "call_dnc_response": {
+    "call_id": "3a9e1c7b-2f4d-4b8a-9c6e-5d7f0a1b2c3d",
+    "phone_e164": "+918765432109",
+    "scope": "campaign",
+    "dnc_recorded": true,
+    "contact_state": "suppressed"
+  },
+  "missed_page": {
+    "rows": [
+      {
+        "id": "5b6c7d8e-9f01-4a2b-8c3d-4e5f60718293",
+        "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "route_name": "Pune customer line",
+        "to_e164": "+912071234500",
+        "caller_dnc": false,
+        "match_name": "Rahul Deshmukh",
+        "has_voicemail": false,
+        "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "assignee_name": "Priya Kulkarni",
+        "assignee_departed": false,
+        "status": "open",
+        "handled_reason": null,
+        "handled_by_user_id": null,
+        "handled_by_name": null,
+        "handled_at": null,
+        "from_e164": "+918765432109",
+        "arrived_at": "2026-11-01T16:42:05.000Z",
+        "ended_at": "2026-11-01T16:42:19.400Z",
+        "reason": "closed",
+        "closed_cause": "hours",
+        "outcome": "closed",
+        "matched_contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+        "matched_campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "matched_campaign_name": "Q4 Renewals — Pune",
+        "callback_due_at": "2026-11-02T03:30:00.000Z"
+      },
+      {
+        "id": "6c7d8e9f-0a12-4b3c-9d4e-5f6071829304",
+        "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "route_name": "Pune customer line",
+        "to_e164": "+912071234500",
+        "caller_dnc": false,
+        "match_name": null,
+        "has_voicemail": false,
+        "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "assignee_name": "Priya Kulkarni",
+        "assignee_departed": false,
+        "status": "open",
+        "handled_reason": null,
+        "handled_by_user_id": null,
+        "handled_by_name": null,
+        "handled_at": null,
+        "from_e164": null,
+        "arrived_at": "2026-11-01T11:05:30.000Z",
+        "ended_at": "2026-11-01T11:07:30.900Z",
+        "reason": "overflow",
+        "closed_cause": null,
+        "outcome": "overflow",
+        "matched_contact_id": null,
+        "matched_campaign_id": null,
+        "matched_campaign_name": null,
+        "callback_due_at": null
+      },
+      {
+        "id": "7d8e9f0a-1b23-4c4d-8e5f-607182930415",
+        "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "route_name": "Pune customer line",
+        "to_e164": "+912071234500",
+        "caller_dnc": true,
+        "match_name": null,
+        "has_voicemail": true,
+        "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "assignee_name": "Priya Kulkarni",
+        "assignee_departed": false,
+        "status": "open",
+        "handled_reason": null,
+        "handled_by_user_id": null,
+        "handled_by_name": null,
+        "handled_at": null,
+        "from_e164": "+919822001144",
+        "arrived_at": "2026-11-01T09:20:10.000Z",
+        "ended_at": "2026-11-01T09:22:48.000Z",
+        "reason": "overflow_no_capacity",
+        "closed_cause": null,
+        "outcome": "voicemail",
+        "matched_contact_id": null,
+        "matched_campaign_id": null,
+        "matched_campaign_name": null,
+        "callback_due_at": null,
+        "voicemail_url": "/inbound/missed/7d8e9f0a-1b23-4c4d-8e5f-607182930415/voicemail"
+      }
+    ],
+    "next_cursor": "eyJhIjoiMjAyNi0xMS0wMVQwOToyMDoxMC4wMDBaIiwiaSI6IjdkOGU5ZjBhIn0",
+    "limit": 3
+  },
+  "missed_page_last": {
+    "rows": [
+      {
+        "id": "8e9f0a1b-2c34-4d5e-9f60-718293041526",
+        "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "route_name": "Pune customer line",
+        "to_e164": "+912071234500",
+        "caller_dnc": false,
+        "match_name": null,
+        "has_voicemail": false,
+        "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "assignee_name": "Priya Kulkarni",
+        "assignee_departed": false,
+        "status": "handled",
+        "handled_reason": "reached",
+        "handled_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "handled_by_name": "Priya Kulkarni",
+        "handled_at": "2026-10-30T15:20:12.000Z",
+        "from_e164": "+919765400321",
+        "arrived_at": "2026-10-30T13:01:00.000Z",
+        "ended_at": "2026-10-30T13:01:44.000Z",
+        "reason": "abandoned_in_queue",
+        "closed_cause": null,
+        "outcome": "abandoned_in_queue",
+        "matched_contact_id": null,
+        "matched_campaign_id": null,
+        "matched_campaign_name": null,
+        "callback_due_at": null
+      }
+    ],
+    "next_cursor": null,
+    "limit": 50
+  },
+  "missed_handled_response": {
+    "call": {
+      "id": "5b6c7d8e-9f01-4a2b-8c3d-4e5f60718293",
+      "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+      "route_name": "Pune customer line",
+      "to_e164": "+912071234500",
+      "caller_dnc": false,
+      "match_name": "Rahul Deshmukh",
+      "has_voicemail": false,
+      "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "assignee_name": "Priya Kulkarni",
+      "assignee_departed": false,
+      "status": "handled",
+      "handled_reason": "marked",
+      "handled_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "handled_by_name": "Priya Kulkarni",
+      "handled_at": "2026-11-02T04:02:31.000Z",
+      "from_e164": "+918765432109",
+      "arrived_at": "2026-11-01T16:42:05.000Z",
+      "ended_at": "2026-11-01T16:42:19.400Z",
+      "reason": "closed",
+      "closed_cause": "hours",
+      "outcome": "closed",
+      "matched_contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+      "matched_campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "matched_campaign_name": "Q4 Renewals — Pune",
+      "callback_due_at": "2026-11-02T03:30:00.000Z"
+    }
+  },
+  "missed_reopen_response": {
+    "call": {
+      "id": "5b6c7d8e-9f01-4a2b-8c3d-4e5f60718293",
+      "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+      "route_name": "Pune customer line",
+      "to_e164": "+912071234500",
+      "caller_dnc": false,
+      "match_name": "Rahul Deshmukh",
+      "has_voicemail": false,
+      "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "assignee_name": "Priya Kulkarni",
+      "assignee_departed": false,
+      "status": "open",
+      "handled_reason": null,
+      "handled_by_user_id": null,
+      "handled_by_name": null,
+      "handled_at": null,
+      "from_e164": "+918765432109",
+      "arrived_at": "2026-11-01T16:42:05.000Z",
+      "ended_at": "2026-11-01T16:42:19.400Z",
+      "reason": "closed",
+      "closed_cause": "hours",
+      "outcome": "closed",
+      "matched_contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+      "matched_campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "matched_campaign_name": "Q4 Renewals — Pune",
+      "callback_due_at": "2026-11-02T03:30:00.000Z"
+    }
+  },
+  "missed_count": {
+    "open": 3,
+    "open_capped": false,
+    "has_rows": true
+  },
+  "missed_count_capped": {
+    "open": 100,
+    "open_capped": true,
+    "has_rows": true
+  },
+  "missed_claim_response": {
+    "call": {
+      "id": "6c7d8e9f-0a12-4b3c-9d4e-5f6071829304",
+      "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+      "route_name": "Pune customer line",
+      "to_e164": "+912071234500",
+      "caller_dnc": false,
+      "match_name": null,
+      "has_voicemail": false,
+      "assignee_user_id": "u-2f8a6c1e-4b3d-4e5f-8a9b-0c1d2e3f4a5b",
+      "assignee_name": "Arjun Mehta",
+      "assignee_departed": false,
+      "status": "open",
+      "handled_reason": null,
+      "handled_by_user_id": null,
+      "handled_by_name": null,
+      "handled_at": null,
+      "from_e164": null,
+      "arrived_at": "2026-11-01T11:05:30.000Z",
+      "ended_at": "2026-11-01T11:07:30.900Z",
+      "reason": "overflow",
+      "closed_cause": null,
+      "outcome": "overflow",
+      "matched_contact_id": null,
+      "matched_campaign_id": null,
+      "matched_campaign_name": null,
+      "callback_due_at": null
+    }
+  },
+  "missed_count_since": {
+    "open": 2,
+    "open_capped": false,
+    "has_rows": true
+  },
+  "refusal_disposition_unknown_code": {
+    "error": "Bad Request",
+    "message": "That outcome cannot be saved as submitted.",
+    "code": "inbound_disposition_invalid",
+    "reason": "unknown_code",
+    "allowed_codes": [
+      "interested",
+      "callback",
+      "query_resolved",
+      "complaint",
+      "do_not_call"
+    ]
+  },
+  "refusal_disposition_note_required": {
+    "error": "Bad Request",
+    "message": "That outcome cannot be saved as submitted.",
+    "code": "inbound_disposition_invalid",
+    "reason": "note_required"
+  },
+  "refusal_outcome_already_saved": {
+    "error": "Conflict",
+    "message": "This call’s outcome is already saved, or has lapsed.",
+    "code": "inbound_outcome_already_saved"
+  },
+  "refusal_call_not_found": {
+    "error": "Not Found",
+    "message": "Inbound call not found.",
+    "code": "inbound_call_not_found"
+  },
+  "refusal_call_live": {
+    "error": "Conflict",
+    "message": "An inbound call is in progress or still needs its outcome.",
+    "code": "inbound_call_live",
+    "inbound_call_id": "3a9e1c7b-2f4d-4b8a-9c6e-5d7f0a1b2c3d"
+  },
+  "refusal_inbound_disabled": {
+    "error": "Forbidden",
+    "message": "Inbound calls are not turned on for this account.",
+    "code": "inbound_disabled"
+  },
+  "refusal_missed_call_claimed": {
+    "error": "Conflict",
+    "message": "Someone else has already taken this missed call.",
+    "code": "inbound_missed_call_claimed"
+  }
+}

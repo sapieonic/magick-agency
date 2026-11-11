@@ -13,9 +13,10 @@ import type {
 import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
-import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
+import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, stationCanTakeInbound, type StationUpgradeQuery } from './station-upgrade.js';
 import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
+import { withTimeoutOr } from '../utils/with-timeout.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -33,6 +34,13 @@ import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
  */
 
 const log = createChildLogger({ component: 'agency-routes' });
+
+/**
+ * How long the attach of a station that cannot take inbound calls waits for what its session held
+ * of an inbound call to be let go (`InboundConnector.onStationCannotTakeInbound`) before it reads
+ * the agent's state for `ready`. A bound: past it, `ready` goes out with whatever Redis says then.
+ */
+export const STATION_INBOUND_LET_GO_WAIT_MS = 3_000;
 
 /**
  * The break's code to tell a client beside `state` (`ready.break_reason`, the bootstrap's
@@ -123,14 +131,16 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
  * `upgrade.media` is the agent leg's audio format (the route parsed and validated it). It
  * is recorded on the socket for the bridge, which reads it at every attach of this socket
  * to a call (`core/bridge/browser-leg-media.ts`). `upgrade.client` tunes liveness and is
- * written to the session at attach.
+ * written to the session at attach. `upgrade.caps` decides, with the client kind, whether this
+ * socket can take inbound calls (`stationCanTakeInbound`, IQ46): kept on the registry entry, never
+ * the session row.
  */
 export async function handleStationSocket(
   socket: WebSocket,
   sessionId: string,
   token: string | undefined,
   runtime: AgencyRuntime,
-  /** The upgrade's `client=` / `media=`, already validated (`parseStationUpgradeQuery`). */
+  /** The upgrade's `client=` / `media=` / `caps=`, already parsed (`parseStationUpgradeQuery`). */
   upgrade: StationUpgradeQuery = DEFAULT_STATION_UPGRADE,
 ): Promise<void> {
   const mediaFormat: AgencyStationMediaFormat = upgrade.media;
@@ -488,6 +498,10 @@ export async function handleStationSocket(
     return;
   }
 
+  // This socket's own answer, never the session's (IQ46): a console always, a phone only with
+  // `caps=inbound`. Decides whether it is sent the inbound frames and offered inbound callers, and
+  // whether what the session held of an inbound call is let go below.
+  const canTakeInbound = stationCanTakeInbound(upgrade);
   await runtime.stations.attach({
     sessionId,
     campaignId: session.campaign_id,
@@ -497,6 +511,7 @@ export async function handleStationSocket(
     ws: socket,
     // Picks the heartbeat grace and, for `mobile`, arms the protocol-ping probe.
     clientKind: upgrade.client,
+    canTakeInbound,
   });
 
   // And the same question again, because `attach` has its own await (the ownership
@@ -518,6 +533,21 @@ export async function handleStationSocket(
   // dormant while this replica holds no stations, and an attach is the only event
   // that can create something for it to watch.
   runtime.wakeStationSweep();
+
+  // ── A station that cannot take inbound calls (IQ46) ───────────────────────
+  // An older app build (no `caps=inbound`) taking over a session that holds an inbound offer, or
+  // is held for one through a caller's preamble: let go as a lost station's, the agent returned to
+  // the pool, BEFORE the rehydrate below reads the state `ready` reports. The connector also waits
+  // for every return of the session it had in flight (a reservation on its way to an offer or a
+  // give-back, the bind's own cancel), so that build's `ready` is not `reserved` for a call it
+  // cannot show (`onStationCannotTakeInbound` says exactly what is covered). Bounded: a step stuck
+  // on the call's chain delays nobody's `ready` past {@link STATION_INBOUND_LET_GO_WAIT_MS}; past
+  // it `ready` says what Redis says, and the return's own `agent_state` frame follows. A bound call
+  // is not re-adopted (below) and stays `on_call` until the bridge's deferred hangup ends it.
+  const inbound = runtime.inbound;
+  if (inbound && !canTakeInbound) {
+    await withTimeoutOr(inbound.onStationCannotTakeInbound(sessionId), STATION_INBOUND_LET_GO_WAIT_MS, undefined);
+  }
 
   // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, so a
   // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
@@ -634,10 +664,11 @@ export async function handleStationSocket(
   // ── Inbound calls (docs/inbound.md §2, P2) ───────────────────────────────
   // The same for an inbound call: re-adopt a bound call's leg onto this socket, restore the
   // session's unsettled inbound call (connected, or owing its outcome) with an `inbound_call` frame,
-  // and re-send "Your customer is waiting" for every caller still waiting for this agent. A
-  // console only: the app has no inbound frame (IQ20), and a phone is never offered a call.
-  const inbound = runtime.inbound;
-  if (!inbound || upgrade.client === 'mobile' || !stillOurs()) return;
+  // and re-send "Your customer is waiting" for every caller still waiting for this agent. Only on
+  // a station that can take inbound calls (a console, or a phone that declared `caps=inbound`:
+  // IQ46). One that cannot (an older app build taking the session over) had what the session held
+  // let go before `ready` (above): an offer back to the queue, a bound call not re-adopted.
+  if (!inbound || !canTakeInbound || !stillOurs()) return;
   const restored = await inbound.reattachStation(sessionId, socket).catch((err: unknown) => {
     log.warn({ err, sessionId }, 'Could not restore the inbound call on reconnect');
     return null;

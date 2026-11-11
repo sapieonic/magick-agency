@@ -416,9 +416,20 @@ describe('mobile stations in multi-process mode: the real server as a primary an
     // station, which only the worker holding it can send.
     const away = await idle.deviceAway();
     expect(away.status).toBe(200);
-    expect(away.body).toMatchObject({ state: 'break', break_reason: 'device_away' });
-    expect((await rig.states.get(idle.sessionId))?.state).toBe('break');
-    expect(await sessionRow(idle.sessionId)).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    // Applied at once, unless the request lands inside a pacing tick's brief reservation: in
+    // `pool` mode each tick reserves every available agent before it finds nothing due, so the
+    // break can be queued behind that reservation and applied by its release a moment later.
+    // Either answer, and nothing else; then the break itself, everywhere.
+    if ((away.body as { state?: unknown }).state === 'reserved') {
+      expect(away.body).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'device_away' });
+    } else {
+      expect(away.body).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    }
+    await until('the idle phone on break in Redis', 5_000, async () => (await rig.states.get(idle.sessionId))?.state === 'break');
+    await until('the idle phone`s row on its device_away break', 5_000, async () => {
+      const row = await sessionRow(idle.sessionId);
+      return row.state === 'break' && row.break_reason === 'device_away';
+    });
     await until('the break frame on the idle phone', 5_000, () =>
       idle.leg.ofEvent('agent_state').some((f) => f['state'] === 'break' && f['break_reason'] === 'device_away'));
 

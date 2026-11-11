@@ -50,6 +50,13 @@ final Map<String, Map<String, Decoder>> decoders = {
       'wrapup_redial_used_up',
       'queue_nothing_due',
       'queue_due',
+      'inbound_call_offered',
+      'inbound_call_connected',
+      'inbound_call_outcome_owed',
+      'inbound_call_settled',
+      'inbound_call_withheld',
+      'customer_waiting',
+      'customer_waiting_cleared',
     ])
       name: (j) => StationFrame.decode(jsonEncode(j)),
   },
@@ -68,6 +75,8 @@ final Map<String, Map<String, Decoder>> decoders = {
     'session_state_left': SessionStateResponse.fromJson,
     'break_request_device_away': (j) => SessionBreakRequest(j['reason']! as String),
     'session_state_device_away': SessionStateResponse.fromJson,
+    'break_request_phone_call': (j) => SessionBreakRequest(j['reason']! as String),
+    'session_state_phone_call': SessionStateResponse.fromJson,
     'conflict_other_campaign': (j) => ErrorBody.fromJson(j).campaignConflict ?? (throw StateError('no conflict')),
     'conflict_softphone': (j) => ErrorBody.fromJson(j).softphoneConflict ?? (throw StateError('no conflict')),
   },
@@ -118,6 +127,36 @@ final Map<String, Map<String, Decoder>> decoders = {
     'refusal_disposition_invalid': ErrorBody.fromJson,
     'refusal_softphone_disabled': ErrorBody.fromJson,
     'refusal_contact_assigned_elsewhere': ErrorBody.fromJson,
+  },
+  'inbound.json': {
+    'call_response': InboundCallResponse.fromJson,
+    'call_update_request': (j) => InboundCallUpdateRequest(notes: j['notes'] as String?),
+    'call_hangup_response': InboundCallResponse.fromJson,
+    'call_disposition_request': (j) => InboundCallDispositionRequest(
+      code: j['code']! as String,
+      notes: j['notes'] as String?,
+      callbackAt: DateTime.parse(j['callback_at']! as String),
+    ),
+    'call_disposition_response': InboundCallDispositionResponse.fromJson,
+    'call_dnc_request': (j) => InboundCallDncRequest(reason: j['reason'] as String?),
+    'call_dnc_response': InboundCallDncResponse.fromJson,
+    'missed_page': decodeInboundMissedPage,
+    'missed_page_last': decodeInboundMissedPage,
+    'missed_handled_response': InboundMissedCallResponse.fromJson,
+    'missed_reopen_response': InboundMissedCallResponse.fromJson,
+    'missed_count': InboundMissedCountResponse.fromJson,
+    'missed_count_capped': InboundMissedCountResponse.fromJson,
+    'missed_claim_response': InboundMissedCallResponse.fromJson,
+    'missed_count_since': InboundMissedCountResponse.fromJson,
+    'refusal_disposition_unknown_code': (j) =>
+        ErrorBody.fromJson(j).inboundDispositionInvalid ?? (throw StateError('not inbound_disposition_invalid')),
+    'refusal_disposition_note_required': (j) =>
+        ErrorBody.fromJson(j).inboundDispositionInvalid ?? (throw StateError('not inbound_disposition_invalid')),
+    'refusal_outcome_already_saved': ErrorBody.fromJson,
+    'refusal_call_not_found': ErrorBody.fromJson,
+    'refusal_call_live': (j) => ErrorBody.fromJson(j).inboundCallLive ?? (throw StateError('not inbound_call_live')),
+    'refusal_inbound_disabled': ErrorBody.fromJson,
+    'refusal_missed_call_claimed': ErrorBody.fromJson,
   },
   'actions.json': {
     'hangup_response': HangupResponse.fromJson,
@@ -262,6 +301,9 @@ Map<String, Object?>? encoded(Object o) => switch (o) {
   final MyContactCallRequest r => r.toJson(),
   final CustomerSearchRequest r => r.toJson(),
   final CustomerTimelineRequest r => r.toJson(),
+  final InboundCallUpdateRequest r => r.toJson(),
+  final InboundCallDispositionRequest r => r.toJson(),
+  final InboundCallDncRequest r => r.toJson(),
   _ => null,
 };
 
@@ -289,6 +331,16 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
     ...manualCallEnums(f.manualCall ?? (throw StateError('manual_call did not decode'))),
   ],
   final QueueFrame f => [f.queue.reason],
+  final InboundCallFrame f => [
+    f.state,
+    ...inboundCallEnums(f.inboundCall ?? (throw StateError('inbound_call did not decode'))),
+  ],
+  final InboundCallResponse r => inboundCallEnums(r.call),
+  final InboundCallDispositionResponse r => [r.contactState, ...inboundCallEnums(r.call)],
+  final InboundCallDncResponse r => [r.scope, r.contactState],
+  final KeysetPage<InboundMissedCall> p => p.rows.expand(missedCallEnums),
+  final InboundMissedCallResponse r => missedCallEnums(r.call),
+  final InboundDispositionRefusal r => [r.rule],
   final SessionBootstrap b => [
     b.state,
     b.campaignStatus,
@@ -305,6 +357,8 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   // `session_refusal` is a sign-in code, not an agency one.
   final ErrorBody e when e.codeRaw == null || SessionRefusalCode.fromWire(e.codeRaw) != SessionRefusalCode.unknown =>
     const [],
+  // An inbound refusal is read through `inboundCode`.
+  final ErrorBody e when e.inboundCode != InboundErrorCode.unknown => [e.inboundCode],
   // A soft-phone refusal is read through `softphoneCode` (its `code` is an action code
   // only for `session_on_softphone`).
   final ErrorBody e when e.softphoneCode != SoftphoneErrorCode.unknown => [e.softphoneCode],
@@ -401,6 +455,26 @@ Iterable<WireEnum?> manualCallEnums(ManualCall c) => [
   ...?c.contact?.priorAttempts?.map((p) => p.outcome),
 ];
 
+/// An inbound call's closed-vocabulary fields, its match and priors included.
+Iterable<WireEnum?> inboundCallEnums(InboundCall c) => [
+  c.state,
+  c.outcome,
+  c.catalogSource,
+  c.sticky?.reason,
+  c.match?.contactState,
+  ...?c.match?.priorAttempts.map((p) => p.outcome),
+  ...c.dispositionCatalog.expand((d) => d.overrideGrant?.kinds ?? const <OverrideKind>[]),
+];
+
+/// A Missed row's closed-vocabulary fields.
+Iterable<WireEnum?> missedCallEnums(InboundMissedCall c) => [
+  c.reason,
+  c.closedCause,
+  c.outcome,
+  c.status,
+  c.handledReason,
+];
+
 void main() {
   test('the fixture directory is found from the package', () {
     expect(agentFixturesDir().existsSync(), isTrue);
@@ -441,13 +515,7 @@ void main() {
   test('every station server event in the fixtures has its own frame type', () {
     final samples = loadFixtureFile('station.json');
     final events = {for (final s in samples.values) StationFrame.decode(jsonEncode(s)).event};
-    // Inbound calls go to console stations only until P3 (the contract's
-    // AGENCY_STATION_CONSOLE_ONLY_EVENTS): the app is never sent them, so the
-    // fixtures carry no sample of them.
-    const consoleOnly = {StationEvent.inboundCall, StationEvent.customerWaiting};
-    expect(
-      events,
-      containsAll(StationEvent.values.where((e) => e != StationEvent.unknown && !consoleOnly.contains(e))),
-    );
+    // The inbound frames included: the app declares `caps=inbound`, so it is sent them.
+    expect(events, containsAll(StationEvent.values.where((e) => e != StationEvent.unknown)));
   });
 }

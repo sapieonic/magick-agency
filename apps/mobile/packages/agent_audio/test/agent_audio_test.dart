@@ -215,6 +215,53 @@ void main() {
     });
   });
 
+  group('phone call monitoring', () {
+    test('asks the platform with the flag, in any phase, not queued behind the lifecycle', () async {
+      await audio.setPhoneCallMonitoring(true);
+      expect(audio.phase, AgentAudioPhase.idle);
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      await audio.setPhoneCallMonitoring(false);
+      expect(calls.map((c) => [c.method, c.arguments]), [
+        ['setPhoneCallMonitoring', {'enabled': true}],
+        ['prepare', {'format': 'alaw8'}],
+        ['setPhoneCallMonitoring', {'enabled': false}],
+      ]);
+      expect(audio.phase, AgentAudioPhase.prepared);
+    });
+
+    test('a platform without it is unsupported, as any missing method', () async {
+      replies['setPhoneCallMonitoring'] = (_) => throw MissingPluginException();
+      await expectLater(
+        audio.setPhoneCallMonitoring(true),
+        throwsA(isA<AgentAudioException>().having((e) => e.code, 'code', AgentAudioErrorCode.unsupported)),
+      );
+    });
+  });
+
+  group('chime', () {
+    test('asks the platform once per call, queued behind the arm it follows', () async {
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      final arm = audio.armMicrophone();
+      final chime = audio.playChime();
+      await Future.wait([arm, chime]);
+      await audio.stop();
+      expect(calls.map((c) => [c.method, c.arguments]), [
+        ['prepare', {'format': 'alaw8'}],
+        ['armMicrophone', null],
+        ['playChime', null],
+        ['stop', {'keepWarm': true}],
+      ]);
+      expect(audio.phase, AgentAudioPhase.prepared, reason: 'not a lifecycle call');
+    });
+
+    test('a refusal surfaces as an AgentAudioException and blocks nothing after it', () async {
+      replies['playChime'] = (_) => throw PlatformException(code: 'unknown', message: 'boom');
+      await expectLater(audio.playChime(), throwsA(isA<AgentAudioException>()));
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      expect(audio.phase, AgentAudioPhase.prepared);
+    });
+  });
+
   group('events', () {
     test('decodes the event channel and drops what it does not understand', () async {
       messenger.setMockStreamHandler(

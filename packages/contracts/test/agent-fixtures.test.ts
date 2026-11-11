@@ -3,9 +3,9 @@ import type * as Core from '../src/agency';
 import type { AgencyApi, PlatformApi } from '../src/index';
 import type { AgencyClientFlagMap } from '../src/flags';
 import { buildLiterals } from '../../../tooling/contracts-literals.mjs';
-import { AGENCY_STATION_CONSOLE_ONLY_EVENTS } from '../src/agency/station';
 import actions from '../fixtures/agent/actions.json';
 import customerHistory from '../fixtures/agent/customer-history.json';
+import inbound from '../fixtures/agent/inbound.json';
 import literals from '../fixtures/agent/literals.json';
 import platform from '../fixtures/agent/platform.json';
 import reads from '../fixtures/agent/reads.json';
@@ -162,6 +162,14 @@ const STATION = {
   agent_state_switch_queued: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_switch_queued),
   queue_nothing_due: fits<Core.AgencyStationQueueFrame>()(station.queue_nothing_due),
   queue_due: fits<Core.AgencyStationQueueFrame>()(station.queue_due),
+  // Inbound calls (docs/inbound.md §6): one call through its states, a withheld caller, the wait notice.
+  inbound_call_offered: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_offered),
+  inbound_call_connected: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_connected),
+  inbound_call_outcome_owed: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_outcome_owed),
+  inbound_call_settled: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_settled),
+  inbound_call_withheld: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_withheld),
+  customer_waiting: fits<Core.AgencyStationCustomerWaitingFrame>()(station.customer_waiting),
+  customer_waiting_cleared: fits<Core.AgencyStationCustomerWaitingFrame>()(station.customer_waiting_cleared),
 };
 
 const STATION_CLIENT = {
@@ -182,6 +190,8 @@ const SESSION = {
   session_state_break_queued: fits<Core.AgencySessionStateResponse>()(session.session_state_break_queued),
   break_request_device_away: fits<Core.AgencySessionBreakRequest>()(session.break_request_device_away),
   session_state_device_away: fits<Core.AgencySessionStateResponse>()(session.session_state_device_away),
+  break_request_phone_call: fits<Core.AgencySessionBreakRequest>()(session.break_request_phone_call),
+  session_state_phone_call: fits<Core.AgencySessionStateResponse>()(session.session_state_phone_call),
   session_state_left: fits<Core.AgencySessionStateResponse>()(session.session_state_left),
   conflict_other_campaign: fits<Core.AgencySessionCampaignConflict>()(session.conflict_other_campaign),
   conflict_softphone: fits<Core.AgencySoftphoneSessionOnSoftphoneRefusal>()(session.conflict_softphone),
@@ -248,6 +258,38 @@ const SOFTPHONE = {
   refusal_contact_assigned_elsewhere: fits<Core.AgencySoftphoneErrorResponse>()(
     softphone.refusal_contact_assigned_elsewhere,
   ),
+};
+
+// Inbound calls (`/proxy/agency/inbound/*`). Bodies the app sends are the console's (`AgencyApi`,
+// no actor fields); the call routes' answers are the dialer contract's, which the public layer
+// passes through; the Missed list, its count and the refusals are `AgencyApi` shapes.
+const INBOUND = {
+  call_response: fits<Core.AgencyInboundCallResponse>()(inbound.call_response),
+  call_update_request: fits<AgencyApi.AgencyInboundCallUpdateRequest>()(inbound.call_update_request),
+  call_hangup_response: fits<Core.AgencyInboundCallResponse>()(inbound.call_hangup_response),
+  call_disposition_request: fits<AgencyApi.AgencyInboundCallDispositionRequest>()(inbound.call_disposition_request),
+  call_disposition_response: fits<Core.AgencyInboundCallDispositionResponse>()(inbound.call_disposition_response),
+  call_dnc_request: fits<AgencyApi.AgencyInboundCallDncRequest>()(inbound.call_dnc_request),
+  call_dnc_response: fits<Core.AgencyInboundCallDncResponse>()(inbound.call_dnc_response),
+  missed_page: fits<AgencyApi.AgencyInboundMissedPage>()(inbound.missed_page),
+  missed_page_last: fits<AgencyApi.AgencyInboundMissedPage>()(inbound.missed_page_last),
+  missed_handled_response: fits<AgencyApi.AgencyInboundMarkHandledResponse>()(inbound.missed_handled_response),
+  missed_reopen_response: fits<AgencyApi.AgencyInboundReopenResponse>()(inbound.missed_reopen_response),
+  missed_count: fits<AgencyApi.AgencyInboundMissedCountResponse>()(inbound.missed_count),
+  missed_count_capped: fits<AgencyApi.AgencyInboundMissedCountResponse>()(inbound.missed_count_capped),
+  missed_claim_response: fits<AgencyApi.AgencyInboundMissedClaimResponse>()(inbound.missed_claim_response),
+  missed_count_since: fits<AgencyApi.AgencyInboundMissedCountResponse>()(inbound.missed_count_since),
+  refusal_disposition_unknown_code: fits<AgencyApi.AgencyInboundErrorResponse>()(
+    inbound.refusal_disposition_unknown_code,
+  ),
+  refusal_disposition_note_required: fits<AgencyApi.AgencyInboundErrorResponse>()(
+    inbound.refusal_disposition_note_required,
+  ),
+  refusal_outcome_already_saved: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_outcome_already_saved),
+  refusal_call_not_found: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_call_not_found),
+  refusal_call_live: fits<AgencyApi.AgencyInboundCallLiveRefusal>()(inbound.refusal_call_live),
+  refusal_inbound_disabled: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_inbound_disabled),
+  refusal_missed_call_claimed: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_missed_call_claimed),
 };
 
 // The agent's reads are public-API-layer shapes, so they are checked against `AgencyApi`.
@@ -332,6 +374,9 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['session', 'session_state_device_away', 'state', 'agent_states'],
   ['session', 'session_state_device_away', 'break_reason', 'reserved_break_codes'],
   ['session', 'break_request_device_away', 'reason', 'reserved_break_codes'],
+  ['session', 'session_state_phone_call', 'state', 'agent_states'],
+  ['session', 'session_state_phone_call', 'break_reason', 'reserved_break_codes'],
+  ['session', 'break_request_phone_call', 'reason', 'reserved_break_codes'],
   ['platform', 'error_not_staffed', 'code', 'action_error_codes'],
   ['session', 'conflict_other_campaign', 'code', 'action_error_codes'],
   ['session', 'conflict_other_campaign', 'state', 'agent_states'],
@@ -457,13 +502,61 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['customer-history', 'error_invalid_number', 'code', 'customer_history_error_codes'],
   ['customer-history', 'error_invalid_number', 'number_error', 'customer_search_number_errors'],
   ['customer-history', 'error_search_expired', 'code', 'customer_history_error_codes'],
+  // Inbound calls: the vocabularies they share with outbound (the inbound ones: INBOUND_LITERAL_FIELDS).
+  ...['inbound_call_offered', 'inbound_call_connected', 'inbound_call_outcome_owed', 'inbound_call_settled']
+    .flatMap((s): Array<[string, string, string, string]> => [
+      ['station', s, 'call.match.contact_state', 'contact_states'],
+      ['station', s, 'call.match.prior_attempts.0.outcome', 'attempt_outcomes'],
+      ['station', s, 'call.match.prior_attempts.1.outcome', 'attempt_outcomes'],
+    ]),
+  ['inbound', 'call_disposition_response', 'contact_state', 'contact_states'],
+  ['inbound', 'call_dnc_response', 'scope', 'dnc_entry_scopes'],
+  ['inbound', 'call_dnc_response', 'contact_state', 'contact_states'],
   ...Object.keys(softphone)
     .filter((s) => s.startsWith('refusal_'))
     .map((s): [string, string, string, string] => ['softphone', s, 'code', 'softphone_error_codes']),
 ];
 
+/**
+ * The inbound literal fields, checked against the inbound vocabularies `literals.json` extracts
+ * (the ones the app switches on). Same path and vocabulary rules as {@link LITERAL_FIELDS}.
+ */
+const INBOUND_CALL_SAMPLES = [
+  'inbound_call_offered', 'inbound_call_connected', 'inbound_call_outcome_owed', 'inbound_call_settled',
+  'inbound_call_withheld',
+] as const;
+const MISSED_ROWS: Array<[string, string]> = [
+  ['missed_page', 'rows.0'], ['missed_page', 'rows.1'], ['missed_page', 'rows.2'], ['missed_page_last', 'rows.0'],
+  ['missed_handled_response', 'call'], ['missed_reopen_response', 'call'], ['missed_claim_response', 'call'],
+];
+type InboundField = [file: string, sample: string, path: string, vocabulary: string];
+const INBOUND_LITERAL_FIELDS: InboundField[] = [
+  ...INBOUND_CALL_SAMPLES.flatMap((s): InboundField[] => [
+    ['station', s, 'call.state', 'inbound_call_states'],
+    ['station', s, 'call.outcome', 'inbound_call_outcomes'],
+    ['station', s, 'call.catalog_source', 'inbound_catalog_sources'],
+    ['station', s, 'call.sticky.reason', 'inbound_sticky_reasons'],
+  ]),
+  ...['call_response', 'call_hangup_response', 'call_disposition_response'].flatMap((s): InboundField[] => [
+    ['inbound', s, 'call.state', 'inbound_call_states'],
+    ['inbound', s, 'call.outcome', 'inbound_call_outcomes'],
+    ['inbound', s, 'call.catalog_source', 'inbound_catalog_sources'],
+    ['inbound', s, 'call.sticky.reason', 'inbound_sticky_reasons'],
+  ]),
+  ...MISSED_ROWS.flatMap(([s, row]): InboundField[] => [
+    ['inbound', s, `${row}.reason`, 'inbound_missed_reasons'],
+    ['inbound', s, `${row}.closed_cause`, 'inbound_closed_causes'],
+    ['inbound', s, `${row}.outcome`, 'inbound_call_outcomes'],
+    ['inbound', s, `${row}.status`, 'inbound_follow_up_statuses'],
+    ['inbound', s, `${row}.handled_reason`, 'inbound_handled_reasons'],
+  ]),
+  ...Object.keys(inbound)
+    .filter((s) => s.startsWith('refusal_'))
+    .map((s): InboundField => ['inbound', s, 'code', 'inbound_error_codes']),
+];
+
 const FILES: Record<string, Record<string, unknown>> = {
-  station, session, softphone, actions, reads, platform, 'customer-history': customerHistory,
+  station, session, softphone, actions, reads, platform, 'customer-history': customerHistory, inbound,
 };
 
 function at(value: unknown, path: string): unknown {
@@ -481,27 +574,42 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
       ['reads', reads, READS],
       ['platform', platform, PLATFORM],
       ['customer-history', customerHistory, CUSTOMER_HISTORY],
+      ['inbound', inbound, INBOUND],
     ];
     for (const [name, file, checked] of registered) {
       expect(Object.keys(checked).sort(), `${name}.json`).toEqual(Object.keys(file).sort());
     }
   });
 
-  it('covers every station server event the contract declares, but the console-only ones', () => {
-    // Inbound calls go to console stations only until P3 (AGENCY_STATION_CONSOLE_ONLY_EVENTS):
-    // the app is never sent them, so there is nothing for it to decode yet.
-    const consoleOnly = new Set<string>(AGENCY_STATION_CONSOLE_ONLY_EVENTS);
+  it('covers every station server event the contract declares', () => {
+    // The inbound frames included: a station that declares the inbound capability (the app's
+    // `caps=inbound`) is sent them, so the app decodes them like every other frame.
     const events = new Set(Object.values(station).map((frame) => frame.event));
-    for (const event of consoleOnly) expect(events.has(event), event).toBe(false);
-    expect([...events].sort())
-      .toEqual([...vocab('station_server_events')].filter((e) => !consoleOnly.has(e)).sort());
-    for (const event of consoleOnly) expect(vocab('station_server_events')).toContain(event);
+    expect([...events].sort()).toEqual([...vocab('station_server_events')].sort());
   });
 
   it.each(LITERAL_FIELDS)('%s.%s: `%s` is a member of %s', (file, sample, path, vocabulary) => {
     const value = at(FILES[file]?.[sample], path);
     expect(value, `${file}.${sample} has no ${path}`).not.toBeUndefined();
     if (value !== null) expect(vocab(vocabulary)).toContain(value);
+  });
+
+  it.each(INBOUND_LITERAL_FIELDS)('%s.%s: `%s` is a member of %s', (file, sample, path, vocabulary) => {
+    const value = at(FILES[file]?.[sample], path);
+    expect(value, `${file}.${sample} has no ${path}`).not.toBeUndefined();
+    if (value !== null) expect(vocab(vocabulary)).toContain(value);
+  });
+
+  it('inbound: one call through offered, connected, owed and settled, as the frames send it', () => {
+    const calls = INBOUND_CALL_SAMPLES.slice(0, 4).map((s) => station[s].call);
+    expect(new Set(calls.map((c) => c.id)).size).toBe(1);
+    expect(calls.map((c) => c.state)).toEqual(['offered', 'connected', 'ended', 'ended']);
+    expect(calls.map((c) => c.connects_at !== null)).toEqual([true, false, false, false]);
+    expect(calls.map((c) => c.outcome_due_at !== null)).toEqual([false, false, true, false]);
+    expect(calls.map((c) => c.settled_at !== null)).toEqual([false, false, false, true]);
+    expect(station.inbound_call_withheld.call.from_e164).toBeNull();
+    expect(inbound.call_hangup_response.call).toEqual(station.inbound_call_outcome_owed.call);
+    expect(inbound.call_disposition_response.call).toEqual(station.inbound_call_settled.call);
   });
 
   it('customer history: the search answer\'s timeline is the five per-kind entry samples, in order', () => {

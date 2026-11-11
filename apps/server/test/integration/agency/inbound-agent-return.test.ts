@@ -18,7 +18,7 @@ const { AgencyDialer } = await import('../../../src/agency/agency-dialer.js');
 const { BreakRegistry } = await import('@magick-agency/domain/break-manager');
 const { parseInboundRouteCreate } = await import('../../../src/agency/inbound/route-config.js');
 const { InboundCallService } = await import('../../../src/agency/inbound/inbound-disposition.js');
-const { INBOUND_DEFAULT_WRAPUP } = await import('../../../src/agency/inbound/inbound-wrapup.js');
+const { INBOUND_DEFAULT_WRAPUP_SECONDS } = await import('../../../src/agency/inbound/inbound-wrapup.js');
 type Connector = InstanceType<typeof InboundConnector>;
 type CallRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundCallRecord;
 type RouteRecord = import('../../../src/db/repositories/agency.repository.js').AgencyInboundRouteRecord;
@@ -35,17 +35,17 @@ type Lifecycle = import('../../../src/core/webrtc-bridge-manager.js').WebRtcLife
  *    `session_busy` give-back (a session the spine says holds another call) puts the agent on
  *    `break`, never `available`, also when the spine cannot be read, and the lapse that settles
  *    the other call later does not lift that break.
- *  - The inbound wrap-up's auto-return (PM): the outcome lapses at the matched campaign's
- *    `wrapup_seconds` when it auto-returns, else at the unmatched default (120 s, its own),
- *    never past the 30-minute backstop; the agent in that wrap-up is returned.
+ *  - The inbound wrap-up's auto-return (IQ52): the outcome lapses at the route's window captured
+ *    on the call (`wrapup_seconds`), else at the default (30 s), whatever the matched campaign's
+ *    own wrap-up rule says, never past the 30-minute backstop; the agent in that wrap-up is returned.
  *  - A supervisor's force-available on an agent who owes an inbound outcome
  *    (`closeOwedForSupervisor`): the call closed as the lapse closes it, the claim cleared, the
  *    panel told; a call still connected is not forced; an outcome saved first wins.
  *
  * Mutation-checked: `returnAgent` without `returnsToPool` returns the on-break and offline agents
  * to `available` (red); `giveBack` falling through to `releaseAgent` on a failed read leaves the
- * agent `available` (red); the lapse SQL without the campaign window lapses only at 30 minutes
- * (red); `closeOwedForSupervisor` not clearing the claim leaves the force-available refused by
+ * agent `available` (red); the lapse SQL reading the default instead of the call's captured
+ * window lapses the 45 s and 600 s calls at 30 s (red); `closeOwedForSupervisor` not clearing the claim leaves the force-available refused by
  * the Lua guard (red).
  */
 
@@ -65,13 +65,13 @@ class FakeWs {
 
 interface StationEntry {
   sessionId: string; campaignId: string | null; tenantId: string; accountId: string; agentUserId: string;
-  ws: FakeWs; clientKind: 'web' | 'mobile';
+  ws: FakeWs; clientKind: 'web' | 'mobile'; canTakeInbound: boolean;
 }
 
 class FakeStations {
   readonly entries = new Map<string, StationEntry>();
-  add(e: Omit<StationEntry, 'ws' | 'clientKind'>): StationEntry {
-    const entry = { clientKind: 'web' as const, ...e, ws: new FakeWs() };
+  add(e: Omit<StationEntry, 'ws' | 'clientKind' | 'canTakeInbound'>): StationEntry {
+    const entry = { clientKind: 'web' as const, canTakeInbound: true, ...e, ws: new FakeWs() };
     this.entries.set(e.sessionId, entry);
     return entry;
   }
@@ -157,12 +157,18 @@ async function agent(state: 'available' | 'wrapup' | 'break' | 'offline' = 'avai
 }
 
 /** A call answered by `sessionId` that ended `endedAgoSeconds` ago and owes its outcome; matched to `matchedCampaignId` if given. */
-async function owed(sessionId: string, endedAgoSeconds: number, matchedCampaignId: string | null = null, matchedContactId: string = randomUUID()): Promise<CallRecord> {
+async function owed(
+  sessionId: string,
+  endedAgoSeconds: number,
+  matchedCampaignId: string | null = null,
+  matchedContactId: string = randomUUID(),
+  wrapupSeconds: number | null = null,
+): Promise<CallRecord> {
   const { call } = await calls.insertArrival({
     tenantId: T, accountId: A, routeId: route.id, phoneNumberId: null, provider: 'plivo', telephonyCredentialId: credentialId,
     providerCallId: `CA-${randomUUID()}`, fromE164: '+447700900555', toE164: '+14155550100',
     identification: { match: matchedCampaignId ? { contactId: matchedContactId, campaignId: matchedCampaignId } : null, callerDnc: false, sticky: null },
-    answered: true, recordingRequested: false, analysisProfileId: null,
+    answered: true, recordingRequested: false, analysisProfileId: null, wrapupSeconds,
   });
   await calls.transition(call!.id, 'queued');
   expect((await calls.offer(call!.id, sessionId)).ok).toBe(true);
@@ -333,64 +339,57 @@ describe('a settle never moves an agent off a break, or out of offline, into the
   });
 });
 
-describe('the inbound wrap-up auto-returns as the outbound one (PM): the matched campaign`s window, else the unmatched default (120 s), never past 30 minutes', () => {
-  it('an unmatched call`s default is its own (120 s, auto-return on), not a new campaign`s column default; a matched campaign keeps its own', async () => {
-    expect(INBOUND_DEFAULT_WRAPUP).toEqual({ wrapupSeconds: 120, autoReturn: true });
-    const { rows } = await pool().query<{ column_name: string; column_default: string }>(
-      `SELECT column_name, column_default FROM information_schema.columns
-        WHERE table_name = 'agency_campaigns' AND column_name = 'wrapup_seconds'`);
-    expect(Number(rows[0]!.column_default)).toBe(30);
-    const campaignDefault = (await insertAgencyCampaign({})).id as string;
-    const session = async () => (await insertAgentSession(campaignId)).id as string;
-    const matched40 = await owed(await session(), 40, campaignDefault);
-    const unmatched40 = await owed(await session(), 40);
-    const lapsed = new Set((await calls.lapseUnsettled()).map((r) => r.id));
-    expect({ matched: lapsed.has(matched40.id), unmatched: lapsed.has(unmatched40.id) }).toEqual({ matched: true, unmatched: false });
-  });
-
-  it('the lapse picks each call at its own window', async () => {
-    const auto45 = (await insertAgencyCampaign({ wrapup_seconds: 45, wrapup_auto_return: true })).id as string;
+describe('IQ52: the inbound wrap-up is the route`s window captured on the call, with auto-return, never past 30 minutes', () => {
+  it('a matched campaign`s own rule no longer applies: no auto-return, a long window or "no timer" lapse at the call`s window', async () => {
     const manual = (await insertAgencyCampaign({ wrapup_seconds: 45, wrapup_auto_return: false })).id as string;
-    const noTimer = (await insertAgencyCampaign({ wrapup_seconds: 0, wrapup_auto_return: true })).id as string;
     const long = (await insertAgencyCampaign({ wrapup_seconds: 7200, wrapup_auto_return: true })).id as string;
+    const noTimer = (await insertAgencyCampaign({ wrapup_seconds: 0, wrapup_auto_return: true })).id as string;
     const session = async () => (await insertAgentSession(campaignId)).id as string;
     const cases = {
-      auto45Before: await owed(await session(), 40, auto45),
-      auto45After: await owed(await session(), 50, auto45),
-      manualAfterWindow: await owed(await session(), 600, manual),
-      manualPastBackstop: await owed(await session(), 31 * 60, manual),
-      noTimer: await owed(await session(), 600, noTimer),
-      longBeforeBackstop: await owed(await session(), 29 * 60, long),
-      longPastBackstop: await owed(await session(), 31 * 60, long),
-      unmatchedBefore: await owed(await session(), 110),
-      unmatchedAfter: await owed(await session(), 125),
-      goneCampaignAfter: await owed(await session(), 125, randomUUID()),
+      manual: await owed(await session(), 35, manual, randomUUID(), 30),
+      long: await owed(await session(), 35, long, randomUUID(), 30),
+      noTimer: await owed(await session(), 35, noTimer, randomUUID(), 30),
+      unmatched: await owed(await session(), 35, null, randomUUID(), 30),
     };
     const lapsed = new Set((await calls.lapseUnsettled()).map((r) => r.id));
-    const picked = Object.fromEntries(Object.entries(cases).map(([k, c]) => [k, lapsed.has(c.id)]));
-    expect(picked).toEqual({
-      auto45Before: false, auto45After: true,
-      manualAfterWindow: false, manualPastBackstop: true,
-      noTimer: false,
-      longBeforeBackstop: false, longPastBackstop: true,
-      unmatchedBefore: false, unmatchedAfter: true,
-      goneCampaignAfter: true,
+    expect(Object.fromEntries(Object.entries(cases).map(([k, c]) => [k, lapsed.has(c.id)])))
+      .toEqual({ manual: true, long: true, noTimer: true, unmatched: true });
+  });
+
+  it('the lapse picks each call at its own captured window; a call with none at the default (30 s)', async () => {
+    expect(INBOUND_DEFAULT_WRAPUP_SECONDS).toBe(30);
+    const session = async () => (await insertAgentSession(campaignId)).id as string;
+    const cases = {
+      w45Before: await owed(await session(), 40, null, randomUUID(), 45),
+      w45After: await owed(await session(), 50, null, randomUUID(), 45),
+      w600Before: await owed(await session(), 590, null, randomUUID(), 600),
+      w600After: await owed(await session(), 610, null, randomUUID(), 600),
+      noneBefore: await owed(await session(), 25),
+      noneAfter: await owed(await session(), 35),
+    };
+    const lapsed = new Set((await calls.lapseUnsettled()).map((r) => r.id));
+    expect(Object.fromEntries(Object.entries(cases).map(([k, c]) => [k, lapsed.has(c.id)]))).toEqual({
+      w45Before: false, w45After: true, w600Before: false, w600After: true, noneBefore: false, noneAfter: true,
     });
+    // The backstop still bounds every window (10-minute windows, a 5-minute backstop): the one
+    // still owed at 590 s goes, as does one ended 400 s ago.
+    const capped = await owed(await session(), 400, null, randomUUID(), 600);
+    expect((await calls.lapseUnsettled({ lapseMs: 300_000 })).map((r) => r.id).sort()).toEqual([capped.id, cases.w600Before.id].sort());
   });
 
   it('the panel`s outcome_due_at is the same window the sweep uses', async () => {
-    const auto45 = (await insertAgencyCampaign({ wrapup_seconds: 45, wrapup_auto_return: true })).id as string;
+    const auto45 = (await insertAgencyCampaign({ wrapup_seconds: 120, wrapup_auto_return: true })).id as string;
     const s = await agent();
-    const call = await owed(s, 0, auto45);
+    const call = await owed(s, 0, auto45, randomUUID(), 45);
     const wire = (await service.get({ tenantId: T, accountId: A, userId: randomUUID(), supervise: true }, call.id));
     expect(wire.ok).toBe(true);
     if (!wire.ok) return;
     expect(new Date(wire.call.outcome_due_at!).getTime() - new Date(wire.call.ended_at!).getTime()).toBe(45_000);
   });
 
-  it('an agent in an unmatched call`s wrap-up past the default window: the call closed, the agent returned', async () => {
+  it('an agent in the wrap-up past the call`s window: the call closed, the agent returned', async () => {
     const s = await agent();
-    const call = await owed(s, INBOUND_DEFAULT_WRAPUP.wrapupSeconds + 2);
+    const call = await owed(s, 12, null, randomUUID(), 10);
     await agents.set(s, 'wrapup', { leaseMs: 60_000 });
     await agents.rehydrateInbound(s, call.id);
     expect(await service.sweepLapsed()).toBe(1);

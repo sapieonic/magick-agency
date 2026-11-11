@@ -11,6 +11,8 @@ import '../../../core/flags/feature_flags.dart' show contactAssignmentEnabledPro
 import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
+import '../../missed/missed_on_duty.dart';
+import '../../missed/rang_while_away.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
@@ -44,6 +46,8 @@ class WaitingView extends ConsumerWidget {
 
     return IdleLayout(
       body: [
+        // IQ50, IQ51: who rang while the agent was paused.
+        const RangWhileAwayNotice(),
         const RecentReleaseCard(),
         _StateCard(
           key: Key(nothingDue ? 'nothing-due-card' : 'waiting-card'),
@@ -70,6 +74,8 @@ class WaitingView extends ConsumerWidget {
                   ),
                 ),
         ),
+        // IQ48: the customers waiting to be called back, a tap from the list.
+        const MissedToCallBackLine(),
       ],
       // Leave is plain HTTP: it stays offered while the socket is down.
       actions: Column(
@@ -221,6 +227,7 @@ class BreakView extends ConsumerWidget {
 
     return IdleLayout(
       body: [
+        const RangWhileAwayNotice(),
         _StateCard(
           key: const Key('break-card'),
           pill: StatusPill(
@@ -279,6 +286,7 @@ class AwayView extends ConsumerWidget {
 
     return IdleLayout(
       body: [
+        const RangWhileAwayNotice(),
         AppCard(
           key: const Key('away-card'),
           borderColor: t.warning.withValues(alpha: 0.35),
@@ -293,6 +301,12 @@ class AwayView extends ConsumerWidget {
               Text(
                 StationCopy.awayDetail(since == null ? null : formatTime(since)),
                 style: text.bodyMedium!.copyWith(color: t.textSecondary),
+              ),
+              const SizedBox(height: Space.sm),
+              Text(
+                StationCopy.awayAutoReturnHint,
+                key: const Key('away-auto-return'),
+                style: text.bodySmall!.copyWith(color: t.textMuted),
               ),
             ],
           ),

@@ -146,6 +146,7 @@ final class Playout {
   private var jitter: JitterBuffer
   private var tone: Ringback
   private var ringback = false
+  private var chime: Chime
   private let current: UnsafeMutablePointer<Int16>
   private var cursor: Int
   private var frameSamples: Int
@@ -154,6 +155,7 @@ final class Playout {
     frameSamples = format.frameSamples
     jitter = JitterBuffer(config: JitterBufferConfig(frameSamples: format.frameSamples))
     tone = Ringback(sampleRate: Int(format.sampleRate))
+    chime = Chime(sampleRate: Int(format.sampleRate))
     current = .allocate(capacity: 320)
     current.initialize(repeating: 0, count: 320)
     cursor = format.frameSamples
@@ -168,9 +170,11 @@ final class Playout {
   func reconfigure(_ format: WireFormat) {
     let fresh = JitterBuffer(config: JitterBufferConfig(frameSamples: format.frameSamples))
     let freshTone = Ringback(sampleRate: Int(format.sampleRate))
+    let freshChime = Chime(sampleRate: Int(format.sampleRate))
     lock.withLock {
       jitter = fresh
       tone = freshTone
+      chime = freshChime
       frameSamples = format.frameSamples
       cursor = format.frameSamples
     }
@@ -180,6 +184,7 @@ final class Playout {
     lock.withLock {
       jitter.reset()
       tone.reset()
+      chime.stop()
       cursor = frameSamples
     }
   }
@@ -187,6 +192,17 @@ final class Playout {
   /// Main thread. Mix the ringback tone into playout (a soft-phone call that is ringing).
   func setRingback(_ on: Bool) {
     lock.withLock { ringback = on }
+  }
+
+  /// Main thread. Play the inbound chime once, from its start (again from the start while one
+  /// plays).
+  func startChime() {
+    lock.withLock { chime.start() }
+  }
+
+  /// Main thread. Silence a chime still playing (the engine is stopping).
+  func stopChime() {
+    lock.withLock { chime.stop() }
   }
 
   func push(_ frame: UnsafePointer<Int16>) {
@@ -208,6 +224,7 @@ final class Playout {
         _ = jitter.pop(into: current)
         // At the wire rate, after the jitter buffer: the same frame-level mix as Android.
         tone.process(current, count: frameSamples, on: ringback)
+        chime.process(current, count: frameSamples)
         cursor = 0
       }
       let n = min(frames - written, frameSamples - cursor)

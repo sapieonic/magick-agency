@@ -21,6 +21,7 @@ import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import {
   BREAK_UNCHANGED_KEY,
   decideDeviceAway,
+  isAppPauseBreakReason,
   runDeviceAway,
   takeBreakUnchanged,
 } from '../../../src/api/routes/agency/device-away.js';
@@ -259,5 +260,53 @@ describe('runDeviceAway', () => {
     expect(repos.session.setState).not.toHaveBeenCalled();
     expect(w.sent).toEqual([]);
     expect(w.breaks.size()).toBe(0);
+  });
+});
+
+// ─── IQ51: the cellular-call pause (`reason: 'phone_call'`), by the same rules ────
+
+describe('the phone-call pause (IQ51): the device-away rules with its own code', () => {
+  it('is one of the app`s pauses; nothing else is', () => {
+    expect(isAppPauseBreakReason('device_away')).toBe(true);
+    expect(isAppPauseBreakReason('phone_call')).toBe(true);
+    for (const other of ['soft_phone', 'lunch', '', null, undefined, 42]) expect(isAppPauseBreakReason(other)).toBe(false);
+  });
+
+  it('available → break/phone_call now, the row mirrored, the agent told', async () => {
+    const w = world('available');
+    const res = await runDeviceAway(w.runtime, session(), 'phone_call');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'phone_call' }) });
+    expect(repos.session.setState).toHaveBeenCalledWith('sess-1', 'break', 'phone_call');
+    expect(w.sent).toEqual([expect.objectContaining({ event: 'agent_state', state: 'break', break_reason: 'phone_call' })]);
+  });
+
+  it.each(['reserved', 'on_call', 'wrapup'] as const)('%s → queued behind it with its own label', async (state) => {
+    const w = world(state);
+    const res = await runDeviceAway(w.runtime, session(), 'phone_call');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state, pending_state: 'break', break_reason: 'phone_call' }) });
+    expect(w.breaks.peek('sess-1')).toEqual({ code: 'phone_call', label: 'On a phone call' });
+    expect(w.sent).toEqual([expect.objectContaining({ pending_break_reason: 'phone_call' })]);
+  });
+
+  it('never replaces a queued device_away, nor the reverse; already on it: idempotent', async () => {
+    const w = world('wrapup');
+    w.breaks.queue('sess-1', { code: 'device_away', label: 'Away (app in background)' });
+    expect((await runDeviceAway(w.runtime, session(), 'phone_call'))).toEqual({
+      ok: true, body: expect.objectContaining({ pending_state: 'break', break_reason: 'device_away', [BREAK_UNCHANGED_KEY]: true }),
+    });
+    const onDeviceAway = world('break');
+    const res = await runDeviceAway(onDeviceAway.runtime, session({ state: 'break', break_reason: 'device_away' }), 'phone_call');
+    expect(res.ok && res.body).toMatchObject({ state: 'break', break_reason: 'device_away', [BREAK_UNCHANGED_KEY]: true });
+    const onIt = world('break');
+    const again = await runDeviceAway(onIt.runtime, session({ state: 'break', break_reason: 'phone_call' }), 'phone_call');
+    expect(again.ok && again.body).toMatchObject({ state: 'break', break_reason: 'phone_call', [BREAK_UNCHANGED_KEY]: true });
+    expect(onIt.transition).not.toHaveBeenCalled();
+  });
+
+  it('a soft-phone session: unchanged, never a write', async () => {
+    const w = world('break');
+    const res = await runDeviceAway(w.runtime, session({ kind: 'softphone', campaign_id: null, state: 'break', break_reason: 'soft_phone' }), 'phone_call');
+    expect(res.ok && res.body).toMatchObject({ kind: 'softphone', [BREAK_UNCHANGED_KEY]: true });
+    expect(w.transition).not.toHaveBeenCalled();
   });
 });

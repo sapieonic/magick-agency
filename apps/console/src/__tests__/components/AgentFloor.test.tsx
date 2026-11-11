@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
   forceAgentAvailable: vi.fn(),
   trackAgencyFloorIntervention: vi.fn(),
+  inboundOn: true,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -28,6 +29,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
 vi.mock('../../api/agency', () => ({ forceAgentAvailable: mocks.forceAgentAvailable }));
+vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
+  useFeatureFlagEnabled: (flag: string) => flag === 'agency_inbound_enabled' && mocks.inboundOn,
+}));
 vi.mock('../../analytics/events', () => ({
   trackAgencyFloorIntervention: mocks.trackAgencyFloorIntervention,
 }));
@@ -50,6 +54,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
     calls_handled: 3,
     client_kind: 'web',
     on_inbound_call: false,
+    can_take_inbound: true,
     ...over,
   };
 }
@@ -572,6 +577,16 @@ describe('the floor as a table', () => {
     expect(screen.getByTestId('agent-drawer-state').textContent).toBe('Away (app in background)');
   });
 
+  it('shows the app\'s phone-call pause as "On a phone call" (IQ51), on the row and in the drawer', () => {
+    renderFloor({ stats: stats([agent({ session_id: 'cell', agent_name: 'Meera', state: 'break', break_reason: 'phone_call', client_kind: 'mobile', state_since: ago(60) })]) });
+    const row = screen.getByTestId('floor-row-cell');
+    expect(row.textContent).toContain('On a phone call');
+    expect(row.textContent).not.toContain('phone_call');
+    expect(row.textContent).not.toContain('On break');
+    fireEvent.click(screen.getByRole('button', { name: 'Meera' }));
+    expect(screen.getByTestId('agent-drawer-state').textContent).toBe('On a phone call');
+  });
+
   it('marks an agent on the mobile app with a phone, and only them', () => {
     renderFloor({ stats: stats([
       agent({ session_id: 'phone', agent_name: 'Meera', client_kind: 'mobile' }),
@@ -581,6 +596,33 @@ describe('the floor as a table', () => {
     expect(marker.getAttribute('title')).toBe('On the mobile app');
     expect(screen.getByRole('img', { name: 'On the mobile app' })).toBeTruthy();
     expect(screen.queryByTestId('floor-mobile-desk')).toBeNull();
+  });
+
+  it('IQ56: marks a phone that cannot take inbound calls, accessibly, and nothing for true, null or a console', () => {
+    renderFloor({ stats: stats([
+      agent({ session_id: 'old', agent_name: 'Meera', client_kind: 'mobile', can_take_inbound: false }),
+      agent({ session_id: 'new', agent_name: 'Ravi', client_kind: 'mobile', can_take_inbound: true }),
+      agent({ session_id: 'unknown', agent_name: 'Sana', client_kind: 'mobile', can_take_inbound: null }),
+      agent({ session_id: 'desk', agent_name: 'Omar', client_kind: 'web', can_take_inbound: false }),
+    ]) });
+    const tag = screen.getByTestId('floor-update-app-old');
+    expect(tag.getAttribute('title')).toBe('App can’t take inbound calls — update the app');
+    // The short words are seen; the whole sentence is what a screen reader hears.
+    expect(tag.textContent).toBe('Update appApp can’t take inbound calls — update the app');
+    expect(within(screen.getByTestId('floor-row-old')).getByText('App can’t take inbound calls — update the app')).toBeTruthy();
+    for (const id of ['new', 'unknown', 'desk']) expect(screen.queryByTestId(`floor-update-app-${id}`), id).toBeNull();
+  });
+
+  it('IQ56: no update tag on an account without inbound calls (the flag off)', () => {
+    mocks.inboundOn = false;
+    try {
+      renderFloor({ stats: stats([
+        agent({ session_id: 'old', agent_name: 'Meera', client_kind: 'mobile', can_take_inbound: false }),
+      ]) });
+      expect(screen.queryByTestId('floor-update-app-old')).toBeNull();
+    } finally {
+      mocks.inboundOn = true;
+    }
   });
 
   it('keeps the break reason beside the state', () => {

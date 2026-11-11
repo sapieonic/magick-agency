@@ -52,6 +52,7 @@ const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
   'agency_inbound_clip.deleted',
   'agency_inbound_call.reassigned',
   'agency_inbound_call.reopened',
+  'agency_inbound_call.claimed',
 ]);
 
 const CAMPAIGN_SCOPED = {

@@ -7,9 +7,53 @@ import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
+import 'banners.dart' show StationHeader, StationTopNotices;
 import 'contact_details.dart';
 import 'hang_up.dart';
 import 'layouts.dart';
+
+/// Reserved with no call on the station yet ([StationStage.incoming]): the server's
+/// `agent_state: reserved` for an inbound caller lands a moment before the frame that names
+/// them, and a reconnect's `ready` can say `reserved` before a campaign dial is restated. So
+/// the words fit either direction. Nothing here acts on a call (there is none yet): no Hang up,
+/// no break, no leaving.
+class IncomingView extends StatelessWidget {
+  const IncomingView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Column(
+      key: const Key('station-incoming'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const StationHeader(),
+        // "Your customer is waiting" and why the last call left, as on every station screen.
+        const Padding(
+          padding: EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, 0),
+          child: StationTopNotices(),
+        ),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(Space.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const LiveDot(size: 12),
+                  const SizedBox(height: Space.md),
+                  Text(StationCopy.callComingThrough, style: text.titleMedium, textAlign: TextAlign.center),
+                  const SizedBox(height: Space.xs),
+                  Text(InboundCopy.connecting, style: text.bodyMedium, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 /// Reserved: the screen pop. The agent has a few seconds to read who they are
 /// about to speak to, so the name is the biggest thing on screen and the

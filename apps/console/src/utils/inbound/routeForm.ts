@@ -57,6 +57,8 @@ export interface InboundRouteDraft {
   queueMaxWait: string;
   maxWaiting: string;
   maxConcurrent: string;
+  /** IQ52: the wrap-up window of every call on the route, in seconds. */
+  wrapupSeconds: string;
   afterHoursAction: AgencyInboundUnconnectedAction;
   overflowAction: AgencyInboundUnconnectedAction;
   recordCalls: boolean;
@@ -128,6 +130,7 @@ export function newRouteDraft(browserZone: string | undefined = readerZone() ?? 
     queueMaxWait: String(D.queue_max_wait_seconds),
     maxWaiting: String(D.max_waiting),
     maxConcurrent: String(D.max_concurrent),
+    wrapupSeconds: String(D.wrapup_seconds),
     afterHoursAction: D.after_hours_action,
     overflowAction: D.overflow_action,
     recordCalls: D.record_calls,
@@ -152,6 +155,7 @@ export function draftFromRoute(route: AgencyInboundRoute): InboundRouteDraft {
     queueMaxWait: String(route.queue_max_wait_seconds),
     maxWaiting: String(route.max_waiting),
     maxConcurrent: String(route.max_concurrent),
+    wrapupSeconds: String(route.wrapup_seconds),
     afterHoursAction: route.after_hours_action,
     overflowAction: route.overflow_action,
     recordCalls: route.record_calls,
@@ -178,6 +182,7 @@ export function configFromDraft(draft: InboundRouteDraft): AgencyInboundRouteCon
     queue_max_wait_seconds: Number(draft.queueMaxWait),
     max_waiting: Number(draft.maxWaiting),
     max_concurrent: Number(draft.maxConcurrent),
+    wrapup_seconds: Number(draft.wrapupSeconds),
     after_hours_action: draft.afterHoursAction,
     overflow_action: draft.overflowAction,
     record_calls: draft.recordCalls,
@@ -262,6 +267,7 @@ export function validateRouteDraft(draft: InboundRouteDraft): Record<string, str
     ['queue_max_wait_seconds', draft.queueMaxWait, L.QUEUE_MAX_WAIT_SECONDS, 'The longest wait'],
     ['max_waiting', draft.maxWaiting, L.MAX_WAITING, 'Callers waiting at once'],
     ['max_concurrent', draft.maxConcurrent, L.MAX_CONCURRENT, 'Calls at once'],
+    ['wrapup_seconds', draft.wrapupSeconds, L.WRAPUP_SECONDS, 'Wrap-up time'],
   ];
   for (const [path, raw, bounds, what] of ints) {
     const issue = intIssue(raw, bounds.min, bounds.max, what);

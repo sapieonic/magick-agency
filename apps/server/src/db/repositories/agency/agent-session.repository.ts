@@ -6,7 +6,7 @@ import type {
   AgencyCampaignSessionRecord,
   AgencyStationAttachRecord,
 } from '../../models/agency.model.js';
-import { SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencyClientKind, type AgencySessionKind } from '@magick-agency/contracts/agency';
+import { DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencyClientKind, type AgencySessionKind } from '@magick-agency/contracts/agency';
 
 const log = createChildLogger({ component: 'agency-repository' });
 
@@ -634,6 +634,24 @@ export class AgencyAgentSessionRepository {
    * break. The transition log is unaffected: a reason is only ever copied onto a
    * `break` event.
    */
+  /**
+   * IQ50: of `sessionIds`, the live sessions on a `device_away` pause applied less than `withinMs`
+   * ago, each with the pause's age in ms (the database's clock, `state_since` as `setState` wrote
+   * it). The inbound connector counts such an agent as one who could take a waiting caller.
+   */
+  async deviceAwayPauseAges(sessionIds: readonly string[], withinMs: number): Promise<Map<string, number>> {
+    if (sessionIds.length === 0) return new Map();
+    const { rows } = await getPool().query<{ id: string; age_ms: number }>(
+      `SELECT s.id, (EXTRACT(EPOCH FROM (now() - s.state_since)) * 1000)::float8 AS age_ms
+         FROM agency_agent_sessions s
+        WHERE s.id = ANY($1::uuid[]) AND s.left_at IS NULL
+          AND s.state = 'break' AND s.break_reason = $2::text
+          AND s.state_since > now() - make_interval(secs => $3::double precision / 1000)`,
+      [[...sessionIds], DEVICE_AWAY_BREAK_REASON, withinMs],
+    );
+    return new Map(rows.map((r) => [r.id, Math.max(0, Number(r.age_ms))]));
+  }
+
   async setState(id: string, state: AgencyAgentState, breakReason?: string | null): Promise<void> {
     const keepReason = state === 'offline' && breakReason === undefined;
     const { rows } = await getPool().query<AgencySessionTransitionRow>(

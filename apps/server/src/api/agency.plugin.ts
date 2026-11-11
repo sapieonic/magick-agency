@@ -90,6 +90,7 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
       // degrades to `connected: null` ("unknown") through the handler's own `bestEffort`.
       stations: {
         connectedBySession: (sessionIds: readonly string[]) => liveRuntime().stations.connectedBySession(sessionIds),
+        inboundCapabilityBySession: (sessionIds: readonly string[]) => liveRuntime().stations.inboundCapabilityBySession(sessionIds),
       },
     },
     // The voice engine's guard host owns `accountConcurrencyGuard`. Without a

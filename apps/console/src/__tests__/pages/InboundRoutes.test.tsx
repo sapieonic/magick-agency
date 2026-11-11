@@ -186,7 +186,7 @@ describe('the route editor', () => {
     expect(body).toMatchObject({
       name: 'Sales', timezone: 'Europe/London', phone_number_ids: ['n-2'], sticky_mode: 'strict',
       sticky_wait_seconds: 30, sticky_lookback_days: 30, queue_max_wait_seconds: 120, max_waiting: 10, max_concurrent: 20,
-      after_hours_action: 'callback', overflow_action: 'callback', record_calls: false, recording_notice: true,
+      wrapup_seconds: 30, after_hours_action: 'callback', overflow_action: 'callback', record_calls: false, recording_notice: true,
       holidays: [{ from: '2026-12-25', to: '2026-12-25', label: null }],
       clips: { ...AGENCY_INBOUND_ROUTE_DEFAULTS.clips, greeting: 'clip-1' },
     });
@@ -248,6 +248,32 @@ describe('the route editor', () => {
     });
     expect(mocks.updateInboundRoute).toHaveBeenCalledWith('r-1', { max_concurrent: 30, record_calls: true, phone_number_ids: [] }, 'tenant-1', 'account-1');
     expect(mocks.showToast).toHaveBeenCalledWith('Inbound route saved.', 'success');
+  });
+
+  it('the wrap-up time (IQ52): the route’s own, said as what every call gets, checked, and sent only when changed', async () => {
+    mocks.getInboundRoute.mockResolvedValue({ ...ROUTE, wrapup_seconds: 45 });
+    mocks.updateInboundRoute.mockImplementation(async (_id: string, patch: object) => ({ ok: true, value: { ...ROUTE, ...patch } }));
+    await renderAt('/app/inbound/r-1');
+    const field = screen.getByLabelText('Wrap-up time (seconds)') as HTMLInputElement;
+    expect(field.value).toBe('45');
+    const hint = field.getAttribute('aria-describedby')!.split(' ').map((id) => document.getElementById(id)?.textContent);
+    expect(hint).toContain(
+      '10–600. Every call on this route gets this long to save an outcome, then the agent returns to calls automatically.',
+    );
+    expect(screen.getByTestId('inbound-route-wrapup').textContent).not.toMatch(/campaign|120/);
+
+    fireEvent.change(field, { target: { value: '601' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('inbound-route-save'));
+    });
+    expect(mocks.updateInboundRoute).not.toHaveBeenCalled();
+    expect(screen.getByText('Wrap-up time must be between 10 and 600.')).toBeTruthy();
+
+    fireEvent.change(field, { target: { value: '90' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('inbound-route-save'));
+    });
+    expect(mocks.updateInboundRoute).toHaveBeenCalledWith('r-1', { wrapup_seconds: 90 }, 'tenant-1', 'account-1');
   });
 
   it('a route that no longer exists says so', async () => {

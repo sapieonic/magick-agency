@@ -383,6 +383,14 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(screen.getByTestId('rail-label').textContent).toBe('On break — Away (app in background)');
   });
 
+  it('names the app\'s phone-call pause (IQ51) by its label too, never the code', async () => {
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'break', break_reason: 'phone_call', since: '2026-08-11T10:00:00.000Z' });
+    });
+    expect(screen.getByTestId('rail-label').textContent).toBe('On break — On a phone call');
+  });
+
   it('B opens the break menu and lands focus inside it', async () => {
     await mounted();
 

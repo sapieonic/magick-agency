@@ -287,6 +287,34 @@ describe('the device-away break', () => {
     await closeStation(ws, sessionId);
   });
 
+  it('IQ51: phone_call by the same rules: applied from available, never a catalog code, audited, lifted by /available', async () => {
+    const { sessionId, ws } = await availableOnMobile();
+    const res = await post(`/proxy/agency/sessions/${sessionId}/break`, w.agent, { reason: 'phone_call' }, { 'x-client': MOBILE_UA });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ session_id: sessionId, kind: 'campaign', state: 'break', break_reason: 'phone_call' });
+    expect((await runtime().agents.get(sessionId))?.state).toBe('break');
+    expect(await sessionRow(sessionId)).toMatchObject({ state: 'break', break_reason: 'phone_call' });
+    expect(breakAudits(sessionId)).toEqual([
+      expect.objectContaining({ details: { reason: 'phone_call', campaign_id: w.campaign }, campaign_id: w.campaign }),
+    ]);
+    // A device_away while on the call's pause changes nothing: the pause the call caused stands.
+    const away = await post(`/proxy/agency/sessions/${sessionId}/break`, w.agent, { reason: 'device_away' });
+    expect(away.json()).toMatchObject({ state: 'break', break_reason: 'phone_call' });
+    expect(breakAudits(sessionId)).toHaveLength(1);
+    const back = await post(`/proxy/agency/sessions/${sessionId}/available`, w.agent);
+    expect(back.statusCode, back.body).toBe(200);
+    expect((await runtime().agents.get(sessionId))?.state).toBe('available');
+
+    // On a call: queued behind it, as device_away is.
+    await runtime().agents.set(sessionId, 'on_call', { leaseMs: AGENT_LEASE_MS.on_call });
+    const queued = await post(`/proxy/agency/sessions/${sessionId}/break`, w.agent, { reason: 'phone_call' });
+    expect(queued.json()).toMatchObject({ state: 'on_call', pending_state: 'break', break_reason: 'phone_call' });
+    expect(runtime().breaks.peek(sessionId)?.code).toBe('phone_call');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/break/cancel`, w.agent)).statusCode).toBe(200);
+    await runtime().agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
+    await closeStation(ws, sessionId);
+  });
+
   it('never overrides a break the agent chose', async () => {
     const { sessionId, ws } = await availableOnMobile();
     expect((await post(`/proxy/agency/sessions/${sessionId}/break`, w.agent, { reason: 'lunch' })).statusCode).toBe(200);

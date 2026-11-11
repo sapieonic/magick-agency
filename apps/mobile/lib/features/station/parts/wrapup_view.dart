@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
+import '../../missed/missed_on_duty.dart';
 import '../logic/disposition_form.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
@@ -84,6 +85,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
         StationNotesField(controller: widget.notes, required: selected?.requiresNote ?? false),
         const SizedBox(height: Space.md),
         const LinkGate(child: QueuedBreakChip(offer: false)),
+        // IQ48: the customers waiting to be called back, a tap from the list.
+        const MissedToCallBackLine(),
       ],
       bottom: LinkGate(
         child: _SaveArea(form: _form, notes: widget.notes, onSave: _save, onRedial: _redial),

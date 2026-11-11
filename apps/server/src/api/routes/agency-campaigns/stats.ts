@@ -115,6 +115,15 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
     // The limit is read as `null` on failure and turned into that `0` below, so the
     // `concurrency` block (MC7) can tell a failed read from a real ceiling.
     const running = campaign.status === 'running';
+    // IQ56: which live stations can take inbound calls (an older app build without
+    // `caps=inbound` cannot). Synchronous and process-local; a failure is "unknown" (null) for
+    // every agent, as for `connected`.
+    let inboundCapable = new Map<string, boolean>();
+    try {
+      inboundCapable = deps.runtime.stations.inboundCapabilityBySession(stats.agents.map((a) => a.session_id));
+    } catch (err) {
+      log.warn({ err, dependency: 'agency.stations.inboundCapabilityBySession' }, 'Campaign stats dependency degraded — serving fallback');
+    }
     const [dncAppliedVersion, limitRead, concurrencyInUse, connected, accountCounts, dialable, capacityMissing] = await Promise.all([
       bestEffort<number | null>(
         'agency.dnc.appliedVersion',
@@ -204,6 +213,8 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
       agents: stats.agents.map((agent) => ({
         ...agent,
         connected: connected.get(agent.session_id) ?? null,
+        // IQ56: from the station this process holds; none here is `null` ("no live station").
+        can_take_inbound: inboundCapable.get(agent.session_id) ?? null,
       })),
       // Contacts remaining and retries pending are genuinely different numbers —
       // `next_attempt_at` can be hours out, so "list exhausted" and "campaign

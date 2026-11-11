@@ -12,6 +12,7 @@ import {
   AGENCY_INBOUND_TOOK_OVER_DISPOSITION_CODE,
   AGENCY_REDIALED_DISPOSITION_CODE,
   DEVICE_AWAY_BREAK_REASON,
+  PHONE_CALL_BREAK_REASON,
   RESERVED_BREAK_REASONS,
   SOFTPHONE_BREAK_REASON,
   type AgencyAttemptOutcome,
@@ -767,6 +768,7 @@ export function validateOutcomeDispositions(
 const RESERVED_BREAK_REASON_OWNER: Readonly<Record<AgencyReservedBreakReason, string>> = {
   [SOFTPHONE_BREAK_REASON]: 'the soft phone',
   [DEVICE_AWAY_BREAK_REASON]: 'the mobile app (sent when it is backgrounded)',
+  [PHONE_CALL_BREAK_REASON]: 'the mobile app (sent while the agent is on a phone call)',
 };
 
 /**

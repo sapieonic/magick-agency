@@ -72,7 +72,8 @@ const ALL_MIGRATIONS = [
   '0020_carrier_account_unavailable_pause', '0021_carrier_refusing_calls_pause', '0022_outcome_dispositions',
   '0023_reports', '0024_inbound', '0025_inbound_checks_validate', '0026_inbound_live_indexes',
   '0027_inbound_connect', '0028_inbound_missed_follow_up', '0029_inbound_reach_settles', '0030_inbound_reached_on_outcome',
-  '0031_ingest_dedupe_columns',
+  '0031_ingest_dedupe_columns', '0032_inbound_route_wrapup',
+  '0033_inbound_answered_from_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

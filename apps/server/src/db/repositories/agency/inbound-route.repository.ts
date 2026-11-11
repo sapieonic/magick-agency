@@ -40,6 +40,7 @@ import type {
   AgencyInboundUnconnectedAction,
 } from '@magick-agency/contracts/agency';
 import type { AgencyInboundRoute, AgencyInboundRouteNumber } from '@magick-agency/contracts/api/agency/inbound';
+import { AGENCY_INBOUND_ROUTE_DEFAULTS } from '@magick-agency/contracts/agency';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -77,6 +78,8 @@ export interface AgencyInboundRouteRecord {
   recording_notice: boolean;
   analysis_profile_id: string | null;
   disposition_catalog: AgencyDisposition[];
+  /** IQ52: the wrap-up window of every call on the route (0032); captured on each call at arrival. */
+  wrapup_seconds: number;
   created_by: string | null;
   updated_by: string | null;
   created_at: Date;
@@ -153,6 +156,7 @@ const PLAIN_FIELDS = [
   'name', 'timezone', 'weekly_hours', 'holidays', 'sticky_mode', 'sticky_wait_seconds', 'sticky_lookback_days',
   'pool_campaign_ids', 'queue_max_wait_seconds', 'max_waiting', 'max_concurrent', 'after_hours_action',
   'overflow_action', 'record_calls', 'recording_notice', 'analysis_profile_id', 'disposition_catalog',
+  'wrapup_seconds',
 ] as const satisfies ReadonlyArray<keyof AgencyInboundRouteConfig>;
 
 /** JSONB columns: bound as JSON text and cast, so an array is never sent as a Postgres array. */
@@ -161,14 +165,14 @@ const CAST: Record<string, string> = {
   weekly_hours: 'jsonb', holidays: 'jsonb', disposition_catalog: 'jsonb', pool_campaign_ids: 'uuid[]',
   analysis_profile_id: 'uuid', sticky_wait_seconds: 'smallint', sticky_lookback_days: 'smallint',
   queue_max_wait_seconds: 'smallint', max_waiting: 'smallint', max_concurrent: 'smallint',
-  record_calls: 'boolean', recording_notice: 'boolean',
+  record_calls: 'boolean', recording_notice: 'boolean', wrapup_seconds: 'smallint',
 };
 
 const ROUTE_COLUMNS = `r.id, r.tenant_id, r.account_id, r.name, r.timezone, r.weekly_hours, r.holidays,
   r.greeting_audio_id, r.hold_audio_id, r.closed_audio_id, r.busy_audio_id, r.recording_notice_audio_id,
   r.callback_audio_id, r.sticky_mode, r.sticky_wait_seconds, r.sticky_lookback_days, r.pool_campaign_ids,
   r.queue_max_wait_seconds, r.max_waiting, r.max_concurrent, r.after_hours_action, r.overflow_action,
-  r.record_calls, r.recording_notice, r.analysis_profile_id, r.disposition_catalog, r.created_by, r.updated_by,
+  r.record_calls, r.recording_notice, r.analysis_profile_id, r.disposition_catalog, r.wrapup_seconds, r.created_by, r.updated_by,
   r.created_at, r.updated_at, r.deleted_at, r.deleted_by`;
 
 /**
@@ -183,7 +187,10 @@ function accountMayUseSql(tpa: string, accountParam: string): string {
 
 /** Every field of a full config as `column → value`, ready to bind. */
 function configColumns(config: AgencyInboundRouteConfig): Array<[string, unknown]> {
-  const out: Array<[string, unknown]> = PLAIN_FIELDS.map((f) => [f, config[f]]);
+  // `wrapup_seconds` is optional on the contract's type (a client written before IQ52); a config
+  // without it takes the route's default rather than a NULL the column refuses.
+  const out: Array<[string, unknown]> = PLAIN_FIELDS.map((f) => [f,
+    f === 'wrapup_seconds' ? (config.wrapup_seconds ?? AGENCY_INBOUND_ROUTE_DEFAULTS.wrapup_seconds) : config[f]]);
   for (const slot of Object.keys(CLIP_COLUMNS) as AgencyInboundClipSlot[]) out.push([CLIP_COLUMNS[slot], config.clips[slot]]);
   return out;
 }
@@ -242,6 +249,7 @@ export function inboundRouteToWire(route: AgencyInboundRouteWithNumbers): Agency
     recording_notice: route.recording_notice,
     analysis_profile_id: route.analysis_profile_id,
     disposition_catalog: route.disposition_catalog,
+    wrapup_seconds: route.wrapup_seconds,
     numbers,
     created_at: route.created_at.toISOString(),
     updated_at: route.updated_at.toISOString(),

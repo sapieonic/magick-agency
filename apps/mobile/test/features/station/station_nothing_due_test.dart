@@ -55,7 +55,7 @@ void main() {
 
     testWidgets('a paused campaign says so first', (tester) async {
       await pumpStation(tester, station(dialing: false, queue: const QueueView(due: false, reason: QueueIdle.queueEmpty)));
-      expect(find.text('Campaign paused — no calls will come through'), findsOneWidget);
+      expect(find.text('Campaign paused — no campaign calls for now'), findsOneWidget);
       expect(find.text(StationCopy.nothingDueHeadline), findsNothing);
     });
 

@@ -105,6 +105,11 @@ String agentStateLabel(AgentState state, [String? raw]) => agentStateLabels[stat
 /// Labels for the server's reserved break codes, which no campaign lists.
 const deviceAwayBreakLabel = 'Away';
 const softPhoneBreakLabel = 'Soft phone';
+const phoneCallBreakLabel = 'Phone call';
+
+/// IQ51: the pause for a cellular call did not go through (asked again a few times first).
+const phoneCallPauseFailedCopy =
+    'We couldn’t pause you for your phone call. Take a break, or a customer may be put through while you’re on it.';
 
 const breakRejectedCopy = 'That break reason is no longer available. Pick another.';
 const breakFailedCopy = 'That break could not be started.';
@@ -224,8 +229,8 @@ String dncFailureCopy(Object error) {
 
 /// Campaign scope only: the agent role cannot reach the workspace-wide list.
 String dncOutcomeCopy(DncResponse response) => response.dncRecorded
-    ? '${response.phoneE164} won’t be dialed again by this campaign. It’s on this campaign’s Do Not Call list.'
-    : '${response.phoneE164} won’t be dialed again by this campaign’s current contacts. We’re still adding it to '
+    ? '${response.phoneE164} won’t be dialled again by this campaign. It’s on this campaign’s Do Not Call list.'
+    : '${response.phoneE164} won’t be dialled again by this campaign’s current contacts. We’re still adding it to '
         'this campaign’s Do Not Call list — until that lands a new upload could bring the number back, so check the list.';
 
 const dncNeedsCallCopy = 'Available while you are on a call';

@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-09.
+"is it done". As of 2026-11-11.
 
 ## Summary
 
@@ -1164,7 +1164,7 @@ summary. Migrations `0028`–`0030`.
 passed (Dart 3.13.7). No inbound call has been placed: P0 (the live Plivo checks) needs an
 account. Still to build: P3 (the mobile app's frames, pickups from break and the soft phone, the
 media-worker handover, reports and Insights) and P4 (VoiceLink inbound); what else remains is
-under "Not built".
+under "Not built". (P3's mobile app frames were built on 2026-11-10, below.)
 
 ### Reports infrastructure 2026-11-09
 
@@ -1190,9 +1190,221 @@ repository. Renderer 81 passed, 11 skipped (no local Chrome). `pnpm test:grafana
 certificate chain and the `uuid_generate_v4()` search path are from Supabase's documentation),
 and the server's integration lanes (no Postgres on this machine at the time).
 
+### Inbound calls on the mobile app 2026-11-10 (IQ46, IQ47, [`inbound.md`](inbound.md) §6 "Mobile stations", [`mobile.md`](mobile.md) "Inbound calls", "Missed calls")
+
+P3's mobile app frames, built on the server and in the agent app the same day and reviewed
+independently twice, each round's findings fixed. Manas decided both rulings on 2026-11-10: IQ46
+(the server side) and IQ47 (the app's defaults), `decisions.md` §4, "Inbound calls on the mobile
+app". The rest of P3 is open (below, "Not built").
+
+**The server.** A mobile station that declares `caps=inbound` on its upgrade
+(`client=mobile&media=alaw8&caps=inbound`) is offered inbound callers exactly as a console is, and
+every older app build stays excluded and is never sent the inbound frames. The capability is the
+live socket's (`StationRegistry`'s `canTakeInbound`), and replaces every mobile exclusion
+(eligibility, the release hook, the in-flight clash's hand-over, the could-take count and the
+queue tile, the send filter: `AGENCY_STATION_INBOUND_EVENTS`, renamed from the console-only list).
+A phone silent on a live inbound call is dropped as on a campaign call (M1); an older build
+reattaching to a session holding an offer or a call is handled as a lost station; the device-away
+break queues behind an inbound offer, call and wrap-up. `literals.json` gains
+`station_capabilities` and the ten inbound vocabularies the Dart wire types check (62 in all). No
+migration.
+
+**The app.** The Dart wire types (`agency_wire`'s `inbound.dart`; `inbound_call` and
+`customer_waiting` decoded; the inbound vocabularies and refusals; `fixtures/agent/inbound.json` and
+the inbound frames in `station.json`). The station declares `caps=inbound` on every connect and
+takes the console's flow with the app on screen: the offer with the chime once per offer (the
+console's `inbound_ring`, made in the engine: a Dart reference, Kotlin and Swift written to shared
+vectors), the call, the outcome pad once it ends, Mark DNC, "Your customer is waiting", why a call
+left, the reconnect check against `GET /inbound/calls/:id`, the away rules (`device_away` queued
+behind the call), CallKit told of an outgoing call as for a campaign call, and five telemetry
+events. Missed calls is a third segment of My calls with the open count badged on it and on the
+tab: the agent's own rows, To follow up / Handled, the reason filter, Mark handled and Reopen, a
+voicemail to be heard on the console, and Call back, which fills the soft phone's pad with the
+number and the matched campaign and never dials.
+
+**Two review rounds, fixed.** On the app: it follows the server's own frame order (the `reserved`
+before an offer lands shows a neutral "Incoming call · Connecting…" with nothing to press, and the
+offer is announced when it lands); a copy the station let go of stays gone (a late answer never puts
+a finished call back beside a campaign call); the reconnect check keeps the copy and asks again on
+its backoff after any non-answer, a 401 or 403 included; notes restored after a restart are kept
+over the server's older copy; a refused outcome re-sends the notes typed since the last save, on an
+inbound call and on the soft phone, and leaving, 4404 and sign-out send them at once; the Missed
+count is polled every 60 s in the foreground and read again when a call settles and when the
+segment comes on screen, and the list asks for `assignee=me`; a waiting Call back lapses after 5
+minutes and closes an override prompt it replaces; the inbound vocabularies are checked as
+extracted. On the server: an offer is refused to a station that lost the capability before the
+spine's write; pacing's hold-back for waiting callers holds back only stations that can take them;
+an older build taking over a session holding an offer has it let go before its `ready`, which then
+reports the agent back in the pool; the IQ46 guards tightened, and the code comments on the
+capability and on which inbound routes the flag gates corrected.
+
+Tests on the server's first commit (`4965a00`): `pnpm lint` clean; server unit 488 files, 9637
+passed + 1 expected fail; server integration `INTEGRATION_LANE=rest` 250 files (+2 skipped), 2644
+passed + 9 expected fail + 2 skipped, `wall-clock` 5 files, 21; contracts 13 files, 463;
+`agency_wire` `dart test` 595; `contracts-literals --check` 62 vocabularies; `pnpm test:tooling`
+16. New suites `inbound-mobile-e2e` 8 and `inbound-mobile-wall-clock` 2 (wall-clock lane); the
+connector races +3 (25), the review fixes +2 (23), eligibility +1 (49), the registry +1 (31), the
+upgrade +17 (30). Eleven guards mutation-checked (each red, then restored). Run on a UTF8 test
+database: the machine's local databases were `SQL_ASCII`, on which `softphone-policy-routes`' emoji
+case fails (`char_length` counts bytes there), whatever the branch. The run on the finished branch
+is under "Test counts".
+
+**Not verified:** nothing has run on a real phone or a real carrier; the app's flow is tested with
+the contract's sample frames and answers, the server's with a simulated phone station. iOS does not
+compile yet, and the chime's Swift has never been compiled. The chime's Kotlin was compiled and
+`ChimeTest.kt` passed offline on a JVM during review, but CI never runs the Android unit tests
+(`ChimeTest.kt`, `RingbackTest.kt`). Ringing a phone whose app is in the background (push) is
+parked, not started: a phone that leaves the app while available is paused and offered nothing.
+
+### Inbound calls on the mobile app: persona review 2026-11-11
+
+A third independent review of the branch, by four reviewers with fresh context: a principal
+engineer on the server and contracts, one on the app, a principal product manager and a principal
+QA engineer (who also ran mutation probes and a compatibility matrix). No Critical findings; one
+High on the app (the Missed row cut the caller's number short). Every engineering and QA finding
+was fixed, with its guard mutation-checked; the product findings that are copy were fixed, the
+ones that need a ruling are under "Open decisions and owners" (Inbound calls).
+
+**The server.** An offer refused because the station cannot take inbound calls is its own result,
+`station_incapable`: the agent is returned with no read of the call records, so a failed read can
+no longer put an older build's agent on a break (it was `session_busy`, whose give-back fails
+closed). An older build's `ready` now waits for every return of the session the connector has in
+flight (the search's or the release hook's reservation through its offer or give-back, a
+give-back, the bind's cancel when its timer fires during the attach), bounded at 3 s
+(`inbound.md` §6). The post-offer requeue awaits the panel before the spine's write and logs a
+requeue that moves nothing or throws. `PacingStations.get` states `canTakeInbound` (the media
+workers' directory says `false`: IB8, IQ13); a filtered inbound frame is logged at debug;
+`agency_inbound_offers_total` gains a `client` label. New tests: the silent-station sweep's
+inbound arm (a phone dropped, a console left alone), the bind firing first, the search giving back
+after its lock, the 3 s bound, a capable phone reconnecting inside the offer window, two
+strict-sticky callers then an older-build takeover, a console handing a connected call to a phone
+(A-law), an older build silent on a bound call; the re-offer timing bound loosened to 5 s so a
+loaded runner cannot fail it.
+
+**The app.** The Missed row wraps instead of cutting the number short (tested at 360 dp, 1× and
+2× text, with the app's fonts). Inbound telemetry is tracked per offer, so a re-offer reports its
+own funnel, and a copy the station lets go of reports its end (`retired: true`). An offer the
+server no longer holds is retired at once by a `ready` that says the agent is not reserved, and
+by a backstop 10 s past `connects_at`, so the microphone, CallKit and the notification no longer
+hold a call that is not there while the reconnect check's reads fail. "A call is coming through"
+replaces "Incoming call" for a `reserved` with no offer (a campaign reconnect showed inbound
+words). A waiting Call back never erases the agent's own dial refusal, and the Missed feature reads
+where the number stands from the soft phone (`callBackWaiting`). "Your customer is waiting" is a
+live region. The inbound routes are made when the station is built (never first in teardown).
+Notes give up on a 403 and retry a 401 on the backoff, on the inbound call and the soft phone.
+
+**Copy, on both the console and the app.** A paused campaign says "no campaign calls for now" and
+that customers who ring in can still reach the agent (the search never reads the campaign's
+status, so they are still offered callers); the `last_from_number` reason says "you last called
+them from this number"; "Your customer is waiting" no longer promises to put them through (a
+teammate takes them after a loose wait); the console's strict-mode hint names only an older
+version of the phone app. In the app: "Listen on the web console", the Missed subtitle (reaching a
+customer closes the row on its own), "Switch to the soft phone", and "dialling", "dialled".
+
+### Inbound pilot rulings 2026-11-11 (IQ48–IQ57, [`decisions.md`](decisions.md) §4, "Inbound pilot rulings")
+
+Manas ruled on the persona review's product findings the same day; all ten are built on the server,
+the console and the app, except IQ53 (in-app voicemail playback, the first follow-up after the
+pilot). Two migrations: `0032_inbound_route_wrapup.sql`, `0033_inbound_answered_from_index.sql`.
+
+- **Missed calls on duty (IQ48).** The app's waiting and wrap-up screens say "N customers to call
+  back"; the Missed list opens on duty in a sheet over the station; Call back switches the campaign
+  to the soft phone in one step (SP7) and puts the number on the pad, never dialling.
+- **Callers nobody owns (IQ49).** An answered inbound call is a sticky signal (folded into
+  `last_connected`). Agents see the account's unassigned Missed rows in a Team view, on the app and
+  the console, and claim one (`POST /inbound/missed/:id/claim`, a compare-and-set, audited
+  `agency_inbound_call.claimed`).
+- **A phone that leaves the app (IQ50).** Back within 30 s, the agent is returned on their own; a
+  `device_away` pause under 30 s old counts as could-take, so callers queue instead of overflowing;
+  on return the app says how many customers rang (`count?since=`).
+- **A cellular call while available (IQ51)** pauses the agent with the reserved break `phone_call`
+  and returns them when it ends; detected without a runtime permission (Android's audio mode, iOS
+  `CXCallObserver`). The console labels it "On a phone call".
+- **The route's wrap-up window (IQ52):** 30 s by default, 10–600, set in the route editor, for
+  every inbound call on the route, captured on the call when it arrives. It replaces IQ32's
+  campaign rule and the 120 s unmatched default.
+- **The caller's name on a Missed row (IQ54)** (`match_name`), on the app and the console.
+- **Calling back a DNC caller (IQ55):** the row says a missed call isn't consent; the SP1 note and
+  override apply.
+- **Older app builds (IQ56):** the floor marks a phone that cannot take inbound calls "Update app",
+  on accounts with inbound on (`agents[].can_take_inbound`). Still to do at the pilot's start:
+  raise `MOBILE_MIN_SUPPORTED_VERSION` to the first release that declares `caps=inbound`.
+- **The badge (IQ57):** the count takes the list's `assignee` and `since`; the app and an agent's
+  console badge ask for `assignee=me`.
+- **Contracts:** `match_name`, `wrapup_seconds` and `can_take_inbound` are required on their types;
+  the `phone_call` break reason, `DEVICE_AWAY_RETURN_GRACE_MS`, `inbound_missed_call_claimed`, the
+  Dart wire types and fixtures to match.
+
+Every new guard was mutation-checked. **Not verified:** none of it has run on a phone; the
+cellular-call detection's Android code (bar its pure tracker, compiled and run on a JVM) and all of
+its Swift have never been compiled.
+
 ## Test counts
 
-Latest run, 2026-11-10, the combined duplicate key and its review fixes (`29f66d7`), one after
+Latest run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
+
+Run on commit `c41091e` (the docs commits after it change no code), one after another from inside
+each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green
+on its first run. `pnpm lint` clean; `pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm
+test:grafana` 33 pass; `contracts-literals --check` up to date (62 vocabularies). `apps/mobile`:
+`flutter analyze` no issues, `flutter test` 1781 passed; `agency_wire` `dart test` 605 passed;
+`agent_audio` `flutter test` 139 passed (Dart; the Kotlin tests were not run). Not run (untouched):
+`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9682 passed + 1 expected fail (488 files) | rest lane 2673 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
+| `packages/db` | 428 (25 files) | 744 (76 files) |
+| `apps/console` | 6161 (325 files) | — |
+| `packages/contracts` | 476 (14 files) | — |
+| `packages/domain` | 254 (12 files) | — |
+| `packages/observability` | 18 (4 files) | — |
+| `apps/mobile` | 1781 (`flutter test`); `agency_wire` 605 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
+
+Previous run, 2026-11-11, inbound calls on the mobile app after the persona review:
+
+Run on commit `e4e1451` (the docs commit after it changes no code), one after another from inside
+each package on a UTF8 test database and Redis db 1 with no other run sharing them. `pnpm lint`
+clean in 9 packages; `pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33
+pass; `contracts-literals --check` up to date (62 vocabularies); `packages/observability` 18 (4
+files). `apps/mobile`: `flutter analyze` no issues, `flutter test` 1705 passed; `agency_wire` `dart
+test` 595 passed; `agent_audio` `flutter test` 136 passed (Dart; the Kotlin tests were not run).
+The rest lane's first run failed one test, `agent-transition-ordering.test.ts`'s two concurrent
+`setState` calls (the timing case already seen once, "Load and scenario suites" above; this branch
+does not touch it), which passed three times alone; the whole lane was then rerun green, and those
+are its counts. Not run (untouched by this change): `packages/db`, `apps/super-admin`,
+`packages/web-ui`, `apps/report-renderer`. These counts are the branch's before `main`'s combined
+duplicate key (#69, below) was merged into it; CI checks the merged result.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9643 passed + 1 expected fail (488 files) | rest lane 2654 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
+| `apps/console` | 6114 (325 files) | — |
+| `packages/contracts` | 463 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `apps/mobile` | 1705 (`flutter test`); `agency_wire` 595 (`dart test`); `agent_audio` 136 (`flutter test`) | — |
+
+Previous run, 2026-11-10, inbound calls on the mobile app (IQ46, IQ47; `inbound.md` §12, P3 row),
+after both review rounds:
+
+Run on commit `cd6be77` (the docs commits after it change no code), one after another from inside
+each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green
+on its first run. `pnpm lint` clean in 9 packages; `pnpm test:tooling` 16 and `pnpm test:release`
+10 pass; `contracts-literals --check` up to date (62 vocabularies). `apps/mobile`: `flutter analyze`
+no issues, `flutter test` 1637 passed; `agency_wire` `dart test` 595 passed; `agent_audio`
+`flutter test` 136 passed (Dart; the Kotlin tests were not run). Not run (untouched by this
+change): `packages/db`, `apps/super-admin`, `packages/web-ui`, `apps/report-renderer`,
+`packages/observability`, `pnpm test:grafana`.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9641 passed + 1 expected fail (488 files) | rest lane 2648 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 21 (5 files) |
+| `apps/console` | 6114 (325 files) | — |
+| `packages/contracts` | 463 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `apps/mobile` | 1637 (`flutter test`); `agency_wire` 595 (`dart test`); `agent_audio` 136 (`flutter test`) | — |
+
+Run of 2026-11-10 on `main`, the combined duplicate key and its review fixes (`29f66d7`), one after
 another from inside each package on `magick_agency_test` and Redis db 1, nothing else sharing them.
 `pnpm lint` clean; `pnpm build` green; `test:grafana`, `test:release` 10 and `test:tooling` 16 pass.
 `agency_wire`'s `dart test` was not run (no Dart SDK on that machine); the change reaches no type it
@@ -1695,14 +1907,18 @@ mocks and the in-process renderer); see "Reports 2026-11-08" above.
 
 **Inbound calls** ([`inbound.md`](inbound.md) §12): P1 and P2 are built (answering, following up,
 and connecting callers to agents on console stations), reviewed, and the fix pass is done (two
-rounds, IQ25–IQ45). Remaining:
+rounds, IQ25–IQ45); P3's mobile app frames are built and reviewed (2026-11-10, IQ46, IQ47: callers
+put through to a phone whose station declares `caps=inbound`, the app's station and its Missed
+calls; not yet run on a phone or a carrier). Remaining:
 
 - **P0**, the live Plivo checks, with a Plivo account: until then the Application, number, Record
   API, hangup and answer-URL shapes (and the 4 s answer budget against Plivo's timeout) are the
   mock carrier's.
-- **P3**: the mobile app's frames (a mobile agent is never offered a call; an all-mobile team sends
-  every caller to Missed calls), pickups from break and the soft phone, the media-worker handover,
-  "press 1 for a callback"; inbound in Insights, agent reports and customer history.
+- **P3, the rest**: pickups from a catalog break and from an idle soft phone (the Take call
+  prompt, IB1), the media-worker handover (IB8, after P0), "press 1 for a callback" if P0 shows
+  DTMF works over the stream, the analysis of voicemails (IQ14); inbound in Insights, agent reports
+  and customer history. Ringing a phone whose app is in the background (push) is parked, not
+  started: an app build that declares `caps=inbound` takes callers only with the app on screen.
 - **P4**: VoiceLink inbound.
 - **Sign-offs**: listening to the seven standard recordings in a call, and their licence (CC BY-SA
   4.0); the voicemail and spine retention for a UK pilot (`AGENCY_RETENTION_DAYS`, deletion on
@@ -1728,14 +1944,14 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Shutdown grace | Ratify `stop_grace_period: 45s`, now in `docker/docker-compose.prod.yml` (the completion-email drain is 30 s; Docker's default grace is 10 s), and the new wait for in-flight pacing ticks (5 s bound) |
 | Tidy-up defaults | Ratify the **default, pending Manas** rows of the 2026-10-16/17 rulings, including the `en-IN` display locale and the rounding rule |
 | Rate floors | Campaign rates withheld under 25 dials, agent rates under 20: one number or two? |
-| Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up (superseded for Plivo numbers linked to inbound by IB1–IB8, `inbound.md`: P1 and P2 built, answering, following up and connecting callers to console stations); abandon clip upload-only; no API keys; super-admins created fresh |
+| Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up (superseded for Plivo numbers linked to inbound by IB1–IB8, `inbound.md`: P1, P2 and P3's mobile app frames built, answering, following up and connecting callers to console stations and to phones that declare `caps=inbound`); abandon clip upload-only; no API keys; super-admins created fresh |
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused; when built, it also clears the owner of every contact it retires (CA11, "Contact assignment" above) |
 | Scaling defaults (2026-11-02/03) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial (now charged to the our-fault ledger, so its bound retires a contact), a dial failed before the carrier (uncharged, redial after 60 s), Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default; and D13 (the `/readyz?detail=1` token, the 1 s readiness cache, the 5 s loop window) |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; a real Plivo call and recording (Plivo step 5, above; needs a Plivo account); launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
-| Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
+| Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). A cellular call while available now pauses the agent (IQ51): test it on Android and iOS devices. First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls), and an inbound call on a phone (the offer and its chime, the call and the outcome, a reconnect mid-call, CallKit on iOS) with a Missed calls Call back; store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 | Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected`. The combined key's rules, its phone-only default and "DNC row claims its key" were ruled 2026-11-11 (`decisions.md` §4) |
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
@@ -1744,7 +1960,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
 | Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
-| Inbound calls | A Plivo account for P0. Ratify the fix pass's defaults IQ25–IQ45 (`decisions.md` §4, "Inbound fix pass"): the 15 s rejoin grace, the 120 s unmatched wrap-up, the busy words for withheld and DNC callers, the kill switch's closed message, the upload limits, the alert thresholds. Sign off the standard recordings (listening and licence); decide the voicemail and spine retention for a UK pilot |
+| Inbound calls | The persona review's product rulings are decided and built (IQ48–IQ57, above); at the pilot's start raise `MOBILE_MIN_SUPPORTED_VERSION` to the first release that declares `caps=inbound` (IQ56); in-app voicemail playback after the pilot (IQ53). Engineering follow-ups: split the inbound call slot out of the station controller and merge the campaign `NotesAutosave` into `CallAutosave`; the `agent_audio` Kotlin tests now run in CI (`mobile.yml`, after the Android build). A Plivo account for P0. Ratify the fix pass's defaults IQ25–IQ45 (`decisions.md` §4, "Inbound fix pass"): the 15 s rejoin grace, the 120 s unmatched wrap-up, the busy words for withheld and DNC callers, the kill switch's closed message, the upload limits, the alert thresholds. Sign off the standard recordings (listening and licence); decide the voicemail and spine retention for a UK pilot |
 | Plivo on tenants' own accounts | Ratify PL1–PL16 (`decisions.md` §4, "Plivo on tenants' own accounts"): a 403 on dial read as a geo-permission refusal; the three automatic pauses (`carrier_auth`, `carrier_account_unavailable`, and `carrier_refusing_calls` after five refusals in a row, PL11); a carrier with no webhook base not offered or started (PL12); numbers of a credential that cannot dial not offered; synced numbers tenant-wide; recordings from `media.plivo.com` only; the calls-per-second default of 2 per account; the carrier choice shown only with more than one carrier account |
 
 ## Deployment invariants

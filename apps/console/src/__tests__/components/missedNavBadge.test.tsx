@@ -50,7 +50,8 @@ describe('the agency sidebar', () => {
     expect(within(missed).getByTestId('sidebar-missed-badge').textContent).toBe('4, 4 to follow up');
     expect(missed.textContent).toBe('Missed calls4, 4 to follow up');
     expect(labels()).toContain('/agency/inbound/summary');
-    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1');
+    // A supervisor's list opens on the account's rows, so the badge counts those (IQ57).
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', {});
   });
 
   it('shows 99+ past the cap, and no badge with nothing open', async () => {
@@ -81,6 +82,8 @@ describe('the agency sidebar', () => {
     await renderWith(<AgencySidebar />, 'viewer');
     expect(labels()).toContain('/agency/inbound/missed');
     expect(labels()).not.toContain('/agency/inbound/summary');
+    // Without agency.supervise their list is their own rows, and so is the badge.
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', { assignee: 'me' });
   });
 });
 
@@ -88,6 +91,9 @@ describe('the agent`s nav', () => {
   it('badges their own Missed calls, current or not', async () => {
     await renderWith(<AgentNav current="campaigns" />, 'agent');
     expect(screen.getByTestId('agent-nav-missed-badge').textContent).toBe('4, 4 to follow up');
+    // Their own rows (IQ57: assignee=me), never the Team view's.
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledWith('t-1', 'a-1', { assignee: 'me' });
+    expect(mocks.getMissedInboundCount).not.toHaveBeenCalledWith('t-1', 'a-1', { assignee: 'unassigned' });
     cleanup();
     await renderWith(<AgentNav current="missed" />, 'agent');
     expect(within(screen.getByTestId('agent-nav-missed')).getByTestId('agent-nav-missed-badge')).toBeTruthy();

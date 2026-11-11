@@ -1,11 +1,11 @@
 # The agent mobile app
 
 The agent-only app in `apps/mobile`: one Flutter project that builds the Android and the iOS app.
-Agents sign in, go on duty on a campaign, take power-dialled calls, dial numbers themselves on the
-soft phone, write up each call and see their own numbers. Supervisors and admins stay on the web
+Agents sign in, go on duty on a campaign, take power-dialled calls and customers who ring in, dial
+numbers themselves on the soft phone, write up each call and see their own numbers. Supervisors and admins stay on the web
 consoles. This doc covers what V1 does and leaves out, how it talks to the server, the rules that
 keep a customer from reaching an absent phone, and how it is built and tested. Running it
-locally: `apps/mobile/README.md`. As of 2026-11-01.
+locally: `apps/mobile/README.md`. As of 2026-11-10.
 
 ## Scope
 
@@ -15,6 +15,9 @@ locally: `apps/mobile/README.md`. As of 2026-11-01.
 - account choice and the campaign list;
 - the pre-flight checks;
 - the station: go on duty, take calls, notes, dispositions, DNC, breaks and leave;
+- inbound calls on the station (customers who ring one of the account's numbers, put through to
+  an agent on duty with the app on screen): the offer with its chime, the call and its outcome, as
+  on the console (IQ46, IQ47). See "Inbound calls" below;
 - the soft phone (manual dialling, decision M2): the Phone tab, and in place on the station after
   "Switch to soft phone" (SP7). See "The soft phone" below;
 - My performance and My calls (campaign calls and soft-phone calls);
@@ -30,11 +33,15 @@ locally: `apps/mobile/README.md`. As of 2026-11-01.
   when Search is pressed, the others as typed. Recent searches (last five) stay on the device
   until Clear or any route to the signed-out state (sign-out, a refused session, start-up with
   nobody signed in);
+- Missed calls (inbound calls that reached nobody, assigned to the agent): a segment of My calls
+  with the open count as a badge on the tab, Call back into the soft phone, Mark handled and
+  Reopen. See "Missed calls" below;
 - the Me tab: account switch, email preferences, the dark theme switch, sound and vibration,
   diagnostics, sign out.
 
 **The tabs**: Station, Phone, Performance, My calls, Me. The Phone tab shows only where the soft
-phone is available to the agent (decision M3); without it the bar has four tabs.
+phone is available to the agent (decision M3); without it the bar has four tabs. Missed calls is
+not a tab: it is a segment of My calls, whose tab carries its badge.
 
 **The tab rule** (decision M4):
 
@@ -80,6 +87,31 @@ customer to nobody. So:
   closes the station socket itself: the server's close handler (`releaseStationOnClose`) writes the
   agent `offline` at once, and the app reconnects on return (the agent then goes available by
   hand). A local notification says "You're paused. Open the app to take calls again."
+- **A short absence returns on its own (IQ50).** Back in the app with the app's own `device_away`
+  pause applied (not queued behind a call) and begun less than `deviceAwayReturnGrace` (30 s,
+  contracts `DEVICE_AWAY_RETURN_GRACE_MS`) before, by the server's `since` (the phone's clock as
+  the fallback), the agent is returned with the ordinary `/available`, decided once the socket is
+  open and no pause request is in flight. A longer absence, another break taken meanwhile, or a
+  refused return keeps the away card and its tap. Meanwhile the server counts the paused agent as
+  one who could take a caller (`inbound.md` §5.1), so callers queue for them. On every return from a
+  `device_away` pause (and when a `phone_call` pause ends) the station publishes the pause's start
+  (`away_return.dart`), and the Missed feature (`rang_while_away.dart`) asks once,
+  `GET /inbound/missed/count?assignee=me&since=…`: "N customers rang while you were away" (or "…on
+  your phone call"), politely announced, with "See missed calls" and Dismiss, until dismissed or
+  opened, a call reaches the agent, or they leave the station. Nothing for 0 or a failed read.
+- **A cellular call while available (IQ51)** pauses the agent with the reserved break `phone_call`
+  ("Phone call"; the server's rules are `device_away`'s, `inbound.md` §6) for the length of the
+  call, and returns them when it ends, only while they are still on that pause (a break taken
+  meanwhile, or a supervisor's change, is kept). A pause the server queued behind a reservation is
+  withdrawn when the cellular call ends; a failed pause is retried on the away delays, then the
+  agent is told "We couldn’t pause you for your phone call. Take a break, or a customer may be put
+  through while you’re on it." A call that ends while the app is away returns them only if they
+  come back within 30 s. During a station call nothing changes (the audio interruption). Detection
+  is `agent_audio`'s `PhoneCallChanged`, asked for only while it can matter, with no runtime
+  permission: Android reads the audio mode (ringtone, in call, call screening, call redirect; the
+  app's own `MODE_IN_COMMUNICATION` is not a phone call; `OnModeChangedListener` on API 31+, a
+  1 s read below), iOS CallKit's `CXCallObserver` without the app's own calls
+  (`packages/agent_audio/README.md`). Not run on a phone; the Swift has never been compiled.
 - **Leaving during `reserved`, `on_call` or `wrapup`**: the call keeps going (the audio session,
   CallKit on iOS and the on-duty foreground service on Android keep the process alive), and
   `device_away` is QUEUED behind it, so the agent is paused after the call rather than made
@@ -124,8 +156,10 @@ customer to nobody. So:
 
 ## The station socket
 
-`/proxy/agency/station/:sessionId?token=…&client=mobile&media=alaw8`. `station_ws_url` is a path
-relative to the API origin; the app resolves it against `API_ORIGIN` (`Env.resolveStationUrl`).
+`/proxy/agency/station/:sessionId?token=…&client=mobile&media=alaw8&caps=inbound`. `station_ws_url`
+is a path relative to the API origin; the app resolves it against `API_ORIGIN`
+(`Env.resolveStationUrl`). `caps=inbound` (see "Inbound calls") is sent on every connect, a re-minted
+one included.
 
 - **`client=mobile`** tunes liveness and is written to `agency_agent_sessions.client_kind` (0006)
   on every attach. The server pings a mobile station every 3 s (`MOBILE_STATION_PROBE_MS`); a
@@ -263,6 +297,8 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   - call fields are never sent before the field set has loaded, and autosave 700 ms after the
     last edit; unsent notes are kept on the phone under `manual:<id>`;
   - notes the agent cleared go with the outcome as `''`, notes never touched are left out;
+  - a refused outcome carried nothing, so the notes' save is armed again and text typed since the
+    last save goes by the notes' own route (the status never sits at saving);
   - the DNC and calling-hours overrides (SP1, SP2) need a note of 10–500 characters, and a
     second refusal of the other kind keeps the first note;
   - "Without one, it closes in m:ss" counts down to `outcome_due_at`, on the server's clock.
@@ -272,7 +308,7 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   asked, by its version key (`id@updated_at`), so a newer frame survives. The station core checks
   too: after a reconnect `ready` with an unsettled call held and no `manual_call` frame within 2 s
   (the server re-sends one only for a call still unsettled), it reads the bootstrap itself,
-  retrying with backoff (2, 4, 8, 16, then every 30 s) while the socket is open, and lets go of a
+  retrying after 4, 8, 16, then every 30 s while the socket is open, and lets go of a
   call the server no longer holds. So the router's hold and the audio never depend on the
   soft-phone controller.
 - **Where the Phone tab shows (M3).** The bootstrap (`GET /softphone/bootstrap`) answered 200 and
@@ -344,6 +380,233 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   (the app has no IANA time-zone database). Conflicts with another account are settled by
   switching account. The copy says the ringback "plays on your phone".
 
+## Missed calls
+
+The console's Missed calls page ([`inbound.md`](inbound.md) §7, §8.4) in an agent's view (M2): the
+inbound calls that reached nobody and were assigned to this agent. The routes are the console's
+(`/proxy/agency/inbound/missed`, `…/:id/handled`, `…/:id/reopen`, `…/count`); the app adds none.
+Code: `lib/features/missed/`.
+
+- **Where it is.** A third segment of My calls ("Missed calls", or "Missed" beside two others),
+  with the open count as a badge on the segment and on the My calls tab ("100+" past the server's
+  cap, `InboundMissedCountResponse.badge`). Not a sixth tab: five already leave about 72 dp each
+  on a 360 dp phone, and Material's bar holds three to five. On duty on a campaign the tab opens
+  only the Missed list (IQ48; the other segments stay off duty only, M4), in a sheet over the
+  station (`missed_on_duty.dart`) that changes nothing on it (no pause, no switch) and closes when
+  another call reaches the agent. The station's waiting, campaign wrap-up and inbound outcome
+  screens show "N customers to call back" (the agent's own open rows; hidden at 0, unknown or
+  forbidden), a 48 dp row that opens the same sheet.
+- **When it shows** (the console's `useMissedCallsAccess`, with the server's answer in place of a
+  role check, as for the Phone tab): `GET /inbound/missed/count` answered 200 (the agent holds
+  `agency.inbound.read`), and `agency_inbound_enabled` is on or the agent has rows (`has_rows`).
+  A 403 (or a 404 from a server without the route) hides it; no answer yet, or only failed reads,
+  hides it too, and a failed re-read keeps the last answer. With the flag off and rows there, the
+  list shows under the console's notice (callers hear the closed message and are still listed). The
+  shell and My calls read a seam (`missed_access.dart`, hidden by default) that `main.dart` plugs
+  the count into.
+- **Kept fresh mid-shift.** Agents keep the app open all shift, and rows change under it: a Call
+  back that reaches the customer, or the customer ringing in and being put through, closes their
+  rows as reached, and new rows are assigned. So:
+  - the count is polled every 60 s while `agency_inbound_enabled` is on and the app is in the
+    foreground (the console's poll; never in the background, and not after a 403);
+  - the count is read when a workspace starts, on return to the app when the last answer is older
+    than the poll (older than 5 min with inbound off; at once after a failed read), after a Mark
+    handled or a Reopen, and on a pull to refresh;
+  - the count is read again when a call settles on this phone: the station's signals
+    (`callActive || outcomeOwed`) going from true to false, which covers a campaign call, an
+    inbound call put through and a soft-phone call on either host (`missedCallsSettledProvider`);
+  - the list and the count are read again when the Missed segment comes on screen (picked, or the
+    My calls tab back in front: the shell's indexed stack turns its tickers back on) and the rows
+    are a minute old or a call has settled since; the rows stay on screen until the new page lands.
+  An answer from a previous workspace never touches this one's (a generation guards the read in
+  flight).
+- **The list.** "Mine" and "Team" (IQ49). Mine is the agent's rows: every page asks for
+  `assignee=me` (the server forces it without `agency.supervise`, and without it would widen a
+  supervisor's list to the whole account), and there is no Reassign; the count asks for
+  `assignee=me` too (IQ57), so the badge counts what the list shows, a supervisor's included. Team
+  is the account's open rows nobody owns (`assignee=unassigned`: callers who were not matched or
+  withheld their number), with Claim as the only action (`POST /inbound/missed/:id/claim`, one at a
+  time): a claimed row leaves Team, the badge is re-read and the claim announced; a refusal
+  (someone else took it, handled, gone) is said on the row and its Claim switched off until the
+  next read drops it; no answer leaves Claim on. Team has no badge. In Mine, "To follow up" / "Handled" and the reason
+  filter (the console's dates are not offered), newest first, keyset pages of 50, the next page
+  fetched ten rows before the end, pull to refresh. Rows are cards of varying height (the
+  actions), not the fixed-height rows of the other lists. Each row: the matched contact's name
+  (`match_name`, IQ54) when there is one, above the caller's number (the name is cut short, the
+  number never), or "Number withheld"; a DNC badge, why it was missed in the console's
+  words ("Out of hours", or the closed cause: "Inbound switched off", "Number not on a route",
+  "Phone line not active"; "Hung up while waiting", "Nobody free to answer", "All lines busy",
+  "Couldn't be answered"), when, the number rung and the route, the matched campaign and any
+  callback the call booked (the number is never cut short: the number and the DNC badge, then the
+  reason, wrap onto a second line when they do not fit, at any text size); on a handled row who handled it ("You", "Customer reached by …") and
+  the reached note.
+- **Call back on duty (IQ48).** On duty on a campaign that is not on the soft phone, Call back
+  hands the number to the soft phone, goes to the station and switches the campaign to the soft
+  phone (SP7's `switchToSoftphone`, unconfirmed as the station's own switch is): applied, the number
+  lands on the pad; queued behind a call or wrap-up, it waits as `afterCall` (the 5-minute wait
+  starts when the switch applies: "Switching to the soft phone after this call…"); refused, the
+  reason is said and the number keeps waiting for a switch. It never dials. A DNC row's Call back
+  says that a missed call isn't consent and that the agent will be asked why the call has to go
+  ahead (IQ55): the soft phone's SP1 note and override, as for a typed number.
+- **Call back** (shown where the soft phone may start a call: the Phone tab shows and the soft
+  phone is not in finish mode; otherwise the console's note says to call another way and mark the
+  call handled). It hands the number and the matched campaign to the soft phone
+  (`SoftphoneActions.callBack`) and goes to the pad: the Phone tab, or the station for a campaign
+  switched to the soft phone (SP7). Like redial it fills the pad, sets "Log to" to the matched
+  campaign when the agent may log to it (else leaves it), and focuses Call; it never dials, so the
+  DNC check and its note (SP1) and the calling hours apply as to a typed number; an open override
+  prompt goes (it was for another number, and "Call anyway" redials that one), as it does on a
+  redial. It waits while the soft phone cannot take it (not open here yet, its bootstrap not read,
+  a call on screen, finish mode) and fills the pad when it can, and the agent is told why it
+  waits: with the soft phone not open, that the number will be on the pad if the agent switches
+  to the soft phone within 5 minutes; with a call on the soft phone (on the Phone tab or the
+  station's), that the number goes on the pad once the call is finished; with the soft phone open
+  here and its setup still being read, nothing (it lands in a moment). The feature reads where the
+  number stands from the soft phone itself (`SoftphoneView.callBackWaiting`: `none`, `afterCall`,
+  `onceOpen`, `setup`, `notKept`), never from its own reading of the screen. A dial already placed
+  when Call back is pressed keeps its own answer: the number waits until that call is on screen
+  and settles, and a refusal (or an override prompt) of that dial stays on the pad until a call
+  settles or the agent dismisses it; Call back never erases it. A waiting number lapses after 5 minutes (time behind
+  a call on screen does not count: the wait starts again when the call settles), on any session
+  change but the first session to open after it (so it never fills a later session's pad or sets
+  its "Log to"), when another device takes the session, and on a workspace change. With the soft
+  phone open on another device or in another account nothing here can take it: the number is not
+  kept and the agent is told to bring the soft phone to this phone and press Call back again. A
+  withheld caller's Call back is disabled with the reason. The number never goes in a route.
+- **Mark handled / Reopen.** One of each at a time, still one across a reload of the list (only
+  the action that set the row's flag clears it). The row leaves the view it no longer matches
+  (or takes the server's copy), the badge is re-read, and the result is announced. A refusal is
+  said on the row: `inbound_missed_call_not_found` in the console's words, a code it has no words
+  for in the server's sentence, no answer in the app's.
+- **Voicemail.** `voicemail_url` is served by `GET /proxy/agency/inbound/missed/:id/voicemail`
+  (`audio/wav`, bearer token and scope headers required, `Cache-Control: private, no-store`); the
+  console fetches it into a blob URL. The app has no player that can send those headers (the
+  `agent_audio` engine plays 8 kHz A-law station frames, not a 16 kHz WAV file), and adding a pub
+  dependency for playback is left for later (iOS does not build yet). A row with a voicemail says
+  "Left a voicemail · Listen on the web console". The wire row carries no voicemail length, so none is
+  shown.
+- **Telemetry.** The console sends no event of its own for the Missed list, so neither does the
+  app. A call placed after Call back carries `entry: 'inbound_callback'` on
+  `agency_softphone_call_placed`, which now has the console's `entry` (`typed`, `pasted`, `redial`,
+  `inbound_callback`) and `surface` (`softphone_page`, `station`). No number is sent.
+
+## Inbound calls
+
+The console's inbound flow ([`inbound.md`](inbound.md) §6, "The console (built, WP-D)") on the
+phone, with the app on screen: an agent on duty on a campaign is offered a caller who rang one of
+the account's numbers, sees and hears them, talks, and saves the outcome. The server's side is
+IQ46, the app's defaults IQ47 (both decided, `decisions.md` §4, "Inbound calls on the mobile app");
+the server's paths for a phone are `inbound.md` §6 "Mobile stations". Ringing a phone whose app
+is in the background (push) is not built: the foreground rule above stands, so a phone that leaves
+the app while `available` is paused and offered nothing. The calls that reach nobody are the
+agent's Missed calls (above).
+
+- **The gate.** The station socket declares `caps=inbound` on every upgrade
+  (`StationSocket.capabilities`, `StationCapability.withQuery`). Only a station that declares it is
+  sent `inbound_call` and `customer_waiting` frames and is searched for callers; an older build
+  that does not is never offered one.
+- **One row, replaced whole.** Every `inbound_call` frame carries the whole call; the station
+  reducer keeps the newest copy from any source (`newerInboundCall` in
+  `lib/core/inbound/inbound_call_rules.dart`, a port of the console's: a later offer wins, then
+  settled over unsettled, then progress within one offer; the frame wins a tie). HTTP answers are
+  adopted into the same copy. A frame for another session, or one that does not read, is ignored.
+  A copy the station let go of (retired by the reconnect check, or dropped by a campaign
+  `reserved`) is remembered, as the console's `staleKeys`: a frame of that snapshot is ignored,
+  and an HTTP answer no further along (a late hang-up, `PATCH` or `GET` answer) is never adopted.
+  A live campaign attempt is always the call on screen (`StationState.inboundOnScreen`): the
+  phase, the screen and where notes, the outcome, Mark DNC and Hang up go read the same call.
+- **The phase follows the call** (`StationState.effectiveState`), as for a campaign call: offered
+  reads `reserved`, connected `on_call`, ended owing its outcome `wrapup`. The server sends
+  `agent_state` around the call's frames (`reserved` just before the offer, `on_call` before the
+  connected call, `wrapup` before the ended one, `available` before the settled one); the call
+  still decides. Reserved with no call on the station (before the offer lands, or for the moment
+  between an offer leaving and the agent being returned, or a campaign reconnect before its dial
+  is restated) shows a neutral "A call is coming through · Connecting…" screen (not the campaign's
+  ringing pop, no Hang up), said once politely by the live region; "Incoming call" is only for a
+  held inbound offer, which is announced ("Incoming call from …") when it lands, though the phase did not change. Everything
+  that reads the phase treats a live inbound call as a call: the shell's `callActive` (the call
+  takes the screen, the bar hides), the away rules (leaving the app during an offer, the call or an owed outcome
+  QUEUES `device_away`, never closes the socket, and the pause is cancelled on return; while the
+  outcome is owed the notification carries its save-by time, `outcome_due_at`), the wake lock, the
+  heartbeat's hold on a stalled socket, the mid-call reconnect countdown (8 s, for a connected call
+  only: the server cancels an offer whose socket is gone at `connects_at`), and the on-duty
+  notification ("Incoming call", "On a call", "Outcome needed"; Mute and Hang up once connected,
+  never while only offered). A new offer clears what a campaign call left on screen; a campaign
+  `reserved` drops an inbound copy still held.
+- **Audio.** The microphone arms on the offer (CallKit `startCall` on iOS, named by the matched
+  contact, else the number, else "Number withheld") and the uplink opens only at `bridged_at`.
+  CallKit is told of an outgoing call, as for a campaign call; its own incoming-call screen is not
+  used (IQ47: the offer is the station's, with the app on screen). The
+  call's end reaches CallKit as `local` when this phone hung it up, else as ended by the other
+  side, also when the copy is retired (never an earlier campaign call's release reason).
+- **The chime** is the console's `inbound_ring` cue, made in the engine
+  (`AgentAudio.playChime`, `packages/agent_audio/README.md` "Inbound chime"): mixed into playout,
+  never sent to the caller, played once per offer (the call id and `offered_at`), from the frame
+  handler right after the arm, so it sounds before the caller's audio binds at `connects_at`. A
+  restatement after a reconnect is silent, a re-offer after a requeue rings again, and a call
+  already connected (or a held copy already past its offer) never chimes. Me → Sounds off silences it (the screen and the haptic still
+  say a call arrived).
+- **The screens** (`lib/features/station/parts/inbound_views.dart`, reading only
+  `StationView.inbound`): the offer (the caller's name, else number, else "Number withheld"; "Your
+  customer" and why, or whose customer they usually are; Recording; the DNC badge and why they are
+  still taken; the number they rang, the route, how long they waited, the matched campaign and the
+  contact as the campaign pop shows it, prior attempts included; "Connecting…" in the band, and
+  "Connecting you to the caller…" where Hang up is, which is not offered yet); on the call (talk
+  timer from `bridged_at`, notes, Mute, Audio, Details, Mark DNC, hold-to-confirm Hang up); the
+  outcome (the pad from the call's `disposition_catalog`, with where it comes from, the callback
+  picker when the code needs a date, notes, Mark DNC, Save outcome, and "Without one, it closes in
+  m:ss" in the band, counted to `outcome_due_at` on the server's clock). They reuse the campaign
+  call's band, layout, notes field, pad, callback picker and hang-up bar.
+- **Actions** go through the same `StationActions` the campaign call uses, routed to the inbound
+  call while one is on the station (`lib/core/inbound/inbound_call_api.dart`: `GET`, `PATCH`,
+  `hangup`, `disposition`, `dnc` under `/proxy/agency/inbound/calls/:id`, every refusal a typed
+  `InboundRefusal`). Hang up only once connected (a CallKit or notification hang-up while offered is
+  ignored and the call reported to CallKit again); a refused hang-up says so and keeps the call.
+  Notes autosave 700 ms after the last keystroke (the soft phone's `CallAutosave`: a 403 or a call
+  gone gives up, a 401 is retried after 4, 8, 16, then every 30 s through the token refresh, and
+  a save that goes through resets it), are kept on the
+  phone under `inbound:<id>` until the server has them, reach a field the agent has not typed in
+  when the server comes to hold others (text restored from the phone after a restart, which no
+  save has carried yet, is never replaced by the server's older copy), and go with the outcome:
+  cleared notes as `''`, untouched ones left out. A refused outcome carried nothing, so text typed
+  since the last save goes by the notes' own route again. Leaving the station, 4404 and signing
+  out send unsent notes at once (bounded at 2 s), not only store them. An
+  `inbound_disposition_invalid` refusal with `allowed_codes` rebuilds the pad; each refusal is
+  said in the console's words. Mark DNC confirms the number and its scope (the matched campaign,
+  else the account), and is not offered for a withheld number. An outcome that stops calling the
+  number confirms first, naming the list the server writes: the matched campaign's, else the
+  account's; for a withheld caller nothing is added, so it saves without asking.
+- **Reconnect.** `ready` keeps the call (it does not carry it). The server restates a call it still
+  holds for this session right after; when no `inbound_call` frame comes within 2 s the station
+  asks `GET /inbound/calls/:id`, and on any other failure asks again after 4, 8, 16, then every
+  30 s while the socket is open, until a frame or an answer settles it. That includes a 401 (the
+  API client has forced one token refresh, and each retry refreshes again) and a 403: retiring on
+  a guess could take a connected call or an owed outcome off the screen. An answer for this
+  session is adopted; one for another session, or `inbound_call_not_found`, retires the copy held
+  when it asked (a newer frame survives). An OFFER is not left waiting on that read: the server
+  states `reserved` for as long as it holds an offer for the station (IQ46), so a `ready` that says
+  `available`, `break` or `offline` retires a held offer at once, as a requeue (a `ready` that
+  says `on_call` or `wrapup` leaves it to the read: the offer may have connected). As a backstop
+  an offer still on offer 10 s past its `connects_at` on the server's clock, and at least 10 s
+  after it reached the phone, with no frame having replaced it, is retired as a requeue, so the
+  microphone, CallKit, the notification and the away rules stop holding a call that is not
+  there. A connected call or an owed outcome is never retired without the server's answer.
+- **Why a call left.** When a call leaves the station without the agent's outcome the station
+  says why for 30 s, or until the next call of any kind (campaign or inbound): the caller hung up before they were connected; it
+  went back to the queue (also when a reconnect finds an offer no longer this station's); the time
+  to save the outcome ran out; a supervisor closed it.
+- **"Your customer is waiting"** (`customer_waiting`): a banner first in every station layout's
+  content, naming the caller (or their number). Cleared by the server's `cleared: true` for that
+  caller, and as a backstop by an offer, a `ready` (re-sent while they wait) and the station
+  leaving reserved / on a call / wrap-up.
+- **Telemetry.** The console sends no inbound call events, so the app's follow the soft phone's
+  names: `agency_inbound_call_offered` (once per chimed offer), `_connected`, `_ended` (with the
+  call's audio counts, and `retired: true` when the station let go of the copy without the call's
+  own end: a reconnect check, a campaign `reserved`, a newer offer), `agency_inbound_outcome_saved`
+  and `_refused`. Each offer is tracked on its own (the call id and `offered_at`), so a re-offer
+  after a requeue reports its own whole funnel. Ids, codes and flags only:
+  never the number, a name or the notes.
+
 ## Inside the app
 
 ```
@@ -354,15 +617,19 @@ lib/
     auth/       the app gate: client-config → Firebase user → session → accounts → ready
     session/    account choice and local preferences
     station/    reducer (a port of the console's), server clock, socket, controller, view mapper;
-                the hosted session (campaign or soft phone) and the soft phone's close
+                the hosted session (campaign or soft phone) and the soft phone's close; the
+                inbound call held beside a campaign call; CallAutosave (notes of a soft-phone or
+                inbound call)
     softphone/  the soft phone's API client, controller, call rules and its UI seam
+    inbound/    the inbound call's API client (typed refusals), its rules (newerInboundCall) and copy
     audio/      orchestration of packages/agent_audio by phase
     lifecycle/  foreground rules (device_away), wake lock, local notifications
   features/   auth, join, accounts, campaigns, preflight, station, softphone (the Phone tab and
-              the panel), performance, calls (with calls/softphone), settings
+              the panel), performance, calls (with calls/softphone), missed (My calls' Missed
+              segment), settings
 packages/
   agency_wire/  hand-written Dart types for the API and station frames
-  agent_audio/  the native voice engine (Kotlin, Swift)
+  agent_audio/  the native voice engine (Kotlin, Swift), the soft phone's ringback, the inbound chime
 ```
 
 - **The station seam.** `lib/core/station/station_view.dart` is the only thing the station
@@ -439,13 +706,16 @@ packages/
     each 20 ms playout frame after the jitter buffer, so any early media is still heard. A Dart
     reference and shared golden vectors pin the Kotlin and Swift copies
     (`packages/agent_audio/README.md`, "Ringback").
+  - The inbound chime is made the same way (`AgentAudio.playChime`, the console's `inbound_ring`
+    cue), once per offer ("Inbound calls" above; `packages/agent_audio/README.md`, "Inbound
+    chime").
 - **Pre-flight**:
   - Checks the microphone permission, a loopback sound check ("Say hello"), the audio route, the network (round trip and measured upload), the battery and Android battery optimisation.
   - Only the microphone and the network block "Go on duty"; the rest is advice.
   - Grading lives in pure functions (`preflight_checks.dart`), separate from the measurements (`device_preflight_checks.dart`).
 - **Wire types.** `agency_wire` is written by hand against `packages/contracts`. Drift is caught from both sides:
   - `packages/contracts/fixtures/agent/*.json` samples are type-checked against the TS contract (`agent-fixtures.test.ts`) and decoded by the Dart tests.
-  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (38, the soft phone's included). `--check` fails when it is stale, and so does `pnpm test` in contracts.
+  - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (62: the soft phone's, customer history's and inbound calls' included, with `station_capabilities`). `--check` fails when it is stale, and so does `pnpm test` in contracts.
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
   - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
 
@@ -465,8 +735,8 @@ packages/
 
 - **Toolchain:** Flutter 3.47.7, pinned in `.github/workflows/mobile.yml`.
 - **CI:**
-  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests.
-  - A debug Android build on every pull request touching the app or the contracts.
+  - Contract literal drift, `flutter analyze`, the app's tests, `agency_wire` and `agent_audio` tests (Dart).
+  - A debug Android build on every pull request touching the app or the contracts, then `agent_audio`'s Kotlin unit tests (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`).
   - An unsigned iOS build on `main`.
 - **Android:**
   - minSdk 28, compileSdk 37 (`permission_handler_android` requires it), targetSdk Flutter's default.
@@ -483,5 +753,18 @@ packages/
 - **iOS has not compiled yet.** CI's first iOS build (on `main`, 2026-11-01) stopped at package resolution: `firebase_core` 5.1.0 needs `gtm-session-fetcher` 4–6 and `google_sign_in_ios` 6.3.8 needs 3.x. The Firebase pin ("Builds and releases", iOS) fixes the resolution: SwiftPM reproduced the conflict with the plugins' constraints and resolved them with the pin. That check ran on Linux, so no Swift or Objective-C was compiled. The next `main` build is the first compile, and the Swift engine and CallKit code (the Swift ringback written to the shared vectors and CallKit for soft-phone calls included) is reviewed against the SDK headers only until it passes.
 - **Customer history (2026-11-06) has not run under Dart or Flutter.** The wire types, the number-rule port, the controller and the two screens were written, reviewed and then fixed (the filters sheet, the copy button, the options read, the three wire additions) in an environment without the SDK; no `dart test`, `flutter test` or `flutter analyze` ran. A Python transcription of the port passed every row of the shared table. The mobile CI job (run on changes to `apps/mobile`, `packages/contracts` and `packages/domain/src/customer-search-number.ts`) is the first run.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
+- **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
+  with the contract's sample frames and answers, played in the server's own frame order, not
+  against a running server offering a real call to a station that declares `caps=inbound` (the
+  server's side is tested on its own, with a simulated phone station: `inbound-mobile-e2e` and
+  `inbound-mobile-wall-clock`), nor on a phone or a carrier. Of the chime, the Dart reference and
+  its vectors run in CI (`flutter test` in `agent_audio`). Its Kotlin (`Chime.kt`, the `EngineSlot`
+  and `VoiceEngine` changes) was compiled and `ChimeTest.kt` passed offline on a JVM during review;
+  CI compiles it again in the debug Android build and, since 2026-11-11, runs the Kotlin unit
+  tests after it (`./gradlew :agent_audio:testDebugUnitTest`; all 44 passed on a JVM with Gradle
+  9.3.1 and Kotlin 2.4.0 when the step was added, outside AGP: the step's first CI run is its first
+  run under the Android Gradle plugin). Its Swift (`Chime.swift`, the `Playout` and `VoiceEngine`
+  changes) has never been compiled, like the rest of the iOS engine (iOS does not compile yet,
+  above). Ringing a phone whose app is in the background (push) is parked, not started.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and on a carrier that cannot cancel a ringing call (SP3) the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.

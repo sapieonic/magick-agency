@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/telemetry/call_telemetry.dart';
 import 'package:magick_agency_agent/core/telemetry/telemetry.dart';
 
+import '../inbound/inbound_fixtures.dart';
 import '../softphone/manual_calls.dart';
 import 'fake_telemetry_sink.dart';
 
@@ -175,6 +176,105 @@ void main() {
       calls.manualPlaced(manualCall({'id': 'mc-2'}));
       calls.manualChanged(manualCall({'id': 'mc-2', 'state': 'ended', 'outcome': 'no_answer', 'ended_at': '2026-10-30T10:00:30.000Z'}));
       expect(sink.last('agency_softphone_call_ended')['media_binary_in'], 0);
+    });
+  });
+
+  group('inbound calls (IQ47: the names are fixed)', () {
+    const reoffered = '2026-11-02T05:31:00.000Z';
+    InboundCall frame(String name, [Map<String, Object?> over = const {}]) => inboundCall(name, overrides: over);
+
+    test('offer → connected → ended: one connect, one end with its audio', () {
+      final offered = frame('inbound_call_offered');
+      calls.inboundOffered(offered);
+      calls.inboundChanged(offered);
+      clock = clock.add(const Duration(seconds: 2));
+      calls.inboundChanged(frame('inbound_call_connected'));
+      calls.inboundChanged(frame('inbound_call_connected'));
+      calls.media
+        ..binaryIn = 900
+        ..sent = 880;
+      calls.inboundChanged(frame('inbound_call_outcome_owed'));
+      calls.inboundChanged(frame('inbound_call_settled'));
+
+      expect(sink.names, ['agency_inbound_call_offered', 'agency_inbound_call_connected', 'agency_inbound_call_ended']);
+      expect(sink.last('agency_inbound_call_connected'),
+          {'route_id': offered.route!.id, 'offer_seconds': 2, 'from_reconnect': false});
+      expect(sink.last('agency_inbound_call_ended'), {
+        'route_id': offered.route!.id,
+        'state': 'ended',
+        'outcome': 'answered',
+        'was_connected': true,
+        'talk_seconds': 227,
+        'retired': false,
+        'media_binary_in': 900,
+        'media_json_in': 0,
+        'media_sent': 880,
+        'media_unsent': 0,
+      });
+    });
+
+    test('offer → requeued → offered again → connected → ended: two whole funnels, in order', () {
+      calls.inboundOffered(frame('inbound_call_offered'));
+      calls.inboundChanged(frame('inbound_call_offered'));
+      calls.media.binaryIn = 30;
+      clock = clock.add(const Duration(seconds: 3));
+      calls.inboundChanged(frame('inbound_call_offered', {'state': 'queued', 'connects_at': null}));
+
+      clock = clock.add(const Duration(seconds: 40));
+      final again = frame('inbound_call_offered', {'offered_at': reoffered});
+      calls.inboundOffered(again);
+      calls.inboundChanged(again);
+      clock = clock.add(const Duration(seconds: 2));
+      calls.inboundChanged(frame('inbound_call_connected', {'offered_at': reoffered}));
+      calls.inboundChanged(frame('inbound_call_outcome_owed', {'offered_at': reoffered}));
+
+      expect(sink.names, [
+        'agency_inbound_call_offered',
+        'agency_inbound_call_ended',
+        'agency_inbound_call_offered',
+        'agency_inbound_call_connected',
+        'agency_inbound_call_ended',
+      ]);
+      final ends = [for (final e in sink.events) if (e.$1 == 'agency_inbound_call_ended') e.$2];
+      expect(ends.first, containsPair('state', 'queued'));
+      expect(ends.first, containsPair('was_connected', false));
+      expect(ends.first, containsPair('media_binary_in', 30));
+      expect(sink.last('agency_inbound_call_connected'), containsPair('offer_seconds', 2),
+          reason: 'counted from the second offer, not the first');
+      expect(sink.last('agency_inbound_call_connected'), containsPair('from_reconnect', false));
+      expect(ends.last, containsPair('was_connected', true));
+      expect(ends.last, containsPair('media_binary_in', 0), reason: 'the second offer counts its audio from zero');
+    });
+
+    test('a re-offer the phone saw without the requeue: the first offer ends as retired before the second starts', () {
+      calls.inboundChanged(frame('inbound_call_offered'));
+      calls.inboundChanged(frame('inbound_call_offered', {'offered_at': reoffered}));
+      calls.inboundChanged(frame('inbound_call_connected', {'offered_at': reoffered}));
+      expect(sink.names, ['agency_inbound_call_ended', 'agency_inbound_call_connected']);
+      expect(sink.last('agency_inbound_call_ended'), containsPair('retired', true));
+      expect(sink.last('agency_inbound_call_ended'), containsPair('state', 'offered'));
+    });
+
+    test('a copy the station let go of without a settled state reports an end, once', () {
+      calls.inboundChanged(frame('inbound_call_offered'));
+      calls.inboundChanged(frame('inbound_call_connected'));
+      calls.inboundLetGo(frame('inbound_call_connected'));
+      calls.inboundLetGo(frame('inbound_call_connected'));
+      expect(sink.names, ['agency_inbound_call_connected', 'agency_inbound_call_ended']);
+      expect(sink.last('agency_inbound_call_ended'), containsPair('retired', true));
+      expect(sink.last('agency_inbound_call_ended'), containsPair('state', 'connected'));
+
+      // One that already ended is not ended twice.
+      calls.inboundChanged(frame('inbound_call_withheld'));
+      calls.inboundChanged(frame('inbound_call_withheld', {'state': 'queued'}));
+      calls.inboundLetGo(frame('inbound_call_withheld', {'state': 'queued'}));
+      expect(sink.names.where((n) => n == 'agency_inbound_call_ended'), hasLength(2));
+    });
+
+    test('a call already over when first seen (a restart) is not this run\'s to report', () {
+      calls.inboundChanged(frame('inbound_call_settled'));
+      calls.inboundLetGo(frame('inbound_call_settled'));
+      expect(sink.names, isEmpty);
     });
   });
 }

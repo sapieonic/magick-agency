@@ -98,9 +98,14 @@ const connectedBySession = vi.fn(
   async (sessionIds: readonly string[]) => new Map(sessionIds.map((id) => [id, true])),
 );
 
+/** IQ56: the stations this process holds, by session: every one a console (can take inbound) by default. */
+const inboundCapabilityBySession = vi.fn(
+  (sessionIds: readonly string[]) => new Map(sessionIds.map((id) => [id, true])),
+);
+
 function statsDeps(): AgencyCampaignRouteDeps {
   return {
-    runtime: { dnc: { appliedVersion }, stations: { connectedBySession } },
+    runtime: { dnc: { appliedVersion }, stations: { connectedBySession, inboundCapabilityBySession } },
     callManager: { accountConcurrencyGuard: { getDistributedAccountCount } },
   };
 }
@@ -137,6 +142,10 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
     connectedBySession.mockClear();
     connectedBySession.mockImplementation(
       async (sessionIds: readonly string[]) => new Map(sessionIds.map((id) => [id, true])),
+    );
+    inboundCapabilityBySession.mockReset();
+    inboundCapabilityBySession.mockImplementation(
+      (sessionIds: readonly string[]) => new Map(sessionIds.map((id) => [id, true])),
     );
 
     app = Fastify({ logger: false });
@@ -359,6 +368,29 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
     expect([...connectedBySession.mock.calls[0]![0]].sort()).toEqual([here.id, ghost.id].sort());
   });
 
+  it('IQ56: marks a phone whose station did not declare caps=inbound; null with no live station here; unknown on a failed read', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const consoleAgent = await insertAgentSession(campaign.id, { agent_user_id: uuidFor('console'), state: 'available' });
+    const newApp = await insertAgentSession(campaign.id, { agent_user_id: uuidFor('new-app'), state: 'available', client_kind: 'mobile' });
+    const oldApp = await insertAgentSession(campaign.id, { agent_user_id: uuidFor('old-app'), state: 'available', client_kind: 'mobile' });
+    const noStation = await insertAgentSession(campaign.id, { agent_user_id: uuidFor('no-station'), state: 'offline' });
+    inboundCapabilityBySession.mockImplementation(() => new Map([[consoleAgent.id, true], [newApp.id, true], [oldApp.id, false]]));
+
+    const body = (await getStats(campaign.id)).json();
+    const byUser = Object.fromEntries((body.agents as Array<{ agent_user_id: string; can_take_inbound: boolean | null }>)
+      .map((a) => [a.agent_user_id, a.can_take_inbound]));
+    expect(byUser).toEqual({
+      [uuidFor('console')]: true, [uuidFor('new-app')]: true, [uuidFor('old-app')]: false, [uuidFor('no-station')]: null,
+    });
+    expect(inboundCapabilityBySession).toHaveBeenCalledTimes(1);
+    expect([...inboundCapabilityBySession.mock.calls[0]![0]].sort()).toEqual([consoleAgent.id, newApp.id, oldApp.id, noStation.id].sort());
+
+    inboundCapabilityBySession.mockImplementation(() => { throw new Error('registry gone'); });
+    const degraded = await getStats(campaign.id);
+    expect(degraded.statusCode).toBe(200);
+    expect((degraded.json().agents as Array<{ can_take_inbound: unknown }>).every((a) => a.can_take_inbound === null)).toBe(true);
+  });
+
   it('reports an agent the registry omits as unknown, not as disconnected', async () => {
     // A session the liveness read simply did not answer for — a partial reply, a
     // shape change, an agent who joined between the two reads. `?? null` is what
@@ -418,7 +450,7 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
     const real = Fastify({ logger: false });
     await real.register(async (scope) => agencyCampaignRoutes(scope, {
       ...statsDeps(),
-      runtime: { dnc: dncAvailabilityProbe(), stations: { connectedBySession } },
+      runtime: { dnc: dncAvailabilityProbe(), stations: { connectedBySession, inboundCapabilityBySession } },
     }), { prefix: '/api/v1/agency-campaigns' });
     await real.ready();
     try {

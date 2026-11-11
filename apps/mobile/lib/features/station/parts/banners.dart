@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
+import '../logic/format.dart';
 import '../station_copy.dart';
 import '../station_providers.dart';
 
@@ -304,6 +305,114 @@ class BusyLabel extends StatelessWidget {
         const SizedBox(width: Space.sm),
         Flexible(child: Text(label)),
       ],
+    );
+  }
+}
+
+// ─── Above whatever the station shows ───────────────────────────────────────
+
+/// "Your customer is waiting" and why the last inbound call left: first in every station
+/// layout's content, above whatever the stage shows (in the scrolling part, so at 200% text it
+/// never pushes the pinned action off the screen).
+class StationTopNotices extends ConsumerWidget {
+  const StationTopNotices({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final waiting = ref.watch(stationViewProvider.select((v) => v?.customerWaiting));
+    final notice = ref.watch(stationViewProvider.select((v) => v?.inboundNotice));
+    if (waiting == null && notice == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (waiting != null) CustomerWaitingBanner(waiting: waiting),
+          if (waiting != null && notice != null) const SizedBox(height: Space.sm),
+          if (notice != null) InboundNoticeLine(text: notice),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Your customer is waiting: Rahul Deshpande": a caller who usually speaks to this agent rang
+/// in while they were busy, and is put through to them when this call's work is done.
+class CustomerWaitingBanner extends StatelessWidget {
+  const CustomerWaitingBanner({super.key, required this.waiting});
+
+  final CustomerWaitingView waiting;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final from = waiting.fromE164;
+    final who = waiting.name ?? (from == null ? null : formatPhone(from));
+    final line = InboundCopy.customerWaiting(who);
+    // A live region: said (politely) when it appears and when the caller waiting changes (the
+    // label names them), never again on a rebuild with the same words.
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: '$line. ${InboundCopy.customerWaitingHint}',
+      excludeSemantics: true,
+      child: AppCard(
+        key: const Key('customer-waiting'),
+        color: t.accentSubtle,
+        borderColor: t.accent.withValues(alpha: 0.4),
+        padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(Icons.phone_callback, size: 18, color: t.accentHover),
+            ),
+            const SizedBox(width: Space.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(line, style: text.titleSmall!.copyWith(color: t.accentHover)),
+                  const SizedBox(height: 2),
+                  Text(InboundCopy.customerWaitingHint, style: text.bodySmall),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Why the last inbound call left without the agent's outcome (30 s).
+class InboundNoticeLine extends StatelessWidget {
+  const InboundNoticeLine({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Semantics(
+      liveRegion: true,
+      child: AppCard(
+        key: const Key('inbound-notice'),
+        color: t.warningSubtle,
+        borderColor: t.warning.withValues(alpha: 0.4),
+        padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, size: 18, color: t.warning),
+            const SizedBox(width: Space.sm),
+            Expanded(child: Text(text, style: Theme.of(context).textTheme.bodyMedium)),
+          ],
+        ),
+      ),
     );
   }
 }

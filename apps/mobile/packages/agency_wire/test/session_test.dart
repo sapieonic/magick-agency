@@ -240,5 +240,16 @@ void main() {
       expect(ReservedBreakCode.tryFromWire('lunch'), isNull);
       expect(const SessionBreakRequest('lunch').toJson(), fixture('session.json', 'break_request'));
     });
+
+    test('IQ50: the device-away return grace is the contract`s 30 s', () {
+      expect(deviceAwayReturnGrace, const Duration(milliseconds: 30000));
+    });
+
+    test('IQ51: the phone-call pause uses its reserved code, and decodes on the session state', () {
+      expect(SessionBreakRequest.phoneCall().toJson(), fixture('session.json', 'break_request_phone_call'));
+      expect(ReservedBreakCode.tryFromWire('phone_call'), ReservedBreakCode.phoneCall);
+      final state = SessionStateResponse.fromJson(fixture('session.json', 'session_state_phone_call'));
+      expect(ReservedBreakCode.tryFromWire(state.breakReason), ReservedBreakCode.phoneCall);
+    });
   });
 }

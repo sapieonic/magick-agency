@@ -54,7 +54,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 
 ### `apps/server/src/agency/`
 
-The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket, tokens and upgrade query (`station-upgrade.ts`: `client=` / `media=`; the registry probes a mobile station with protocol pings and holds each station to its client kind's heartbeat grace), the reserved-agent leaf (`reserved-agent.ts`: the `reserving` marker every pre-attempt reservation holds, and the one return of a reserved agent that was not dialled, to a queued break or the pool, shared by the pacing tick, its media-worker twin and the agent's own dial), wrap-up (and wrap-up redial: `wrapup-redial.ts` places a redial of the customer from wrap-up through the normal dial path, `wrapup-redial-rules.ts` holds its pure rules; the rest of it is the dialer's `hasRedialInFlight` / `releaseOwingOutcome`, the WrapupManager's redial set-up mark and the stats' `CONVERSATION_ATTEMPT_SQL` in `db/repositories/agency/sql-fragments.ts`), breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; the insights rollup job (`insights-rollup-job.ts`: every `agency.insightsRollup.intervalMs` a pass recomputes the dirty 15-minute buckets migration 0012's triggers mark, `batchSize` at a time, publishes the backlog and stops with agency; started by `bootstrap/agency.ts`, the main process only, `docs/insights.md`); what a campaign PATCH changed, for its `agency_campaign.config_changed` audit row (`campaign-config-audit.ts`, IN8: the internal PATCH handler computes it from the row before and after the write and hands it to the public route on a private response header; a carrier-account change carries each side's label as it was then, so the Activity trail never prints a credential id); and the campaign-management layer: CSV ingest and its jobs (and their activity rows, `agency-ingest-audit.ts`, IN8: a committed upload started, how it ended, a roster clear), staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment; and for contact assignment (decisions CA1–CA15, the operations in `assignment/`): `campaign-assignment-gate.ts` (CA9: a campaign create, PATCH or retry asking for an assignment setting or an outcome override other than its default and other than what the campaign already stores is refused while `agency_contact_assignment_enabled` is off; it never gates the runtime), `contact-overrides.ts` (the pure rules of outcome-granted overrides and of why an agent may dial one of their contacts now, CA7, CA8; DNC is never overridable) and `my-contact-call.ts` (the agent's dial of one of their own contacts on the campaign's normal path, CA7), and `agent-caller-id-audit.ts` (the dedicated caller ID audit rows, DN10: one envelope for the set, the supervisor's release and the release on unstaff); and `auto-disposition.ts` (automatic outcomes for unanswered calls, OD1–OD8: `resolveAutoDisposition`, the code a campaign's `outcome_dispositions` stamps on an attempt that ended `no_answer`, `busy`, `failed`, `invalid` or `abandoned`, re-checked against the catalog with the shared `autoDispositionRefusal` (`packages/domain/src/auto-disposition.ts`); the write-time rule is `validateOutcomeDispositions` in `campaign-config.ts`, shared with the public layer's `agency-campaign-config.ts`; tested by `test/unit/agency/auto-disposition.test.ts`, and on a real database by `test/integration/agency/auto-disposition-settle.test.ts` (the stamp on settle) and `campaign-outcome-dispositions-setting.test.ts` (create, PATCH, retry)). Which carrier account a campaign dials on (decisions B18–B22): `campaign-carrier.ts` checks a campaign's carrier, its pinned tenant credential and its caller IDs at create, PATCH and retry (404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`; on the same carrier account only the caller IDs a write adds), `campaign-dialability.ts` narrows a pinned campaign's caller IDs at the dial to those still active on its credential (PL13, cached, cleared by a sync, retire, delete or unassign) and refuses start and resume (`campaignDialBlockers`, in this order) while its tenant-account carrier cannot dial from this server (409 `carrier_not_ready`, PL12), with none left (409 `campaign_caller_ids_unavailable`) or with no concurrency allocated to the carrier on an account split by carrier (409 `carrier_capacity_unallocated`, PL14), and `carrier-account-pause.ts` pauses a running campaign whose dial was refused because its carrier account cannot dial (`carrier_auth` on a carrier 401, `carrier_account_unavailable` on a credential no longer `active`, `carrier_refusing_calls` when `carrier-refusal-breaker.ts` counts five carrier refusals in a row, PL11), audited `agency_campaign.auto_paused` with the reason; `carrier-account-pause-reasons.ts` tells those reasons apart for Insights.
+The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket, tokens and upgrade query (`station-upgrade.ts`: `client=` / `media=` / `caps=`, and `stationCanTakeInbound`: a console always, a phone only with `caps=inbound`, IQ46; the registry keeps that per socket as `canTakeInbound` and drops the inbound frames for a station without it; the registry probes a mobile station with protocol pings and holds each station to its client kind's heartbeat grace), the reserved-agent leaf (`reserved-agent.ts`: the `reserving` marker every pre-attempt reservation holds, and the one return of a reserved agent that was not dialled, to a queued break or the pool, shared by the pacing tick, its media-worker twin and the agent's own dial), wrap-up (and wrap-up redial: `wrapup-redial.ts` places a redial of the customer from wrap-up through the normal dial path, `wrapup-redial-rules.ts` holds its pure rules; the rest of it is the dialer's `hasRedialInFlight` / `releaseOwingOutcome`, the WrapupManager's redial set-up mark and the stats' `CONVERSATION_ATTEMPT_SQL` in `db/repositories/agency/sql-fragments.ts`), breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; the insights rollup job (`insights-rollup-job.ts`: every `agency.insightsRollup.intervalMs` a pass recomputes the dirty 15-minute buckets migration 0012's triggers mark, `batchSize` at a time, publishes the backlog and stops with agency; started by `bootstrap/agency.ts`, the main process only, `docs/insights.md`); what a campaign PATCH changed, for its `agency_campaign.config_changed` audit row (`campaign-config-audit.ts`, IN8: the internal PATCH handler computes it from the row before and after the write and hands it to the public route on a private response header; a carrier-account change carries each side's label as it was then, so the Activity trail never prints a credential id); and the campaign-management layer: CSV ingest and its jobs (and their activity rows, `agency-ingest-audit.ts`, IN8: a committed upload started, how it ended, a roster clear), staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment; and for contact assignment (decisions CA1–CA15, the operations in `assignment/`): `campaign-assignment-gate.ts` (CA9: a campaign create, PATCH or retry asking for an assignment setting or an outcome override other than its default and other than what the campaign already stores is refused while `agency_contact_assignment_enabled` is off; it never gates the runtime), `contact-overrides.ts` (the pure rules of outcome-granted overrides and of why an agent may dial one of their contacts now, CA7, CA8; DNC is never overridable) and `my-contact-call.ts` (the agent's dial of one of their own contacts on the campaign's normal path, CA7), and `agent-caller-id-audit.ts` (the dedicated caller ID audit rows, DN10: one envelope for the set, the supervisor's release and the release on unstaff); and `auto-disposition.ts` (automatic outcomes for unanswered calls, OD1–OD8: `resolveAutoDisposition`, the code a campaign's `outcome_dispositions` stamps on an attempt that ended `no_answer`, `busy`, `failed`, `invalid` or `abandoned`, re-checked against the catalog with the shared `autoDispositionRefusal` (`packages/domain/src/auto-disposition.ts`); the write-time rule is `validateOutcomeDispositions` in `campaign-config.ts`, shared with the public layer's `agency-campaign-config.ts`; tested by `test/unit/agency/auto-disposition.test.ts`, and on a real database by `test/integration/agency/auto-disposition-settle.test.ts` (the stamp on settle) and `campaign-outcome-dispositions-setting.test.ts` (create, PATCH, retry)). Which carrier account a campaign dials on (decisions B18–B22): `campaign-carrier.ts` checks a campaign's carrier, its pinned tenant credential and its caller IDs at create, PATCH and retry (404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`; on the same carrier account only the caller IDs a write adds), `campaign-dialability.ts` narrows a pinned campaign's caller IDs at the dial to those still active on its credential (PL13, cached, cleared by a sync, retire, delete or unassign) and refuses start and resume (`campaignDialBlockers`, in this order) while its tenant-account carrier cannot dial from this server (409 `carrier_not_ready`, PL12), with none left (409 `campaign_caller_ids_unavailable`) or with no concurrency allocated to the carrier on an account split by carrier (409 `carrier_capacity_unallocated`, PL14), and `carrier-account-pause.ts` pauses a running campaign whose dial was refused because its carrier account cannot dial (`carrier_auth` on a carrier 401, `carrier_account_unavailable` on a credential no longer `active`, `carrier_refusing_calls` when `carrier-refusal-breaker.ts` counts five carrier refusals in a row, PL11), audited `agency_campaign.auto_paused` with the reason; `carrier-account-pause-reasons.ts` tells those reasons apart for Insights.
 
 Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-audit.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-caller-id-audit.ts`, `agent-record.ts`, `agent-state-machine.ts`, `auto-disposition.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-carrier.ts`, `campaign-completion-notice.ts`, `campaign-dialability.ts`, `campaign-concurrency.ts`, `campaign-config-audit.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `carrier-account-pause.ts`, `carrier-account-pause-reasons.ts`, `carrier-refusal-breaker.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `insights-rollup-job.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `reserved-agent.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`
 
@@ -255,7 +255,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 90 |
 | `apps/server/test/unit/agency/pacing-round.test.ts` | ~31 |
-| `apps/server/test/unit/agency/pacing-skip.test.ts` (with `inbound_waiting` holding agents back for waiting inbound callers) | 59 |
+| `apps/server/test/unit/agency/pacing-skip.test.ts` (with `inbound_waiting` holding agents back for waiting inbound callers, only stations that can take them: an older phone never held back, preferred or not, nor one whose capability is not known) | 61 |
 | `apps/server/test/unit/agency/pre-dial-gates-hours-override.test.ts` | 13 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
@@ -280,7 +280,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 30 |
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 47 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
-| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 22 |
+| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/reaper.test.ts` | 45 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
@@ -292,13 +292,13 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
 | `apps/server/test/unit/agency/station-heartbeat-lease.test.ts` (what the heartbeat renews: `available`, `break`, a vouched `wrapup`) | 5 |
-| `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 20 |
+| `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 22 |
 | `apps/server/test/unit/agency/station-socket-media.test.ts` | 6 |
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 10 |
-| `apps/server/test/unit/agency/station-registry.test.ts` (with the console-only events never sent to a mobile station) | 30 |
+| `apps/server/test/unit/agency/station-registry.test.ts` (with the inbound events sent only to a station that can take inbound calls: a console, a phone with `caps=inbound`, never an older phone; the capability per socket across a reattach, and each detach reporting its own) | 31 |
 | `apps/server/test/unit/agency/station-supersede-stomp.test.ts` | 10 |
 | `apps/server/test/unit/agency/station-token.test.ts` | 6 |
-| `apps/server/test/unit/agency/station-upgrade.test.ts` | 13 |
+| `apps/server/test/unit/agency/station-upgrade.test.ts` (`client=`, `media=`, `caps=` and `stationCanTakeInbound`) | 30 |
 | `apps/server/test/unit/agency/supervisor-stats.test.ts` | 26 |
 | `apps/server/test/unit/agency/wrapup-manager.redial.test.ts` | 14 |
 | `apps/server/test/unit/agency/wrapup-manager.test.ts` | 34 |
@@ -466,15 +466,17 @@ Files: `eligibility.ts`, `identify-caller.ts`, `inbound-call-router.ts`, `inboun
 | `apps/server/test/integration/agency/inbound-agent-claim.test.ts` (real Lua: `reserveForInbound` from each state and every refusal, `available` refused `-3`, no attempt reserved onto a held session, `releaseInbound` by its own id, the rehydrate, an inbound offer racing a pacing reservation, 64 calls racing for one agent) | 10 |
 | `apps/server/test/unit/agency/pacing-inbound-waiting-event.test.ts` (the `inbound_waiting` bus event: round trip, bounds, clamps, malformed input) | 20 |
 | `apps/server/test/integration/telephony/plivo-inbound-e2e.test.ts` (mock Plivo rings a linked number: open, closed, unknown, withheld, DNC, terminal, exhausted, disabled credential, unlinked, tenant default, a message with no recording spoken by the carrier, bad signature, replay, over `max_concurrent`, caller hangs up mid-message, restart sweep) | 18 |
-| `apps/server/test/unit/agency/inbound-eligibility.test.ts` (every §4.3 row, the sticky status and phase, loose / strict / off, the order, the search order, the release hook's choice; membership, a declined offer, and whether anyone could take the caller at all; the rejoin grace: a station closed moments ago counted, never offered, and `rejoinState`) | 48 |
+| `apps/server/test/unit/agency/inbound-eligibility.test.ts` (every §4.3 row, the sticky status and phase, loose / strict / off, the order, the search order, the release hook's choice; membership, a declined offer, and whether anyone could take the caller at all; the rejoin grace: a station closed moments ago counted, never offered, and `rejoinState`; a phone with `caps=inbound` judged as a console, one without `no_inbound_capability`, IQ46) | 49 |
 | `apps/server/test/unit/agency/inbound/inbound-handover.test.ts` (the hand-over over a scripted host: what is promised and refused, the backstop, the release hook's take (offered when queued, held through the preamble, nothing on a lost CAS or a leaving caller), a held session let go, forget and the stop) | 15 |
 | `apps/server/test/unit/agency/inbound-queue.test.ts` (FIFO and the head, `max_waiting`, the maximum and sticky waits, the `inbound_waiting` summary, the snapshot) | 6 |
-| `apps/server/test/unit/agency/inbound-hold-back.test.ts` (pacing's hold-back helper) | 7 |
+| `apps/server/test/unit/agency/inbound-hold-back.test.ts` (pacing's hold-back helper; a station that cannot take inbound calls never held back nor counted toward `n`, IQ46) | 9 |
 | `apps/server/test/unit/agency/inbound-settlement.test.ts` (the settlement table, the catalog choice, how an unconnected call ends, the panel row) | 13 |
-| `apps/server/test/integration/agency/inbound-connector-races.test.ts` (real Redis and Postgres, the bridge and stations faked: two callers for one agent, pacing and inbound for one agent, two connectors, the caller hanging up on offer and against the bind, the station lost before the bind, the lease lost, the search never taking a wrap-up (a stale view too), the release hook and the queued break, the lapse, a graceful shutdown (IQ18); the clash's hand-over: held through the preamble, kept from the team while queued, let go on a hangup or a dropped station, dropped, one per call; a caller past their maximum wait never reserved for (M4); no hand-over to a phone, a closed station or the soft phone; `inbound_waiting` holding no team agent for a strict caller, and the team taking them once their agent is away; a failed `connected` write still ending `answered`) | 22 |
-| `apps/server/test/integration/agency/inbound-connector-review-fixes.test.ts` (real Redis and Postgres, the bridge and stations faked in `inbound-connector-fakes.ts`: a caller nobody in the pool could take overflowed at once, when queued, at a break (the republish) and at the last station's close, while busy agents keep them waiting; an agent removed or deactivated while the caller waits never offered them; a hang-up of an offered call is a decline (requeued, never re-offered to that agent, nothing abandoned; overflowed when nobody else could take them); a refused bind (cancelled and requeued, left to the call's end when it is ending, the agent not returned when the socket closed); the hang-up of a call the stale sweep ended, and its wait on the connector's end; the tile counted by each caller's account, and `no_agents_available`; round 2: the rejoin grace (a blip does not overflow, a close that outlasts it does, by its own timer; a break never counted), a decline or refused bind past the maximum wait releasing the agent before the exit, and the router deciding at the answer (nobody could take them: the call-back message or the voicemail at once, no queue)) | 21 |
+| `apps/server/test/integration/agency/inbound-connector-races.test.ts` (real Redis and Postgres, the bridge and stations faked: two callers for one agent, pacing and inbound for one agent, two connectors, the caller hanging up on offer and against the bind, the station lost before the bind, the lease lost, the search never taking a wrap-up (a stale view too), the release hook and the queued break, the lapse, a graceful shutdown (IQ18); the clash's hand-over: held through the preamble, kept from the team while queued, let go on a hangup or a dropped station, dropped, one per call; a caller past their maximum wait never reserved for (M4); no hand-over to a phone without `caps=inbound`, a closed station or the soft phone; `inbound_waiting` holding no team agent for a strict caller, and the team taking them once their agent is away; never preferring a sticky agent's station that cannot take inbound calls (IQ46); `onStationCannotTakeInbound` settling once the agent is returned, also when the bind's timer fired first or the search gives back after its lock; an offer refused to a station that cannot take inbound calls (`station_incapable`) returning the agent with no read of the call records; a failed `connected` write still ending `answered`) | 30 |
+| `apps/server/test/integration/agency/inbound-connector-review-fixes.test.ts` (real Redis and Postgres, the bridge and stations faked in `inbound-connector-fakes.ts`: a caller nobody in the pool could take overflowed at once, when queued, at a break (the republish) and at the last station's close, while busy agents keep them waiting; an agent removed or deactivated while the caller waits never offered them; a hang-up of an offered call is a decline (requeued, never re-offered to that agent, nothing abandoned; overflowed when nobody else could take them); a refused bind (cancelled and requeued, left to the call's end when it is ending, the agent not returned when the socket closed); the hang-up of a call the stale sweep ended, and its wait on the connector's end; the tile counted by each caller's account, and `no_agents_available`; round 2: the rejoin grace (a blip does not overflow, a close that outlasts it does, by its own timer; a break never counted), a decline or refused bind past the maximum wait releasing the agent before the exit, and the router deciding at the answer (nobody could take them: the call-back message or the voicemail at once, no queue)) | 23 |
 | `apps/server/test/integration/telephony/inbound-connect-e2e.test.ts` (end to end on mock Plivo and the station fleet: auto-connect with the panel before media; loose sticky taken from wrap-up, the sticky wait lapsing, strict; the queue's order, limits and pacing yielding; the caller hanging up on offer; the station dropped during the offer and after the bind; restart; recording; concurrency, a turned-away caller never recorded; the inbound stop settling its calls before it returns) | 14 |
 | `apps/server/test/integration/telephony/inbound-wrapup-lease.test.ts` (wall-clock lane: a campaign wrap-up past the old 15 s lease and an inbound one past a cut lease both still `wrapup` at their end and taken for the waiting caller with no `available` instant; `/break` during an inbound wrap-up queued and applied by the save; an unvouched `wrapup` lease lapsing) | 4 |
+| `apps/server/test/integration/telephony/inbound-mobile-e2e.test.ts` (IQ46 end to end on mock Plivo and the station fleet: a phone with `caps=inbound` offered, bridged to A-law binary frames both ways; an older phone never offered nor sent the frames, the tile's `no_agents_available`, nor taken for its agent's sticky caller (strict: the team takes them); a phone lost during an offer (the sweep, an older build's reattach, whose `ready` is never `reserved`) requeued; an older build reattaching during an inbound wrap-up (back in `wrapup`, no inbound frame, the saved outcome returning the agent); silent mid-call, terminated and resumed inside 8 s; device-away during an offer, a hand-over held through the caller's greeting, a call and an inbound wrap-up queued behind it, the release hook taking no caller; a capable phone reconnecting inside the offer window, the offer kept standing; two strict-sticky callers, a release, then an older-build takeover, nobody lost; the 3 s let-go bound) | 13 |
+| `apps/server/test/integration/telephony/inbound-mobile-wall-clock.test.ts` (wall-clock lane, IQ46: a phone lost on an inbound call past the 8 s deferred hangup, the call `answered` and owed, back on `break` with it; an older build reattaching mid-call never re-adopted, the call ended by the deferred hangup, owed in `wrapup`; a console handing a connected call to a capable phone, re-adopted as A-law; an older build silent past its grace on a bound call, terminated, the call `answered`) | 4 |
 | `apps/server/test/integration/telephony/inbound-clash-voicemail-e2e.test.ts` (end to end on mock Plivo, the bucket in memory: the clash (the ringing dial cancelled by its request id, `canceled` / `inbound_call`, the contact uncharged, the same agent held through the greeting and put through, never `available`, no redial while they talk); the bridged-first race; voicemail after hours (the WAV, the Missed row `closed`, played back through the route whole and by range), from the queue (`overflow`), and none when the caller leaves at the beep; the voicemail budget, and a voicemail whose row cannot be written discarded) | 6 |
 | `apps/server/test/integration/agency/chaos/inbound-floor.test.ts` (callers and agents at random under `LOAD_SEED` / `LOAD_SCALE`: the five invariants) | 1 |
 | `apps/server/test/integration/api/inbound-calls-routes.test.ts` (the finish routes and the queue tiles through the public layer: who may act, the outcome's refusals and replay, DNC scopes, not flag-gated, the audit rows) | 6 |
@@ -1333,7 +1335,7 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 `ci-scope.mjs` picks what a pull request's CI runs from its diff, and its guard holds the rules to the files each package's suites read outside the package ([`operations.md`](operations.md), "What CI runs").
 
-`contracts-literals.mjs` regenerates `packages/contracts/fixtures/agent/literals.json`, the literal unions the agent app switches on (38 vocabularies), and with `--check` fails when it is stale ([`mobile.md`](mobile.md), "Wire types").
+`contracts-literals.mjs` regenerates `packages/contracts/fixtures/agent/literals.json`, the literal unions the agent app switches on (62 vocabularies, the inbound ones and `station_capabilities` included), and with `--check` fails when it is stale ([`mobile.md`](mobile.md), "Wire types").
 
 Files: `ci-scope.mjs`, `ci-scope.test.mjs`, `contracts-literals.mjs`, `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
 
@@ -1352,7 +1354,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 
 | Test file | Cases |
 |---|---|
-| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json` and `customer-history.json` included) | 202 |
+| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json`, `customer-history.json` and `inbound.json` included, and the inbound vocabularies of `literals.json`) | 293 |
 | `packages/contracts/test/agent-caller-id.test.ts` | 2 |
 | `packages/contracts/test/assignment.test.ts` | 6 |
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
@@ -2425,8 +2427,9 @@ The agent app (Flutter, Android and iOS); how it works is in [`mobile.md`](mobil
 tests run with `flutter test` from `apps/mobile` (each package's from its own folder). Counts are
 static counts of `test(` / `testWidgets(` calls on 2026-11-01, marked `~`: a loop of cases counts
 as one, so they undercount. The files the soft phone added or changed were re-counted the same way
-after it (`softphone_controller_test.dart` counts its `softphoneTest(` helper). The Kotlin tests of
-`agent_audio` run from `apps/mobile/android` (`./gradlew :agent_audio:testDebugUnitTest`).
+after it (`softphone_controller_test.dart` counts its `softphoneTest(` helper), and the files inbound
+calls added or changed on 2026-11-10. The Kotlin tests of `agent_audio` run from
+`apps/mobile/android` (`./gradlew :agent_audio:testDebugUnitTest`), by hand: CI does not run them.
 
 ### `apps/mobile/lib/` (`main.dart`, `app/`, `ui/`)
 
@@ -2439,8 +2442,8 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/app/shell_test.dart` | ~22 |
-| `apps/mobile/test/app/softphone_navigation_test.dart` | ~27 |
+| `apps/mobile/test/app/shell_test.dart` (with the Missed badge on My calls) | ~24 |
+| `apps/mobile/test/app/softphone_navigation_test.dart` | ~28 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
 | `apps/mobile/test/core/foundation_test.dart` | ~20 |
 
@@ -2467,10 +2470,10 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 | `apps/mobile/test/core/session/account_choice_test.dart` | ~8 |
 | `apps/mobile/test/core/session/local_preferences_test.dart` | ~1 |
 | `apps/mobile/test/core/session/session_api_test.dart` | ~6 |
-| `apps/mobile/test/core/telemetry/call_telemetry_test.dart` | ~10 |
+| `apps/mobile/test/core/telemetry/call_telemetry_test.dart` (each inbound offer's own funnel, a re-offer after a requeue, a let-go copy's `retired` end) | ~15 |
 | `apps/mobile/test/core/telemetry/gate_telemetry_test.dart` | ~3 |
 | `apps/mobile/test/core/telemetry/posthog_sink_test.dart` | ~4 |
-| `apps/mobile/test/core/telemetry/softphone_dial_events_test.dart` | ~5 |
+| `apps/mobile/test/core/telemetry/softphone_dial_events_test.dart` (with `entry` and `surface`) | ~7 |
 | `apps/mobile/test/core/telemetry/station_call_events_test.dart` | ~3 |
 | `apps/mobile/test/core/telemetry/telemetry_test.dart` | ~13 |
 
@@ -2485,22 +2488,48 @@ phone's host actions, and closes a soft-phone session without closing over its c
 (`close_softphone.dart`, a port of the console's `closeSoftphoneSession`). After a reconnect it
 checks a soft-phone call it still holds against the server itself (the bootstrap, with backoff), so
 a call that ended while the socket was down lets go of ringback, CallKit and the hold, and it
-carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`).
+carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`). It holds an
+inbound call beside the campaign's (`StationState.inbound`, `newerInboundCall`, the let-go copies
+remembered, `inboundOnScreen`; the phase follows it, `effectiveState`), declares `caps=inbound` on
+the socket, chimes once per offer, checks a held inbound call after a reconnect
+(`GET /inbound/calls/:id`, with backoff) and routes the station's actions to it
+([`mobile.md`](mobile.md), "Inbound calls"). `call_autosave.dart` (`CallAutosave`) is the debounced
+notes save of a soft-phone or inbound call (`manual:<id>`, `inbound:<id>`): kept on the phone until
+sent, re-armed by a refused outcome (`outcomeRefused`), flushed on leave (`flushNow`). Test
+helper: `controller_harness.dart`.
 
-Files: `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
+Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
 
 | Test file | Cases |
 |---|---|
 | `apps/mobile/test/core/audio/audio_orchestration_test.dart` | ~29 |
 | `apps/mobile/test/core/lifecycle/lifecycle_test.dart` | ~23 |
+| `apps/mobile/test/core/station/call_autosave_test.dart` (restored text kept over the server's older copy, `outcomeRefused`, `flushNow`) | ~6 |
 | `apps/mobile/test/core/station/clock_and_liveness_test.dart` | ~18 |
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
 | `apps/mobile/test/core/station/station_controller_test.dart` | ~67 |
 | `apps/mobile/test/core/station/softphone_host_test.dart` | ~41 |
+| `apps/mobile/test/core/station/station_inbound_test.dart` (an inbound call through the core from the contract's frames, in the server's frame order: offer to settled, the chime once per offer, why a call left, the reconnect check and its refusals, "Your customer is waiting", `device_away` queued, the actions and their refusals, a let-go copy kept gone, the notes on a refused outcome and on leaving) | ~31 |
 | `apps/mobile/test/core/station/station_queue_test.dart` | ~11 |
-| `apps/mobile/test/core/station/station_reducer_test.dart` | ~28 |
+| `apps/mobile/test/core/station/station_reducer_test.dart` (with the inbound phase) | ~32 |
 | `apps/mobile/test/core/station/station_redial_test.dart` | ~27 |
-| `apps/mobile/test/core/station/station_socket_test.dart` | ~27 |
+| `apps/mobile/test/core/station/station_socket_test.dart` (with `caps=inbound`) | ~31 |
+
+### `apps/mobile/lib/core/inbound/`
+
+The inbound call's domain ([`mobile.md`](mobile.md), "Inbound calls"): the API client for the
+call routes under `/proxy/agency/inbound/calls/:id` (`GET`, notes `PATCH`, hangup, disposition,
+DNC; every refusal a typed `InboundRefusal`), the call's rules (`newerInboundCall`, a port of the
+console's, and the predicates the station reads) and every sentence it says in the console's
+British English. Test helper: `inbound_fixtures.dart` (calls built from `fixtures/agent/inbound.json`
+and `station.json`).
+
+Files: `inbound_call_api.dart`, `inbound_call_rules.dart`, `inbound_copy.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/core/inbound/inbound_call_api_test.dart` | ~8 |
+| `apps/mobile/test/core/inbound/inbound_call_rules_test.dart` | ~19 |
 
 ### `apps/mobile/lib/core/softphone/`
 
@@ -2510,7 +2539,10 @@ every soft-phone route (scoped to the session's account; the dial never retried)
 UI seam (`softphone_view.dart`: `SoftphoneView`, `SoftphoneActions`, the Phone tab's screen states
 and availability), and `SoftphoneController`, a port of the console's `useSoftphone`, per
 workspace (`softphoneOverrides`). Pure helpers with the console's tables: call state and labels,
-phone input, call fields, overrides, refusal copy, and the debounced autosave (`manual:<id>`).
+phone input, call fields, overrides, refusal copy, and the debounced autosave (`manual:<id>`, on
+the station's `CallAutosave`). `SoftphoneController.callBack` takes a Missed call's Call back: it
+fills the pad and focuses Call, never dials, and waits at most 5 minutes for a soft phone that can
+take it.
 `hosted_here.dart` remembers, per workspace, the session this phone hosts, so only that one resumes
 on its own.
 Test helpers: `manual_calls.dart` (rows shared with the console's tests), `fake_softphone_host.dart`.
@@ -2527,7 +2559,7 @@ Files: `call_fields.dart`, `call_labels.dart`, `call_state.dart`, `hosted_here.d
 | `apps/mobile/test/core/softphone/phone_input_test.dart` | ~20 |
 | `apps/mobile/test/core/softphone/refusal_copy_test.dart` | ~8 |
 | `apps/mobile/test/core/softphone/softphone_api_test.dart` | ~15 |
-| `apps/mobile/test/core/softphone/softphone_controller_test.dart` | ~100 |
+| `apps/mobile/test/core/softphone/softphone_controller_test.dart` (with Call back and a refused outcome's notes) | ~116 |
 | `apps/mobile/test/core/softphone/softphone_seams_test.dart` | ~14 |
 
 ### `apps/mobile/lib/features/` (`auth/`, `join/`, `accounts/`, `campaigns/`, `settings/`)
@@ -2552,8 +2584,8 @@ Files: `auth/auth_widgets.dart`, `auth/no_membership_screen.dart`, `auth/sign_in
 
 My performance (windows, readouts, the bucket chart, stale-while-revalidate) and My calls (keyset
 pages, filters, the debounced number search, the attempt sheet; and the "Soft-phone calls" segment
-with its own list, filters and detail sheet, `calls/softphone/`); all keyed by
-`agentWorkspaceProvider`. Test helper: `softphone_support.dart`.
+with its own list, filters and detail sheet, `calls/softphone/`; and the "Missed calls" segment,
+`features/missed/` below); all keyed by `agentWorkspaceProvider`. Test helper: `softphone_support.dart`.
 
 Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `performance/logic/bucket_series.dart`, `performance/logic/en_in_format.dart`, `performance/logic/performance_view.dart`, `performance/logic/readouts.dart`, `performance/logic/stats_windows.dart`, `performance/performance_api.dart`, `performance/performance_controller.dart`, `performance/performance_screen.dart`, `performance/widgets/bucket_chart.dart`, `calls/calls_controller.dart`, `calls/calls_screen.dart`, `calls/logic/attempt_copy.dart`, `calls/logic/attempt_filters.dart`, `calls/logic/debouncer.dart`, `calls/softphone/softphone_call_detail_sheet.dart`, `calls/softphone/softphone_call_tile.dart`, `calls/softphone/softphone_calls_controller.dart`, `calls/softphone/softphone_calls_list.dart`, `calls/widgets/attempt_detail_sheet.dart`, `calls/widgets/attempt_tile.dart`, `calls/widgets/filter_bar.dart`
 
@@ -2603,11 +2635,38 @@ Files: `customer_history_api.dart`, `customer_history_controller.dart`, `custome
 | `apps/mobile/test/features/customers/customer_history_controller_test.dart` | ~21 |
 | `apps/mobile/test/features/customers/customer_history_screens_test.dart` | ~31 |
 
+### `apps/mobile/lib/features/missed/`
+
+Missed calls, a segment of My calls ([`mobile.md`](mobile.md), "Missed calls"; inbound.md §7,
+§8.4): the routes (`missed_calls_api.dart`: the list with `assignee=me`, the count, Mark handled,
+Reopen), the count's controller (polled every 60 s in the foreground while inbound is on, read
+again when a call settles on this phone, `missedCallsSettledProvider`; the badge, "100+" past the
+cap) and the access seam the shell and My calls read (`missed_access.dart`, hidden by default,
+plugged in by `main.dart`), the list's controller (To follow up / Handled, the reason filter,
+keyset pages of 50, Mark handled and Reopen, re-read on entering with rows a minute old or a
+settle since; a generation per workspace), every sentence in the console's British English
+(`missed_calls_copy.dart`), the rows and the list, and Call back (`call_back.dart`: the number and
+the matched campaign handed to `SoftphoneActions.callBack`, then the pad). Test helper:
+`support.dart`.
+
+Files: `call_back.dart`, `missed_access.dart`, `missed_call_tile.dart`, `missed_calls_api.dart`, `missed_calls_controller.dart`, `missed_calls_copy.dart`, `missed_calls_list.dart`, `missed_count_controller.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/features/missed/missed_calls_api_test.dart` | ~8 |
+| `apps/mobile/test/features/missed/missed_calls_controller_test.dart` | ~19 |
+| `apps/mobile/test/features/missed/missed_calls_copy_test.dart` | ~3 |
+| `apps/mobile/test/features/missed/missed_calls_screen_test.dart` (the rows, Call back through the real soft phone, the segment and its badge on My calls, the flag-off notice, Mark handled and Reopen, kept fresh mid-shift) | ~20 |
+| `apps/mobile/test/features/missed/missed_call_tile_test.dart` (the caller's number never cut short at 360 dp, at 1× and 2× text, with every reason and the DNC badge, with the app's real fonts loaded; the Call back labels) | ~34 |
+| `apps/mobile/test/features/missed/missed_count_controller_test.dart` (the visibility rule, when the count is read, the poll, a settle, a workspace change) | ~16 |
+
 ### `apps/mobile/lib/features/` (`preflight/`, `station/`)
 
 Pre-flight (pure grading apart from the device measurements) and the station screens: one
 screen per phase, the call band, contact details, notes, wrap-up and dispositions, sheets and
-link-state screens.
+link-state screens; the inbound call's offer, call and outcome (`parts/inbound_views.dart`, reading
+only `StationView.inbound`), the neutral "A call is coming through · Connecting…" screen, and the banners
+above every layout ("Your customer is waiting", why the last inbound call left).
 
 Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_copy.dart`, `logic/*`, `parts/*`, `widgets/*`)
 
@@ -2620,6 +2679,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
 | `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
+| `apps/mobile/test/features/station/station_inbound_test.dart` (the inbound screens: the server's `reserved` before the offer, the offer, on the call, the outcome, the banners, 360×640 at 200% text) | ~15 |
 | `apps/mobile/test/features/station/station_nothing_due_test.dart` | ~9 |
 | `apps/mobile/test/features/station/station_phases_test.dart` | ~38 |
 | `apps/mobile/test/features/station/station_redial_test.dart` | ~12 |
@@ -2649,11 +2709,15 @@ Hand-written Dart types for the API and the station frames, the soft phone's inc
 (`assignment.dart`: their own contacts, agent retry, the per-contact call and their refusals),
 customer history (`customer_history.dart`: the search, timeline and options shapes, an unknown
 timeline kind kept as `CustomerTimelineUnknownEntry`, `CustomerHistoryOpenOverride.followUpAt`,
-`CustomerHistorySummary.contactsTruncated`, `CustomerSearchOptionsResponse`) and the search box's
+`CustomerHistorySummary.contactsTruncated`, `CustomerSearchOptionsResponse`), the search box's
 number rule (`customer_search_number.dart`, a port of `packages/domain/src/customer-search-number.ts`
-held to the same table), checked against `packages/contracts` fixtures and literal unions.
+held to the same table) and inbound calls (`inbound.dart`: `InboundCall` with its route, sticky,
+match and catalog, the call routes' bodies and answers, the Missed list's row, query, page and
+count, the inbound refusals; the `inbound_call` and `customer_waiting` frames in `station.dart`,
+the inbound vocabularies and `StationCapability` in `enums.dart`), checked against
+`packages/contracts` fixtures and literal unions.
 
-Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_history.dart`, `lib/src/customer_search_number.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/softphone.dart`, `lib/src/station.dart`
+Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_history.dart`, `lib/src/customer_search_number.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/inbound.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/softphone.dart`, `lib/src/station.dart`
 
 | Test file | Cases |
 |---|---|
@@ -2663,6 +2727,7 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 | `apps/mobile/packages/agency_wire/test/customer_search_number_test.dart` | ~8 (one runs every row of the shared table) |
 | `apps/mobile/packages/agency_wire/test/decode_budget_test.dart` | ~2 |
 | `apps/mobile/packages/agency_wire/test/fixtures_test.dart` | ~5 |
+| `apps/mobile/packages/agency_wire/test/inbound_test.dart` (`inbound.json` and the inbound frames of `station.json` decoded, the predicates, the refusals, the Missed shapes) | ~33 |
 | `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~10 |
 | `apps/mobile/packages/agency_wire/test/platform_test.dart` | ~14 |
 | `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
@@ -2673,18 +2738,24 @@ Files: `lib/src/actions.dart`, `lib/src/assignment.dart`, `lib/src/customer_hist
 ### `apps/mobile/packages/agent_audio/`
 
 The native voice engine as a Flutter plugin: the Dart API and reference models (A-law codec,
-half-band filter, jitter buffer, loopback, the soft phone's ringback tone), with the Kotlin
-(`android/`) and Swift (`ios/`) engines, the Android on-duty service and iOS CallKit. Kotlin tests
-on 2026-11-01, as Gradle printed them: 33, `RingbackTest.kt` 11 of them (the shared golden vectors
-in `test/support/ringback_vectors.dart`, and the plugin's `EngineSlot`: the ringback request is
-applied when an engine starts, never to a loopback, kept across a restart and cleared on stop).
+half-band filter, jitter buffer, loopback, the soft phone's ringback tone, the inbound chime), with
+the Kotlin (`android/`) and Swift (`ios/`) engines, the Android on-duty service and iOS CallKit.
+Kotlin tests on 2026-11-01, as Gradle printed them: 33, `RingbackTest.kt` 11 of them (the shared
+golden vectors in `test/support/ringback_vectors.dart`, and the plugin's `EngineSlot`: the ringback
+request is applied when an engine starts, never to a loopback, kept across a restart and cleared on
+stop). `ChimeTest.kt` (2026-11-10, 8 `@Test` methods: the vectors in
+`test/support/chime_vectors.dart`, played once frame by frame, mixed into playout saturating, a
+restart while playing, and through `EngineSlot` a chime asked for before the engine runs, played
+once, dropped by stop, never on a loopback) passed offline on a JVM during review; no Gradle print
+of the whole suite since. CI runs none of the Kotlin tests.
 
-Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/tone/ringback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
+Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/tone/chime.dart`, `lib/src/tone/ringback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/packages/agent_audio/test/agent_audio_test.dart` | ~26 |
+| `apps/mobile/packages/agent_audio/test/agent_audio_test.dart` (with `playChime`) | ~28 |
 | `apps/mobile/packages/agent_audio/test/alaw_test.dart` | ~6 |
+| `apps/mobile/packages/agent_audio/test/chime_test.dart` (the console's `inbound_ring` against the shared vectors, at 8 and 16 kHz) | ~6 |
 | `apps/mobile/packages/agent_audio/test/events_test.dart` | ~9 |
 | `apps/mobile/packages/agent_audio/test/half_band_test.dart` | ~10 |
 | `apps/mobile/packages/agent_audio/test/jitter_buffer_test.dart` | ~16 |

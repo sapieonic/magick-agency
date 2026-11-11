@@ -3,8 +3,13 @@
  * and its Missed inbound list. The vocabularies and the route configuration are the dialer
  * contract's (`../../agency/inbound.ts`), re-exported here so a console file needs one import.
  *
- * Routes (under `/proxy/agency`, Firebase session, tenant and account headers; every one also
- * needs the `agency_inbound_enabled` flag, else `403 inbound_disabled`):
+ * Routes (under `/proxy/agency`, Firebase session, tenant and account headers). The
+ * `agency_inbound_enabled` flag (else `403 inbound_disabled`) gates the route editor's routes
+ * only: `/inbound/routes*`, `/inbound/numbers` and `/inbound/clips*` (the standard recordings'
+ * preview included), and the supervisor's `GET /inbound/queue`. The Missed routes below (the
+ * list, the voicemail, Mark handled, reopen, the count, the reassign), `GET /inbound/summary` and
+ * the answered call's finish routes (`/inbound/calls/:id*`) are never gated, so the follow-ups of
+ * calls taken before the switch stay workable (the kill switch, docs/inbound.md §8.1):
  *  - `GET    /inbound/routes`                 `agency.inbound.write` → {@link AgencyInboundRoutesResponse}
  *  - `GET    /inbound/routes/:id`             `agency.inbound.write` → {@link AgencyInboundRouteResponse}
  *  - `POST   /inbound/routes`                 `agency.inbound.write`, {@link AgencyInboundRouteCreateRequest} → 201 {@link AgencyInboundRouteResponse}
@@ -29,8 +34,12 @@
  *  - `GET    /inbound/missed/:id/voicemail`   `agency.inbound.read` → the row's voicemail, `audio/wav`, streamed (P2;
  *    a `Range` request is answered 206; the Missed list's assignee rule; `inbound_missed_call_not_found` when the
  *    row has none, or it has aged out; `Cache-Control: private, no-store`, so no copy outlives the retention purge)
- *  - `GET    /inbound/missed/count`           `agency.inbound.read` → {@link AgencyInboundMissedCountResponse} (the nav badge;
+ *  - `GET    /inbound/missed/count`           `agency.inbound.read`, {@link AgencyInboundMissedCountQuery} →
+ *    {@link AgencyInboundMissedCountResponse} (the nav badge; the list's `assignee` scope, IQ57, and `since`, IQ50;
  *    not behind the flag: Missed rows stay readable with inbound turned off)
+ *  - `POST   /inbound/missed/:id/claim`       `agency.inbound.read`, no body → {@link AgencyInboundMissedClaimResponse}
+ *    (IQ49: an agent takes an unassigned row from the Team view; `inbound_missed_call_claimed` when someone has it,
+ *    `inbound_missed_call_handled` when it is done; not behind the flag; audited `agency_inbound_call.claimed`)
  *  - `POST   /inbound/missed/:id/assign`      `agency.supervise`, {@link AgencyInboundMissedAssignRequest} →
  *    {@link AgencyInboundMissedAssignResponse} (not behind the flag; audited `agency_inbound_call.reassigned`)
  *  - `GET    /inbound/summary`                `agency.supervise`, {@link AgencyInboundSummaryQuery} → {@link AgencyInboundSummary}
@@ -39,7 +48,9 @@
  * Every route read and write carries the route's `warnings` (P2, {@link inboundRouteWarnings}).
  *
  * `agency.inbound.read` floors at `agent`: an agent sees and handles only the rows assigned to
- * them (the route forces `assignee=me`); with `agency.supervise` the caller sees the account's.
+ * them (the route forces `assignee=me`), and (IQ49) reads the account's UNASSIGNED rows with
+ * `assignee=unassigned` (the Team view) and claims one; with `agency.supervise` the caller sees the
+ * account's.
  * Refusals are {@link AgencyInboundErrorResponse} (`../../errors.ts` §6); a malformed query (a bad
  * cursor, an unknown filter value) or a body that is not JSON is the agency surface's ordinary 400.
  */
@@ -504,6 +515,13 @@ export interface AgencyInboundMissedCall {
   outcome: AgencyInboundCallOutcome;
   /** The caller's number is on a DNC list: never dialled automatically; the agent decides. */
   caller_dnc: boolean;
+  /**
+   * IQ54: the matched contact's display name (the roster's `name`, `full_name`, `customer_name` or
+   * `first_name` column, the first that has one, trimmed, at most 100 characters: the name the
+   * "customer is waiting" notice shows); null when the caller matched no contact, withheld their
+   * number, or the contact has no name. Shown above the number.
+   */
+  match_name: string | null;
   matched_contact_id: string | null;
   matched_campaign_id: string | null;
   matched_campaign_name: string | null;
@@ -537,8 +555,14 @@ export interface AgencyInboundMissedCall {
 
 /**
  * `GET /inbound/missed`. Newest first, keyset paged on (`arrived_at`, `id`). `status` defaults to
- * `open`. `assignee`: `me`, `unassigned`, or a user id (supervise only; without
- * `agency.supervise` the list is always the caller's own and the value is ignored). `reason`
+ * `open`. `assignee` ({@link AGENCY_INBOUND_MISSED_ASSIGNEE_ME}, {@link AGENCY_INBOUND_MISSED_ASSIGNEE_UNASSIGNED}
+ * or a user id):
+ *  - `unassigned`: the account's rows assigned to nobody (an unmatched or withheld caller nobody
+ *    answered), for ANY caller with the list, an agent included (IQ49, the "Team" view);
+ *  - `me`: the caller's own rows;
+ *  - a user id: that person's rows, with `agency.supervise` only;
+ *  - absent: the account's rows with `agency.supervise`.
+ * Without `agency.supervise` every value but `unassigned` reads the caller's own rows. `reason`
  * narrows to one reason. `from` / `to` bound `arrived_at` (inclusive, exclusive; ISO-8601).
  * `limit` 1–100, default 50.
  */
@@ -553,6 +577,24 @@ export interface AgencyInboundMissedListQuery {
 }
 
 export type AgencyInboundMissedPage = AgencyKeysetPage<AgencyInboundMissedCall>;
+
+/** `assignee=me` on the Missed list and its count: the caller's own rows. */
+export const AGENCY_INBOUND_MISSED_ASSIGNEE_ME = 'me';
+/** `assignee=unassigned` on the Missed list and its count: the account's rows assigned to nobody (IQ49's Team view). */
+export const AGENCY_INBOUND_MISSED_ASSIGNEE_UNASSIGNED = 'unassigned';
+
+/**
+ * `POST /inbound/missed/:id/claim`, no body (IQ49): the caller takes an OPEN row that is assigned
+ * to nobody; it is assigned to them and moves to their own list. Any caller with the list may
+ * claim (an agent, from the Team view). A compare-and-set: only while the row is unassigned.
+ * Claiming a row already the caller's answers it as it is (idempotent); one someone else has is
+ * `409 inbound_missed_call_claimed`; a handled row is `409 inbound_missed_call_handled`; a row
+ * that is not the account's is `404 inbound_missed_call_not_found`. Audited
+ * `agency_inbound_call.claimed` when it changed.
+ */
+export interface AgencyInboundMissedClaimResponse {
+  call: AgencyInboundMissedCall;
+}
 
 /**
  * `POST /inbound/missed/:id/handled`, no body. Idempotent: marking a handled row again answers it
@@ -593,15 +635,30 @@ export interface AgencyInboundMissedAssignResponse {
 export const AGENCY_INBOUND_MISSED_COUNT_CAP = 100;
 
 /**
- * `GET /inbound/missed/count` (`agency.inbound.read`): the nav badge. The caller's scope is the
- * list's: an agent's own rows; with `agency.supervise`, the account's.
+ * `GET /inbound/missed/count`'s query. `assignee` is the list's ({@link AgencyInboundMissedListQuery},
+ * the same rules, IQ57): `me` (the caller's own, whoever asks: a supervisor's badge counts what
+ * their list shows), `unassigned` (the Team view's rows, for anyone with the list), a user id
+ * (supervise only), or absent (an agent's own rows; with `agency.supervise`, the account's, the
+ * count before IQ57). `since` (ISO-8601, IQ50): only rows whose call arrived at or after it ("N
+ * customers rang while you were away": the app sends when its `device_away` pause began). A
+ * malformed value is the agency surface's ordinary 400.
+ */
+export interface AgencyInboundMissedCountQuery {
+  assignee?: string;
+  since?: string;
+}
+
+/**
+ * `GET /inbound/missed/count` (`agency.inbound.read`): the nav badge. The scope is the query's
+ * ({@link AgencyInboundMissedCountQuery}); with no `assignee` it is the list's default: an agent's
+ * own rows; with `agency.supervise`, the account's.
  */
 export interface AgencyInboundMissedCountResponse {
   /** Open rows, at most {@link AGENCY_INBOUND_MISSED_COUNT_CAP}. */
   open: number;
   /** There are more open rows than {@link AGENCY_INBOUND_MISSED_COUNT_CAP}. */
   open_capped: boolean;
-  /** The scope holds any Missed row, open or handled: the list has something to show. */
+  /** The scope (with `since`, those rows) holds any Missed row, open or handled: the list has something to show. */
   has_rows: boolean;
 }
 

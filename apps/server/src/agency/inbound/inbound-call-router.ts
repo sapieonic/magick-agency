@@ -477,6 +477,9 @@ export class AgencyInboundCallRouter implements InboundCallRouter, InboundCallEx
         // scopes turn away has the flag taken back with its admission, `refuseAdmission`).
         recordingRequested: recorded && underCap, analysisProfileId: route?.analysis_profile_id ?? null,
         closedCause,
+        // IQ52: the route's wrap-up window, captured now so an edit or a delete of the route never
+        // moves the countdown of a call already taken (`inbound-wrapup.ts`).
+        wrapupSeconds: route?.wrapup_seconds ?? null,
       }, { client });
       if (!inserted.call) return null;
       if (inserted.created && underCap) {

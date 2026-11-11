@@ -3,8 +3,11 @@
  * on the internal handler instance under `/api/v1/agency` (decision B16), part of
  * `agency.routes.ts`:
  *
- *  - `GET  /inbound/missed/count`: the nav badge, the open rows of the caller's scope (an agent's
- *    own; with `agency.supervise`, the account's) and whether the scope has any row at all;
+ *  - `GET  /inbound/missed/count`: the nav badge, the open rows of the caller's scope (the list's
+ *    `assignee` rule, IQ57: an agent's own, or the unassigned ones; with `agency.supervise` the
+ *    account's, or `me`) and whether the scope has any row at all; `since` narrows to rows that
+ *    arrived at or after it (IQ50);
+ *  - `POST /inbound/missed/:id/claim`: an agent takes an unassigned open row (IQ49);
  *  - `POST /inbound/missed/:id/assign`: a supervisor gives an open row to a member of the account,
  *    or to the account;
  *  - `GET  /inbound/summary`: the account's inbound calls over a date range, for supervisors.
@@ -27,7 +30,14 @@ import {
 } from '../../../db/repositories/agency.repository.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
-import { inboundMissedToWire, sendInboundRefusal, type InboundCallReassignedAudit, type InboundCoreAnswer } from './inbound-answer.js';
+import { inboundMissedCountQuerySchema, missedAssigneeScope } from '../helpers/inbound-missed-query.js';
+import {
+  inboundMissedToWire,
+  sendInboundRefusal,
+  type InboundCallClaimedAudit,
+  type InboundCallReassignedAudit,
+  type InboundCoreAnswer,
+} from './inbound-answer.js';
 import { queryActor } from './inbound.js';
 
 /** `POST /inbound/missed/:id/assign`'s body: a member's id, or null for the account. */
@@ -65,14 +75,40 @@ export async function registerInboundMissedWorkRoutes(sub: FastifyInstance): Pro
   sub.get('/inbound/missed/count', async (request, reply) => {
     const actor = queryActor(request, reply);
     if (!actor) return reply;
+    const parsed = inboundMissedCountQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) return replyValidationFailed(reply, parsed.error.flatten());
+    // The list's rule (§8.4, IQ57): without `agency.supervise` the caller's own rows, or the
+    // unassigned ones; with it, what was asked (absent: the account's).
+    const assignee = missedAssigneeScope(actor, parsed.data.assignee);
     const counted = await agencyInboundCallRepository.countMissed({
       tenantId: actor.tenantId,
       accountId: actor.accountId,
-      // Without `agency.supervise`, the caller's own rows: the list's rule (§8.4).
-      ...(actor.supervise ? {} : { assigneeUserId: actor.userId }),
+      ...(assignee ? { assignee } : {}),
+      ...(parsed.data.since ? { since: new Date(parsed.data.since) } : {}),
     });
     const body: AgencyInboundMissedCountResponse = { open: counted.open, open_capped: counted.capped, has_rows: counted.hasRows };
     return reply.send(body);
+  });
+
+  // ── POST /inbound/missed/:id/claim — take an unassigned row (IQ49) ─────────
+  // Any caller with the list (the public route's `agency.inbound.read`): the row must be the
+  // account's, open, and assigned to nobody; it becomes the caller's. Already theirs: as it is.
+  sub.post<{ Params: { id: string } }>('/inbound/missed/:id/claim', async (request, reply) => {
+    const actor = queryActor(request, reply);
+    if (!actor) return reply;
+    if (!UUID_RE.test(request.params.id)) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    const result = await agencyInboundCallRepository.claimMissed({
+      tenantId: actor.tenantId, accountId: actor.accountId, id: request.params.id, userId: actor.userId,
+    });
+    if (!result) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
+    if (result.outcome === 'handled') return sendInboundRefusal(reply, { code: 'inbound_missed_call_handled' });
+    if (result.outcome === 'taken') return sendInboundRefusal(reply, { code: 'inbound_missed_call_claimed' });
+    const audit: InboundCallClaimedAudit = { call_id: result.call.id, changed: result.changed };
+    const envelope: InboundCoreAnswer<{ call: ReturnType<typeof inboundMissedToWire> }, InboundCallClaimedAudit> = {
+      answer: { call: inboundMissedToWire(result.call) },
+      audit,
+    };
+    return reply.send(envelope);
   });
 
   // ── POST /inbound/missed/:id/assign — a supervisor's reassign ──────────────

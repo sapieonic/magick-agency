@@ -51,6 +51,13 @@ void main() {
     expect(AudioEvent.decode({'type': 'service'}), isNull);
   });
 
+  test('phone call (another app\'s, a cellular call) started / ended', () {
+    expect(AudioEvent.decode({'type': 'phoneCall', 'active': true}), const PhoneCallChanged(active: true));
+    expect(AudioEvent.decode({'type': 'phoneCall', 'active': false}), const PhoneCallChanged(active: false));
+    expect(AudioEvent.decode({'type': 'phoneCall'}), isNull);
+    expect(AudioEvent.decode({'type': 'phoneCall', 'active': 'yes'}), isNull);
+  });
+
   test('error', () {
     expect(
       AudioEvent.decode({'type': 'error', 'code': 'media_services_reset', 'message': 'reset', 'recovered': true}),

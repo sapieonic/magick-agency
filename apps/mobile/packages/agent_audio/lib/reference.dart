@@ -7,4 +7,5 @@ library;
 export 'src/codec/alaw.dart';
 export 'src/codec/half_band.dart';
 export 'src/jitter/jitter_buffer.dart';
+export 'src/tone/chime.dart';
 export 'src/tone/ringback.dart';

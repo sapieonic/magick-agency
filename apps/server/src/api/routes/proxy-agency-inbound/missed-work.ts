@@ -2,8 +2,11 @@
  * Working the Missed inbound list and the inbound summary (docs/inbound.md §7, §8.4, §11), part of
  * `proxy-agency-inbound.routes.ts`:
  *
- *  - `GET  /inbound/missed/count` (`agency.inbound.read`): the nav badge. An agent's own open rows;
- *    with `agency.supervise`, the account's;
+ *  - `GET  /inbound/missed/count` (`agency.inbound.read`): the nav badge, `?assignee=` and `?since=`
+ *    (IQ57, IQ50): the list's scope (an agent's own rows, or the unassigned ones; with
+ *    `agency.supervise`, the account's or `me`), rows that arrived since;
+ *  - `POST /inbound/missed/:id/claim` (`agency.inbound.read`): take an unassigned row (IQ49);
+ *    audited `agency_inbound_call.claimed` when it changed;
  *  - `POST /inbound/missed/:id/assign` (`agency.supervise`): give an open row to a member of the
  *    account, or to the account; audited `agency_inbound_call.reassigned` when it changed;
  *  - `GET  /inbound/summary` (`agency.supervise`): the account's inbound calls over a range, with
@@ -20,7 +23,10 @@ import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { resolvedUserAuditActor } from '../../../audit/platform/audit-actor.js';
 import { agentNamesOrNone } from '../../../agency/agency-agent-identity.js';
 import { callCore } from '../../core-dispatch.js';
-import type { InboundCallReassignedAudit } from '../agency/inbound-answer.js';
+import type { InboundCallClaimedAudit, InboundCallReassignedAudit } from '../agency/inbound-answer.js';
+import { inboundMissedCountQuerySchema } from '../helpers/inbound-missed-query.js';
+import { parseOr400 } from '../helpers/parse-or-400.js';
+import { definedQueryString } from '../helpers/query-string.js';
 import { actorQuery, inboundActorOrRefuse, inboundAuditTenancy, sendAudited } from './shared.js';
 import { withNames } from './missed.js';
 
@@ -39,18 +45,49 @@ function stringQuery(query: unknown, keys: readonly string[]): Record<string, st
 }
 
 export async function registerInboundMissedWorkRoutes(app: FastifyInstance): Promise<void> {
-  /** GET /proxy/agency/inbound/missed/count — `{ open, open_capped, has_rows }`. */
+  /** GET /proxy/agency/inbound/missed/count?assignee&since — `{ open, open_capped, has_rows }`. */
   app.get('/inbound/missed/count', { preHandler: [requirePermission('agency.inbound.read')] }, async (request, reply) => {
+    const parsed = parseOr400(inboundMissedCountQuerySchema, request.query ?? {}, reply, 'agency');
+    if (!parsed) return reply;
     const actor = inboundActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await callCore({
       method: 'GET',
       path: '/agency/inbound/missed/count',
-      query: actorQuery(actor),
+      query: { ...definedQueryString(parsed.data), ...actorQuery(actor) },
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
     return reply.code(result.status).send(result.body);
+  });
+
+  /** POST /proxy/agency/inbound/missed/:id/claim — no body → `{ call }` (IQ49). */
+  app.post<{ Params: { id: string } }>('/inbound/missed/:id/claim', { preHandler: [requirePermission('agency.inbound.read')] }, async (request, reply) => {
+    const actor = inboundActorOrRefuse(request, reply);
+    if (!actor) return reply;
+    const result = await callCore({
+      method: 'POST',
+      path: `/agency/inbound/missed/${request.params.id}/claim`,
+      query: actorQuery(actor),
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    });
+    return sendAudited<InboundCallClaimedAudit>(reply, result, 'POST /inbound/missed/:id/claim', (audit) => {
+      if (!audit.changed) return;
+      platformAuditLogger.log({
+        ...inboundAuditTenancy(request),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
+        action: 'agency_inbound_call.claimed',
+        resource_type: 'agency_inbound_call',
+        resource_id: audit.call_id,
+        details: { from: null, to: actor.agent_user_id },
+      });
+    }, async (answer) => {
+      const call = (answer as { call?: unknown } | null)?.call;
+      if (!isMissedRow(call)) return reply.send(answer);
+      const [named] = await withNames([call], request.tenantId!, request.accountId);
+      return reply.send({ call: named });
+    });
   });
 
   /** POST /proxy/agency/inbound/missed/:id/assign — `{ assignee_user_id }` → `{ call }`. */

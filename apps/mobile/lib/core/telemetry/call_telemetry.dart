@@ -1,6 +1,7 @@
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/foundation.dart';
 
+import '../inbound/inbound_call_rules.dart' show inboundOfferKey;
 import 'telemetry.dart';
 
 /// What this phone itself saw of a call's audio. The server counts the same
@@ -22,10 +23,12 @@ final class CallMedia {
       {'media_binary_in': binaryIn, 'media_json_in': jsonIn, 'media_sent': sent, 'media_unsent': unsent};
 }
 
-/// One soft-phone call as this run has seen it.
+/// One soft-phone call, or one offer of an inbound call, as this run has seen it.
 final class _Tracked {
   _Tracked(this.id, {required this.live, required this.connected});
 
+  /// The soft-phone call's id; for an inbound call its offer ([inboundOfferKey]): a call
+  /// requeued and offered again is a second funnel, with its own connect and end.
   final String id;
 
   /// Seen before it ended (or placed from this phone): its end is this run's
@@ -127,6 +130,98 @@ final class CallTelemetry {
     _bridgedAt = null;
     media.reset();
   }
+
+  // ─── Inbound calls ────────────────────────────────────────────────────────
+  //
+  // The console sends no inbound call events (`apps/console/src/analytics/events.ts` has
+  // none), so these follow the soft phone's names: `agency_inbound_call_offered`, `_connected`,
+  // `_ended`, and `agency_inbound_outcome_saved` / `_refused`. Ids only: never the caller's
+  // number, the contact's name or the notes.
+
+  _Tracked? _inbound;
+  DateTime? _inboundOfferedAt;
+
+  /// The last copy of the tracked offer seen: what a synthetic end reports.
+  InboundCall? _inboundLast;
+
+  /// The offer this phone chimed for (once per offer: a restatement is not a new one).
+  void inboundOffered(InboundCall call) {
+    Telemetry.event('agency_inbound_call_offered', {
+      'route_id': call.route?.id,
+      'matched': call.match != null,
+      'campaign_id': call.match?.campaignId,
+      'sticky': call.sticky != null,
+      'sticky_is_you': call.sticky?.isYou ?? false,
+      'recording': call.recording,
+      'caller_dnc': call.callerDnc,
+      'withheld': call.fromE164 == null,
+      'waited_seconds': call.waitedSeconds,
+      'catalog_source': call.catalogSourceRaw,
+    });
+  }
+
+  /// The station's copy of the inbound call, whenever it changes. Tracked per offer
+  /// ([inboundOfferKey]): a re-offer of the same call after a requeue starts a new funnel, and
+  /// an earlier offer the station never saw end is reported ended as `retired` first.
+  void inboundChanged(InboundCall call) {
+    final key = inboundOfferKey(call);
+    var t = _inbound;
+    if (t == null || t.id != key) {
+      if (_inboundLast case final last?) inboundLetGo(last);
+      final live = call.isLive;
+      t = _inbound = _Tracked(key, live: live, connected: call.bridgedAt != null);
+      _inboundOfferedAt = live && call.state == InboundCallState.offered ? _now() : null;
+      if (live) media.reset();
+    }
+    _inboundLast = call;
+    if (!t.live) return;
+    if (!t.connected && call.bridgedAt != null) {
+      t.connected = true;
+      final offeredAt = _inboundOfferedAt;
+      Telemetry.event('agency_inbound_call_connected', {
+        'route_id': call.route?.id,
+        'offer_seconds': offeredAt == null ? 0 : _now().difference(offeredAt).inSeconds,
+        'from_reconnect': offeredAt == null,
+      });
+    }
+    // Left the line: ended, settled before it was answered, or back in the queue.
+    final over = call.state == InboundCallState.ended || call.state == InboundCallState.queued || call.isSettled;
+    if (over) _inboundEnded(t, call, retired: false);
+  }
+
+  /// The station let go of [call] (`last`: the copy it held) without a copy saying it left the
+  /// line: retired by the reconnect check, dropped by a campaign `reserved`, or replaced by
+  /// another offer. Its end is reported (`retired: true`) unless it already was.
+  void inboundLetGo(InboundCall call) {
+    final t = _inbound;
+    if (t == null || t.id != inboundOfferKey(call) || !t.live) return;
+    _inboundEnded(t, call, retired: true);
+  }
+
+  void _inboundEnded(_Tracked t, InboundCall call, {required bool retired}) {
+    if (t.ended) return;
+    t.ended = true;
+    Telemetry.event('agency_inbound_call_ended', {
+      'route_id': call.route?.id,
+      'state': call.stateRaw,
+      'outcome': call.outcomeRaw,
+      'was_connected': call.bridgedAt != null,
+      'talk_seconds': call.talkSeconds ?? 0,
+      'retired': retired,
+      ...media.properties,
+    });
+  }
+
+  void inboundOutcomeSaved(InboundCall call, {required String code, required bool callback}) =>
+      Telemetry.event('agency_inbound_outcome_saved', {
+        'catalog_source': call.catalogSourceRaw,
+        'code': code,
+        'callback': callback,
+      });
+
+  /// [code]: the refusal's code; null when none came back.
+  void inboundOutcomeRefused(InboundCall call, {required String? code}) =>
+      Telemetry.event('agency_inbound_outcome_refused', {'catalog_source': call.catalogSourceRaw, 'code': code});
 
   // ─── Soft-phone calls ─────────────────────────────────────────────────────
 

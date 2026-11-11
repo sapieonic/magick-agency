@@ -24,7 +24,7 @@ import { DispositionCatalogEditor } from '../campaigns/agency/DispositionCatalog
 import { useConfigFieldErrors } from '../campaigns/agency/configFieldErrors';
 import { DEFAULT_DISPOSITIONS } from '../../utils/agencyCampaignConfigForm';
 import { formatDialNumber } from '../../utils/softphone/phoneInput';
-import { UNANSWERED_LEAD, inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
+import { UNANSWERED_LEAD, WRAPUP_FIELD, inboundRefusalCopy } from '../../utils/inbound/inboundCopy';
 import {
   configFromDraft,
   createRequestFromDraft,
@@ -63,8 +63,8 @@ const COMMON_TIMEZONES = [
  * Settings → Inbound calls → a route (`/app/inbound/new`, `/app/inbound/:routeId`;
  * `docs/inbound.md` §8.1): name and time zone, the numbers it answers, weekly hours (overnight
  * stretches included) and holidays, the clips callers hear, routing to the caller's agent (IB2),
- * queue limits (§5.1), what happens when nobody answers (IB3), recording (IB7) and the outcomes
- * for callers matched to no campaign.
+ * queue limits (§5.1), the wrap-up window of every call on it (IQ52), what happens when nobody
+ * answers (IB3), recording (IB7) and the outcomes for callers matched to no campaign.
  *
  * The cards are in `./inbound-route/` (hours and holidays, what callers hear with its previews and
  * the recordings, who answers); this page holds the draft, the loads and the save, and the
@@ -364,6 +364,14 @@ export default function InboundRouteEditorPage() {
               <NumberField id="ib-max-concurrent" label="Calls at once" value={draft.maxConcurrent}
                 hint="Waiting and connected together. Inbound calls also count towards the account’s live calls."
                 onChange={(v) => update({ maxConcurrent: v })} errors={errors} path="max_concurrent" />
+            </div>
+          </section>
+
+          <section className="card" aria-labelledby="ib-after-call" data-testid="inbound-route-wrapup">
+            <h2 className={styles.cardTitle} id="ib-after-call">After the call</h2>
+            <div className={styles.fields}>
+              <NumberField id="ib-wrapup" label={WRAPUP_FIELD.label} value={draft.wrapupSeconds} hint={WRAPUP_FIELD.hint}
+                onChange={(v) => update({ wrapupSeconds: v })} errors={errors} path="wrapup_seconds" />
             </div>
           </section>
 

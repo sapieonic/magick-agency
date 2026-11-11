@@ -26,7 +26,13 @@ import type { AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-
 export interface PacingStations {
   isLocallyOwned(sessionId: string): boolean;
   ownerOf(sessionId: string): Promise<string | null>;
-  get(sessionId: string): { campaignId: string | null } | undefined;
+  /**
+   * The station's campaign, and whether it can take inbound calls (`StationRegistry`'s
+   * `canTakeInbound`, IQ46): only such a station is held back for a waiting inbound caller
+   * (`pacing/inbound-hold-back.ts`). The media workers' directory answers false: with media
+   * workers no inbound caller is put through to an agent (IB8, IQ13), so holding one back is moot.
+   */
+  get(sessionId: string): { campaignId: string | null; canTakeInbound: boolean } | undefined;
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number;
   send(sessionId: string, frame: AgencyStationServerFrame): boolean;
 }
@@ -1329,6 +1335,14 @@ export class PacingEngine {
     return typeof stations.get === 'function' ? stations.get.call(this.stations, sessionId)?.campaignId ?? null : null;
   }
 
+  /**
+   * Whether the session's station may be held back for a waiting inbound caller: one that can take
+   * inbound calls (see {@link PacingStations.get}).
+   */
+  private holdableForInbound(sessionId: string): boolean {
+    return this.stations.get(sessionId)?.canTakeInbound === true;
+  }
+
   private markDirty(campaignId: string): void {
     const state = this.pacingState.get(campaignId);
     if (state) state.dirty = true;
@@ -1627,9 +1641,11 @@ export class PacingEngine {
     // ── Inbound callers first (docs/inbound.md §5.2, IQ2) ─────────────────────
     // While inbound callers wait for this account's agents, the agents they are sticky to and the
     // `n` longest idle are not this tick's to reserve (`pacing/inbound-hold-back.ts`). After the
-    // sort, so the agents held back are the ones the inbound search would offer the callers to.
+    // sort, so the agents held back are the ones the inbound search would offer the callers to;
+    // only stations that can take inbound calls (IQ46), so an older app build is dialled meanwhile.
     const inboundHeld = holdBackForInbound(
-      candidates, this.inboundHolds.get(accountKeyOf(campaign.tenant_id, campaign.account_id)), campaign.id, this.now());
+      candidates, this.inboundHolds.get(accountKeyOf(campaign.tenant_id, campaign.account_id)), campaign.id, this.now(),
+      (sessionId) => this.holdableForInbound(sessionId));
     if (inboundHeld.length !== candidates.length) {
       candidates.splice(0, candidates.length, ...inboundHeld);
       if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };

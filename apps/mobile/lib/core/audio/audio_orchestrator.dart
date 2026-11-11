@@ -55,6 +55,7 @@ final class AudioTarget {
 /// | `bridged`                 | `startUplink`, CallKit `reportConnected`       |
 /// | `released`                | CallKit `endCall`, then `stop` (kept warm)     |
 /// | soft-phone call ringing   | `setRingback(true)` unless the ring is muted   |
+/// | inbound call offered      | as `reserved`, then `playChime` once ([chime])  |
 /// | leave                     | `release`, stop the on-duty service            |
 ///
 /// Lifecycle calls run strictly in order on one queue; [sync] records the
@@ -70,6 +71,7 @@ class AudioOrchestrator {
     required this._onChanged,
     required this._onSystemHangUp,
     this.format = audio.AgentAudioFormat.alaw8,
+    this._onPhoneCall,
   });
 
   static final _log = Log('station.audio');
@@ -79,6 +81,13 @@ class AudioOrchestrator {
   final void Function() _onChanged;
   final void Function() _onSystemHangUp;
   final audio.AgentAudioFormat format;
+
+  /// A phone call not the app's own (a cellular call) started or ended, while
+  /// [setPhoneCallMonitoring] is on (IQ51).
+  final void Function(bool active)? _onPhoneCall;
+
+  /// Phone-call reports are asked for (or the ask is queued).
+  bool _phoneCalls = false;
 
   StreamSubscription<Uint8List>? _uplinkSub;
   StreamSubscription<audio.AudioEvent>? _eventsSub;
@@ -251,6 +260,14 @@ class AudioOrchestrator {
     if (_bridged) _enqueue('connected', () => _engine.reportConnected(id));
   }
 
+  /// The inbound chime, once, for the call the audio holds (an inbound offer): queued behind
+  /// the call's own start and arm, so it plays once the engine runs (the native side keeps a
+  /// request made before it does), and a later `stop` drops it.
+  void chime() {
+    if (!_opened || _callId == null) return;
+    _enqueue('chime', _engine.playChime);
+  }
+
   /// Downlink: one frame, straight to the engine.
   void playFrame(Uint8List frame) => _engine.playFrame(frame);
 
@@ -299,9 +316,22 @@ class AudioOrchestrator {
     _enqueue('fgs.update', () => _engine.updateOnDutyService(notification));
   }
 
+  /// Reports of phone calls outside the app (a cellular call) on or off: the
+  /// station asks for them while the agent waits for calls (IQ51). Repeats
+  /// are dropped; a failure is logged and leaves them off.
+  void setPhoneCallMonitoring(bool on) {
+    if (!_opened || on == _phoneCalls) return;
+    _phoneCalls = on;
+    _enqueue(on ? 'phoneCalls.on' : 'phoneCalls.off', () => _engine.setPhoneCallMonitoring(on));
+  }
+
   /// Off duty: end any call, release the session, stop the on-duty service.
   Future<void> close() async {
     if (!_opened) return;
+    if (_phoneCalls) {
+      _phoneCalls = false;
+      _enqueue('phoneCalls.off', () => _engine.setPhoneCallMonitoring(false));
+    }
     final call = _callId;
     if (call != null) _enqueue('endCall', () => _engine.endCall(call));
     _enqueue('release', _engine.release);
@@ -386,6 +416,9 @@ class AudioOrchestrator {
         _serviceUp = false;
         _serviceProblem = MicProblem.serviceStopped;
         if (_view.micProblem == MicProblem.none) _setView(_copy(micProblem: _serviceProblem));
+      case audio.PhoneCallChanged(:final active):
+        // Only while asked for: a report racing the switch-off is not news.
+        if (_phoneCalls) _onPhoneCall?.call(active);
       case audio.AudioSessionActivation() || audio.InputLevel() || audio.JitterStats():
         break;
     }

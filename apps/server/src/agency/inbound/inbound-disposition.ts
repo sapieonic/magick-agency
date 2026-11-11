@@ -27,8 +27,8 @@
  *
  * ── The lapse (§6) ───────────────────────────────────────────────────────────────
  * {@link InboundCallService.sweepLapsed}, every few seconds: a bridged call whose outcome did not
- * come within its window (`inbound-wrapup.ts`: the matched campaign's wrap-up auto-return, else
- * the account default, never past the 30-minute backstop `AGENCY_INBOUND_OUTCOME_LAPSE_MS`), or
+ * come within its window (`inbound-wrapup.ts`: the route's wrap-up window captured on the call,
+ * IQ52, else 30 s, never past the 30-minute backstop `AGENCY_INBOUND_OUTCOME_LAPSE_MS`), or
  * whose session left, is closed `no_disposition` (`lapseUnsettled`), its field cleared and its
  * agent returned, from the wrap-up it holds them in only ({@link returnsToPool}: an agent on a
  * break stays on it, SWE-M1). A supervisor's force-available closes one the same way
@@ -503,8 +503,8 @@ export function returnsToPool(live: Pick<AgentLiveState, 'state' | 'inboundCallI
 }
 
 /**
- * How often the outcome-lapse sweep runs: the auto-return windows are a campaign's
- * `wrapup_seconds` (30 s by default), so an agent is returned within a few seconds of the
+ * How often the outcome-lapse sweep runs: the auto-return windows are the route's
+ * `wrapup_seconds` (IQ52: 30 s by default, at least 10 s), so an agent is returned within a few seconds of the
  * countdown the panel shows. One indexed read of the unsettled bridged calls (a handful).
  */
 export const INBOUND_LAPSE_SWEEP_INTERVAL_MS = 5_000;

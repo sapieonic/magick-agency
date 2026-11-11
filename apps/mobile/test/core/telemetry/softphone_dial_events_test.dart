@@ -60,6 +60,33 @@ void main() {
     h.reply('POST $callsPath', manualCallJson(), status: 201);
     h.run(h.actions.dial());
     expect(sink.names, ['agency_softphone_call_placed']);
-    expect(sink.last('agency_softphone_call_placed'), {'tagged': false, 'overrides': 'none'});
+    expect(sink.last('agency_softphone_call_placed'),
+        {'tagged': false, 'overrides': 'none', 'entry': 'typed', 'surface': 'softphone_page'});
+  });
+
+  softphoneTest('placed says how the number got on the pad, as the console’s `entry`: a Missed call’s Call back', (h) {
+    h.openWith(number: '');
+    h.actions.callBack('+918765432109', campaignId: 'camp-1');
+    h.reply('POST $callsPath', manualCallJson(), status: 201);
+    h.run(h.actions.dial());
+    expect(sink.last('agency_softphone_call_placed'),
+        {'tagged': true, 'overrides': 'none', 'entry': 'inbound_callback', 'surface': 'softphone_page'});
+  });
+
+  softphoneTest('a Call back number edited on the pad (a backspace) is the agent\'s own: `typed`', (h) {
+    h.openWith(number: '');
+    h.actions.callBack('+918765432109', campaignId: 'camp-1');
+    h.actions.backspace();
+    h.reply('POST $callsPath', manualCallJson(), status: 201);
+    h.run(h.actions.dial());
+    expect(sink.last('agency_softphone_call_placed'), containsPair('entry', 'typed'));
+  });
+
+  softphoneTest('a pasted number is `pasted`', (h) {
+    h.openWith(number: '');
+    h.actions.pasteNumber('tel:+919820461733');
+    h.reply('POST $callsPath', manualCallJson(), status: 201);
+    h.run(h.actions.dial());
+    expect(sink.last('agency_softphone_call_placed'), containsPair('entry', 'pasted'));
   });
 }

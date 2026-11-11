@@ -41,6 +41,7 @@ export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode, string> = {
   inbound_clip_storage_unavailable: 'Recordings can’t be uploaded here yet: this service has no audio storage set up. Contact support.',
   inbound_missed_call_handled: 'This call has already been handled, so there’s nothing to reassign.',
   inbound_assignee_invalid: 'That person can’t take this account’s missed calls any more. Choose someone else.',
+  inbound_missed_call_claimed: 'Someone else has already taken this missed call.',
 };
 
 /** Why an upload was refused, in the editor's words. */
@@ -77,7 +78,7 @@ export const STICKY_MODE_LABELS: Record<AgencyInboundStickyMode, { label: string
   },
   strict: {
     label: 'Wait for their agent',
-    hint: 'While their agent is on a call or finishing one, the caller waits for them, up to the longest wait; if nobody answers, the follow-up is theirs. If their agent is offline, on a break or on the phone app, the team answers at once.',
+    hint: 'While their agent is on a call or finishing one, the caller waits for them, up to the longest wait; if nobody answers, the follow-up is theirs. If their agent is offline, on a break or on an older version of the phone app, the team answers at once.',
   },
   off: { label: 'Off', hint: 'Every caller goes to the team, longest idle agent first.' },
 };
@@ -90,6 +91,15 @@ export const STICKY_WAIT_FIELD = {
   label: 'How long to wait for their agent (seconds)',
   hint: `${AGENCY_INBOUND_ROUTE_LIMITS.STICKY_WAIT_SECONDS.min}–${AGENCY_INBOUND_ROUTE_LIMITS.STICKY_WAIT_SECONDS.max}, then the team. No longer than the longest wait.`,
   strictHint: 'With “Wait for their agent”, the caller waits for them while they’re busy, up to the longest wait instead.',
+} as const;
+
+/**
+ * The route's wrap-up window (IQ52): every inbound call on the route takes it, matched to a
+ * campaign or not, on a console or a phone, and the agent is returned to calls when it ends.
+ */
+export const WRAPUP_FIELD = {
+  label: 'Wrap-up time (seconds)',
+  hint: `${AGENCY_INBOUND_ROUTE_LIMITS.WRAPUP_SECONDS.min}–${AGENCY_INBOUND_ROUTE_LIMITS.WRAPUP_SECONDS.max}. Every call on this route gets this long to save an outcome, then the agent returns to calls automatically.`,
 } as const;
 
 /** A standard recording's words, quoted for a hint. */

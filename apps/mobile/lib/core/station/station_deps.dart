@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../audio/audio_engine.dart';
 import '../auth/app_gate.dart';
 import '../lifecycle/app_lifecycle.dart';
+import '../session/local_preferences.dart';
 import 'notes_autosave.dart';
 import 'station_transport.dart';
 
@@ -68,3 +69,7 @@ final stationFrameDecoderProvider = Provider<StationFrame Function(String)>((ref
 final stationUnauthorizedSinkProvider = Provider<void Function(Object error)>(
   (ref) => (error) => ref.read(appGateProvider.notifier).reportError(error),
 );
+
+/// Whether the agent wants sounds on this phone (Me → Sounds: "Ring and call tones on this
+/// phone"), read when the inbound chime is due. Injectable so tests need no stored preferences.
+final stationSoundsProvider = Provider<bool Function()>((ref) => () => ref.read(localPreferencesProvider).sounds);

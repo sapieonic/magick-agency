@@ -16,6 +16,9 @@ public final class AgentAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
   private let messenger: FlutterBinaryMessenger
   private let engine = VoiceEngine()
   private let callKit = CallKitController()
+  private let phoneCalls = PhoneCallMonitor()
+  /// The app asked for phone-call reports; they run only while CallKit is on.
+  private var phoneCallsWanted = false
   private var eventSink: FlutterEventSink?
   private var downlink: FlutterBasicMessageChannel?
 
@@ -25,6 +28,14 @@ public final class AgentAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
     engine.delegate = self
     callKit.delegate = self
     engine.cellularCallActive = { [weak self] in self?.callKit.otherCallActive ?? false }
+    phoneCalls.isOwnCall = { [weak self] uuid in self?.callKit.isOwnCall(uuid) ?? false }
+    phoneCalls.emit = { [weak self] event in self?.emit(event) }
+  }
+
+  /// Phone-call reports run while the app wants them and CallKit is allowed (the call
+  /// observer is CallKit; where CallKit is turned off, nothing is reported).
+  private func syncPhoneCalls() {
+    phoneCalls.setEnabled(phoneCallsWanted && callKit.enabled)
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -49,6 +60,8 @@ public final class AgentAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
   public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
     engine.stop(keepWarm: false)
     callKit.enabled = false
+    phoneCallsWanted = false
+    syncPhoneCalls()
     downlink?.setMessageHandler(nil)
     downlink = nil
     eventSink = nil
@@ -109,6 +122,9 @@ public final class AgentAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       case "setRingback":
         engine.setRingback(args["on"] as? Bool ?? false)
         result(nil)
+      case "playChime":
+        engine.playChime()
+        result(nil)
       case "setInputLevelMetering":
         engine.setMetering(args["enabled"] as? Bool ?? false)
         result(nil)
@@ -124,6 +140,11 @@ public final class AgentAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
         }
       case "configureCallSystem":
         callKit.enabled = args["useCallKit"] as? Bool ?? true
+        syncPhoneCalls()
+        result(nil)
+      case "setPhoneCallMonitoring":
+        phoneCallsWanted = args["enabled"] as? Bool ?? false
+        syncPhoneCalls()
         result(nil)
       case "startCall":
         callKit.startCall(

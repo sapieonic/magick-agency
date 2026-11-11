@@ -111,6 +111,8 @@ const configFields = {
   analysis_profile_id: uuid.nullable(),
   // Held to the campaign catalog's rules below (`catalogIssues`); here only "an array".
   disposition_catalog: z.array(z.unknown()),
+  // IQ52: every inbound call on the route takes this window, with auto-return.
+  wrapup_seconds: int(L.WRAPUP_SECONDS.min, L.WRAPUP_SECONDS.max, 'wrapup_seconds'),
 };
 
 const phoneNumberIds = z.array(uuid).max(L.NUMBERS_MAX, `At most ${L.NUMBERS_MAX} numbers on one route.`)
@@ -197,6 +199,7 @@ export function parseInboundRouteCreate(body: unknown): InboundRouteParse {
     recording_notice: b.recording_notice ?? d.recording_notice,
     analysis_profile_id: b.analysis_profile_id ?? d.analysis_profile_id,
     disposition_catalog: (b.disposition_catalog ?? [...d.disposition_catalog]) as AgencyDisposition[],
+    wrapup_seconds: b.wrapup_seconds ?? d.wrapup_seconds,
   };
   const issues = [...catalogIssues(config.disposition_catalog), ...crossFieldIssues(config)];
   return issues.length > 0 ? { ok: false, issues } : { ok: true, config, phoneNumberIds: b.phone_number_ids };

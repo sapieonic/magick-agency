@@ -165,7 +165,10 @@ async function boot(
     campaigns: {
       runtime: {
         dnc: { appliedVersion: async () => null },
-        stations: { connectedBySession: (ids) => runtime.stations.connectedBySession(ids) },
+        stations: {
+          connectedBySession: (ids) => runtime.stations.connectedBySession(ids),
+          inboundCapabilityBySession: (ids) => runtime.stations.inboundCapabilityBySession(ids),
+        },
       },
       callManager: guardHost,
     },

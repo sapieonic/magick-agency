@@ -88,6 +88,7 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   // Working the Missed list and the inbound summary (`agency/inbound-missed-work.ts`), Postgres only.
   'GET /inbound/missed/count': 'none',
   'POST /inbound/missed/:id/assign': 'none',
+  'POST /inbound/missed/:id/claim': 'none',
   'GET /inbound/summary': 'none',
   // The answered inbound call (`agency/inbound-calls.ts`): inbound callers are connected only in
   // one process (IB8), so the connector and the agents it took are this process's.

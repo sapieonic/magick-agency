@@ -1,10 +1,12 @@
 # agency_wire
 
 Hand-written, immutable Dart wire types for the agent app: the station socket
-(frames, close codes, intervals), the session and action routes, the agent's own
-reads, customer history (and its search box's number rule, a port of
-`packages/domain/src/customer-search-number.ts`), and the platform shapes the app
-signs in with. Pure Dart, no code generation.
+(frames, close codes, intervals, the upgrade's `caps=`), the session and action routes,
+the agent's own reads, customer history (and its search box's number rule, a port of
+`packages/domain/src/customer-search-number.ts`), inbound calls (the `inbound_call` and
+`customer_waiting` frames, the call routes' bodies and answers, their refusals) and the
+Missed list (rows, query, page, count, Mark handled and Reopen), and the platform shapes
+the app signs in with. Pure Dart, no code generation.
 
 Every type cites the TypeScript type it mirrors in `packages/contracts/src`.
 

@@ -109,6 +109,10 @@ export interface AgentSpec {
   label?: string;
   /** This agent's app; see {@link FleetOptions.client}. */
   client?: 'web' | 'mobile';
+  /** `media=` on this agent's upgrades (unset: none sent, the server reads `pcm16`). */
+  media?: 'pcm16' | 'alaw8';
+  /** `caps=` on this agent's upgrades, verbatim (unset: none sent). E.g. `inbound`. */
+  caps?: string;
 }
 
 /** Poll until `predicate` holds or the deadlock bound passes. */
@@ -260,8 +264,14 @@ export class StationLeg {
 export class FleetAgent {
   readonly legs: StationLeg[] = [];
   readonly label: string;
-  /** The `client=` this agent's legs send, or null for none. */
-  readonly client: 'web' | 'mobile' | null;
+  /**
+   * The `client=`, `media=` and `caps=` this agent's NEXT leg sends (null: none). Mutable, so a
+   * test can reattach the same session as another app build (an older one with no caps, say) or
+   * another app (a console's session continued on a phone).
+   */
+  client: 'web' | 'mobile' | null;
+  media: 'pcm16' | 'alaw8' | null;
+  caps: string | null;
 
   constructor(readonly spec: AgentSpec, private readonly fleet: StationFleet, index: number) {
     this.label = spec.label ?? spec.sessionId.slice(0, 8);
@@ -270,6 +280,8 @@ export class FleetAgent {
       ?? (typeof opt === 'number'
         ? (Math.floor((index + 1) * opt) > Math.floor(index * opt) ? 'mobile' : 'web')
         : opt ?? null);
+    this.media = spec.media ?? null;
+    this.caps = spec.caps ?? null;
   }
 
   get sessionId(): string { return this.spec.sessionId; }
@@ -299,6 +311,8 @@ export class FleetAgent {
     const params = [
       ...(token === undefined ? [] : [`token=${encodeURIComponent(token)}`]),
       ...(this.client ? [`client=${this.client}`] : []),
+      ...(this.media ? [`media=${this.media}`] : []),
+      ...(this.caps !== null ? [`caps=${encodeURIComponent(this.caps)}`] : []),
     ];
     const query = params.length ? `?${params.join('&')}` : '';
     const leg = new StationLeg(`${this.fleet.options.origin}${path}${query}`);

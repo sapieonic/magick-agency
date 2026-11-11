@@ -167,6 +167,9 @@ const EXPECTED_AGENT_REACHABLE = [
   // The nav badge's count of the same rows (an agent's own; the account's with supervise). The
   // reassign and the inbound summary are `agency.supervise` and refuse an agent.
   'GET /proxy/agency/inbound/missed/count',
+  // IQ49: an agent takes an unassigned row of the account (the Team view's `assignee=unassigned`)
+  // with a compare-and-set; another's row answers `inbound_missed_call_claimed`.
+  'POST /proxy/agency/inbound/missed/:id/claim',
   // The answered inbound call's finish (docs/inbound.md §6, P2): `agency.inbound.read`, so the
   // agent who took a call can finish it. The internal handler acts only on a call offered to or
   // connected with the caller's own session (another's answers `inbound_call_not_found`).

@@ -143,6 +143,8 @@ describe('0024 — agency_inbound_routes', () => {
       'disposition_catalog jsonb not null', 'created_by uuid', 'updated_by uuid',
       'created_at timestamp with time zone not null', 'updated_at timestamp with time zone not null',
       'deleted_at timestamp with time zone', 'deleted_by uuid',
+      // 0032: the route's wrap-up window, IQ52 (inbound-route-wrapup-migration.test.ts pins it).
+      'wrapup_seconds smallint not null',
     ]);
     const d = AGENCY_INBOUND_ROUTE_DEFAULTS;
     expect(await route()).toMatchObject({
@@ -152,6 +154,7 @@ describe('0024 — agency_inbound_routes', () => {
       max_waiting: d.max_waiting, max_concurrent: d.max_concurrent, after_hours_action: d.after_hours_action,
       overflow_action: d.overflow_action, record_calls: d.record_calls, recording_notice: d.recording_notice,
       analysis_profile_id: null, disposition_catalog: [], greeting_audio_id: null, deleted_at: null,
+      wrapup_seconds: d.wrapup_seconds,
     });
   });
 
@@ -289,6 +292,8 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
       'carrier_seconds integer',
       // 0030: why a call was answered closed (inbound-reached-on-outcome-migration.test.ts pins it).
       'closed_cause character varying',
+      // 0032: the route's wrap-up window, captured at arrival (inbound-route-wrapup-migration.test.ts).
+      'wrapup_seconds smallint',
     ]);
     expect(await call()).toMatchObject({ state: 'arrived', provider: 'plivo', caller_dnc: false, outcome: null, follow_up_status: null });
   });
@@ -593,7 +598,7 @@ describe('0024 — down', () => {
     } finally {
       await migrate('up');
     }
-    expect((await columns('agency_inbound_calls')).length).toBe(51); // 0024's 33, 0027's 15, 0028's 1, 0029's 1 and 0030's 1
+    expect((await columns('agency_inbound_calls')).length).toBe(52); // 0024's 33, 0027's 15, 0028's 1, 0029's 1, 0030's 1 and 0032's 1
     expect((await checkDef('ck_agency_calls_origin'))!.validated).toBe(true);
   });
 });

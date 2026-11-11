@@ -132,14 +132,21 @@ describe('station WebSocket proxy', () => {
   it('hands the parsed client and media on: the defaults when the upgrade names neither', async () => {
     const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t`);
     await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler');
-    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[4]).toEqual({ client: 'web', media: 'pcm16' });
+    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[4]).toEqual({ client: 'web', media: 'pcm16', caps: [] });
     client.close();
   });
 
   it('hands client=mobile and media=alaw8 on as named', async () => {
     const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t&client=mobile&media=alaw8`);
     await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler');
-    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[4]).toEqual({ client: 'mobile', media: 'alaw8' });
+    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[4]).toEqual({ client: 'mobile', media: 'alaw8', caps: [] });
+    client.close();
+  });
+
+  it('hands caps on, the app`s caps=inbound and a repeated caps as their union; an unknown capability is ignored, never refused (IQ46)', async () => {
+    const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t&client=mobile&media=alaw8&caps=video&caps=inbound,push`);
+    await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler');
+    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[4]).toEqual({ client: 'mobile', media: 'alaw8', caps: ['inbound'] });
     client.close();
   });
 

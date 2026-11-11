@@ -185,3 +185,30 @@
   line-height: 1.5;
   color: var(--text-muted);
 }
+
+/* IQ54: the matched contact's name, on its own line above the caller's number. */
+.callerName {
+  display: block;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* "Show your missed calls" after a claim: a text button inside the notice. */
+.inlineLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inlineLink:hover {
+  text-decoration: underline;
+}
+
+.inlineLink:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

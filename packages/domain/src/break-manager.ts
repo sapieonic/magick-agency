@@ -1,6 +1,8 @@
 import {
   DEVICE_AWAY_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON_LABEL,
+  PHONE_CALL_BREAK_REASON,
+  PHONE_CALL_BREAK_REASON_LABEL,
   RESERVED_BREAK_REASONS,
   type AgencyBreakReason,
 } from '@magick-agency/contracts/agency';
@@ -95,6 +97,12 @@ export function isReservedBreakReason(code: unknown): boolean {
 export const DEVICE_AWAY_BREAK: Readonly<AgencyBreakReason> = Object.freeze({
   code: DEVICE_AWAY_BREAK_REASON,
   label: DEVICE_AWAY_BREAK_REASON_LABEL,
+});
+
+/** IQ51: the cellular-call pause as a reason entry, as {@link DEVICE_AWAY_BREAK}. */
+export const PHONE_CALL_BREAK: Readonly<AgencyBreakReason> = Object.freeze({
+  code: PHONE_CALL_BREAK_REASON,
+  label: PHONE_CALL_BREAK_REASON_LABEL,
 });
 
 /** Agent states from which a break must be QUEUED rather than applied now. */

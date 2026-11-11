@@ -10,6 +10,9 @@ import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/station/station_view_mapper.dart';
+import 'package:magick_agency_agent/features/missed/missed_access.dart';
+import 'package:magick_agency_agent/features/missed/missed_calls_copy.dart';
+import 'package:magick_agency_agent/features/missed/missed_on_duty.dart';
 
 import '../core/auth/support/harness.dart';
 import 'shell_harness.dart';
@@ -234,6 +237,80 @@ void main() {
       await pumpAt(tester, 800, textScale: 2);
       expect(tabLabels(tester), ['Station', 'Phone', 'Stats', 'My calls', 'Me']);
       expectOneLineEach(tester, 1.3);
+    });
+  });
+
+  group('the Missed calls badge', () {
+    testWidgets('My calls carries the open count; none, no badge', (tester) async {
+      c = shellContainer(extra: [
+        missedCallsAccessProvider.overrideWithValue(const MissedCallsAccess(visible: true, inboundOn: true, badge: '100+')),
+      ]);
+      await pumpShell(tester, c);
+      expect(tabLabels(tester), ['Station', 'Performance', 'My calls', 'Me'], reason: 'no sixth tab');
+      final badge = tester.widget<Badge>(find.byKey(const Key('tab-missed-badge')).first);
+      expect((badge.label! as Text).data, '100+');
+    });
+
+    testWidgets('no open rows (or the list hidden): no badge', (tester) async {
+      c = shellContainer(extra: [
+        missedCallsAccessProvider.overrideWithValue(const MissedCallsAccess(visible: true, inboundOn: true)),
+      ]);
+      await pumpShell(tester, c);
+      expect(find.byKey(const Key('tab-missed-badge')), findsNothing);
+    });
+  });
+
+  group('the Missed list on duty (IQ48)', () {
+    late List<BuildContext> opened;
+    ProviderContainer withMissed(MissedCallsAccess access) {
+      opened = [];
+      return shellContainer(extra: [
+        missedCallsAccessProvider.overrideWithValue(access),
+        missedOnDutyOpenerProvider.overrideWithValue(opened.add),
+      ]);
+    }
+
+    testWidgets('held on the station: My calls opens the Missed list over it, and moves the agent nowhere',
+        (tester) async {
+      c = withMissed(const MissedCallsAccess(visible: true, inboundOn: true, badge: '3'));
+      c.read(testSignalsProvider.notifier).set(available);
+      await pumpShell(tester, c, initial: Routes.station('c1'));
+      expect(tabEnabled(tester, 'My calls'), isTrue);
+      for (final label in ['Performance', 'Me']) {
+        expect(tabEnabled(tester, label), isFalse, reason: label);
+      }
+      expect(find.byTooltip(MissedCopy.onDutyTab), findsOneWidget);
+      await tester.tap(find.text('My calls'));
+      await tester.pumpAndSettle();
+      expect(opened, hasLength(1));
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+    });
+
+    testWidgets('the list hidden for this agent: My calls stays closed on duty', (tester) async {
+      c = withMissed(MissedCallsAccess.hidden);
+      c.read(testSignalsProvider.notifier).set(available);
+      await pumpShell(tester, c, initial: Routes.station('c1'));
+      expect(tabEnabled(tester, 'My calls'), isFalse);
+      await tester.tap(find.text('My calls'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty);
+    });
+
+    testWidgets('on a break: My calls is the tab itself, every segment', (tester) async {
+      c = withMissed(const MissedCallsAccess(visible: true, inboundOn: true, badge: '3'));
+      c.read(testSignalsProvider.notifier).set(onBreak);
+      await pumpShell(tester, c, initial: Routes.station('c1'));
+      await tester.tap(find.text('My calls'));
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty);
+      expect(find.text('at /calls'), findsOneWidget);
+    });
+
+    testWidgets('a call on screen: no tab bar at all', (tester) async {
+      c = withMissed(const MissedCallsAccess(visible: true, inboundOn: true, badge: '3'));
+      c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, callActive: true, campaignId: 'c1'));
+      await pumpShell(tester, c, initial: Routes.station('c1'));
+      expect(find.byType(NavigationBar), findsNothing);
     });
   });
 }

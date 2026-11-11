@@ -16,6 +16,7 @@ import 'package:meta/meta.dart';
 
 import 'enums.dart';
 import 'equality.dart';
+import 'inbound.dart';
 import 'json.dart';
 import 'softphone.dart';
 
@@ -41,9 +42,11 @@ enum StationEvent implements WireEnum {
   /// Contact assignment: this agent's own queue changed (strict / preferred).
   queue('queue'),
 
-  /// Inbound calls: console stations only until P3 (`AGENCY_STATION_CONSOLE_ONLY_EVENTS`). The
-  /// server never sends these to the app, so no frame type decodes them yet ([UnknownFrame]).
+  /// Inbound calls: sent only to a station that declared [StationCapability.inbound]
+  /// on its upgrade (`caps=inbound`). See [InboundCallFrame].
   inboundCall('inbound_call'),
+
+  /// A caller sticky to this agent waits for them. See [CustomerWaitingFrame].
   customerWaiting('customer_waiting'),
   unknown('');
 
@@ -103,6 +106,8 @@ sealed class StationFrame {
         'ended' => BridgeEndedFrame.fromJson(decoded),
         'manual_call' => ManualCallFrame.fromJson(decoded),
         'queue' => QueueFrame.fromJson(decoded),
+        'inbound_call' => InboundCallFrame.fromJson(decoded),
+        'customer_waiting' => CustomerWaitingFrame.fromJson(decoded),
         _ => UnknownFrame(raw: text, eventRaw: event, reason: 'unknown event'),
       };
       // Any failure, including a TypeError this package did not anticipate,
@@ -780,6 +785,107 @@ final class QueueFrame extends StationFrame {
 
   @override
   String toString() => 'QueueFrame($campaignId, $queue)';
+}
+
+/// An inbound call offered to or connected with this station changed: the
+/// whole call, on every change, and once more right after `ready` on a
+/// reconnect. Play the inbound chime once per call id, on `offered`.
+///
+/// The call is kept raw in [call] and decoded once, **tolerantly**, into
+/// [inboundCall]: a call this build cannot read gives a frame with a null
+/// [inboundCall] (which the station ignores), never an [UnknownFrame], so one
+/// server-side field change cannot silence inbound calls. The lenient getters
+/// read [call] directly for logs.
+///
+/// Contract: `AgencyStationInboundCallFrame` (`agency/inbound.ts`).
+final class InboundCallFrame extends StationFrame {
+  InboundCallFrame(Map<String, Object?> call) : call = frozenMap(call), inboundCall = InboundCall.tryFromJson(call);
+
+  factory InboundCallFrame.fromJson(Map<String, Object?> j) => InboundCallFrame(j.obj('call'));
+
+  /// The `AgencyInboundCall`, unchanged and unmodifiable.
+  final Map<String, Object?> call;
+
+  /// [call] decoded, or null when it does not read as an inbound call.
+  final InboundCall? inboundCall;
+
+  String? get id => _string('id');
+  String? get sessionId => _string('session_id');
+  InboundCallState get state => InboundCallState.fromWire(_string('state'));
+
+  String? _string(String k) {
+    final v = call[k];
+    return v is String ? v : null;
+  }
+
+  @override
+  StationEvent get event => StationEvent.inboundCall;
+
+  @override
+  bool operator ==(Object other) => other is InboundCallFrame && jsonEquals(other.call, call);
+
+  @override
+  int get hashCode => jsonHash(call);
+
+  @override
+  String toString() => 'InboundCallFrame($id, ${call['state']})';
+}
+
+/// "Your customer is waiting": a caller sticky to this agent is queued while
+/// the agent is reserved, on a call or in wrap-up; they are offered the call
+/// when they free, ahead of the team. Re-sent after a reconnect while the
+/// caller still waits. [cleared] retires the notice for [inboundCallId] (taken,
+/// overflowed or hung up).
+///
+/// Contract: `AgencyStationCustomerWaitingFrame` (`agency/inbound.ts`).
+final class CustomerWaitingFrame extends StationFrame {
+  const CustomerWaitingFrame({
+    required this.inboundCallId,
+    this.fromE164,
+    this.matchName,
+    required this.waitingSince,
+    this.cleared = false,
+  });
+
+  factory CustomerWaitingFrame.fromJson(Map<String, Object?> j) => CustomerWaitingFrame(
+    inboundCallId: j.str('inbound_call_id'),
+    fromE164: j.strOrNull('from_e164'),
+    matchName: j.strOrNull('match_name'),
+    waitingSince: j.time('waiting_since'),
+    cleared: j.boolOrNull('cleared') ?? false,
+  );
+
+  final String inboundCallId;
+
+  /// E.164; null when withheld.
+  final String? fromE164;
+
+  /// The matched contact's display name, when the roster has one.
+  final String? matchName;
+
+  /// When the caller started waiting.
+  final DateTime waitingSince;
+
+  /// The caller no longer waits for this agent: remove the notice.
+  final bool cleared;
+
+  @override
+  StationEvent get event => StationEvent.customerWaiting;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CustomerWaitingFrame &&
+      other.inboundCallId == inboundCallId &&
+      other.fromE164 == fromE164 &&
+      other.matchName == matchName &&
+      other.waitingSince == waitingSince &&
+      other.cleared == cleared;
+
+  @override
+  int get hashCode => Object.hash(inboundCallId, fromE164, matchName, waitingSince, cleared);
+
+  @override
+  String toString() => 'CustomerWaitingFrame($inboundCallId, cleared: $cleared)';
 }
 
 // ─── Payload types ──────────────────────────────────────────────────────────

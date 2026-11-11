@@ -12,6 +12,12 @@
  *  2. then the `n` longest-idle candidates left (the ones the connector's search would offer the
  *     callers to: it orders the team longest idle first, as pacing does).
  *
+ * Only a station that can take inbound calls is held back, by either rule (IQ46: every console,
+ * and a phone that declared `caps=inbound`; the registry's `canTakeInbound`). A phone that cannot
+ * is never offered a caller, so holding it back would idle it for nothing: it is kept, preferred
+ * or not, does not count toward `n`, and pacing dials it while the agent held back in its place is
+ * one the caller can actually be put through to.
+ *
  * It subtracts from the idle side, never from `limit − occupied`, which already counts the
  * waiting calls through the account's live total (IB5's third arm), IQ2. The hold is per campaign,
  * so with several campaigns on the account it may hold back up to `n` agents on each: an
@@ -41,16 +47,26 @@ export function inboundHoldApplies(hold: InboundHold | undefined, campaignId: st
 
 /**
  * The candidates pacing may still reserve (see the header). `candidates` must already be in the
- * engine's order (longest idle first), which is kept. Pure: with no hold that applies, the input
- * itself is returned (no copy, on every tick); else a new array.
+ * engine's order (longest idle first), which is kept. `canTakeInbound` answers for a candidate's
+ * station: one that cannot take inbound calls is never held back. Pure: with no hold that
+ * applies, the input itself is returned (no copy, on every tick); else a new array.
  */
 export function holdBackForInbound<T extends { sessionId: string }>(
   candidates: readonly T[],
   hold: InboundHold | undefined,
   campaignId: string,
   now: number,
+  canTakeInbound: (sessionId: string) => boolean,
 ): readonly T[] {
   if (!inboundHoldApplies(hold, campaignId, now)) return candidates;
-  const rest = candidates.filter((c) => !hold.preferredSessionIds.has(c.sessionId));
-  return rest.slice(Math.min(Math.max(0, hold.n), rest.length));
+  // One pass in the engine's order: the preferred sessions out, then the first `n` of the rest,
+  // counting only the stations that can take a caller.
+  let toHold = Math.max(0, hold.n);
+  return candidates.filter((c) => {
+    if (!canTakeInbound(c.sessionId)) return true;
+    if (hold.preferredSessionIds.has(c.sessionId)) return false;
+    if (toHold === 0) return true;
+    toHold--;
+    return false;
+  });
 }

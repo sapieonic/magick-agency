@@ -1,7 +1,11 @@
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/inbound/inbound_call_rules.dart';
 import 'package:magick_agency_agent/core/station/station_state.dart';
+import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/core/station/station_view_mapper.dart';
 
+import '../inbound/inbound_fixtures.dart';
 import '../softphone/manual_calls.dart' as mc;
 import 'fixtures.dart';
 
@@ -360,5 +364,114 @@ void main() {
       final next = mc.manualCall({'id': 'mc-2', 'created_at': '2026-10-30T10:05:00.000Z', 'updated_at': '2026-10-30T10:05:00.000Z'});
       expect(run([ManualCallAction(settled), ManualCallAdoptAction(next)]).manualCall, next);
     });
+  });
+
+  group('inbound copies the station let go of (the console\'s staleKeys)', () {
+    final connected = inboundCall('inbound_call_connected');
+    final offered = inboundCall('inbound_call_offered');
+    final owed = inboundCall('inbound_call_outcome_owed');
+    final settled = inboundCall('inbound_call_settled');
+
+    test('retired: an answer of the same snapshot, or one no further along, is never adopted', () {
+      final s = run([InboundCallAction(connected), InboundCallRetireAction(inboundSnapshotKey(connected))]);
+      expect(s.inboundCall, isNull);
+      expect(s.retiredInbound, [connected]);
+      expect(run([InboundCallAdoptAction(connected)], s).inboundCall, isNull);
+      expect(run([InboundCallAdoptAction(offered)], s).inboundCall, isNull, reason: 'earlier in the same offer');
+      expect(run([InboundCallAction(connected)], s).inboundCall, isNull, reason: 'a frame of the retired snapshot too');
+      // News: further along (it settled), or a later offer of the call.
+      expect(run([InboundCallAdoptAction(settled)], s).inboundCall, settled);
+      final reoffer = inboundCall('inbound_call_offered', overrides: {'offered_at': '2026-11-02T05:40:00.000Z'});
+      expect(run([InboundCallAdoptAction(reoffer)], s).inboundCall, reoffer);
+      expect(run([InboundCallAction(owed)], s).inboundCall, owed, reason: 'a frame of a newer snapshot is the authority');
+    });
+
+    test('dropped by a campaign reserved: the late answer does not come back beside the campaign call', () {
+      final s = run([InboundCallAction(settled), ReservedAction(_attempt)]);
+      expect(s.inboundCall, isNull);
+      expect(s.retiredInbound, [settled]);
+      final late = run([InboundCallAdoptAction(connected)], s);
+      expect(late.inboundCall, isNull);
+      expect(late.effectiveState, AgentState.reserved);
+    });
+
+    test('the let-go copies are bounded', () {
+      var s = StationState.initial;
+      for (var i = 0; i < StationState.retiredInboundLimit + 3; i++) {
+        final c = inboundCall('inbound_call_connected', overrides: {'id': 'ib-$i'});
+        s = run([InboundCallAction(c), InboundCallRetireAction(inboundSnapshotKey(c))], s);
+      }
+      expect(s.retiredInbound, hasLength(StationState.retiredInboundLimit));
+      expect(s.retiredInbound.last.id, 'ib-${StationState.retiredInboundLimit + 2}');
+    });
+
+    test('a live campaign attempt is the call on screen: the inbound copy beside it is not', () {
+      // Never sent by the server; the reducer still keeps the two readings in step.
+      final s = run([ReservedAction(_attempt), InboundCallAction(connected)]);
+      expect(s.inboundOnStation, connected);
+      expect(s.inboundOnScreen, isNull);
+      expect(s.effectiveState, AgentState.reserved);
+      final mapped = StationViewMapper().map(
+        campaignId: 'camp-1',
+        campaignName: 'Renewals',
+        sessionId: 'sess-1',
+        s: s,
+        bootstrap: null,
+        catalog: const [],
+        breakReasons: const [],
+        pendingBreakCode: null,
+        audio: const AudioView(),
+        notes: const NotesView(),
+        busy: StationBusy.none,
+        actionError: null,
+        fatal: null,
+        dispositionSavedCode: null,
+        countdown: null,
+        reconnectDeadline: null,
+        reconnectWindow: null,
+        dncOutcome: null,
+        missedReleaseDismissed: false,
+        awayPauseRequested: false,
+      );
+      expect(mapped.inbound, isNull);
+      expect(mapped.call?.attemptId, 'att-1');
+      expect(mapped.phase, AgentPhase.reserved);
+    });
+  });
+
+  test('the inbound caller\'s prior attempts follow a new clock offset (the contact is not resolved again)', () {
+    final call = inboundCall('inbound_call_offered');
+    final mapper = StationViewMapper();
+    InboundCallView map(int offsetMs) => mapper
+        .map(
+          campaignId: 'camp-1',
+          campaignName: 'Renewals',
+          sessionId: 'sess-1',
+          s: StationState(agentState: AgentState.reserved, inboundCall: call, clockOffsetMs: offsetMs),
+          bootstrap: null,
+          catalog: const [],
+          breakReasons: const [],
+          pendingBreakCode: null,
+          audio: const AudioView(),
+          notes: const NotesView(),
+          busy: StationBusy.none,
+          actionError: null,
+          fatal: null,
+          dispositionSavedCode: null,
+          countdown: null,
+          reconnectDeadline: null,
+          reconnectWindow: null,
+          dncOutcome: null,
+          missedReleaseDismissed: false,
+          awayPauseRequested: false,
+        )
+        .inbound!;
+    final before = map(0);
+    expect(before.priorAttempts, isNotEmpty);
+    final after = map(5000);
+    expect(after.displayName, before.displayName);
+    for (var i = 0; i < before.priorAttempts.length; i++) {
+      expect(before.priorAttempts[i].at.difference(after.priorAttempts[i].at).abs(), const Duration(seconds: 5));
+    }
   });
 }

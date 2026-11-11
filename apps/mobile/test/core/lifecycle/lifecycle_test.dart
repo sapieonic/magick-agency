@@ -5,6 +5,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:magick_agency_agent/core/lifecycle/lifecycle_policy.dart';
+import 'package:magick_agency_agent/core/station/away_return.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
 import '../station/controller_harness.dart';
@@ -407,4 +408,233 @@ void main() {
       });
     });
   });
+
+  group('back within 30 s of the device_away pause (IQ50)', () {
+    const availablePath = '/proxy/agency/sessions/sess-1/available';
+
+    test('the window is 30 s, and the away card says so', () {
+      expect(deviceAwayReturnGrace, const Duration(seconds: 30));
+      expect(autoReturnsFromAway(const Duration(seconds: 29, milliseconds: 999)), isTrue);
+      expect(autoReturnsFromAway(const Duration(seconds: 30)), isFalse);
+    });
+
+    /// Available, away, the pause landed and applied at 09:00:00 (the server's
+    /// `since`), then back after [away].
+    App pausedThenBack(FakeAsync async, Duration away) {
+      final app = App(async)..start();
+      app.readyFrame('available');
+      app.agentStateFrame('available');
+      app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: 'device_away'));
+      app.routes['POST $availablePath'] = (_) => json(200, stateBody('available'));
+      app.lifecycle.hide();
+      async.flushMicrotasks();
+      app.agentStateFrame('break', breakReason: 'device_away');
+      async.elapse(away);
+      app.lifecycle.show();
+      async.flushMicrotasks();
+      return app;
+    }
+
+    test('back at 29 s: returned to the pool, as "Resume taking calls" would', () {
+      fakeAsync((async) {
+        final app = pausedThenBack(async, const Duration(seconds: 29));
+        expect(app.requests('POST', availablePath), hasLength(1));
+        app.agentStateFrame('available', since: '2026-11-01T09:00:29.000Z');
+        expect(app.view!.phase, AgentPhase.available);
+        app.dispose();
+      });
+    });
+
+    test('back at 31 s: still paused, on the away card with its tap', () {
+      fakeAsync((async) {
+        final app = pausedThenBack(async, const Duration(seconds: 31));
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('POST', availablePath), isEmpty);
+        expect(app.view!.onBreak!.isDeviceAway, isTrue);
+        app.dispose();
+      });
+    });
+
+    test('the pause’s age runs from when the server applied it (its `since`), not from the ask', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: 'device_away'));
+        app.routes['POST $availablePath'] = (_) => json(200, stateBody('available'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        // The server applied the pause 20 s after the phone asked (a slow network): back 40 s
+        // after asking is 20 s after the pause began.
+        app.agentStateFrame('break', breakReason: 'device_away', since: '2026-11-01T09:00:20.000Z');
+        async.elapse(const Duration(seconds: 40));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', availablePath), hasLength(1));
+        app.dispose();
+      });
+    });
+
+    test('a pause still in flight on return: decided when it lands', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        final answer = Completer<http.Response>();
+        app.routes['POST $_breakPath'] = (_) => answer.future;
+        app.routes['POST $availablePath'] = (_) => json(200, stateBody('available'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 2));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', availablePath), isEmpty, reason: 'nothing to return from yet');
+        answer.complete(json(200, stateBody('break', breakReason: 'device_away')));
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'device_away', since: '2026-11-01T09:00:01.000Z');
+        async.flushMicrotasks();
+        expect(app.requests('POST', availablePath), hasLength(1));
+        app.dispose();
+      });
+    });
+
+    test('a queued pause (not applied) is cancelled on return as before, and nothing is returned from', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('on_call', breakReason: 'device_away', pending: 'break'));
+        app.routes['POST $_breakPath/cancel'] = (_) => json(200, stateBody('on_call'));
+        app.routes['POST $availablePath'] = (_) => json(200, stateBody('available'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', '$_breakPath/cancel'), hasLength(1));
+        expect(app.requests('POST', availablePath), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('a pause queued behind a call that applied while away: left to the tap', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inWrapup('att-1');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('wrapup', breakReason: 'device_away', pending: 'break'));
+        app.routes['POST $availablePath'] = (_) => json(200, stateBody('available'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'device_away', since: '2026-11-01T09:00:05.000Z');
+        async.elapse(const Duration(seconds: 10));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', availablePath), isEmpty);
+        expect(app.view!.onBreak!.isDeviceAway, isTrue);
+        app.dispose();
+      });
+    });
+
+    test('who rang while away (IQ50): every return from the pause is published, with when it began', () {
+      fakeAsync((async) {
+        final quick = pausedThenBack(async, const Duration(seconds: 29));
+        expect(quick.container.read(awayReturnProvider), AwayReturn(since: DateTime.utc(2026, 11, 1, 9), kind: AwayKind.app, seq: 1));
+        quick.dispose();
+        final slow = pausedThenBack(async, const Duration(minutes: 5));
+        expect(slow.container.read(awayReturnProvider)?.since, DateTime.utc(2026, 11, 1, 9), reason: 'not returned, still told');
+        slow.dispose();
+      });
+    });
+
+    test('a pause queued behind a call that applied while away is published too; a break of another reason is not',
+        () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inWrapup('att-1');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('wrapup', breakReason: 'device_away', pending: 'break'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'device_away', since: '2026-11-01T09:00:05.000Z');
+        async.elapse(const Duration(seconds: 10));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.container.read(awayReturnProvider)?.since, DateTime.utc(2026, 11, 1, 9, 0, 5));
+        app.dispose();
+
+        final other = pausedThenBackWithBreak(async);
+        expect(other.container.read(awayReturnProvider), isNull);
+        other.dispose();
+      });
+    });
+
+    test('another break taken meanwhile (on another device, by a supervisor): never ended', () {
+      fakeAsync((async) {
+        final app = pausedThenBackWithBreak(async);
+        expect(app.requests('POST', availablePath), isEmpty);
+        expect(app.view!.onBreak!.code, 'tea');
+        app.dispose();
+      });
+    });
+
+    test('a refused return: the away card and its tap, with the reason', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: 'device_away'));
+        app.routes['POST $availablePath'] = (_) => json(409, {'code': 'state_changing', 'message': 'Try again in a moment.'});
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.agentStateFrame('break', breakReason: 'device_away');
+        async.elapse(const Duration(seconds: 10));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', availablePath), hasLength(1));
+        expect(app.view!.onBreak!.isDeviceAway, isTrue);
+        expect(app.view!.actionError, 'Try again in a moment.');
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('POST', availablePath), hasLength(1), reason: 'asked once; the tap is the agent’s');
+        app.dispose();
+      });
+    });
+
+    test('gone again before the station answered: the next return decides afresh', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: 'device_away'));
+        app.routes['POST $availablePath'] = (_) => json(200, stateBody('available'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.socket.serverClose(4408);
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.lifecycle.hide();
+        async.elapse(const Duration(minutes: 2));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        app.readyFrame('break', extra: {'break_reason': 'device_away'});
+        async.flushMicrotasks();
+        expect(app.requests('POST', availablePath), isEmpty, reason: 'away for minutes in all');
+        app.dispose();
+      });
+    });
+  });
+}
+
+/// Available, away, the pause applied, then a break of another reason replaced it while away.
+App pausedThenBackWithBreak(FakeAsync async) {
+  final app = App(async)..start();
+  app.readyFrame('available');
+  app.agentStateFrame('available');
+  app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: 'device_away'));
+  app.routes['POST /proxy/agency/sessions/sess-1/available'] = (_) => json(200, stateBody('available'));
+  app.lifecycle.hide();
+  async.flushMicrotasks();
+  app.agentStateFrame('break', breakReason: 'device_away');
+  app.agentStateFrame('break', breakReason: 'tea', since: '2026-11-01T09:00:03.000Z');
+  async.elapse(const Duration(seconds: 5));
+  app.lifecycle.show();
+  async.flushMicrotasks();
+  return app;
 }

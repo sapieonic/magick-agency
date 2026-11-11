@@ -20,6 +20,7 @@ import {
   validateBreakReason,
   isReservedBreakReason,
   DEVICE_AWAY_BREAK,
+  PHONE_CALL_BREAK,
   breakMustWait,
   BreakRegistry,
 } from '../../../src/break-manager.js';
@@ -90,9 +91,18 @@ describe('the device-away break (the mobile app, reserved)', () => {
     expect(Object.isFrozen(DEVICE_AWAY_BREAK)).toBe(true);
   });
 
-  it('isReservedBreakReason names both reserved codes and nothing else', () => {
+  it('IQ51: the phone-call pause is reserved the same way and carried with its own label', () => {
+    const configured = [{ code: 'phone_call', label: 'Phone' }, { code: 'lunch', label: 'Lunch' }];
+    expect(resolveBreakReasons(configured)).toEqual([{ code: 'lunch', label: 'Lunch' }]);
+    expect(validateBreakReason(configured, 'phone_call')).toEqual({ ok: false, allowed: ['lunch'] });
+    expect(PHONE_CALL_BREAK).toEqual({ code: 'phone_call', label: 'On a phone call' });
+    expect(Object.isFrozen(PHONE_CALL_BREAK)).toBe(true);
+  });
+
+  it('isReservedBreakReason names the three reserved codes and nothing else', () => {
     expect(isReservedBreakReason('soft_phone')).toBe(true);
     expect(isReservedBreakReason('device_away')).toBe(true);
+    expect(isReservedBreakReason('phone_call')).toBe(true);
     for (const code of ['lunch', 'break', '', null, undefined, 42]) expect(isReservedBreakReason(code)).toBe(false);
   });
 });

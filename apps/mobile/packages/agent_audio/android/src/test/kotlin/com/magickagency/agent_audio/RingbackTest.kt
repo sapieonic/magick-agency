@@ -152,6 +152,8 @@ class RingbackTest {
     private class FakeEngine(private val failStart: Boolean = false) : CallEngine {
         override var ringback = false
         var started = false
+
+        override fun playChime() {}
         var stopped = false
 
         override fun start(loopback: Loopback?) {

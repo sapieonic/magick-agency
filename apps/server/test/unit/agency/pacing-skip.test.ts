@@ -108,13 +108,16 @@ function makeAgents(states: Record<string, string>) {
   };
 }
 
-function makeStations(owned: Record<string, string>) {
+/** Stations on `owned`'s campaigns; each can take inbound calls (IQ46) unless listed in `cannotTakeInbound`. */
+function makeStations(owned: Record<string, string>, cannotTakeInbound: readonly string[] = []) {
   return {
     isLocallyOwned: vi.fn((id: string) => id in owned),
     ownerOf: vi.fn(async (id: string) => (id in owned ? 'r1' : null)),
     broadcast: vi.fn(() => 0),
     sessionIdsForCampaign: vi.fn(() => Object.keys(owned)),
-    get: vi.fn((id: string) => (id in owned ? { sessionId: id, campaignId: owned[id] } : undefined)),
+    get: vi.fn((id: string) => (id in owned
+      ? { sessionId: id, campaignId: owned[id], canTakeInbound: !cannotTakeInbound.includes(id) }
+      : undefined)),
   };
 }
 
@@ -1303,6 +1306,28 @@ describe('PacingEngine rounds: inbound_waiting holds agents back for waiting inb
     r.bus.publish(waiting({ n: 1, preferredSessionIds: ['s3'] }));
     await r.e.runRound();
     expect(reservedIds(agents)).toEqual(['s2']);
+  });
+
+  it('a station that cannot take inbound calls (an older app build) is never held back, preferred or not: the one held is one that can take the caller (IQ46)', async () => {
+    const agents = makeAgents({ s1: 'available', s2: 'available', s3: 'available' });
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }, { id: 's3' }]);
+    // s1 is the longest idle and s3 is a sticky caller's agent, both on an older build.
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1', s3: 'camp-1' }, ['s1', 's3']), agents }));
+    lead(r.e);
+    r.bus.publish(waiting({ n: 1, preferredSessionIds: ['s3'] }));
+    await r.e.runRound();
+    expect(reservedIds(agents).sort()).toEqual(['s1', 's3']);
+  });
+
+  it('a station whose capability is not known here (no `canTakeInbound`: the media workers` directory) is never held back', async () => {
+    const agents = makeAgents({ s1: 'available' });
+    const stations = makeStations({ s1: 'camp-1' });
+    stations.get.mockImplementation((id: string) => (id === 's1' ? { sessionId: id, campaignId: 'camp-1' } : undefined) as never);
+    const r = track(rig({ stations, agents }));
+    lead(r.e);
+    r.bus.publish(waiting({ n: 1 }));
+    await r.e.runRound();
+    expect(reservedIds(agents)).toEqual(['s1']);
   });
 
   it('only on the campaigns of the routes` pools; another account`s callers hold nothing here', async () => {

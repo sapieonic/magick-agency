@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-11-09.
+are as of 2026-11-10.
 
 ## What Magick Agency is
 
@@ -60,15 +60,20 @@ renderer 86 ([`reports.md`](reports.md); `status.md`, "Test counts"). They have 
 in CI.
 
 Inbound calls on Plivo numbers (2026-11-09: IB1–IB8 decided by Manas, the build's rulings IQ1–IQ24,
-the fix pass's decisions IQ25–IQ45) are built through P1 (every call answered on a linked number,
-what the caller hears, the Missed list and the inbound callback) and P2 (callers put through to
-agents on console stations, one process: the queue, sticky routing, the in-flight clash, voicemail),
-behind a flag. An independent engineering, product and QA review was fixed in two rounds (our
-standard recordings, recording upload, the kill switch, monitoring, Missed-row follow-up, the
-inbound summary; [`inbound.md`](inbound.md) §12; test counts in `status.md`). Not done: P0, the live
-Plivo checks (needs a Plivo account; until then the carrier's shapes are the mock's); P3 (the
-mobile app, pickups from break and the soft phone, the media-worker handover, Insights and
-reports); P4 (VoiceLink inbound).
+the fix pass's decisions IQ25–IQ45; 2026-11-10: IQ46–IQ47, decided) are built through P1 (every
+call answered on a linked number, what the caller hears, the Missed list and the inbound callback)
+and P2 (callers put through to agents on console stations, one process: the queue, sticky routing,
+the in-flight clash, voicemail), behind a flag. An independent engineering, product and QA review
+was fixed in two rounds (our standard recordings, recording upload, the kill switch, monitoring,
+Missed-row follow-up, the inbound summary; [`inbound.md`](inbound.md) §12; test counts in
+`status.md`). P3's mobile app frames are built too (2026-11-10, reviewed twice): a phone whose
+station declares `caps=inbound` is offered callers as a console is, and the agent app takes them on
+its station and lists the agent's Missed calls with Call back into the soft phone (not yet run on a
+phone or a carrier). Not done: P0, the live Plivo checks (needs a Plivo account; until then the
+carrier's shapes are the mock's); the rest of P3 (pickups from break and the soft phone, the
+media-worker handover, inbound in Insights, reports and customer history, "press 1 for a
+callback"); P4 (VoiceLink inbound). Ringing a phone whose app is in the background (push) is
+parked.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
@@ -95,13 +100,13 @@ Details and next steps: [`status.md`](status.md).
 | [`intent-and-plan.md`](intent-and-plan.md) | What it is for, the settled product decisions, why it is built this way, the delivery phases, invariants, out of scope |
 | [`architecture.md`](architecture.md) | How it is built: packages, server composition and start/stop order, the public API layer and internal handler instance, identity, dialer runtime, voice engine, analysis, DNC, audit, UIs, observability, tests, CI |
 | [`modules.md`](modules.md) | Every module and file group, what it does, and which test files cover it |
-| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B27, rulings Q1–Q9 and later rulings (inbound's are IB1–IB8 and IQ1–IQ45), still open with owner |
+| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B27, rulings Q1–Q9 and later rulings (inbound's are IB1–IB8 and IQ1–IQ47), still open with owner |
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
-| [`mobile.md`](mobile.md) | The agent mobile app (`apps/mobile`, Flutter): V1 scope, the foreground rule and `device_away`, how it talks to the server and the station socket (`client=mobile`, `media=alaw8`), the app's structure, builds and releases, what is not verified |
+| [`mobile.md`](mobile.md) | The agent mobile app (`apps/mobile`, Flutter): V1 scope, the foreground rule and `device_away`, how it talks to the server and the station socket (`client=mobile`, `media=alaw8`, `caps=inbound`), the soft phone, Missed calls and inbound calls on the phone, the app's structure, builds and releases, what is not verified |
 | [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |
 | [`customer-history.md`](customer-history.md) | Customer history: one phone number searched across the tenant's campaigns and the soft phone; decisions CH1–CH13, the number rule shared by console, server and app, the API (the number only in `POST` bodies, a short-lived search id), the summary and the timeline, visibility, audit and rate limit, the v2 key-column design |
 | [`reports.md`](reports.md) | Reports: agent performance reviews, campaign and account reports as PDF and Excel, ad hoc or on a schedule; decisions RP1–RP16, the contracts and datasets (every figure the screens' own), the pipeline (assembler, SQS or in-process renderer, the signed callback, the tick), who may run what, config, S3 keys |
-| [`inbound.md`](inbound.md) | Inbound calls (2026-11-09; P1 and P2 built and reviewed, P0's live Plivo checks open, P3 and P4 not built): answering customers who ring back on Plivo numbers linked to inbound, the sticky agent and its fallbacks, the queue and pacing priority, off hours, follow-ups (Missed inbound list, inbound callbacks), who configures what, decisions IB1–IB8 (the build's rulings and the fix pass's decisions, IQ1–IQ45, are in `decisions.md`), the phased build plan and its status |
+| [`inbound.md`](inbound.md) | Inbound calls (2026-11-09; P1 and P2 built and reviewed, P3's mobile app frames built 2026-11-10, P0's live Plivo checks open, the rest of P3 and P4 not built): answering customers who ring back on Plivo numbers linked to inbound, the sticky agent and its fallbacks, the queue and pacing priority, off hours, follow-ups (Missed inbound list, inbound callbacks), mobile stations, who configures what, decisions IB1–IB8 (the build's rulings, the fix pass's and the mobile app's decisions, IQ1–IQ47, are in `decisions.md`), the phased build plan and its status |
 | [`insights.md`](insights.md) | The campaign's analytic tabs (Overview, Calls, Agents, Callbacks, Health): decisions IN1–IN13, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |

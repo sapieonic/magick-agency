@@ -763,6 +763,9 @@ describe('break_reasons at the write', () => {
       ]);
     // A malformed entry is not a reserved one (the column's own shape checks own it).
     expect(validate({ break_reasons: [null, 'device_away', { label: 'no code' }] })).toEqual([]);
+    // IQ51: the app's phone-call pause is reserved too.
+    expect(validate({ break_reasons: [{ code: 'phone_call', label: 'Phone' }] }))
+      .toEqual([{ field: 'break_reasons', message: expect.stringContaining('"phone_call": it is reserved for the mobile app') }]);
   });
 
   it('a PATCH listing device_away is a 400 and writes nothing', async () => {

@@ -72,6 +72,13 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
 
     @Volatile override var ringback = false
 
+    /** Chimes asked for ([playChime]); the playback loop starts the chime when this moves. */
+    private val chimeRequests = java.util.concurrent.atomic.AtomicInteger(0)
+
+    override fun playChime() {
+        chimeRequests.incrementAndGet()
+    }
+
     private val jitter = JitterBuffer(JitterBufferConfig(frameSamples = format.frameSamples))
     private val jitterLock = Any()
     private val downlinkLock = Any()
@@ -249,12 +256,21 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val out = ShortArray(format.frameSamples)
         val tone = Ringback(format.sampleRate)
+        val chime = Chime(format.sampleRate)
+        var chimesSeen = 0
         var pops = 0
         try {
             while (running) {
                 synchronized(jitterLock) { jitter.pop(out) }
                 // At the wire rate, after the jitter buffer: the same frame-level mix as iOS.
                 tone.process(out, ringback)
+                // The inbound chime, once per request, after the ringback (never both at once).
+                val chimes = chimeRequests.get()
+                if (chimes != chimesSeen) {
+                    chimesSeen = chimes
+                    chime.start()
+                }
+                chime.process(out)
                 val w = trk.write(out, 0, out.size)
                 if (w < 0) {
                     fail("lost", "Playback write failed ($w)")

@@ -290,7 +290,7 @@ export function describeRail(input: {
       // Driven by `dialing`, never by `campaign_state.status` — deriving the
       // predicate from `status` forces every client to re-derive it and they will
       // disagree.
-      label: dialing ? 'Waiting for a call' : 'Campaign paused — no calls will come through',
+      label: dialing ? 'Waiting for a call' : 'Campaign paused — no campaign calls for now',
       detail: null,
     };
   }

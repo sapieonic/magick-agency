@@ -90,6 +90,7 @@ type CampaignScopedAuditAction = Exclude<
   | 'agency_inbound_clip.deleted'
   | 'agency_inbound_call.reassigned'
   | 'agency_inbound_call.reopened'
+  | 'agency_inbound_call.claimed'
 >;
 
 /**

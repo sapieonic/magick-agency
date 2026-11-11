@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Calendar, Check, ListChecks, Phone, PhoneIncoming, RotateCcw, UserRoundPen } from 'lucide-react';
+import { AlertCircle, Calendar, Check, ListChecks, Phone, PhoneIncoming, RotateCcw, UserPlus, UserRoundPen } from 'lucide-react';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -10,6 +10,7 @@ import { VoicemailPlayer } from './VoicemailPlayer';
 import { useTenant } from '../../../contexts/TenantContext';
 import {
   assignMissedInboundCall,
+  claimMissedInboundCall,
   listMissedInboundCalls,
   markMissedInboundCallHandled,
   reopenMissedInboundCall,
@@ -30,19 +31,44 @@ import {
 } from '../../../utils/inbound/inboundCopy';
 import {
   MISSED_REACHED_NOTE,
+  MISSED_TEAM_COPY,
+  claimRefusalCopy,
+  claimedNotice,
   departedAssigneeNote,
+  missedCallerLabel,
+  missedCallerName,
   missedAssigneeLabel,
   missedHandledLabel,
   missedReasonLabel,
   reassignRefusalCopy,
   reopenRefusalCopy,
 } from '../../../utils/inbound/missedCopy';
-import { AGENCY_INBOUND_MISSED_REASONS, type AgencyInboundMissedCall } from '../../../types/inbound';
+import {
+  AGENCY_INBOUND_MISSED_ASSIGNEE_UNASSIGNED,
+  AGENCY_INBOUND_MISSED_REASONS,
+  type AgencyInboundMissedCall,
+  type AgencyInboundMissedListQuery,
+} from '../../../types/inbound';
 import spine from '../SpineListLayout.module.css';
 import styles from './Inbound.module.css';
 import missedStyles from './MissedCalls.module.css';
 
 const PAGE_SIZE = 50;
+
+/** An agent's two views (IQ49): their own rows, or the account's unassigned ones to claim. */
+export type MissedView = 'mine' | 'team';
+
+/**
+ * The page's query for the filters and the view. The Team view is the account's open rows nobody
+ * has (`assignee=unassigned`), whatever the status tab said; the agent's own view is the server's
+ * default for them.
+ */
+export function missedListQuery(filters: MissedFiltersDraft, view: MissedView): AgencyInboundMissedListQuery {
+  if (view === 'team') {
+    return missedQueryFromDraft({ ...filters, status: 'open', assignee: AGENCY_INBOUND_MISSED_ASSIGNEE_UNASSIGNED });
+  }
+  return missedQueryFromDraft(filters);
+}
 
 export interface MissedCallsListProps {
   /** The signed-in user: "You" on their rows. */
@@ -67,6 +93,14 @@ export interface MissedCallsListProps {
  * A supervisor **reassigns** an open row to a member of the account, or to the account; a row
  * whose assignee has left reads "Former member" with the prompt to reassign it. Every change
  * re-reads the nav badge's count.
+ *
+ * Without `agency.supervise` the list has two views (IQ49): **Yours** (the agent's own rows, as
+ * above) and **Team**, the account's open rows nobody has, each with **Claim**: the row becomes
+ * theirs and leaves the Team view for their own (a compare-and-set on the server; someone quicker
+ * is said in words on the row). A supervisor keeps the account's whole list, the same rows under
+ * "Assigned to: The account (no one in particular)".
+ *
+ * A row whose caller was matched to a contact shows the contact's name above the number (IQ54).
  */
 export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsListProps) {
   const { tenantId, accountId } = useTenant();
@@ -87,7 +121,14 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
   /** The row whose reassign picker is open, and what is picked ('' : the account). */
   const [reassigning, setReassigning] = useState<{ id: string; to: string } | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
+  /** Agents only: their own rows, or the Team view (supervisors always read the account's). */
+  const [view, setView] = useState<MissedView>('mine');
+  const [claiming, setClaiming] = useState<string | null>(null);
+  /** The Team view's last claim, said where the row was: it has moved to the agent's own list. */
+  const [claimNote, setClaimNote] = useState<string | null>(null);
   const seq = useRef(0);
+  const effectiveView: MissedView = supervise ? 'mine' : view;
+  const team = effectiveView === 'team';
 
   useEffect(() => {
     if (!supervise || !tenantId) return;
@@ -113,14 +154,14 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
   }, [supervise, tenantId, accountId]);
 
   const load = useCallback(
-    async (filters: MissedFiltersDraft) => {
+    async (filters: MissedFiltersDraft, which: MissedView) => {
       if (!tenantId || !accountId) return;
       const mine = ++seq.current;
       setLoading(true);
       setError(null);
       setMoreError(null);
       try {
-        const page = await listMissedInboundCalls({ ...missedQueryFromDraft(filters), limit: PAGE_SIZE }, tenantId, accountId);
+        const page = await listMissedInboundCalls({ ...missedListQuery(filters, which), limit: PAGE_SIZE }, tenantId, accountId);
         if (mine !== seq.current) return;
         setRows(page.rows);
         setNextCursor(page.next_cursor);
@@ -135,8 +176,8 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
   );
 
   useEffect(() => {
-    void load(applied);
-  }, [load, applied]);
+    void load(applied, effectiveView);
+  }, [load, applied, effectiveView]);
 
   const loadMore = async () => {
     if (!nextCursor || loadingMore || !tenantId || !accountId) return;
@@ -145,7 +186,7 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
     setMoreError(null);
     try {
       const page = await listMissedInboundCalls(
-        { ...missedQueryFromDraft(applied), cursor: nextCursor, limit: PAGE_SIZE },
+        { ...missedListQuery(applied, effectiveView), cursor: nextCursor, limit: PAGE_SIZE },
         tenantId,
         accountId,
       );
@@ -231,6 +272,22 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
       },
     );
 
+  const claim = (call: AgencyInboundMissedCall) =>
+    runRowAction(call, [claiming, setClaiming], () => claimMissedInboundCall(call.id, tenantId ?? undefined, accountId ?? undefined), {
+      refusalCopy: claimRefusalCopy,
+      // Theirs now: off the Team view, onto their own list (read again when they open it).
+      stillMatches: () => false,
+      announce: () => claimedNotice(callerLabel(call)),
+      done: () => setClaimNote(claimedNotice(callerLabel(call))),
+    });
+
+  const switchView = (next: MissedView) => {
+    if (next === view) return;
+    setRowError(null);
+    setClaimNote(null);
+    setView(next);
+  };
+
   const callBack = (call: AgencyInboundMissedCall) => {
     if (!call.from_e164) return;
     navigate('/dialer/phone', {
@@ -245,10 +302,31 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
     setDraft((current) => ({ ...current, status }));
     setApplied((current) => ({ ...current, status }));
   };
-  const open = applied.status === 'open';
+  const open = team || applied.status === 'open';
 
   return (
     <div className={styles.page} data-testid="missed-calls-list">
+      {supervise ? null : (
+        <div className={styles.tabs} role="tablist" aria-label="Whose missed calls">
+          {(['mine', 'team'] as const).map((which) => (
+            <button
+              key={which}
+              type="button"
+              role="tab"
+              className={styles.tab}
+              aria-selected={view === which}
+              aria-controls="missed-calls-panel"
+              onClick={() => switchView(which)}
+              data-testid={`missed-view-${which}`}
+            >
+              {which === 'mine' ? MISSED_TEAM_COPY.mineTab : MISSED_TEAM_COPY.teamTab}
+            </button>
+          ))}
+        </div>
+      )}
+      {team ? (
+        <p className={styles.note} data-testid="missed-team-lead">{MISSED_TEAM_COPY.lead}</p>
+      ) : (
       <div className={styles.tabs} role="tablist" aria-label="Which missed calls">
         {(['open', 'handled'] as const).map((status) => (
           <button
@@ -265,6 +343,15 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
           </button>
         ))}
       </div>
+      )}
+      {team && claimNote ? (
+        <p className={missedStyles.notice} data-testid="missed-claimed-note">
+          {claimNote}{' '}
+          <button type="button" className={missedStyles.inlineLink} onClick={() => switchView('mine')} data-testid="missed-claimed-show">
+            Show your missed calls
+          </button>
+        </p>
+      ) : null}
 
       <FiltersCard activeCount={active}>
         <div className={spine.fieldRow}>
@@ -351,7 +438,7 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
       <p className={styles.srOnly} aria-live="polite" role="status">
         {announcement}
       </p>
-      {error ? <ErrorAlert message={error} onRetry={() => void load(applied)} /> : null}
+      {error ? <ErrorAlert message={error} onRetry={() => void load(applied, effectiveView)} /> : null}
 
       <p className={spine.count} aria-live="polite" aria-atomic="true">
         {!loading && rows.length > 0 ? (
@@ -367,11 +454,13 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
       {!loading && !error && rows.length === 0 ? (
         <EmptyState
           icon={<PhoneIncoming size={32} />}
-          title={active > 0 ? 'Nothing matches those filters' : open ? 'No missed calls to follow up' : 'No handled missed calls'}
+          title={active > 0 ? 'Nothing matches those filters' : team ? MISSED_TEAM_COPY.emptyTitle : open ? 'No missed calls to follow up' : 'No handled missed calls'}
           description={
             active > 0
               ? 'Widen the dates or clear the filters.'
-              : open
+              : team
+                ? MISSED_TEAM_COPY.emptyDescription
+                : open
                 ? supervise
                   ? 'When a customer rings and nobody answers, the call appears here for someone to call them back.'
                   : 'When one of your customers rings and nobody answers, the call appears here for you to call them back.'
@@ -385,7 +474,7 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
           <div className={spine.tableWrap}>
             <table className={`${spine.table} ${styles.stackTable}`}>
               <caption className={styles.srOnly}>
-                {open ? 'Missed calls to follow up, newest first' : 'Handled missed calls, newest first'}
+                {team ? MISSED_TEAM_COPY.caption : open ? 'Missed calls to follow up, newest first' : 'Handled missed calls, newest first'}
               </caption>
               <thead>
                 <tr>
@@ -402,6 +491,9 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
                   <tr key={call.id} data-testid={`missed-row-${call.id}`}>
                     <td className={styles.when} data-label="When">{formatSpineTimestamp(call.arrived_at)}</td>
                     <td data-label="Caller">
+                      {missedCallerName(call) ? (
+                        <span className={missedStyles.callerName} data-testid="missed-caller-name">{missedCallerName(call)}</span>
+                      ) : null}
                       {call.from_e164 ? (
                         <span className={styles.mono}>{formatDialNumber(call.from_e164)}</span>
                       ) : (
@@ -525,6 +617,25 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
                             </p>
                           ) : null}
                         </div>
+                      ) : team ? (
+                        <div className={styles.rowActions}>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => void claim(call)}
+                            disabled={claiming !== null}
+                            aria-label={`Claim the call from ${callerLabel(call)}`}
+                            data-testid="missed-claim"
+                          >
+                            <UserPlus size={13} aria-hidden="true" />
+                            {claiming === call.id ? 'Claiming…' : 'Claim'}
+                          </button>
+                          {rowError?.id === call.id ? (
+                            <p className="error-text" role="alert">
+                              {rowError.message}
+                            </p>
+                          ) : null}
+                        </div>
                       ) : (
                         <div className={styles.rowActions}>
                           {canCallBack ? (
@@ -573,7 +684,7 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
               </button>
             </div>
           ) : null}
-          {open && !canCallBack ? (
+          {open && !team && !canCallBack ? (
             <p className={styles.note} data-testid="missed-no-softphone">
               Call back opens the soft phone, which isn’t on for this account. Call the customer another way, then mark the call handled.
             </p>
@@ -585,5 +696,5 @@ export function MissedCallsList({ userId, supervise, canCallBack }: MissedCallsL
 }
 
 function callerLabel(call: AgencyInboundMissedCall): string {
-  return call.from_e164 ? formatDialNumber(call.from_e164) : 'a withheld number';
+  return missedCallerLabel(call, formatDialNumber);
 }

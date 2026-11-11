@@ -156,15 +156,27 @@ export async function agentUser(): Promise<string> {
   return id;
 }
 
+/**
+ * The station an agent attaches as: the app's upgrade (`client=mobile&media=alaw8&caps=inbound`),
+ * an older app build's (no `caps`), or the console's (the default).
+ */
+export const CAPABLE_PHONE = { client: 'mobile', media: 'alaw8', caps: 'inbound' } as const;
+export const OLD_PHONE = { client: 'mobile', media: 'alaw8' } as const;
+export type StationKind = { client?: 'web' | 'mobile'; media?: 'pcm16' | 'alaw8'; caps?: string };
+
 /** An agent joins `campaignId` on a real station socket (the fleet) and is put `available` (unless told). */
-export async function joinAgent(world: InboundWorld, campaignId: string, opts: { userId?: string; available?: boolean } = {}): Promise<FleetAgent> {
+export async function joinAgent(
+  world: InboundWorld,
+  campaignId: string,
+  opts: { userId?: string; available?: boolean; station?: StationKind } = {},
+): Promise<FleetAgent> {
   const runtime = getAgencyRuntime()!;
   const userId = opts.userId ?? await agentUser();
   const join = await agencyAgentSessionRepository.joinOrRehydrate({
     tenantId: TENANT, accountId: ACCOUNT, campaignId, agentUserId: userId, replicaId: runtime.replicaId,
   });
   if (!join.ok) throw new Error('join refused');
-  const agent = world.fleet.add({ sessionId: join.session.id, tenantId: TENANT, accountId: ACCOUNT, campaignId, agentUserId: userId });
+  const agent = world.fleet.add({ sessionId: join.session.id, tenantId: TENANT, accountId: ACCOUNT, campaignId, agentUserId: userId, ...opts.station });
   await agent.connectReady();
   await waitFor('station attached', () => runtime.stations.isLocallyOwned(agent.sessionId));
   if (opts.available !== false) await goAvailable(agent);

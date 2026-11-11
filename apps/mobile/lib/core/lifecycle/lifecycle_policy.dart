@@ -16,6 +16,16 @@ import 'package:agency_wire/agency_wire.dart';
 /// rules that keep a call alive in the background are also asked about the
 /// manual call: live, or ended and owing its outcome (wrap-up's twin).
 
+/// Whether a `device_away` pause that had lasted [pausedFor] when the agent
+/// came back returns them on its own, as if they had pressed "Resume taking
+/// calls" (IQ50): back within the wire's [deviceAwayReturnGrace]
+/// (`DEVICE_AWAY_RETURN_GRACE_MS`, the window the server also counts them as
+/// able to take a waiting caller); a longer absence still needs the tap. The
+/// away card says the same (`StationCopy.awayAutoReturnHint`). Only the app's
+/// own pause asked for at once qualifies, never a break of another reason or
+/// one queued behind a call: the station controller decides that.
+bool autoReturnsFromAway(Duration pausedFor) => pausedFor < deviceAwayReturnGrace;
+
 /// What to ask the server for while the app is in the background.
 enum AwayAction {
   none,

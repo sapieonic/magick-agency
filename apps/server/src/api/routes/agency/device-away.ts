@@ -1,16 +1,25 @@
 /*
- * The device-away break (`DEVICE_AWAY_BREAK_REASON`): what `POST /sessions/:id/break` does
- * with `reason: 'device_away'`, which the agent mobile app sends the moment it is
- * backgrounded. Part of `agency.routes.ts` (the session routes, `./sessions.ts`).
+ * The agent app's own pauses (`APP_PAUSE_BREAK_REASONS`): what `POST /sessions/:id/break`
+ * does with `reason: 'device_away'`, which the agent mobile app sends the moment it is
+ * backgrounded, and (IQ51) `reason: 'phone_call'`, which it sends when a cellular call
+ * starts while the agent is available. Part of `agency.routes.ts` (the session routes,
+ * `./sessions.ts`).
  *
- * The other breaks are the agent's choice from a menu; this one is the app saying "I can
- * no longer promise anyone is in front of me". So it protects pacing and never overrides
- * a choice: it takes an `available` agent out of the pool now, is queued behind a call
- * like any break, and leaves every other state exactly as it was (`decideDeviceAway`).
+ * The other breaks are the agent's choice from a menu; these are the app saying "I can
+ * no longer promise anyone is in front of me" (or "they are on another call"). So they
+ * protect pacing and never override a choice: they take an `available` agent out of the
+ * pool now, are queued behind a call like any break, and leave every other state exactly
+ * as it was (`decideDeviceAway`). Both run the same rules with their own code; neither is
+ * ever a campaign catalog's, and the ordinary `POST /sessions/:id/available` lifts either.
  */
-import type { AgencyAgentState, AgencyBreakReason, AgencySessionStateResponse } from '@magick-agency/contracts/agency';
-import { DEVICE_AWAY_BREAK_REASON } from '@magick-agency/contracts/agency';
-import { breakMustWait, DEVICE_AWAY_BREAK } from '@magick-agency/domain/break-manager';
+import type {
+  AgencyAgentState,
+  AgencyAppPauseBreakReason,
+  AgencyBreakReason,
+  AgencySessionStateResponse,
+} from '@magick-agency/contracts/agency';
+import { APP_PAUSE_BREAK_REASONS, DEVICE_AWAY_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { breakMustWait, DEVICE_AWAY_BREAK, PHONE_CALL_BREAK } from '@magick-agency/domain/break-manager';
 import { agencyAgentSessionRepository } from '../../../db/repositories/agency.repository.js';
 import { isCampaignSession, type AgencyAgentSessionRecord } from '../../../db/models/agency.model.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
@@ -66,6 +75,17 @@ export function takeBreakUnchanged(body: unknown): boolean {
   return unchanged;
 }
 
+/** Whether `reason` is one of the app's own pauses (`device_away`, `phone_call`): the device-away rules apply. */
+export function isAppPauseBreakReason(reason: unknown): reason is AgencyAppPauseBreakReason {
+  return typeof reason === 'string' && (APP_PAUSE_BREAK_REASONS as readonly string[]).includes(reason);
+}
+
+/** Each app pause's reason entry (the break queue holds it; no catalog carries it). */
+const APP_PAUSE_BREAKS: Readonly<Record<AgencyAppPauseBreakReason, Readonly<AgencyBreakReason>>> = {
+  device_away: DEVICE_AWAY_BREAK,
+  phone_call: PHONE_CALL_BREAK,
+};
+
 /** How many times a lost CAS is re-decided before answering 409 state_changing (nothing changed). */
 const DEVICE_AWAY_PASSES = 3;
 
@@ -75,7 +95,8 @@ export type DeviceAwayResult =
   | { ok: false };
 
 /**
- * Run a device-away request for `session` (already owned and live, `requireOwnedSession`).
+ * Run an app pause (`code`: `device_away`, by default, or `phone_call`) for `session`
+ * (already owned and live, `requireOwnedSession`).
  *
  * Every pass reads Redis once and decides from that one read; only `apply` writes, by
  * CAS, so a reservation or another break that lands between the read and the write is
@@ -86,8 +107,9 @@ export type DeviceAwayResult =
 export async function runDeviceAway(
   runtime: AgencyRuntime,
   session: AgencyAgentSessionRecord,
+  code: AgencyAppPauseBreakReason = DEVICE_AWAY_BREAK_REASON,
 ): Promise<DeviceAwayResult> {
-  const reason: AgencyBreakReason = { ...DEVICE_AWAY_BREAK };
+  const reason: AgencyBreakReason = { ...APP_PAUSE_BREAKS[code] };
   let queuedHere = false;
   for (let pass = 0; pass < DEVICE_AWAY_PASSES; pass++) {
     const live = await runtime.agents.get(session.id);
@@ -104,7 +126,7 @@ export async function runDeviceAway(
       const moved = await runtime.agents.transition(session.id, 'available', 'break', { leaseMs: AGENT_LEASE_MS.break });
       if (!moved) continue;
       // Ours, queued a moment ago and overtaken by a release: it has applied now.
-      if (queued?.code === DEVICE_AWAY_BREAK_REASON) runtime.breaks.take(session.id);
+      if (queued?.code === reason.code) runtime.breaks.take(session.id);
       await agencyAgentSessionRepository.setState(session.id, 'break', reason.code);
       runtime.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: reason.code });
       return {
@@ -129,7 +151,7 @@ export async function runDeviceAway(
     const state = live?.state ?? 'offline';
     // Queued here, and the queue is empty again on `break`: the release applied ours
     // between two passes (the row read at the start of the request predates it).
-    const breakReason = queuedHere && state === 'break' && !queued ? DEVICE_AWAY_BREAK_REASON : session.break_reason;
+    const breakReason = queuedHere && state === 'break' && !queued ? reason.code : session.break_reason;
     const body: AgencySessionStateResponse & { [BREAK_UNCHANGED_KEY]?: true } = {
       session_id: session.id,
       campaign_id: session.campaign_id,
@@ -147,14 +169,14 @@ export async function runDeviceAway(
     return { ok: true, body };
   }
   // A `queue` on the last pass is still a queued break: answer it rather than 409.
-  if (queuedHere && runtime.breaks.peek(session.id)?.code === DEVICE_AWAY_BREAK_REASON) {
+  if (queuedHere && runtime.breaks.peek(session.id)?.code === reason.code) {
     const live = await runtime.agents.get(session.id);
     return {
       ok: true,
       body: {
         session_id: session.id, campaign_id: session.campaign_id, kind: session.kind,
         state: live?.state ?? 'offline', since: new Date().toISOString(),
-        pending_state: 'break', break_reason: DEVICE_AWAY_BREAK_REASON,
+        pending_state: 'break', break_reason: reason.code,
       },
     };
   }

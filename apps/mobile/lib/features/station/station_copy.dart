@@ -1,6 +1,8 @@
+import 'package:agency_wire/agency_wire.dart' show deviceAwayReturnGrace;
 import '../../core/station/station_view.dart';
 import '../softphone/softphone_copy.dart';
 import 'logic/disposition_form.dart';
+import 'logic/format.dart';
 
 /// Every sentence the station screen says, in one place so it can be
 /// localised later.
@@ -33,6 +35,11 @@ abstract final class StationCopy {
   };
   static const onTheSoftphone = 'On the soft phone';
 
+  /// Reserved with no call on the station yet (`StationStage.incoming`): the moment before an
+  /// inbound offer lands, or a reconnect's `ready` saying `reserved` before the call (inbound,
+  /// or a campaign dial) is restated. Words for either direction, on screen and said aloud.
+  static const callComingThrough = 'A call is coming through';
+
   // ── Header ──
   static const running = 'Running';
   static const paused = 'Paused';
@@ -41,8 +48,10 @@ abstract final class StationCopy {
   // ── Waiting ──
   static const waitingHeadline = 'Waiting for a call';
   static const waitingHint = 'Keep this screen open so the next customer reaches you. Their details appear before they pick up.';
-  static const pausedHeadline = 'Campaign paused — no calls will come through';
-  static const pausedHint = 'Nothing will be sent to you until the campaign is running again.';
+  // A paused campaign stops campaign calls only: the inbound router does not read campaign
+  // status, so customers who ring in still reach an available agent.
+  static const pausedHeadline = 'Campaign paused — no campaign calls for now';
+  static const pausedHint = 'Customers who ring in can still reach you. Campaign calls start again when it’s running.';
   static String availableFor(String clock) => 'Available for $clock';
 
   // ── Nothing due (contact assignment: a strict or preferred campaign) ──
@@ -87,6 +96,9 @@ abstract final class StationCopy {
   static String awayDetail(String? at) => at == null
       ? 'You switched to another app, so we paused you. No customer was connected to an empty line.'
       : 'At $at you switched to another app, so we paused you. No customer was connected to an empty line.';
+  /// IQ50: under the away card's detail. The window is the controller's own.
+  static final awayAutoReturnHint = 'Come back within ${deviceAwayReturnGrace.inSeconds} seconds and you’re '
+      'returned to calls without a tap.';
   static const awayFor = 'Paused for';
   static const awayCountsAs = 'Counts as';
   static const awayCountsAsValue = 'Away (not a break)';
@@ -302,4 +314,112 @@ abstract final class StationCopy {
     final parts = name.trim().split(RegExp(r'\s+'));
     return parts.isEmpty ? name : parts.first;
   }
+}
+
+/// What the station says about an inbound call, in the console's words
+/// (`utils/inbound/inboundCall.ts`, `InboundCallView.tsx`, `CustomerWaitingPill.tsx`).
+abstract final class InboundCopy {
+  // ── Who rang ──
+  static const numberWithheld = 'Number withheld';
+
+  /// Who is on the line, in the fewest words: the name, else the number, else "Number withheld".
+  static String who(InboundCallView call) {
+    final name = call.displayName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    final from = call.fromE164;
+    return from == null ? numberWithheld : formatPhone(from);
+  }
+  static const inboundCall = 'Inbound call';
+
+  /// "Your customer" and why (`sticky.is_you`); otherwise whose customer they usually are.
+  static String sticky(InboundSticky reason, {required bool isYou}) {
+    if (!isYou) return 'Usually speaks to another agent, who isn’t free';
+    return switch (reason) {
+      InboundSticky.owner => 'Your customer: their contact is assigned to you',
+      InboundSticky.lastFromNumber => 'Your customer: you last called them from this number',
+      InboundSticky.lastConnected => 'Your customer: you last spoke to them',
+      InboundSticky.lastDialled => 'Your customer: you last called them',
+      InboundSticky.other => 'Your customer',
+    };
+  }
+
+  static const recorded = 'Recording';
+  static const notRecorded = 'Not recorded';
+  static const dncBadge = 'On Do Not Call';
+  static const dncEnquiry =
+      'This number is on a Do Not Call list. The customer’s own call is an enquiry, so help them now — but don’t call them back unless they ask you to.';
+  static const theyRang = 'They rang';
+  static const route = 'Route';
+  static const beforeYou = 'Before you';
+  static const campaign = 'Campaign';
+  static const notOnCampaign = 'Not on a campaign';
+  static String matchLine(String campaign, String? state) => state == null ? campaign : '$campaign · $state';
+
+  /// "Waited 1 min 5 s": how long the caller held before this offer.
+  static String waited(int seconds) {
+    final s = seconds < 0 ? 0 : seconds;
+    if (s < 60) return 'Waited $s s';
+    final m = s ~/ 60;
+    final rest = s % 60;
+    return rest == 0 ? 'Waited $m min' : 'Waited $m min $rest s';
+  }
+
+  static String noMatch({required bool withheld}) => withheld
+      ? '$numberWithheld: there is no number to match to a contact. Ask who’s calling and note it.'
+      : 'This number isn’t on any campaign’s contacts. Ask who’s calling and note it.';
+
+  // ── The band ──
+  static const incomingCall = 'Incoming call';
+  static const connecting = 'Connecting…';
+  static String incomingFrom(String who) => 'From $who · $connecting';
+  static String onCallWith(String who) => '$who · Inbound';
+  static const outcomeNeeded = 'Outcome needed';
+  static String outcomeDetail(String who) => 'The call with $who ended. Pick an outcome and save it to take your next call.';
+
+  /// "Without one, it closes in 29:41": the words around the countdown's digits.
+  static const lapsePrefix = 'Without one, it closes in';
+  static String lapseSemantics(String clockTime) => 'Without an outcome, the call closes at $clockTime.';
+
+  // ── Hang up ──
+  static const hangupConnecting = 'Connecting you to the caller…';
+
+  // ── The outcome ──
+  static String catalogHint(InboundCatalogKind kind, {String? campaignName, String? routeName}) => switch (kind) {
+    InboundCatalogKind.campaign => campaignName != null ? 'From $campaignName’s outcome list' : 'From the campaign’s outcome list',
+    InboundCatalogKind.route => routeName != null ? 'From the $routeName route’s outcome list' : 'From the route’s outcome list',
+    InboundCatalogKind.standard => 'From the standard outcome list',
+  };
+
+  // ── Mark DNC ──
+  static const dncTitle = 'Add this number to Do Not Call?';
+  static const dncAction = 'Add to Do Not Call';
+  static String dncMessage(String number, String? campaignName) =>
+      '$number won’t be called again ${campaignName != null ? 'for $campaignName' : 'from this account'}. Do this when the customer asks not to be called.';
+  static const dncWithheld = 'The caller withheld their number.';
+
+  /// Saving an outcome that stops calling the number: the server adds it to the matched
+  /// campaign's Do Not Call list, or with no match the account's (never "this campaign").
+  /// [campaignName] null: no campaign matched. Not asked for a withheld number, where nothing
+  /// is added.
+  static String suppressConfirmBody(String label, {required String number, String? campaignName}) {
+    final list = campaignName == null
+        ? 'this account’s Do Not Call list'
+        : 'the Do Not Call list for ${campaignName.trim().isEmpty ? 'this campaign' : campaignName}';
+    return '“$label” adds $number to $list. You can’t undo this from the app — an admin has to remove it.';
+  }
+  static const dncNotMarked = 'The call moved on before Do Not Call was marked, so nothing was recorded.';
+
+  // ── Details ──
+  static const detailsTitle = 'Caller details';
+
+  // ── "Your customer is waiting" ──
+  static String customerWaiting(String? who) => who == null ? 'Your customer is waiting' : 'Your customer is waiting: $who';
+  // Not a promise to put them through: under the default `loose` mode a teammate takes them
+  // after 30 s.
+  static const customerWaitingHint =
+      'A customer who usually speaks to you has rung in and is on hold. Finish this call’s work soon to take them.';
+
+  // ── Announcements ──
+  static String offerAnnouncement(String who) => 'Incoming call from $who';
+  static const outcomeAnnouncement = 'Outcome needed';
 }
