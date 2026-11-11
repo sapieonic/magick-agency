@@ -3,6 +3,7 @@ import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 import type { AgencyAgentState, AgencyStationServerFrame } from '../types/agency';
 import { AGENCY_STATION_CLOSE } from '../types/agency';
 import { mintStationToken } from '../api/agency';
+import { errorCode } from '../utils/agencyErrors';
 import {
   trackAgencyStationConnectionChanged,
   trackAgencyStationTokenMintFailed,
@@ -258,6 +259,16 @@ export function useAgencyStation(
    * something else cannot drift.
    */
   const tokenSpentRef = useRef(false);
+  /**
+   * OS3: this window lost the station to another device or window: a 4409, or a re-mint the server
+   * refused `station_on_other_device`. Set where `superseded` is dispatched. The one way back is
+   * the agent's own `reconnect()` from that screen ("Use this window instead"), whose next mint
+   * TAKES the station over ({@link takeOverNextMintRef}); every automatic reconnect mints without,
+   * and is refused, so this window never takes the station back on its own.
+   */
+  const supersededRef = useRef(false);
+  /** The next mint asks to take the station over: armed only by `reconnect()` after a supersede. */
+  const takeOverNextMintRef = useRef(false);
   /** The bootstrap `tokenSpentRef` is about, so a new one re-arms it. */
   const tokenBootstrapRef = useRef<StationSocketBootstrap | null>(null);
   /**
@@ -1120,8 +1131,9 @@ export function useAgencyStation(
         // Bounded — see `TOKEN_MINT_TIMEOUT_MS`. A rejection lands in the catch
         // below and walks the ordinary retry ladder; without the bound a hung
         // request left the hook with no socket, no timer and no way back.
+        const takeOver = takeOverNextMintRef.current;
         const minted = await withDeadline(
-          mintStationToken(bootstrap.session_id, options.tenantId, options.accountId),
+          mintStationToken(bootstrap.session_id, options.tenantId, options.accountId, { takeOver }),
           TOKEN_MINT_TIMEOUT_MS,
           `token mint exceeded ${TOKEN_MINT_TIMEOUT_MS}ms`,
         );
@@ -1131,8 +1143,23 @@ export function useAgencyStation(
         // second socket that made the API supersede the first.
         if (gen !== generationRef.current) return;
         url = minted.station_ws_url;
+        // A take-over is spent once granted; later reconnects are this window's own again.
+        if (takeOver) takeOverNextMintRef.current = false;
       } catch (err) {
         if (gen !== generationRef.current) return;
+        /**
+         * OS3: the agent moved the station to another device or window while this one's socket
+         * was down. Stop exactly as a 4409 stops, with no retry: retrying would be refused
+         * forever, and taking it back is the agent's call ("Use this window instead").
+         */
+        if (errorCode(err) === 'station_on_other_device') {
+          logDiagnostic('token_mint_refused', 'station_on_other_device: the station is on another device');
+          supersededRef.current = true;
+          takeOverNextMintRef.current = false;
+          dispatch({ type: 'connection', connection: 'superseded' });
+          reportConnection('superseded', null);
+          return;
+        }
         logDiagnostic('token_mint_failed', err instanceof Error ? err.message : 'unknown');
         trackAgencyStationTokenMintFailed({ retry_count: retryCountRef.current });
         scheduleRetry();
@@ -1341,6 +1368,7 @@ export function useAgencyStation(
       }
       if (event.code === AGENCY_STATION_CLOSE.SUPERSEDED) {
         logDiagnostic('close', '4409 superseded by another window');
+        supersededRef.current = true;
         dispatch({ type: 'connection', connection: 'superseded' });
         reportConnection('superseded', event.code);
         return;
@@ -1524,13 +1552,26 @@ export function useAgencyStation(
    * No close here — `connect()` retires the incumbent itself, and doing it twice
    * is how the old version raced.
    */
-  const reconnect = useCallback(() => {
+  const restart = useCallback((takeOver: boolean) => {
+    takeOverNextMintRef.current = takeOver;
+    supersededRef.current = false;
     retryCountRef.current = 0;
     connectStampsRef.current = [];
     pendingPingsRef.current = 0;
     dispatch({ type: 'missed_pings', count: 0 });
     void connect();
   }, [connect]);
+  /**
+   * The agent's Reconnect button. From the superseded screen it is "Use this window instead": the
+   * agent's own choice, so the next mint takes the station over (OS3). From anywhere else it is an
+   * ordinary reconnect.
+   */
+  const reconnect = useCallback(() => restart(supersededRef.current), [restart]);
+  /**
+   * A reconnect nobody pressed (a back/forward-cache restore): never a take-over, so a window
+   * restored after the station moved elsewhere is refused and says so instead of taking it back.
+   */
+  const reconnectAutomatically = useCallback(() => restart(false), [restart]);
 
   /**
    * Leaving the page: `beforeunload` only prompts, `pagehide` closes, and a
@@ -1552,7 +1593,7 @@ export function useAgencyStation(
     agentStateRef,
     busyRef: manualLiveRef,
     onPageHide: retireForUnload,
-    onRestore: reconnect,
+    onRestore: reconnectAutomatically,
   });
 
   return {

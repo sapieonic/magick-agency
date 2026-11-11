@@ -334,11 +334,12 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  it('uq_agency_agent_live is superseded — only the tenant index exists', async () => {
+  it('the live-session uniqueness is per AGENT across tenants (0034) — neither older index exists', async () => {
     expect(await indexDef('uq_agency_agent_live')).toBeUndefined();
-    expect(await indexDef('uq_agency_agent_live_tenant')).toBe(
-      'CREATE UNIQUE INDEX uq_agency_agent_live_tenant ON public.agency_agent_sessions ' +
-      'USING btree (tenant_id, agent_user_id) WHERE (left_at IS NULL)',
+    expect(await indexDef('uq_agency_agent_live_tenant')).toBeUndefined();
+    expect(await indexDef('uq_agency_agent_live_agent')).toBe(
+      'CREATE UNIQUE INDEX uq_agency_agent_live_agent ON public.agency_agent_sessions ' +
+      'USING btree (agent_user_id) WHERE (left_at IS NULL)',
     );
   });
 });
@@ -488,19 +489,22 @@ describe('the uniqueness constraints that carry the design (docs/architecture.md
   });
 
   // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-M6
-  it('uq_agency_agent_live_tenant — one live session per agent per TENANT, reusable after leaving', async () => {
+  it('uq_agency_agent_live_agent — one live session per agent in ANY tenant, reusable after leaving', async () => {
     const agent = randomUUID();
     const campaign = await insertCampaign();
     const first = await insertSession(campaign.id, { agent_user_id: agent });
     await expect(insertSession(campaign.id, { agent_user_id: agent })).rejects.toMatchObject({
-      code: '23505', constraint: 'uq_agency_agent_live_tenant',
+      code: '23505', constraint: 'uq_agency_agent_live_agent',
     });
     const otherAccount = randomUUID();
     const other = await insertCampaign({ account_id: otherAccount });
     await expect(insertSession(other.id, { agent_user_id: agent, account_id: otherAccount })).rejects.toMatchObject({
-      code: '23505', constraint: 'uq_agency_agent_live_tenant',
+      code: '23505', constraint: 'uq_agency_agent_live_agent',
     });
-    await expect(insertSession(campaign.id, { agent_user_id: agent, tenant_id: randomUUID() })).resolves.toBeTruthy();
+    // Another tenant is refused too (0034, OS1): one pair of ears.
+    await expect(insertSession(campaign.id, { agent_user_id: agent, tenant_id: randomUUID() })).rejects.toMatchObject({
+      code: '23505', constraint: 'uq_agency_agent_live_agent',
+    });
     await pool().query('UPDATE agency_agent_sessions SET left_at = now() WHERE id = $1', [first.id]);
     await expect(insertSession(other.id, { agent_user_id: agent, account_id: otherAccount })).resolves.toBeTruthy();
   });

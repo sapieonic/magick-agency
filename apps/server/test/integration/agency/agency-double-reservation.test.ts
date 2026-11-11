@@ -79,7 +79,7 @@ const TENANT = DEFAULTS.tenantId; // UUID
  * This was once forced: `uq_agency_campaign_running` allowed one running campaign per
  * ACCOUNT, so two campaigns that could dial at the same moment were necessarily in two
  * accounts. Migration 0015 dropped it (decisions MC6), and two running campaigns of ONE
- * account are now possible too; `uq_agency_agent_live_tenant` covers that case as well,
+ * account are now possible too; the live-session index (agent-wide since 0034) covers that case as well,
  * since a same-account pair is also a same-tenant pair. The two-account shape stays
  * because it is the one an account-scoped index would miss: `account_id` is deliberately
  * absent from the uniqueness key because "an agent moving between two accounts of the
@@ -103,14 +103,15 @@ async function restore092(): Promise<void> {
   const pool = getTestPool();
   await pool.query('DROP INDEX IF EXISTS uq_agency_agent_live');
   await pool.query(`UPDATE agency_agent_sessions SET left_at = now() WHERE left_at IS NULL`);
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live_tenant
-                      ON agency_agent_sessions (tenant_id, agent_user_id)
+  // The agent-wide index since 0034 (OS1); was the tenant-wide one.
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live_agent
+                      ON agency_agent_sessions (agent_user_id)
                       WHERE left_at IS NULL`);
 }
 
 /** The per-campaign world: a per-campaign index, which permits the second session. */
 const RESTORE_074 = `
-  DROP INDEX IF EXISTS uq_agency_agent_live_tenant;
+  DROP INDEX IF EXISTS uq_agency_agent_live_agent;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live
     ON agency_agent_sessions (campaign_id, agent_user_id)
     WHERE left_at IS NULL`;
@@ -184,7 +185,7 @@ async function join(campaignId: string, accountId: string, agentUserId = AGENT) 
  * `joinOrRehydrate` **as it worked with a per-campaign index** — the only difference is the ON CONFLICT arbiter's name.
  *
  * The counterfactual cases need it because the two halves of this change are
- * coupled through that name, which is the whole subject of the code/schema coupling: today's method names `(tenant_id, agent_user_id)` and cannot run
+ * coupled through that name, which is the whole subject of the code/schema coupling: today's method names `(agent_user_id)` (0034; was `(tenant_id, agent_user_id)`) and cannot run
  * against a per-campaign schema at all (asserted below, `42P10`). Reproducing the defect
  * therefore means running the per-campaign join path, not the
  * current code with a different index underneath it.
@@ -443,11 +444,10 @@ describe('agency double reservation — one human, two campaigns (integration)',
     expect(await agentsDialedFor(world.dialed)).toEqual([uuidFor('agent-alice'), uuidFor('agent-bob')]);
   });
 
-  it('the same agent id in ANOTHER tenant is dialled independently', async () => {
-    // The scope decision, driven through the dial path: a shared-services operator
-    // id appearing under two tenants is two people as far as this system can tell,
-    // and both must keep working. Global uniqueness would also have "fixed" the
-    // double bridge — and silently taken one of these two off the floor.
+  it('the same agent in ANOTHER tenant is refused, so they are dialled exactly once (OS1)', async () => {
+    // Amended by 0034 (Manas, 2026-11-11): one agent is one pair of ears in every tenant they
+    // belong to. Was: "the same agent id in another tenant is dialled independently", the
+    // per-tenant scope this suite once pinned.
     const world = await makeWorld();
     const ours = await dialableCampaign('ours', ACCOUNT);
     const theirs = await insertAgencyCampaign({
@@ -456,29 +456,20 @@ describe('agency double reservation — one human, two campaigns (integration)',
     });
     await insertAgencyContacts(theirs.id, 3, { tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT });
 
-    // The other tenant needs its own DNC baseline — the gate is per tenant.
-    // Decision B8: no baseline to publish; the other tenant is authoritative with no
-    // `dnc_entries` row. Asserted through the gate's own call instead.
-    const dnc = new DncRegistry();
-    expect(await dnc.check(OTHER_TENANT, '+919000000099', { accountId: OTHER_ACCOUNT, campaignId: theirs.id }))
-      .toBe('clear');
-
     const a = await join(ours.id, ACCOUNT);
     const b = await agencyAgentSessionRepository.joinOrRehydrate({
       tenantId: OTHER_TENANT, accountId: OTHER_ACCOUNT,
       campaignId: theirs.id, agentUserId: AGENT, replicaId: REPLICA,
     });
     expect(a.ok).toBe(true);
-    expect(b.ok).toBe(true);
-    if (!a.ok || !b.ok) throw new Error('unreachable');
+    expect(b).toMatchObject({ ok: false, reason: 'other_tenant' });
+    if (!a.ok) throw new Error('unreachable');
 
     await goAvailable(world, a.session.id);
-    await goAvailable(world, b.session.id);
-
     await world.pacing.tickOnce(ours.id);
     await world.pacing.tickOnce(theirs.id);
 
-    expect(world.dialed).toHaveLength(2);
-    expect(new Set(world.dialed.map((c) => c.tenantId))).toEqual(new Set([TENANT, OTHER_TENANT]));
+    expect(world.dialed).toHaveLength(1);
+    expect(world.dialed[0]!.tenantId).toBe(TENANT);
   });
 });

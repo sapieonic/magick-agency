@@ -104,7 +104,7 @@ export type AgencyActionErrorCode =
    * for the session.
    *
    * Not a politeness. Leaving clears the lease and sets `left_at`, and a left row
-   * no longer participates in `uq_agency_agent_live_tenant` — so an `on_call`
+   * no longer participates in `uq_agency_agent_live_agent` — so an `on_call`
    * agent who left could join a second campaign and be bridged a second customer
    * while the first call is still up. That is the double-bridge the one-live-session-per-agent rule
    * exists to prevent, reachable in one click, and the constraint cannot see it
@@ -190,15 +190,30 @@ export type AgencyActionErrorCode =
    * or the agent's station not connected. 503 when the agent's state could not be read
    * (Redis did not answer): nothing changed, try again. `message` says which.
    */
-  | 'redial_blocked';
+  | 'redial_blocked'
+  /**
+   * 409 (OS3): another device holds this session's station and the request (the campaign join,
+   * the soft-phone open or `POST /sessions/:id/station-token`) did not ask to take it over.
+   * Nothing changed. Body: `AgencyStationOnOtherDeviceRefusal` (`./agency/station-device`).
+   * The soft-phone open answers it (and `session_in_other_tenant`) with this union's code, not
+   * the soft-phone union's: the two unions never share a string.
+   */
+  | 'station_on_other_device'
+  /**
+   * The campaign join or the soft-phone open refused (409, OS1): the agent is live, on a campaign
+   * or the soft phone, in ANOTHER tenant. One live session per agent across every tenant. Body:
+   * `AgencySessionInOtherTenantRefusal`.
+   */
+  | 'session_in_other_tenant';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **26 members** — 16 before `session_on_other_campaign` and
+ * ⚠️ **28 members** — 16 before `session_on_other_campaign` and
  * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`, 20 before
- * the six wrap-up redial codes.
+ * the six wrap-up redial codes, 26 before `station_on_other_device` and
+ * `session_in_other_tenant` (OS1, OS3).
  * `test/errors.test.ts` snapshots the list.
  *
  * Order is the declaration order of the union.
@@ -230,6 +245,8 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'redial_blocked_dnc',
   'redial_blocked_calling_hours',
   'redial_blocked',
+  'station_on_other_device',
+  'session_in_other_tenant',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**

@@ -223,7 +223,7 @@ export async function registerMyStaffingRoutes(app: FastifyInstance): Promise<vo
    * that can say so.
    *
    * Being LIVE on one campaign at a time is the dialer runtime's session index
-   * (`uq_agency_agent_live_tenant`), not this table: a second concurrent join
+   * (`uq_agency_agent_live_agent`), not this table: a second concurrent join
    * answers a typed 409 the console renders. This route reports what an agent
    * MAY work, not what they are on.
    *

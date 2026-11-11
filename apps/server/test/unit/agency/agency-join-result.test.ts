@@ -119,6 +119,30 @@ describe('joinOrRehydrate — what the upsert returning zero rows means', () => 
     expect(upsertCalls()).toBe(1);
   });
 
+  it('reports `other_tenant` (OS1) for a live row in ANOTHER tenant, even on a campaign id that matches', async () => {
+    // The arbiter spans tenants since 0034, so the blocker may be another tenant's. The tenant
+    // decides before the campaign: never a rehydrate across tenants, never a retry into one.
+    const blocker = sessionRow({ id: 'sess-there', tenant_id: 't-other', campaign_id: 'camp-requested' });
+    script([{ upsert: [], live: [blocker] }]);
+
+    const result = await agencyAgentSessionRepository.joinOrRehydrate(PARAMS);
+
+    expect(result).toMatchObject({ ok: false, reason: 'other_tenant', session: { id: 'sess-there', tenant_id: 't-other' } });
+    expect(upsertCalls()).toBe(1);
+    // The conflict read is not scoped to this tenant: a tenant-scoped read would find nothing.
+    const read = query.mock.calls.map(([sql]) => String(sql)).find((sql) => sql.includes('SELECT * FROM agency_agent_sessions'));
+    expect(read?.replace(/\s+/g, ' ')).toContain('WHERE agent_user_id = $1 AND left_at IS NULL');
+  });
+
+  it('reports `other_tenant` from the soft-phone open too', async () => {
+    const blocker = sessionRow({ id: 'sess-there', tenant_id: 't-other', campaign_id: null, kind: 'softphone' });
+    script([{ upsert: [], live: [blocker] }]);
+
+    const result = await agencyAgentSessionRepository.joinSoftphone({ tenantId: 't1', accountId: 'a1', agentUserId: 'u-agent', replicaId: 'r1' });
+
+    expect(result).toMatchObject({ ok: false, reason: 'other_tenant', session: { id: 'sess-there' } });
+  });
+
   it('RETRIES rather than conflicting when the live row is on the REQUESTED campaign', async () => {
     // The race: a concurrent join for this agent landed on this campaign between
     // our upsert and our read. That is a rehydrate. Returning `other_campaign`
@@ -182,7 +206,7 @@ describe('joinOrRehydrate — what the upsert returning zero rows means', () => 
 });
 
 describe('joinOrRehydrate — the statement it issues', () => {
-  it('arbitrates on the tenant-scoped index and only updates its own campaign', async () => {
+  it('arbitrates on the agent-wide index (OS1) and only updates its own tenant, account and campaign', async () => {
     // Pinned as text because both clauses are load-bearing and neither is visible
     // in any return value: the arbiter must be the unique index on the agent's live session (naming a
     // dropped index would fail outright), and the `DO UPDATE … WHERE` is what
@@ -193,10 +217,12 @@ describe('joinOrRehydrate — the statement it issues', () => {
     await agencyAgentSessionRepository.joinOrRehydrate(PARAMS);
 
     const sql = String(query.mock.calls[0]![0]).replace(/\s+/g, ' ');
-    expect(sql).toContain('ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL');
+    expect(sql).toContain('ON CONFLICT (agent_user_id) WHERE left_at IS NULL');
+    // A live session in another tenant is the refusal, never a rehydrate (0034, OS1).
+    expect(sql).toContain('WHERE agency_agent_sessions.tenant_id = EXCLUDED.tenant_id');
     // NULL-safe and kind-aware: a soft-phone session's campaign_id is NULL (0005), and
     // `=` would make its rehydrate arm match nothing (the old 500).
-    expect(sql).toContain('WHERE agency_agent_sessions.kind = EXCLUDED.kind');
+    expect(sql).toContain('AND agency_agent_sessions.kind = EXCLUDED.kind');
     expect(sql).toContain('AND agency_agent_sessions.campaign_id IS NOT DISTINCT FROM EXCLUDED.campaign_id');
     expect(sql).not.toContain('agency_agent_sessions.campaign_id = EXCLUDED.campaign_id');
   });

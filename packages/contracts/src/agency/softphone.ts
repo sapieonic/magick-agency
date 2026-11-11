@@ -29,6 +29,7 @@ import type {
 } from './enums';
 import type { AgencyContextDisplay, AgencyDisposition, AgencyStationIntervals } from './session';
 import type { AgencyKeysetPage } from './spine';
+import type { AgencyStationDeviceFields } from './station-device';
 import type { AgencyClientKind, AgencyPriorAttempt, AgencyReleaseReason } from './station';
 
 // ─── The break, and the session kind ────────────────────────────────────────
@@ -58,7 +59,7 @@ export const SOFTPHONE_BREAK_REASON_LABEL = 'Soft phone';
  *   nothing campaign-scoped (pacing, staffing counts, the supervisor's per-campaign
  *   floor) ever sees it.
  *
- * Both kinds count against `uq_agency_agent_live_tenant`: one live session per
+ * Both kinds count against `uq_agency_agent_live_agent`: one live session per
  * agent per tenant, one pair of ears.
  */
 export type AgencySessionKind = 'campaign' | 'softphone';
@@ -499,7 +500,7 @@ export interface AgencySoftphoneSessionSummary {
   session_id: string;
   /**
    * The account the session is in. The live session is the agent's one in the TENANT
-   * (`uq_agency_agent_live_tenant`), so it may be in a sibling account of the one the
+   * (`uq_agency_agent_live_agent`), so it may be in a sibling account of the one the
    * bootstrap was read for: then `call` is not read, and the session routes (`leave`,
    * scoped to the session's account) must be sent with this account, not the caller's.
    */
@@ -551,7 +552,7 @@ export interface AgencySoftphoneBootstrap {
 // ─── Sessions ───────────────────────────────────────────────────────────────
 
 /** `POST /sessions`: open a soft-phone session. The body is only the server-filled actor. */
-export interface AgencySoftphoneCreateSessionRequest {
+export interface AgencySoftphoneCreateSessionRequest extends AgencyStationDeviceFields {
   /** Filled by the public API layer from the authenticated session, never by the browser. */
   agent_user_id: string;
   /** As on the campaign join (`AgencyCreateSessionRequest.client_kind`): picks the `intervals` served. */
@@ -798,7 +799,7 @@ export interface AgencySoftphoneContactInFlightRefusal extends AgencySoftphoneEr
  * campaign. The remedy is the switch on that session (§4.2), not a second session.
  *
  * `account_id` is the account the campaign session is in, which may be a sibling of
- * the one asked (one live session per agent per TENANT): the switch and every other
+ * the one asked (one live session per agent, across tenants): the switch and every other
  * session route are scoped to it. `account_name` is best-effort (NULL when the read
  * failed), like `campaign_name`'s fallback.
  */

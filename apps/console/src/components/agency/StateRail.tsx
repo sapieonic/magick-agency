@@ -142,8 +142,8 @@ export function describeRail(input: {
   if (connection === 'superseded') {
     return {
       tone: 'danger',
-      label: 'Your station moved to another window',
-      detail: 'You opened the dialler somewhere else. Only one can take calls.',
+      label: 'Your station moved to another device',
+      detail: 'You opened it on your phone or in another window. Only one can take calls.',
     };
   }
   if (connection === 'session_gone') {

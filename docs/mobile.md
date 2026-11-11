@@ -154,6 +154,23 @@ customer to nobody. So:
 | Upload check | `POST /client-config/uplink-probe` (authenticated, 64 KB cap, 6/min per user): pre-flight times a 32 KB upload and refuses "Go on duty" below 64 kbps |
 | Invite links | `https://<console host>/agency/join/<token>` opens the app through App Links / Universal Links; the web image serves `assetlinks.json` and `apple-app-site-association` (`docker/mobile-app-links.sh`, [`operations.md`](operations.md)) |
 
+## One station per agent
+
+An agent is live in one place at a time (decisions OS1–OS6): one live session across every
+tenant, and its station on one device. This install is one device: it sends a `device_id` (32 hex
+characters, made once and kept in the preferences store, `lib/core/station/station_device.dart`)
+on the join, the soft-phone open and every station-token mint. The server keeps which device holds
+the station and refuses the others `409 station_on_other_device` unless they ask to take it over.
+
+- **Takes the station over** (`take_over: true`): "Go on duty" (and the pre-flight's leave-and-join
+  remedies), "Use this phone instead" after 4409, "Use it on this phone", and any soft-phone open
+  the agent asks for.
+- **Never takes it over**: the reconnect ladder's mints, the soft-phone session this phone resumes
+  on its own, and the campaign station on the soft phone it resumes on its own. A refused resume
+  shows "open on another device" with "Use it on this phone"; a refused mint stops as 4409 does.
+- **Live in another workspace** (`409 session_in_other_tenant`): the join is refused with the
+  server's sentence, which names the workspace; nothing here can end that session.
+
 ## The station socket
 
 `/proxy/agency/station/:sessionId?token=…&client=mobile&media=alaw8&caps=inbound`. `station_ws_url`
@@ -200,8 +217,10 @@ one included.
   - 4409: superseded by another device. The on-duty service and the audio stop at once, and the
     notification loses Mute / Hang up: the call moved, and nothing on this phone may end it (a
     notification hang-up carries no call id, so it is ignored when this phone holds no call).
-    "Use this phone" starts them again and takes the session back; going back to the campaigns
-    forgets the station here.
+    "Use this phone" starts them again and takes the session back (its mint carries
+    `take_over`); going back to the campaigns forgets the station here.
+  - A re-mint refused `409 station_on_other_device` (the agent moved the station to the console or
+    another phone while this one's socket was down): handled exactly as 4409, never retried.
   - 1008: the server refused the upgrade (`invalid_client` / `invalid_media`): terminal, never
     retried. The station says to update the app, leaves the session (best effort; not while a
     soft-phone call owes its outcome, which would lapse) and closes here.
@@ -277,7 +296,7 @@ The console's soft phone ([`softphone.md`](softphone.md)) on the phone: dial a t
 outside pacing, optionally logged to a campaign, and save its outcome. It uses the console's
 routes and the `manual_call` station frame; the app adds no server route. Agent-only (M2).
 
-- **One session host.** The server allows one live session per agent per tenant, so the station
+- **One session host.** The server allows one live session per agent (across tenants since 0034), so the station
   core (`StationController`) hosts either kind as a `HostedSession`
   (`lib/core/station/hosted_session.dart`): a campaign station from the join, or a soft-phone
   session from `POST /softphone/sessions`. One socket, one audio engine, one on-duty service,

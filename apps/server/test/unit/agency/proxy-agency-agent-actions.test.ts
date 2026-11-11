@@ -194,8 +194,47 @@ describe('session create — who is joining', () => {
     await app.close();
   });
 
+  it('OS3: forwards the device id and take_over; a malformed device id is a 400 that never reaches the handler', async () => {
+    const app = await buildApp({ role: 'agent' });
+    await app.inject({
+      method: 'POST', url: `${PREFIX}/sessions`,
+      payload: { campaign_id: CAMPAIGN, device_id: 'tab-0123456789abcdef', take_over: true },
+    });
+    expect(sentBody()).toMatchObject({ device_id: 'tab-0123456789abcdef', take_over: true, agent_user_id: AGENT_USER });
 
+    for (const bad of ['short', 'has space in it', 'x'.repeat(65), 42]) {
+      mocks.proxyToCore.mockClear();
+      const res = await app.inject({ method: 'POST', url: `${PREFIX}/sessions`, payload: { campaign_id: CAMPAIGN, device_id: bad } });
+      expect(res.statusCode, String(bad)).toBe(400);
+      expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    }
+    await app.close();
+  });
+});
 
+describe('OS3: the station-token mint carries the device', () => {
+  it('forwards device_id and take_over with the actor; an empty body is still a mint', async () => {
+    mocks.proxyToCore.mockResolvedValue({ status: 200, body: { session_id: 'session-1' } });
+    const app = await buildApp({ role: 'agent', userId: 'user-caller' });
+    await app.inject({
+      method: 'POST', url: `${PREFIX}/sessions/session-1/station-token`,
+      payload: { device_id: 'phone-0123456789abcdef', take_over: true },
+    });
+    expect(sentBody()).toEqual({ device_id: 'phone-0123456789abcdef', take_over: true, agent_user_id: 'user-caller' });
+
+    mocks.proxyToCore.mockClear();
+    const empty = await app.inject({ method: 'POST', url: `${PREFIX}/sessions/session-1/station-token` });
+    expect(empty.statusCode).toBe(200);
+    expect(sentBody()).toEqual({ agent_user_id: 'user-caller' });
+
+    mocks.proxyToCore.mockClear();
+    const bad = await app.inject({
+      method: 'POST', url: `${PREFIX}/sessions/session-1/station-token`, payload: { device_id: 'nope!' },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    await app.close();
+  });
 });
 
 describe('disposition — actor attribution', () => {

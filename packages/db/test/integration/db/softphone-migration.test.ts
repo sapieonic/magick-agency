@@ -167,12 +167,12 @@ describe('0005 — agency_agent_sessions.kind', () => {
     await expect(insertSession(campaign.id, { state: 'available' })).resolves.toBeTruthy();
   });
 
-  it('uq_agency_agent_live_tenant spans both kinds: one pair of ears', async () => {
+  it('the live-session uniqueness (uq_agency_agent_live_agent since 0034) spans both kinds: one pair of ears', async () => {
     const agent = randomUUID();
     const campaign = await insertCampaign();
     await insertSession(campaign.id, { agent_user_id: agent });
     await expect(insertSoftphoneSession({ agent_user_id: agent })).rejects.toMatchObject({
-      code: '23505', constraint: 'uq_agency_agent_live_tenant',
+      code: '23505', constraint: 'uq_agency_agent_live_agent',
     });
     await pool().query(`UPDATE agency_agent_sessions SET left_at = now(), state = 'offline' WHERE agent_user_id = $1`, [agent]);
     await expect(insertSoftphoneSession({ agent_user_id: agent })).resolves.toBeTruthy();

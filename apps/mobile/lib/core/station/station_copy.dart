@@ -150,6 +150,18 @@ const notStaffedCopy = 'You’re not on this campaign’s team. Ask your supervi
 const featureDisabledCopy = 'Calling is switched off for your organisation right now. Ask your supervisor.';
 const joinFailedCopy = 'Could not join the campaign.';
 
+/// OS3: the station is open on another device, and this phone did not take it (an automatic
+/// resume). [holder] is the app that last attached it.
+String stationOnOtherDeviceCopy(ClientKind? holder) => switch (holder) {
+      ClientKind.web => 'Your station is open in the console. Use it there, or go on duty here to move it to this phone.',
+      ClientKind.mobile => 'Your station is open on another phone. Use it there, or go on duty here to move it to this phone.',
+      _ => 'Your station is open on another device. Use it there, or go on duty here to move it to this phone.',
+    };
+
+/// OS1: the agent is live in another workspace; nothing here can end it.
+const sessionInOtherTenantCopy =
+    'You’re live in another workspace. Leave your station there first: you can be on only one station at a time.';
+
 const softphoneCallPendingCopy =
     'Your soft phone has a call that isn’t finished. Hang up and save its outcome there, then come back to join.';
 

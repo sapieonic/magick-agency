@@ -29,6 +29,7 @@ import { takeInboundCloseAudit } from './agency/inbound-close-audit.js';
 import { takeBreakUnchanged } from './agency/device-away.js';
 import { sendCoreRefusal } from './proxy-agency-softphone/shared.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
+import { stationDeviceSchema } from './helpers/station-device.js';
 import { parseClientHeader } from '../../utils/client-header.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent' });
@@ -144,7 +145,7 @@ const requireDncManage = requirePermission('agency.dnc.manage');
 const createSessionSchema = z.object({
   campaign_id: z.string().uuid(),
   session_id: z.string().uuid().optional(),
-});
+}).merge(stationDeviceSchema);
 
 const breakSchema = z.object({
   reason: z.string().min(1).max(50),
@@ -379,12 +380,16 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/sessions/:id/station-token', {
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
+    // OS3: the device reconnecting, and `take_over` on the agent's "Use it here". An empty body
+    // (an older client) is still a valid mint.
+    const device = parseOr400(stationDeviceSchema, request.body ?? {}, reply, 'agency');
+    if (!device) return reply;
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await callCore({
       method: 'POST',
       path: `/agency/sessions/${request.params.id}/station-token`,
-      body: { ...actor },
+      body: { ...device.data, ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });

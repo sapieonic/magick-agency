@@ -73,7 +73,7 @@ class FakeLauncher implements StationLauncher {
   StationStart _next() => outcomes.isEmpty ? const StationStarted() : outcomes.removeAt(0);
 
   @override
-  Future<StationStart> start(String campaignId, {required String campaignName}) async {
+  Future<StationStart> start(String campaignId, {required String campaignName, bool takeOver = true}) async {
     calls.add('start:$campaignId');
     lastName = campaignName;
     return _next();
@@ -474,7 +474,7 @@ class _HeldLauncher implements StationLauncher {
   Completer<StationStart> result = Completer<StationStart>();
 
   @override
-  Future<StationStart> start(String campaignId, {required String campaignName}) => result.future;
+  Future<StationStart> start(String campaignId, {required String campaignName, bool takeOver = true}) => result.future;
   @override
   Future<StationStart> leaveOtherAndStart(StationElsewhere other, String campaignId, {required String campaignName}) => result.future;
   @override
@@ -484,7 +484,7 @@ class _HeldLauncher implements StationLauncher {
 
 class _ThrowingLauncher implements StationLauncher {
   @override
-  Future<StationStart> start(String campaignId, {required String campaignName}) => Future.error(StateError('socket'));
+  Future<StationStart> start(String campaignId, {required String campaignName, bool takeOver = true}) => Future.error(StateError('socket'));
   @override
   Future<StationStart> leaveOtherAndStart(StationElsewhere other, String campaignId, {required String campaignName}) =>
       Future.error(StateError('socket'));

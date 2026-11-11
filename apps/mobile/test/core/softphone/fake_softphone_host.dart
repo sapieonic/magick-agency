@@ -157,9 +157,13 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
     _read = () => container.read(_hostSlotProvider);
   }
 
+  /// The `takeOver` of every open, in order (OS3).
+  final List<bool> openTakeOvers = [];
+
   @override
-  Future<SoftphoneOpenResult> openSoftphone() async {
+  Future<SoftphoneOpenResult> openSoftphone({bool takeOver = true}) async {
     log.add('open');
+    openTakeOvers.add(takeOver);
     final r = openResult;
     if (r is SoftphoneOpened) view = openedView;
     return r;
@@ -249,11 +253,15 @@ class FakeSoftphoneHost implements SoftphoneHostActions {
 /// Starts a campaign station; recorded.
 class FakeLauncher implements StationLauncher {
   final List<String> started = [];
+
+  /// The `takeOver` of every start, in order (OS3).
+  final List<bool> takeOvers = [];
   StationStart result = const StationStarted();
 
   @override
-  Future<StationStart> start(String campaignId, {required String campaignName}) async {
+  Future<StationStart> start(String campaignId, {required String campaignName, bool takeOver = true}) async {
     started.add(campaignId);
+    takeOvers.add(takeOver);
     return result;
   }
 

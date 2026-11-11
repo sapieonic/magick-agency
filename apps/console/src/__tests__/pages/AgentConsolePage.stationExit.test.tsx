@@ -805,6 +805,40 @@ describe('AgentConsolePage — not staffed on the campaign', () => {
   });
 });
 
+/**
+ * 409 `session_in_other_tenant` (OS1): the agent is live in another workspace. Nothing here can
+ * end that session, so the screen is `StationFatal` with the API's sentence naming the workspace,
+ * never the conflict screen, and nothing is remembered as a live session in THIS tenant.
+ */
+describe('AgentConsolePage — live in another workspace', () => {
+  beforeEach(() => clearAllLiveSessions());
+
+  it('says so in the API’s words, naming the workspace, with the way home', async () => {
+    const sentence = 'You are live in Acme Collections. Leave your station there first: an agent can hold only one live station at a time.';
+    mocks.createAgencySession.mockRejectedValue(new ApiError(409, {
+      error: 'Conflict', code: 'session_in_other_tenant', message: sentence, tenant_id: 'tenant-2', tenant_name: 'Acme Collections',
+    }));
+
+    await mounted();
+
+    const fatal = await screen.findByRole('alert');
+    expect(fatal.textContent).toContain(sentence);
+    expect(screen.queryByTestId('join-conflict')).toBeNull();
+    expect(readLiveSession('tenant-1')).toBeNull();
+  });
+
+  it('falls back to its own sentence when the refusal carries none', async () => {
+    mocks.createAgencySession.mockRejectedValue(new ApiError(409, {
+      error: 'Conflict', code: 'session_in_other_tenant', message: '', tenant_id: 'tenant-2', tenant_name: null,
+    }));
+
+    await mounted();
+
+    const fatal = await screen.findByRole('alert');
+    expect(fatal.textContent).toContain('You are live in another workspace.');
+  });
+});
+
 describe('AgentConsolePage — the join conflict’s one-click switch', () => {
   const conflict = (state: string) =>
     new ApiError(409, {

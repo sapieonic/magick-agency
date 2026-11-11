@@ -395,9 +395,11 @@ describe('agent occupancy is bounded by the window (integration)', () => {
       ['offline', new Date('2026-08-18T10:00:00Z')],
     ]);
 
+    // Left: one person holds one live session across tenants (0034, OS1); a past shift is what
+    // this read sums anyway.
     const theirSession = await insertAgentSession(theirs.id as string, {
       agent_user_id: AGENT, tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT,
-      joined_at: new Date('2026-08-18T09:00:00Z'),
+      joined_at: new Date('2026-08-18T09:00:00Z'), state: 'offline', left_at: new Date('2026-08-18T18:00:00Z'),
     });
     await insertAgentShift(theirSession, [
       ['available', new Date('2026-08-18T09:00:00Z')],

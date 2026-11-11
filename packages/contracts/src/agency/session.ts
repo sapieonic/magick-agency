@@ -10,6 +10,7 @@ import type { AgencyActionErrorResponse } from './actions';
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
 import type { AgencyClientKind, AgencyQueueState } from './station';
 import type { AgencyAssignmentMode } from './assignment';
+import type { AgencyStationDeviceFields } from './station-device';
 import { SOFTPHONE_OVERRIDE_NOTE_MAX, SOFTPHONE_OVERRIDE_NOTE_MIN } from './softphone';
 
 // ─── Campaign-derived config the agent console needs ────────────────────────
@@ -137,7 +138,12 @@ export interface AgencyBreakReason {
 
 // ─── POST /api/v1/agency/sessions — session bootstrap ───────────────────────
 
-export interface AgencyCreateSessionRequest {
+/**
+ * `device_id` / `take_over` (OS3, `./station-device`): which device is joining, and whether the
+ * agent chose to take the station here. A join from another device than the one holding the
+ * session's station, without `take_over`, is refused `station_on_other_device`.
+ */
+export interface AgencyCreateSessionRequest extends AgencyStationDeviceFields {
   campaign_id: string;
   /**
    * **Which agent is joining.** The public API layer's user id, supplied by the public API layer from the

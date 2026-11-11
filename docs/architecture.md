@@ -221,7 +221,9 @@ every account the caller belongs to (CH2) where every internal handler is single
   lease, or a soft-phone session it changes nothing and answers the current state (200, and no
   audit row). The return is the ordinary `/available`; `break/cancel` withdraws a queued one.
 - **Joining** (`POST /proxy/agency/sessions`, internal `api/routes/agency/sessions.ts`). One live
-  session per agent per tenant (`uq_agency_agent_live_tenant`, `409 session_on_other_campaign`). A
+  session per agent across every tenant (`uq_agency_agent_live_agent`, 0034, OS1): `409
+  session_on_other_campaign` (or `session_on_softphone`) in this tenant, `409
+  session_in_other_tenant` (naming the tenant only) in another. A
   NEW session needs an active staffing row on the campaign (`agency_campaign_agents`, the rows
   `GET /proxy/agency/my-assignments` lists), else `403 not_staffed`, unless the caller's role holds
   `agency.supervise` (the public layer reads it from the membership and sends `supervise`).
@@ -229,6 +231,17 @@ every account the caller belongs to (CH2) where every internal handler is single
   the staffing row and touches no live session, so an agent unassigned mid-shift keeps that session
   (a reload, an app resume) until they leave it. Staffing narrows where a session may start; it
   grants nothing.
+- **One station per agent: the device that holds it** (OS3–OS6, contracts
+  `agency/station-device.ts`). The join, the soft-phone open and the token mint carry the client's
+  `device_id` (one console page load, one app install) and, on the agent's own action only,
+  `take_over`. The session keeps the holder (`agency_agent_sessions.station_device_id`); a request
+  from another device without `take_over` is `409 station_on_other_device` and changes nothing,
+  so a device whose socket dropped (a laptop asleep, a phone out of signal) cannot reconnect onto a
+  station the agent moved elsewhere. The claim is one `UPDATE` (`claimStationDevice`), made after
+  the join's upsert and before its rehydrate and mint (the join and the soft-phone open also
+  pre-check read-only, so a refused join writes nothing). A take-over moves the holder and mints a
+  token that replaces the old one; the new socket supersedes the old (4409) on attach. A body with
+  no `device_id` (an older client) is allowed and clears the holder.
 - **Stations** (`station-registry.ts`, `station-socket.ts`, `station-token.ts`,
   `station-upgrade.ts`). The browser console or the agent mobile app opens a WebSocket at
   `/proxy/agency/station/:sessionId` (`station_ws_url`, a path relative to the API origin) with a

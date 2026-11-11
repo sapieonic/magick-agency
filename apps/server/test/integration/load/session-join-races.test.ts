@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * ─── One agent, many joins at once ──────────────────────────────────────────────
  *
  * The join (`POST /proxy/agency/sessions`) is one `INSERT … ON CONFLICT` on the agent's one
- * live session per tenant (`uq_agency_agent_live_tenant`): a double-click, two console
+ * live session per agent (`uq_agency_agent_live_agent`): a double-click, two console
  * tabs, a reconnect racing a fresh join. This suite fires those races through the real
  * route, many agents at once, and checks the answers and the rows.
  *

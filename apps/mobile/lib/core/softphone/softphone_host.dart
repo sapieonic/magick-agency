@@ -191,6 +191,13 @@ final class SoftphoneOpenElsewhere extends SoftphoneOpenResult {
   final SessionOnSoftphoneRefusal refusal;
 }
 
+/// 409 `station_on_other_device` (OS3): an automatic resume found the soft-phone session's
+/// station on another device. Not taken: "Use it on this phone" opens it with `take_over`.
+final class SoftphoneOpenOnOtherDevice extends SoftphoneOpenResult {
+  const SoftphoneOpenOnOtherDevice(this.refusal);
+  final StationOnOtherDeviceRefusal refusal;
+}
+
 /// 403 `softphone_disabled`: off for the account and nothing here to rehydrate.
 final class SoftphoneOpenDisabled extends SoftphoneOpenResult {
   const SoftphoneOpenDisabled();
@@ -278,7 +285,10 @@ abstract interface class SoftphoneHostActions {
   /// account (`POST /softphone/sessions`), mints a station token when the URL
   /// carries none, starts the on-duty service and audio, and opens the socket.
   /// With the flag off the server rehydrates an existing session only.
-  Future<SoftphoneOpenResult> openSoftphone();
+  ///
+  /// [takeOver] (OS3): the agent opened it here, so the station moves to this phone. An automatic
+  /// resume passes false, and gets [SoftphoneOpenOnOtherDevice] when another device holds it.
+  Future<SoftphoneOpenResult> openSoftphone({bool takeOver = true});
 
   /// Closes a soft-phone session: the hosted one when [sessionId] is null,
   /// else the one named (a refusal's, in [accountId]). Reads the bootstrap in

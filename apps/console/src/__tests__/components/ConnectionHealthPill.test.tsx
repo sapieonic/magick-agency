@@ -13,7 +13,7 @@ describe('ConnectionHealthPill — one word per connection state', () => {
     ['connecting', 'Connecting'],
     ['open', 'Connected'],
     ['reconnecting', 'Reconnecting'],
-    ['superseded', 'Moved to another window'],
+    ['superseded', 'Moved to another device'],
     ['session_gone', 'Session ended'],
     // Named, not left to a fallback: a stopped console must never read
     // "Connecting".

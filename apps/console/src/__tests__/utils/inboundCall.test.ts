@@ -149,6 +149,6 @@ describe('describeInboundRail', () => {
   it('a lost connection outranks the call', () => {
     expect(describeInboundRail({ connection: 'disconnected', call: connected() }).detail).toMatch(/can’t hear you/);
     expect(describeInboundRail({ connection: 'reconnecting', call: owing() }).detail).toMatch(/outcome is kept/);
-    expect(describeInboundRail({ connection: 'superseded', call: connected() }).label).toMatch(/another window/);
+    expect(describeInboundRail({ connection: 'superseded', call: connected() }).label).toMatch(/another device/);
   });
 });

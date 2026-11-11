@@ -9,7 +9,7 @@ import 'package:magick_agency_agent/core/softphone/softphone_controller.dart' sh
 import 'package:magick_agency_agent/core/softphone/softphone_copy.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
-import 'package:magick_agency_agent/core/station/station_copy.dart' show catalogChangedCopy;
+import 'package:magick_agency_agent/core/station/station_copy.dart' show catalogChangedCopy, stationOnOtherDeviceCopy;
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart' show MicPermission;
 
@@ -1396,6 +1396,8 @@ void main() {
       'a soft-phone session this phone hosted is reopened',
       (h) {
         expect(h.host.count('open'), 1);
+        // OS3: the app's own resume never takes the station from another device.
+        expect(h.host.openTakeOvers, [false]);
         expect(h.view.screen, const SoftphoneScreenActive());
       },
       before: (h) {
@@ -1411,10 +1413,53 @@ void main() {
       'a campaign session this phone hosted, on the soft phone with an unsettled call, has its station started',
       (h) {
         expect(h.launcher.started, ['camp-1']);
+        expect(h.launcher.takeOvers, [false], reason: 'OS3: a resume is never a take-over');
         expect(h.host.count('open'), 0);
       },
       before: (h) {
         h.rememberHosted('sess-1');
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
+          200,
+          bootstrapJson({
+            'session': sessionSummary(kind: 'campaign', campaignId: 'camp-1', campaignName: 'Home Loan Renewals'),
+            'call': owedJson({'session_id': 'sess-1'}),
+          }),
+        );
+      },
+    );
+
+    softphoneTest(
+      'OS3: a resume refused because another device holds the soft phone says so; Use it on this phone takes it',
+      (h) {
+        expect(h.view.screen, const SoftphoneScreenOtherDevice());
+        h.host.openResult = const SoftphoneOpened(sessionId: 'sess-sp', created: false);
+        h.run(h.actions.open());
+        expect(h.host.openTakeOvers, [false, true]);
+      },
+      before: (h) {
+        h.rememberHosted('sess-sp');
+        h.host.openResult = const SoftphoneOpenOnOtherDevice(
+          StationOnOtherDeviceRefusal(sessionId: 'sess-sp', clientKind: ClientKind.web),
+        );
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
+          200,
+          bootstrapJson({'softphone_enabled': true, 'session': sessionSummary()}),
+        );
+      },
+    );
+
+    softphoneTest(
+      'OS3: a campaign station resume refused because another device holds it offers Use it on this phone',
+      (h) {
+        expect(h.launcher.takeOvers, [false]);
+        expect(
+          h.view.screen,
+          const SoftphoneScreenOtherDevice(campaignId: 'camp-1', campaignName: 'Home Loan Renewals'),
+        );
+      },
+      before: (h) {
+        h.rememberHosted('sess-1');
+        h.launcher.result = StationRefused(stationOnOtherDeviceCopy(ClientKind.web), code: 'station_on_other_device');
         h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
           200,
           bootstrapJson({

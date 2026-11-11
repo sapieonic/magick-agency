@@ -851,7 +851,11 @@ final class StationRefused extends StationStart {
 abstract interface class StationLauncher {
   /// Joins (or rehydrates) the campaign's session, starts the on-duty
   /// foreground service and the audio pre-warm, and opens the socket.
-  Future<StationStart> start(String campaignId, {required String campaignName});
+  ///
+  /// [takeOver] (OS3): the agent chose this phone, so the station moves here. An automatic resume
+  /// passes false, and is refused (a [StationRefused] with `station_on_other_device`) when another
+  /// device holds the station.
+  Future<StationStart> start(String campaignId, {required String campaignName, bool takeOver = true});
 
   /// Leaves [other] (refused while a call is live there), then starts.
   Future<StationStart> leaveOtherAndStart(StationElsewhere other, String campaignId, {required String campaignName});

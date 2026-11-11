@@ -812,7 +812,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
         }
         if (resume && _foregroundOrDefer()) {
           _resumeTried = true;
-          await _openSession();
+          // OS3: a resume the app makes on its own never takes the station from another device.
+          await _openSession(takeOver: false);
           return;
         }
         _screen = const SoftphoneScreenClosed();
@@ -855,8 +856,16 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   }
 
   Future<void> _startStation(String campaignId, String campaignName) async {
+    final epoch = _epoch;
     try {
-      await ref.read(stationLauncherProvider).start(campaignId, campaignName: campaignName);
+      // OS3: an automatic resume, so never a take-over. Refused when another device holds the
+      // station: the screen then says so and offers "Use it on this phone" (which takes it).
+      final started = await ref.read(stationLauncherProvider).start(campaignId, campaignName: campaignName, takeOver: false);
+      if (epoch != _epoch) return;
+      if (started is StationRefused && started.code == AgencyErrorCode.stationOnOtherDevice.wire) {
+        _screen = SoftphoneScreenOtherDevice(campaignId: campaignId, campaignName: campaignName);
+        _emit();
+      }
     } catch (e) {
       _log.warn('station resume failed', {'error': e.runtimeType.toString()});
     }
@@ -996,7 +1005,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _emit();
   }
 
-  Future<void> _openSession() async {
+  /// [takeOver] (OS3): false only for the app's own resume; every open the agent asks for takes
+  /// the station to this phone.
+  Future<void> _openSession({bool takeOver = true}) async {
     final epoch = _epoch;
     _sessionBusy = SoftphoneSessionBusy.opening;
     _sessionError = null;
@@ -1004,7 +1015,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _emit();
     SoftphoneOpenResult result;
     try {
-      result = await _actions.openSoftphone();
+      result = await _actions.openSoftphone(takeOver: takeOver);
     } catch (e) {
       _log.warn('soft phone open failed', {'error': e.runtimeType.toString()});
       result = const SoftphoneOpenRefused(softphoneOpenFailedCopy);
@@ -1024,6 +1035,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
           accountName: _accountName(refusal.accountId, refusal.accountName),
           canSwitchAccount: _canSwitchTo(refusal.accountId),
         );
+        _screenSessionId = refusal.sessionId;
+      case SoftphoneOpenOnOtherDevice(:final refusal):
+        // OS3: the resume found it on another device. "Use it on this phone" opens it here.
+        _screen = const SoftphoneScreenOtherDevice(canClose: false);
         _screenSessionId = refusal.sessionId;
       case SoftphoneOpenDisabled():
         // Off for the account and nothing here to rehydrate: the bootstrap says the rest.

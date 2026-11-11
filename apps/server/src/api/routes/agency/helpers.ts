@@ -9,6 +9,7 @@ import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
+import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import {
   agencyAgentSessionRepository,
   agencyAttemptRepository,
@@ -16,16 +17,20 @@ import {
   agencyContactRepository,
 } from '../../../db/repositories/agency.repository.js';
 import { dispositionErrorMessage } from '../../../agency/disposition.js';
-import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
+import type { AgencyAgentSessionRecord, AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { StationTokenUnavailableError, type StationTokenStore } from '../../../agency/station-token.js';
 import { DEFERRED_HANGUP_MS, STATION_HEARTBEAT_GRACE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { resolveCallingWindow, scheduleCallbackInWindow } from '../../../agency/calling-hours.js';
-import type {
-  AgencyActionErrorCode,
-  AgencyActionErrorResponse,
-  AgencyRetryContext,
-  AgencyStationIntervals,
+import {
+  AGENCY_STATION_DEVICE_ID_PATTERN,
+  type AgencyActionErrorCode,
+  type AgencyActionErrorResponse,
+  type AgencyClientKind,
+  type AgencyRetryContext,
+  type AgencySessionInOtherTenantRefusal,
+  type AgencyStationIntervals,
+  type AgencyStationOnOtherDeviceRefusal,
 } from '@magick-agency/contracts/agency';
 // The banner copy is built server-side from the frozen selector, so the sentence the
 // agent reads and the query that produced their roster cannot disagree. A leaf
@@ -227,7 +232,7 @@ export async function resolveReservedAgentUserId(sessionId: string | null): Prom
  * would set the Redis lease and mirror `available` onto a row with `left_at` set,
  * so the console renders a ready agent and gets no error, while
  * `findLiveForCampaign` (which the pacing tick reads) excludes left rows and
- * never dials them. Nothing anywhere is red. `uq_agency_agent_live_tenant` makes that state
+ * never dials them. Nothing anywhere is red. `uq_agency_agent_live_agent` makes that state
  * routine rather than exotic — the dedupe
  * closes sessions out from under whoever is holding them — so the guard belongs
  * on the shared path where a new route inherits it instead of having to
@@ -345,4 +350,73 @@ export async function mintStationTokenOr503(
     });
     return null;
   }
+}
+
+// ─── One station per agent (OS1, OS3; contracts `agency/station-device.ts`) ─────────────
+
+/**
+ * The device fields of a join, a soft-phone open or a token mint, read from the internal body.
+ * The public layer has already validated them (`stationDeviceSchema`); a malformed value here
+ * (an internal caller) is treated as absent, which is an older client's behaviour, never a 500.
+ * `take_over` without a device id means nothing.
+ */
+export function stationDeviceFields(body: unknown): { deviceId: string | null; takeOver: boolean } {
+  const b = (body ?? {}) as { device_id?: unknown; take_over?: unknown };
+  const deviceId = typeof b.device_id === 'string' && AGENCY_STATION_DEVICE_ID_PATTERN.test(b.device_id) ? b.device_id : null;
+  return { deviceId, takeOver: deviceId !== null && b.take_over === true };
+}
+
+/**
+ * Whether `session` (the agent's live session, about to be rehydrated) is held by another device
+ * than the caller's, which did not ask to take it over: the read-only pre-check that lets a join or
+ * a soft-phone open refuse BEFORE its upsert writes anything. The claim after the upsert
+ * (`claimStationDevice`) is the atomic one; this only spares a refused join its writes.
+ */
+export function heldByOtherDevice(
+  session: Pick<AgencyAgentSessionRecord, 'station_device_id'>,
+  device: { deviceId: string | null; takeOver: boolean },
+): boolean {
+  return device.deviceId !== null && !device.takeOver
+    && session.station_device_id !== null && session.station_device_id !== device.deviceId;
+}
+
+/** 409 `station_on_other_device` (OS3): another device holds the session's station. */
+export function sendStationOnOtherDevice(
+  reply: FastifyReply,
+  sessionId: string,
+  clientKind: AgencyClientKind,
+): FastifyReply {
+  const refusal: AgencyStationOnOtherDeviceRefusal = {
+    error: 'Conflict',
+    code: 'station_on_other_device',
+    message: clientKind === 'mobile'
+      ? 'Your station is open on your phone. Use it there, or take it over here.'
+      : 'Your station is open on another device. Use it there, or take it over here.',
+    session_id: sessionId,
+    client_kind: clientKind,
+  };
+  return reply.code(409).send(refusal);
+}
+
+/**
+ * 409 `session_in_other_tenant` (OS1): the agent is live in another tenant. Names only the tenant
+ * (the agent's own membership); the tenant name is best effort.
+ */
+export async function sendSessionInOtherTenant(reply: FastifyReply, tenantId: string): Promise<FastifyReply> {
+  const tenantName = await tenantRepository.findById(tenantId)
+    .then((t) => t?.name ?? null)
+    .catch((err: unknown) => {
+      log.warn({ err, tenantId }, 'Could not resolve the live session\'s tenant name');
+      return null;
+    });
+  const refusal: AgencySessionInOtherTenantRefusal = {
+    error: 'Conflict',
+    code: 'session_in_other_tenant',
+    message: tenantName
+      ? `You are live in ${tenantName}. Leave your station there first: an agent can hold only one live station at a time.`
+      : 'You are live in another workspace. Leave your station there first: an agent can hold only one live station at a time.',
+    tenant_id: tenantId,
+    tenant_name: tenantName,
+  };
+  return reply.code(409).send(refusal);
 }

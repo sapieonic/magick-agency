@@ -263,6 +263,14 @@ class StationSocket {
           _setConnection(StationConnection.sessionGone, closeCode: StationCloseCode.sessionGone.code);
           return;
         }
+        // OS3: the agent moved the station to another device while this phone's socket was
+        // down. Stop exactly as a 4409 stops, with no retry: taking it back is the agent's
+        // "Use this phone instead", never this ladder's.
+        if (e is ApiHttpError && e.code == AgencyErrorCode.stationOnOtherDevice.wire) {
+          _log.warn('station token refused: the station is on another device', {'status': e.status});
+          _setConnection(StationConnection.superseded, closeCode: StationCloseCode.superseded.code);
+          return;
+        }
         _log.warn('station token mint failed', {'error': e.runtimeType.toString(), 'retry': _retryCount});
         _scheduleRetry(null);
         return;

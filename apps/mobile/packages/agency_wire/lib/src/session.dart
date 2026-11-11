@@ -23,25 +23,56 @@ import 'station.dart';
 /// `supervise` and `client_kind`).
 @immutable
 final class CreateSessionRequest {
-  const CreateSessionRequest({required this.campaignId, this.sessionId});
+  const CreateSessionRequest({required this.campaignId, this.sessionId, this.device});
 
   final String campaignId;
 
   /// Resume hint; the server rehydrates regardless.
   final String? sessionId;
 
+  /// Which device is joining, and whether the agent chose to take the station here (OS3).
+  final StationDevice? device;
+
   Map<String, Object?> toJson() {
     final json = <String, Object?>{'campaign_id': campaignId};
     putIfSet(json, 'session_id', sessionId);
+    if (device != null) json.addAll(device!.toJson());
     return json;
   }
 
   @override
   bool operator ==(Object other) =>
-      other is CreateSessionRequest && other.campaignId == campaignId && other.sessionId == sessionId;
+      other is CreateSessionRequest && other.campaignId == campaignId && other.sessionId == sessionId && other.device == device;
 
   @override
-  int get hashCode => Object.hash(campaignId, sessionId);
+  int get hashCode => Object.hash(campaignId, sessionId, device);
+}
+
+/// The device fields of the join, the soft-phone open and the station-token mint (OS3): which
+/// device (this install) is asking, and whether the agent chose to take the station here. Only
+/// the agent's own actions take over ("Go on duty", "Use this phone"); an automatic resume or
+/// reconnect never does, so a phone that lost its socket cannot take back a station the agent
+/// moved to the console.
+///
+/// Contract: `AgencyStationDeviceFields` (`agency/station-device.ts`).
+@immutable
+final class StationDevice {
+  const StationDevice({required this.deviceId, required this.takeOver});
+
+  /// 8–64 of `[A-Za-z0-9_-]` (`AGENCY_STATION_DEVICE_ID_PATTERN`).
+  final String deviceId;
+  final bool takeOver;
+
+  /// What the server accepts as a device id.
+  static final pattern = RegExp(r'^[A-Za-z0-9_-]{8,64}$');
+
+  Map<String, Object?> toJson() => {'device_id': deviceId, 'take_over': takeOver};
+
+  @override
+  bool operator ==(Object other) => other is StationDevice && other.deviceId == deviceId && other.takeOver == takeOver;
+
+  @override
+  int get hashCode => Object.hash(deviceId, takeOver);
 }
 
 /// One disposition the agent can choose. A disposition's `retry`/`terminal`/

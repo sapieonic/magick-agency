@@ -84,6 +84,15 @@ enum AgencyErrorCode implements WireEnum {
 
   /// Any other reason the dial could not be placed; `message` says which.
   redialBlocked('redial_blocked'),
+
+  /// 409 (OS3) on join, the soft-phone open or a token mint: another device holds this
+  /// session's station and the request did not take it over. Nothing changed. See
+  /// [StationOnOtherDeviceRefusal].
+  stationOnOtherDevice('station_on_other_device'),
+
+  /// 409 (OS1) on join or the soft-phone open: the agent is live in another workspace (tenant).
+  /// Nothing here can end it. `message` names the workspace.
+  sessionInOtherTenant('session_in_other_tenant'),
   unknown('');
 
   const AgencyErrorCode(this.wire);
@@ -216,6 +225,16 @@ final class ErrorBody {
     if (code != AgencyErrorCode.sessionOnSoftphone) return null;
     try {
       return SessionOnSoftphoneRefusal.fromJson(raw);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// The 409 `station_on_other_device` refusal (OS3), when this is one that reads.
+  StationOnOtherDeviceRefusal? get stationOnOtherDevice {
+    if (code != AgencyErrorCode.stationOnOtherDevice) return null;
+    try {
+      return StationOnOtherDeviceRefusal.fromJson(raw);
     } on FormatException {
       return null;
     }
@@ -394,4 +413,37 @@ final class SessionOnSoftphoneRefusal {
 
   @override
   int get hashCode => Object.hash(sessionId, accountId, accountName, message);
+}
+
+/// 409 `station_on_other_device` (OS3): another device holds this session's station, and the
+/// request (the join, the soft-phone open or a token mint) did not take it over. Nothing changed.
+/// The remedy is the same request with `take_over: true`, on the agent's own "Use this phone".
+///
+/// Contract: `AgencyStationOnOtherDeviceRefusal` (`agency/station-device.ts`).
+@immutable
+final class StationOnOtherDeviceRefusal {
+  const StationOnOtherDeviceRefusal({required this.sessionId, required this.clientKind, this.message});
+
+  factory StationOnOtherDeviceRefusal.fromJson(Map<String, Object?> j) => StationOnOtherDeviceRefusal(
+    sessionId: j.str('session_id'),
+    clientKind: ClientKind.fromWire(j.strOrNull('client_kind')),
+    message: j.strOrNull('message'),
+  );
+
+  final String sessionId;
+
+  /// The app that last attached the station: `web` reads "in a browser", `mobile` "on another
+  /// phone". Display only.
+  final ClientKind clientKind;
+  final String? message;
+
+  @override
+  bool operator ==(Object other) =>
+      other is StationOnOtherDeviceRefusal &&
+      other.sessionId == sessionId &&
+      other.clientKind == clientKind &&
+      other.message == message;
+
+  @override
+  int get hashCode => Object.hash(sessionId, clientKind, message);
 }

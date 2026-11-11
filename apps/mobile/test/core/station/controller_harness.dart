@@ -12,9 +12,11 @@ import 'package:magick_agency_agent/app/providers.dart';
 import 'package:magick_agency_agent/core/api/api_client.dart';
 import 'package:magick_agency_agent/core/env.dart';
 import 'package:magick_agency_agent/core/lifecycle/app_lifecycle.dart';
+import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
 import 'package:magick_agency_agent/core/station/station_deps.dart';
+import 'package:magick_agency_agent/core/station/station_device.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
@@ -144,6 +146,9 @@ Map<String, Object?> stateBody(String state, {String? breakReason, String? pendi
       'break_reason': breakReason,
     };
 
+/// The device id every [App] sends (OS3).
+const testDeviceId = 'phone-test-device-0001';
+
 /// The station core in a container, with every outside dependency faked.
 class App {
   App(this.async) {
@@ -171,6 +176,10 @@ class App {
         }),
         stationUnauthorizedSinkProvider.overrideWithValue(unauthorized.add),
         stationSoundsProvider.overrideWithValue(() => sounds),
+        // OS3: this install's device id, fixed so a test can read it off the requests.
+        stationDeviceIdsProvider.overrideWithValue(
+          StationDeviceIds(() => MemoryStore({StationDeviceIds.storeKey: testDeviceId})),
+        ),
         ...stationOverrides,
       ],
     );

@@ -51,7 +51,7 @@ warning and its screen-reader confirm text).
   - An agent live on a campaign **switches**: their campaign session goes to `break/soft_phone`
     (queued like any break while they are on a call or in wrap-up), and they dial from the same
     session and socket. **Return to campaign** ends that break.
-  - Either way `uq_agency_agent_live_tenant` still allows one live session per agent per tenant:
+  - Either way `uq_agency_agent_live_agent` still allows one live session per agent (across tenants since 0034):
     one pair of ears. That session may be in a sibling account of the one the console is in, so
     the refusals that name it carry its `account_id` (§6), and a soft-phone open never rehydrates
     a session from another account.
@@ -465,7 +465,7 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   with it off the page rehydrates only an existing soft-phone session (reading the bootstrap
   first, never opening a new one; the server's `rehydrate_only` serves a session in this account)
   and is "Not available for your account" otherwise. The one session it cannot rehydrate is one in
-  a sibling account of the tenant (one live session per agent per tenant; the bootstrap's
+  a sibling account of the tenant (one live session per agent (across tenants since 0034); the bootstrap's
   `session.account_id` names where it is): the page says the soft phone is open in another
   account, reads that call in that account, says a supervisor can save an owed outcome, and can
   close it, with the session's own account (`leave` is scoped to it). The station shows the soft phone in place on `break/soft_phone`

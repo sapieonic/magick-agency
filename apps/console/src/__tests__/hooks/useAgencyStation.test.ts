@@ -1127,11 +1127,56 @@ describe('useAgencyStation', () => {
       act(() => latest().serverClose(4401, 'token expired'));
 
       await waitFor(() => expect(view.result.current.connection).toBe('reconnecting'));
-      await waitFor(() => expect(mocks.mintStationToken).toHaveBeenCalledWith('sess-1', undefined, undefined), {
+      await waitFor(() => expect(mocks.mintStationToken).toHaveBeenCalledWith('sess-1', undefined, undefined, { takeOver: false }), {
         timeout: 3000,
       });
       await waitFor(() => expect(FakeSocket.instances.length).toBe(2), { timeout: 3000 });
       expect(latest().url).toContain('token=FRESH');
+    });
+
+    it('OS3: a re-mint refused station_on_other_device stops as a 4409 does, with no retry', async () => {
+      // The laptop slept, the agent took the station on their phone; on waking, this window's
+      // reconnect is refused and must not keep trying (or take the station back).
+      mocks.mintStationToken.mockRejectedValue(Object.assign(new Error('Conflict'), {
+        statusCode: 409,
+        details: { error: 'Conflict', code: 'station_on_other_device', message: 'on your phone', session_id: 'sess-1', client_kind: 'mobile' },
+      }));
+      const view = await mounted();
+      act(() => latest().serverClose(1006, ''));
+      await waitFor(() => expect(view.result.current.connection).toBe('superseded'), { timeout: 3000 });
+      expect(mocks.mintStationToken).toHaveBeenCalledTimes(1);
+      expect(mocks.mintStationToken).toHaveBeenCalledWith('sess-1', undefined, undefined, { takeOver: false });
+      await new Promise((r) => setTimeout(r, 700));
+      expect(mocks.mintStationToken).toHaveBeenCalledTimes(1);
+      expect(FakeSocket.instances).toHaveLength(1);
+    });
+
+    it('OS3: "Use this window instead" (reconnect after a supersede) takes the station over, once', async () => {
+      mocks.mintStationToken.mockResolvedValue({
+        session_id: 'sess-1', station_ws_url: '/proxy/agency/station/sess-1?token=BACK', expires_at: 'x',
+      });
+      const view = await mounted();
+      act(() => latest().serverClose(4409, 'superseded'));
+      await waitFor(() => expect(view.result.current.connection).toBe('superseded'));
+
+      act(() => view.result.current.reconnect());
+      await waitFor(() => expect(FakeSocket.instances.length).toBe(2), { timeout: 3000 });
+      expect(mocks.mintStationToken).toHaveBeenLastCalledWith('sess-1', undefined, undefined, { takeOver: true });
+
+      // The take-over is spent: the next drop's reconnect is an ordinary one.
+      act(() => latest().serverClose(4401, 'token expired'));
+      await waitFor(() => expect(mocks.mintStationToken).toHaveBeenCalledTimes(2), { timeout: 3000 });
+      expect(mocks.mintStationToken).toHaveBeenLastCalledWith('sess-1', undefined, undefined, { takeOver: false });
+    });
+
+    it('OS3: an ordinary Reconnect (not after a supersede) never takes over', async () => {
+      mocks.mintStationToken.mockResolvedValue({
+        session_id: 'sess-1', station_ws_url: '/proxy/agency/station/sess-1?token=AGAIN', expires_at: 'x',
+      });
+      const view = await mounted();
+      act(() => view.result.current.reconnect());
+      await waitFor(() => expect(mocks.mintStationToken).toHaveBeenCalled(), { timeout: 3000 });
+      expect(mocks.mintStationToken).toHaveBeenLastCalledWith('sess-1', undefined, undefined, { takeOver: false });
     });
 
     it('reports reconnecting rather than "ended" on an ordinary drop', async () => {

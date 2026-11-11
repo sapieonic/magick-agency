@@ -156,7 +156,7 @@ beforeEach(async () => {
   const sessionB = (await insertAgentSession(campaign, { tenant_id: tenant, account_id: account, agent_user_id: agentB.id, state: 'wrapup' })).id as string;
   const b = await bridgedAttempt(campaign, tenant, account, sessionB, '+919811100001');
   // Other agents' sessions (agent A must stay free to join in the bootstrap case: one live
-  // session per agent per tenant, `uq_agency_agent_live_tenant`).
+  // session per agent, `uq_agency_agent_live_agent`).
   const siblingSession = (await insertAgentSession(siblingCampaign, { tenant_id: tenant, account_id: sibling, agent_user_id: randomUUID() })).id as string;
   const s = await bridgedAttempt(siblingCampaign, tenant, sibling, siblingSession, '+919811100002');
   const foreignSession = (await insertAgentSession(foreignCampaign, { tenant_id: otherTenant, account_id: otherAccount, agent_user_id: randomUUID() })).id as string;

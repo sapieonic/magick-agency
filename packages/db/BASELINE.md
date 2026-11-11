@@ -169,7 +169,7 @@ Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provi
 
 Columns: `id`, `campaign_id`, `tenant_id`, `account_id`, `phone_e164`, `context`, `source_row_number`, `timezone`, `state`, `attempt_count`, `last_outcome`, `last_disposition`, `next_attempt_at`, `suppressed_reason`, `created_at`, `updated_at`, `our_fault_attempts`, `row_fingerprint`, `csv_line_number`, `source_contact_id`, `root_contact_id`.
 
-**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below). 0006 adds `client_kind` (`web | mobile`, the app the station last attached from).
+**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent (across tenants since 0034) (`uq_agency_agent_live_agent`), across every tenant since 0034 (`uq_agency_agent_live_agent`, which also adds `station_device_id`). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below). 0006 adds `client_kind` (`web | mobile`, the app the station last attached from).
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state`, `break_reason`, `state_since`, `owner_replica`, `last_heartbeat`, `joined_at`, `left_at`, `created_at`, `updated_at`, `kind`, `client_kind`.
 
@@ -219,7 +219,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_agency_campaign_retry_idempotency` | `agency_campaigns` |
 | `uq_agency_contacts_source_row` | `agency_contacts` |
 | `uq_agency_contacts_row_fingerprint` | `agency_contacts` |
-| `uq_agency_agent_live_tenant` | `agency_agent_sessions` |
+| `uq_agency_agent_live_agent` (0034; was `uq_agency_agent_live_agent`) | `agency_agent_sessions` |
 | `uq_agency_attempt_number` | `agency_call_attempts` |
 | `uq_agency_attempt_live` | `agency_call_attempts` |
 | `uq_agency_ingest_chunk` | `agency_ingest_chunks` |
@@ -399,7 +399,7 @@ typed number outside pacing, optionally logged ("tagged") to one of their campai
   NOT NULL (the campaign FK and its cascade stay). CHECKs: `ck_agency_agent_session_kind` (`campaign
   | softphone`); `ck_agency_agent_session_kind_campaign` (`(kind = 'campaign') = (campaign_id IS NOT
   NULL)`); `ck_agency_agent_session_softphone_state` (a soft-phone session is only ever `break` or
-  `offline`, so pacing can never reserve it). `uq_agency_agent_live_tenant` is unchanged and spans
+  `offline`, so pacing can never reserve it). `uq_agency_agent_live_agent` is unchanged and spans
   both kinds.
 - **`agency_agent_session_events.campaign_id`**: DROP NOT NULL (copied from the session).
 - **`agency_manual_calls`**: one row per soft-phone dial, the soft phone's audit spine. `id`,
@@ -764,7 +764,7 @@ account", MC4 and MC6).
 - **Drops `uq_agency_campaign_running`**, the baseline's one running campaign per account. The
   account's `max_concurrent_calls` is shared between its running campaigns by the pacing round;
   Start and Resume no longer answer 409 `another_campaign_running` (the code is retired from
-  `packages/contracts`). Agent exclusivity is unchanged (`uq_agency_agent_live_tenant`).
+  `packages/contracts`). Agent exclusivity is unchanged (`uq_agency_agent_live_agent`).
 - **`idx_agency_contacts_account_live_digits`** `(tenant_id, account_id, regexp_replace(phone_e164,
   '[^0-9]', '', 'g')) WHERE state IN ('in_flight', 'connected')`: the claims' busy probe
   (`numberLiveSql`), widened from the campaign to the account so a number on a call on any of the
@@ -1338,6 +1338,20 @@ Stored numbers are E.164, so no digits expression. **Down** drops it. **Tests**:
 down → up inventory suite, and the server's `test/integration/dnc/dnc-list-search.test.ts` (the
 search and its plan).
 
+### 0035 — `migrations/0035_one_station_per_agent.sql`
+
+One station per agent (OS1, OS3). **`uq_agency_agent_live_agent`** `(agent_user_id) WHERE left_at IS
+NULL` replaces `uq_agency_agent_live_agent`: one live session per agent across every tenant, the
+join upsert's arbiter (its `DO UPDATE` also requires the same tenant). Before the index is built,
+every live session of an agent live in more than one but the newest heartbeat (ties: newest join,
+then id) is left (`offline`, `left_at = now()`), with an `offline` transition logged for one that
+was not already offline. **`station_device_id`** `VARCHAR(64)` NULL: the client-generated id of the
+device holding the session's station (`claimStationDevice`); NULL is none. **Down** drops the
+column and the index and restores `uq_agency_agent_live_agent` (always buildable). **Tests**:
+`test/integration/db/one-station-per-agent-migration.test.ts` (the definitions, the clean-up, down
+then up), `baseline.test.ts`, the down → up inventory suite, and the server's
+`test/integration/agency/agency-session-tenant-unique.test.ts` (the join and the claim).
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and
@@ -1345,7 +1359,7 @@ search and its plan).
 
 - the table set, column shapes, nullability, state CHECKs, JSONB guards and cascades;
 - every unique index above, including all live-state pairs of `uq_agency_attempt_live` and its exact
-  definition, `uq_agency_campaign_running` (absent after 0015) and `uq_agency_agent_live_tenant`;
+  definition, `uq_agency_campaign_running` (absent after 0015) and `uq_agency_agent_live_agent`;
 - every `updated_at` trigger firing (with backdated rows, so the check cannot pass vacuously);
 - the root-stamping trigger and the retry-lineage columns and indexes;
 - the fingerprint function (definition, `NOT STRICT`, `STABLE`, collision behaviour);
@@ -1364,7 +1378,7 @@ search and its plan).
   in enum order.
 - The two audit tables differ in shape (`ip_address` `TEXT` vs `INET`; `created_at` vs `timestamp`);
   the merged activity-trail query handles both.
-- `uq_agency_agent_live_tenant` (one live session per agent per tenant) is the session constraint;
+- `uq_agency_agent_live_agent` (one live session per agent across tenants, 0034; was `uq_agency_agent_live_agent`) is the session constraint;
   there is no per-campaign variant.
 
 ## Open questions

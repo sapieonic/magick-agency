@@ -10,6 +10,7 @@ import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { resolvedUserAuditActor } from '../../../audit/platform/audit-actor.js';
 import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { stationDeviceSchema } from '../helpers/station-device.js';
 import { parseClientHeader } from '../../../utils/client-header.js';
 import { stringField } from '../helpers/core-campaign.js';
 import { rewriteStationWsUrl } from '../proxy-agency-station.routes.js';
@@ -47,7 +48,9 @@ export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Prom
    * (the internal handler's `rehydrate_only`). A flag read that throws is a 500.
    */
   app.post('/softphone/sessions', { preHandler: finish }, async (request, reply) => {
-    if (!parseOr400(emptyBody, request.body ?? {}, reply, 'agency')) return reply;
+    // OS3: the device opening, and `take_over` on the agent's "Use it here". Nothing else.
+    const device = parseOr400(stationDeviceSchema, request.body ?? {}, reply, 'agency');
+    if (!device) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
     if (!actor) return reply;
     const enabled = await softphoneEnabled(request);
@@ -57,6 +60,7 @@ export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Prom
       // Only the agent: nobody opens a soft-phone session for someone else. `client_kind`
       // (from `X-Client`) picks the intervals served, as on the campaign join.
       body: {
+        ...device.data,
         agent_user_id: actor.agent_user_id,
         client_kind: parseClientHeader(request.headers['x-client']).kind,
         ...(enabled ? {} : { rehydrate_only: true }),

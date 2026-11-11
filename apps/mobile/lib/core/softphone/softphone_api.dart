@@ -22,9 +22,12 @@ import '../station/station_deps.dart';
 /// current account, uses the usual client. `leave` and the station token stay
 /// in `StationApi`.
 final class SoftphoneApi {
-  SoftphoneApi(this._client, {required this._scopedTo, this._onUnauthorized});
+  SoftphoneApi(this._client, {required this._scopedTo, this._onUnauthorized, this._device});
 
   final ApiClient _client;
+
+  /// This install's device fields (OS3), or null to send none (reads only; tests).
+  final Future<StationDevice> Function({required bool takeOver})? _device;
 
   /// A client scoped to another account of the same tenant.
   final ApiClient Function(String accountId) _scopedTo;
@@ -81,11 +84,14 @@ final class SoftphoneApi {
 
   // ── The session ──
 
-  /// `POST /softphone/sessions` (no body): 201 opened, 200 rehydrated. The
-  /// client kind (which picks the intervals served) travels in `X-Client`.
-  Future<SoftphoneSessionResponse> openSession({String? accountId}) async {
+  /// `POST /softphone/sessions`: 201 opened, 200 rehydrated. The client kind
+  /// (which picks the intervals served) travels in `X-Client`; the body is the
+  /// device fields (OS3): [takeOver] on the agent's own open, never on an
+  /// automatic resume.
+  Future<SoftphoneSessionResponse> openSession({String? accountId, bool takeOver = true}) async {
     const path = '$_base/softphone/sessions';
-    final body = await _guard(() => _via(accountId).post(path));
+    final device = await _device?.call(takeOver: takeOver);
+    final body = await _guard(() => _via(accountId).post(path, body: device?.toJson()));
     return _decode(path, body, SoftphoneSessionResponse.fromJson);
   }
 

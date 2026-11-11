@@ -2508,7 +2508,7 @@ notes save of a soft-phone or inbound call (`manual:<id>`, `inbound:<id>`): kept
 sent, re-armed by a refused outcome (`outcomeRefused`), flushed on leave (`flushNow`). Test
 helper: `controller_harness.dart`.
 
-Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
+Files: `station/call_autosave.dart`, `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_device.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
 
 | Test file | Cases |
 |---|---|

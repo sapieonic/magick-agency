@@ -213,6 +213,16 @@ export function useStationJoin({
           return;
         }
         /**
+         * 409 `session_in_other_tenant` (OS1): the agent is live in another workspace they belong
+         * to. Nothing here can end that session (every session route is scoped to its own
+         * tenant), so it is `StationFatal` with the API's sentence, which names the workspace.
+         */
+        if (errorCode(err) === 'session_in_other_tenant') {
+          setJoinError(otherTenantSentence(err));
+          trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
+          return;
+        }
+        /**
          * 403 `not_staffed`: nobody has assigned them to this campaign. No remedy on this
          * screen (a supervisor staffs them), so it is `StationFatal` with the API's own
          * sentence, which names who to ask, and its escape to a landing screen that will
@@ -582,6 +592,15 @@ export const SOFTPHONE_REOPENED_COPY =
 export const NOT_STAFFED_COPY = 'You’re not assigned to this campaign. Ask your supervisor to add you.';
 
 /** The API's sentence on a `not_staffed` refusal, else {@link NOT_STAFFED_COPY}. */
+/** The fallback when a `session_in_other_tenant` refusal carries no sentence of its own. */
+export const OTHER_TENANT_COPY =
+  'You are live in another workspace. Leave your station there first: you can be on only one station at a time.';
+
+function otherTenantSentence(err: unknown): string {
+  const message = errorBody(err)?.message;
+  return typeof message === 'string' && message.trim().length > 0 ? message : OTHER_TENANT_COPY;
+}
+
 function notStaffedSentence(err: unknown): string {
   const message = errorBody(err)?.message;
   return typeof message === 'string' && message.trim().length > 0 ? message : NOT_STAFFED_COPY;

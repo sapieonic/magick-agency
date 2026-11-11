@@ -205,7 +205,9 @@
       "disposition_already_submitted",
       "redial_blocked_dnc",
       "redial_blocked_calling_hours",
-      "redial_blocked"
+      "redial_blocked",
+      "station_on_other_device",
+      "session_in_other_tenant"
     ]
   },
   "roles": {

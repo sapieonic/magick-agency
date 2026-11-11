@@ -75,6 +75,11 @@ media-worker handover, inbound in Insights, reports and customer history, "press
 callback"); P4 (VoiceLink inbound). Ringing a phone whose app is in the background (push) is
 parked.
 
+One station per agent (2026-11-11, OS1–OS6): an agent is live in one place only, one console
+window or the app, across every tenant they belong to (`0034_one_station_per_agent.sql`). A device
+that lost its socket can no longer reconnect onto a station the agent moved elsewhere; only the
+agent's own "Use it here" / "Use this phone" moves it ([`status.md`](status.md)).
+
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and

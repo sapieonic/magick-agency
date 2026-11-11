@@ -17,7 +17,7 @@ export const CONNECTION_LABEL: Record<StationConnection, string> = {
   connecting: 'Connecting',
   open: 'Connected',
   reconnecting: 'Reconnecting',
-  superseded: 'Moved to another window',
+  superseded: 'Moved to another device',
   session_gone: 'Session ended',
   disconnected: 'Disconnected',
 };
