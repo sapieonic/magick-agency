@@ -351,8 +351,11 @@ class CustomerWaitingBanner extends StatelessWidget {
     final from = waiting.fromE164;
     final who = waiting.name ?? (from == null ? null : formatPhone(from));
     final line = InboundCopy.customerWaiting(who);
+    // A live region: said (politely) when it appears and when the caller waiting changes (the
+    // label names them), never again on a rebuild with the same words.
     return Semantics(
       container: true,
+      liveRegion: true,
       label: '$line. ${InboundCopy.customerWaitingHint}',
       excludeSemantics: true,
       child: AppCard(

@@ -370,6 +370,15 @@ void main() {
       expect(find.byKey(const Key('customer-waiting')), findsNothing);
     });
 
+    testWidgets('said when it appears: a polite live region naming the caller', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpStation(tester, inboundStation(inbound: caller(stage: InboundStage.connected), waiting: waiting));
+      final node = tester.getSemantics(find.byKey(const Key('customer-waiting')));
+      expect(node.flagsCollection.isLiveRegion, isTrue);
+      expect(node.label, 'Your customer is waiting: Rahul Deshpande. ${InboundCopy.customerWaitingHint}');
+      semantics.dispose();
+    });
+
     testWidgets('over a campaign call too, named by number when no contact matched', (tester) async {
       await pumpStation(
         tester,
