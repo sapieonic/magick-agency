@@ -108,13 +108,17 @@ class _HoldToConfirmBarState extends State<HoldToConfirmBar> with SingleTickerPr
     setState(() {});
   }
 
+  // A pointer keeps reporting to what it hit when it went down, even after that
+  // has left the tree: the call ends mid-hold and the bar is replaced, then the
+  // finger lifts. By then `_fill` is disposed and `context` is gone, so the
+  // late move or lift is dropped here, before either is touched.
   void _up(PointerEvent e) {
-    if (e.pointer != _pointer) return;
+    if (!mounted || e.pointer != _pointer) return;
     _cancel();
   }
 
   void _move(PointerMoveEvent e) {
-    if (e.pointer != _pointer) return;
+    if (!mounted || e.pointer != _pointer) return;
     final size = context.size;
     if (size == null) return;
     // A little slack, so a thumb that rolls slightly does not cancel.
