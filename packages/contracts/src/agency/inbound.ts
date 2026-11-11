@@ -184,6 +184,17 @@ export interface AgencyInboundRouteConfig {
   analysis_profile_id: string | null;
   /** Outcomes for callers matched to no campaign. `[]`: the built-in catalog, never "no outcomes" (as the soft phone's). */
   disposition_catalog: AgencyDisposition[];
+  /**
+   * IQ52: the wrap-up window, in seconds ({@link AGENCY_INBOUND_ROUTE_LIMITS}`.WRAPUP_SECONDS`), of
+   * EVERY inbound call on the route, matched to a campaign or not, on a console or a phone, always
+   * with auto-return: the outcome lapses `no_disposition` and the agent is returned when it ends
+   * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS} stays the backstop). Captured on the call when it
+   * arrives, so editing or deleting the route never moves a countdown already shown. Always stored
+   * and served (30 by default, `0032_inbound_route_wrapup.sql`); optional in this type only so a
+   * client written before it still typechecks, and a create or PATCH that leaves it out keeps the
+   * default or the stored value.
+   */
+  wrapup_seconds?: number;
 }
 
 /**
@@ -211,6 +222,8 @@ export const AGENCY_INBOUND_ROUTE_DEFAULTS = Object.freeze({
   recording_notice: true,
   analysis_profile_id: null as string | null,
   disposition_catalog: [] as AgencyDisposition[],
+  /** IQ52 (Manas: "start at 30 and let the route editor change it"). */
+  wrapup_seconds: 30,
 });
 
 /**
@@ -225,6 +238,8 @@ export const AGENCY_INBOUND_ROUTE_LIMITS = Object.freeze({
   QUEUE_MAX_WAIT_SECONDS: { min: 10, max: 1800 },
   MAX_WAITING: { min: 0, max: 100 },
   MAX_CONCURRENT: { min: 1, max: 500 },
+  /** IQ52: the route's wrap-up window (`ck_agency_inbound_routes_wrapup`, 0032). */
+  WRAPUP_SECONDS: { min: 10, max: 600 },
   WEEKLY_HOURS_MAX: 50,
   HOLIDAYS_MAX: 100,
   /** Days one holiday entry may span (`from`..`to` inclusive). */
@@ -354,7 +369,11 @@ export interface AgencyInboundCall {
   ended_at: string | null;
   /** Talk time from the bind, once ended; NULL before. */
   talk_seconds: number | null;
-  /** When an owed outcome lapses (`ended_at` + {@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}); NULL when none is owed. */
+  /**
+   * When an owed outcome lapses and the agent is returned: `ended_at` + the route's wrap-up window
+   * captured on the call (IQ52, `AgencyInboundRouteConfig.wrapup_seconds`; 30 s when the call has
+   * none), never past `ended_at` + {@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}. NULL when none is owed.
+   */
   outcome_due_at: string | null;
   disposition_code: string | null;
   notes: string | null;

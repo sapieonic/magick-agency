@@ -54,7 +54,7 @@ import {
 import { AGENCY_INBOUND_MISSED_COUNT_CAP } from '@magick-agency/contracts/api/agency/inbound';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
-import { INBOUND_DEFAULT_WRAPUP, type InboundWrapupRule } from '../../../agency/inbound/inbound-wrapup.js';
+import { INBOUND_DEFAULT_WRAPUP_SECONDS } from '../../../agency/inbound/inbound-wrapup.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
 import { inboundFromDigitsSql, inboundNumberBusySql } from './sql-fragments.js';
 
@@ -160,6 +160,12 @@ export interface AgencyInboundCallRecord {
   voicemail_seconds: number | null;
   /** The ringing outbound attempt this call cancelled (§5.4). */
   clash_attempt_id: string | null;
+  /**
+   * IQ52 (0032): the route's wrap-up window, captured when the call arrived: how long after its end
+   * an owed outcome lapses and the agent is returned. NULL: no route (the tenant default's), or a
+   * row the migration could not name a route for: the default ({@link INBOUND_DEFAULT_WRAPUP_SECONDS}).
+   */
+  wrapup_seconds: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -198,6 +204,13 @@ export interface AgencyInboundArrivalInput {
    * callers that write an open call need not name it; the router always says.
    */
   closedCause?: AgencyInboundClosedCause | null;
+  /**
+   * IQ52: the route's wrap-up window, captured on the row (`wrapup_seconds`, 0032) so editing or
+   * deleting the route never moves the countdown of a call already taken. Absent or null: none (a
+   * call with no route); the lapse then takes the default. Optional only so the many test callers
+   * need not name it; the router always passes the route's.
+   */
+  wrapupSeconds?: number | null;
 }
 
 /** How a call ends ({@link AgencyInboundCallRepository.end}). */
@@ -277,7 +290,7 @@ const CALL_COLUMNS = `c.id, c.tenant_id, c.account_id, c.route_id, c.phone_numbe
   c.follow_up_status, c.follow_up_reason, c.follow_up_assignee_user_id, c.handled_by_user_id, c.handled_at,
   c.session_id, c.queued_at, c.offered_at, c.offer_count, c.recording_requested, c.disposition_code,
   c.disposition_source, c.notes, c.callback_at, c.dispositioned_by_user_id, c.dispositioned_at,
-  c.dispositioned_on_behalf, c.settled_at, c.voicemail_seconds, c.clash_attempt_id,
+  c.dispositioned_on_behalf, c.settled_at, c.voicemail_seconds, c.clash_attempt_id, c.wrapup_seconds,
   c.created_at, c.updated_at`;
 
 /** A row's Missed-list joins: the route's name and the matched campaign's. Both LEFT, no FK. */
@@ -317,17 +330,17 @@ export class AgencyInboundCallRepository {
         `INSERT INTO agency_inbound_calls AS c
            (tenant_id, account_id, route_id, phone_number_id, provider, telephony_credential_id, provider_call_id,
             from_e164, to_e164, matched_contact_id, matched_campaign_id, caller_dnc, sticky_user_id, sticky_reason,
-            answered_at, recording_requested, closed_cause)
+            answered_at, recording_requested, closed_cause, wrapup_seconds)
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::varchar, $6::uuid, $7::varchar,
                  $8::varchar, $9::varchar, $10::uuid, $11::uuid, $12::boolean, $13::uuid, $14::varchar,
-                 CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar)
+                 CASE WHEN $15::boolean THEN now() END, $16::boolean, $17::varchar, $18::smallint)
          ON CONFLICT (provider, provider_call_id) DO NOTHING
          RETURNING ${CALL_COLUMNS}`,
         [
           input.tenantId, input.accountId, input.routeId, input.phoneNumberId, input.provider, input.telephonyCredentialId,
           input.providerCallId, input.fromE164, input.toE164, id.match?.contactId ?? null, id.match?.campaignId ?? null,
           id.callerDnc, id.sticky?.userId ?? null, id.sticky?.reason ?? null, input.answered,
-          input.recordingRequested, input.closedCause ?? null,
+          input.recordingRequested, input.closedCause ?? null, input.wrapupSeconds ?? null,
         ],
       );
       const inserted = rows[0];
@@ -723,9 +736,9 @@ export class AgencyInboundCallRepository {
    * The outcome-lapse sweep (§2 step 8, §6): close every bridged call whose outcome did not come
    * within its window of `ended_at`, or whose session has LEFT: `no_disposition`, the source its
    * match implies, no `dispositioned_by_user_id` (nobody recorded it), settled. The window is the
-   * matched campaign's wrap-up auto-return (`inbound-wrapup.ts`: `wrapup_seconds` when
-   * `wrapup_auto_return` is on and it is above 0), else `defaultWrapup` (unmatched, or the
-   * campaign row gone), never past `lapseMs`, the backstop ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}).
+   * route's, captured on the call at arrival (`wrapup_seconds`, IQ52; `inbound-wrapup.ts`), else
+   * `defaultWrapupSeconds` (a call with none), never past `lapseMs`, the backstop
+   * ({@link AGENCY_INBOUND_OUTCOME_LAPSE_MS}). A matched campaign's own wrap-up rule no longer applies.
    * At most `limit`, oldest end first, over `idx_agency_inbound_calls_unsettled_lapse`.
    *
    * **Releases and settles nothing.** It returns the rows it closed; the caller settles each one's
@@ -736,16 +749,14 @@ export class AgencyInboundCallRepository {
    * `settled_at IS NULL` re-check) or waits.
    */
   async lapseUnsettled(
-    opts: { lapseMs?: number; defaultWrapup?: InboundWrapupRule; limit?: number } = {},
+    opts: { lapseMs?: number; defaultWrapupSeconds?: number; limit?: number } = {},
     deps: { client?: Db } = {},
   ): Promise<AgencyInboundCallRecord[]> {
-    const fallback = opts.defaultWrapup ?? INBOUND_DEFAULT_WRAPUP;
     const { rows } = await (deps.client ?? getPool()).query<AgencyInboundCallRecord>(
       `WITH picked AS MATERIALIZED (
          SELECT c.id
            FROM agency_inbound_calls c
            LEFT JOIN agency_agent_sessions s ON s.id = c.session_id
-           LEFT JOIN agency_campaigns k ON k.id = c.matched_campaign_id AND k.tenant_id = c.tenant_id
           WHERE c.bridged_at IS NOT NULL AND c.settled_at IS NULL AND c.state = 'ended'
             AND (c.ended_at < now() - make_interval(secs => ${OUTCOME_WINDOW_SECONDS_SQL}) OR s.left_at IS NOT NULL)
           ORDER BY c.ended_at
@@ -757,7 +768,7 @@ export class AgencyInboundCallRepository {
          FROM picked
         WHERE c.id = picked.id AND c.settled_at IS NULL AND c.state = 'ended'
         RETURNING ${CALL_COLUMNS}`,
-      [opts.lapseMs ?? AGENCY_INBOUND_OUTCOME_LAPSE_MS, opts.limit ?? 500, fallback.wrapupSeconds, fallback.autoReturn],
+      [opts.lapseMs ?? AGENCY_INBOUND_OUTCOME_LAPSE_MS, opts.limit ?? 500, opts.defaultWrapupSeconds ?? INBOUND_DEFAULT_WRAPUP_SECONDS],
     );
     return rows;
   }
@@ -1029,15 +1040,11 @@ const LAPSE_SET_SQL = `settled_at = now(),
               dispositioned_at = now()`;
 
 /**
- * The lapse window in seconds (`inbound-wrapup.ts`'s `inboundOutcomeWindowMs`, in SQL): the
- * matched campaign `k`'s auto-return window, else the default (`$3` seconds, `$4` auto-return),
- * never past the backstop (`$1` ms). Auto-return off, or no window: the backstop.
+ * The lapse window in seconds (`inbound-wrapup.ts`'s `inboundOutcomeWindowMs`, in SQL): the route's
+ * window captured on the call (`c.wrapup_seconds`, IQ52), else the default (`$3` seconds), never past
+ * the backstop (`$1` ms). Always with auto-return.
  */
-const OUTCOME_WINDOW_SECONDS_SQL = `CASE
-                 WHEN COALESCE(k.wrapup_auto_return, $4::boolean) AND COALESCE(k.wrapup_seconds, $3::int) > 0
-                   THEN LEAST(COALESCE(k.wrapup_seconds, $3::int)::double precision, $1::double precision / 1000)
-                 ELSE $1::double precision / 1000
-               END`;
+const OUTCOME_WINDOW_SECONDS_SQL = `LEAST(COALESCE(c.wrapup_seconds, $3::int)::double precision, $1::double precision / 1000)`;
 
 /** The one-unsettled-call-per-session index (`0027_inbound_connect.sql`). */
 const SESSION_UNSETTLED_INDEX = 'uq_agency_inbound_calls_session_unsettled';

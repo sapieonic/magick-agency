@@ -1292,6 +1292,25 @@ the CHECK and the column. **Tests**: `test/integration/db/ingest-dedupe-columns-
 combined-key jobs and leaving single-key and finished ones, down then up) and the down → up
 inventory suite.
 
+### 0032 — `migrations/0032_inbound_route_wrapup.sql`
+
+The inbound wrap-up window is the route's (IQ52, replacing IQ32's window: the matched campaign's
+auto-return rule, 120 s unmatched). **`agency_inbound_routes.wrapup_seconds`** `SMALLINT NOT NULL
+DEFAULT 30`, `ck_agency_inbound_routes_wrapup` (10..600: the contract's
+`AGENCY_INBOUND_ROUTE_LIMITS.WRAPUP_SECONDS`, default `AGENCY_INBOUND_ROUTE_DEFAULTS.wrapup_seconds`):
+every inbound call on the route takes it, always with auto-return. **`agency_inbound_calls.wrapup_seconds`**
+`SMALLINT NULL`, `ck_agency_inbound_calls_wrapup` (the same range when set): the route's window
+CAPTURED by the router at arrival, read by the outcome-lapse sweep (`lapseUnsettled`, no campaign
+join) and the panel's `outcome_due_at`, so an edit or delete of the route never moves a countdown
+already shown. NULL on a call with no route (the tenant default's, never bridged); the server reads
+NULL as 30 s. The 30-minute lapse stays the backstop. The Up backfills every call with a route from
+it (the `updated_at` trigger disabled around it). **Down** drops both columns and CHECKs.
+**Tests**: `test/integration/db/inbound-route-wrapup-migration.test.ts` (shape, defaults, both CHECKs
+against the contract's bounds, the backfill with `updated_at` kept, down then up), the down → up
+inventory suite, and the server's `test/integration/agency/inbound-agent-return.test.ts` (the lapse
+at each call's window, the campaign's rule ignored), `inbound-closed-cause.test.ts` (the router's
+capture) and `test/integration/api/inbound-routes.test.ts` (validation and audit).
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

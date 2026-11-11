@@ -139,7 +139,7 @@ async function liveNumbersOf(routeId: string): Promise<string[]> {
 async function createRoute(actor: Actor, body: Record<string, unknown>, opts: { account?: string } = {}) {
   const res = await call('POST', '/routes', actor, { timezone: 'Europe/London', ...body }, opts);
   expect(res.statusCode, res.body).toBe(201);
-  return res.json().route as { id: string; name: string; numbers: Array<{ phone_number_id: string }> };
+  return res.json().route as { id: string; name: string; numbers: Array<{ phone_number_id: string }>; wrapup_seconds?: number };
 }
 
 /** An ended call that reached nobody: an open Missed row. */
@@ -299,6 +299,26 @@ describe('validation', () => {
     const listed = (await call('GET', '/routes', sup())).json().routes.find((r: { id: string }) => r.id === created.id);
     expect(listed.warnings).toHaveLength(1);
     await call('DELETE', `/routes/${created.id}`, sup());
+  });
+
+  it('IQ52: the wrap-up window, 30 s by default, 10–600 s, changed by a PATCH and audited by name', async () => {
+    const created = await createRoute(sup(), { name: 'Wrap' });
+    expect(created.wrapup_seconds).toBe(30);
+    for (const bad of [9, 601, 12.5, '30', null]) {
+      const res = await call('PATCH', `/routes/${created.id}`, sup(), { wrapup_seconds: bad });
+      expect(res.statusCode, String(bad)).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'inbound_route_invalid', details: [{ path: 'wrapup_seconds' }] });
+    }
+    const changed = await call('PATCH', `/routes/${created.id}`, sup(), { wrapup_seconds: 90 });
+    expect(changed.statusCode, changed.body).toBe(200);
+    expect(changed.json().route.wrapup_seconds).toBe(90);
+    const [row] = await audits('agency_inbound_route.updated', created.id);
+    expect(row!.details).toEqual({ fields: ['wrapup_seconds'], numbers_added: [], numbers_removed: [] });
+    const made = await call('POST', '/routes', sup(), { name: 'Wrap long', timezone: 'UTC', wrapup_seconds: 600 });
+    expect(made.statusCode, made.body).toBe(201);
+    expect(made.json().route.wrapup_seconds).toBe(600);
+    await call('DELETE', `/routes/${created.id}`, sup());
+    await call('DELETE', `/routes/${made.json().route.id}`, sup());
   });
 
   it('takes only the account’s own clips, profile and pool campaigns', async () => {

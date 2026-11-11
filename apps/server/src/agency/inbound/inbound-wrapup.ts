@@ -1,47 +1,35 @@
-import { AGENCY_INBOUND_OUTCOME_LAPSE_MS } from '@magick-agency/contracts/agency';
-import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
+import { AGENCY_INBOUND_OUTCOME_LAPSE_MS, AGENCY_INBOUND_ROUTE_DEFAULTS } from '@magick-agency/contracts/agency';
 
 /**
- * ─── HOW LONG AN ANSWERED INBOUND CALL'S OUTCOME WAITS (docs/inbound.md §6) ───────────────
+ * ─── HOW LONG AN ANSWERED INBOUND CALL'S OUTCOME WAITS (docs/inbound.md §6; IQ52) ──────────
  *
- * An inbound call's wrap-up follows the outbound wrap-up's auto-return rule (`wrapup-manager.ts`)
- * for the call's matched campaign: with `wrapup_auto_return` on and a `wrapup_seconds` window,
- * the outcome lapses `wrapup_seconds` after the call ended (`no_disposition`, as the reaper closes
- * an outbound wrap-up's attempt after its window) and the agent is returned; with auto-return off,
- * or `wrapup_seconds = 0` ("no timer"), the agent stays until they save it. A caller who matched
- * no campaign takes its own default ({@link INBOUND_DEFAULT_WRAPUP}, 120 s with auto-return: a new
- * enquiry with no contact record needs longer than a campaign call; there is no account setting).
- * {@link AGENCY_INBOUND_OUTCOME_LAPSE_MS} (30 minutes) stays as the backstop: no outcome waits
- * longer, whatever the campaign says.
+ * The inbound wrap-up window is the ROUTE's (IQ52, which replaces IQ32's window): every inbound
+ * call on a route, matched to a campaign or not, on a console or a phone, takes the route's
+ * `wrapup_seconds` (30 s by default, 10–600 s, set in the route editor), always with auto-return:
+ * the outcome lapses `no_disposition` that long after the call ended and the agent is returned to
+ * the pool. The matched campaign's own wrap-up rule (`wrapup_seconds`, `wrapup_auto_return`) no
+ * longer applies to an inbound call. {@link AGENCY_INBOUND_OUTCOME_LAPSE_MS} (30 minutes) stays the
+ * backstop: no outcome waits longer.
+ *
+ * **The window is captured on the call** (`agency_inbound_calls.wrapup_seconds`, 0032), written
+ * from its route when the call arrives, and read from the row from then on. A route edited or
+ * deleted while its call is live or its outcome owed does not move the countdown the agent was
+ * shown, and the read needs no join (a deleted route's row is kept, but an edit would otherwise
+ * change a window already on screen). A call with none (the tenant default's, which no agent
+ * takes; a row from before the migration with no route) takes {@link INBOUND_DEFAULT_WRAPUP_SECONDS}.
  *
  * One rule, read in two places that must agree: the panel's `outcome_due_at`
- * (`inbound-call-wire.ts`) and the lapse sweep's SQL (`agencyInboundCallRepository.lapseUnsettled`,
- * which is passed {@link INBOUND_DEFAULT_WRAPUP} and the backstop).
+ * (`inbound-call-wire.ts`) and the lapse sweep's SQL (`agencyInboundCallRepository.lapseUnsettled`).
  */
 
-/** The auto-return rule of an inbound call's wrap-up: the outbound wrap-up's two campaign settings. */
-export interface InboundWrapupRule {
-  wrapupSeconds: number;
-  autoReturn: boolean;
-}
+/** The window of a call that captured none: the route's default (IQ52: "start at 30"). */
+export const INBOUND_DEFAULT_WRAPUP_SECONDS = AGENCY_INBOUND_ROUTE_DEFAULTS.wrapup_seconds;
 
-/**
- * The rule for a caller who matched no campaign: 120 s with auto-return. Its own constant, not a
- * new campaign's default (30 s): an unmatched caller is a new enquiry with no contact record, and
- * the agent needs time to note who they are before the outcome lapses (PM decision, round 2).
- */
-export const INBOUND_DEFAULT_WRAPUP: Readonly<InboundWrapupRule> = Object.freeze({ wrapupSeconds: 120, autoReturn: true });
-
-/** The rule for a call matched to `campaign` (null: unmatched, or the campaign row is gone). */
-export function inboundWrapupRule(
-  campaign: Pick<AgencyCampaignRecord, 'wrapup_seconds' | 'wrapup_auto_return'> | null,
-): InboundWrapupRule {
-  if (!campaign) return { ...INBOUND_DEFAULT_WRAPUP };
-  return { wrapupSeconds: campaign.wrapup_seconds, autoReturn: campaign.wrapup_auto_return };
-}
-
-/** How long after the call ended its outcome lapses, in ms: the auto-return window, never past the backstop. */
-export function inboundOutcomeWindowMs(rule: InboundWrapupRule, backstopMs: number = AGENCY_INBOUND_OUTCOME_LAPSE_MS): number {
-  if (!rule.autoReturn || !(rule.wrapupSeconds > 0)) return backstopMs;
-  return Math.min(rule.wrapupSeconds * 1000, backstopMs);
+/** How long after the call ended its outcome lapses, in ms: the captured window (else the default), never past the backstop. */
+export function inboundOutcomeWindowMs(
+  call: { wrapup_seconds: number | null },
+  backstopMs: number = AGENCY_INBOUND_OUTCOME_LAPSE_MS,
+): number {
+  const seconds = call.wrapup_seconds ?? INBOUND_DEFAULT_WRAPUP_SECONDS;
+  return Math.min(seconds * 1000, backstopMs);
 }

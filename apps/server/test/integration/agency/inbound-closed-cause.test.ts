@@ -144,3 +144,31 @@ describe('closed_cause: why the answer treated the caller as closed', () => {
     expect(await answered(harness(), arrival(to))).toMatchObject({ account_id: XA, outcome: 'overflow', closed_cause: null });
   });
 });
+
+/**
+ * IQ52: the route's wrap-up window is captured on the call at arrival (`wrapup_seconds`, 0032), so
+ * an edit of the route afterwards never moves the countdown of a call already taken; a call with
+ * no route captures none. Mutation-checked: dropping `wrapupSeconds` from the router's insert turns
+ * this red.
+ */
+describe('wrapup_seconds: the route`s window, captured at arrival (IQ52)', () => {
+  const windowOf = async (carrierCallId: string) => (await pool().query<{ wrapup_seconds: number | null }>(
+    'SELECT wrapup_seconds FROM agency_inbound_calls WHERE provider_call_id = $1', [carrierCallId])).rows[0]!.wrapup_seconds;
+
+  it('the route`s window on the call, unchanged by a later edit of the route; none without a route', async () => {
+    const to = await routedNumber({ wrapup_seconds: 75 });
+    const a = arrival(to);
+    await answered(harness(), a);
+    expect(await windowOf(a.carrierCallId)).toBe(75);
+    await pool().query('UPDATE agency_inbound_routes SET wrapup_seconds = 20');
+    expect(await windowOf(a.carrierCallId)).toBe(75);
+    const b = arrival(to);
+    await answered(harness(), b);
+    expect(await windowOf(b.carrierCallId)).toBe(20);
+
+    const bare = await linkedNumber();
+    const c = arrival(bare.e164);
+    await answered(harness(), c);
+    expect(await windowOf(c.carrierCallId)).toBeNull();
+  });
+});
