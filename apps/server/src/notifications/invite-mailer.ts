@@ -175,7 +175,8 @@ const AGENCY_JOIN_PATH = '/agency/join';
 
 /**
  * The invitation CLAIM page for every other role — the same three steps against
- * the same two endpoints, outside the agency shell, and finishing in `/app`.
+ * the same two endpoints, finishing at `/app`, the console's home decision
+ * (`AppHomeRedirect`: `/agency` with the dialler on, Settings with it off).
  *
  * Public in the console's router for the reason the agency one is: the reader
  * has no session yet. Both pages call the same role-agnostic endpoints, and the
@@ -208,11 +209,13 @@ const WORKSPACE_JOIN_PATH = '/join';
  * safer of the two wrong answers — a page with no signup on it, rather than a
  * claim page with nothing to claim.
  *
- * ── Every other role's claim page lands them in the shell ──────────────────
- * A supervisor is `account_admin` or above and legitimately administers in
- * `/app` — team, settings — so `/join/:token` finishes there and they reach the
- * dialer from its nav entry. Supervisors are first-class AT the agency door and
- * it routes them correctly; the invite link is simply not where that is decided.
+ * ── Every other role's claim page lands them in the console ─────────────────
+ * `/join/:token` finishes at `/app`, which is no longer a shell of its own: the
+ * console has one shell (B28) and `/app` only decides where to go, `/agency` when
+ * the dialler is on (Home for a supervisor, the campaign list for a viewer or
+ * operator) and Settings (`/settings/*`, where Team lives) when it is off.
+ * Supervisors are first-class AT the agency door and it routes them correctly;
+ * the invite link is simply not where that is decided.
  *
  * It used to be the bare `/login`, and that was the defect: an invited operator
  * with no account met a sign-in page with no signup on it and a credential they
