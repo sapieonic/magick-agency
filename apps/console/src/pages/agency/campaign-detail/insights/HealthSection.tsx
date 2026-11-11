@@ -103,7 +103,7 @@ export function HealthSection({
           sub={`Do Not Call ${formatCount(health.predial_blocks.dnc)} · invalid ${formatCount(health.predial_blocks.invalid)} · ${formatCount(health.predial_blocks.outside_calling_hours_deferrals)} held for calling hours`}
           testId="kpi-predial"
         />
-        <Kpi label="At the concurrency limit" value={minutes(health.concurrency_limit_minutes)} sub="Time the account’s line limit held dials back" testId="kpi-concurrency-minutes" />
+        <Kpi label="All lines in use" value={minutes(health.concurrency_limit_minutes)} sub="Time every one of the account’s lines was busy, holding dials back" testId="kpi-concurrency-minutes" />
         <Kpi
           label="Carrier failures"
           value={<CountLink to={attemptsLink(campaignId, { ...range, outcome: 'failed' })} value={health.carrier_failures} label="failed dials" />}

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Info, Clock, AlertTriangle, Mic, Download, MessageSquare } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -57,11 +56,11 @@ export type { RecordingOutcome };
  *
  * ── Every caller-specific prop is REQUIRED, and that is the design ─────────
  *
- * Not one of `breadcrumbs`, `leafLabel`, `subtitle`, `roleLabels`,
+ * Not one of `subtitle`, `roleLabels`,
  * `identityFacts`, `identityCards`, `analysisEnabled`, `analysisTitle`,
  * `analysisMessages`, `retryLabel`, `recordingEnabled`, `fetchRecording` or
  * `onRetryAnalysis` has a default. A default here would be somebody's wording,
- * and a new consumer would then inherit a breadcrumb, a recording URL and a
+ * and a new consumer would then inherit a subtitle, a recording URL and a
  * session UUID by saying nothing at all. The compile error is the point, the
  * same way it is for the `scope` parameter on the API's repository reads.
  *
@@ -147,9 +146,6 @@ export interface CallFactCard {
 
 export interface CallDetailViewProps {
   call: WebRtcCallRecord;
-  /** The trail ABOVE this page. The leaf is `leafLabel`. */
-  breadcrumbs: Array<{ label: string; href?: string }>;
-  leafLabel: string;
   /** Under the destination number — the caller's one-line "what happened". */
   subtitle: string;
   /**
@@ -294,8 +290,6 @@ export function FactCard({ card, icon }: { card: CallFactCard; icon: React.React
 
 export function CallDetailView({
   call,
-  breadcrumbs,
-  leafLabel,
   subtitle,
   roleLabels,
   identityFacts,
@@ -322,9 +316,6 @@ export function CallDetailView({
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[...breadcrumbs, { label: leafLabel }]}
-      />
       <PageHeader
         title={formatPhone(call.destination_phone)}
         subtitle={subtitle}

@@ -466,7 +466,8 @@ describe('health and compliance', () => {
     show(<HealthSection ctx={ctx} health={health()} timezone={ZONE} />);
     expect(screen.getByTestId('pacing-history-since').textContent).toBe('Pacing history since 4 Nov, 05:30. Earlier minutes were not recorded.');
     const reasons = within(screen.getByTestId('stall-reasons-table')).getAllByRole('rowheader').map((c) => c.textContent);
-    expect(reasons).toEqual(['No agents free', 'At the concurrency limit', 'Outside calling hours']);
+    expect(reasons).toEqual(['No agents free', 'All lines in use', 'Outside calling hours']);    // The minutes every line was busy, in the health strip's words.
+    expect(screen.getByTestId('kpi-concurrency-minutes').textContent).toContain('All lines in use');
   });
 
   it('reads recording coverage', () => {

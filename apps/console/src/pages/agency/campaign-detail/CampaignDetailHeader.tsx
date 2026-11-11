@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import {
+  Activity,
   Headphones,
   Pause,
   Play,
@@ -13,10 +14,14 @@ import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import { CampaignLineageStrip } from '../../../components/agency/CampaignLineageStrip';
 import { CampaignHistoryLink } from '../../../components/agency/CampaignHistoryLink';
 import type { Role } from '../../../types/auth';
-import type {
-  AgencyCampaignAction as Action,
+import {
   agencyCampaignControls,
+  campaignEnding,
+  PAUSE_IN_FLIGHT_NOTE,
+  showsPauseInFlightNote,
+  type AgencyCampaignAction as Action,
 } from '../../../utils/agencyCampaignControls';
+import { campaignTimeline } from '../../../utils/agency/overview/lifecycle';
 import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { formatClockTime } from '../../../utils/format/date';
 import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../../types/agency-campaign';
@@ -35,8 +40,6 @@ interface CampaignDetailHeaderProps {
   lastUpdatedAt: Date | null;
   /** The page is polling — said beside the stamp. */
   autoRefreshing: boolean;
-  /** "Started …" / "Running for …", absent facts already dropped. */
-  timelineParts: string[];
   /**
    * The stats' `concurrency` block, said through `concurrencyLine` against
    * `campaign.status` (the status the badge shows, not the stats' copy of it).
@@ -47,13 +50,12 @@ interface CampaignDetailHeaderProps {
   accountId: string | null;
   /** `agency.supervise`: the lifecycle buttons and the secondary actions. */
   canControl: boolean;
-  controls: ReturnType<typeof agencyCampaignControls>;
   /** The lifecycle action in flight, which disables every button. */
   busy: Action | null;
   onAction: (action: Action) => void;
-  terminal: boolean;
+  /** Retry contacts: offered with `onRetry` (the page that owns the retry dialog). */
   canRetry: boolean;
-  onRetry: () => void;
+  onRetry?: () => void;
   canJoinStation: boolean;
   /** For History, which follows its page's own gate (`audit.read`), not `canControl`. */
   role: Role | undefined;
@@ -61,25 +63,24 @@ interface CampaignDetailHeaderProps {
 }
 
 /**
- * The campaign's title, status, clocks and lineage on the left, and on the right
+ * The campaign's header on every Monitor tab and on Settings: its title, status, clocks and
+ * lineage on the left, and on the right
  * every affordance that CHANGES the campaign: the lifecycle controls, Add
  * contacts / New campaign, Retry contacts, Join as agent and Refresh; and
- * History, the campaign's activity trail (decision IN14). Out of
- * `AgencyCampaignDetailPage`, which owns the state those controls act on.
+ * History, the campaign's activity trail (decision IN14). The page owns the state those
+ * controls act on (`useCampaignLifecycle`); beneath the header, the note that a pause stops
+ * new calls only.
  */
 export function CampaignDetailHeader({
   campaign,
   lastUpdatedAt,
   autoRefreshing,
-  timelineParts,
   concurrency,
   tenantId,
   accountId,
   canControl,
-  controls,
   busy,
   onAction,
-  terminal,
   canRetry,
   onRetry,
   canJoinStation,
@@ -87,7 +88,30 @@ export function CampaignDetailHeader({
   onRefresh,
 }: CampaignDetailHeaderProps) {
   const linesInUse = concurrencyLine(campaign.status, concurrency);
+  const controls = agencyCampaignControls(campaign.status);
+  /*
+    HOW it ended, not merely THAT it did. `stopped` and `completed` are different
+    events — a supervisor ended one, the other ran out of list — and the badge
+    beside the title already distinguishes them. Collapsing both into a boolean
+    is what had a completed campaign reporting "Stopped by: Automatically",
+    which reads as the dialer having killed it.
+  */
+  const ending = campaignEnding(campaign.status);
+  const terminal = ending !== null;
+  /*
+    The two clock facts, in reading order, with the absent ones dropped rather
+    than dashed — `campaignTimeline` returns `null` for anything this server did
+    not carry, and "Started —" reads as a failed read (or, on a campaign that
+    genuinely never started, as a wrong one). One `now` for the render: the
+    page re-renders every 10s from the poll, which is what keeps "Running for
+    6 hours" honest.
+  */
+  const timeline = campaignTimeline(campaign, ending, new Date());
+  const timelineParts = [timeline.started, timeline.ran].filter(
+    (part): part is string => part !== null,
+  );
   return (
+    <>
     <header className={styles.header}>
       <div className={styles.headerCopy}>
         <div className={styles.headerMain}>
@@ -203,7 +227,7 @@ export function CampaignDetailHeader({
           campaign is a perfectly ordinary thing to retry part of, and a
           running one's child can run beside it (the dialog says how).
         */}
-        {canRetry && (
+        {canRetry && onRetry && (
           <button
             type="button"
             className={`${styles.actionButton} ${styles.secondaryAction}`}
@@ -251,5 +275,17 @@ export function CampaignDetailHeader({
         </button>
       </div>
     </header>
+    {/*
+      Said out loud rather than left to be inferred from a counter that keeps
+      moving: pause stops NEW calls only. A supervisor who believes they cut
+      off live conversations may say so to a customer who is still on one.
+    */}
+    {canControl && showsPauseInFlightNote(campaign.status) && (
+      <p className={styles.pauseNote}>
+        <Activity size={15} aria-hidden="true" />
+        {PAUSE_IN_FLIGHT_NOTE}
+      </p>
+    )}
+    </>
   );
 }

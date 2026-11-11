@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
@@ -14,6 +14,7 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  */
 
 const mocks = vi.hoisted(() => ({
+  transitionAgencyCampaign: vi.fn(),
   useTenant: vi.fn(),
   getAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
@@ -73,6 +74,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 vi.mock('../../api/agencyCampaigns', () => ({
   getAgencyCampaign: mocks.getAgencyCampaign,
   updateAgencyCampaign: mocks.updateAgencyCampaign,
+  // The campaign header above the form: its lifecycle controls and lineage strip.
+  transitionAgencyCampaign: mocks.transitionAgencyCampaign,
+  campaignLineage: async () => ({ root_campaign_id: 'camp-1', campaigns: [] }),
 }));
 // The lifecycle and upload history under the form (IN13), and the tab bar's overdue-callbacks badge.
 vi.mock('../../api/agencyInsights', () => ({
@@ -103,6 +107,12 @@ function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
   };
 }
 
+/** Stands in for search: a push navigation from outside the page. */
+function JumpTo({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(to)}>Jump</button>;
+}
+
 function HashProbe() {
   return <span data-testid="location-hash">{useLocation().hash}</span>;
 }
@@ -118,6 +128,7 @@ function renderPage(path = '/agency/campaigns/camp-1/settings') {
 }
 
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
+import { saveSettings } from '../helpers/settingsForm';
 import * as insightsSamples from '../helpers/insights';
 
 beforeEach(() => {
@@ -192,7 +203,7 @@ describe('campaign settings — saving', () => {
 
     const name = await screen.findByLabelText(/campaign name/i);
     fireEvent.change(name, { target: { value: 'Collections — September' } });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
 
@@ -216,7 +227,8 @@ describe('campaign settings — saving', () => {
 
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     await waitFor(() => expect(screen.getByDisplayValue('11:30')).toBeTruthy());
     expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe(
@@ -236,7 +248,7 @@ describe('campaign settings — saving', () => {
     await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByLabelText(/description/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect('description' in mocks.updateAgencyCampaign.mock.calls[0]![1]).toBe(false);
   });
@@ -252,7 +264,7 @@ describe('campaign settings — saving', () => {
     })) as HTMLInputElement;
     expect(box.checked).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].wrapup_auto_return).toBe(false);
 
@@ -279,7 +291,7 @@ describe('campaign settings — saving', () => {
     );
 
     fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].allow_wrapup_redial).toBe(false);
 
@@ -311,7 +323,7 @@ describe('campaign settings — saving', () => {
 
     fireEvent.keyDown(slider, { key: 'PageDown' });
     fireEvent.keyDown(slider, { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(3.4);
 
@@ -335,7 +347,7 @@ describe('campaign settings — saving', () => {
 
       // Only the calling hours change.
       fireEvent.change(start, { target: { value: '11:00' } });
-      const save = screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement;
+      const save = screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement;
       expect(save.disabled).toBe(false);
       fireEvent.click(save);
       await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
@@ -344,14 +356,17 @@ describe('campaign settings — saving', () => {
       expect(body.abandonment_ceiling_pct).toBe(stored);
       expect('abandonmentCeilingStoredPct' in body).toBe(false);
 
-      // Re-seeded from the response, the stored value is still accepted: Save stays on.
+      // Re-seeded from the response: nothing is unsaved, and the stored value is still
+      // accepted, so the next edit can be saved.
       await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Campaign settings saved.', 'success'));
-      expect((screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.queryByRole('button', { name: /save changes/i })).toBeNull();
+      fireEvent.change(screen.getByDisplayValue('11:00'), { target: { value: '12:00' } });
+      expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(false);
 
       // A NEW out-of-range value is still refused.
       fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '30' } });
       expect(screen.getByText('Set the limit between 0.5% and 10%.')).toBeTruthy();
-      expect((screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
     },
   );
 
@@ -360,7 +375,7 @@ describe('campaign settings — saving', () => {
 
     const name = await screen.findByLabelText(/campaign name/i);
     fireEvent.change(name, { target: { value: '   ' } });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(screen.getByText(/a campaign needs a name/i)).toBeTruthy());
     expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
@@ -381,9 +396,11 @@ describe('campaign settings — editing a live campaign', () => {
     renderPage();
 
     expect(await screen.findByText(/calls placed from now on/i)).toBeTruthy();
-    expect((await screen.findByLabelText(/campaign name/i)).hasAttribute('disabled')).toBe(false);
+    const name = await screen.findByLabelText(/campaign name/i);
+    expect(name.hasAttribute('disabled')).toBe(false);
+    fireEvent.change(name, { target: { value: 'Collections — September' } });
     expect(
-      screen.getByRole('button', { name: /save settings/i }).hasAttribute('disabled'),
+      screen.getByRole('button', { name: /save changes/i }).hasAttribute('disabled'),
     ).toBe(false);
   });
 
@@ -435,7 +452,7 @@ describe('campaign settings — permissions', () => {
     renderPage();
 
     await screen.findByLabelText(/campaign name/i);
-    expect(screen.queryByRole('button', { name: /save settings/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /save changes/i })).toBeNull();
   });
 
   it('shows a role that cannot write the abandonment limit read-only, not as a live slider', async () => {
@@ -473,7 +490,7 @@ describe('campaign settings — caller IDs', () => {
 
     // Deselect the only number.
     fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() =>
       expect(screen.getByText(/needs at least one caller id/i)).toBeTruthy(),
@@ -484,7 +501,8 @@ describe('campaign settings — caller IDs', () => {
   it('sends the pool AND pins a campaign that names no carrier to the service’s own account', async () => {
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     const [, body] = mocks.updateAgencyCampaign.mock.calls[0]!;
@@ -531,7 +549,7 @@ describe('campaign settings — recording opt-in', () => {
       .toBeNull();
     expect(recordBox().checked).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     // Omitting looks harmless because the column defaults to false — and would
     // mean an operator who turned recording on could never turn it back off.
@@ -542,7 +560,7 @@ describe('campaign settings — recording opt-in', () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole('checkbox', { name: RECORD_LABEL }));
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(true);
@@ -578,7 +596,7 @@ describe('campaign settings — `agency.recording` off', () => {
 
     const name = await screen.findByLabelText(/campaign name/i);
     fireEvent.change(name, { target: { value: 'Renamed' } });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     const [, body] = mocks.updateAgencyCampaign.mock.calls[0]!;
@@ -603,7 +621,7 @@ describe('campaign settings — `agency.recording` off', () => {
     fireEvent.click(recordBox());
     expect(recordBox().checked).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(false);
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith(
@@ -642,7 +660,7 @@ describe('campaign settings — call-summary profile', () => {
     const select = (await screen.findByLabelText(/call summary/i)) as HTMLSelectElement;
     expect(select.value).toBe('__none__');
 
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
   });
@@ -653,7 +671,7 @@ describe('campaign settings — call-summary profile', () => {
     fireEvent.change(await screen.findByLabelText(/call summary/i), {
       target: { value: 'prof-2' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBe('prof-2');
@@ -665,7 +683,7 @@ describe('campaign settings — call-summary profile', () => {
 
     const select = (await screen.findByLabelText(/call summary/i)) as HTMLSelectElement;
     expect(select.value).toBe('prof-gone');
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBe('prof-gone');
   });
@@ -743,7 +761,7 @@ describe('campaign settings — call-summary profile', () => {
 
     expect(await screen.findByText(/agency\.analytics/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /remove summary profile/i }));
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].analysis_profile_id).toBeNull();
@@ -754,7 +772,8 @@ describe('campaign settings — call-summary profile', () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ analysis_profile_id: 'prof-1' }));
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect('analysis_profile_id' in mocks.updateAgencyCampaign.mock.calls[0]![1]).toBe(false);
   });
@@ -768,7 +787,7 @@ describe('campaign settings — call-summary profile', () => {
     capabilitiesOff('calls.dialer.analytics');
     renderPage();
 
-    await screen.findByRole('button', { name: /save settings/i });
+    await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByText(/calls\.dialer\.analytics/)).toBeNull();
     expect(mocks.useCallAnalysisProfiles).toHaveBeenCalledWith({ enabled: true });
     expect(mocks.useCallAnalysisProfiles).not.toHaveBeenCalledWith({ enabled: false });
@@ -784,7 +803,8 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     );
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     const alert = await screen.findByText(/agency\.recording/);
     expect(alert.textContent).toContain('Ask an administrator');
@@ -803,7 +823,7 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     fireEvent.change(await screen.findByLabelText(/call summary/i), {
       target: { value: 'prof-2' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     expect(
       await screen.findByText(/dialer call analysis is not enabled for this account/i),
@@ -828,7 +848,7 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     fireEvent.change(await screen.findByLabelText(/call summary/i), {
       target: { value: 'prof-2' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
 
     expect(await screen.findByText(/no longer available on this account/i)).toBeTruthy();
   });
@@ -844,7 +864,8 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     );
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /save settings/i }));
+    await screen.findByLabelText(/campaign name/i);
+    saveSettings();
 
     expect(
       await screen.findByText(/must be a call-analysis profile id, or null to clear it/i),
@@ -872,6 +893,171 @@ describe('the campaign section bar', () => {
   });
 });
 
+/**
+ * ── The campaign's header, as on its Monitor tabs ──────────────────────────
+ * Settings is where "who changed the caller ID?" is asked, so History is here; and the
+ * campaign's name and its lifecycle controls, which the assignment notice tells people to use.
+ */
+describe('the campaign header on Settings', () => {
+  it('names the campaign, shows its status, the lifecycle controls and History', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Collections — August' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /pause/i })).toBeTruthy();
+    expect(screen.getByTestId('campaign-history-link').getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
+  });
+
+  it('leaves out the controls and History below their gates', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+    expect(screen.queryByRole('button', { name: /pause/i })).toBeNull();
+    expect(screen.queryByTestId('campaign-history-link')).toBeNull();
+  });
+
+  it('pauses the campaign without touching edits in progress', async () => {
+    // Loaded running; read again (after the pause) as paused.
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({ status: 'running' }))
+      .mockResolvedValue(campaign({ status: 'paused' }));
+    mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    renderPage();
+
+    const name = (await screen.findByLabelText(/campaign name/i)) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: 'Collections — September' } });
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+
+    await waitFor(() => expect(mocks.transitionAgencyCampaign)
+      .toHaveBeenCalledWith('camp-1', 'pause', 'tenant-1', 'account-1'));
+    expect(await screen.findByRole('button', { name: /resume/i })).toBeTruthy();
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Collections — September');
+  });
+});
+
+/**
+ * ── Unsaved changes ───────────────────────────────────────────────────────────
+ * Save is a bar stuck to the bottom of the view, there only while something is unsaved, with
+ * a count of the settings that differ; leaving with unsaved edits asks first.
+ */
+describe('unsaved changes', () => {
+  const bar = () => screen.queryByTestId('unsaved-changes-bar');
+  const nameField = () => screen.getByLabelText(/campaign name/i) as HTMLInputElement;
+
+  function renderWithExit() {
+    return render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+          <Route path="*" element={<p>Somewhere else</p>} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-1/overview" />
+      </MemoryRouter>,
+    );
+  }
+
+  it('shows no bar until something is edited, then counts each changed setting', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    expect(bar()).toBeNull();
+    expect(screen.getByTestId('unsaved-changes-status').textContent).toBe('');
+
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    expect(bar()?.textContent).toContain('1 unsaved change');
+    expect(screen.getByTestId('unsaved-changes-status').textContent).toBe('1 unsaved change');
+
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    expect(bar()?.textContent).toContain('2 unsaved changes');
+
+    // Put back by hand: nothing unsaved any more.
+    fireEvent.change(nameField(), { target: { value: 'Collections — August' } });
+    fireEvent.change(screen.getByDisplayValue('11:00'), { target: { value: '10:00' } });
+    expect(bar()).toBeNull();
+  });
+
+  it('Discard puts back what is saved, and the bar goes', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(nameField().value).toBe('Collections — August');
+    expect(screen.getByDisplayValue('10:00')).toBeTruthy();
+    expect(bar()).toBeNull();
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  it('Save sends the edits and clears the bar', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(nameField().value).toBe('Collections — September');
+  });
+
+  it('keeps Save back, saying why, while a field must be fixed', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '30' } });
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(bar()?.textContent).toMatch(/fix/i);
+  });
+
+  it('asks before leaving with unsaved edits; Cancel stays with them', async () => {
+    renderWithExit();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
+    expect(screen.getByText(/1 unsaved change to this campaign’s settings/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(nameField().value).toBe('Collections — September');
+  });
+
+  it('leaves on "Leave without saving"', async () => {
+    renderWithExit();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    expect(screen.getByText('Somewhere else')).toBeTruthy();
+  });
+
+  it('does not ask when nothing is unsaved, nor after Save or Discard', async () => {
+    renderWithExit();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Somewhere else')).toBeTruthy();
+  });
+
+  it('lets the section nav move about the page with unsaved edits', async () => {
+    Element.prototype.scrollIntoView = () => {};
+    try {
+      renderPage();
+      await screen.findByTestId('settings-section-nav');
+      fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+      fireEvent.click(screen.getByTestId('settings-section-link-recording'));
+      expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
+      expect(screen.queryByRole('dialog')).toBeNull();
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+});
+
 describe('inbound calls (P2): “Put callers through to their agent”', () => {
   it('is offered with the inbound flag on, round-trips through save, and goes back off the response', async () => {
     mocks.flags = new Set(['agency_inbound_enabled']);
@@ -882,7 +1068,7 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
     expect(screen.getByTestId('inbound-sticky-hint').textContent).toMatch(/agent they last spoke to first/);
     fireEvent.click(box);
     expect(screen.getByTestId('inbound-sticky-hint').textContent).toMatch(/next free agent/);
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].inbound_sticky_enabled).toBe(false);
   });
@@ -892,7 +1078,7 @@ describe('inbound calls (P2): “Put callers through to their agent”', () => {
     renderPage();
     await screen.findByRole('checkbox', { name: /allow redial from wrap-up/i });
     expect(screen.queryByRole('checkbox', { name: /put callers through to their agent/i })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    saveSettings();
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].inbound_sticky_enabled).toBe(false);
   });
@@ -996,6 +1182,31 @@ describe('the settings sections', () => {
     expect(scrolled).toEqual(['recording']);
     expect(current()).toEqual(['Recording']);
     expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
+  });
+
+  it('opens at a section of another campaign only once that campaign is on the page', async () => {
+    let resolveSecond: (value: AgencyCampaign) => void = () => {};
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) => (id === 'camp-1'
+      ? campaign()
+      : new Promise<AgencyCampaign>((resolve) => { resolveSecond = resolve; })));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-2/settings#recording" />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId('settings-section-nav');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    // Still the first campaign (or a spinner): no scroll to its Recording.
+    expect(scrolled).toEqual([]);
+
+    await act(async () => resolveSecond(campaign({ id: 'camp-2', name: 'Renewals' })));
+    await waitFor(() => expect(scrolled).toEqual(['recording']));
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Renewals');
+    expect(current()).toEqual(['Recording']);
   });
 
   it('highlights the section scrolled into view', async () => {

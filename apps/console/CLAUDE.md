@@ -31,7 +31,12 @@ profiles, team, invites and settings. Detail: `docs/architecture.md` "UIs", `doc
   Settings pages live under `/settings/*`; `/app/<page>` only redirects there
   (`LegacyAppRedirect`), so never link to `/app/...` (`agencyShellBoundary.test.ts`).
   A page names what the URL cannot (a campaign's name) in the top bar's breadcrumb with
-  `usePageCrumbs` (`components/layout/PageCrumbs.tsx`; campaign pages via `useCampaignCrumbs`).
+  `usePageCrumbs` (`components/layout/PageCrumbs.tsx`; campaign pages via `useCampaignCrumbs`,
+  which takes the campaign in state and names it only when its id is the URL's). That is the
+  only breadcrumb: a page does not render web-ui's `<Breadcrumbs>` as well.
+- The router is a plain `<Router>`, not a data router, so react-router's `useBlocker` does not
+  work. A form that must not be left with unsaved edits uses `hooks/useUnsavedChangesGuard`
+  (campaign Settings, with `UnsavedChangesBar`).
 - One search (B28): the top bar's field and ⌘K open `components/common/GlobalSearch`, whose results
   come from `utils/consoleSearch.ts`. Pages are read from `consoleNav.ts`, so a new tab is found by
   its label with no extra step (add words to `PAGE_KEYWORDS` if people would type others, and keep

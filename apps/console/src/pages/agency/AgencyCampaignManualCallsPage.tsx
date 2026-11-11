@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Phone } from 'lucide-react';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { useTenant } from '../../contexts/TenantContext';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useGovernance } from '../../contexts/GovernanceContext';
@@ -26,7 +25,7 @@ export default function AgencyCampaignManualCallsPage() {
   const { id } = useParams<{ id: string }>();
   const { tenantId, accountId, role } = useTenant();
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  useCampaignCrumbs(id, campaign?.name, [{ label: 'Call log' }]);
+  useCampaignCrumbs(id, campaign, [{ label: 'Call log' }]);
 
   useEffect(() => {
     if (!id || !tenantId || !accountId) return;
@@ -40,13 +39,6 @@ export default function AgencyCampaignManualCallsPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Call log' },
-        ]}
-      />
       <CampaignTabs campaignId={id} active="manual" role={role} campaignStatus={campaign?.status} />
       {/* Call log's second view (decision IN14): the bar marks Call log, this marks the view. */}
       <CallLogViews campaignId={id} active="manual" role={role} />

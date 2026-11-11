@@ -238,7 +238,8 @@ describe('a terminal campaign is the primary case', () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     expect(mocks.getCampaignAttempts).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('Q3 Renewals')).toBeTruthy();
+    // The campaign's name is the top bar's (`useCampaignCrumbs`); its status is the header's.
+    expect(await screen.findByText('Stopped')).toBeTruthy();
   });
 });
 
@@ -550,7 +551,7 @@ describe('filters in the URL', () => {
       disposition_catalog: [{ code: 'not_interested', label: 'Not interested' }],
     });
     renderWithLocation(DRILLDOWN);
-    await screen.findByText('Q3 Renewals');
+    await screen.findByText('Stopped');
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     const applied = within(screen.getByTestId('attempts-applied'));
     expect(applied.getByText('Outcome: Connected')).toBeTruthy();

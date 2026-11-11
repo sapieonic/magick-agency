@@ -27,7 +27,6 @@ import {
   retentionNotice,
   truncationNotice,
 } from '../../utils/agencyActivityCopy';
-import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { CampaignHistoryLink } from '../../components/agency/CampaignHistoryLink';
 import { CAMPAIGN_TABS, campaignLandingPath } from '../../utils/agencyCampaignTabs';
@@ -132,7 +131,7 @@ export function AgencyCampaignActivityPage() {
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  useCampaignCrumbs(id, campaign?.name, [{ label: 'History' }]);
+  useCampaignCrumbs(id, campaign, [{ label: 'History' }]);
   const [page, setPage] = useState<ActivityPage | null>(null);
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -378,15 +377,6 @@ export function AgencyCampaignActivityPage() {
 
   return (
     <div className={styles.page}>
-      <Breadcrumbs
-        items={[
-          { label: 'Campaigns', href: '/agency/campaigns' },
-          ...(campaign
-            ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }]
-            : []),
-          { label: 'History' },
-        ]}
-      />
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
