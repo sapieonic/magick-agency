@@ -260,7 +260,7 @@ export function describeInboundRail(input: {
   }
 }
 
-/** "Without one, it closes in 29:41" — the countdown's words around its digits. */
+/** "Without one, it closes in 0:24" — the countdown's words around its digits. */
 export const LAPSE_PREFIX = 'Without one, it closes in';
 
 /** Why the outcome pad is closed, by phase. */

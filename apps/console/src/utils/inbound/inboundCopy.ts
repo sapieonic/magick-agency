@@ -93,6 +93,15 @@ export const STICKY_WAIT_FIELD = {
   strictHint: 'With “Wait for their agent”, the caller waits for them while they’re busy, up to the longest wait instead.',
 } as const;
 
+/**
+ * The route's wrap-up window (IQ52): every inbound call on the route takes it, matched to a
+ * campaign or not, on a console or a phone, and the agent is returned to calls when it ends.
+ */
+export const WRAPUP_FIELD = {
+  label: 'Wrap-up time (seconds)',
+  hint: `${AGENCY_INBOUND_ROUTE_LIMITS.WRAPUP_SECONDS.min}–${AGENCY_INBOUND_ROUTE_LIMITS.WRAPUP_SECONDS.max}. Every call on this route gets this long to save an outcome, then the agent returns to calls automatically.`,
+} as const;
+
 /** A standard recording's words, quoted for a hint. */
 function quoted(recording: AgencyInboundStandardRecording): string {
   return `“${AGENCY_INBOUND_STANDARD_WORDS[recording]}”`;

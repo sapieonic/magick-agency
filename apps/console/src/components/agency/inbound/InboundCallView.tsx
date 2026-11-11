@@ -209,8 +209,9 @@ function TalkTimer({ from, clock }: { from: string; clock: ServerClock }) {
 }
 
 /**
- * "Without one, it closes in 29:41": the 30 minutes an owed outcome waits before the server
- * closes the call `no_disposition` and returns the agent (`outcome_due_at`). The digits are
+ * "Without one, it closes in 0:24": the route's wrap-up window (IQ52, 30 s by default) an owed
+ * outcome waits before the server closes the call `no_disposition` and returns the agent
+ * (`outcome_due_at`). The digits are
  * `aria-hidden` (a countdown inside the live region would announce every second); the time it
  * closes at is said once, in words, for a screen reader.
  */

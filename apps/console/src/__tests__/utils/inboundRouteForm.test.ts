@@ -40,6 +40,7 @@ const ROUTE: AgencyInboundRoute = {
   queue_max_wait_seconds: 120,
   max_waiting: 10,
   max_concurrent: 20,
+  wrapup_seconds: 45,
   after_hours_action: 'callback',
   overflow_action: 'callback',
   record_calls: false,
@@ -58,7 +59,7 @@ describe('a new route', () => {
     expect(validateRouteDraft({ ...draft, name: 'Main line' })).toEqual({});
     expect(draft).toMatchObject({
       timezone: 'Europe/Paris', stickyMode: 'loose', stickyWait: '30', stickyLookback: '30',
-      queueMaxWait: '120', maxWaiting: '10', maxConcurrent: '20', afterHoursAction: 'callback', overflowAction: 'callback',
+      queueMaxWait: '120', maxWaiting: '10', maxConcurrent: '20', wrapupSeconds: '30', afterHoursAction: 'callback', overflowAction: 'callback',
       recordCalls: false, recordingNotice: true, catalog: [], numberIds: [],
     });
     expect(newRouteDraft('Not/AZone').timezone).toBe('UTC');
@@ -68,7 +69,7 @@ describe('a new route', () => {
   it('creates with the whole configuration and its numbers', () => {
     const draft = { ...newRouteDraft('UTC'), name: '  Sales  ', hours: weekdayHours(), numberIds: ['n-2'] };
     const body = createRequestFromDraft(draft);
-    expect(body).toMatchObject({ name: 'Sales', timezone: 'UTC', phone_number_ids: ['n-2'], sticky_wait_seconds: 30 });
+    expect(body).toMatchObject({ name: 'Sales', timezone: 'UTC', phone_number_ids: ['n-2'], sticky_wait_seconds: 30, wrapup_seconds: 30 });
     expect(body.weekly_hours).toEqual([1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:30' })));
   });
 });
@@ -117,6 +118,17 @@ describe('the console’s checks', () => {
     expect(errors['max_waiting']).toMatch(/count towards calls at once/);
   });
 
+  it('holds the wrap-up time to 10–600 whole seconds (IQ52), at the server’s path', () => {
+    const named = { ...newRouteDraft('UTC'), name: 'X' };
+    for (const ok of ['10', '30', '600']) expect(validateRouteDraft({ ...named, wrapupSeconds: ok }), ok).toEqual({});
+    for (const bad of ['9', '601', '0']) {
+      expect(validateRouteDraft({ ...named, wrapupSeconds: bad })['wrapup_seconds'], bad).toBe('Wrap-up time must be between 10 and 600.');
+    }
+    for (const bad of ['', '12.5', 'abc']) {
+      expect(validateRouteDraft({ ...named, wrapupSeconds: bad })['wrapup_seconds'], bad).toBe('Wrap-up time must be a whole number.');
+    }
+  });
+
   it('holds a customised outcome list to the campaign rules', () => {
     const draft = { ...newRouteDraft('UTC'), name: 'X', catalog: [{ code: '', label: '' }] };
     expect(Object.keys(validateRouteDraft(draft)).some((k) => k.startsWith('disposition_catalog'))).toBe(true);
@@ -137,6 +149,13 @@ describe('a PATCH', () => {
     expect(patchFromDraft(ROUTE, edited)).toEqual({ name: 'Main', clips: { closed: 'clip-2' }, max_concurrent: 25 });
     expect(patchFromDraft(ROUTE, { ...draft, numberIds: ['n-1', 'n-2'] })).toEqual({ phone_number_ids: ['n-1', 'n-2'] });
     expect(patchFromDraft(ROUTE, { ...draft, numberIds: [] })).toEqual({ phone_number_ids: [] });
+  });
+
+  it('round-trips the route’s wrap-up time and sends it only when it changed (IQ52)', () => {
+    const draft = draftFromRoute(ROUTE);
+    expect(draft.wrapupSeconds).toBe('45');
+    expect(configFromDraft(draft).wrapup_seconds).toBe(45);
+    expect(patchFromDraft(ROUTE, { ...draft, wrapupSeconds: '90' })).toEqual({ wrapup_seconds: 90 });
   });
 });
 
