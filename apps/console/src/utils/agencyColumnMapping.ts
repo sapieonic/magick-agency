@@ -76,8 +76,14 @@ export interface MappingState {
  * One part of the duplicate key: the phone number, or another column such as a
  * loan number. `phone` names no column: it follows whichever column holds the
  * phone, so remapping the phone cannot leave the key on a stale column.
+ *
+ * `from` marks a phone key that was a column key until that column was made the
+ * phone (see {@link normaliseKeys}). It is that column, compared as a number only
+ * while it holds the phone: when the phone leaves it, it is that column again, so
+ * undoing a mis-set Phone role cannot drop the column from the key. The phone key
+ * the operator picks ("Phone number", and the default) has no `from`.
  */
-export type DedupeKey = { kind: 'phone' } | { kind: 'column'; column: string };
+export type DedupeKey = { kind: 'phone'; from?: string } | { kind: 'column'; column: string };
 
 /**
  * "Check duplicates on": up to {@link AGENCY_MAX_DEDUPE_COLUMNS} keys, in the operator's
@@ -104,13 +110,16 @@ export function dedupeKeys(choice: DedupeChoice): DedupeKey[] {
 
 /**
  * The keys as the mapping can honour them: a column now holding the phone becomes
- * the phone key (the phone dedupe compares normalised numbers), a key named twice
- * counts once, and at most {@link AGENCY_MAX_DEDUPE_COLUMNS} are kept.
+ * the phone key (the phone dedupe compares normalised numbers) remembering the
+ * column, a phone key whose column no longer holds the phone is that column again,
+ * a key named twice counts once, and at most {@link AGENCY_MAX_DEDUPE_COLUMNS} are kept.
  */
 function normaliseKeys(roles: ColumnMapping, keys: DedupeKey[]): DedupeKey[] {
   const out: DedupeKey[] = [];
   for (const key of keys) {
-    const next: DedupeKey = key.kind === 'column' && roles[key.column] === 'phone' ? { kind: 'phone' } : key;
+    const next: DedupeKey = key.kind === 'column'
+      ? roles[key.column] === 'phone' ? { kind: 'phone', from: key.column } : key
+      : key.from !== undefined && roles[key.from] !== 'phone' ? { kind: 'column', column: key.from } : key;
     if (!out.some((k) => sameKey(k, next))) out.push(next);
   }
   return out.slice(0, AGENCY_MAX_DEDUPE_COLUMNS);
@@ -175,7 +184,8 @@ export function setRole(state: MappingState, column: string, role: ColumnRole): 
     // Merging them would drop the old phone column from the key, and a key with
     // fewer columns drops MORE rows (the false removal the combination exists
     // to prevent). The old phone key becomes its column here; the moved column
-    // becomes the phone key in `normaliseKeys`, as any column made the phone does.
+    // becomes the phone key in `normaliseKeys`, as any column made the phone does,
+    // and becomes its column again there when the phone leaves it (an undo).
     const swap = role === 'phone' && previousPhone !== null
       && dedupe.keys.some((key) => key.kind === 'column' && key.column === column);
     const keys = swap
@@ -193,7 +203,11 @@ export function setRole(state: MappingState, column: string, role: ColumnRole): 
  */
 export function setDedupe(state: MappingState, choice: DedupeChoice): MappingState {
   if (choice.mode === 'none') return { ...state, dedupe: choice };
-  if (choice.keys.some((key) => key.kind === 'column' && !(key.column in state.roles))) return state;
+  const unknown = (key: DedupeKey) => {
+    const name = key.kind === 'column' ? key.column : key.from;
+    return name !== undefined && !(name in state.roles);
+  };
+  if (choice.keys.some(unknown)) return state;
   const keys = normaliseKeys(state.roles, choice.keys);
   if (keys.length === 0) return state;
   return { ...state, dedupe: { mode: 'keys', keys } };
@@ -201,13 +215,14 @@ export function setDedupe(state: MappingState, choice: DedupeChoice): MappingSta
 
 /**
  * Put `key` at position `index` of the duplicate key (0 is the first select). A
- * key already elsewhere in the list moves here rather than appearing twice.
+ * key already elsewhere in the list moves here rather than appearing twice, and
+ * keeps the column a phone key was made from.
  */
 export function setDedupeKey(state: MappingState, index: number, key: DedupeKey): MappingState {
   const keys = dedupeKeys(state.dedupe);
   if (index < 0 || index > keys.length) return state;
   const next = keys.filter((k, i) => i !== index && !sameKey(k, key));
-  next.splice(index, 0, key);
+  next.splice(index, 0, keys.find((k) => sameKey(k, key)) ?? key);
   return setDedupe(state, { mode: 'keys', keys: next });
 }
 
@@ -232,14 +247,19 @@ export function dedupeKeyOptions(analysis: AgencyColumnAnalysis, state: MappingS
 }
 
 /**
- * Add a key to the combination: the first one not already in it, in the order
- * {@link dedupeKeyOptions} lists them. Unchanged when none is left, at the
- * maximum, or when the choice is "Don't remove duplicates".
+ * "Combine with another column": add the first column not already in the key, in
+ * file order. The phone number is added only when no other column is left, so the
+ * button never puts the phone into a key the operator built on other columns
+ * unasked, yet a loan number can still be combined with the number in a file that
+ * has nothing else. The added select is an ordinary one: the operator can change
+ * it to any key. Unchanged when none is left, at the maximum, or when the choice is
+ * "Don't remove duplicates".
  */
 export function addDedupeKey(analysis: AgencyColumnAnalysis, state: MappingState): MappingState {
   const keys = dedupeKeys(state.dedupe);
   if (state.dedupe.mode !== 'keys' || keys.length >= AGENCY_MAX_DEDUPE_COLUMNS) return state;
-  const next = dedupeKeyOptions(analysis, state, keys.length)[0];
+  const options = dedupeKeyOptions(analysis, state, keys.length);
+  const next = options.find((key) => key.kind === 'column') ?? options[0];
   return next ? setDedupe(state, { mode: 'keys', keys: [...keys, next] }) : state;
 }
 

@@ -211,7 +211,10 @@ describe('the duplicate check', () => {
 
   const phone = { kind: 'phone' } as const;
   const col = (column: string) => ({ kind: 'column', column }) as const;
-  const keys = (...k: Array<ReturnType<typeof col> | typeof phone>) => ({ mode: 'keys', keys: k }) as const;
+  /** The phone key a column key became when that column was made the phone. */
+  const phoneFrom = (from: string) => ({ kind: 'phone', from }) as const;
+  const keys = (...k: Array<ReturnType<typeof col> | ReturnType<typeof phoneFrom> | typeof phone>) =>
+    ({ mode: 'keys', keys: k }) as const;
 
   it('starts on the phone and sends exactly the request it sent before the control existed', () => {
     const state = initialMapping(analysis());
@@ -234,21 +237,83 @@ describe('the duplicate check', () => {
 
   it('treats the phone column chosen as a column as the phone key', () => {
     const state = setDedupe(initialMapping(analysis()), keys(col('Cust Mobile')));
-    expect(state.dedupe).toEqual(PHONE_DEDUPE);
+    expect(state.dedupe).toEqual(keys(phoneFrom('Cust Mobile')));
+    expect(build(state)).not.toHaveProperty('dedupe_columns');
   });
 
   it('ignores a column the file does not have, and a choice with no key', () => {
     const state = initialMapping(analysis());
     expect(setDedupe(state, keys(col('Loan No')))).toBe(state);
     expect(setDedupe(state, keys(col('Full Name'), col('Loan No')))).toBe(state);
+    expect(setDedupe(state, keys(phoneFrom('Loan No')))).toBe(state);
     expect(setDedupe(state, keys())).toBe(state);
   });
 
   it('falls back to the phone when the duplicate column is made the phone column', () => {
     let state = setDedupe(initialMapping(analysis()), keys(col('Internal Score')));
     state = setRole(state, 'Internal Score', 'phone');
-    expect(state.dedupe).toEqual(PHONE_DEDUPE);
+    expect(state.dedupe).toEqual(keys(phoneFrom('Internal Score')));
     expect(build(state)).not.toHaveProperty('dedupe_columns');
+  });
+
+  describe('undoing a mis-set Phone role gives the key column back', () => {
+    it('a single key: the column made the phone by mistake is the key again once the phone moves back', () => {
+      let state = setDedupe(initialMapping(analysis()), keys(col('Full Name')));
+      state = setRole(state, 'Full Name', 'phone');
+      state = setRole(state, 'Cust Mobile', 'phone');
+      expect(state.dedupe).toEqual(keys(col('Full Name')));
+      expect(build(state).dedupe_columns).toEqual(['Full Name']);
+    });
+
+    it('a combination: the column made the phone by mistake stays in the key once the phone moves back', () => {
+      // Without it the key would be [Cust Mobile, TZ]: Full Name dropped, so more rows dropped.
+      let state = setDedupe(initialMapping(analysis()), keys(col('Full Name'), col('TZ')));
+      state = setRole(state, 'Full Name', 'phone');
+      expect(build(state).dedupe_columns).toEqual(['Full Name', 'TZ']);
+      state = setRole(state, 'Cust Mobile', 'phone');
+      expect(state.dedupe).toEqual(keys(col('Full Name'), col('TZ')));
+      expect(build(state).dedupe_columns).toEqual(['Full Name', 'TZ']);
+    });
+
+    it('giving that column another role also gives it back', () => {
+      let state = setDedupe(initialMapping(analysis()), keys(col('Full Name'), col('TZ')));
+      state = setRole(state, 'Full Name', 'phone');
+      state = setRole(state, 'Full Name', 'detail');
+      expect(state.dedupe).toEqual(keys(col('Full Name'), col('TZ')));
+      expect(mappingBlockReason(state)).toBe('no_phone_column');
+    });
+
+    it('the phone number the operator picked still follows the phone: a wrong suggestion fixed keeps the phone dedupe', () => {
+      let state = initialMapping(analysis());
+      state = setRole(state, 'Full Name', 'phone');
+      expect(state.dedupe).toEqual(PHONE_DEDUPE);
+      state = setRole(state, 'Cust Mobile', 'phone');
+      expect(state.dedupe).toEqual(PHONE_DEDUPE);
+      expect(build(state)).not.toHaveProperty('dedupe_columns');
+
+      let pair = setDedupe(initialMapping(analysis()), keys(phone, col('TZ')));
+      pair = setRole(pair, 'Full Name', 'phone');
+      expect(pair.dedupe).toEqual(keys(phone, col('TZ')));
+      expect(build(pair).dedupe_columns).toEqual(['Full Name', 'TZ']);
+    });
+
+    it('a swap then an undo compares the same columns again', () => {
+      let state = setDedupe(initialMapping(analysis()), keys(phone, col('Full Name')));
+      state = setRole(state, 'Full Name', 'phone');
+      expect(state.dedupe).toEqual(keys(col('Cust Mobile'), phoneFrom('Full Name')));
+      state = setRole(state, 'Cust Mobile', 'phone');
+      expect(state.dedupe).toEqual(keys(phoneFrom('Cust Mobile'), col('Full Name')));
+      expect(build(state).dedupe_columns).toEqual(['Cust Mobile', 'Full Name']);
+    });
+
+    it('moving the phone key to another select keeps the column it was made from', () => {
+      let state = setDedupe(initialMapping(analysis()), keys(col('Full Name'), col('TZ'), col('Internal Score')));
+      state = setRole(state, 'Full Name', 'phone');
+      state = setDedupeKey(state, 2, phone);
+      expect(state.dedupe).toEqual(keys(col('TZ'), phoneFrom('Full Name')));
+      state = setRole(state, 'Cust Mobile', 'phone');
+      expect(state.dedupe).toEqual(keys(col('TZ'), col('Full Name')));
+    });
   });
 
   it('blocks the import when a duplicate column is set to Ignore', () => {
@@ -291,7 +356,7 @@ describe('the duplicate check', () => {
       // Merging them would drop Cust Mobile from the key, and a smaller key drops more rows.
       let state = setDedupe(initialMapping(analysis()), keys(phone, col('Full Name'), col('TZ')));
       state = setRole(state, 'Full Name', 'phone');
-      expect(state.dedupe).toEqual(keys(col('Cust Mobile'), phone, col('TZ')));
+      expect(state.dedupe).toEqual(keys(col('Cust Mobile'), phoneFrom('Full Name'), col('TZ')));
       expect(build(state).dedupe_columns).toEqual(['Cust Mobile', 'Full Name', 'TZ']);
 
       let pair = setDedupe(initialMapping(analysis()), keys(phone, col('TZ')));
@@ -302,7 +367,7 @@ describe('the duplicate check', () => {
     it('a key column made the phone column, with the phone not a key, becomes the phone key', () => {
       let state = setDedupe(initialMapping(analysis()), keys(col('Full Name'), col('TZ')));
       state = setRole(state, 'Full Name', 'phone');
-      expect(state.dedupe).toEqual(keys(phone, col('TZ')));
+      expect(state.dedupe).toEqual(keys(phoneFrom('Full Name'), col('TZ')));
       expect(build(state).dedupe_columns).toEqual(['Full Name', 'TZ']);
     });
 
@@ -330,6 +395,21 @@ describe('the duplicate check', () => {
       expect(canAddDedupeKey(small, full)).toBe(false);
       // "Don't remove duplicates" has nothing to combine.
       expect(canAddDedupeKey(a, setDedupe(initialMapping(a), { mode: 'none' }))).toBe(false);
+    });
+
+    it('"Combine with another column" adds a column, not the phone, while a column is left', () => {
+      const a = analysis();
+      let state = setDedupe(initialMapping(a), keys(col('Full Name')));
+      state = addDedupeKey(a, state);
+      expect(state.dedupe).toEqual(keys(col('Full Name'), col('TZ')));
+      state = addDedupeKey(a, state);
+      expect(state.dedupe).toEqual(keys(col('Full Name'), col('TZ'), col('Internal Score')));
+
+      // Only the phone left: it is added, so a loan number can still be combined with the number.
+      const small = analysis({ columns: [column('Cust Mobile', { phone_score: 0.95 }), column('Loan No')] });
+      const loan = setDedupe(initialMapping(small), keys(col('Loan No')));
+      expect(canAddDedupeKey(small, loan)).toBe(true);
+      expect(addDedupeKey(small, loan).dedupe).toEqual(keys(col('Loan No'), phone));
     });
 
     it('each select offers the keys the other selects do not hold', () => {

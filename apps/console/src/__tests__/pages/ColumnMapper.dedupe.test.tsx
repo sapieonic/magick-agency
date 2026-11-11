@@ -102,6 +102,25 @@ describe('ColumnMapper: Check duplicates on', () => {
       });
     });
 
+    it('"Combine with another column" adds a column rather than the phone, and the phone only when no column is left', () => {
+      const onChange = vi.fn<(next: MappingState) => void>();
+      const loan: MappingState = { ...initialMapping(ANALYSIS), dedupe: { mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }] } };
+      const { rerender } = render(<ColumnMapper analysis={ANALYSIS} state={loan} onChange={onChange} fileName="loans.csv" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Combine with another column' }));
+      const two = onChange.mock.calls[0]![0];
+      expect(two.dedupe).toEqual({
+        mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }, { kind: 'column', column: 'none' }],
+      });
+      // The added select is an ordinary one: the phone number is still offered in it.
+      rerender(<ColumnMapper analysis={ANALYSIS} state={two} onChange={onChange} fileName="loans.csv" />);
+      const second = screen.getByLabelText('Duplicate check column 2') as HTMLSelectElement;
+      expect([...second.options].map((o) => o.textContent)).toEqual(['Phone number', 'none']);
+      fireEvent.click(screen.getByRole('button', { name: 'Combine with another column' }));
+      expect(onChange.mock.calls[1]![0].dedupe).toEqual({
+        mode: 'keys', keys: [{ kind: 'column', column: 'Loan No' }, { kind: 'column', column: 'none' }, { kind: 'phone' }],
+      });
+    });
+
     it('shows a select per extra key, each offering only the keys the others do not hold', () => {
       const { select } = renderMapper(combined);
       expect(select.value).toBe('column:Loan No');
