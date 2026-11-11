@@ -54,8 +54,11 @@ void main() {
 
     testWidgets('a hold the call ends under lets go without an error', (tester) async {
       // The customer hangs up first: the stage moves to wrap-up and the bar
-      // leaves the screen with the agent's finger still on it.
-      final h = await pumpStation(tester, onCall());
+      // leaves the screen with the agent's finger still on it. Reduced motion
+      // takes the old stage out on the next frame; with the 220 ms fade the bar
+      // stays mounted and armed, and whether the hold completes first would
+      // turn on how the test's pumps line up with the 500 ms hold.
+      final h = await pumpStation(tester, onCall(), disableAnimations: true);
       final gesture = await tester.startGesture(tester.getCenter(find.byKey(const Key('hang-up'))));
       await tester.pump(const Duration(milliseconds: 100));
       await h.endCall();
