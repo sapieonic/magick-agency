@@ -50,6 +50,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
     calls_handled: 3,
     client_kind: 'web',
     on_inbound_call: false,
+    can_take_inbound: true,
     ...over,
   };
 }
@@ -570,6 +571,16 @@ describe('the floor as a table', () => {
     expect(row.textContent).toContain('Long break');
     fireEvent.click(screen.getByRole('button', { name: 'Meera' }));
     expect(screen.getByTestId('agent-drawer-state').textContent).toBe('Away (app in background)');
+  });
+
+  it('shows the app\'s phone-call pause as "On a phone call" (IQ51), on the row and in the drawer', () => {
+    renderFloor({ stats: stats([agent({ session_id: 'cell', agent_name: 'Meera', state: 'break', break_reason: 'phone_call', client_kind: 'mobile', state_since: ago(60) })]) });
+    const row = screen.getByTestId('floor-row-cell');
+    expect(row.textContent).toContain('On a phone call');
+    expect(row.textContent).not.toContain('phone_call');
+    expect(row.textContent).not.toContain('On break');
+    fireEvent.click(screen.getByRole('button', { name: 'Meera' }));
+    expect(screen.getByTestId('agent-drawer-state').textContent).toBe('On a phone call');
   });
 
   it('marks an agent on the mobile app with a phone, and only them', () => {

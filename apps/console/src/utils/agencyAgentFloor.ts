@@ -191,7 +191,8 @@ export function floorRisk(
   //    agent working calls by hand (`docs/softphone.md` §2), and half an hour of
   //    it is a shift, not an agent who walked away. The mobile app's device-away
   //    break IS flagged: half an hour with the app in the background is exactly
-  //    an agent worth a supervisor's look.
+  //    an agent worth a supervisor's look. So is its phone-call pause (IQ51): an
+  //    ordinary break, and half an hour of a personal call on shift is worth one too.
   if (agent.state === 'break' && !isOnSoftphone(agent) && elapsedMs !== null) {
     if (elapsedMs > LONG_BREAK_SECONDS * 1000) return 'long_break';
   }
@@ -316,8 +317,9 @@ export function isOnSoftphone(agent: Pick<AgencySupervisorAgent, 'state' | 'brea
 /**
  * The agent's state as the floor and the drawer write it: the state, and a
  * break's reason code beside it — except the reserved breaks, which are named for
- * what they are: the soft phone rather than an idle "On break · soft_phone", and the
- * mobile app's device-away break as "Away (app in background)".
+ * what they are: the soft phone rather than an idle "On break · soft_phone", the
+ * mobile app's device-away break as "Away (app in background)", and its cellular-call
+ * pause (IQ51) as "On a phone call".
  *
  * Whether a soft-phone agent is on a call right now is not on the wire
  * (`AgencySupervisorAgent` carries the session's state and reason only), so the
@@ -339,7 +341,8 @@ export function floorStateLabel(
   const label = AGENCY_FLOOR_STATE_LABELS[agent.state];
   if (agent.state !== 'break' || !agent.break_reason) return label;
   // A reserved break is named for what it is: the mobile app's `device_away` reads
-  // "Away (app in background)", never "On break · device_away".
+  // "Away (app in background)" and its `phone_call` "On a phone call", never
+  // "On break · device_away".
   return reservedBreakReasonLabel(agent.break_reason) ?? `${label} · ${agent.break_reason}`;
 }
 
