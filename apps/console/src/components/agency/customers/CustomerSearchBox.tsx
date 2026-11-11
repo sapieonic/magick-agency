@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Search, X } from 'lucide-react';
 import {
   formatSearchNumber,
@@ -9,22 +8,18 @@ import {
   type SearchCountry,
 } from '@magick-agency/domain/customer-search-number';
 import { CUSTOMER_SEARCH_VALUE_MAX } from '@magick-agency/contracts/api/agency/customer-history';
-import { searchCustomers } from '../../../api/customerHistory';
-import { useTenant } from '../../../contexts/TenantContext';
 import { usePermission } from '../../../hooks/usePermission';
 import { useCustomerSearchDefaultCallingCode } from '../../../hooks/useCustomerSearchDefaultCallingCode';
 import {
   browserStorage,
   clearRecentCustomerSearches,
   readRecentCustomerSearches,
-  rememberCustomerSearch,
   subscribeRecentCustomerSearches,
   RECENT_CUSTOMER_SEARCHES_KEY,
   type RecentCustomerSearch,
 } from '../../../utils/customerSearchRecent';
-import { rememberCustomerSearchAnswer, type CustomerHistoryLocationState } from '../../../utils/customerHistoryStore';
+import { useCustomerSearchRun } from '../../../hooks/useCustomerSearchRun';
 import {
-  customerHistoryRefusal,
   customerSearchHelperLines,
   customerSearchPreview,
 } from '../../../utils/customerHistoryCopy';
@@ -97,8 +92,6 @@ export interface CustomerSearchBoxProps {
  */
 export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, storage }: CustomerSearchBoxProps) {
   const allowed = usePermission('agency.customer_history.read');
-  const { tenantId, accountId } = useTenant();
-  const navigate = useNavigate();
   const store = useMemo(() => storage ?? browserStorage(), [storage]);
   const defaultCallingCode = useCustomerSearchDefaultCallingCode();
 
@@ -106,20 +99,10 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
   /** `null` until the person picks: the picker follows the platform default until then. */
   const [countryIso, setCountryIso] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  const search = useCustomerSearchRun(resultsPath, store);
+  const { busy, error: serverError, clearError: clearServerError } = search;
   const recent = useRecentCustomerSearches(store);
   const inputRef = useRef<HTMLInputElement>(null);
-  /** The search in flight; aborted when the box unmounts (the panel closed, the page left). */
-  const inflight = useRef<AbortController | null>(null);
-
-  useEffect(
-    () => () => {
-      inflight.current?.abort();
-      inflight.current = null;
-    },
-    [],
-  );
 
   const id = useId();
   const inputId = `${id}-number`;
@@ -134,39 +117,13 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
 
   const run = useCallback(
     async (value: string, iso: string) => {
-      inflight.current?.abort();
-      const controller = new AbortController();
-      inflight.current = controller;
-      setBusy(true);
-      setServerError(null);
-      try {
-        // The platform default the picker does not list has no ISO: no `country` names it.
-        const answer = await searchCustomers(
-          iso ? { by: 'phone', value, country: iso } : { by: 'phone', value },
-          tenantId ?? undefined,
-          accountId ?? undefined,
-          controller.signal,
-        );
-        // Nobody is waiting for this answer any more: never navigate them away from where they went.
-        if (controller.signal.aborted) return;
-        rememberCustomerSearchAnswer(answer);
-        rememberCustomerSearch(store, { e164: answer.key.value, country: iso });
+      if (await search.run(value, iso)) {
         setRaw('');
         setRevealed(false);
-        const state: CustomerHistoryLocationState = { searchId: answer.search_id };
-        navigate(resultsPath, { state });
         onSearched?.();
-      } catch (err: unknown) {
-        if (controller.signal.aborted) return;
-        setServerError(customerHistoryRefusal(err, 'Could not search this number. Try again.', 'search').message);
-      } finally {
-        if (inflight.current === controller) {
-          inflight.current = null;
-          setBusy(false);
-        }
       }
     },
-    [tenantId, accountId, store, navigate, resultsPath, onSearched],
+    [search, onSearched],
   );
 
   const onSubmit = useCallback(
@@ -176,13 +133,13 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
       if (busy) return;
       const result = parseSearchNumber(raw, country);
       if (!result.ok) {
-        setServerError(null);
+        clearServerError();
         inputRef.current?.focus();
         return;
       }
       void run(raw.trim(), country.iso);
     },
-    [busy, raw, country, run],
+    [busy, raw, country, run, clearServerError],
   );
 
   const onClearRecent = useCallback(() => {
@@ -221,7 +178,7 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
             value={country.iso}
             onChange={(e) => {
               setCountryIso(e.target.value);
-              setServerError(null);
+              clearServerError();
             }}
           >
             {countries.map((c) => (
@@ -246,7 +203,7 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
             autoFocus={autoFocus}
             onChange={(e) => {
               setRaw(e.target.value);
-              setServerError(null);
+              clearServerError();
               // Typing again: an unfinished number goes quiet until the next submit or blur.
               setRevealed(false);
             }}

@@ -49,6 +49,10 @@ export function ConsoleLayout() {
     if (!isMobile) setSidebarOpen(false);
   }, [isMobile]);
 
+  // One search (B28): the top bar's field and ⌘K open the same dialog.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const handleSearchClick = useCallback(() => setSearchOpen(true), []);
+
   const handleMenuClick = useCallback(() => setSidebarOpen((prev) => !prev), []);
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), []);
 
@@ -123,6 +127,7 @@ export function ConsoleLayout() {
             onMenuClick={handleMenuClick}
             menuExpanded={sidebarOpen}
             menuControls={MOBILE_SIDEBAR_ID}
+            onSearchClick={handleSearchClick}
           />
         </div>
         <main id="main-content" className={styles.content}>
@@ -137,8 +142,8 @@ export function ConsoleLayout() {
         </main>
       </div>
 
-      {/* ⌘K / Ctrl+K, on every page of the shell. */}
-      <GlobalSearch />
+      {/* ⌘K / Ctrl+K and the top bar's search field, on every page of the shell. */}
+      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
     </div>
   );
 }

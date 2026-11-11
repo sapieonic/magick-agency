@@ -164,3 +164,52 @@ describe('the old /app URLs', () => {
     expect(where()).toBe('/app');
   });
 });
+
+describe('"Find a setting"', () => {
+  const filter = () => screen.getByLabelText('Find a setting') as HTMLInputElement;
+  const entries = () => screen.queryAllByTestId(/^settings-nav-/).map((a) => a.textContent);
+
+  it('filters the sub-nav by the words ⌘K finds settings by', () => {
+    renderAt('/settings/team');
+    // The default caller ID, and "What callers hear" on inbound routes.
+    fireEvent.change(filter(), { target: { value: 'caller' } });
+    expect(entries()).toEqual(['Soft phone', 'Inbound routing']);
+    fireEvent.change(filter(), { target: { value: 'default caller' } });
+    expect(entries()).toEqual(['Soft phone']);
+    fireEvent.change(filter(), { target: { value: 'IVR' } });
+    expect(entries()).toEqual(['Inbound routing']);
+    fireEvent.change(filter(), { target: { value: 'dark mode' } });
+    expect(entries()).toEqual(['Profile and appearance']);
+  });
+
+  it('drops a group with nothing left in it', () => {
+    renderAt('/settings/team');
+    fireEvent.change(filter(), { target: { value: 'invite' } });
+    expect(screen.getAllByTestId(/^settings-group-/).map((g) => g.dataset.testid)).toEqual(['settings-group-tenant']);
+  });
+
+  it('never shows an entry the reader is not offered', () => {
+    mocks.role = 'viewer';
+    renderAt('/settings/profile');
+    fireEvent.change(filter(), { target: { value: 'invite' } });
+    expect(entries()).toEqual([]);
+  });
+
+  it('says when nothing matches, and announces the count', () => {
+    renderAt('/settings/team');
+    fireEvent.change(filter(), { target: { value: 'zzzz' } });
+    expect(screen.getByTestId('settings-filter-empty').textContent).toBe('No setting matches “zzzz”.');
+    expect(filter().getAttribute('aria-describedby')).toBeTruthy();
+    expect(document.getElementById(filter().getAttribute('aria-describedby')!)!.textContent).toBe('0 settings found');
+  });
+
+  it('shows everything again when cleared, or on Escape', () => {
+    renderAt('/settings/team');
+    const all = entries();
+    fireEvent.change(filter(), { target: { value: 'invite' } });
+    expect(entries()).toEqual(['Team']);
+    fireEvent.keyDown(filter(), { key: 'Escape' });
+    expect(filter().value).toBe('');
+    expect(entries()).toEqual(all);
+  });
+});

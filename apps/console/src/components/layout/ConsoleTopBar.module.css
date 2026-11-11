@@ -63,8 +63,57 @@
   font-weight: 600;
 }
 
+/* The one search field: a button styled as a field, which opens GlobalSearch. */
 .search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 1 380px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition);
+}
+
+.search:hover {
+  border-color: var(--text-muted);
+  color: var(--text-secondary);
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.searchIcon {
   flex-shrink: 0;
+}
+
+.searchText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchKey {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 
 .right {
@@ -89,5 +138,24 @@
   .crumb,
   .separator {
     display: none;
+  }
+
+  /* On a phone the field is an icon button; its aria-label still says what it searches. */
+  .search {
+    flex: 0 0 auto;
+    min-height: 40px;
+    min-width: 40px;
+    justify-content: center;
+    padding: 0;
+    margin-left: auto;
+  }
+
+  .searchText,
+  .searchKey {
+    display: none;
+  }
+
+  .search + .right {
+    margin-left: 0;
   }
 }

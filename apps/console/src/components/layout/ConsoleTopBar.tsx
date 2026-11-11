@@ -1,11 +1,11 @@
 import { Fragment } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu } from 'lucide-react';
-import { CustomerSearchPopover } from '../agency/customers/CustomerSearchPopover';
+import { Menu, Search } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
-import { DIALER_FLAG, breadcrumbFor, settingsEntryForPath } from '../../utils/consoleNav';
+import { breadcrumbFor, settingsEntryForPath, type GateInput } from '../../utils/consoleNav';
+import { canSearchCampaigns, canSearchNumbers, searchPlaceholder, searchShortcutLabel } from '../../utils/consoleSearch';
 import { ProfileMenu } from './ProfileMenu';
 import styles from './ConsoleTopBar.module.css';
 
@@ -15,28 +15,43 @@ interface Props {
   menuExpanded?: boolean;
   /** id of the mobile navigation drawer the menu button controls. */
   menuControls?: string;
+  /** Opens the console's search (`GlobalSearch`). No field without it. */
+  onSearchClick?: () => void;
 }
 
-function useCapability(capability: string): boolean {
+/** Flags and capabilities, failing closed outside their providers (as the sidebar reads them). */
+function useGateReaders(): Pick<GateInput, 'isFlagEnabled' | 'isCapabilityEnabled'> {
+  let isFlagEnabled: (flag: string) => boolean = () => false;
+  let isCapabilityEnabled: (capability: string) => boolean = () => false;
   try {
-    return useGovernance().isEnabled(capability);
+    isFlagEnabled = useFeatureFlags().isEnabled;
   } catch {
-    return false;
+    /* no provider: every flag off */
   }
+  try {
+    isCapabilityEnabled = useGovernance().isEnabled;
+  } catch {
+    /* no provider: every capability off */
+  }
+  return { isFlagEnabled, isCapabilityEnabled };
 }
 
 /**
- * The console's top bar (decision B28): where you are on the left, "Search a number" beside it,
- * and the profile menu on the right. On a phone the breadcrumb shows only the current page and
- * the menu button opens the sidebar.
+ * The console's top bar (decision B28): where you are on the left, the one search field beside
+ * it, and the profile menu on the right. The field opens `GlobalSearch` (⌘K): pages, Settings,
+ * campaigns and, for a reader who may search customer history, a phone number
+ * (`docs/customer-history.md` §5). Its words say only what this reader can search. On a phone
+ * the breadcrumb shows only the current page, the field is an icon button, and the menu button
+ * opens the sidebar.
  */
-export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls }: Props) {
+export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearchClick }: Props) {
   const { pathname } = useLocation();
-  const { accountId } = useTenant();
-  const agencyCapability = useCapability('agency');
-  const dialerFlag = useFeatureFlagEnabled(DIALER_FLAG);
-  const dialerOn = agencyCapability && dialerFlag;
+  const { role, accountId } = useTenant();
+  const readers = useGateReaders();
+  const gate: GateInput = { role, ...readers };
   const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label);
+  const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
+  const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');
 
   return (
     <div className={styles.topbar}>
@@ -77,15 +92,20 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls }: Props
         </nav>
       )}
 
-      {/*
-        "Search a number" (`docs/customer-history.md` §5): one phone number, every call to it.
-        Hidden without `agency.customer_history.read` (the popover checks), without the dialer,
-        and until an account is resolved, since the search carries the account header.
-      */}
-      {accountId && dialerOn && (
-        <div className={styles.search}>
-          <CustomerSearchPopover />
-        </div>
+      {onSearchClick && (
+        <button
+          type="button"
+          className={styles.search}
+          onClick={onSearchClick}
+          aria-label={label}
+          aria-haspopup="dialog"
+          aria-keyshortcuts="Meta+K Control+K"
+          data-testid="console-search-trigger"
+        >
+          <Search size={16} aria-hidden="true" className={styles.searchIcon} />
+          <span className={styles.searchText} aria-hidden="true">{label}</span>
+          <kbd className={styles.searchKey} aria-hidden="true">{shortcut}</kbd>
+        </button>
       )}
 
       <div className={styles.right}>
