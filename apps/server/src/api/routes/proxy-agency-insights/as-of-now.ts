@@ -8,7 +8,7 @@ import { insightsCache, insightsCacheKey } from '../../../agency/insights/cache.
 import { liveStats } from '../helpers/live-stats.js';
 import { computeSummary } from '../../../agency/insights/summary.js';
 import { computeReadiness } from '../../../agency/insights/readiness.js';
-import { computeAllocation } from '../../../agency/insights/allocation.js';
+import { cachedAllocation } from '../../../agency/insights/allocation.js';
 import { computeUploads } from '../../../agency/insights/uploads.js';
 import { insightsCampaign, type CampaignParams } from './shared.js';
 
@@ -39,7 +39,7 @@ export async function registerInsightsAsOfNowRoutes(app: FastifyInstance): Promi
   }, async (request, reply) => {
     const campaign = await insightsCampaign(request, reply);
     if (!campaign) return reply;
-    const body = await insightsCache.get(insightsCacheKey('allocation', campaign), () => computeAllocation(campaign));
+    const body = await cachedAllocation(campaign);
     return reply.code(200).send(body);
   });
 

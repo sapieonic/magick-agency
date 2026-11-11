@@ -201,6 +201,13 @@ describe('stallCopy — each arm names its own evidence', () => {
     expect(copy.advice).toMatch(/support/i);
   });
 
+  it('concurrency_saturated says "lines", not "concurrency", in its label and headline (the strip and Home share both)', () => {
+    expect(AGENCY_STALL_LABELS.concurrency_saturated).toBe('All lines in use');
+    const copy = stallCopy({ code: 'concurrency_saturated', limit: 5, in_use: 5 }, at);
+    expect(copy.headline).toBe('All your lines are in use: 5 of 5.');
+    expect(`${AGENCY_STALL_LABELS.concurrency_saturated} ${copy.headline}`).not.toMatch(/concurrency/i);
+  });
+
   it('outside_calling_hours falls back honestly when no window resolves', () => {
     const withWindow = stallCopy(
       {

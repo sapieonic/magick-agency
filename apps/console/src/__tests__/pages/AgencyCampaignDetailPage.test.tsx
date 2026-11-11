@@ -860,7 +860,7 @@ describe('campaign detail — the health strip', () => {
     const items = Array.from(
       screen.getByTestId('health-strip-others').querySelectorAll('li'),
     ).map((li) => li.textContent);
-    expect(items).toEqual(['At the concurrency limit', 'Unusually many failed calls']);
+    expect(items).toEqual(['All lines in use', 'Unusually many failed calls']);
   });
 
   it('does not offer a disclosure when nothing else matched', async () => {

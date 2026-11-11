@@ -183,6 +183,11 @@ export const ENDPOINTS = {
        */
       campaignInsights: (campaignId: string, section: string) =>
         `${API_BASE}/proxy/agency/campaigns/${encodeURIComponent(campaignId)}/insights/${section}`,
+      /**
+       * Home's board (decision B28a): the active campaigns with what Home reads for each, in
+       * one request. `agency.supervise`, like the Insights reads it shares a cache with.
+       */
+      home: `${API_BASE}/proxy/agency/home`,
     },
   },
   /**

@@ -155,6 +155,11 @@ counterpart (`CustomerSearchOptionsResponse` included). It reuses the dialer voc
 `AgencyAttemptOutcome`, `AgencyCampaignStatus`, `AgencyContactState`, `AgencyDncEntryScope` and
 `AgencyOverrideKind` (`override_applied`) by import rather than redeclaring them.
 
+Home's board (`home.ts`, `GET /proxy/agency/home`, decision B28a) is console-side only: the public
+API layer assembles it (the campaign list, the internal stats handler's payload through
+`helpers/live-stats.ts`, the insights allocation through its cache). `AgencyHomeCampaignStats` is a
+`Pick` of the console `AgencyCampaignStats`, so its fields keep that type's optionality.
+
 Reports (`reports.ts`, docs/reports.md) are console-side only too: runs, downloads and
 subscriptions are served by the public API layer itself, so `AgencyReportRun`,
 `AgencyCreateReportRequest`, `AgencyReportSubscription` and the rest have no dialer counterpart.

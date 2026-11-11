@@ -194,6 +194,26 @@
   color: var(--success);
 }
 
+/* Waiting, nothing wrong: a quieter group under the list, never counted by the badge. */
+.waiting {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-light);
+}
+
+.waitingTitle {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.waiting .attentionTitle,
+.waiting .campaignName {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 /* On a narrow page the time and the button drop under the reason. */
 @container home (max-width: 560px) {
   .attentionRow {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
+import { act, render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { campaign, stats } from '../helpers/home';
+import { board, onBoard, stats } from '../helpers/home';
 
 /**
  * Home (B28): the gate, the three sections, their links and states, the request bound, and the
@@ -10,10 +10,7 @@ import { campaign, stats } from '../helpers/home';
 
 const mocks = vi.hoisted(() => ({
   role: 'account_admin' as string | undefined,
-  listAgencyCampaigns: vi.fn(),
-  listAgencyCampaignsPage: vi.fn(),
-  getAgencyCampaignStats: vi.fn(),
-  getInsightsAllocation: vi.fn(),
+  getAgencyHomeBoard: vi.fn(),
   getAgencyGroupedStats: vi.fn(),
   missed: { available: false, count: null as null | { open: number; open_capped: boolean; has_rows: boolean } },
 }));
@@ -21,20 +18,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../contexts/TenantContext', () => ({
   useTenant: () => ({ role: mocks.role, tenantId: 't-1', accountId: 'a-1', accounts: [{ id: 'a-1', name: 'Pune Collections' }] }),
 }));
-vi.mock('../../api/agencyCampaigns', () => ({
-  listAgencyCampaigns: mocks.listAgencyCampaigns,
-  listAgencyCampaignsPage: mocks.listAgencyCampaignsPage,
-  getAgencyCampaignStats: mocks.getAgencyCampaignStats,
-  getAgencyCampaign: vi.fn(),
-}));
-vi.mock('../../api/agencyInsights', () => ({ getInsightsAllocation: mocks.getInsightsAllocation }));
+vi.mock('../../api/agencyHome', () => ({ getAgencyHomeBoard: mocks.getAgencyHomeBoard }));
 vi.mock('../../api/agencyStats', () => ({ getAgencyGroupedStats: mocks.getAgencyGroupedStats }));
 vi.mock('../../hooks/useMissedCallsAccess', () => ({
   useMissedCallsAccess: () => ({ ...mocks.missed, inboundOn: true, settled: true }),
 }));
 
 import HomePage from '../../pages/agency/HomePage';
-import { resetHomeAttentionCountForTests, useHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
+import { homeAttentionAge, resetHomeAttentionCountForTests, useHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
+import { HOME_FAST_MS } from '../../hooks/useHomeBoard';
 
 function Where() {
   return <div data-testid="where">{useLocation().pathname}</div>;
@@ -55,17 +47,12 @@ function renderHome() {
   );
 }
 
-const allocation = (overdue: number) => ({ totals: { callbacks_overdue: overdue } });
-
 beforeEach(() => {
   vi.clearAllMocks();
   resetHomeAttentionCountForTests();
   mocks.role = 'account_admin';
   mocks.missed = { available: false, count: null };
-  mocks.listAgencyCampaigns.mockResolvedValue([]);
-  mocks.listAgencyCampaignsPage.mockResolvedValue({ campaigns: [], total: 3 });
-  mocks.getAgencyCampaignStats.mockResolvedValue(stats());
-  mocks.getInsightsAllocation.mockResolvedValue(allocation(0));
+  mocks.getAgencyHomeBoard.mockResolvedValue(board([], { any_campaign: true }));
   mocks.getAgencyGroupedStats.mockResolvedValue({ rows: [], total_groups: 0 });
 });
 afterEach(() => cleanup());
@@ -75,7 +62,7 @@ describe('the gate', () => {
     mocks.role = role;
     renderHome();
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/agency'));
-    expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+    expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
     expect(mocks.getAgencyGroupedStats).not.toHaveBeenCalled();
   });
 
@@ -83,18 +70,20 @@ describe('the gate', () => {
     mocks.role = undefined;
     renderHome();
     expect(screen.queryByTestId('where')).toBeNull();
-    expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+    expect(mocks.getAgencyHomeBoard).not.toHaveBeenCalled();
   });
 });
 
 describe('Needs your attention', () => {
-  it('lists each condition with its action linking to the exact tab, and shares the count', async () => {
-    mocks.listAgencyCampaigns.mockResolvedValue([campaign('c1', 'running', 'Q4 collections'), campaign('c2', 'paused', 'Card follow-up')]);
-    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
-      id === 'c1'
-        ? stats({ agents_live: 2, abandoned_24h: 3, answered_24h: 100 })
-        : stats({ stall: { code: 'auto_paused_abandonment', measured_pct: 3.4, ceiling_pct: 3, paused_at: '2026-11-11T09:12:00Z' } }));
-    mocks.getInsightsAllocation.mockImplementation(async (id: string) => allocation(id === 'c1' ? 7 : 0));
+  it('lists each condition with its action linking to the exact tab, and shares the count without the missed calls', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([
+      onBoard('c1', { name: 'Q4 collections', stats: stats({ agents_live: 2, abandoned_24h: 3, answered_24h: 100 }), overdue: 7 }),
+      onBoard('c2', {
+        status: 'paused',
+        name: 'Card follow-up',
+        stats: stats({ stall: { code: 'auto_paused_abandonment', measured_pct: 3.4, ceiling_pct: 3, paused_at: '2026-11-11T09:12:00Z' } }),
+      }),
+    ]));
     mocks.missed = { available: true, count: { open: 3, open_capped: false, has_rows: true } };
 
     renderHome();
@@ -108,11 +97,25 @@ describe('Needs your attention', () => {
     expect(within(list).getAllByRole('listitem')).toHaveLength(4);
     expect(screen.getByText('Each item clears itself once it’s fixed')).toBeTruthy();
     expect(screen.getByText('7 callbacks overdue')).toBeTruthy();
-    await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('4'));
+    // Four rows; the badge counts three: the missed calls are the Inbound badge's.
+    await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('3'));
+  });
+
+  it('shows a campaign that is only waiting apart, muted, and leaves it out of the count', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([
+      onBoard('c1', { name: 'Night shift', stats: stats({ stall: { code: 'outside_calling_hours', contacts_waiting: 40, next_window_opens_at: null } }) }),
+    ]));
+    renderHome();
+    const waiting = await screen.findByTestId('home-waiting');
+    expect(within(waiting).getByText('Waiting, nothing wrong')).toBeTruthy();
+    expect(within(waiting).getByText('Outside calling hours')).toBeTruthy();
+    expect(screen.queryByTestId('home-attention')).toBeNull();
+    expect(screen.getByTestId('home-attention-empty').textContent).toContain('Nothing needs you right now');
+    await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('0'));
   });
 
   it('says nothing needs you when nothing does', async () => {
-    mocks.listAgencyCampaigns.mockResolvedValue([campaign('c1')]);
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
     renderHome();
     expect((await screen.findByTestId('home-attention-empty')).textContent).toContain('Nothing needs you right now');
     await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('0'));
@@ -121,11 +124,13 @@ describe('Needs your attention', () => {
 
 describe('Floor right now', () => {
   it('has a row per running campaign linking to its Agents tab', async () => {
-    mocks.listAgencyCampaigns.mockResolvedValue([campaign('c1', 'running', 'Diwali renewals'), campaign('c2', 'paused')]);
-    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
-      stats(id === 'c1'
-        ? { agents_live: 4, agents_by_state: { offline: 0, available: 1, reserved: 0, on_call: 2, wrapup: 1, break: 0 } }
-        : {}));
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([
+      onBoard('c1', {
+        name: 'Diwali renewals',
+        stats: stats({ agents_live: 4, agents_by_state: { offline: 0, available: 1, reserved: 0, on_call: 2, wrapup: 1, break: 0 } }),
+      }),
+      onBoard('c2', { status: 'paused' }),
+    ]));
     renderHome();
     const table = await screen.findByTestId('home-floor');
     const links = within(table).getAllByRole('link');
@@ -134,14 +139,13 @@ describe('Floor right now', () => {
   });
 
   it('says so when nothing is running, and offers the new-campaign button', async () => {
-    mocks.listAgencyCampaigns.mockResolvedValue([]);
     renderHome();
     expect((await screen.findByTestId('home-floor-empty')).textContent).toContain('No campaign is running');
     expect(screen.getByRole('link', { name: /New campaign/ }).getAttribute('href')).toBe('/agency/campaigns/new');
   });
 
   it('shows the get-started card for an account with no campaigns at all', async () => {
-    mocks.listAgencyCampaignsPage.mockResolvedValue({ campaigns: [], total: 0 });
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([], { any_campaign: false }));
     renderHome();
     expect(await screen.findByText('Launch your first campaign')).toBeTruthy();
     expect(screen.queryByTestId('home-floor')).toBeNull();
@@ -150,22 +154,44 @@ describe('Floor right now', () => {
   });
 
   it('shows the error with a retry when the campaigns do not load', async () => {
-    mocks.listAgencyCampaigns.mockRejectedValue(new Error('Could not reach the server'));
+    mocks.getAgencyHomeBoard.mockRejectedValue(new Error('Could not reach the server'));
     renderHome();
     expect(await screen.findByText(/Could not reach the server/)).toBeTruthy();
   });
 });
 
 describe('the request bound', () => {
-  it('reads the active statuses once and per-campaign data for 25 campaigns at most', async () => {
-    mocks.listAgencyCampaigns.mockResolvedValue(Array.from({ length: 30 }, (_, i) => campaign(`c${i}`)));
+  it('reads the board in one request, and says when the server capped it', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board(Array.from({ length: 25 }, (_, i) => onBoard(`c${i}`)), { active_total: 30 }));
     renderHome();
     await screen.findByTestId('home-cap-note');
-    expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(1);
-    expect(mocks.listAgencyCampaigns).toHaveBeenCalledWith('t-1', 'a-1', ['running', 'stopping', 'paused']);
-    expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(25);
-    expect(mocks.getInsightsAllocation).toHaveBeenCalledTimes(25);
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    expect(mocks.getAgencyHomeBoard).toHaveBeenCalledWith('t-1', 'a-1');
     expect(screen.getByTestId('home-cap-note').textContent).toContain('first 25 of 30 active campaigns');
+  });
+});
+
+describe('the count it shares with the badge', () => {
+  it('is published again on every refresh, even when it has not changed, so the badge never reads while Home is open', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 2 })]));
+      renderHome();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByTestId('shared-count').textContent).toBe('1');
+      for (let i = 0; i < 6; i += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
+        });
+      }
+      // Five quiet minutes would leave a count stamped once stale; each refresh restamps it.
+      expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(7);
+      expect(homeAttentionAge('t-1/a-1')).toBeLessThan(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -183,6 +209,9 @@ describe('Today so far', () => {
     expect(tiles.textContent).toContain('1,218');
     expect(tiles.textContent).toContain('Across 2 campaigns');
     expect(tiles.textContent).toContain('1h 5m');
+    // 31 successes of 406 conversations, and what a success is.
+    expect(tiles.textContent).toContain('Success rate 7.6% of conversations');
+    expect(screen.getByText(/A success is a call whose outcome the campaign marks ‘Counts as a success’/)).toBeTruthy();
     expect(mocks.getAgencyGroupedStats).toHaveBeenCalledTimes(1);
     expect(mocks.getAgencyGroupedStats.mock.calls[0]![0]).toMatchObject({ group_by: ['campaign'], limit: 1000 });
   });

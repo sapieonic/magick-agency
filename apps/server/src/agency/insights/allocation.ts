@@ -70,6 +70,7 @@ import { callbackCodes } from '../../db/repositories/agency/assignment-sql.js';
 import { agentNamesOrNone } from '../agency-agent-identity.js';
 import { localDayEnd } from '../calling-hours.js';
 import { actorOf, iso, reconcile, successCodes } from './shared.js';
+import { insightsCache, insightsCacheKey } from './cache.js';
 
 /** A due backlog at least this many times the staffed average is "high". */
 export const IMBALANCE_HIGH_FACTOR = 1.5;
@@ -165,6 +166,15 @@ async function history(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAl
       batch_id: typeof details['batch_id'] === 'string' ? details['batch_id'] : null,
     };
   });
+}
+
+/**
+ * The allocation as every caller reads it: through the insights cache (`cache.ts`), under the one
+ * key the allocation route, the activity read and Home's board share, so they never compute it
+ * twice for the same campaign state.
+ */
+export function cachedAllocation(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAllocation> {
+  return insightsCache.get(insightsCacheKey('allocation', campaign), () => computeAllocation(campaign));
 }
 
 export async function computeAllocation(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAllocation> {
