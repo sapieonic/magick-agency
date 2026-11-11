@@ -1,6 +1,8 @@
+import { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   ChartNoAxesCombined,
+  House,
   ListChecks,
   PhoneIncoming,
   PhoneOff,
@@ -16,6 +18,13 @@ import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
+import { useHomeBoard } from '../../hooks/useHomeBoard';
+import {
+  homeAttentionKey,
+  publishHomeAttentionCount,
+  useHomeAttentionCount,
+} from '../../hooks/useHomeAttentionCount';
+import { attentionBadgeLabel, attentionBadgeText, homeAttention, type HomeMissed } from '../../utils/agency/home';
 import {
   DIALER_FLAG,
   activeNavId,
@@ -28,6 +37,7 @@ import { AccountSwitcher } from './AccountSwitcher';
 import styles from './ConsoleSidebar.module.css';
 
 const ICONS: Record<ConsoleSectionId, LucideIcon> = {
+  home: House,
   campaigns: ListChecks,
   inbound: PhoneIncoming,
   reports: ChartNoAxesCombined,
@@ -56,7 +66,7 @@ function useGateReaders(): Pick<GateInput, 'isFlagEnabled' | 'isCapabilityEnable
 }
 
 /**
- * The four work sections. Mounted only when the dialer is on for the account (the `agency`
+ * Home and the four work sections. Mounted only when the dialer is on for the account (the `agency`
  * capability and `agency_dialer_enabled`), so the missed-calls count is never asked for by a
  * tenant without it.
  */
@@ -86,6 +96,9 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
           >
             <Icon size={18} className={styles.navIcon} aria-hidden="true" />
             <span className={styles.navLabel}>{section.label}</span>
+            {section.id === 'home' ? (
+              <HomeNavBadge onHome={isActive} missed={{ available: missed.available, count: missed.count }} />
+            ) : null}
             {section.id === 'inbound' && badge ? (
               <span className={styles.navBadge} data-testid="sidebar-missed-badge">
                 <span aria-hidden="true">{badge}</span>
@@ -96,6 +109,34 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
         );
       })}
     </>
+  );
+}
+
+/**
+ * The Home entry's badge: how many things need the supervisor, the same list the Home page
+ * shows (`homeAttention`). Rendered only beside the Home entry, so only for a reader who
+ * passes Home's gate. On Home the page publishes the count on every refresh and this reads it;
+ * anywhere else this reads the same data itself on the slow tick (`useHomeBoard` background
+ * mode), skipping a read while the shared count is fresh. In the attention tone, apart from the
+ * missed-calls count.
+ */
+function HomeNavBadge({ onHome, missed }: { onHome: boolean; missed: HomeMissed }) {
+  const { tenantId, accountId } = useTenant();
+  const key = homeAttentionKey(tenantId, accountId);
+  const board = useHomeBoard({ tenantId, accountId, enabled: !onHome, mode: 'background', attentionKey: key });
+  const count = board.status === 'ready' && !onHome ? homeAttention(board.reads, missed, () => '').length : null;
+  useEffect(() => {
+    if (key && count !== null) publishHomeAttentionCount(key, count);
+  }, [key, count]);
+  const shared = useHomeAttentionCount(key);
+  const text = attentionBadgeText(shared);
+  const label = attentionBadgeLabel(shared);
+  if (!text) return null;
+  return (
+    <span className={`${styles.navBadge} ${styles.navBadgeAttention}`} data-testid="sidebar-attention-badge">
+      <span aria-hidden="true">{text}</span>
+      <span className={styles.srOnly}>{`, ${label}`}</span>
+    </span>
   );
 }
 

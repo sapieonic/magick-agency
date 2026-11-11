@@ -6,7 +6,7 @@ import type { ProductSurface } from '../analytics/posthog';
 
 /**
  * The console's navigation model (decision B28): one shell for every signed-in page that is
- * not an agent's full-viewport surface, with four work sections in the sidebar, a Settings hub
+ * not an agent's full-viewport surface, with Home and four work sections in the sidebar, a Settings hub
  * pinned under them, and an in-page tab bar inside a section that groups more than one page.
  *
  * Pure on purpose. The sidebar, the tab bar, the breadcrumb and the tests all read the same
@@ -59,7 +59,22 @@ function agency(gate: Gate): Gate {
   };
 }
 
-export type ConsoleSectionId = 'campaigns' | 'inbound' | 'reports' | 'dnc';
+export type ConsoleSectionId = 'home' | 'campaigns' | 'inbound' | 'reports' | 'dnc';
+
+/** The supervisor's Home page: what needs them, the floor, and today so far. */
+export const HOME_PATH = '/agency/home';
+
+/**
+ * Who gets Home: `agency.supervise`, because every read it makes floors there (each campaign's
+ * `/stats` floor, the insights allocation for overdue callbacks, the grouped stats for today).
+ * The route, the sidebar entry, its badge and `AgencyHomeRedirect` all read this one gate.
+ */
+export const HOME_GATE: Gate = agency({ permission: 'agency.supervise' });
+
+/** Whether the reader may open Home (and so lands there from `/agency`). */
+export function canSeeHome(input: GateInput): boolean {
+  return passesGate(HOME_GATE, input);
+}
 
 export interface SectionTab {
   id: string;
@@ -84,6 +99,13 @@ export interface ConsoleSection {
  * entry had.
  */
 export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
+  /* First, and active only on its own URL. Its badge counts what needs the supervisor. */
+  {
+    id: 'home',
+    label: 'Home',
+    paths: [HOME_PATH],
+    tabs: [{ id: 'home', label: 'Home', to: HOME_PATH, gate: HOME_GATE }],
+  },
   {
     id: 'campaigns',
     label: 'Campaigns',

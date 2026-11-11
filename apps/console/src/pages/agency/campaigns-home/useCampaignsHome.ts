@@ -13,13 +13,13 @@ import { campaignGroup, needsPolling, sortCampaigns } from '../../../utils/agenc
 import type { AgencyCampaign, AgencyCampaignStats } from '../../../types/agency-campaign';
 
 /** The cards' refresh, matching the campaign detail page's own poll. */
-const REFRESH_MS = 10_000;
+export const REFRESH_MS = 10_000;
 
 /** Rows per request; the server caps `limit` at 100. */
 export const PAGE_SIZE = 100;
 
 /** Every started-and-not-finished status: the ones read in full, however old. */
-const ACTIVE_STATUSES = ['running', 'stopping', 'paused'];
+export const ACTIVE_STATUSES = ['running', 'stopping', 'paused'];
 
 export type StatsState =
   | { status: 'loading' }

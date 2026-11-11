@@ -70,6 +70,7 @@ export const SUPERVISOR_SOURCES = [
   'src/utils/agencyCampaignPerformance.ts',
   'src/utils/agencyAgentFloor.ts',
   'src/pages/agency/AgencyAnalyticsPage.tsx',
+  'src/utils/agency/home.ts',
 ] as const;
 
 export type SupervisorSource = (typeof SUPERVISOR_SOURCES)[number];
@@ -88,6 +89,8 @@ const CARD = 'src/pages/agency/campaigns-home/ActiveCampaignCard.tsx';
 const STRIP = 'src/components/agency/CampaignHealthStrip.tsx';
 const PERFORMANCE = 'src/utils/agencyCampaignPerformance.ts';
 const FLOOR = 'src/components/agency/AgentFloor.tsx';
+/** Home's rules (B28): the attention list and the floor. */
+const HOME = 'src/utils/agency/home.ts';
 
 export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   keyof AgencyCampaignStats,
@@ -170,21 +173,11 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
       'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '
       + 'Insights tab shows the rolling rate from its own reads (`health.abandonment.rolling_24h`).',
   },
-  abandonment_ceiling_pct: {
-    unconsumed:
-      'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '
-      + 'Insights tab shows the ceiling from its own reads (`settings.abandonment_ceiling_pct`).',
-  },
-  abandoned_24h: {
-    unconsumed:
-      'Read only by the health strip\'s abandonment sample, deleted with the Overview panel. The '
-      + 'Insights tab divides its own counts (`health.abandonment.rolling_24h.abandoned`).',
-  },
-  answered_24h: {
-    unconsumed:
-      'Read only by the health strip\'s abandonment sample, deleted with the Overview panel. The '
-      + 'Insights tab divides its own counts (`health.abandonment.rolling_24h.answered`).',
-  },
+  // Read again by Home (B28): its abandonment rule and the floor's rate, over the guardrail's
+  // 24 hours with IN5's sample floor. The strip's read-out that read them first is gone.
+  abandonment_ceiling_pct: { consumedIn: HOME },
+  abandoned_24h: { consumedIn: HOME },
+  answered_24h: { consumedIn: HOME },
 
   // ── the derived figures ─────────────────────────────────────────────────
   connect_rate_pct: { consumedIn: PERFORMANCE },
