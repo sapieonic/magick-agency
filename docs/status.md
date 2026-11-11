@@ -472,7 +472,9 @@ alone dropped the second branch's loan. "Check duplicates on" now combines up to
 accepted row, and a row with any of them blank is kept.
 
 - Migration `0031_ingest_dedupe_columns.sql` (`agency_ingest_jobs.dedupe_columns TEXT[]`, 1 to 3,
-  backfilled from 0007's `dedupe_column`, which is no longer written). Contract:
+  backfilled from 0007's `dedupe_column`, which is no longer read but is still written for a
+  one-column key, so a server rolled back past 0031 keeps that key; the Down fails a pending or
+  running job whose key combines columns, `interrupted`, rather than run it on one column). Contract:
   `dedupe_columns` on the ingest request (the single `dedupe_column` is still accepted, as one key)
   and on the job, the insights summary and the uploads list (replacing `dedupe_column` there);
   `AGENCY_MAX_DEDUPE_COLUMNS`. The readiness check's `detail.dedupe_column` names the key as one
@@ -480,12 +482,15 @@ accepted row, and a row with any of them blank is kept.
 - Rule and defaults: [`decisions.md`](decisions.md) §4, "Combined duplicate key".
 - Mapping screen: keys 2 and 3 under the first select, each removable while two or more remain.
   Moving the phone role onto a column that is a key swaps the two keys rather than merging them,
-  so the key never loses a column (a smaller key drops more rows). `POST /ingest/jobs` records the
+  so the key never loses a column (a smaller key drops more rows). A key column made the phone
+  remembers itself and is that column again when the phone moves off it, so undoing a mis-set
+  Phone role keeps the key. "Combine with another column" adds a column, and the phone number
+  only when no other column is left. `POST /ingest/jobs` records the
   phone column named alone as the phone dedupe, not a column key.
 - A fresh-context review found two existing paths that can still drop a row the operator meant to
-  keep, both now stated in `decisions.md` §4 and neither changed: a DNC-suppressed row still claims
-  its key (open defect, pinned `it.fails`), and rows differing only in an ignored column collapse
-  at the roster insert (the console's notes now say so).
+  keep, both now stated in `decisions.md` §4 and neither changed, both kept by Manas's ruling of
+  2026-11-11: a DNC-suppressed row still claims its key (pinned as ruled), and rows differing only
+  in an ignored column collapse at the roster insert (the console's notes now say so).
 - `REPORT_DATASET_VERSION` stays 1: the campaign dataset embeds `AgencyInsightsSummary`, whose
   `dedupe_column` became `dedupe_columns`, and the renderer reads neither. Insights still say
   "duplicates on phone" for an upload sent with no duplicate check (`dedupe_phones: false` is not on
@@ -1732,7 +1737,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
-| Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected`. Ratify the combined key's any-blank rule (a row with any key column blank is never a duplicate), and rule on the open defect "DNC row claims its key" (`decisions.md` §4) |
+| Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected`. The combined key's rules, its phone-only default and "DNC row claims its key" were ruled 2026-11-11 (`decisions.md` §4) |
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |

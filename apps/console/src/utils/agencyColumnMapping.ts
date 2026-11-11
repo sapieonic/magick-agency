@@ -349,14 +349,6 @@ export function phoneUniquenessLine(analysis: AgencyColumnAnalysis, column: stri
     : `${column}: ${percentUnique(counts.distinct, counts.total)}% of valid numbers are unique ${scopeOf(analysis)}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier number and will be dropped.`;
 }
 
-/**
- * A combined key's columns as one name, as the ingest labels it: `Loan No + Branch`.
- * `null` for no key (the phone dedupe, or none).
- */
-export function dedupeKeyName(columns: readonly string[]): string | null {
-  return columns.length > 0 ? columns.join(' + ') : null;
-}
-
 /** `Loan No and Branch both match` / `A, B and C all match`: the rule a combination applies. */
 export function combinationMatch(names: readonly string[]): string {
   return `${joinAnd(names)} ${names.length === 2 ? 'both' : 'all'} match`;
