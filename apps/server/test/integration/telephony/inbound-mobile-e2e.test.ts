@@ -402,6 +402,11 @@ describe('the device-away break and inbound calls: queued behind the call, never
     // A second phone, available, backgrounded: out of the pool at once, and a caller goes elsewhere.
     const other = await joinAgent(world, campaignId, { station: CAPABLE_PHONE });
     expect((await deviceAway(other)).body).toMatchObject({ state: 'break', break_reason: 'device_away' });
+    // IQ50: a device_away pause less than 30 s old (either phone's: the first one's applied at the
+    // outcome save) still counts as one who could take the caller (they queue, never offered;
+    // `inbound-connector-review-fixes.test.ts` pins it). Past it, nobody could.
+    await pool().query(`UPDATE agency_agent_sessions SET state_since = now() - interval '31 seconds' WHERE id = ANY($1::uuid[])`,
+      [[phone.sessionId, other.sessionId]]);
     const next = ring(world, callerScript(() => false), '447700900778');
     const overflowed = await spineWhen(next, 'overflowed: nobody could take them', (r) => r.state === 'ended');
     expect(overflowed).toMatchObject({ outcome: 'overflow', offer_count: 0 });
