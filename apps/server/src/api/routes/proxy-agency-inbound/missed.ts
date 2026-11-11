@@ -4,8 +4,9 @@
  * `agency.inbound.read` floors at `agent` (§8.1): an agent reads and marks only the rows assigned
  * to them; a caller whose role holds `agency.supervise` reads and marks the account's, assigned
  * or not. The internal handler applies that from the role-derived `supervise` (`shared.ts`).
- * Rows assigned to "the account" (no person) are therefore a supervisor's to work: the design
- * gives an agent "their own Missed rows" only. Part of `proxy-agency-inbound.routes.ts`. Never
+ * Rows assigned to "the account" (no person) an agent reads with `assignee=unassigned` (IQ49, the
+ * "Team" view, with their voicemails) and claims one (`missed-work.ts`) to work it as their own.
+ * Part of `proxy-agency-inbound.routes.ts`. Never
  * behind `agency_inbound_enabled`: switching inbound off leaves its follow-ups to be worked.
  *
  * Enrichment here: `assignee_name` and `handled_by_name` (`users`, one query; a failed lookup

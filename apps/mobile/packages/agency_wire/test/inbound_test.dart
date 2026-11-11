@@ -325,6 +325,10 @@ void main() {
       expect(voicemail.voicemailUrl, '/inbound/missed/7d8e9f0a-1b23-4c4d-8e5f-607182930415/voicemail');
       expect(voicemail.callerDnc, isTrue);
       expect(voicemail.outcome, InboundCallOutcome.voicemail);
+      // IQ54: the matched contact's name; none for an unmatched or withheld caller.
+      expect(closed.matchName, 'Rahul Deshmukh');
+      expect(overflow.matchName, isNull);
+      expect(voicemail.matchName, isNull);
       final last = decodeInboundMissedPage(ib('missed_page_last'));
       expect(last.hasMore, isFalse);
       expect(last.rows.single.handledReason, InboundHandledReason.reached);
@@ -339,6 +343,28 @@ void main() {
       expect(reopened.isOpen, isTrue);
       expect(reopened.id, handled.id);
       expect(reopened.handledReason, isNull);
+    });
+
+    test('claim answers the row as it now is: the claimant`s (IQ49)', () {
+      final claimed = InboundMissedCallResponse.fromJson(ib('missed_claim_response')).call;
+      expect(claimed.assigneeUserId, 'u-2f8a6c1e-4b3d-4e5f-8a9b-0c1d2e3f4a5b');
+      expect(claimed.assigneeName, 'Arjun Mehta');
+      expect(claimed.isOpen, isTrue);
+      expect(claimed.isWithheld, isTrue);
+      expect(claimed.matchName, isNull);
+      // A server before IQ54 sends no `match_name`: null.
+      final json = Map<String, Object?>.of(ib('missed_handled_response')['call']! as Map<String, Object?>)..remove('match_name');
+      expect(InboundMissedCall.fromJson(json).matchName, isNull);
+    });
+
+    test('the count query: the list`s assignee and since, only what is set (IQ57, IQ50)', () {
+      expect(const InboundMissedCountQuery().toQuery(), <String, String>{});
+      expect(
+        InboundMissedCountQuery(assignee: InboundMissedQuery.assigneeMe, since: DateTime.utc(2026, 11, 11, 9, 30).toLocal()).toQuery(),
+        {'assignee': 'me', 'since': '2026-11-11T09:30:00.000Z'},
+      );
+      expect(const InboundMissedCountQuery(assignee: InboundMissedQuery.assigneeUnassigned).toQuery(), {'assignee': 'unassigned'});
+      expect(InboundMissedCountResponse.fromJson(ib('missed_count_since')).badge, '2');
     });
 
     test('the count, and the badge it shows', () {
@@ -378,6 +404,12 @@ void main() {
   });
 
   group('ErrorBody: the inbound refusals', () {
+    test('inbound_missed_call_claimed: someone else has the row (IQ49)', () {
+      final body = ErrorBody.fromJson(ib('refusal_missed_call_claimed'));
+      expect(body.inboundCode, InboundErrorCode.inboundMissedCallClaimed);
+      expect(body.code, AgencyErrorCode.unknown);
+    });
+
     test('inbound_disposition_invalid with unknown_code lists the catalog', () {
       final body = ErrorBody.fromJson(ib('refusal_disposition_unknown_code'));
       expect(body.inboundCode, InboundErrorCode.inboundDispositionInvalid);

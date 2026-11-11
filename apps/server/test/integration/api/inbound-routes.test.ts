@@ -500,12 +500,14 @@ describe('the Missed inbound list and Mark handled', () => {
 
   const idsOf = (res: { json: () => { rows: Array<{ id: string }> } }) => res.json().rows.map((r) => r.id);
 
-  it('an agent sees only their own rows, whatever they ask for', async () => {
-    for (const query of ['', '?assignee=unassigned', `?assignee=${agent(1).id}`, '?assignee=me']) {
+  it('an agent sees only their own rows, whatever they ask for, but the Team view (IQ49)', async () => {
+    for (const query of ['', `?assignee=${agent(1).id}`, '?assignee=me']) {
       const res = await call('GET', `/missed${query}`, agent(0));
       expect(res.statusCode, res.body).toBe(200);
       expect(idsOf(res), query).toEqual([ids['a0new'], ids['a0old']]);
     }
+    // IQ49: the account's unassigned rows, the Team view any agent with the list may open.
+    expect(idsOf(await call('GET', '/missed?assignee=unassigned', agent(0)))).toEqual([ids['none2'], ids['none1']]);
     const row = (await call('GET', '/missed', agent(0))).json().rows[0];
     expect(row).toMatchObject({
       id: ids['a0new'], account_id: floor.account, reason: 'overflow', outcome: 'overflow', status: 'open', caller_dnc: true,

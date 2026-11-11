@@ -275,6 +275,8 @@ const INBOUND = {
   missed_reopen_response: fits<AgencyApi.AgencyInboundReopenResponse>()(inbound.missed_reopen_response),
   missed_count: fits<AgencyApi.AgencyInboundMissedCountResponse>()(inbound.missed_count),
   missed_count_capped: fits<AgencyApi.AgencyInboundMissedCountResponse>()(inbound.missed_count_capped),
+  missed_claim_response: fits<AgencyApi.AgencyInboundMissedClaimResponse>()(inbound.missed_claim_response),
+  missed_count_since: fits<AgencyApi.AgencyInboundMissedCountResponse>()(inbound.missed_count_since),
   refusal_disposition_unknown_code: fits<AgencyApi.AgencyInboundErrorResponse>()(
     inbound.refusal_disposition_unknown_code,
   ),
@@ -285,6 +287,7 @@ const INBOUND = {
   refusal_call_not_found: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_call_not_found),
   refusal_call_live: fits<AgencyApi.AgencyInboundCallLiveRefusal>()(inbound.refusal_call_live),
   refusal_inbound_disabled: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_inbound_disabled),
+  refusal_missed_call_claimed: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_missed_call_claimed),
 };
 
 // The agent's reads are public-API-layer shapes, so they are checked against `AgencyApi`.
@@ -519,7 +522,7 @@ const INBOUND_CALL_SAMPLES = [
 ] as const;
 const MISSED_ROWS: Array<[string, string]> = [
   ['missed_page', 'rows.0'], ['missed_page', 'rows.1'], ['missed_page', 'rows.2'], ['missed_page_last', 'rows.0'],
-  ['missed_handled_response', 'call'], ['missed_reopen_response', 'call'],
+  ['missed_handled_response', 'call'], ['missed_reopen_response', 'call'], ['missed_claim_response', 'call'],
 ];
 type InboundField = [file: string, sample: string, path: string, vocabulary: string];
 const INBOUND_LITERAL_FIELDS: InboundField[] = [

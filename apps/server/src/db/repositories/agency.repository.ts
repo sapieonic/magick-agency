@@ -270,6 +270,8 @@ export type {
   AgencyInboundOfferRefusal,
   AgencyInboundIdentification,
   AgencyInboundReassignResult,
+  AgencyInboundClaimResult,
+  AgencyInboundMissedAssignee,
   AgencyInboundMissedListInput,
   AgencyInboundMissedRow,
   AgencyInboundTransitionTarget,

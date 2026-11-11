@@ -48,6 +48,7 @@ import {
 import { InboundQueue, accountKeyOfCall, summarizeWaiting, type InboundQueueRouteSnapshot } from './inbound-queue.js';
 import { inboundCallToWire, loadInboundPanelContext, type InboundPanelContext } from './inbound-call-wire.js';
 import { InboundHandovers, type HandoverHost, type InboundOfferRefused } from './inbound-handover.js';
+import { matchName } from './match-name.js';
 
 const log = createChildLogger({ component: 'agency-inbound-connector' });
 
@@ -1801,13 +1802,4 @@ export function unconnectedOutcome(bridgeOutcome: string | undefined): AgencyInb
     default:
       return 'abandoned_in_queue';
   }
-}
-
-/** A display name from a roster contact's context (the CSV's name columns), if any. */
-function matchName(context: Record<string, unknown>): string | undefined {
-  for (const key of ['name', 'full_name', 'customer_name', 'first_name']) {
-    const v = context[key];
-    if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 100);
-  }
-  return undefined;
 }

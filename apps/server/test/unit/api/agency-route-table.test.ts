@@ -77,6 +77,9 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /api/v1/webhooks/plivo/inbound-answer/:_', 'Plivo inbound answer callback, replies XML (carrier-facing)'],
   ['POST /api/v1/webhooks/plivo/inbound-status/:_', 'Plivo inbound hangup callback (carrier-facing)'],
   ['POST /api/v1/webhooks/plivo/inbound-fallback', 'Plivo inbound fallback answer URL: fixed XML, no state (carrier-facing)'],
+  // IQ49: the agent app's Team view claims an unassigned Missed row. No console caller yet: when
+  // the console's Missed page offers Claim, its path joins the console inventory and this goes.
+  ['POST /proxy/agency/inbound/missed/:_/claim', 'Missed row claim (IQ49; the agent app, the console to follow)'],
   ['WS /api/v1/webrtc-call/:_/pstn-stream', 'carrier PSTN media leg, VoiceLink and Plivo (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],
   ['GET /super-admin/usage', 'super-admin usage counts'],

@@ -144,6 +144,8 @@ final Map<String, Map<String, Decoder>> decoders = {
     'missed_reopen_response': InboundMissedCallResponse.fromJson,
     'missed_count': InboundMissedCountResponse.fromJson,
     'missed_count_capped': InboundMissedCountResponse.fromJson,
+    'missed_claim_response': InboundMissedCallResponse.fromJson,
+    'missed_count_since': InboundMissedCountResponse.fromJson,
     'refusal_disposition_unknown_code': (j) =>
         ErrorBody.fromJson(j).inboundDispositionInvalid ?? (throw StateError('not inbound_disposition_invalid')),
     'refusal_disposition_note_required': (j) =>
@@ -152,6 +154,7 @@ final Map<String, Map<String, Decoder>> decoders = {
     'refusal_call_not_found': ErrorBody.fromJson,
     'refusal_call_live': (j) => ErrorBody.fromJson(j).inboundCallLive ?? (throw StateError('not inbound_call_live')),
     'refusal_inbound_disabled': ErrorBody.fromJson,
+    'refusal_missed_call_claimed': ErrorBody.fromJson,
   },
   'actions.json': {
     'hangup_response': HangupResponse.fromJson,

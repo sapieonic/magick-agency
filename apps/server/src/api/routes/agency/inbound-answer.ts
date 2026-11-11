@@ -15,6 +15,7 @@ import type {
   AgencyInboundRouteConfig,
 } from '@magick-agency/contracts/api/agency/inbound';
 import type { AgencyInboundMissedRow } from '../../../db/repositories/agency.repository.js';
+import { matchName } from '../../../agency/inbound/match-name.js';
 import type { InboundCallRefusal } from '../../../agency/inbound/inbound-disposition.js';
 
 /**
@@ -43,6 +44,7 @@ export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, num
   inbound_clip_storage_unavailable: 503,
   inbound_missed_call_handled: 409,
   inbound_assignee_invalid: 400,
+  inbound_missed_call_claimed: 409,
 };
 
 /** English fallback copy, British spelling. The console words each code itself. */
@@ -67,6 +69,7 @@ const INBOUND_REFUSAL_MESSAGES: Readonly<Record<AgencyInboundErrorCode, string>>
   inbound_clip_storage_unavailable: 'Recordings cannot be uploaded on this deployment: it has no audio storage.',
   inbound_missed_call_handled: 'This missed call is already handled.',
   inbound_assignee_invalid: 'That person cannot work this account’s missed calls.',
+  inbound_missed_call_claimed: 'Someone else has already taken this missed call.',
 };
 
 const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
@@ -161,6 +164,12 @@ export interface InboundCallReassignedAudit {
   changed: boolean;
   from: string | null;
   to: string | null;
+}
+
+/** `POST /inbound/missed/:id/claim` (IQ49): whether this request assigned it to the caller (false: it already was theirs). */
+export interface InboundCallClaimedAudit {
+  call_id: string;
+  changed: boolean;
 }
 
 /** `POST /inbound/missed/:id/handled`: whether this request marked it (false: already handled). */
@@ -275,6 +284,8 @@ export function inboundMissedToWire(
     closed_cause: row.follow_up_reason === 'closed' ? (row.closed_cause ?? null) : null,
     outcome: row.outcome!,
     caller_dnc: row.caller_dnc,
+    // IQ54: the matched contact's name; none for an unmatched or withheld caller.
+    match_name: row.from_e164 !== null && row.matched_contact_id !== null ? (matchName(row.match_context) ?? null) : null,
     matched_contact_id: row.matched_contact_id,
     matched_campaign_id: row.matched_campaign_id,
     matched_campaign_name: row.matched_campaign_name,

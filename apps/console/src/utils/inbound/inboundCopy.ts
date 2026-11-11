@@ -41,6 +41,7 @@ export const INBOUND_REFUSAL_COPY: Record<AgencyInboundErrorCode, string> = {
   inbound_clip_storage_unavailable: 'Recordings can’t be uploaded here yet: this service has no audio storage set up. Contact support.',
   inbound_missed_call_handled: 'This call has already been handled, so there’s nothing to reassign.',
   inbound_assignee_invalid: 'That person can’t take this account’s missed calls any more. Choose someone else.',
+  inbound_missed_call_claimed: 'Someone else has already taken this missed call.',
 };
 
 /** Why an upload was refused, in the editor's words. */

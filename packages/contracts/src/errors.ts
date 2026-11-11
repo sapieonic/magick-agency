@@ -578,10 +578,15 @@ export type AgencyInboundErrorCode =
   | 'inbound_clip_name_taken'
   /** 503. This deployment has no audio storage, so recordings cannot be uploaded. */
   | 'inbound_clip_storage_unavailable'
-  /** 409. `POST /inbound/missed/:id/assign`: the Missed row is already handled (marked, or closed because the customer was reached); a follow-up that is done is not handed on. */
+  /** 409. `POST /inbound/missed/:id/assign` and `/claim`: the Missed row is already handled (marked, or closed because the customer was reached); a follow-up that is done is not handed on. */
   | 'inbound_missed_call_handled'
   /** 400. `POST /inbound/missed/:id/assign`: the person named is not an active member who can work this account's Missed calls. */
-  | 'inbound_assignee_invalid';
+  | 'inbound_assignee_invalid'
+  /**
+   * 409. `POST /inbound/missed/:id/claim` (IQ49): the row is no longer unassigned: someone else
+   * claimed it first, or a supervisor gave it to someone. Nothing changed; refresh the Team view.
+   */
+  | 'inbound_missed_call_claimed';
 
 /** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
 export const AGENCY_INBOUND_ERROR_CODES = [
@@ -605,6 +610,7 @@ export const AGENCY_INBOUND_ERROR_CODES = [
   'inbound_clip_storage_unavailable',
   'inbound_missed_call_handled',
   'inbound_assignee_invalid',
+  'inbound_missed_call_claimed',
 ] as const satisfies readonly AgencyInboundErrorCode[];
 
 const _allInboundCodesListed: AllListed<

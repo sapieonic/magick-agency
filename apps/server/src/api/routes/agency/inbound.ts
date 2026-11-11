@@ -67,7 +67,7 @@ import { UUID_RE } from '../../../utils/uuid.js';
 import { sendRefusal } from '../helpers/refusal.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
-import { INBOUND_MISSED_DEFAULT_LIMIT, inboundMissedQuerySchema } from '../helpers/inbound-missed-query.js';
+import { INBOUND_MISSED_DEFAULT_LIMIT, inboundMissedQuerySchema, missedAssigneeScope } from '../helpers/inbound-missed-query.js';
 import {
   inboundMissedToWire,
   inboundRouteConfigOf,
@@ -345,11 +345,9 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
     const after = readKeysetCursor(request, reply);
     if (after === null) return reply;
     const q = parsed.data;
-    // Without `agency.supervise` the list is the caller's own, whatever was asked (§8.1).
-    const assignee = !actor.supervise || q.assignee === 'me'
-      ? { userId: actor.userId }
-      : q.assignee === 'unassigned' ? 'unassigned' as const
-        : q.assignee ? { userId: q.assignee.toLowerCase() } : undefined;
+    // Without `agency.supervise` the list is the caller's own, whatever was asked (§8.1), except
+    // `unassigned`: the account's rows nobody has, which any caller with the list reads (IQ49).
+    const assignee = missedAssigneeScope(actor, q.assignee);
     const limit = q.limit ?? INBOUND_MISSED_DEFAULT_LIMIT;
     const page = await agencyInboundCallRepository.listMissed({
       tenantId: actor.tenantId,
@@ -369,14 +367,17 @@ export async function registerInboundRoutes(sub: FastifyInstance): Promise<void>
   // ── GET /inbound/missed/:id/voicemail — where a Missed row's voicemail is ──
   // The object's key and length, for the public route to stream from the bucket (bytes do not
   // travel through `callCore`, which buffers). The list's rules: the account's row, and without
-  // `agency.supervise` only one assigned to the caller; a row with no voicemail (none left, or
-  // aged out) is the same 404 as a row that is not there.
+  // `agency.supervise` only one assigned to the caller or (IQ49) to nobody, an open row of the Team
+  // view the agent may claim; a row with no voicemail (none left, or aged out) is the same 404 as
+  // a row that is not there.
   sub.get<{ Params: { id: string } }>('/inbound/missed/:id/voicemail', async (request, reply) => {
     const actor = queryActor(request, reply);
     if (!actor) return reply;
     if (!UUID_RE.test(request.params.id)) return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
     const row = await agencyInboundCallRepository.findMissed(actor.tenantId, actor.accountId, request.params.id);
-    if (!row || !row.voicemail_key || (!actor.supervise && row.follow_up_assignee_user_id !== actor.userId)) {
+    const agentMayRead = row !== null && (row.follow_up_assignee_user_id === actor.userId
+      || (row.follow_up_assignee_user_id === null && row.follow_up_status === 'open'));
+    if (!row || !row.voicemail_key || (!actor.supervise && !agentMayRead)) {
       return sendInboundRefusal(reply, { code: 'inbound_missed_call_not_found' });
     }
     const body: InboundVoicemailLocation = { call_id: row.id, voicemail_key: row.voicemail_key, voicemail_seconds: row.voicemail_seconds };

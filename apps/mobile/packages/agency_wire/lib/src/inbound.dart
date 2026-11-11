@@ -17,7 +17,8 @@
 /// | `GET /inbound/missed` | [InboundMissedQuery] | [InboundMissedPage] |
 /// | `POST /inbound/missed/:id/handled` | none | [InboundMissedCallResponse] |
 /// | `POST /inbound/missed/:id/reopen` | none | [InboundMissedCallResponse] |
-/// | `GET /inbound/missed/count` | | [InboundMissedCountResponse] |
+/// | `GET /inbound/missed/count` | [InboundMissedCountQuery] | [InboundMissedCountResponse] |
+/// | `POST /inbound/missed/:id/claim` | none | [InboundMissedCallResponse] |
 ///
 /// Refusals are an `ErrorBody` read through `inboundCode` and its typed
 /// accessors (`errors.dart`). Neither the five call routes nor the Missed
@@ -638,6 +639,7 @@ final class InboundMissedCall {
     this.matchedContactId,
     this.matchedCampaignId,
     this.matchedCampaignName,
+    this.matchName,
     this.callbackDueAt,
     required this.hasVoicemail,
     this.voicemailUrl,
@@ -682,6 +684,7 @@ final class InboundMissedCall {
       matchedContactId: j.strOrNull('matched_contact_id'),
       matchedCampaignId: j.strOrNull('matched_campaign_id'),
       matchedCampaignName: j.strOrNull('matched_campaign_name'),
+      matchName: j.strOrNull('match_name'),
       callbackDueAt: j.timeOrNull('callback_due_at'),
       hasVoicemail: j.boolean('has_voicemail'),
       voicemailUrl: j.strOrNull('voicemail_url'),
@@ -727,6 +730,11 @@ final class InboundMissedCall {
   final String? matchedContactId;
   final String? matchedCampaignId;
   final String? matchedCampaignName;
+
+  /// The matched contact's name (`match_name`, IQ54), shown above the
+  /// number; null when the caller matched no contact, withheld their number,
+  /// or the contact has no name (and from a server before it).
+  final String? matchName;
 
   /// When the callback this call booked on the matched contact is due; null: none was booked.
   final DateTime? callbackDueAt;
@@ -774,6 +782,7 @@ final class InboundMissedCall {
       other.matchedContactId == matchedContactId &&
       other.matchedCampaignId == matchedCampaignId &&
       other.matchedCampaignName == matchedCampaignName &&
+      other.matchName == matchName &&
       other.callbackDueAt == callbackDueAt &&
       other.hasVoicemail == hasVoicemail &&
       other.voicemailUrl == voicemailUrl &&
@@ -800,9 +809,11 @@ InboundMissedPage decodeInboundMissedPage(Map<String, Object?> json) =>
     KeysetPage.fromJson(json, InboundMissedCall.fromJson);
 
 /// The query of `GET /proxy/agency/inbound/missed`. Newest first, keyset
-/// paged. An agent always sees only the rows assigned to them (the server
-/// forces `assignee=me` without `agency.supervise`), so the app leaves
-/// [assignee] null. A null member is left off.
+/// paged. An agent sees the rows assigned to them (the server forces
+/// `assignee=me` without `agency.supervise`, so the app leaves [assignee]
+/// null for its own list) and, with [assigneeUnassigned], the account's rows
+/// assigned to nobody: the Team view (IQ49), whose rows it claims with
+/// `POST /inbound/missed/:id/claim`. A null member is left off.
 ///
 /// Contract: `AgencyApi.AgencyInboundMissedListQuery`.
 @immutable
@@ -818,7 +829,8 @@ final class InboundMissedQuery {
   /// Null: the server's default, `open`.
   final InboundFollowUpStatus? status;
 
-  /// [assigneeMe], [assigneeUnassigned], or a user id (supervisors only).
+  /// [assigneeMe], [assigneeUnassigned] (anyone with the list: the Team
+  /// view), or a user id (supervisors only).
   final String? assignee;
   final InboundMissedReason? reason;
 
@@ -871,12 +883,14 @@ final class InboundMissedQuery {
   int get hashCode => Object.hash(status, assignee, reason, from, to, cursor, limit);
 }
 
-/// The answer of `POST /inbound/missed/:id/handled`, `/reopen` and `/assign`:
-/// the row as it now is. Marking a handled row again, or reopening an open
-/// one, answers it unchanged (idempotent).
+/// The answer of `POST /inbound/missed/:id/handled`, `/reopen`, `/assign`
+/// and `/claim`: the row as it now is. Marking a handled row again,
+/// reopening an open one, or claiming a row already yours, answers it
+/// unchanged (idempotent).
 ///
 /// Contract: `AgencyApi.AgencyInboundMarkHandledResponse`,
-/// `AgencyInboundReopenResponse`, `AgencyInboundMissedAssignResponse`.
+/// `AgencyInboundReopenResponse`, `AgencyInboundMissedAssignResponse`,
+/// `AgencyInboundMissedClaimResponse`.
 @immutable
 final class InboundMissedCallResponse {
   const InboundMissedCallResponse({required this.call});
@@ -893,7 +907,39 @@ final class InboundMissedCallResponse {
   int get hashCode => call.hashCode;
 }
 
-/// `GET /proxy/agency/inbound/missed/count`: the badge. An agent's own rows.
+/// The query of `GET /proxy/agency/inbound/missed/count` (IQ57, IQ50). A
+/// null member is left off.
+///
+/// Contract: `AgencyApi.AgencyInboundMissedCountQuery`.
+@immutable
+final class InboundMissedCountQuery {
+  const InboundMissedCountQuery({this.assignee, this.since});
+
+  /// The list's scope ([InboundMissedQuery.assigneeMe],
+  /// [InboundMissedQuery.assigneeUnassigned], or a user id for supervisors).
+  /// Null: the caller's own rows for an agent (the account's for a
+  /// supervisor). The app asks [InboundMissedQuery.assigneeMe] for its badge.
+  final String? assignee;
+
+  /// Only rows whose call arrived at or after this ("N customers rang while
+  /// you were away": when the `device_away` pause began).
+  final DateTime? since;
+
+  Map<String, String> toQuery() => <String, String>{
+    'assignee': ?assignee,
+    if (since != null) 'since': isoUtc(since!),
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is InboundMissedCountQuery && other.assignee == assignee && other.since == since;
+
+  @override
+  int get hashCode => Object.hash(assignee, since);
+}
+
+/// `GET /proxy/agency/inbound/missed/count`: the badge, in the scope of its
+/// [InboundMissedCountQuery].
 ///
 /// Contract: `AgencyApi.AgencyInboundMissedCountResponse`.
 @immutable
@@ -1028,9 +1074,13 @@ enum InboundErrorCode implements WireEnum {
   inboundClipNameTaken('inbound_clip_name_taken'),
   inboundClipStorageUnavailable('inbound_clip_storage_unavailable'),
 
-  /// 409 (`/assign`): the row is already handled.
+  /// 409 (`/assign`, `/claim`): the row is already handled.
   inboundMissedCallHandled('inbound_missed_call_handled'),
   inboundAssigneeInvalid('inbound_assignee_invalid'),
+
+  /// 409 (`/claim`, IQ49): someone else has the row now (claimed first, or
+  /// given by a supervisor). Refresh the Team view.
+  inboundMissedCallClaimed('inbound_missed_call_claimed'),
   unknown('');
 
   const InboundErrorCode(this.wire);

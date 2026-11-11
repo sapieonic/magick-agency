@@ -356,6 +356,7 @@
         "route_name": "Pune customer line",
         "to_e164": "+912071234500",
         "caller_dnc": false,
+        "match_name": "Rahul Deshmukh",
         "has_voicemail": false,
         "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
         "assignee_name": "Priya Kulkarni",
@@ -383,6 +384,7 @@
         "route_name": "Pune customer line",
         "to_e164": "+912071234500",
         "caller_dnc": false,
+        "match_name": null,
         "has_voicemail": false,
         "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
         "assignee_name": "Priya Kulkarni",
@@ -410,6 +412,7 @@
         "route_name": "Pune customer line",
         "to_e164": "+912071234500",
         "caller_dnc": true,
+        "match_name": null,
         "has_voicemail": true,
         "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
         "assignee_name": "Priya Kulkarni",
@@ -444,6 +447,7 @@
         "route_name": "Pune customer line",
         "to_e164": "+912071234500",
         "caller_dnc": false,
+        "match_name": null,
         "has_voicemail": false,
         "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
         "assignee_name": "Priya Kulkarni",
@@ -476,6 +480,7 @@
       "route_name": "Pune customer line",
       "to_e164": "+912071234500",
       "caller_dnc": false,
+      "match_name": "Rahul Deshmukh",
       "has_voicemail": false,
       "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
       "assignee_name": "Priya Kulkarni",
@@ -505,6 +510,7 @@
       "route_name": "Pune customer line",
       "to_e164": "+912071234500",
       "caller_dnc": false,
+      "match_name": "Rahul Deshmukh",
       "has_voicemail": false,
       "assignee_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
       "assignee_name": "Priya Kulkarni",
@@ -534,6 +540,41 @@
   "missed_count_capped": {
     "open": 100,
     "open_capped": true,
+    "has_rows": true
+  },
+  "missed_claim_response": {
+    "call": {
+      "id": "6c7d8e9f-0a12-4b3c-9d4e-5f6071829304",
+      "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "route_id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+      "route_name": "Pune customer line",
+      "to_e164": "+912071234500",
+      "caller_dnc": false,
+      "match_name": null,
+      "has_voicemail": false,
+      "assignee_user_id": "u-2f8a6c1e-4b3d-4e5f-8a9b-0c1d2e3f4a5b",
+      "assignee_name": "Arjun Mehta",
+      "assignee_departed": false,
+      "status": "open",
+      "handled_reason": null,
+      "handled_by_user_id": null,
+      "handled_by_name": null,
+      "handled_at": null,
+      "from_e164": null,
+      "arrived_at": "2026-11-01T11:05:30.000Z",
+      "ended_at": "2026-11-01T11:07:30.900Z",
+      "reason": "overflow",
+      "closed_cause": null,
+      "outcome": "overflow",
+      "matched_contact_id": null,
+      "matched_campaign_id": null,
+      "matched_campaign_name": null,
+      "callback_due_at": null
+    }
+  },
+  "missed_count_since": {
+    "open": 2,
+    "open_capped": false,
     "has_rows": true
   },
   "refusal_disposition_unknown_code": {
@@ -575,5 +616,10 @@
     "error": "Forbidden",
     "message": "Inbound calls are not turned on for this account.",
     "code": "inbound_disabled"
+  },
+  "refusal_missed_call_claimed": {
+    "error": "Conflict",
+    "message": "Someone else has already taken this missed call.",
+    "code": "inbound_missed_call_claimed"
   }
 }
