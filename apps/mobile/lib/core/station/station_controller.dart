@@ -175,6 +175,10 @@ class StationController extends Notifier<StationView?>
 
   /// The read that checks a held inbound call after a reconnect ([_checkInboundCall]).
   Timer? _inboundCheckTimer;
+
+  /// The backstop for an offer nothing settles ([_armOfferBackstop]): the snapshot it watches.
+  Timer? _offerBackstopTimer;
+  String? _offerBackstopKey;
   int _inboundCheckFailures = 0;
   int _inboundCheck = 0;
 
@@ -215,6 +219,7 @@ class StationController extends Notifier<StationView?>
     scopedTo: _scopedClient,
     onUnauthorized: _reportUnauthorized,
   );
+
 
   late final InboundCallApi _inboundApi = InboundCallApi(
     ref.read(apiClientProvider),
@@ -590,6 +595,7 @@ class StationController extends Notifier<StationView?>
     _inboundHangupFailure = null;
     _inboundHungUpHere = null;
     _cancelInboundCheck();
+    _cancelOfferBackstop();
   }
 
   // ─── Frames ─────────────────────────────────────────────────────────────
@@ -627,6 +633,18 @@ class StationController extends Notifier<StationView?>
         // copy right after `ready` only while the call is unsettled, so one
         // that settled meanwhile sends nothing and would stay "live" here.
         if (!first && isCallUnsettled(_station.manualCall)) _startHeldCallCheck();
+        // An offer held here while the server says the agent is not reserved, nor on a call or
+        // in a wrap-up: the server states `reserved` for as long as it holds an offer for this
+        // station (IQ46), so the offer is gone (cancelled with the lost socket, the caller back
+        // in the queue). Retired at once as a requeue, without waiting on a read that may keep
+        // failing. A copy past its offer (connected, owing its outcome) is never retired on a
+        // guess: the check below asks. Nor is an offer while `ready` says on a call or in a
+        // wrap-up: the offer may have connected meanwhile, and the server restates it.
+        final offer = _station.inboundOnScreen;
+        if (offer != null && inboundPhase(offer) == InboundPhase.offered && !isCallPhase(frame.state)) {
+          _cancelInboundCheck();
+          _retireInbound(offer);
+        }
         // The same for an inbound call: `ready` keeps it, and the server restates one it still
         // holds for this session right after. One requeued or settled while the socket was away
         // sends nothing, so the station asks (`GET /inbound/calls/:id`).
@@ -1890,6 +1908,7 @@ class StationController extends Notifier<StationView?>
       _actionError = null;
       _calls.inboundChanged(now);
     }
+    _armOfferBackstop();
   }
 
   void _setInboundNotice(String? text) {
@@ -2121,13 +2140,7 @@ class StationController extends Notifier<StationView?>
     final check = _inboundCheck;
     final result = await _inboundApi.getCall(held.id);
     if (!_live(s) || check != _inboundCheck) return;
-    void leave() {
-      _dispatch(InboundCallRetireAction(inboundSnapshotKey(held)));
-      if (inboundPhase(held) == InboundPhase.offered) {
-        _setInboundNotice(inboundRequeuedCopy);
-        _emit();
-      }
-    }
+    void leave() => _retireInbound(held);
 
     switch (result) {
       case InboundOk(value: final answer):
@@ -2151,6 +2164,72 @@ class StationController extends Notifier<StationView?>
         final wait = inboundCheckDelays[_inboundCheckFailures.clamp(0, inboundCheckDelays.length - 1)];
         _inboundCheckTimer = Timer(wait, () => unawaited(_checkInboundCall(s)));
     }
+  }
+
+  /// The server no longer holds [held] for this station: the copy is let go of (only while it
+  /// is still that snapshot, so a newer frame survives) and remembered, so no late answer
+  /// brings it back. An offer went back to the queue, and the agent is told so.
+  void _retireInbound(InboundCall held) {
+    _dispatch(InboundCallRetireAction(inboundSnapshotKey(held)));
+    if (inboundPhase(held) == InboundPhase.offered) {
+      _setInboundNotice(inboundRequeuedCopy);
+      _emit();
+    }
+  }
+
+  // ─── An offer nothing settles ──────────────────────────────────────────
+
+  /// How long past its `connects_at` an offer may stay on offer here. The caller's audio binds
+  /// at `connects_at`, and the server then sends the call connected, or cancels the offer (a
+  /// lost socket, the caller gone) and returns the agent; an offer still showing this long
+  /// after has lost the frame that settled it.
+  static const offerStaleAfter = Duration(seconds: 10);
+
+  /// The backstop for an offer whose settling frame never came (a socket that dropped and came
+  /// back with no frame restating the call, and a reconnect check that keeps failing): once
+  /// [offerStaleAfter] past its `connects_at` on the server's clock (the pong offset), with no
+  /// frame having replaced that snapshot, it is retired as a requeue, so the microphone, CallKit,
+  /// the notification and the away rules stop holding a call that is not there. Never sooner
+  /// than [offerStaleAfter] after the offer first reached this phone.
+  void _armOfferBackstop() {
+    final held = _station.inboundOnScreen;
+    final connectsAt = held?.connectsAt;
+    final key = held != null && connectsAt != null && inboundPhase(held) == InboundPhase.offered
+        ? inboundSnapshotKey(held)
+        : null;
+    if (key == _offerBackstopKey) return;
+    _cancelOfferBackstop();
+    if (key == null) return;
+    _offerBackstopKey = key;
+    // Never sooner than [offerStaleAfter] after this phone first saw the offer: before the
+    // first pong the offset is unknown, and a phone clock running ahead would otherwise read a
+    // fresh offer as long past.
+    final byServer = connectsAt!.add(offerStaleAfter);
+    final bySight = _serverNow.add(offerStaleAfter);
+    _scheduleOfferBackstop(byServer.isAfter(bySight) ? byServer : bySight);
+  }
+
+  void _scheduleOfferBackstop(DateTime staleAt) {
+    final wait = staleAt.difference(_serverNow);
+    _offerBackstopTimer = Timer(wait.isNegative ? Duration.zero : wait, () {
+      _offerBackstopTimer = null;
+      final held = _station.inboundOnScreen;
+      if (held == null || inboundSnapshotKey(held) != _offerBackstopKey || _s == null || _terminal) return;
+      // The clock offset may have moved since the timer was set: wait out the rest.
+      if (_serverNow.isBefore(staleAt)) {
+        _scheduleOfferBackstop(staleAt);
+        return;
+      }
+      _log.warn('inbound offer past connects_at with nothing settling it: retired', {'id': held.id});
+      _cancelInboundCheck();
+      _retireInbound(held);
+    });
+  }
+
+  void _cancelOfferBackstop() {
+    _offerBackstopTimer?.cancel();
+    _offerBackstopTimer = null;
+    _offerBackstopKey = null;
   }
 
   // ─── The soft phone (SoftphoneHostActions) ──────────────────────────────

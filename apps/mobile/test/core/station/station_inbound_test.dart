@@ -216,14 +216,16 @@ void main() {
       fakeAsync((async) {
         final app = _offered(async);
         app.routes['GET $_call'] = (_) => json(404, inboundSample('refusal_call_not_found'));
-        _reconnect(app);
+        // `reserved`, so the ready alone does not say the offer is gone: the read does.
+        _reconnect(app, state: 'reserved');
         expect(app.view!.inbound, isNotNull, reason: 'the 2 s grace for the frame');
         async.elapse(const Duration(seconds: 3));
         expect(app.requests('GET', _call), hasLength(1));
         expect(app.view!.inbound, isNull);
         expect(app.view!.inboundNotice, inboundRequeuedCopy);
-        expect(app.signals.callActive, isFalse);
         expect(app.engine.endedCalls.last.callId, fixtureCallId);
+        app.agentStateFrame('available', since: '2026-11-02T05:31:00.000Z');
+        expect(app.signals.callActive, isFalse);
         app.dispose();
       });
     });
@@ -565,6 +567,178 @@ void main() {
         v = app.view!;
         expect(v.inbound, isNull);
         expect(stationStageOf(v, 'camp-1'), StationStage.available);
+        app.dispose();
+      });
+    });
+  });
+
+  group('an offer nothing settles', () {
+    /// [returned]: the server has said the agent is back in the pool (`ready` or `agent_state`).
+    void expectRetiredOffer(App app, {bool returned = true}) {
+      final v = app.view!;
+      expect(v.inbound, isNull);
+      expect(v.inboundNotice, inboundRequeuedCopy);
+      if (returned) {
+        expect(v.phase, AgentPhase.available);
+        expect(app.signals.callActive, isFalse, reason: 'away, pause and sign-out are no longer held');
+      }
+      expect(app.engine.endedCalls.last.callId, fixtureCallId, reason: 'CallKit ends the call it was told of');
+      expect(app.engine.notification?.text, isNot(inboundOfferedNotificationText));
+    }
+
+    test('ready says available after a reconnect: the offer went back to the queue, retired at once, no read', () {
+      fakeAsync((async) {
+        final app = _offered(async);
+        app.routes['GET $_call'] = (_) => json(503, {'error': 'Service Unavailable', 'message': 'down'});
+        _reconnect(app);
+        expectRetiredOffer(app);
+        async.elapse(const Duration(minutes: 2));
+        expect(app.requests('GET', _call), isEmpty);
+        // A restatement of that offer is a snapshot let go of: it stays gone.
+        app.frame(stationFrame('inbound_call_offered'));
+        expect(app.view!.inbound, isNull);
+        app.dispose();
+      });
+    });
+
+    test('ready says on a break or offline: retired too; on a call or in a wrap-up the read decides', () {
+      for (final state in ['break', 'offline']) {
+        fakeAsync((async) {
+          final app = _offered(async);
+          _reconnect(app, state: state);
+          expect(app.view!.inbound, isNull, reason: state);
+          expect(app.view!.inboundNotice, inboundRequeuedCopy, reason: state);
+          app.dispose();
+        });
+      }
+      fakeAsync((async) {
+        final app = _offered(async);
+        app.routes['GET $_call'] = (_) => json(200, {'call': inboundCallJson('inbound_call_connected')});
+        _reconnect(app, state: 'on_call');
+        expect(app.view!.inbound!.stage, InboundStage.offered, reason: 'it may have connected meanwhile');
+        async.elapse(const Duration(seconds: 3));
+        expect(app.view!.inbound!.stage, InboundStage.connected);
+        app.dispose();
+      });
+    });
+
+    test('a connected call is never retired on ready alone, and 503s keep it and ask again on the backoff', () {
+      fakeAsync((async) {
+        final app = _offered(async);
+        app.frame(stationFrame('inbound_call_connected'));
+        app.routes['GET $_call'] = (_) => json(503, {'error': 'Service Unavailable', 'message': 'down'});
+        _reconnect(app);
+        expect(app.view!.inbound!.stage, InboundStage.connected, reason: 'only the server\'s answer retires it');
+        async.elapse(const Duration(seconds: 3));
+        expect(app.requests('GET', _call), hasLength(1));
+        async.elapse(const Duration(seconds: 4 + 8 + 16));
+        expect(app.requests('GET', _call), hasLength(4), reason: 'asked again after 4, 8, 16 s');
+        async.elapse(const Duration(minutes: 3));
+        expect(app.view!.inbound!.stage, InboundStage.connected);
+        expect(app.requests('GET', _call).length, greaterThan(4));
+        app.dispose();
+      });
+    });
+
+    test('503s for an offer ready still calls reserved: kept until 10 s past connects_at, then retired', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        // The harness's clock is 09:00:00; the caller's audio binds at 09:00:01.5.
+        app.frame(stationFrame('inbound_call_offered', call: {
+          'offered_at': '2026-11-01T09:00:00.000Z',
+          'connects_at': '2026-11-01T09:00:01.500Z',
+        }));
+        app.routes['GET $_call'] = (_) => json(503, {'error': 'Service Unavailable', 'message': 'down'});
+        _reconnect(app, state: 'reserved'); // 5 s
+        async.elapse(const Duration(seconds: 3)); // the read at 2 s fails
+        expect(app.requests('GET', _call), hasLength(1));
+        expect(app.view!.inbound!.stage, InboundStage.offered);
+        async.elapse(const Duration(milliseconds: 3400)); // 11.4 s
+        expect(app.view!.inbound, isNotNull);
+        async.elapse(const Duration(milliseconds: 200)); // 11.6 s
+        // `reserved` stays the agent's state until the server says otherwise; the offer's
+        // microphone, CallKit call and notification do not.
+        expectRetiredOffer(app, returned: false);
+        app.agentStateFrame('available', since: '2026-11-01T09:00:12.000Z');
+        expectRetiredOffer(app);
+        final reads = app.requests('GET', _call).length;
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('GET', _call), hasLength(reads), reason: 'nothing left to ask about');
+        app.dispose();
+      });
+    });
+
+    test('the backstop: an offer whose settling frame never came, socket open, leaves 10 s past connects_at', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered', call: {
+          'offered_at': '2026-11-01T09:00:00.000Z',
+          'connects_at': '2026-11-01T09:00:01.500Z',
+        }));
+        async.elapse(const Duration(milliseconds: 11400));
+        expect(app.view!.inbound!.stage, InboundStage.offered);
+        async.elapse(const Duration(milliseconds: 200));
+        expectRetiredOffer(app);
+        app.dispose();
+      });
+    });
+
+    test('the backstop waits 10 s from the offer reaching the phone, whatever the phone\'s clock reads', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        // A phone clock a minute ahead of the server's, before any pong: connects_at reads as
+        // long past the moment the offer lands.
+        app.frame(stationFrame('inbound_call_offered', call: {
+          'offered_at': '2026-11-01T08:59:00.000Z',
+          'connects_at': '2026-11-01T08:59:01.500Z',
+        }));
+        async.elapse(const Duration(milliseconds: 9900));
+        expect(app.view!.inbound!.stage, InboundStage.offered);
+        async.elapse(const Duration(milliseconds: 200));
+        expectRetiredOffer(app);
+        app.dispose();
+      });
+    });
+
+    test('the backstop leaves alone an offer that connected, and one a newer offer replaced', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered', call: {
+          'offered_at': '2026-11-01T09:00:00.000Z',
+          'connects_at': '2026-11-01T09:00:01.500Z',
+        }));
+        async.elapse(const Duration(seconds: 2));
+        app.frame(stationFrame('inbound_call_connected', call: {
+          'offered_at': '2026-11-01T09:00:00.000Z',
+          'bridged_at': '2026-11-01T09:00:01.510Z',
+        }));
+        async.elapse(const Duration(minutes: 5));
+        expect(app.view!.inbound!.stage, InboundStage.connected);
+        app.dispose();
+      });
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered', call: {
+          'offered_at': '2026-11-01T09:00:00.000Z',
+          'connects_at': '2026-11-01T09:00:01.500Z',
+        }));
+        app.frame(stationFrame('inbound_call_offered',
+            call: {'offered_at': '2026-11-01T09:00:00.000Z', 'state': 'queued', 'connects_at': null}));
+        async.elapse(const Duration(seconds: 8));
+        // Offered again: its own connects_at, its own 10 s.
+        app.frame(stationFrame('inbound_call_offered', call: {
+          'offered_at': '2026-11-01T09:00:08.000Z',
+          'connects_at': '2026-11-01T09:00:09.500Z',
+        }));
+        async.elapse(const Duration(seconds: 6)); // 14 s: past the first offer's, not this one's
+        expect(app.view!.inbound!.stage, InboundStage.offered);
+        async.elapse(const Duration(seconds: 6)); // 20 s
+        expect(app.view!.inbound, isNull);
         app.dispose();
       });
     });
