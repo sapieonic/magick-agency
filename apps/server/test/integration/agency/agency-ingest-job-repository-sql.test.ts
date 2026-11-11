@@ -71,6 +71,16 @@ describe('AgencyIngestJobRepository on real Postgres', () => {
     expect(await create({ dedupe_columns: [] })).toMatchObject({ dedupe_columns: null });
   });
 
+  it('create: a one-column key is also written to dedupe_column (a server rolled back past 0031 reads only it)', async () => {
+    const single = await create({ dedupe_columns: ['Loan No'], mode: 'replace' });
+    expect(await row(single.id)).toMatchObject({ dedupe_columns: ['Loan No'], dedupe_column: 'Loan No', mode: 'replace' });
+    // A combination stays out of it (one of its columns alone is a stricter rule), as does no key.
+    const combined = await create({ dedupe_columns: ['Loan No', 'Branch'] });
+    expect(await row(combined.id)).toMatchObject({ dedupe_columns: ['Loan No', 'Branch'], dedupe_column: null });
+    const none = await create();
+    expect(await row(none.id)).toMatchObject({ dedupe_columns: null, dedupe_column: null });
+  });
+
   it('create: mode replace takes the optional $14 column; dry_run and dedupe_phones=false are kept', async () => {
     const job = await create({ mode: 'replace', dry_run: true, dedupe_phones: false, account_id: null });
 

@@ -97,8 +97,9 @@ export interface AgencyIngestJobRecord {
   /**
    * 0031: the columns that together mark a duplicate row, in the operator's
    * order. NULL (or absent on a row read before it): `dedupe_phones` decides.
-   * 0007's single `dedupe_column` is superseded: 0031 copied it here, and
-   * nothing writes or reads it any more.
+   * 0007's single `dedupe_column` is superseded: 0031 copied it here and nothing
+   * reads it. `create()` still writes it for a one-column key, so a server
+   * rolled back past 0031 (which reads only `dedupe_column`) keeps that key.
    */
   dedupe_columns?: string[] | null;
   dry_run: boolean;
@@ -299,10 +300,20 @@ export class AgencyIngestJobRepository {
     // above: `mode` for a replace, `dedupe_columns` (0031) when the operator chose
     // a duplicate key. A job that asks for neither inserts exactly as it did before them, and
     // one that does fails loudly on a schema that cannot record what it asked.
+    //
+    // A one-column key is also written to 0007's `dedupe_column`, which nothing here
+    // reads: a rollback does not undo a migration, and the server before 0031 reads
+    // only that column, so without it a job created here and run (or shown) by a
+    // rolled-back server would dedupe on the phone. A combination is not written
+    // there: one of its columns alone is a stricter rule than the operator chose
+    // (the 0031 Down fails a combined-key job that has not finished instead).
     const optional: [string, unknown][] = [];
     if (input.mode === 'replace') optional.push(['mode', input.mode]);
     if (input.dedupe_columns?.length) {
       optional.push(['dedupe_columns', input.dedupe_columns]);
+      if (input.dedupe_columns.length === 1) {
+        optional.push(['dedupe_column', input.dedupe_columns[0]]);
+      }
     }
     for (const [, value] of optional) values.push(value);
     const extraColumns = optional.map(([column]) => `, ${column}`).join('');

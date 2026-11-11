@@ -1,7 +1,8 @@
 // Real Postgres: migrations/0031_ingest_dedupe_columns.sql. globalSetup has applied every
 // migration. The server writes and reads the column (agency-ingest-job.repository.ts); this pins
 // its shape and the 1..3 CHECK, that a job created without it keeps the earlier behaviour (NULL,
-// dedupe_phones decides), the backfill from 0007's `dedupe_column`, and down then up.
+// dedupe_phones decides), the backfill from 0007's `dedupe_column`, down then up, and that the
+// down fails an unfinished combined-key job rather than hand it one of its columns.
 import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -72,11 +73,13 @@ describe('0031 — agency_ingest_jobs.dedupe_columns', () => {
       .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_ingest_jobs_dedupe_columns' });
   });
 
-  it('backfills 0007 jobs; down keeps a single key and the first of a combination; up again', async () => {
+  it('backfills 0007 jobs; down keeps a single key and the first of a finished combination; up again', async () => {
     const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
     const after = files.length - files.indexOf(FILE);
-    const single = await insertJob({ dedupe_columns: ['Loan No'] });
-    const combined = await insertJob({ dedupe_columns: ['Loan No', 'Branch'] });
+    // As the server writes them: a one-column key in both columns, a combination in the new one.
+    const single = await insertJob({ dedupe_columns: ['Loan No'], dedupe_column: 'Loan No' });
+    const runningSingle = await insertJob({ dedupe_columns: ['Loan No'], dedupe_column: 'Loan No', status: 'running' });
+    const combined = await insertJob({ dedupe_columns: ['Loan No', 'Branch'], status: 'completed' });
     const phone = await insertJob();
 
     const stamped = async () => (await pool().query<{ id: string; updated_at: Date }>(
@@ -87,8 +90,9 @@ describe('0031 — agency_ingest_jobs.dedupe_columns', () => {
     try {
       // `updated_at` is a running job's heartbeat: the Down's copy is not progress.
       expect(await stamped()).toEqual(before);
-      expect(await jobRow(single['id'])).toMatchObject({ dedupe_column: 'Loan No' });
-      expect(await jobRow(combined['id'])).toMatchObject({ dedupe_column: 'Loan No' });
+      expect(await jobRow(single['id'])).toMatchObject({ dedupe_column: 'Loan No', status: 'pending' });
+      expect(await jobRow(runningSingle['id'])).toMatchObject({ dedupe_column: 'Loan No', status: 'running' });
+      expect(await jobRow(combined['id'])).toMatchObject({ dedupe_column: 'Loan No', status: 'completed' });
       expect(await jobRow(phone['id'])).toMatchObject({ dedupe_column: null });
       expect(await jobRow(single['id'])).not.toHaveProperty('dedupe_columns');
       // A job an 0007 server wrote, for the backfill.
@@ -105,5 +109,40 @@ describe('0031 — agency_ingest_jobs.dedupe_columns', () => {
     // The combination came back through `dedupe_column`: the down kept only its first key.
     expect(await jobRow(combined['id'])).toMatchObject({ dedupe_columns: ['Loan No'] });
     expect(await jobRow(phone['id'])).toMatchObject({ dedupe_columns: null });
+  });
+
+  it('down fails an unfinished combined-key job, so a server before 0031 never runs it on one column', async () => {
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    const after = files.length - files.indexOf(FILE);
+    const old = new Date('2026-01-01T00:00:00Z');
+    const pending = await insertJob({ dedupe_columns: ['Loan No', 'Branch'], updated_at: old });
+    const running = await insertJob({ dedupe_columns: ['Loan No', 'Branch', 'Mobile'], status: 'running', updated_at: old });
+    // Finished combinations keep today's handling: left as they ended, their first key kept for display.
+    const terminal = await Promise.all((['completed', 'failed', 'cancelled'] as const).map((status) =>
+      insertJob({ dedupe_columns: ['Loan No', 'Branch'], status, updated_at: old,
+        ...(status === 'failed' ? { error_code: 'malformed_csv', error_message: 'Bad file.' } : {}) })));
+    const pendingSingle = await insertJob({ dedupe_columns: ['Loan No'], dedupe_column: 'Loan No', updated_at: old });
+
+    await migrate('down', after);
+    try {
+      for (const job of [pending, running]) {
+        const r = await jobRow(job['id']);
+        expect(r).toMatchObject({ status: 'failed', error_code: 'interrupted', dedupe_column: 'Loan No' });
+        expect(r['error_message']).toMatch(/Upload the file again\.$/);
+        expect(r['finished_at']).toBeInstanceOf(Date);
+        // A change of state, not a schema copy: `updated_at` moves with it.
+        expect((r['updated_at'] as Date).getTime()).toBeGreaterThan(old.getTime());
+      }
+      expect(await jobRow(terminal[0]!['id'])).toMatchObject({
+        status: 'completed', error_code: null, finished_at: null, dedupe_column: 'Loan No', updated_at: old });
+      expect(await jobRow(terminal[1]!['id'])).toMatchObject({
+        status: 'failed', error_code: 'malformed_csv', error_message: 'Bad file.', dedupe_column: 'Loan No', updated_at: old });
+      expect(await jobRow(terminal[2]!['id'])).toMatchObject({
+        status: 'cancelled', error_code: null, dedupe_column: 'Loan No', updated_at: old });
+      expect(await jobRow(pendingSingle['id'])).toMatchObject({
+        status: 'pending', error_code: null, finished_at: null, dedupe_column: 'Loan No', updated_at: old });
+    } finally {
+      await migrate('up');
+    }
   });
 });

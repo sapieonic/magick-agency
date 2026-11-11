@@ -479,7 +479,8 @@ the header whose value marks a duplicate row in the file (for example a loan num
 borrower with two loans on one phone keeps both rows). Compared trimmed and case-insensitive; a
 blank value is never a duplicate. NULL keeps the earlier behaviour, which `dedupe_phones` decides
 (normalised phone, or none). Superseded by 0031's `dedupe_columns`, which the Up backfills from it:
-nothing writes or reads `dedupe_column` any more. No index, no rewrite. **Down** drops the column. **Tests**:
+nothing reads `dedupe_column` any more, and the server writes it only for a one-column key, so a
+server rolled back past 0031 keeps that key. No index, no rewrite. **Down** drops the column. **Tests**:
 `test/integration/db/ingest-dedupe-column-migration.test.ts` and the down → up inventory suite.
 
 ### 0008 — `migrations/0008_wrapup_redial.sql`
@@ -1273,15 +1274,23 @@ Roster upload, combining duplicate columns. **`agency_ingest_jobs.dedupe_columns
 order. A row is a duplicate only when every one matches an earlier accepted row (each trimmed and
 case-insensitive; the phone column by its normalised number); a row with any of them blank is never
 a duplicate. NULL: `dedupe_phones` decides, as before. The Up backfills it from 0007's
-`dedupe_column`, which is superseded: no longer written or read. The backfill and the Down's copy
+`dedupe_column`, which is superseded and no longer read, but still written for a one-column key
+(NULL for a combination or no key): a rollback does not undo a migration, and a server rolled back
+past 0031 reads only `dedupe_column`. The backfill and the Down's copy
 run with `agency_ingest_jobs_updated_at` disabled, so no job's `updated_at` (the running job's
 heartbeat, `reapStaleJobs`) moves. Written by
 `POST /proxy/agency/ingest/jobs` (`dedupe_columns`, or the single `dedupe_column`), read by the
 ingest service, the job payload, the audit row and the insights reads. No index; the table holds
-one row per upload. **Down** writes the first column back to `dedupe_column` where it is NULL (a
-single key exactly; a combination keeps its first column, a record of a finished upload) and drops
+one row per upload. **Down** first fails every unfinished job (`pending`, `running`) whose key
+combines columns (`error_code` `interrupted`, as the stale-job reaper writes, and a message to
+upload the file again; its `updated_at` moves, a change of state), because the server before 0031
+would run it on one of its columns alone and reject as duplicates rows the operator's key keeps.
+It then writes the first column back to `dedupe_column` where it is NULL (a single key exactly; a
+combination keeps its first column, a record of a finished upload) with the trigger off, and drops
 the CHECK and the column. **Tests**: `test/integration/db/ingest-dedupe-columns-migration.test.ts`
-(shape, the CHECK, the backfill, `updated_at` left alone, down then up) and the down → up inventory suite.
+(shape, the CHECK, the backfill, `updated_at` left alone by the copies, the Down failing unfinished
+combined-key jobs and leaving single-key and finished ones, down then up) and the down → up
+inventory suite.
 
 ## Tests
 

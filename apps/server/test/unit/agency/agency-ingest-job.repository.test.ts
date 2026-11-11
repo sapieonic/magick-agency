@@ -68,6 +68,19 @@ describe('AgencyIngestJobRepository', () => {
       expect(sqlOf(1)).toContain('created_by, mode, dedupe_columns)');
       expect(sqlOf(1)).toContain('$13,$14,$15)');
       expect(paramsOf(1).slice(13)).toEqual(['replace', ['Loan No', 'Branch']]);
+      // A combination never reaches 0007's single column: one of its keys alone is stricter.
+      expect(sqlOf(1)).not.toContain('dedupe_column,');
+      expect(sqlOf(1)).not.toMatch(/dedupe_column\)/);
+    });
+
+    it('writes a one-column key to dedupe_column too, so a server rolled back past 0031 keeps it', async () => {
+      await repo.create({
+        tenant_id: TENANT, s3_key: 'k', file_name: 'f.csv', phone_column: 'Mobile',
+        dedupe_columns: ['Loan No'],
+      });
+      expect(sqlOf()).toContain('created_by, dedupe_columns, dedupe_column)');
+      expect(sqlOf()).toContain('$13,$14,$15)');
+      expect(paramsOf().slice(13)).toEqual([['Loan No'], 'Loan No']);
     });
 
     it('stores an empty ignore list rather than NULL', async () => {
