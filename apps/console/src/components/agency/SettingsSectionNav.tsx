@@ -11,35 +11,62 @@ export interface SettingsNavSection {
 const PICK_HOLD_MS = 900;
 
 /**
+ * The section id a URL hash names. A hash is percent-encoded text typed or pasted by anyone,
+ * so a malformed one (`#%E0%A4%A`) is read as written rather than thrown: it names no section.
+ */
+export function sectionIdOfHash(hash: string): string {
+  const raw = hash.replace(/^#/, '');
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * Which section is in view, for the nav's highlight, and the jump to one.
  *
  * - The highlight follows the topmost section crossing the upper part of the view (an
  *   `IntersectionObserver`; without one, as in jsdom, it stays where it was put).
  * - `select(id)` scrolls to the section, highlights it at once and writes `#id` into the URL
  *   (replacing, so Back leaves the page rather than walking its sections).
- * - On arrival with `#id` naming a section, the page opens at it, once `ready` says the
- *   sections are on the page.
+ * - Every navigation to `#id` naming a section opens the page at it, once `ready` says the
+ *   sections are on the page: the first arrival, and each later one while the page stays
+ *   mounted (react-router keeps this page's instance across `…/settings#a` → `…/settings#b`, and
+ *   across campaigns, when search jumps there). Each navigation is handled once, by its
+ *   `location.key`; the one `select` itself wrote is not scrolled to again.
+ *
+ * `ready` must be false while the sections on screen are not the ones the URL is about (a
+ * campaign still loading after a jump from another), or the jump would land on the old page.
  */
 export function useSectionInView(sections: readonly SettingsNavSection[], ready: boolean) {
-  const { pathname, search, hash } = useLocation();
+  const { pathname, search, hash, key } = useLocation();
   const navigate = useNavigate();
   const ids = sections.map((s) => s.id);
   const idsKey = ids.join(' ');
-  const hashId = decodeURIComponent(hash.replace(/^#/, ''));
+  const hashId = sectionIdOfHash(hash);
   const [active, setActive] = useState<string | null>(ids.includes(hashId) ? hashId : ids[0] ?? null);
   const holdUntil = useRef(0);
-  const arrived = useRef(false);
+  /** The navigation (`location.key`) last opened at its section, or found to name none. */
+  const handledKey = useRef<string | null>(null);
+  /** The hash `select` just wrote: its navigation is already scrolled to. */
+  const pickedHash = useRef<string | null>(null);
 
-  // Arrival at `#id`: once, as soon as the sections exist.
+  // Arrival at `#id`: once per navigation, as soon as the sections exist.
   useEffect(() => {
-    if (!ready || arrived.current) return;
-    arrived.current = true;
+    if (!ready || handledKey.current === key) return;
+    handledKey.current = key;
+    if (pickedHash.current !== null && pickedHash.current === hash) {
+      pickedHash.current = null;
+      return;
+    }
+    pickedHash.current = null;
     const list = idsKey.split(' ');
     if (!hashId || !list.includes(hashId)) return;
     setActive(hashId);
     holdUntil.current = Date.now() + PICK_HOLD_MS;
     document.getElementById(hashId)?.scrollIntoView?.({ block: 'start' });
-  }, [ready, idsKey, hashId]);
+  }, [ready, idsKey, hashId, hash, key]);
 
   useEffect(() => {
     if (!ready || typeof IntersectionObserver === 'undefined') return undefined;
@@ -68,6 +95,7 @@ export function useSectionInView(sections: readonly SettingsNavSection[], ready:
   const select = useCallback(
     (id: string) => {
       setActive(id);
+      pickedHash.current = `#${id}`;
       holdUntil.current = Date.now() + PICK_HOLD_MS;
       const reduce = typeof window.matchMedia === 'function'
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches;

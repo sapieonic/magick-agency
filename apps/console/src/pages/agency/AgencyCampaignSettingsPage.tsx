@@ -387,7 +387,14 @@ export function AgencyCampaignSettingsPage() {
     (section) => (section.id !== 'agents' || agentsVisible)
       && (section.id !== 'roster-uploads' || historyVisible),
   );
-  const sectionNav = useSectionInView(sections, Boolean(campaign && config && recording));
+  /*
+    Ready once THIS campaign's sections are on the page: not while a jump from another
+    campaign's settings is still loading this one (the old campaign is in state until then).
+  */
+  const sectionNav = useSectionInView(
+    sections,
+    !loading && campaign?.id === id && Boolean(config && recording),
+  );
   useCampaignCrumbs(id, campaign?.name, [{ label: 'Settings' }]);
 
   if (loading) return <LoadingSpinner />;

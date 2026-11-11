@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 
 /**
@@ -101,6 +101,12 @@ function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
     retry_policy: {},
     ...over,
   };
+}
+
+/** Stands in for search: a push navigation from outside the page. */
+function JumpTo({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(to)}>Jump</button>;
 }
 
 function HashProbe() {
@@ -996,6 +1002,31 @@ describe('the settings sections', () => {
     expect(scrolled).toEqual(['recording']);
     expect(current()).toEqual(['Recording']);
     expect(screen.getByTestId('location-hash').textContent).toBe('#recording');
+  });
+
+  it('opens at a section of another campaign only once that campaign is on the page', async () => {
+    let resolveSecond: (value: AgencyCampaign) => void = () => {};
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) => (id === 'camp-1'
+      ? campaign()
+      : new Promise<AgencyCampaign>((resolve) => { resolveSecond = resolve; })));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-2/settings#recording" />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId('settings-section-nav');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    // Still the first campaign (or a spinner): no scroll to its Recording.
+    expect(scrolled).toEqual([]);
+
+    await act(async () => resolveSecond(campaign({ id: 'camp-2', name: 'Renewals' })));
+    await waitFor(() => expect(scrolled).toEqual(['recording']));
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Renewals');
+    expect(current()).toEqual(['Recording']);
   });
 
   it('highlights the section scrolled into view', async () => {
