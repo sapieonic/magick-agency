@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Info, MessageSquare, PhoneOff, PhoneMissed, SearchX } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import {
@@ -325,6 +326,10 @@ export default function AgencyAttemptCallPage() {
 
   const [detail, setDetail] = useState<AgencyAttemptCallDetail | null>(null);
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(campaignId, campaign?.name, [
+    { label: 'Call log', to: `/agency/campaigns/${campaignId}/attempts` },
+    { label: 'Call' },
+  ]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /** Whether pressing Retry could possibly change the answer — see `isTerminalLoadError`. */
@@ -382,7 +387,7 @@ export default function AgencyAttemptCallPage() {
 
   /**
    * The trail back to where the reader came from — which is the whole point of the
-   * page existing. `Call attempts` is the list they clicked out of.
+   * page existing. `Call log` (its Dialler calls view) is the list they clicked out of.
    *
    * The campaign crumb is always PRESENT and only its label arrives late. The name
    * comes from its own request, so inserting a third crumb once it landed reflowed
@@ -393,7 +398,7 @@ export default function AgencyAttemptCallPage() {
   const breadcrumbs = [
     { label: 'Campaigns', href: '/agency/campaigns' },
     { label: campaign?.name ?? 'Campaign', href: `/agency/campaigns/${campaignId}` },
-    { label: 'Call attempts', href: `/agency/campaigns/${campaignId}/attempts` },
+    { label: 'Call log', href: `/agency/campaigns/${campaignId}/attempts` },
   ];
 
   /*
@@ -401,7 +406,7 @@ export default function AgencyAttemptCallPage() {
    * screen. It is rendered per PAGE rather than by the layout — the four
    * standalone campaign screens each mount it themselves — so a page that does
    * not render it simply has none, which is what happened here: the reader
-   * following a row out of Call attempts lost the Overview / Performance /
+   * following a row out of the call list lost the Overview / Performance /
    * Agents / Contacts / Call attempts / Activity / Settings bar that every other
    * campaign screen has.
    *

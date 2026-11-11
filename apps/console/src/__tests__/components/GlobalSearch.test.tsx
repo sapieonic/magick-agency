@@ -217,6 +217,16 @@ describe('campaigns', () => {
     expect(where()).toBe('/agency/campaigns/c-1/settings');
   });
 
+  it('offer a campaign Settings section by what people type, landing on its anchor', async () => {
+    renderShell();
+    fireEvent.click(trigger());
+    type('caller diwali');
+    const option = await waitFor(() => within(dialog()).getByRole('option', { name: /^Caller IDs/ }));
+    expect(option.textContent).toContain('Diwali renewals › Settings');
+    fireEvent.click(option);
+    expect(where()).toBe('/agency/campaigns/c-1/settings#caller-ids');
+  });
+
   it('are never read for a reader the Campaigns page is not offered to', () => {
     mocks.role = 'agent';
     renderShell();

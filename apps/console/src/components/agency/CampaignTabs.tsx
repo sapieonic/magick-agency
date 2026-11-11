@@ -4,10 +4,15 @@ import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { getInsightsAllocation } from '../../api/agencyInsights';
 import { useTenant } from '../../contexts/TenantContext';
 import { hasPermission } from '../../utils/permissions';
-import { campaignTabHref, isCampaignPanel, visibleCampaignTabs, type CampaignTabId } from '../../utils/agencyCampaignTabs';
+import {
+  barTabFor,
+  campaignTabHref,
+  isCampaignPanel,
+  visibleCampaignTabGroups,
+  type CampaignTabId,
+} from '../../utils/agencyCampaignTabs';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
-import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import type { Role } from '../../types/auth';
 import styles from './CampaignTabs.module.css';
 
@@ -23,6 +28,12 @@ import styles from './CampaignTabs.module.css';
  * navigation, with `aria-current="page"` marking where you are. The visual
  * language is still a tab strip, because that is what it behaves like.
  *
+ * ── Three labelled groups, one level (decision IN14) ───────────────────────
+ * Monitor, Data and Set up are labels with a divider between them, not menus:
+ * each group is a `role="group"` named by its label, and every tab is still a
+ * direct link. On a phone the bar scrolls sideways and the labels hide; the
+ * dividers keep the grouping.
+ *
  * ── Where it sits ──────────────────────────────────────────────────────────
  * Directly below whatever identifies the PAGE, and above the section's own
  * content — which is not the same pixel offset on every screen, and the
@@ -37,7 +48,11 @@ import styles from './CampaignTabs.module.css';
  */
 export interface CampaignTabsProps {
   campaignId: string;
-  /** The section currently on screen. */
+  /**
+   * The screen currently showing. Soft-phone calls marks Call log (its second
+   * view) and Activity marks no tab (it is the header's History), via
+   * `barTabFor`; the analytics event still names the screen itself.
+   */
   active: CampaignTabId;
   /** Drives which tabs render at all; see `CAMPAIGN_TABS` for each gate. */
   role: Role | undefined;
@@ -89,61 +104,79 @@ export function CampaignTabs({
   // Never empty: Agents is ungated, so every role that can open a campaign gets
   // at least that. A viewer or operator gets ONLY that (the analytic tabs and the spine
   // tabs floor at `agency.supervise`), and the bar still says where they are.
-  const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
-  const tabs = visibleCampaignTabs(role, (flag) => flag === SOFTPHONE_FLAG && softphone);
+  // No bar tab carries a flag since Soft-phone calls moved into Call log
+  // (`CallLogViews` reads that flag), so none is passed.
+  const groups = visibleCampaignTabGroups(role);
+  const current = barTabFor(active);
 
   return (
     <nav className={styles.tabs} aria-label="Campaign sections" data-testid="campaign-tabs">
-      {tabs.map((tab) => {
-        const isActive = tab.id === active;
-        const showCount = tab.id === 'agents' && typeof liveAgentCount === 'number' && liveAgentCount > 0;
-        // Rendered only for a positive count, in the danger tone: unlike the
-        // floor count this one is a warning, not a "someone is there".
-        const alert = tab.id === 'callbacks' && overdue !== null && overdue > 0
-          ? { count: overdue, label: `${overdue} overdue` }
-          : null;
-        const showAlert = alert !== null;
+      {groups.map((group) => {
+        const labelId = `campaign-tab-group-${group.id}-${campaignId}`;
         return (
-          /*
-            A plain `Link`, deliberately not a `NavLink`. NavLink derives
-            "active" from a prefix match, which makes `…/campaigns/:id` active
-            on every section beneath it — two tabs marked `aria-current="page"`
-            at once — and it writes that attribute itself, over anything passed
-            in. The section that is rendering is the only thing that knows which
-            tab it is (`…/contacts/add` is Contacts), so it says so via `active`.
-          */
-          <Link
-            key={tab.id}
-            to={campaignTabHref(tab.id, campaignId, carrySearch)}
-            className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
-            aria-current={isActive ? 'page' : undefined}
-            title={tab.hint}
-            data-testid={`campaign-tab-${tab.id}`}
-            onClick={() => {
-              // Undefined or unrecognised ⇒ skip rather than guess (prop doc).
-              if (campaignStatus && isKnownCampaignStatus(campaignStatus)) {
-                trackAgencyCampaignTabViewed({
-                  campaign_id: campaignId,
-                  tab: tab.id,
-                  from_tab: active,
-                  campaign_status: campaignStatus,
-                });
-              }
-            }}
+          <div
+            key={group.id}
+            className={styles.group}
+            role="group"
+            aria-labelledby={labelId}
+            data-testid={`campaign-tab-group-${group.id}`}
           >
-            {tab.label}
-            {showCount && (
-              <span className={styles.badge} data-testid="campaign-tab-agents-count">
-                {liveAgentCount}
-              </span>
-            )}
-            {showAlert && (
-              <span className={`${styles.badge} ${styles.badgeAlert}`} data-testid={`campaign-tab-${tab.id}-alert`}>
-                <span aria-hidden="true">{alert.count}</span>
-                <span className="sr-only">{`, ${alert.label}`}</span>
-              </span>
-            )}
-          </Link>
+            <span id={labelId} className={styles.groupLabel}>
+              {group.label}
+            </span>
+            {group.tabs.map((tab) => {
+              const isActive = tab.id === current;
+              const showCount = tab.id === 'agents' && typeof liveAgentCount === 'number' && liveAgentCount > 0;
+              // Rendered only for a positive count, in the danger tone: unlike the
+              // floor count this one is a warning, not a "someone is there".
+              const alert = tab.id === 'callbacks' && overdue !== null && overdue > 0
+                ? { count: overdue, label: `${overdue} overdue` }
+                : null;
+              const showAlert = alert !== null;
+              return (
+                /*
+                  A plain `Link`, deliberately not a `NavLink`. NavLink derives
+                  "active" from a prefix match, which makes `…/campaigns/:id` active
+                  on every section beneath it — two tabs marked `aria-current="page"`
+                  at once — and it writes that attribute itself, over anything passed
+                  in. The section that is rendering is the only thing that knows which
+                  tab it is (`…/contacts/add` is Contacts), so it says so via `active`.
+                */
+                <Link
+                  key={tab.id}
+                  to={campaignTabHref(tab.id, campaignId, carrySearch)}
+                  className={`${styles.tab} ${isActive ? styles.tabActive : ''}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  title={tab.hint}
+                  data-testid={`campaign-tab-${tab.id}`}
+                  onClick={() => {
+                    // Undefined or unrecognised ⇒ skip rather than guess (prop doc).
+                    if (campaignStatus && isKnownCampaignStatus(campaignStatus)) {
+                      trackAgencyCampaignTabViewed({
+                        campaign_id: campaignId,
+                        tab: tab.id,
+                        from_tab: active,
+                        campaign_status: campaignStatus,
+                      });
+                    }
+                  }}
+                >
+                  {tab.label}
+                  {showCount && (
+                    <span className={styles.badge} data-testid="campaign-tab-agents-count">
+                      {liveAgentCount}
+                    </span>
+                  )}
+                  {showAlert && (
+                    <span className={`${styles.badge} ${styles.badgeAlert}`} data-testid={`campaign-tab-${tab.id}-alert`}>
+                      <span aria-hidden="true">{alert.count}</span>
+                      <span className="sr-only">{`, ${alert.label}`}</span>
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
         );
       })}
     </nav>

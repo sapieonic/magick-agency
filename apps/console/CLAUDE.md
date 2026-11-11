@@ -26,12 +26,17 @@ profiles, team, invites and settings. Detail: `docs/architecture.md` "UIs", `doc
   breadcrumbs and Settings entries, each with its gate, are tables in `utils/consoleNav.ts`; add a
   page there, gated as its route is. Settings pages live under `/settings/*`; `/app/<page>` only
   redirects there (`LegacyAppRedirect`), so never link to `/app/...` (`agencyShellBoundary.test.ts`).
+  A page names what the URL cannot (a campaign's name) in the top bar's breadcrumb with
+  `usePageCrumbs` (`components/layout/PageCrumbs.tsx`; campaign pages via `useCampaignCrumbs`).
 - One search (B28): the top bar's field and ⌘K open `components/common/GlobalSearch`, whose results
   come from `utils/consoleSearch.ts`. Pages are read from `consoleNav.ts`, so a new tab is found by
   its label with no extra step (add words to `PAGE_KEYWORDS` if people would type others); a new
   Settings entry needs a `SETTINGS_SEARCH` row (`consoleSearch.test.ts` fails without one), naming
   only settings its page really has. The same words drive the hub's "Find a setting" filter. A
   phone number runs `hooks/useCustomerSearchRun.ts`, shared with `CustomerSearchBox`.
+- The campaign bar (`utils/agencyCampaignTabs.ts`, IN13/IN14) is grouped but flat: one tab per
+  question. Campaign Settings sections are `utils/campaignSettingsSections.ts`; their ids are
+  link anchors (`…/settings#<id>`), so rename a label, never an id.
 - PostHog analytics in `src/analytics/`: anything carrying a token or PII in a URL is redacted in
   `redact.ts`, which also turns the URL scope into `/t/:tenant/a/:account`. The mobile app sends
   the same event names, so rename events on both sides.

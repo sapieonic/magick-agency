@@ -233,8 +233,16 @@ export interface Crumb {
 /**
  * The top bar's breadcrumb: the section, then the page when it says something the section does
  * not. On a phone only the last crumb shows.
+ *
+ * `pageCrumbs` are what a page supplied through `usePageCrumbs` (`components/layout/PageCrumbs`)
+ * for what the URL cannot say, such as a campaign's name; they follow the section and replace
+ * the generic page crumb. A section's own tab pages keep their crumbs.
  */
-export function breadcrumbFor(pathname: string, settingsLabel?: string | null): Crumb[] {
+export function breadcrumbFor(
+  pathname: string,
+  settingsLabel?: string | null,
+  pageCrumbs?: readonly Crumb[] | null,
+): Crumb[] {
   const path = trimTrailingSlash(pathname);
   if (pathWithin(path, '/settings')) {
     return settingsLabel ? [{ label: 'Settings', to: '/settings' }, { label: settingsLabel }] : [{ label: 'Settings' }];
@@ -247,6 +255,7 @@ export function breadcrumbFor(pathname: string, settingsLabel?: string | null): 
 
   const tab = section.tabs.find((t) => t.to === path);
   if (tab) return tab.label === section.label ? [{ label: section.label }] : [home, { label: tab.label }];
+  if (pageCrumbs && pageCrumbs.length > 0) return [home, ...pageCrumbs];
 
   if (path === '/agency/campaigns/new') return [home, { label: 'New campaign' }];
   if (pathWithin(path, '/agency/campaigns')) return [home, { label: 'Campaign' }];

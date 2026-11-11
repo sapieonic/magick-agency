@@ -166,6 +166,17 @@ describe('the breadcrumb', () => {
     expect(breadcrumbFor('/agency/campaigns/new')[1]).toEqual({ label: 'New campaign' });
   });
 
+  it('puts the crumbs a page supplies after its section, in place of the generic one', () => {
+    const page = [{ label: 'Q3 Renewals', to: '/agency/campaigns/c-1' }, { label: 'Settings' }];
+    expect(breadcrumbFor('/agency/campaigns/c-1/settings', null, page)).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      ...page,
+    ]);
+    // A section's own tab page keeps its crumbs, and an empty list changes nothing.
+    expect(breadcrumbFor('/agency/campaigns', null, page)).toEqual([{ label: 'Campaigns' }]);
+    expect(breadcrumbFor('/agency/campaigns/c-1/overview', null, [])[1]).toEqual({ label: 'Campaign' });
+  });
+
   it('says a page once when it shares the section name', () => {
     expect(breadcrumbFor('/agency/campaigns')).toEqual([{ label: 'Campaigns' }]);
     expect(breadcrumbFor('/agency/dnc')).toEqual([{ label: 'Do Not Call' }]);

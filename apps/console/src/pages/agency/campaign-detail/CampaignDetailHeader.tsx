@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
 import { CampaignLineageStrip } from '../../../components/agency/CampaignLineageStrip';
+import { CampaignHistoryLink } from '../../../components/agency/CampaignHistoryLink';
+import type { Role } from '../../../types/auth';
 import type {
   AgencyCampaignAction as Action,
   agencyCampaignControls,
@@ -53,13 +55,16 @@ interface CampaignDetailHeaderProps {
   canRetry: boolean;
   onRetry: () => void;
   canJoinStation: boolean;
+  /** For History, which follows its page's own gate (`audit.read`), not `canControl`. */
+  role: Role | undefined;
   onRefresh: () => void;
 }
 
 /**
  * The campaign's title, status, clocks and lineage on the left, and on the right
  * every affordance that CHANGES the campaign: the lifecycle controls, Add
- * contacts / New campaign, Retry contacts, Join as agent and Refresh. Out of
+ * contacts / New campaign, Retry contacts, Join as agent and Refresh; and
+ * History, the campaign's activity trail (decision IN14). Out of
  * `AgencyCampaignDetailPage`, which owns the state those controls act on.
  */
 export function CampaignDetailHeader({
@@ -78,6 +83,7 @@ export function CampaignDetailHeader({
   canRetry,
   onRetry,
   canJoinStation,
+  role,
   onRefresh,
 }: CampaignDetailHeaderProps) {
   const linesInUse = concurrencyLine(campaign.status, concurrency);
@@ -228,6 +234,12 @@ export function CampaignDetailHeader({
             Join as agent
           </Link>
         )}
+        {/*
+          History (the activity trail) left the tab bar for here (decision
+          IN14): who changed what is a fact about the campaign, read now and
+          then, not one of the questions the tabs answer.
+        */}
+        <CampaignHistoryLink campaignId={campaign.id} role={role} />
         <button
           type="button"
           className={`${styles.actionButton} ${styles.iconAction}`}

@@ -1,0 +1,54 @@
+/* Call log's two views: a segmented control, the console's usual shape for "one of two". */
+.views {
+  display: inline-flex;
+  max-width: 100%;
+  margin: 0 0 16px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  overflow-x: auto;
+}
+
+.view {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color var(--transition), background var(--transition);
+}
+
+.view:hover {
+  color: var(--text-primary);
+}
+
+.view:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.viewActive,
+.viewActive:hover {
+  background: var(--bg-elevated);
+  color: var(--accent-hover);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view {
+    transition: none;
+  }
+}
+
+@media print {
+  .views {
+    display: none !important;
+  }
+}

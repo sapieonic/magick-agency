@@ -186,3 +186,31 @@
   font-size: 11px;
   color: var(--color-text-muted, #6b7280);
 }
+
+/* The way back to the campaign's tabs: History is the header's button, not a tab (IN14). */
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--accent-hover);
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media print {
+  .backLink {
+    display: none !important;
+  }
+}

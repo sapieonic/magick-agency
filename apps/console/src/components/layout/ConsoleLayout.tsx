@@ -9,6 +9,7 @@ import { productSurfaceForPath } from '../../utils/consoleNav';
 import { FOCUSABLE_SELECTOR, trapTab } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import { ConsoleSidebar } from './ConsoleSidebar';
 import { ConsoleTopBar } from './ConsoleTopBar';
+import { PageCrumbsProvider } from './PageCrumbs';
 import styles from './ConsoleLayout.module.css';
 
 export const MOBILE_SIDEBAR_ID = 'console-mobile-sidebar';
@@ -103,47 +104,50 @@ export function ConsoleLayout() {
   }, [isMobile, isDrawerOpen, handleSidebarClose]);
 
   return (
-    <div className={styles.layout}>
-      <a href="#main-content" className={styles.skipLink}>
-        Skip to main content
-      </a>
+    /* Lets a page name itself in the top bar's breadcrumb (`usePageCrumbs`). */
+    <PageCrumbsProvider>
+      <div className={styles.layout}>
+        <a href="#main-content" className={styles.skipLink}>
+          Skip to main content
+        </a>
 
-      <div
-        id={MOBILE_SIDEBAR_ID}
-        ref={sidebarRef}
-        className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ''}`}
-        role={isMobile ? 'dialog' : undefined}
-        aria-modal={isMobile ? true : undefined}
-        aria-label={isMobile ? 'Navigation menu' : undefined}
-      >
-        <ConsoleSidebar onClose={handleSidebarClose} />
-      </div>
-
-      {sidebarOpen && <div className={styles.overlay} onClick={handleSidebarClose} />}
-
-      <div ref={mainRef} className={styles.main}>
-        <div className={styles.topbar}>
-          <ConsoleTopBar
-            onMenuClick={handleMenuClick}
-            menuExpanded={sidebarOpen}
-            menuControls={MOBILE_SIDEBAR_ID}
-            onSearchClick={handleSearchClick}
-          />
+        <div
+          id={MOBILE_SIDEBAR_ID}
+          ref={sidebarRef}
+          className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ''}`}
+          role={isMobile ? 'dialog' : undefined}
+          aria-modal={isMobile ? true : undefined}
+          aria-label={isMobile ? 'Navigation menu' : undefined}
+        >
+          <ConsoleSidebar onClose={handleSidebarClose} />
         </div>
-        <main id="main-content" className={styles.content}>
-          {/*
-            Keyed by account, so a switch REMOUNTS the page rather than re-rendering it: every
-            id on an agency page is account-scoped (a campaign, a draft mid-build, a roster
-            awaiting its mapping), and a page left mounted while requests carry the new
-            account header would show one account's data and write to another's. A switch is
-            a full page load today (B26); the key stays as the second line of defence.
-          */}
-          <Outlet key={accountId ?? 'no-account'} />
-        </main>
-      </div>
 
-      {/* ⌘K / Ctrl+K and the top bar's search field, on every page of the shell. */}
-      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
-    </div>
+        {sidebarOpen && <div className={styles.overlay} onClick={handleSidebarClose} />}
+
+        <div ref={mainRef} className={styles.main}>
+          <div className={styles.topbar}>
+            <ConsoleTopBar
+              onMenuClick={handleMenuClick}
+              menuExpanded={sidebarOpen}
+              menuControls={MOBILE_SIDEBAR_ID}
+              onSearchClick={handleSearchClick}
+            />
+          </div>
+          <main id="main-content" className={styles.content}>
+            {/*
+              Keyed by account, so a switch REMOUNTS the page rather than re-rendering it: every
+              id on an agency page is account-scoped (a campaign, a draft mid-build, a roster
+              awaiting its mapping), and a page left mounted while requests carry the new
+              account header would show one account's data and write to another's. A switch is
+              a full page load today (B26); the key stays as the second line of defence.
+            */}
+            <Outlet key={accountId ?? 'no-account'} />
+          </main>
+        </div>
+
+        {/* ⌘K / Ctrl+K and the top bar's search field, on every page of the shell. */}
+        <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
+      </div>
+    </PageCrumbsProvider>
   );
 }

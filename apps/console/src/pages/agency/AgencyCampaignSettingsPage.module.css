@@ -1,5 +1,47 @@
 .page {
-  max-width: 760px;
+  max-width: 1000px;
+}
+
+/* The section nav beside the sections; one column on a phone, the nav a strip above. */
+.layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 760px);
+  gap: 28px;
+  align-items: start;
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Every section is an anchor (`#id`); land it just below the top of the scroll area. */
+.sections > * {
+  scroll-margin-top: 16px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.anchor {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  /* Clear the sticky section strip. */
+  .sections > * {
+    scroll-margin-top: 64px;
+  }
 }
 
 .header {
@@ -24,17 +66,6 @@
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
-}
-
-.basics {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  margin-bottom: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
 }
 
 .fieldError {
@@ -82,7 +113,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 20px;
+  margin-top: 4px;
 }
 
 .blockCopy {

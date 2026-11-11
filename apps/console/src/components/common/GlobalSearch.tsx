@@ -18,19 +18,12 @@ import {
   canSearchNumbers,
   searchConsole,
   searchPlaceholder,
-  type CampaignSettingsSection,
   type SearchCampaign,
   type SearchResult,
 } from '../../utils/consoleSearch';
+import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';
 import styles from './GlobalSearch.module.css';
 
-/*
- * The sections of a campaign's Settings page, linked as `…/settings#<id>`.
- * TODO(B28 search): replace this line with
- * `import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';`
- * once the campaign settings sections land.
- */
-const CAMPAIGN_SETTINGS_SECTIONS: readonly CampaignSettingsSection[] = [];
 
 /** Where customer history opens inside the console shell (`docs/customer-history.md` §5). */
 const CUSTOMER_RESULTS_PATH = '/agency/customers';

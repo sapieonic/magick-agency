@@ -7,6 +7,7 @@ import { useGovernance } from '../../contexts/GovernanceContext';
 import { breadcrumbFor, settingsEntryForPath, type GateInput } from '../../utils/consoleNav';
 import { canSearchCampaigns, canSearchNumbers, searchPlaceholder, searchShortcutLabel } from '../../utils/consoleSearch';
 import { ProfileMenu } from './ProfileMenu';
+import { useSuppliedCrumbs } from './PageCrumbs';
 import styles from './ConsoleTopBar.module.css';
 
 interface Props {
@@ -49,7 +50,7 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearc
   const { role, accountId } = useTenant();
   const readers = useGateReaders();
   const gate: GateInput = { role, ...readers };
-  const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label);
+  const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label, useSuppliedCrumbs(pathname));
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
   const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');
 

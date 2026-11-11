@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Download, ListChecks, RefreshCw, RotateCcw, Search, Upload, UserPlus, Users } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignContacts } from '../../api/agencySpine';
@@ -140,6 +141,7 @@ export function AgencyCampaignRosterPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
+  useCampaignCrumbs(id, campaign?.name, [{ label: 'Contacts' }]);
   const [rows, setRows] = useState<AgencyRosterContact[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   /** The server's exact count of the filtered roster (`?include_total=1`), or null without one. */

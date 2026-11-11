@@ -319,6 +319,31 @@ describe('campaign detail — the status-to-action matrix', () => {
     expect(screen.getByRole('link', { name: 'Add contacts' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'New campaign' })).toBeNull();
   });
+  /*
+    History (decision IN14): the activity trail left the tab bar for the header,
+    on its page's own gate (`audit.read`), not the lifecycle controls' one.
+  */
+  it('offers History in the header, opening the activity page, and no Activity tab', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Collections' });
+
+    const history = screen.getByTestId('campaign-history-link');
+    expect(history.textContent).toBe('History');
+    expect(history.getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
+    expect(history.getAttribute('aria-current')).toBeNull();
+    expect(screen.queryByTestId('campaign-tab-activity')).toBeNull();
+  });
+
+  it('groups the tabs as Monitor, Data and Set up', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Collections' });
+
+    const groups = screen.getAllByRole('group').filter((g) => g.closest('[data-testid="campaign-tabs"]'));
+    expect(groups.map((g) => g.getAttribute('aria-labelledby') && document.getElementById(g.getAttribute('aria-labelledby')!)?.textContent))
+      .toEqual(['Monitor', 'Data', 'Set up']);
+    expect(within(screen.getByTestId('campaign-tab-group-data')).getAllByRole('link').map((l) => l.textContent))
+      .toEqual(['Contacts', 'Call log']);
+  });
 });
 
 describe('campaign detail — stopping', () => {
@@ -1111,6 +1136,8 @@ describe('campaign detail — permissions (agency.supervise)', () => {
     // point of the read-only view — and Insights, whose reads would 403, is not.
     expect(await screen.findByTestId('floor-unavailable')).toBeTruthy();
     expect(screen.queryByTestId('insights-panel')).toBeNull();
+    // History follows `audit.read`, which neither holds.
+    expect(screen.queryByTestId('campaign-history-link')).toBeNull();
   });
 
   it('an operator is now below the floor too — the gate moved off proxy.schedules.write', async () => {
