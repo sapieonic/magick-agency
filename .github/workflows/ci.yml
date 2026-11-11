@@ -83,7 +83,9 @@ jobs:
           cache: pnpm
       # Real decoders for apps/server/test/unit/audio/decode.test.ts, which fails
       # (rather than skips) under CI when they are missing.
+      # Bounded: a stalled package mirror once held this step for 16 minutes before failing.
       - if: needs.changes.outputs.server == 'true'
+        timeout-minutes: 5
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
       - run: pnpm install --frozen-lockfile
       # lint = tsc --noEmit over src AND test in every package in scope (tests are typechecked).
@@ -109,7 +111,9 @@ jobs:
 
   # One job per section, in parallel. Each job has its own Postgres and Redis, so the
   # sections cannot truncate each other. The wall-clock lane is the files that wait on
-  # real timers (apps/server/vitest.config.integration.ts).
+  # real timers (apps/server/vitest.config.integration.ts). Inside a job the files run in
+  # parallel, one database and Redis db per worker, as many workers as the runner has
+  # cores up to 4 (tooling/test-env.ts).
   integration:
     name: Integration (${{ matrix.section }})
     needs: changes
@@ -167,7 +171,9 @@ jobs:
           cache: pnpm
       # Real decoders for the server's recording uploads
       # (test/integration/api/inbound-clips-routes.test.ts decodes a real WAV).
+      # Bounded, as in the unit job.
       - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server'
+        timeout-minutes: 5
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
       - if: env.IN_SCOPE == 'true'
         run: pnpm install --frozen-lockfile

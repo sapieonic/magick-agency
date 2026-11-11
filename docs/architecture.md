@@ -928,10 +928,18 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
   `packages/db/test/helpers/test-db.ts` and `apps/server/test/helpers/test-redis.ts` refuse any other
   port, a database not named `magick_agency_test*`, or Redis db 0.
 - **Per-worktree databases.** `tooling/test-env.ts` reads an untracked `.test-env.local.json`
-  (`{ "dbName": "magick_agency_test_<x>", "redisDb": 2 }`); integration global setup drops and
-  re-migrates that database on every run, so never run two integration runs on one database.
+  (`{ "dbName": "magick_agency_test_<x>", "redisDb": 5, "workers": 4 }`); integration global setup
+  drops and re-migrates that database on every run, so never run two integration runs on one
+  database.
+- **Parallel integration files.** The global setup copies the migrated database once per worker
+  (`CREATE DATABASE <db>_w<N> TEMPLATE <db>`), and `packages/db/test/helpers/worker-env.ts` points
+  worker N at its copy and at Redis db `redisDb + N - 1`, so a worker's `truncateAll` and `FLUSHDB`
+  reach only its own files. Up to 4 workers by default (`TEST_WORKERS`); a worktree owns the Redis
+  range `redisDb`..`redisDb + workers - 1`, and the server's global setup refuses to start while
+  another client is on that range.
 - **Unit vs integration.** `pnpm test` is unit; `pnpm test:integration` runs the server and
-  `packages/db` suites file-serially against the real stack. Run from inside the package directory.
+  `packages/db` suites, files in parallel, against the real stack. Run from inside the package
+  directory.
 - **Chaos suites** (`apps/server/test/integration/agency/chaos/`): abandonment counter vs table,
   predicate agreement, attempt-number collision, DNC self-heal loop, lease renewer killed, network
   drop during ring, Redis expired wholesale, restart mid-bridge, roster exactly-once.

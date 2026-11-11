@@ -162,9 +162,10 @@ function fakeBridge(ringMs: number) {
  * so overlapping integration runs remain an operational hazard in general. This
  * only fixes the part that a test can fix.
  */
-// The worktree's whole test db (6383, `.test-env.local.json`) is already private to this
-// checkout, and every other db index belongs to another worktree or stack, so the
-// "private database" is the worktree's own — read off the agency harness URL. A
+// The worker's whole test db (6383, one per integration worker: tooling/test-env.ts) is
+// already private to this file while it runs, and every other db index belongs to another
+// worker, worktree or stack, so the "private database" is the worker's own — read off the
+// agency harness URL. A
 // hard-coded fallback URL would risk reaching another stack's port.
 const TEST_REDIS_URL = AGENCY_TEST_REDIS_URL;
 const LEASE_DB = Number(new URL(TEST_REDIS_URL).pathname.replace(/^\//, '') || '0');

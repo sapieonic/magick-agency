@@ -133,15 +133,20 @@ pnpm infra:reset    # stop and drop the volume; run infra:up and migrate:up agai
 ### Working in more than one git worktree
 
 All worktrees share the same Postgres and Redis. If two of them run the integration suites
-together, they wipe each other's rows. Give each worktree its own test database and Redis db
-in an untracked `.test-env.local.json` at the repo root:
+together, they wipe each other's rows. Integration files run in parallel, each worker on its own
+copy of the test database (`<dbName>_w<N>`, made by the test setup) and its own Redis db, so a
+worktree owns a range of Redis dbs: `redisDb` to `redisDb + workers - 1` (by default dbs 1-4).
+Give each other worktree its own test database and a Redis range that does not overlap, in an
+untracked `.test-env.local.json` at the repo root:
 
 ```json
-{ "dbName": "magick_agency_test_wt1", "redisDb": 2 }
+{ "dbName": "magick_agency_test_wt1", "redisDb": 5, "workers": 4 }
 ```
 
-The database name must start with `magick_agency_test`, and the Redis db must not be 0. The
-test setup does not create the database, so create it once:
+The database name must start with `magick_agency_test`, the Redis range must stay within 1-15,
+and `workers` (or `TEST_WORKERS`) is how many files run at once (1 runs them one at a time). The
+server's integration run refuses to start while another client is on one of its Redis dbs. The
+test setup makes the per-worker copies but not the database itself, so create it once:
 
 ```bash
 docker exec magick-agency-postgres createdb -U magick_agency magick_agency_test_wt1

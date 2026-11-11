@@ -1341,7 +1341,23 @@ its Swift have never been compiled.
 
 ## Test counts
 
-Latest run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
+Latest run, 2026-11-11, integration files in parallel (one database and Redis db per worker,
+`tooling/test-env.ts`):
+
+Run from inside each package, 4 workers on a 4-vCPU machine (Postgres 16 and Redis 7 on the
+agency ports), nothing else sharing them. `pnpm lint` clean; `pnpm test:tooling` 16 and `pnpm
+test:release` 10 pass. `packages/db` unit 434 (26 files: the worker-target tests are new) and
+integration 744 (76 files), green on six runs in a row once the 0017 plan test seeds on fresh
+tables (before that it tipped to a bitmap scan once in four). `apps/server` unit 9682 passed + 1
+expected fail (488 files); rest lane 2673 passed + 9 expected fail + 2 skipped (250 files + 2
+skipped), green on two runs in a row (a third, earlier run timed one test out once:
+`assignment-repository.test.ts`'s 10,000-contact split, 1.2–1.9 s on every other run, cause not
+found); wall-clock lane 23 (5 files). Wall time against the serial runs on the same machine:
+rest lane 1044 s → 302–321 s; wall-clock lane 133 s (its files sum to 320 s run one after
+another); `packages/db` integration 34 s (about 95 s serial on another machine). Not run (untouched): the web UIs, `packages/contracts`, `packages/domain`,
+`packages/observability`, `apps/report-renderer`, `apps/mobile`, `pnpm test:grafana`.
+
+Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
 
 Run on commit `c41091e` (the docs commits after it change no code), one after another from inside
 each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green

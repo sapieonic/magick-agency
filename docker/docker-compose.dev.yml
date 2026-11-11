@@ -4,7 +4,7 @@
 # flush another stack's data.
 #
 #   Postgres 5436 — databases `magick_agency` (dev) and `magick_agency_test`
-#   Redis    6383 — db 0 dev, db 1 test (only db 1 is ever flushed, by tests)
+#   Redis    6383 — db 0 dev, dbs 1-4 test, one per integration worker (db 0 is never flushed)
 #
 #   pnpm infra:up     start and wait for health
 #   pnpm infra:reset  drop the volume

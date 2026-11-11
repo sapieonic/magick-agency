@@ -37,7 +37,10 @@ before writing a repository or a migration.
 
 ## Tests
 
-Run from this directory. `pnpm test` (unit), `pnpm test:integration` (real Postgres 5436,
-file-serial). `test/helpers/global-setup.ts` drops and re-migrates the test database on every
-run, and the server's integration suite uses the same setup: never run two integration runs on
-one database (per-worktree DB: root `CLAUDE.md`). `test/helpers/test-db.ts` holds the guards.
+Run from this directory. `pnpm test` (unit), `pnpm test:integration` (real Postgres 5436, files
+in parallel). `test/helpers/global-setup.ts` drops and re-migrates the test database on every
+run and copies it once per worker (`<db>_w<N>`); `test/helpers/worker-env.ts` points each worker
+at its copy. The server's integration suite uses the same setup: never run two integration runs
+on one database (per-worktree DB and worker count: root `CLAUDE.md`, `tooling/test-env.ts`). A
+plan test seeds on fresh tables (`freshTables`, `test/helpers/rerun-plan.ts`): which files ran
+earlier in its worker's database changes from run to run. `test/helpers/test-db.ts` holds the guards.

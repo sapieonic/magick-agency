@@ -81,11 +81,17 @@ Run from this directory (dotenv resolves from cwd):
 pnpm vitest run test/unit/agency/pacing-engine.test.ts
 pnpm vitest run -c vitest.config.integration.ts test/integration/agency/<file>.test.ts
 pnpm vitest run -t "<test name>"
-INTEGRATION_LANE=rest pnpm test:integration        # skip the ~5 min wall-clock files
+INTEGRATION_LANE=rest pnpm test:integration        # skip the ~2 min wall-clock files
 ```
 
-- Unit config excludes `test/integration/**`; integration runs file-serially (one database) with
-  `packages/db/test/helpers/global-setup.ts`, which drops and re-migrates the test DB.
+- Unit config excludes `test/integration/**`. Integration runs files in parallel, each worker on
+  its own copy of the test database and its own Redis db (`tooling/test-env.ts`;
+  `TEST_WORKERS=1` runs them one at a time). `test/setup/integration-global-setup.ts` checks no
+  other run holds those Redis dbs, then `packages/db/test/helpers/global-setup.ts` drops and
+  re-migrates the test DB and copies it per worker; `packages/db/test/helpers/worker-env.ts`
+  (the first setup file) points each worker at its copy. A test that reads a plan or a timing
+  must not depend on what earlier files left in its tables: which files ran earlier in a worker
+  changes from run to run.
 - `INTEGRATION_LANE=wall-clock|rest` splits off the files that wait on real timers (Redis
   TTLs, the mobile liveness grace; listed in `vitest.config.integration.ts`); unset runs everything.
 - **Chaos suites:** `test/integration/agency/chaos/`, run with integration.

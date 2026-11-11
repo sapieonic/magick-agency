@@ -14,6 +14,7 @@ import { TEST_DB_URL } from '../../helpers/test-db.js';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { ACCOUNT, insertCampaign, TENANT } from '../fixtures.js';
 import { endPlanTransactions, inPlanTransaction } from '../plan-transaction.js';
+import { freshTables } from '../../helpers/rerun-plan.js';
 
 const pool = () => getTestPool();
 
@@ -59,6 +60,11 @@ describe('0017 — customer history contacts index', () => {
   });
 
   it('a placeholder on 5,000 roster rows: each account\'s walk is a Limit over the index, stopped at the cap, no sort under it', async () => {
+    // New heap and index files: the plan is a close call between this walk and a bitmap scan of
+    // idx_agency_contacts_phone plus a sort, and what earlier files left in the table (dead
+    // pages, index bloat) could tip it. With files in parallel, which files ran earlier in this
+    // worker's database changes from run to run, and it did tip once in four runs.
+    await freshTables(pool(), ['agency_contacts']);
     const campaign = await insertCampaign();
     // Seeded, analysed and planned in one rolled-back transaction: no row or statistic outlives it.
     // The table is of a realistic size around the placeholder (on a tiny table a full read costs
