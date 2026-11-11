@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-10.
+"is it done". As of 2026-11-11.
 
 ## Summary
 
@@ -1271,7 +1271,29 @@ customer closes the row on its own), "Switch to the soft phone", and "dialling",
 
 ## Test counts
 
-Latest run, 2026-11-10, inbound calls on the mobile app (IQ46, IQ47; `inbound.md` §12, P3 row),
+Latest run, 2026-11-11, inbound calls on the mobile app after the persona review (above):
+
+Run on commit `e4e1451` (the docs commit after it changes no code), one after another from inside
+each package on a UTF8 test database and Redis db 1 with no other run sharing them. `pnpm lint`
+clean in 9 packages; `pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33
+pass; `contracts-literals --check` up to date (62 vocabularies); `packages/observability` 18 (4
+files). `apps/mobile`: `flutter analyze` no issues, `flutter test` 1705 passed; `agency_wire` `dart
+test` 595 passed; `agent_audio` `flutter test` 136 passed (Dart; the Kotlin tests were not run).
+The rest lane's first run failed one test, `agent-transition-ordering.test.ts`'s two concurrent
+`setState` calls (the timing case already seen once, "Load and scenario suites" above; this branch
+does not touch it), which passed three times alone; the whole lane was then rerun green, and those
+are its counts. Not run (untouched by this change): `packages/db`, `apps/super-admin`,
+`packages/web-ui`, `apps/report-renderer`.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9643 passed + 1 expected fail (488 files) | rest lane 2654 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
+| `apps/console` | 6114 (325 files) | — |
+| `packages/contracts` | 463 (13 files) | — |
+| `packages/domain` | 253 (12 files) | — |
+| `apps/mobile` | 1705 (`flutter test`); `agency_wire` 595 (`dart test`); `agent_audio` 136 (`flutter test`) | — |
+
+Previous run, 2026-11-10, inbound calls on the mobile app (IQ46, IQ47; `inbound.md` §12, P3 row),
 after both review rounds:
 
 Run on commit `cd6be77` (the docs commits after it change no code), one after another from inside
