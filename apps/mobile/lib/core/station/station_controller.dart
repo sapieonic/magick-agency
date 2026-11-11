@@ -217,6 +217,30 @@ class StationController extends Notifier<StationView?>
   /// when they came back and when the pause was asked for (device clock).
   ({DateTime back, DateTime asked})? _autoReturn;
   Timer? _autoReturnExpiry;
+
+  // IQ51: a cellular call while available.
+  /// A phone call not the app's own is in progress (the audio engine's report,
+  /// while it is asked for).
+  bool _cellularCall = false;
+
+  /// The `phone_call` pause was asked for during this cellular call: once per
+  /// call, so a pause the agent ended themselves is not asked for again.
+  bool _phoneCallAsked = false;
+  bool _phoneCallInFlight = false;
+
+  /// The server queued it behind a call reserved meanwhile: cancelled when the
+  /// cellular call ends, as the away pause is on return.
+  bool _phoneCallQueued = false;
+
+  /// The server applied it, until the next `agent_state` frame says where the
+  /// agent stands: the away pause is not asked for on top of it meanwhile.
+  bool _phoneCallApplied = false;
+  int _phoneCallRetries = 0;
+  Timer? _phoneCallRetry;
+
+  /// The cellular call ended: the return from its pause waits until this
+  /// (device clock) for the app to be on screen and the pause to show.
+  DateTime? _phoneCallReturnBy;
   int _awayRetries = 0;
   Timer? _awayRetry;
   Timer? _awayDeadline;
@@ -411,6 +435,7 @@ class StationController extends Notifier<StationView?>
       sendUplink: _sendUplink,
       onChanged: _emit,
       onSystemHangUp: () => unawaited(hangUp()),
+      onPhoneCall: (active) => _onPhoneCall(s, active),
     );
     s.notes = NotesAutosave(
       save: _api.saveNotes,
@@ -590,6 +615,7 @@ class StationController extends Notifier<StationView?>
     _awayAskedNowAt = null;
     _cancelAwayTimers();
     _cancelAutoReturn();
+    _resetPhoneCall();
     _upgradeRefused = false;
     _readySeen = false;
     _mapper = StationViewMapper();
@@ -665,6 +691,7 @@ class StationController extends Notifier<StationView?>
       case AgentStateFrame():
         // The authority: an HTTP answer held for reconciliation is now stale.
         _lastStateResponse = null;
+        _phoneCallApplied = false;
         if (frame.state == AgentState.onBreak) _breakOverride = null;
         // Available again: whatever pause was asked for is over (and is asked
         // for afresh below if the app is still away).
@@ -831,6 +858,7 @@ class StationController extends Notifier<StationView?>
   void _letGo(_Session s, {required bool keepSocket}) {
     _cancelAwayTimers();
     _cancelAutoReturn();
+    _resetPhoneCall();
     _cancelHeldCallCheck();
     _setWakeLock(false);
     _setNotice(AwayNotice.none, null);
@@ -916,6 +944,7 @@ class StationController extends Notifier<StationView?>
     s.inboundNotes.callChanged(inbound?.id, serverNotes: inbound?.notes, accepting: inbound != null);
     _applyLifecycle(s);
     _maybeAutoReturn(s);
+    _syncPhoneCall(s);
     _emit();
   }
 
@@ -1365,6 +1394,157 @@ class StationController extends Notifier<StationView?>
     });
   }
 
+  // ─── A cellular call while available (IQ51) ─────────────────────────────
+
+  void _resetPhoneCall() {
+    _cellularCall = false;
+    _phoneCallAsked = false;
+    _phoneCallInFlight = false;
+    _phoneCallQueued = false;
+    _phoneCallApplied = false;
+    _phoneCallRetries = 0;
+    _phoneCallRetry?.cancel();
+    _phoneCallRetry = null;
+    _phoneCallReturnBy = null;
+  }
+
+  /// On the `phone_call` break: the pause a cellular call put the agent on.
+  bool get _onPhoneCallBreak =>
+      _station.effectiveState == AgentState.onBreak && _station.breakReasonCode == phoneCallBreakReason;
+
+  /// The audio engine's report: a phone call not the app's own (a cellular
+  /// call) started or ended.
+  void _onPhoneCall(_Session s, bool active) {
+    if (!identical(_s, s) || s.hosted.isSoftphone || active == _cellularCall) return;
+    _cellularCall = active;
+    _log.info('phone call outside the app', {'active': active});
+    if (active) {
+      _phoneCallReturnBy = null;
+    } else {
+      _phoneCallEnded(s);
+    }
+    _afterChange();
+  }
+
+  /// Run on every change: phone-call reports are asked for while the agent
+  /// waits for calls on a campaign station (and until a pause asked for during
+  /// a cellular call is settled), the pause asked for, and the return made.
+  /// During a station call nothing changes here: the audio interruption is
+  /// that call's (the engine mutes and says so).
+  void _syncPhoneCall(_Session s) {
+    final campaign = !s.hosted.isSoftphone && !_terminal;
+    final st = _station.effectiveState;
+    final wanted = campaign && (st == AgentState.available || _phoneCallAsked);
+    s.audio.setPhoneCallMonitoring(wanted);
+    // Unknown while not asked for; turning the reports on states it again.
+    if (!wanted) _cellularCall = false;
+    if (!campaign) return;
+    _maybePauseForPhoneCall(s);
+    _maybeReturnFromPhoneCall(s);
+  }
+
+  /// Available on a campaign station, nothing on screen, and a cellular call
+  /// in progress: pause with the reserved `phone_call` break, once per call.
+  void _maybePauseForPhoneCall(_Session s) {
+    if (!_cellularCall || _phoneCallAsked || _phoneCallInFlight) return;
+    if (_station.connection != StationConnection.open || _inFlight.isNotEmpty) return;
+    if (_station.effectiveState != AgentState.available || _pendingBreakCode != null) return;
+    if (_station.inboundOnScreen != null || isCallUnsettled(_station.manualCall)) return;
+    _phoneCallAsked = true;
+    _phoneCallRetries = 0;
+    _askPhoneCallPause(s);
+  }
+
+  void _askPhoneCallPause(_Session s) {
+    _phoneCallInFlight = true;
+    _log.info('a phone call while available: pausing');
+    unawaited(_api.takeBreak(s.id, phoneCallBreakReason, timeout: const Duration(seconds: 5)).then((response) {
+      _phoneCallInFlight = false;
+      if (!identical(_s, s)) return;
+      if (response != null) {
+        if (response.pendingState != null) {
+          // A call was reserved meanwhile: the pause waits behind it.
+          _phoneCallQueued = true;
+          _writeQueue(response.breakReason ?? phoneCallBreakReason);
+        } else {
+          _phoneCallApplied = true;
+        }
+        _lastStateResponse = response;
+      }
+      // The cellular call ended while this was on its way.
+      if (!_cellularCall) _phoneCallEnded(s);
+      _afterChange();
+    }, onError: (Object e) {
+      _phoneCallInFlight = false;
+      if (!identical(_s, s)) return;
+      _log.warn('phone_call pause failed', {'error': e.runtimeType.toString()});
+      if (!_cellularCall) {
+        // Over before it was paused for: nothing to undo.
+        _phoneCallAsked = false;
+        _afterChange();
+        return;
+      }
+      if (_awayRetryable(e) && _phoneCallRetries < awayRetryDelays.length) {
+        final delay = awayRetryDelays[_phoneCallRetries++];
+        _phoneCallRetry = Timer(delay, () {
+          _phoneCallRetry = null;
+          if (!identical(_s, s) || !_cellularCall) return;
+          if (_station.effectiveState != AgentState.available || _pendingBreakCode != null) return;
+          _askPhoneCallPause(s);
+        });
+        return;
+      }
+      // Given up: the agent is told, and away the app pauses them as for leaving it.
+      _actionError = phoneCallPauseFailedCopy;
+      if (!_foreground) _awayKey = null;
+      _afterChange();
+    }));
+  }
+
+  /// The cellular call ended. A pause still on its way is decided when it
+  /// lands; one queued behind a call is withdrawn; one that applied is
+  /// returned from ([_maybeReturnFromPhoneCall]) once the app is on screen,
+  /// within [deviceAwayAutoReturnWithin], and only while the agent is still on
+  /// that `phone_call` break: a break taken meanwhile, or a supervisor's
+  /// change, is never undone.
+  void _phoneCallEnded(_Session s) {
+    _phoneCallRetry?.cancel();
+    _phoneCallRetry = null;
+    if (!_phoneCallAsked || _phoneCallInFlight) return;
+    _phoneCallAsked = false;
+    if (_phoneCallQueued) {
+      _phoneCallQueued = false;
+      if (_pendingBreakCode != phoneCallBreakReason) return;
+      unawaited(_api.cancelBreak(s.id).then((r) {
+        if (!identical(_s, s)) return;
+        _writeQueue(r?.pendingState != null ? r?.breakReason : null);
+        _afterChange();
+      }, onError: (Object e) => _log.warn('cancelling the phone_call pause failed', {'error': e.runtimeType.toString()})));
+      return;
+    }
+    _phoneCallReturnBy = _now().add(deviceAwayAutoReturnWithin);
+  }
+
+  void _maybeReturnFromPhoneCall(_Session s) {
+    final by = _phoneCallReturnBy;
+    if (by == null) return;
+    if (!_now().isBefore(by) || _cellularCall) {
+      _phoneCallReturnBy = null;
+      return;
+    }
+    if (!_foreground || _station.connection != StationConnection.open || _phoneCallInFlight) return;
+    if (_onPhoneCallBreak && _pendingBreakCode == null) {
+      _phoneCallReturnBy = null;
+      _log.info('the phone call ended: returning to the pool');
+      scheduleMicrotask(() {
+        if (identical(_s, s)) unawaited(endBreak());
+      });
+      return;
+    }
+    // Still available (the pause's frame not in yet) waits; anything else is not the call's pause.
+    if (_station.effectiveState != AgentState.available) _phoneCallReturnBy = null;
+  }
+
   /// The agent came back to a `device_away` pause that began at [pausedAt].
   // TODO(IQ50 phase 2): "N customers rang while you were away" reads the agent's own Missed
   // rows since [pausedAt] once the count route takes a `since`; the station says it on return.
@@ -1428,6 +1608,8 @@ class StationController extends Notifier<StationView?>
   void _maybeSendAway() {
     final s = _s;
     if (s == null || _foreground || _awayInFlight || _terminal || _awayClosed || _awayRetry != null) return;
+    // A cellular call's pause is on its way, or just applied: the agent is out of the pool by it.
+    if (_phoneCallInFlight || _phoneCallApplied) return;
     // A call in progress queues the pause, whatever `agent_state` last said.
     final st = _station.effectiveState;
     // A soft-phone session is never in the pool: nothing to pause.

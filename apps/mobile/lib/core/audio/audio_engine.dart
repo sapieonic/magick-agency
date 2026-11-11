@@ -40,6 +40,10 @@ abstract interface class AudioEngine {
   Future<void> startOnDutyService(OnDutyNotification notification);
   Future<void> updateOnDutyService(OnDutyNotification notification);
   Future<void> stopOnDutyService();
+
+  /// [PhoneCallChanged] events on [events]: a phone call not the app's own (a
+  /// cellular call) started or ended. On reports the state at once.
+  Future<void> setPhoneCallMonitoring(bool enabled);
 }
 
 /// The real engine: the `agent_audio` plugin.
@@ -103,4 +107,7 @@ final class PluginAudioEngine implements AudioEngine {
 
   @override
   Future<void> stopOnDutyService() => _audio.stopOnDutyService();
+
+  @override
+  Future<void> setPhoneCallMonitoring(bool enabled) => _audio.setPhoneCallMonitoring(enabled);
 }

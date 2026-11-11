@@ -71,6 +71,7 @@ class AudioOrchestrator {
     required this._onChanged,
     required this._onSystemHangUp,
     this.format = audio.AgentAudioFormat.alaw8,
+    this._onPhoneCall,
   });
 
   static final _log = Log('station.audio');
@@ -80,6 +81,13 @@ class AudioOrchestrator {
   final void Function() _onChanged;
   final void Function() _onSystemHangUp;
   final audio.AgentAudioFormat format;
+
+  /// A phone call not the app's own (a cellular call) started or ended, while
+  /// [setPhoneCallMonitoring] is on (IQ51).
+  final void Function(bool active)? _onPhoneCall;
+
+  /// Phone-call reports are asked for (or the ask is queued).
+  bool _phoneCalls = false;
 
   StreamSubscription<Uint8List>? _uplinkSub;
   StreamSubscription<audio.AudioEvent>? _eventsSub;
@@ -308,9 +316,22 @@ class AudioOrchestrator {
     _enqueue('fgs.update', () => _engine.updateOnDutyService(notification));
   }
 
+  /// Reports of phone calls outside the app (a cellular call) on or off: the
+  /// station asks for them while the agent waits for calls (IQ51). Repeats
+  /// are dropped; a failure is logged and leaves them off.
+  void setPhoneCallMonitoring(bool on) {
+    if (!_opened || on == _phoneCalls) return;
+    _phoneCalls = on;
+    _enqueue(on ? 'phoneCalls.on' : 'phoneCalls.off', () => _engine.setPhoneCallMonitoring(on));
+  }
+
   /// Off duty: end any call, release the session, stop the on-duty service.
   Future<void> close() async {
     if (!_opened) return;
+    if (_phoneCalls) {
+      _phoneCalls = false;
+      _enqueue('phoneCalls.off', () => _engine.setPhoneCallMonitoring(false));
+    }
     final call = _callId;
     if (call != null) _enqueue('endCall', () => _engine.endCall(call));
     _enqueue('release', _engine.release);
@@ -395,6 +416,9 @@ class AudioOrchestrator {
         _serviceUp = false;
         _serviceProblem = MicProblem.serviceStopped;
         if (_view.micProblem == MicProblem.none) _setView(_copy(micProblem: _serviceProblem));
+      case audio.PhoneCallChanged(:final active):
+        // Only while asked for: a report racing the switch-off is not news.
+        if (_phoneCalls) _onPhoneCall?.call(active);
       case audio.AudioSessionActivation() || audio.InputLevel() || audio.JitterStats():
         break;
     }

@@ -105,6 +105,11 @@ String agentStateLabel(AgentState state, [String? raw]) => agentStateLabels[stat
 /// Labels for the server's reserved break codes, which no campaign lists.
 const deviceAwayBreakLabel = 'Away';
 const softPhoneBreakLabel = 'Soft phone';
+const phoneCallBreakLabel = 'Phone call';
+
+/// IQ51: the pause for a cellular call did not go through (asked again a few times first).
+const phoneCallPauseFailedCopy =
+    'We couldn’t pause you for your phone call. Take a break, or a customer may be put through while you’re on it.';
 
 const breakRejectedCopy = 'That break reason is no longer available. Pick another.';
 const breakFailedCopy = 'That break could not be started.';

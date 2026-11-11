@@ -143,6 +143,19 @@ class AgentAudio {
   /// pending lifecycle calls.
   Future<void> playChime() => _queued(() => _invoke<void>('playChime'));
 
+  /// Turns [PhoneCallChanged] events on or off: whether a phone call that is not this app's
+  /// own (a cellular call, ringing or active) is in progress. Turning it on reports the state
+  /// at once; off stops the reports. Independent of the call lifecycle (no phase needed) and
+  /// idempotent. No runtime permission is asked for:
+  ///
+  /// * Android: the audio mode (RINGTONE, IN_CALL, CALL_SCREENING, CALL_REDIRECT; never the
+  ///   app's own `MODE_IN_COMMUNICATION`), from `OnModeChangedListener` on API 31+ and by
+  ///   reading it once a second below that, while monitoring is on. Not `READ_PHONE_STATE`.
+  /// * iOS: CallKit's `CXCallObserver`, the app's own CallKit calls excluded. Off (no events)
+  ///   while CallKit is turned off ([configureCallSystem]).
+  Future<void> setPhoneCallMonitoring(bool enabled) =>
+      _invoke<void>('setPhoneCallMonitoring', {'enabled': enabled});
+
   /// Routes available now. Earpiece is absent on devices without one.
   Future<List<AudioRoute>> routes() async {
     final raw = await _invoke<List<Object?>>('routes');

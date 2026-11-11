@@ -227,6 +227,7 @@ types it does not know.
 | `session`      | `active` (iOS: CallKit activated / deactivated the audio session)                                   |
 | `callReset`    | — (iOS: CallKit provider reset)                                                                     |
 | `service`      | `running`: false (Android: the on-duty service stopped without `stopOnDutyService`)                 |
+| `phoneCall`    | `active` (a phone call not the app's own, ringing or active; while `setPhoneCallMonitoring` is on)  |
 
 Route `name` is the headset's product name; built-in earpiece and speaker have an empty name
 (the app labels them by `kind`). Audio never moves to the loudspeaker on its own: when the
@@ -252,6 +253,22 @@ screen-off is held only for a call on the earpiece, never during the loopback te
   closed with an `ended` event; a `.began` for a suspended app (`appWasSuspended`) is ignored.
 - **Android**, a permanent focus loss gets no GAIN back: while a call runs the plugin asks for
   focus again (at once when a cellular call ends, otherwise after 1, 2, 5, then every 10 s).
+
+## Phone calls outside the app
+
+`setPhoneCallMonitoring(true)` reports whether a phone call that is not the app's own (a
+cellular call, ringing or active) is in progress: `PhoneCallChanged` once at once, then on each
+change. The app uses it to pause an agent waiting for calls while they take a cellular call.
+No runtime permission is asked for:
+
+- **Android**: the audio mode, never `READ_PHONE_STATE`. A cellular call sets a telephony mode
+  (RINGTONE, IN_CALL, CALL_SCREENING, CALL_REDIRECT); the app's own calls use
+  `MODE_IN_COMMUNICATION`, which is not one. API 31+: `OnModeChangedListener`; below that the
+  mode is read once a second while monitoring is on (`PhoneCallMonitor`, the dedupe in
+  `PhoneCallTracker`).
+- **iOS**: CallKit's `CXCallObserver`, the app's own CallKit calls excluded by UUID
+  (`PhoneCallMonitor.swift`). Nothing is reported while CallKit is turned off
+  (`configureCallSystem(useCallKit: false)`).
 
 ## What the app must add
 
@@ -311,7 +328,7 @@ Kotlin unit tests (`android/src/test`) cover A-law, the decimator (shared checks
 jitter buffer (replaying the Dart trace), the ringback tone (the Dart vectors, cadence,
 mixing, the request kept across arm and cleared by stop), the inbound chime (the Dart vectors,
 played once frame by frame, a request before the engine runs, dropped by stop), framing, the uplink encoder, the
-level meter and the interruption tracker; they need no Android or Flutter classes. They run with the app's Gradle
+level meter, the interruption tracker and the phone-call tracker; they need no Android or Flutter classes. They run with the app's Gradle
 build (`./gradlew :agent_audio:testDebugUnitTest` from `apps/mobile/android`), by hand: CI builds the
 Android app but does not run them.
 

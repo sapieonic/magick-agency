@@ -47,6 +47,10 @@ final class CallKitController: NSObject, CXProviderDelegate {
   /// A call is reported to CallKit and not yet ended.
   var hasActiveCall: Bool { enabled && !uuidById.isEmpty }
 
+  /// Whether [uuid] is a call this app reported to CallKit (registered before the start
+  /// request, so a call being started is ours too). Read by `PhoneCallMonitor`.
+  func isOwnCall(_ uuid: UUID) -> Bool { idByUUID[uuid] != nil }
+
   /// A cellular (or other app's) call is in progress. Used to classify audio interruptions.
   var otherCallActive: Bool {
     guard enabled else { return false }

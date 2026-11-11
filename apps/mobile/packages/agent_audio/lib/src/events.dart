@@ -71,6 +71,9 @@ sealed class AudioEvent {
       case 'service':
         // Only the stop is reported; a start is the result of `startOnDutyService`.
         return m['running'] == false ? const OnDutyServiceStopped() : null;
+      case 'phoneCall':
+        final active = m['active'];
+        return active is bool ? PhoneCallChanged(active: active) : null;
     }
     return null;
   }
@@ -363,4 +366,24 @@ final class OnDutyServiceStopped extends AudioEvent {
 
   @override
   String toString() => 'OnDutyServiceStopped()';
+}
+
+/// A phone call that is not this app's own (a cellular call, ringing or active) started or
+/// ended, while [AgentAudio.setPhoneCallMonitoring] is on. Sent once when monitoring turns on
+/// (the state then) and on every change after, never twice in a row with the same [active].
+/// No runtime permission: Android reads the audio mode (a telephony mode, never the app's own
+/// `MODE_IN_COMMUNICATION`), iOS CallKit's call observer (the app's own calls excluded).
+final class PhoneCallChanged extends AudioEvent {
+  const PhoneCallChanged({required this.active});
+
+  final bool active;
+
+  @override
+  bool operator ==(Object other) => other is PhoneCallChanged && other.active == active;
+
+  @override
+  int get hashCode => active.hashCode;
+
+  @override
+  String toString() => 'PhoneCallChanged($active)';
 }

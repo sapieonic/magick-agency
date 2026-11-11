@@ -2,7 +2,7 @@ import 'package:agency_wire/agency_wire.dart' as wire;
 
 import '../inbound/inbound_call_rules.dart';
 import '../inbound/inbound_copy.dart';
-import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
+import '../lifecycle/lifecycle_policy.dart' show isCallPhase, phoneCallBreakReason;
 
 import 'contact_context.dart';
 import 'server_clock.dart';
@@ -305,6 +305,7 @@ class StationViewMapper {
   static String breakLabel(String code, List<wire.BreakReason> reasons) {
     if (code == wire.ReservedBreakCode.deviceAway.wire) return deviceAwayBreakLabel;
     if (code == wire.ReservedBreakCode.softPhone.wire) return softPhoneBreakLabel;
+    if (code == phoneCallBreakReason) return phoneCallBreakLabel;
     if (code.isEmpty) return agentStateLabels[wire.AgentState.onBreak]!;
     for (final r in reasons) {
       if (r.code == code) return r.label;

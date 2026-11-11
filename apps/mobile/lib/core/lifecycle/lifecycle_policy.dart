@@ -28,6 +28,13 @@ const deviceAwayAutoReturnWithin = Duration(seconds: 30);
 /// reason or one queued behind a call: the station controller decides that.
 bool autoReturnsFromAway(Duration pausedFor) => pausedFor < deviceAwayAutoReturnWithin;
 
+/// IQ51: the reserved break a cellular call puts an available agent on, for
+/// the length of the call (returned when it ends, only from a pause the call
+/// itself caused).
+// TODO(IQ51): switch to the wire constant (`ReservedBreakCode.phoneCall.wire`)
+// once `agency_wire` has it; this is the app's one copy of the code.
+const phoneCallBreakReason = 'phone_call';
+
 /// What to ask the server for while the app is in the background.
 enum AwayAction {
   none,
