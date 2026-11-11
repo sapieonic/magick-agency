@@ -403,6 +403,37 @@ void main() {
       });
     });
 
+    test('a 401 on the notes is asked again on the slow backoff (through the token refresh); a 403 is not', () {
+      fakeAsync((async) {
+        final app = _offered(async);
+        app.frame(stationFrame('inbound_call_connected'));
+        var patches = 0;
+        app.routes['PATCH $_call'] = (_) => ++patches <= 2
+            ? json(401, {'error': 'Unauthorized', 'message': 'expired'})
+            : json(200, {'call': inboundCallJson('inbound_call_connected', overrides: {'notes': 'Asked about'})});
+        app.controller.updateNotes('Asked about');
+        async.elapse(const Duration(milliseconds: 700));
+        expect(patches, 2, reason: 'the API client refreshed the token once and asked again');
+        expect(app.view!.notes.status, NotesStatus.retrying, reason: 'never given up for good');
+        async.elapse(const Duration(seconds: 3));
+        expect(patches, 2, reason: 'the slow backoff, not the 2.8 s retry');
+        async.elapse(const Duration(seconds: 1));
+        expect(patches, 3);
+        expect(app.view!.notes.status, NotesStatus.saved);
+        app.dispose();
+      });
+      fakeAsync((async) {
+        final app = _offered(async);
+        app.frame(stationFrame('inbound_call_connected'));
+        app.routes['PATCH $_call'] = (_) => json(403, {'error': 'Forbidden', 'message': 'no'});
+        app.controller.updateNotes('Asked about');
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('PATCH', _call), hasLength(1), reason: 'the role does not allow it');
+        expect(app.view!.notes.status, NotesStatus.failed);
+        app.dispose();
+      });
+    });
+
     test('the outcome: cleared notes go as \'\', untouched ones are left out', () {
       fakeAsync((async) {
         final app = _offered(async);

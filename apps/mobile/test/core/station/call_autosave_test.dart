@@ -16,12 +16,14 @@ import 'memory_notes_store.dart';
 void main() {
   late List<String?> sent;
   late MemoryNotesStore store;
+  ApiError? Function() refuse = () => null;
 
   CallAutosave<InboundCall, InboundCallUpdateRequest> make(FakeAsync async) {
     final clock = async.getClock(DateTime.utc(2026, 11, 2, 5, 31));
     return CallAutosave<InboundCall, InboundCallUpdateRequest>(
       save: (id, request) async {
         sent.add(request.notes);
+        if (refuse() case final error?) throw error;
         return inboundCall('inbound_call_connected', overrides: {'notes': request.notes});
       },
       request: (notes) => notes == null ? null : InboundCallUpdateRequest(notes: notes),
@@ -29,7 +31,7 @@ void main() {
       onChanged: () {},
       onSaved: (_) {},
       keyPrefix: 'inbound',
-      hopeless: (e) => e is ApiUnauthorized,
+      hopeless: (e) => e is ApiHttpError && e.code == 'inbound_call_not_found',
       now: clock.now,
     );
   }
@@ -37,6 +39,63 @@ void main() {
   setUp(() {
     sent = [];
     store = MemoryNotesStore();
+    refuse = () => null;
+  });
+
+  ApiHttpError refusal(int status, [String? code]) =>
+      ApiHttpError(status: status, code: code, message: 'no', body: {'code': ?code, 'message': 'no'}, requestId: null);
+
+  group('which refusals are asked again', () {
+    test('the call gone and a 403 are hopeless; a 401 is not, whatever the caller\'s own rule says', () {
+      fakeAsync((async) {
+        final a = make(async);
+        expect(a.isHopeless(refusal(404, 'inbound_call_not_found')), isTrue);
+        expect(a.isHopeless(refusal(403)), isTrue);
+        expect(a.isHopeless(const ApiUnauthorized()), isFalse);
+        expect(a.isHopeless(refusal(503)), isFalse);
+        expect(a.isHopeless(const ApiNetworkError('offline')), isFalse);
+      });
+    });
+
+    test('a 401 is asked again after 4, 8, 16, then every 30 s; a save that goes through resets it', () {
+      fakeAsync((async) {
+        var fails = 3;
+        refuse = () => fails-- > 0 ? const ApiUnauthorized() : null;
+        final a = make(async)..callChanged('ib-1', serverNotes: null, accepting: true);
+        async.flushMicrotasks();
+        a.editNotes('Wants a quote');
+        async.elapse(const Duration(milliseconds: 700));
+        expect(sent, hasLength(1));
+        expect(a.view.status, NotesStatus.retrying);
+        async.elapse(const Duration(seconds: 4));
+        expect(sent, hasLength(2));
+        async.elapse(const Duration(seconds: 7));
+        expect(sent, hasLength(2), reason: 'the second wait is 8 s');
+        async.elapse(const Duration(seconds: 1));
+        expect(sent, hasLength(3));
+        async.elapse(const Duration(seconds: 16));
+        expect(sent, hasLength(4));
+        expect(a.view.status, NotesStatus.saved);
+        // The next 401 starts the backoff again from 4 s.
+        fails = 1;
+        a.editNotes('Wants a quote by Friday');
+        async.elapse(const Duration(milliseconds: 700));
+        async.elapse(const Duration(seconds: 4));
+        expect(sent, hasLength(6));
+      });
+    });
+
+    test('a 403 is not asked again', () {
+      fakeAsync((async) {
+        refuse = () => refusal(403);
+        final a = make(async)..callChanged('ib-1', serverNotes: null, accepting: true);
+        async.flushMicrotasks();
+        a.editNotes('Wants a quote');
+        async.elapse(const Duration(minutes: 2));
+        expect(sent, hasLength(1));
+        expect(a.view.status, NotesStatus.failed);
+      });
+    });
   });
 
   test('unsent text is kept under inbound:<id>, and restored over the server\'s on return', () {

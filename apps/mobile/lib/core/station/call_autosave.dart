@@ -20,8 +20,13 @@ import 'station_view.dart' show NotesStatus, NotesView;
 ///   debounce fires, after each confirmed save, and on [persistNow] when the app leaves the
 ///   foreground), and swept with the station's after a day. A call that comes back on screen (a
 ///   restart, a reconnect) takes the stored text over the server's, as the station does.
-/// * A refusal that cannot get better ([_hopeless]) is not retried; anything else is, every
-///   [retryDelay], while the call is on screen (the console's 4× debounce).
+/// * A refusal that cannot get better is not retried: the call's own ([_hopeless]: settled,
+///   gone, an invalid body) and a 403 (the agent's role does not allow the write). A 401 is
+///   retried on the slow backoff ([unauthorizedRetryDelays]): the API client has forced one
+///   token refresh before it, and each retry refreshes again, as the station's reconnect check
+///   does; an expired sign-in is the app gate's to settle, never a reason to drop the notes.
+///   Anything else is retried every [retryDelay] while the call is on screen (the console's 4×
+///   debounce).
 /// * Saving the outcome cancels the pending save ([cancelPending]): the outcome carries the same
 ///   notes, and the PATCH would race it. A refused outcome carried nothing, so [outcomeRefused]
 ///   arms the save again for text the server does not have yet.
@@ -39,6 +44,7 @@ class CallAutosave<C, R extends Object> {
     this._now = DateTime.now,
     this.debounce = const Duration(milliseconds: 700),
     this.retryDelay = const Duration(milliseconds: 2800),
+    this.unauthorizedRetryDelays = defaultUnauthorizedRetryDelays,
     String logTag = 'call.autosave',
   }) : _log = Log(logTag);
 
@@ -58,13 +64,27 @@ class CallAutosave<C, R extends Object> {
   /// The store key's prefix: `manual`, `inbound`.
   final String _keyPrefix;
 
-  /// A refusal no retry can fix (the call is settled or gone, the body is invalid, the sign-in
-  /// expired).
+  /// A refusal of the call's own that no retry can fix (the call is settled or gone, the body is
+  /// invalid). A 401 and a 403 are decided here, the same for every call ([isHopeless]).
   final bool Function(ApiError error) _hopeless;
   final void Function(String callId, ApiError error)? _onFailed;
   final DateTime Function() _now;
   final Duration debounce;
   final Duration retryDelay;
+
+  /// The waits before each retry of a save refused with a 401; the last repeats.
+  final List<Duration> unauthorizedRetryDelays;
+
+  /// 4, 8, 16, then every 30 s: the station's reconnect check's backoff after its first read.
+  static const defaultUnauthorizedRetryDelays = [
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 16),
+    Duration(seconds: 30),
+  ];
+
+  /// 401s in a row since the last save that went through.
+  int _unauthorizedFailures = 0;
 
   String? _callId;
   String _text = '';
@@ -137,6 +157,7 @@ class CallAutosave<C, R extends Object> {
     _inFlight = 0;
     _lastKeystrokeAt = null;
     _lastSaveSucceededAt = null;
+    _unauthorizedFailures = 0;
     _text = callId == null ? '' : (serverNotes ?? '');
     _hydrated = callId != null && serverNotes != null;
     if (callId != null) unawaited(_restore(callId));
@@ -261,16 +282,22 @@ class CallAutosave<C, R extends Object> {
       if (_disposed || _callId != callId) return;
       _lastSaveSucceededAt = _now();
       _failure = null;
+      _unauthorizedFailures = 0;
       // The server now holds what was on screen when this was sent.
       if (notes != null && notes == _text) _restoredUnsent = false;
       if (notes != null && _touched) unawaited(_persist(callId, notes));
       _onSaved(saved);
     } on ApiError catch (e) {
       if (_disposed || _callId != callId) return;
-      final hopeless = _hopeless(e);
+      final hopeless = isHopeless(e);
       _failure = hopeless ? _Failure.terminal : _Failure.retryable;
+      Duration wait = retryDelay;
+      if (e is ApiUnauthorized) {
+        wait = unauthorizedRetryDelays[_unauthorizedFailures.clamp(0, unauthorizedRetryDelays.length - 1)];
+        _unauthorizedFailures++;
+      }
       // A newer edit has its own save armed; otherwise try again later.
-      if (!hopeless && _timer == null) _arm(retryDelay);
+      if (!hopeless && _timer == null) _arm(wait);
       _log.warn('call save failed', {
         'error': e.runtimeType.toString(),
         'code': e is ApiHttpError ? e.code : null,
@@ -282,6 +309,14 @@ class CallAutosave<C, R extends Object> {
         _refresh();
       }
     }
+  }
+
+  /// A refusal no retry can fix: a 403 (the role does not allow the write: asking again gets the
+  /// same answer), or the call's own ([_hopeless]). Never a 401 (retried on the slow backoff).
+  bool isHopeless(ApiError e) {
+    if (e is ApiUnauthorized) return false;
+    if (e is ApiHttpError && e.status == 403) return true;
+    return _hopeless(e);
   }
 
   Future<void> _persist(String callId, String value) async {

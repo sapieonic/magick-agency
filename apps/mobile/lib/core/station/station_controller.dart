@@ -420,7 +420,7 @@ class StationController extends Notifier<StationView?>
         if (identical(_s, s)) adoptInboundCall(call);
       },
       keyPrefix: 'inbound',
-      hopeless: (e) => e is ApiUnauthorized || InboundRefusal.of(e).callGone,
+      hopeless: (e) => InboundRefusal.of(e).callGone,
       now: _now,
       logTag: 'inbound.autosave',
     );

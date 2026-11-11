@@ -12,8 +12,9 @@ import '../station/call_autosave.dart';
 ///   when it is SENT: a save armed before the field set arrived may fire after it, and then it
 ///   carries the fields;
 /// * unsent notes are kept under `manual:<id>` ([storeKey]);
-/// * a refusal that cannot get better (`call_settled`, `call_not_found`, `fields_invalid`, an
-///   expired sign-in) is not retried.
+/// * a refusal of the call's own that cannot get better (`call_settled`, `call_not_found`,
+///   `fields_invalid`) is not retried; a 403 and a 401 follow [CallAutosave]'s rule (a 403 is
+///   not retried, a 401 is, on the slow backoff).
 class ManualAutosave extends CallAutosave<ManualCall, ManualCallUpdateRequest> {
   ManualAutosave({
     required super.save,
@@ -31,7 +32,6 @@ class ManualAutosave extends CallAutosave<ManualCall, ManualCallUpdateRequest> {
   static String storeKey(String callId) => 'manual:$callId';
 
   static bool _hopeless(ApiError e) {
-    if (e is ApiUnauthorized) return true;
     final code = e is ApiHttpError ? ErrorBody.fromJson(e.body).softphoneCode : null;
     return code == SoftphoneErrorCode.callSettled ||
         code == SoftphoneErrorCode.callNotFound ||

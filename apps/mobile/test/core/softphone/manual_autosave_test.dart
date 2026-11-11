@@ -185,6 +185,41 @@ void main() {
     expect(failed, hasLength(3));
   });
 
+  test('a 403 is not retried; a 401 is, on the slow backoff (each retry refreshes the token), until it goes through',
+      () {
+    fakeAsync((async) {
+      answer = () => refusal('forbidden', status: 403);
+      final a = make(async)..callChanged('mc-1', accepting: true);
+      async.flushMicrotasks();
+      a.editNotes('Notes');
+      async.elapse(const Duration(milliseconds: 700));
+      async.elapse(const Duration(minutes: 2));
+      expect(sent, hasLength(1), reason: 'the role does not allow it: asking again gets the same answer');
+      expect(a.view.status, NotesStatus.failed);
+    });
+    fakeAsync((async) {
+      sent.clear();
+      var fails = 5;
+      answer = () => fails-- > 0 ? const ApiUnauthorized() : null;
+      final a = make(async)..callChanged('mc-1', accepting: true);
+      async.flushMicrotasks();
+      a.editNotes('Notes');
+      async.elapse(const Duration(milliseconds: 700));
+      expect(sent, hasLength(1));
+      expect(a.view.status, NotesStatus.retrying, reason: 'an expired sign-in never drops the notes');
+      // 4, 8, 16, 30, 30 s.
+      for (final (wait, count) in [(4, 2), (8, 3), (16, 4), (30, 5)]) {
+        async.elapse(Duration(seconds: wait) - const Duration(milliseconds: 100));
+        expect(sent, hasLength(count - 1), reason: 'not before $wait s');
+        async.elapse(const Duration(milliseconds: 100));
+        expect(sent, hasLength(count));
+      }
+      async.elapse(const Duration(seconds: 30));
+      expect(sent, hasLength(6));
+      expect(a.view.status, NotesStatus.saved);
+    });
+  });
+
   test('cancelPending drops the armed save (the outcome carries the same notes)', () {
     fakeAsync((async) {
       final a = make(async)..callChanged('mc-1', accepting: true);
