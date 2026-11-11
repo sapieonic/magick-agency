@@ -51,3 +51,35 @@ export const CAMPAIGN_SETTINGS_SECTIONS: { id: string; label: string; keywords: 
     keywords: ['uploads', 'upload history', 'roster', 'contact list', 'csv', 'file', 'lifecycle', 'started', 'paused', 'stopped'],
   },
 ];
+
+/** What decides which sections a campaign's Settings page has, for this reader. */
+export interface CampaignSettingsSectionContext {
+  /** `agency_contact_assignment_enabled` is on. */
+  assignmentEnabled: boolean;
+  /** `agency_inbound_enabled` is on. */
+  inboundEnabled: boolean;
+  /** The campaign still carries contact-assignment settings from before assignment was turned off. */
+  assignmentLeftovers: boolean;
+  /** The reader holds `agency.supervise`, the floor of Lifecycle and uploads' reads. */
+  canSupervise: boolean;
+}
+
+/**
+ * Whether the page shows Agents: only with something in it, contact assignment or inbound calls
+ * on, or contact-assignment settings left from before it was turned off. The Settings page and
+ * search both read this, so search never links to an anchor the page does not have.
+ */
+export function campaignHasAgentsSection(
+  ctx: Pick<CampaignSettingsSectionContext, 'assignmentEnabled' | 'inboundEnabled' | 'assignmentLeftovers'>,
+): boolean {
+  return ctx.assignmentEnabled || ctx.inboundEnabled || ctx.assignmentLeftovers;
+}
+
+/** The sections a campaign's Settings page has for this reader, in page order. */
+export function campaignSettingsSectionsFor(ctx: CampaignSettingsSectionContext): typeof CAMPAIGN_SETTINGS_SECTIONS {
+  return CAMPAIGN_SETTINGS_SECTIONS.filter((section) => {
+    if (section.id === 'agents') return campaignHasAgentsSection(ctx);
+    if (section.id === 'roster-uploads') return ctx.canSupervise;
+    return true;
+  });
+}

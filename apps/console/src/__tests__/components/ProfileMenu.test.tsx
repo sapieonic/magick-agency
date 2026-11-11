@@ -176,6 +176,43 @@ describe('ProfileMenu — who, theme and sign out', () => {
     expect(document.activeElement).toBe(screen.getByTestId('profile-menu-trigger'));
   });
 
+  it('is a disclosure, not a menu: expanded state and the panel it controls, no popup role claimed', () => {
+    renderTopBar();
+    const trigger = screen.getByTestId('profile-menu-trigger');
+    expect(trigger.getAttribute('aria-haspopup')).toBeNull();
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(trigger.getAttribute('aria-controls')).toBeNull();
+    openMenu();
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(trigger.getAttribute('aria-controls')).toBe(screen.getByTestId('profile-menu').id);
+    expect(screen.getByTestId('profile-menu').getAttribute('role')).toBeNull();
+  });
+
+  it('closes when focus moves out of it, and stays open while it moves within', () => {
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    try {
+      renderTopBar();
+      openMenu();
+      const theme = screen.getByTestId('profile-menu-theme');
+      fireEvent.blur(screen.getByTestId('profile-menu-trigger'), { relatedTarget: theme });
+      expect(screen.getByTestId('profile-menu')).toBeTruthy();
+      fireEvent.blur(theme, { relatedTarget: outside });
+      expect(screen.queryByTestId('profile-menu')).toBeNull();
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('leaves an Escape another layer took (search above it) alone', () => {
+    renderTopBar();
+    openMenu();
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    event.preventDefault();
+    document.dispatchEvent(event);
+    expect(screen.getByTestId('profile-menu')).toBeTruthy();
+  });
+
   it('makes initials from a name, or the email without one', () => {
     expect(initialsFor('Priya Shah', 'p@x.com')).toBe('PS');
     expect(initialsFor('Priya', 'p@x.com')).toBe('PR');

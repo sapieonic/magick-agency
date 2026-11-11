@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   CONSOLE_SECTIONS,
   activeNavId,
+  SETTINGS_GATE,
   appliesTo,
+  backCrumb,
   breadcrumbFor,
+  passesGate,
+  settingsLandingPath,
   legacySettingsPath,
   productSurfaceForPath,
   settingsEntryForPath,
@@ -60,12 +64,22 @@ describe('the work sections', () => {
     ]);
   });
 
-  it.each(['viewer', 'operator'] as const)('offers a %s the same four but not Home (read floors; Home needs agency.supervise)', (role) => {
-    expect(sectionIds(input(role))).toEqual(['campaigns', 'inbound', 'reports', 'dnc']);
+  it.each(['viewer', 'operator'] as const)('offers a %s the same four and Take calls, but not Home (read floors; Home needs agency.supervise)', (role) => {
+    expect(sectionIds(input(role))).toEqual(['campaigns', 'inbound', 'reports', 'dnc', 'dialer']);
   });
 
-  it('offers an agent nothing, which is why an agent is never routed into the shell', () => {
-    expect(sectionIds(input('agent'))).toEqual([]);
+  it('offers an agent no work page, only the way back to the dialler', () => {
+    expect(visibleSections(input('agent')).map((s) => [s.section.id, s.href])).toEqual([['dialer', '/dialer']]);
+  });
+
+  it('offers Take calls only to whoever takes calls without supervising, under the dialer', () => {
+    for (const role of ['account_admin', 'tenant_admin', 'tenant_owner', undefined] as const) {
+      expect(sectionIds(input(role))).not.toContain('dialer');
+    }
+    expect(sectionIds(input('operator', { flagsOff: ['agency_dialer_enabled'] }))).not.toContain('dialer');
+    expect(sectionIds(input('operator', { capsOff: ['agency'] }))).not.toContain('dialer');
+    // A link out: never active, no tab bar, no crumbs in the shell.
+    expect(tabBarFor('/dialer', input('operator'))).toBeNull();
   });
 
   it('offers nothing while the role is unresolved', () => {
@@ -111,12 +125,17 @@ describe('the tab bar of a grouped page', () => {
     expect(tabBarFor('/agency/dnc', input('account_admin'))).toBeNull();
   });
 
-  it('groups Missed calls with Summary, and Analytics with Reports', () => {
+  it('groups Missed calls with Summary, and Analytics with Exports (the Reports section)', () => {
     expect(tabBarFor('/agency/inbound/summary', input('account_admin'))?.tabs.map((t) => t.to)).toEqual([
       '/agency/inbound/missed',
       '/agency/inbound/summary',
     ]);
-    expect(tabBarFor('/agency/reports', input('viewer'))?.tabs.map((t) => t.label)).toEqual(['Analytics', 'Reports']);
+    expect(tabBarFor('/agency/reports', input('viewer'))?.tabs.map((t) => t.label)).toEqual(['Analytics', 'Exports']);
+    // The label changed; the URL and the id did not.
+    expect(tabBarFor('/agency/reports', input('viewer'))?.tabs.map((t) => [t.id, t.to])).toEqual([
+      ['analytics', '/agency/analytics'],
+      ['reports', '/agency/reports'],
+    ]);
   });
 
   it('is shown on the grouped pages only, not on one campaign or one report', () => {
@@ -182,12 +201,48 @@ describe('the breadcrumb', () => {
     expect(breadcrumbFor('/agency/dnc')).toEqual([{ label: 'Do Not Call' }]);
   });
 
-  it('names a Settings page under Settings', () => {
+  it('names a Settings page under Settings, which is not a link: /settings reopens this page', () => {
     expect(breadcrumbFor('/settings/notifications', 'Email notifications')).toEqual([
-      { label: 'Settings', to: '/settings' },
+      { label: 'Settings' },
       { label: 'Email notifications' },
     ]);
+    expect(breadcrumbFor('/settings/inbound')).toEqual([{ label: 'Settings' }, { label: 'Inbound routing' }]);
     expect(breadcrumbFor('/agency/customers')).toEqual([{ label: 'Customer history' }]);
+  });
+
+  it('links a page below a Settings entry back to the entry', () => {
+    expect(breadcrumbFor('/settings/inbound/r-1')).toEqual([
+      { label: 'Settings' },
+      { label: 'Inbound routing', to: '/settings/inbound' },
+      { label: 'Inbound route' },
+    ]);
+    expect(breadcrumbFor('/settings/inbound/new').at(-1)).toEqual({ label: 'New inbound route' });
+  });
+
+  it('puts a tab between the section and a sub-page when the tab is not the section', () => {
+    expect(breadcrumbFor('/agency/reports/run-1')).toEqual([
+      { label: 'Reports', to: '/agency/analytics' },
+      { label: 'Exports', to: '/agency/reports' },
+      { label: 'Report' },
+    ]);
+    expect(breadcrumbFor('/agency/reports')).toEqual([{ label: 'Reports', to: '/agency/analytics' }, { label: 'Exports' }]);
+    expect(breadcrumbFor('/agency/softphone/calls/x')).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      { label: 'Soft-phone calls', to: '/agency/softphone' },
+      { label: 'Soft-phone call' },
+    ]);
+  });
+
+  it('gives the phone’s back arrow the crumb above the page, when it is a link', () => {
+    expect(backCrumb(breadcrumbFor('/agency/reports/run-1'))).toEqual({ label: 'Exports', to: '/agency/reports' });
+    expect(backCrumb(breadcrumbFor('/agency/inbound/summary'))).toEqual({ label: 'Inbound', to: '/agency/inbound/missed' });
+    const page = [{ label: 'Diwali renewals', to: '/agency/campaigns/c-1/overview' }, { label: 'Settings' }];
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/settings', null, page))).toEqual(page[0]);
+    expect(backCrumb(breadcrumbFor('/settings/inbound/r-1'))).toEqual({ label: 'Inbound routing', to: '/settings/inbound' });
+    // Nothing above: a section's first page, a Settings entry, customer history.
+    expect(backCrumb(breadcrumbFor('/agency/campaigns'))).toBeNull();
+    expect(backCrumb(breadcrumbFor('/settings/team'))).toBeNull();
+    expect(backCrumb(breadcrumbFor('/agency/customers'))).toBeNull();
   });
 });
 
@@ -218,9 +273,40 @@ describe('the Settings hub', () => {
   });
 
   it('gives everyone Profile first, so /settings always has somewhere to go', () => {
-    for (const role of [undefined, 'agent', 'viewer', 'tenant_owner'] as const) {
+    for (const role of [undefined, 'viewer', 'tenant_owner'] as const) {
       expect(visibleSettingsGroups(input(role))[0]?.entries[0]?.path).toBe('/settings/profile');
     }
+    // A dedicated agent too, while `AgentLanding` keeps them in the shell (the dialer off).
+    expect(visibleSettingsGroups(input('agent', { flagsOff: ['agency_dialer_enabled'] }))[0]?.entries[0]?.path).toBe('/settings/profile');
+  });
+
+  it('offers a dedicated agent no Settings page while the dialer is on: AgentLanding sends them to /dialer', () => {
+    expect(visibleSettingsGroups(input('agent'))).toEqual([]);
+    expect(passesGate(SETTINGS_GATE, input('agent'))).toBe(false);
+    expect(passesGate(SETTINGS_GATE, input('agent', { capsOff: ['agency'] }))).toBe(true);
+    for (const role of ['viewer', 'operator', 'account_admin', undefined] as const) {
+      expect(passesGate(SETTINGS_GATE, input(role))).toBe(true);
+    }
+  });
+
+  describe('where /settings opens', () => {
+    it('is the entry visited last, while the reader may still open it', () => {
+      expect(settingsLandingPath(input('account_admin'), 'inbound')).toBe('/settings/inbound');
+      expect(settingsLandingPath(input('account_admin'), 'notifications')).toBe('/settings/notifications');
+    });
+
+    it('falls back to Team for someone who manages people, else the first entry', () => {
+      expect(settingsLandingPath(input('account_admin'), null)).toBe('/settings/team');
+      // Inbound routing's flag went off since the last visit.
+      expect(settingsLandingPath(input('account_admin', { flagsOff: ['agency_inbound_enabled'] }), 'inbound')).toBe('/settings/team');
+      // Accounts is not a viewer's, nor is Team.
+      expect(settingsLandingPath(input('viewer'), 'accounts')).toBe('/settings/profile');
+      expect(settingsLandingPath(input('viewer'), 'no-such-page')).toBe('/settings/profile');
+    });
+
+    it('is nowhere when the reader may open no entry', () => {
+      expect(settingsLandingPath(input('agent'), 'profile')).toBeNull();
+    });
   });
 
   it('gates each account setting on its flag and capability', () => {
@@ -245,9 +331,20 @@ describe('the Settings hub', () => {
     expect(appliesTo('you', names)).toBe('only you');
     expect(appliesTo('account', names)).toBe('Pune Collections');
     expect(appliesTo('tenant', names)).toBe('all of Acme Finance');
+    expect(appliesTo('tenant', { ...names, tenantWide: true })).toBe('all of Acme Finance');
     expect(settingsGroupTitle('account', names)).toBe('This account · Pune Collections');
     expect(settingsGroupTitle('you', names)).toBe('You');
     expect(settingsGroupTitle('tenant', names)).toBe('People and access');
+  });
+});
+
+describe('Applies to, for a seat scoped to one account', () => {
+  it('says the account for people and access: the server confines that seat to it', () => {
+    const names = { accountName: 'Pune Collections', tenantName: 'Acme Finance', tenantWide: false };
+    expect(appliesTo('tenant', names)).toBe('Pune Collections');
+    expect(appliesTo('tenant', { tenantName: 'Acme Finance', tenantWide: false })).toBe('this account');
+    expect(appliesTo('account', names)).toBe('Pune Collections');
+    expect(appliesTo('you', names)).toBe('only you');
   });
 });
 

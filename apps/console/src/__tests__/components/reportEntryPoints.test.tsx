@@ -137,17 +137,18 @@ describe('navigation', () => {
   const reportTabs = (role: string, reports: boolean) =>
     tabBarFor('/agency/analytics', gates(role, reports))?.tabs.map((t) => [t.label, t.to]) ?? [];
 
-  it('the console groups Reports beside Analytics only while the flag is on', () => {
+  it('the console groups Exports (the reports page) beside Analytics only while the flag is on', () => {
     expect(reportTabs('account_admin', true)).toEqual([
       ['Analytics', '/agency/analytics'],
-      ['Reports', '/agency/reports'],
+      ['Exports', '/agency/reports'],
     ]);
     expect(reportTabs('account_admin', false)).toEqual([]);
   });
 
-  it('the console offers a viewer Reports (their own runs) but never a dedicated agent', () => {
-    expect(reportTabs('viewer', true).map(([label]) => label)).toContain('Reports');
-    expect(visibleSections(gates('agent', true))).toEqual([]);
+  it('the console offers a viewer Exports (their own runs) but never a dedicated agent', () => {
+    expect(reportTabs('viewer', true).map(([label]) => label)).toContain('Exports');
+    // A dedicated agent is offered only the way back to the dialler.
+    expect(visibleSections(gates('agent', true)).map((s) => s.section.id)).toEqual(['dialer']);
   });
 
   it('the agent nav offers My reports only while the flag is on', () => {

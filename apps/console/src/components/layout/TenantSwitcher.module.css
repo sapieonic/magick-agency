@@ -1,37 +1,41 @@
+/* The tenant line of the sidebar's context block (decision B28): small and muted. */
 .switcher {
   position: relative;
+  width: 100%;
 }
 
 .trigger {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
+  width: 100%;
+  background: none;
+  border: 1px solid transparent;
   border-radius: var(--radius);
-  padding: 6px 12px;
+  padding: 2px 4px;
   cursor: pointer;
-  color: var(--text-primary);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: 11px;
   font-weight: 500;
   min-height: auto;
   transition: all var(--transition);
-  max-width: 240px;
 }
 
-.trigger:hover {
-  border-color: var(--border-focus);
-  background: var(--bg-elevated);
+button.trigger:hover {
+  background: var(--bg-tertiary);
 }
 
 .triggerIcon {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .triggerName {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -47,73 +51,4 @@
 
 .triggerChevronOpen {
   transform: rotate(180deg);
-}
-
-@media (max-width: 768px) {
-  .trigger {
-    max-width: 140px;
-    padding: 6px 8px;
-  }
-
-  .triggerName {
-    font-size: 12px;
-  }
-
-  .triggerChevron {
-    display: none;
-  }
-}
-
-@media (max-width: 480px) {
-  .trigger {
-    max-width: 100px;
-    padding: 6px;
-    gap: 4px;
-  }
-
-  .triggerName {
-    font-size: 11px;
-  }
-}
-
-/* The sidebar's context block (decision B28). */
-.contextSwitcher {
-  width: 100%;
-}
-
-.contextTrigger,
-.contextTrigger:hover {
-  width: 100%;
-  max-width: none;
-  background: none;
-  border-color: transparent;
-  padding: 2px 4px;
-}
-
-button.contextTrigger:hover {
-  background: var(--bg-tertiary);
-}
-
-.contextTrigger .triggerName {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-
-.contextTrigger {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.contextTrigger .triggerIcon {
-  width: 12px;
-  height: 12px;
-  color: var(--text-muted);
-}
-
-@media (max-width: 768px) {
-  .contextTrigger {
-    max-width: none;
-  }
 }

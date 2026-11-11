@@ -287,7 +287,7 @@ export default function AnalysisProfilesPage() {
   if (error) {
     return (
       <div className={styles.page}>
-        <PageHeader title="Call Summaries" />
+        <PageHeader title="Call summaries" />
         <ErrorAlert message={error} onRetry={reload} />
       </div>
     );
@@ -296,7 +296,7 @@ export default function AnalysisProfilesPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Call Summaries"
+        title="Call summaries"
         badge={profiles.length}
         actions={
           canWrite ? (

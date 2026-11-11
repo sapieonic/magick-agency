@@ -1,34 +1,43 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * The Settings hub (decision B28): the sub-nav grouped by who a setting affects, each entry
- * gated as before, an empty group hidden, the "Applies to" line, the campaign-settings hint,
- * `/settings` opening the first entry, the new Profile and appearance page, and every old
- * `/app/<page>` URL landing on its `/settings/<page>` twin with the rest of the URL kept.
+ * gated as before, an empty group hidden, the "Applies to" line (truthful for a seat scoped to
+ * one account), the campaign-settings pointer, `/settings` reopening the last page visited, the
+ * phone's one-picker sub-nav, the Profile and appearance page, and every old `/app/<page>` URL
+ * landing on its `/settings/<page>` twin with the rest of the URL kept.
  */
 
 const mocks = vi.hoisted(() => ({
   role: 'account_admin' as string | undefined,
   theme: 'dark' as 'dark' | 'light',
   toggleTheme: vi.fn(),
+  flagsOff: new Set<string>(),
+  memberships: [] as Array<{ tenant_id: string; account_id: string | null; role: string; status: string }>,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({
   useTenant: () => ({
     role: mocks.role,
+    tenantId: 't-1',
     accountId: 'a-1',
     accounts: [{ id: 'a-1', name: 'Pune Collections' }],
     activeTenant: { id: 't-1', name: 'Acme Finance' },
   }),
 }));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ isEnabled: () => true, status: 'ready' }),
+  useFeatureFlags: () => ({ isEnabled: (f: string) => !mocks.flagsOff.has(f), status: 'ready' }),
 }));
 vi.mock('../../contexts/GovernanceContext', () => ({ useGovernance: () => ({ isEnabled: () => true, loading: false }) }));
 vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { display_name: 'Priya Shah', email: 'priya@example.com', avatar_url: null } }),
+  useAuth: () => ({
+    user: { id: 'u-1', display_name: 'Priya Shah', email: 'priya@example.com', avatar_url: null },
+    memberships: mocks.memberships,
+  }),
 }));
 vi.mock('../../contexts/ThemeContext', () => ({
   useTheme: () => ({ theme: mocks.theme, toggleTheme: mocks.toggleTheme }),
@@ -68,6 +77,9 @@ beforeEach(() => {
   mocks.role = 'account_admin';
   mocks.theme = 'dark';
   mocks.toggleTheme.mockClear();
+  mocks.flagsOff = new Set();
+  mocks.memberships = [];
+  localStorage.clear();
 });
 afterEach(() => cleanup());
 
@@ -99,9 +111,18 @@ describe('the sub-nav', () => {
     expect(screen.getByTestId('settings-group-you')).toBeTruthy();
   });
 
-  it('points campaign settings at the campaign', () => {
+  it('points campaign settings at the campaign, with a link to Campaigns', () => {
     renderAt('/settings/team');
-    expect(screen.getByText(/Caller IDs, calling hours and retries belong to one campaign/)).toBeTruthy();
+    const hint = screen.getByTestId('settings-campaign-hint');
+    expect(hint.textContent).toMatch(/Caller IDs, calling hours and retries belong to one campaign/);
+    expect(within(hint).getByRole('link', { name: 'Campaigns' }).getAttribute('href')).toBe('/agency/campaigns');
+  });
+
+  it('says nothing about campaigns to a tenant without the dialer', () => {
+    mocks.flagsOff = new Set(['agency_dialer_enabled']);
+    renderAt('/settings/team');
+    expect(screen.queryByTestId('settings-campaign-hint')).toBeNull();
+    expect(screen.queryByText(/belong to one campaign/)).toBeNull();
   });
 
   it('never says "Notifications" on its own: it is Email notifications', () => {
@@ -121,13 +142,97 @@ describe('Applies to', () => {
   });
 });
 
-describe('/settings and Profile and appearance', () => {
-  it('opens the first entry, Profile and appearance', () => {
+describe('Applies to, by the reader’s seat', () => {
+  it('says the account, not the tenant, for people and access on a seat scoped to one account', () => {
+    mocks.memberships = [{ tenant_id: 't-1', account_id: 'a-1', role: 'account_admin', status: 'active' }];
+    renderAt('/settings/team');
+    expect(screen.getByTestId('settings-applies-to').textContent).toBe('Applies to: Pune Collections');
+  });
+
+  it('says the tenant for a tenant-wide seat', () => {
+    mocks.memberships = [{ tenant_id: 't-1', account_id: null, role: 'account_admin', status: 'active' }];
+    renderAt('/settings/team');
+    expect(screen.getByTestId('settings-applies-to').textContent).toBe('Applies to: all of Acme Finance');
+  });
+});
+
+describe('where /settings opens', () => {
+  it('opens Team for someone who manages people, the first time', () => {
+    renderAt('/settings');
+    expect(where()).toBe('/settings/team');
+  });
+
+  it('opens Profile and appearance for someone with no Team', () => {
+    mocks.role = 'viewer';
     renderAt('/settings');
     expect(screen.getByTestId('profile-email').textContent).toBe('priya@example.com');
     expect(screen.getByTestId('settings-nav-profile').getAttribute('aria-current')).toBe('page');
   });
 
+  it('reopens the page visited last', () => {
+    renderAt('/settings/inbound');
+    cleanup();
+    renderAt('/settings');
+    expect(where()).toBe('/settings/inbound');
+  });
+
+  it('passes over a last page the reader may no longer open', () => {
+    renderAt('/settings/inbound');
+    cleanup();
+    mocks.flagsOff = new Set(['agency_inbound_enabled']);
+    renderAt('/settings');
+    expect(where()).toBe('/settings/team');
+  });
+
+  it('remembers per person', () => {
+    renderAt('/settings/inbound');
+    expect(Object.keys(localStorage)).toEqual(['magick.settings.last:u-1']);
+  });
+
+  it('works with storage that throws', () => {
+    const own = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('blocked');
+      },
+    });
+    try {
+      renderAt('/settings/inbound');
+      cleanup();
+      renderAt('/settings');
+      expect(where()).toBe('/settings/team');
+    } finally {
+      if (own) Object.defineProperty(window, 'localStorage', own);
+      else delete (window as { localStorage?: Storage }).localStorage;
+    }
+  });
+});
+
+describe('on a phone', () => {
+  it('offers the sub-nav as one picker, which opens the page chosen', () => {
+    renderAt('/settings/team');
+    const picker = screen.getByLabelText('Settings page') as HTMLSelectElement;
+    expect(picker.value).toBe('team');
+    expect([...picker.querySelectorAll('optgroup')].map((g) => g.label)).toEqual([
+      'You',
+      'This account · Pune Collections',
+      'People and access',
+    ]);
+    fireEvent.change(picker, { target: { value: 'inbound' } });
+    expect(where()).toBe('/settings/inbound');
+  });
+
+  it('shows the picker instead of the full sub-nav at phone width, and only there', () => {
+    const css = readFileSync(resolve(__dirname, '../../pages/settings/SettingsLayout.module.css'), 'utf-8');
+    expect(css).toMatch(/\.compact \{\s*display: none;/);
+    const phone = css.slice(css.indexOf('@media (max-width: 768px)'));
+    expect(phone).toMatch(/\.compact \{\s*display: flex;/);
+    expect(phone).toMatch(/\.full \{\s*display: none;/);
+  });
+});
+
+describe('Profile and appearance', () => {
   it('shows the name and email without offering to edit them, and switches the theme', () => {
     renderAt('/settings/profile');
     expect(screen.getByTestId('profile-name').textContent).toBe('Priya Shah');

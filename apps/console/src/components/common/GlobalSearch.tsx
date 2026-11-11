@@ -10,20 +10,17 @@ import {
   FALLBACK_SEARCH_CALLING_CODE,
   loadCustomerSearchDefaultCallingCode,
 } from '../../hooks/useCustomerSearchDefaultCallingCode';
-import { listAgencyCampaigns } from '../../api/agencyCampaigns';
+import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
 import { browserStorage } from '../../utils/customerSearchRecent';
-import { DIALER_FLAG, type GateInput } from '../../utils/consoleNav';
+import { dialerOn, type GateInput } from '../../utils/consoleNav';
 import {
   canSearchCampaigns,
   canSearchNumbers,
   searchConsole,
   searchPlaceholder,
-  type SearchCampaign,
   type SearchResult,
 } from '../../utils/consoleSearch';
-import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';
 import styles from './GlobalSearch.module.css';
-
 
 /** Where customer history opens inside the console shell (`docs/customer-history.md` §5). */
 const CUSTOMER_RESULTS_PATH = '/agency/customers';
@@ -93,50 +90,40 @@ interface DialogProps {
   onClose: (restoreFocus: boolean) => void;
 }
 
-/** The reader's gates, with Missed calls' rule read only where the dialer can have it. */
+/**
+ * The reader's gates, with Missed calls' rule read only where the dialer can have it.
+ *
+ * One tree whatever resolves while it is open: the palette is always the second child, and the
+ * missed-calls reader beside it comes and goes, so flags or the account arriving never remount
+ * the palette and lose what was typed.
+ */
 function SearchDialog({ onClose }: DialogProps) {
   const { role, accountId } = useTenant();
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const { isEnabled: isCapabilityEnabled } = useGovernance();
-  const base: GateInput = { role, isFlagEnabled, isCapabilityEnabled };
-  const dialerOn = isCapabilityEnabled('agency') && isFlagEnabled(DIALER_FLAG);
-  if (dialerOn && accountId) return <DialogWithMissed base={base} onClose={onClose} />;
-  return <Palette gate={base} onClose={onClose} />;
+  const [missedAvailable, setMissedAvailable] = useState<boolean | undefined>(undefined);
+  const readMissed = dialerOn({ isFlagEnabled, isCapabilityEnabled }) && Boolean(accountId);
+  const gate: GateInput = {
+    role,
+    isFlagEnabled,
+    isCapabilityEnabled,
+    ...(readMissed && missedAvailable !== undefined ? { missedAvailable } : {}),
+  };
+  return (
+    <>
+      {readMissed ? <MissedAccessReader onRead={setMissedAvailable} /> : null}
+      <Palette gate={gate} onClose={onClose} />
+    </>
+  );
 }
 
-function DialogWithMissed({ base, onClose }: DialogProps & { base: GateInput }) {
-  // Shares the sidebar's read (`useMissedCallsCount`), so opening search asks for nothing new.
-  const missed = useMissedCallsAccess();
-  return <Palette gate={{ ...base, missedAvailable: missed.available }} onClose={onClose} />;
-}
-
-type CampaignsState =
-  | { status: 'idle' | 'loading' | 'error'; campaigns: null }
-  | { status: 'ready'; campaigns: SearchCampaign[] };
-
-/**
- * The account's campaigns, read once as the search opens (never per keystroke) and kept while it
- * is open; nothing is read for a reader the Campaigns page is not offered to.
- */
-function useSearchCampaigns(allowed: boolean, tenantId: string | null, accountId: string | null): CampaignsState {
-  const [state, setState] = useState<CampaignsState>({ status: 'idle', campaigns: null });
+/** Shares the sidebar's read (`useMissedCallsCount`), so opening search asks for nothing new. */
+function MissedAccessReader({ onRead }: { onRead: (available: boolean) => void }) {
+  const { available } = useMissedCallsAccess();
   useEffect(() => {
-    if (!allowed || !accountId) return undefined;
-    let live = true;
-    setState({ status: 'loading', campaigns: null });
-    listAgencyCampaigns(tenantId ?? undefined, accountId).then(
-      (rows) => {
-        if (live) setState({ status: 'ready', campaigns: rows.map((c) => ({ id: c.id, name: c.name })) });
-      },
-      () => {
-        if (live) setState({ status: 'error', campaigns: null });
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [allowed, tenantId, accountId]);
-  return state;
+    onRead(available);
+  }, [available, onRead]);
+  return null;
 }
 
 /** The customer-search country's calling code, read only for a reader who may search numbers. */
@@ -171,7 +158,8 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
   const campaignsAllowed = canSearchCampaigns(gate, accountId ?? null);
   const callingCode = useDefaultCallingCode(numbersAllowed, tenantId ?? null, accountId ?? null);
   const campaigns = useSearchCampaigns(campaignsAllowed, tenantId ?? null, accountId ?? null);
-  const numberSearch = useCustomerSearchRun(CUSTOMER_RESULTS_PATH, store);
+  const { run: runNumberSearch, busy: numberBusy, error: numberError, clearError: clearNumberError } =
+    useCustomerSearchRun(CUSTOMER_RESULTS_PATH, store);
   const placeholder = searchPlaceholder(numbersAllowed, campaignsAllowed);
 
   const answer = useMemo(
@@ -182,7 +170,6 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
         accountId: accountId ?? null,
         defaultCallingCode: callingCode,
         campaigns: campaigns.campaigns,
-        campaignSections: CAMPAIGN_SETTINGS_SECTIONS,
       }),
     // `gate` is rebuilt on each render from stable readers; its parts are what matter.
     [query, gate.role, gate.isFlagEnabled, gate.isCapabilityEnabled, gate.missedAvailable, accountId, callingCode, campaigns],
@@ -211,18 +198,21 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
         onClose(false);
         return;
       }
-      if (numberSearch.busy) return;
-      void numberSearch.run(result.target.raw, result.target.countryIso).then((opened) => {
+      if (numberBusy) return;
+      void runNumberSearch(result.target.raw, result.target.countryIso).then((opened) => {
         if (opened) onClose(false);
       });
     },
-    [navigate, onClose, numberSearch],
+    [navigate, onClose, numberBusy, runNumberSearch],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // The topmost layer only: the phone's navigation drawer under it, and the profile menu,
+        // skip an Escape already handled (`defaultPrevented`), and it goes no further anyway.
         e.preventDefault();
+        e.stopPropagation();
         onClose(true);
         return;
       }
@@ -257,7 +247,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
   const trimmed = query.trim();
   const campaignsLoading = campaignsAllowed && trimmed !== '' && campaigns.status === 'loading';
   const campaignsFailed = campaignsAllowed && trimmed !== '' && campaigns.status === 'error';
-  const status = numberSearch.busy
+  const status = numberBusy
     ? 'Searching…'
     : flat.length === 0
       ? trimmed === '' ? '' : 'No results'
@@ -299,7 +289,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
-              numberSearch.clearError();
+              clearNumberError();
             }}
           />
           <kbd className={styles.escKey} aria-hidden="true">Esc</kbd>
@@ -308,8 +298,8 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
         {answer.numberNote && (
           <p className={styles.note} data-testid="global-search-number-note">{answer.numberNote}</p>
         )}
-        {numberSearch.error && (
-          <p className={styles.error} role="alert" data-testid="global-search-error">{numberSearch.error}</p>
+        {numberError && (
+          <p className={styles.error} role="alert" data-testid="global-search-error">{numberError}</p>
         )}
 
         <div className={styles.results} ref={resultsRef} id={listboxId} role="listbox" aria-label="Results">

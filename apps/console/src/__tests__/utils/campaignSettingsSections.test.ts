@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import {
+  CAMPAIGN_SETTINGS_SECTIONS,
+  campaignHasAgentsSection,
+  campaignSettingsSectionsFor,
+} from '../../utils/campaignSettingsSections';
 
 /**
  * The campaign Settings page's sections. Search deep-links to `…/settings#<id>` by these, so
@@ -42,5 +48,28 @@ describe('CAMPAIGN_SETTINGS_SECTIONS', () => {
 
   it('spells its labels in British English', () => {
     expect(CAMPAIGN_SETTINGS_SECTIONS.find((s) => s.id === 'dialling-retries')?.label).toBe('Dialling and retries');
+  });
+});
+
+describe('the sections a campaign’s page has', () => {
+  const all = { assignmentEnabled: true, inboundEnabled: true, assignmentLeftovers: false, canSupervise: true };
+  const ids = (ctx: typeof all) => campaignSettingsSectionsFor(ctx).map((s) => s.id);
+
+  it('has Agents only with contact assignment, inbound calls or assignment settings left over', () => {
+    expect(campaignHasAgentsSection({ assignmentEnabled: false, inboundEnabled: false, assignmentLeftovers: false })).toBe(false);
+    expect(campaignHasAgentsSection({ assignmentEnabled: true, inboundEnabled: false, assignmentLeftovers: false })).toBe(true);
+    expect(campaignHasAgentsSection({ assignmentEnabled: false, inboundEnabled: true, assignmentLeftovers: false })).toBe(true);
+    expect(campaignHasAgentsSection({ assignmentEnabled: false, inboundEnabled: false, assignmentLeftovers: true })).toBe(true);
+    expect(ids({ ...all, assignmentEnabled: false, inboundEnabled: false })).not.toContain('agents');
+  });
+
+  it('has Lifecycle and uploads only at agency.supervise, and everything else always, in page order', () => {
+    expect(ids(all)).toEqual(CAMPAIGN_SETTINGS_SECTIONS.map((s) => s.id));
+    expect(ids({ ...all, canSupervise: false })).not.toContain('roster-uploads');
+  });
+
+  it('is what the Settings page reads to show Agents', () => {
+    const page = readFileSync(resolve(__dirname, '../../pages/agency/AgencyCampaignSettingsPage.tsx'), 'utf-8');
+    expect(page).toMatch(/const agentsVisible = campaignHasAgentsSection\(/);
   });
 });

@@ -4,19 +4,24 @@ import {
 } from '@magick-agency/domain/customer-search-number';
 import {
   CONSOLE_SECTIONS,
-  DIALER_FLAG,
   SETTINGS_ENTRIES,
+  agencyGate,
   passesGate,
   settingsGroupTitle,
   type Gate,
   type GateInput,
   type SettingsEntry,
 } from './consoleNav';
-import { CAMPAIGN_TABS } from './agencyCampaignTabs';
+import { CAMPAIGN_TABS, type CampaignTabDefinition, type CampaignTabId } from './agencyCampaignTabs';
+import { campaignSettingsSectionsFor } from './campaignSettingsSections';
+import { CONTACT_ASSIGNMENT_FLAG } from './agencyAssignmentCopy';
+import { INBOUND_FLAG } from './inbound/inboundFlag';
+import { hasPermission } from './permissions';
 
 /**
  * What ⌘K (`GlobalSearch`) finds, and what the Settings hub's "Find a setting" filters (B28):
- * a phone number's history, pages, Settings pages, campaigns and campaign settings sections.
+ * a phone number's history, pages, Settings pages, campaigns, each campaign's own pages (its
+ * tabs, Activity and Soft-phone calls) and campaign settings sections.
  *
  * Pure on purpose, like `consoleNav.ts`, whose tables it reads: the pages are the sidebar's
  * sections and tabs, and the Settings pages are the hub's entries, each offered under the gate
@@ -46,13 +51,14 @@ function matchesAll(tokens: readonly string[], text: string): boolean {
 
 /* ── Results ─────────────────────────────────────────────────────────────── */
 
-export type SearchGroupId = 'number' | 'pages' | 'settings' | 'campaigns' | 'campaign-settings';
+export type SearchGroupId = 'number' | 'pages' | 'settings' | 'campaigns' | 'campaign-pages' | 'campaign-settings';
 
 export const SEARCH_GROUP_TITLES: Record<SearchGroupId, string> = {
   number: 'Phone number',
   pages: 'Pages',
   settings: 'Settings',
   campaigns: 'Campaigns',
+  'campaign-pages': 'Campaign pages',
   'campaign-settings': 'Campaign settings',
 };
 
@@ -84,7 +90,8 @@ export interface SearchGroup {
  * The words that find each sidebar page, by `<section id>:<tab id>`. Optional: a page with no
  * row is still found by its label and its section's. `compliance` and `opt out` are kept off Do
  * Not Call on purpose: the list binds the dialler only, so it is not the answer to a wider
- * question.
+ * question. A page that was renamed keeps its old name here, so the word people learnt still
+ * finds it.
  */
 const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   'home:home': ['attention', 'today', 'floor', 'stalled', 'paused', 'overdue'],
@@ -93,8 +100,10 @@ const PAGE_KEYWORDS: Record<string, readonly string[]> = {
   'inbound:missed': ['missed calls', 'inbound', 'unanswered', 'callback', 'follow up'],
   'inbound:summary': ['inbound summary', 'queue', 'incoming'],
   'reports:analytics': ['analytics', 'stats', 'performance', 'agents'],
-  'reports:reports': ['report', 'export', 'pdf', 'workbook', 'excel', 'download', 'subscription'],
+  // "Reports" until the tab became Exports; the section is still Reports.
+  'reports:reports': ['report', 'reports', 'export', 'exports', 'pdf', 'workbook', 'excel', 'download', 'subscription'],
   'dnc:dnc': ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'dialling', 'dialing'],
+  'dialer:dialer': ['dialler', 'dialer', 'station', 'my calls', 'take calls', 'join campaign', 'agent workspace'],
 };
 
 /** A title the tab's own label would leave ambiguous out of its tab bar. */
@@ -111,13 +120,13 @@ interface PageEntry {
   keywords: readonly string[];
 }
 
-function agencyGate(gate: Gate): Gate {
-  return { ...gate, capabilities: ['agency', ...(gate.capabilities ?? [])], flags: [DIALER_FLAG, ...(gate.flags ?? [])] };
-}
+/** Customer history's gate: the permission, under the dialer whose accounts the search reads. */
+export const NUMBER_SEARCH_GATE: Gate = agencyGate({ permission: 'agency.customer_history.read' });
 
 /**
  * Pages that are not a sidebar entry or a tab but are worth going to directly. "New campaign" is
  * the Campaigns page's button, shown with `agency.campaigns.write` (`AgencyCampaignsPage`).
+ * Customer history is where a number's search lands; opened on its own it is the search box.
  */
 const EXTRA_PAGES: readonly PageEntry[] = [
   {
@@ -127,6 +136,13 @@ const EXTRA_PAGES: readonly PageEntry[] = [
     to: '/agency/campaigns/new',
     gate: agencyGate({ permission: 'agency.campaigns.write' }),
     keywords: ['create campaign', 'add campaign', 'upload', 'roster'],
+  },
+  {
+    key: 'customers:history',
+    title: 'Customer history',
+    to: '/agency/customers',
+    gate: NUMBER_SEARCH_GATE,
+    keywords: ['history', 'customer', 'phone number', 'search a number', 'look up', 'lookup', 'calls to a number'],
   },
 ];
 
@@ -148,8 +164,8 @@ export function searchPages(): PageEntry[] {
   );
   const campaignsAt = fromNav.findIndex((p) => p.key === 'campaigns:campaigns');
   const pages = [...fromNav];
-  pages.splice(campaignsAt + 1, 0, ...EXTRA_PAGES);
-  return pages;
+  pages.splice(campaignsAt + 1, 0, ...EXTRA_PAGES.filter((p) => p.key.startsWith('campaigns:')));
+  return [...pages, ...EXTRA_PAGES.filter((p) => !p.key.startsWith('campaigns:'))];
 }
 
 export function pageResults(tokens: readonly string[], gate: GateInput): SearchResult[] {
@@ -302,13 +318,44 @@ export function campaignsGate(): Gate {
   return tab ? tab.gate : agencyGate({ permission: 'agency.campaigns.read' });
 }
 
+/**
+ * A campaign screen's gate, as the tab bar gates it (`CAMPAIGN_TABS`: its permission and its
+ * flag), under the dialer. The campaign list's own gate comes on top: no campaign is offered
+ * without it.
+ */
+export function campaignTabGate(tab: Pick<CampaignTabDefinition, 'permission' | 'flag'>): Gate {
+  return agencyGate({
+    ...(tab.permission ? { permission: tab.permission } : {}),
+    ...(tab.flag ? { flags: [tab.flag] } : {}),
+  });
+}
+
 /** A campaign's Settings tab, gated as the tab bar gates it (`CAMPAIGN_TABS`). */
 export function campaignSettingsGate(): Gate {
   const tab = CAMPAIGN_TABS.find((t) => t.id === 'settings');
-  return agencyGate(tab?.permission ? { permission: tab.permission } : {});
+  return tab ? campaignTabGate(tab) : agencyGate({ permission: 'agency.supervise' });
 }
 
+/**
+ * The words that find each campaign screen, beside its label. Every screen needs a row
+ * (`consoleSearch.test.ts`). Old names stay: Call log was "Call attempts", and Activity is the
+ * header's History button.
+ */
+export const CAMPAIGN_TAB_KEYWORDS: Record<CampaignTabId, readonly string[]> = {
+  overview: ['overview', 'insights', 'headline', 'needs attention'],
+  calls: ['calls', 'outcomes', 'dispositions', 'trends'],
+  agents: ['agents', 'floor', 'staffing', 'assigned'],
+  callbacks: ['callbacks', 'callback', 'overdue', 'promised'],
+  health: ['health', 'abandonment', 'stalls', 'carrier failures'],
+  contacts: ['contacts', 'roster', 'contact list'],
+  attempts: ['call log', 'call attempts', 'attempts', 'dials', 'dialler calls'],
+  manual: ['soft phone calls', 'softphone calls', 'manual calls'],
+  activity: ['activity', 'history', 'audit', 'audit trail', 'who did what', 'changes'],
+  settings: ['settings', 'configure', 'set up'],
+};
+
 const MAX_CAMPAIGNS = 5;
+const MAX_CAMPAIGN_PAGES = 6;
 const MAX_CAMPAIGN_SECTIONS = 6;
 
 /** Campaigns whose name holds every word of the query, each with "<name> › Settings" when allowed. */
@@ -339,6 +386,41 @@ export function campaignResults(
       };
       return [open, settings];
     });
+}
+
+/**
+ * A campaign's own page ("Diwali renewals › Call log") in each campaign the query names: every
+ * word must be in the campaign's name or the page's words, and at least one in the page's, so
+ * "call log" lists the newest campaigns' Call log and "diwali history" Diwali renewals' Activity.
+ * Only the screens the reader may open (`gate`, each as its tab), in tab order.
+ */
+export function campaignPageResults(
+  campaigns: readonly SearchCampaign[],
+  query: string,
+  gate: GateInput,
+): SearchResult[] {
+  const tokens = searchTokens(query);
+  if (tokens.length === 0) return [];
+  const results: SearchResult[] = [];
+  for (const tab of CAMPAIGN_TABS) {
+    if (!passesGate(campaignTabGate(tab), gate)) continue;
+    const tabText = haystack([tab.label, ...CAMPAIGN_TAB_KEYWORDS[tab.id]]);
+    if (!tokens.some((t) => tabText.includes(t))) continue;
+    for (const c of campaigns) {
+      const name = normalise(c.name);
+      if (!tokens.every((t) => tabText.includes(t) || name.includes(t))) continue;
+      results.push({
+        // The Settings tab's key is the campaign row's own "› Settings", so the two never both show.
+        key: tab.id === 'settings' ? `campaign:${c.id}:settings` : `campaign-page:${c.id}:${tab.id}`,
+        group: 'campaign-pages',
+        title: `${c.name} › ${tab.label}`,
+        kind: 'Campaign',
+        target: { type: 'path', to: tab.path(c.id) },
+      });
+      if (results.length >= MAX_CAMPAIGN_PAGES) return results;
+    }
+  }
+  return results;
 }
 
 /**
@@ -375,9 +457,6 @@ export function campaignSettingsResults(
 }
 
 /* ── A phone number ──────────────────────────────────────────────────────── */
-
-/** Customer history's gate: the permission, under the dialer whose accounts the search reads. */
-export const NUMBER_SEARCH_GATE: Gate = agencyGate({ permission: 'agency.customer_history.read' });
 
 /** Only phone characters, with at least three digits: what someone typing a number types. */
 const PHONE_LIKE = /^[+\d\s().-]+$/;
@@ -426,13 +505,30 @@ export interface SearchInput {
   defaultCallingCode: string;
   /** The account's campaigns, or null while unread (or not readable). */
   campaigns: readonly SearchCampaign[] | null;
-  campaignSections: readonly CampaignSettingsSection[];
 }
 
 export interface SearchAnswer {
   groups: SearchGroup[];
-  /** The refusal for a number-like query, shown above the results and never selectable. */
+  /**
+   * The refusal for a number-like query, shown above the results and never selectable. Null
+   * when anything else matched: "2026" may be a campaign's name rather than half a number.
+   */
   numberNote: string | null;
+}
+
+/**
+ * The campaign Settings sections search may link to: the ones every campaign's page has for
+ * this reader (`campaignSettingsSectionsFor`). Agents is left out when its page might not show
+ * it: without contact assignment or inbound calls it is there only for a campaign with
+ * contact-assignment settings left over, which the campaign list does not say.
+ */
+export function searchableCampaignSections(gate: GateInput): CampaignSettingsSection[] {
+  return campaignSettingsSectionsFor({
+    assignmentEnabled: gate.isFlagEnabled(CONTACT_ASSIGNMENT_FLAG),
+    inboundEnabled: gate.isFlagEnabled(INBOUND_FLAG),
+    assignmentLeftovers: false,
+    canSupervise: hasPermission(gate.role, 'agency.supervise'),
+  });
 }
 
 /** Whether this reader may search numbers here (the old "Search a number" button's rule). */
@@ -461,13 +557,19 @@ export function searchConsole(input: SearchInput): SearchAnswer {
 
   if (input.campaigns && canSearchCampaigns(input.gate, input.accountId)) {
     const withSettings = passesGate(campaignSettingsGate(), input.gate);
-    groups.push(group('campaigns', campaignResults(input.campaigns, tokens, withSettings)));
+    const campaigns = campaignResults(input.campaigns, tokens, withSettings);
+    const shown = new Set(campaigns.map((r) => r.key));
+    groups.push(group('campaigns', campaigns));
+    groups.push(group('campaign-pages', campaignPageResults(input.campaigns, input.query, input.gate).filter((r) => !shown.has(r.key))));
     if (withSettings) {
-      groups.push(group('campaign-settings', campaignSettingsResults(input.campaigns, input.campaignSections, input.query)));
+      const sections = searchableCampaignSections(input.gate);
+      groups.push(group('campaign-settings', campaignSettingsResults(input.campaigns, sections, input.query)));
     }
   }
 
-  return { groups: groups.filter((g) => g.results.length > 0), numberNote };
+  const found = groups.filter((g) => g.results.length > 0);
+  const others = found.some((g) => g.id !== 'number');
+  return { groups: found, numberNote: others ? null : numberNote };
 }
 
 function group(id: SearchGroupId, results: SearchResult[]): SearchGroup {

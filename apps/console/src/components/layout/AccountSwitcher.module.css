@@ -1,27 +1,28 @@
+/* The account line of the sidebar's context block (decision B28): in bold. */
 .switcher {
   position: relative;
+  width: 100%;
 }
 
 .trigger {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
+  width: 100%;
+  background: none;
+  border: 1px solid transparent;
   border-radius: var(--radius);
-  padding: 6px 12px;
+  padding: 2px 4px;
   cursor: pointer;
   color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   min-height: auto;
   transition: all var(--transition);
-  max-width: 200px;
 }
 
-.trigger:hover {
-  border-color: var(--border-focus);
-  background: var(--bg-elevated);
+button.trigger:hover {
+  background: var(--bg-tertiary);
 }
 
 .triggerIcon {
@@ -32,6 +33,9 @@
 }
 
 .triggerName {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -47,33 +51,6 @@
 
 .triggerChevronOpen {
   transform: rotate(180deg);
-}
-
-@media (max-width: 768px) {
-  .trigger {
-    max-width: 140px;
-    padding: 6px 8px;
-  }
-
-  .triggerName {
-    font-size: 12px;
-  }
-
-  .triggerChevron {
-    display: none;
-  }
-}
-
-@media (max-width: 480px) {
-  .trigger {
-    max-width: 100px;
-    padding: 6px;
-    gap: 4px;
-  }
-
-  .triggerName {
-    font-size: 11px;
-  }
 }
 
 /*
@@ -108,39 +85,4 @@
   width: 0.85rem;
   height: 0.85rem;
   flex-shrink: 0;
-}
-
-/* The sidebar's context block (decision B28). */
-.contextSwitcher {
-  width: 100%;
-}
-
-.contextTrigger,
-.contextTrigger:hover {
-  width: 100%;
-  max-width: none;
-  background: none;
-  border-color: transparent;
-  padding: 2px 4px;
-}
-
-button.contextTrigger:hover {
-  background: var(--bg-tertiary);
-}
-
-.contextTrigger .triggerName {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-
-.contextTrigger {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-@media (max-width: 768px) {
-  .contextTrigger {
-    max-width: none;
-  }
 }

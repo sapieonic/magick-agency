@@ -129,6 +129,40 @@
   color: var(--text-muted);
 }
 
+/* The sub-nav as one picker: phones only (see the media query below). */
+.compact {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.compactLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.compactSelect {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+}
+
+.full {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hint a {
+  color: var(--accent);
+}
+
 .page {
   min-width: 0;
 }
@@ -152,5 +186,14 @@
 
   .side {
     position: static;
+  }
+
+  /* On a phone the sub-nav would stack above every page: one picker instead. */
+  .compact {
+    display: flex;
+  }
+
+  .full {
+    display: none;
   }
 }

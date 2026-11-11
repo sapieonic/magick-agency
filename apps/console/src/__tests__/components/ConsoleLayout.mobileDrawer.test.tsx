@@ -202,3 +202,48 @@ describe('ConsoleLayout — one shell for both zones', () => {
     expect(layoutMocks.useProductSurface).toHaveBeenLastCalledWith('ai');
   });
 });
+
+describe('ConsoleLayout — widening past the phone breakpoint with the drawer open', () => {
+  /** A media query whose answer the test changes, telling its listeners as a browser would. */
+  function liveMatchMedia(initial: boolean) {
+    let mobile = initial;
+    const listeners = new Set<() => void>();
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      get matches() {
+        return query === MOBILE_MEDIA ? mobile : false;
+      },
+      media: query,
+      addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+      removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+    }));
+    return (next: boolean) => {
+      mobile = next;
+      act(() => listeners.forEach((fn) => fn()));
+    };
+  }
+
+  it('leaves nothing inert, keeps focus where it was in the sidebar, and forgets the drawer', async () => {
+    const resize = liveMatchMedia(true);
+    renderLayout();
+    const toggle = getToggle();
+    act(() => toggle.focus());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Close menu'));
+    const focused = document.activeElement;
+
+    resize(false);
+
+    const mainWrapper = screen.getByText('Dashboard content').closest('main')!.parentElement!;
+    expect(getDrawer().inert).toBe(false);
+    expect(mainWrapper.inert).toBe(false);
+    expect(getDrawer().getAttribute('role')).toBeNull();
+    // Not thrown back to the toggle, which a desktop hides.
+    expect(document.activeElement).toBe(focused);
+    expect(getToggle().getAttribute('aria-expanded')).toBe('false');
+
+    // Back to a phone: the drawer is closed, not reopened.
+    resize(true);
+    expect(getDrawer().inert).toBe(true);
+    expect(mainWrapper.inert).toBe(false);
+  });
+});

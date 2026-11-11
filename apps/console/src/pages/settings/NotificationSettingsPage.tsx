@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Mail, Save } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useGateReaders } from '../../hooks/useGateReaders';
+import { HOME_GATE, HOME_PATH, passesGate } from '../../utils/consoleNav';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import {
   getNotificationPreferences,
@@ -89,7 +92,10 @@ function isAtDefault(
 }
 
 export default function NotificationSettingsPage() {
-  const { tenantId } = useTenant();
+  const { tenantId, role } = useTenant();
+  const readers = useGateReaders();
+  /* Home lists what needs a supervisor now; point there only for a reader Home is offered to. */
+  const homeShown = passesGate(HOME_GATE, { role, ...readers });
   const { showToast, showErrorToast } = useToast();
 
   const [events, setEvents] = useState<NotificationEventPreference[]>([]);
@@ -257,6 +263,16 @@ export default function NotificationSettingsPage() {
           'A summary is only sent for periods with activity, so a quiet week means no email.',
         ]}
       />
+
+      {homeShown && (
+        <aside className={styles.homeAside} data-testid="notifications-home-aside">
+          <p>
+            Looking for what needs you right now? Paused campaigns, overdue callbacks and missed calls
+            are listed on Home, under Needs your attention.
+          </p>
+          <Link to={HOME_PATH} className={styles.homeAsideLink}>Go to Home</Link>
+        </aside>
+      )}
 
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
 

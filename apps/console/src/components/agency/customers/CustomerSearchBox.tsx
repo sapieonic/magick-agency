@@ -99,8 +99,7 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
   /** `null` until the person picks: the picker follows the platform default until then. */
   const [countryIso, setCountryIso] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const search = useCustomerSearchRun(resultsPath, store);
-  const { busy, error: serverError, clearError: clearServerError } = search;
+  const { run: runSearch, busy, error: serverError, clearError: clearServerError } = useCustomerSearchRun(resultsPath, store);
   const recent = useRecentCustomerSearches(store);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -117,13 +116,13 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
 
   const run = useCallback(
     async (value: string, iso: string) => {
-      if (await search.run(value, iso)) {
+      if (await runSearch(value, iso)) {
         setRaw('');
         setRevealed(false);
         onSearched?.();
       }
     },
-    [search, onSearched],
+    [runSearch, onSearched],
   );
 
   const onSubmit = useCallback(
