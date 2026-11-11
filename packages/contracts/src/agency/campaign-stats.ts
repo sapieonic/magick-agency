@@ -155,6 +155,19 @@ export interface AgencySupervisorAgent {
    * Optional on the wire like `redials`: absent from a server that predates it.
    */
   inbound_outcome_owed?: boolean;
+  /**
+   * IQ56: whether the session's live station can take inbound calls (`caps=inbound` on a phone's
+   * station upgrade; every console can). `false`: a phone on an app build that did not declare it
+   * — never offered an inbound caller nor counted as one who could take one — which the floor marks
+   * "App can't take inbound calls — update the app". `null`: no live station held by the process
+   * that served this read (none at all, or, with media workers, one a worker holds: such a
+   * deployment never puts inbound callers through, IB8, so the question does not arise). Optional
+   * on the wire like `inbound_outcome_owed`: absent from a server that predates it.
+   *
+   * **Composed by the ROUTE** ({@link AGENCY_AGENT_ROUTE_FIELDS}): the capability lives on the
+   * live socket (`StationRegistry`), never the session row.
+   */
+  can_take_inbound?: boolean | null;
 }
 
 /**
@@ -170,7 +183,7 @@ export interface AgencySupervisorAgent {
  * dependency behind `stats()`, where every other field is a query.
  */
 export const AGENCY_AGENT_ROUTE_FIELDS =
-  ['connected'] as const satisfies readonly (keyof AgencySupervisorAgent)[];
+  ['connected', 'can_take_inbound'] as const satisfies readonly (keyof AgencySupervisorAgent)[];
 
 /**
  * One floor row **as the database can answer it** — everything except the fields

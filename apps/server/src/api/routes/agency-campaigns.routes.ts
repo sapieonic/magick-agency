@@ -56,7 +56,14 @@ export interface AgencyCampaignRouteDeps {
      * distinguish a Redis fault from an absent key, so it would report every agent
      * disconnected during a blip. See the method's own comment.
      */
-    stations: { connectedBySession(sessionIds: readonly string[]): Promise<Map<string, boolean>> };
+    stations: {
+      connectedBySession(sessionIds: readonly string[]): Promise<Map<string, boolean>>;
+      /**
+       * IQ56: the floor's "can take inbound calls" column, from the stations this process holds
+       * (`StationRegistry.inboundCapabilityBySession`); a session missing from the map is `null`.
+       */
+      inboundCapabilityBySession(sessionIds: readonly string[]): Map<string, boolean>;
+    };
   };
   callManager: {
     accountConcurrencyGuard: Pick<AccountConcurrencyGuard, 'getDistributedAccountCount'>;

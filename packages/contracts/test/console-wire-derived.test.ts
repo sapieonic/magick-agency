@@ -124,6 +124,8 @@ interface OldAgencySupervisorAgent {
   on_inbound_call: boolean;
   // Added deliberately (inbound fix pass): the floor's inbound wrap-up and its "Close and make available".
   inbound_outcome_owed?: boolean;
+  // Added deliberately (IQ56): the live station can take inbound calls (`caps=inbound`); null: none here.
+  can_take_inbound?: boolean | null;
 }
 
 interface OldAgencyCampaignStats {

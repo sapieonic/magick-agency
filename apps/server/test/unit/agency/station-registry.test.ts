@@ -221,6 +221,11 @@ describe('StationRegistry frame delivery', () => {
       expect(reg.get('old')!.canTakeInbound).toBe(false);
       expect(reg.get('capable')!.canTakeInbound).toBe(true);
       expect(reg.get('desk')!.canTakeInbound).toBe(true);
+      // IQ56: the floor's column, from the stations held here; a session with none is absent.
+      expect(reg.inboundCapabilityBySession(['old', 'capable', 'desk', 'elsewhere'])).toEqual(
+        new Map([['old', false], ['capable', true], ['desk', true]]),
+      );
+      expect(reg.inboundCapabilityBySession([])).toEqual(new Map());
       const frames = [
         { event: 'inbound_call', call: { id: 'c1' } },
         { event: 'customer_waiting', inbound_call_id: 'c1', from_e164: '+447700900000', waiting_since: '2026-11-09T10:00:00.000Z' },

@@ -224,7 +224,7 @@ describe('agency agent surfaces through the in-process internal hop (integration
       campaigns: {
         runtime: {
           dnc: { appliedVersion: async () => null },
-          stations: { connectedBySession: async () => new Map<string, boolean>() },
+          stations: { connectedBySession: async () => new Map<string, boolean>(), inboundCapabilityBySession: () => new Map<string, boolean>() },
         },
         callManager: {
           accountConcurrencyGuard: {

@@ -518,6 +518,21 @@ export class StationRegistry {
     return this.stations.get(sessionId);
   }
 
+  /**
+   * IQ56: of `sessionIds`, those whose station THIS process holds, each with whether it can take
+   * inbound calls (`canTakeInbound`: every console, and a phone that declared `caps=inbound`). A
+   * session missing from the map has no station here (none at all, or one a media worker holds).
+   * Process-local and synchronous: the capability is on the live socket, never in Redis or the row.
+   */
+  inboundCapabilityBySession(sessionIds: readonly string[]): Map<string, boolean> {
+    const out = new Map<string, boolean>();
+    for (const id of sessionIds) {
+      const entry = this.stations.get(id);
+      if (entry) out.set(id, entry.canTakeInbound);
+    }
+    return out;
+  }
+
   /** The live socket for an agent, if this replica holds it. */
   socketFor(sessionId: string): WebSocket | undefined {
     return this.stations.get(sessionId)?.ws;
