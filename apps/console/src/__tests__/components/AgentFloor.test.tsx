@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
   forceAgentAvailable: vi.fn(),
   trackAgencyFloorIntervention: vi.fn(),
+  inboundOn: true,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -28,6 +29,9 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
 vi.mock('../../api/agency', () => ({ forceAgentAvailable: mocks.forceAgentAvailable }));
+vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
+  useFeatureFlagEnabled: (flag: string) => flag === 'agency_inbound_enabled' && mocks.inboundOn,
+}));
 vi.mock('../../analytics/events', () => ({
   trackAgencyFloorIntervention: mocks.trackAgencyFloorIntervention,
 }));
@@ -607,6 +611,18 @@ describe('the floor as a table', () => {
     expect(tag.textContent).toBe('Update appApp can’t take inbound calls — update the app');
     expect(within(screen.getByTestId('floor-row-old')).getByText('App can’t take inbound calls — update the app')).toBeTruthy();
     for (const id of ['new', 'unknown', 'desk']) expect(screen.queryByTestId(`floor-update-app-${id}`), id).toBeNull();
+  });
+
+  it('IQ56: no update tag on an account without inbound calls (the flag off)', () => {
+    mocks.inboundOn = false;
+    try {
+      renderFloor({ stats: stats([
+        agent({ session_id: 'old', agent_name: 'Meera', client_kind: 'mobile', can_take_inbound: false }),
+      ]) });
+      expect(screen.queryByTestId('floor-update-app-old')).toBeNull();
+    } finally {
+      mocks.inboundOn = true;
+    }
   });
 
   it('keeps the break reason beside the state', () => {

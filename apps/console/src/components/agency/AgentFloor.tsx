@@ -35,6 +35,8 @@ import type {
 import { AgentFloorDrawer } from './AgentFloorDrawer';
 import { formatCount } from '../../utils/format/number';
 import styles from './AgentFloor.module.css';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 
 /**
  * The agent floor — the half of the supervisor screen that answers
@@ -236,9 +238,12 @@ function AgentRow({
   ranked,
   busiest,
   canSupervise,
+  inboundOn,
   onOpen,
 }: {
   ranked: RankedFloorAgent;
+  /** `agency_inbound_enabled`: the IQ56 tag means nothing on an account that takes no inbound calls. */
+  inboundOn: boolean;
   /** The floor's busiest agent — what this row's bar is drawn against. */
   busiest: number;
   canSupervise: boolean;
@@ -325,7 +330,7 @@ function AgentRow({
             The short words are shown; the whole sentence is the tooltip and what a
             screen reader hears. Nothing for `null` (no live station known here).
           */}
-          {cannotTakeInbound(agent) && (
+          {inboundOn && cannotTakeInbound(agent) && (
             <span
               className={styles.updateAppTag}
               title={APP_CANNOT_TAKE_INBOUND_LABEL}
@@ -414,6 +419,7 @@ export function AgentFloor({ campaignId, stats, wrapupSeconds, canSupervise, onF
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
 
   const agents = stats?.agents;
+  const inboundOn = useFeatureFlagEnabled(INBOUND_FLAG);
   const now = useTickingNow((agents?.length ?? 0) > 0);
   const summary = stateSummary(stats?.agents_by_state);
 
@@ -566,6 +572,7 @@ export function AgentFloor({ campaignId, stats, wrapupSeconds, canSupervise, onF
                       ranked={entry}
                       busiest={busiest}
                       canSupervise={canSupervise}
+                      inboundOn={inboundOn}
                       onOpen={(agent) => {
                         // Bucketed state, never the agent's id/name — see events.ts.
                         trackAgencyFloorIntervention({
