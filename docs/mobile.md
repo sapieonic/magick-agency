@@ -629,6 +629,45 @@ agent's Missed calls (above).
   after a requeue reports its own whole funnel. Ids, codes and flags only:
   never the number, a name or the notes.
 
+## The ring channel (Mode B)
+
+**Frozen: the contract WP3 (Android native) and WP4 (Flutter) build against** (2026-11-12, Mode B,
+decisions IQ58–IQ74; the wire types are `agency_wire`'s `push_devices.dart` and the ring fields of
+`InboundCall`). Not built yet: nothing in the app opens this channel today. Change it only
+deliberately, on both sides at once, and update this section in the same commit.
+
+One `MethodChannel` named **`magick_agency/ring`**, standard codec, used in both directions. Every
+argument and result is a map with string keys (or `null`, a string, a bool); ids and tokens are
+strings exactly as the server sent them. The offer token is never logged on either side.
+
+**Dart → native** (`invokeMethod`):
+
+| Method | Arguments | Result |
+|---|---|---|
+| `getToken` | none | `String?`: the FCM registration token; `null` when push is unavailable (no Firebase defines, no Play services) |
+| `pendingAnswer` | none | `{call_id, offer_token, session_id}` or `null`: the ring the agent answered while Flutter was not running (a cold start from the full-screen intent). **Cleared on read**: a second call answers `null` |
+| `checklist` | none | `{notifications, full_screen, battery_exempt, microphone, phone_account, dnd_allows_calls}`, each a `bool`: whether that permission or setting lets the phone ring |
+| `openSettings` | `{item}`: one of the `checklist` keys | `null`: opens the system screen that fixes it |
+| `reportBound` | `{call_id}` | `null`: the station has bound the call's audio; native marks the Telecom connection active and stops the grace |
+| `reportEnded` | `{call_id, reason}`: `ended` (the call ended after it bound), `accept_failed` (accept or the attach failed inside the grace, after one retry), `cancelled` (the server says the ring is over, or another agent took the caller) | `null`: native disconnects the Telecom connection and drops the call notification |
+| `showAwayNotification` | `{on}`: `bool` | `null`: shows or removes the ongoing "Away · inbound calls ring this phone" notification (actions "Back to calls", "Stop ringing") |
+| `showMissedRing` | none | `null`: posts the local "Missed inbound call" notification (no name, no number) |
+
+**Native → Dart** (native calls `invokeMethod` on the same channel; Dart's handler answers `null`):
+
+| Method | Arguments | When |
+|---|---|---|
+| `token` | `{token}` | FCM issued a new token (`onNewToken`); Dart registers it (`PUT /push-devices/:deviceId`) |
+| `ringAnswered` | `{call_id, offer_token, session_id}` | The agent answered with Flutter running; native has already posted `…/ring/answering`. Dart accepts (`…/ring/accept`) and attaches the station |
+| `ringEnded` | `{call_id, reason}`: an `InboundRingResult` wire value (`declined`, `busy_on_phone`, `expired`, or a `ring_cancel` push's reason) | A ring ended on the phone without being answered |
+| `testRingReceived` | none | A `test_ring` push arrived and rang locally (the settings card's success) |
+| `stopRingingTapped` | none | The away notification's "Stop ringing"; Dart sends `PATCH ring_enabled=false` |
+
+A push reaches native only (`RingMessagingService`, payload `AgencyRingPush`); Dart never handles a
+push itself. Native posts `…/ring/answering` and `…/ring/decline` (the offer token only, IQ71) at
+the tap without starting Flutter; `…/ring/accept` (Firebase Bearer and the station device id) is
+always Dart's.
+
 ## Inside the app
 
 ```
