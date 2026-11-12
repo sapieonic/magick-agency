@@ -391,10 +391,14 @@ export function activityTargetLabel(type: string | null): string {
 /**
  * Where a row's target opens in the console, or `null` when it has no page of its own
  * (then the id is shown short, copyable). Routes are written without the URL scope.
+ * A soft-phone call's page is behind `agency_softphone_enabled` (`softphoneEnabled`); its
+ * rows stay in the history after the soft phone is turned off, and then are not linked to a
+ * page that would only say it is unavailable.
  */
 export function activityTargetPath(
   target: { type: string | null; id: string | null },
   campaignId: string,
+  softphoneEnabled: boolean,
 ): string | null {
   if (!target.id) return null;
   switch (target.type) {
@@ -404,7 +408,7 @@ export function activityTargetPath(
     case 'agency_contact':
       return `/agency/campaigns/${campaignId}/contacts/${target.id}`;
     case 'agency_manual_call':
-      return `/agency/softphone/calls/${target.id}`;
+      return softphoneEnabled ? `/agency/softphone/calls/${target.id}` : null;
     default:
       return null;
   }

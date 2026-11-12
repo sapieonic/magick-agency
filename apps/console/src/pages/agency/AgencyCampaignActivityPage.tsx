@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, ArrowLeft, Calendar, Download, History, ListChecks, RefreshCw } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agencyActivity';
@@ -872,10 +873,12 @@ function TargetCell({
   target: ActivityRow['target'];
   campaignId: string;
 }) {
+  // The soft-phone call page's own gate: off, its rows show the id instead of a dead link.
+  const softphoneEnabled = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   if (!target.id) return <>—</>;
   if (target.type === 'agency_campaign' && target.id === campaignId) return <>This campaign</>;
   const label = activityTargetLabel(target.type);
-  const path = activityTargetPath(target, campaignId);
+  const path = activityTargetPath(target, campaignId, softphoneEnabled);
   if (path) {
     return (
       <Link to={path} className={styles.targetLink} title={target.id}>

@@ -48,8 +48,12 @@ interface InsightsPanelProps {
   shellStatus: string;
   /** Which tab is on screen (decision IN13): each shows its own sections over the same reads. */
   view: CampaignPanelId;
-  /** The overdue callbacks as of now, for the Callbacks tab's badge; null until known. */
-  onCallbacksOverdue?: (count: number | null) => void;
+  /**
+   * The overdue callbacks as of now, for the Callbacks tab's badge; null until known. With the
+   * campaign the count was read for: a reload keeps the last answer on screen, so for a moment
+   * after the route moves to another campaign the allocation is still the previous one's.
+   */
+  onCallbacksOverdue?: (count: number | null, campaignId: string | null) => void;
 }
 
 /** The range reads each tab shows. */
@@ -182,9 +186,10 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
 
   // The Callbacks tab's badge, as of now (the allocation is polled).
   const overdueNow = allocation ? allocation.totals.callbacks_overdue : null;
+  const overdueFor = allocation ? allocation.campaign_id : null;
   useEffect(() => {
-    onCallbacksOverdue?.(overdueNow);
-  }, [overdueNow, onCallbacksOverdue]);
+    onCallbacksOverdue?.(overdueNow, overdueFor);
+  }, [overdueNow, overdueFor, onCallbacksOverdue]);
   const activity = rangeData.activity.data;
   const names = useMemo(() => {
     const map = new Map<string, string>();

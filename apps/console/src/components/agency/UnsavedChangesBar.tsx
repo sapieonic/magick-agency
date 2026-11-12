@@ -7,10 +7,13 @@ interface UnsavedChangesBarProps {
   /** How many settings differ from what is saved; the bar shows only above zero. */
   count: number;
   saving: boolean;
-  /** Why Save cannot go yet (a field to fix), or why the last save did not; said in the bar. */
+  /**
+   * Why Save is held back (a field to fix), or null when it may go. Save is disabled exactly
+   * while this is set, so a held Save always says why.
+   */
+  blockedReason: string | null;
+  /** Anything else worth saying beside the count, such as why the last save did not go. */
   note: string | null;
-  /** Save is held back until the note's problem is fixed. */
-  blocked: boolean;
   onDiscard: () => void;
   onSave: () => void;
 }
@@ -18,27 +21,30 @@ interface UnsavedChangesBarProps {
 /**
  * A form's Save, where the person is: a bar stuck to the bottom of the view while anything is
  * unsaved — "3 unsaved changes · Discard · Save changes" — and gone once it is saved or
- * discarded. The count is also said through a polite live region that stays on the page, so a
- * screen reader hears it appear and change without focus moving off the field being edited.
+ * discarded. The count and the note are also said through a polite live region that stays on
+ * the page, so a screen reader hears them appear and change without focus moving off the field
+ * being edited: a save that fails, or a Save that a field holds back, is heard and not only seen.
  */
-export function UnsavedChangesBar({ count, saving, note, blocked, onDiscard, onSave }: UnsavedChangesBarProps) {
+export function UnsavedChangesBar({ count, saving, blockedReason, note, onDiscard, onSave }: UnsavedChangesBarProps) {
   const summary = count > 0 ? plural(count, 'unsaved change') : '';
+  const said = blockedReason ?? note;
   return (
     <>
       <p className="sr-only" role="status" aria-live="polite" data-testid="unsaved-changes-status">
-        {summary}
+        {summary && said ? `${summary}. ${said}` : summary}
       </p>
       {count > 0 && (
         <div className={styles.bar} role="region" aria-label="Unsaved changes" data-testid="unsaved-changes-bar">
-          <div className={styles.copy}>
-            <p className={styles.count} aria-hidden="true">{summary}</p>
-            {note && <p className={styles.note}>{note}</p>}
+          {/* Said through the live region above; hidden here so it is not read twice. */}
+          <div className={styles.copy} aria-hidden="true">
+            <p className={styles.count}>{summary}</p>
+            {said && <p className={styles.note} data-testid="unsaved-changes-note">{said}</p>}
           </div>
           <div className={styles.actions}>
             <button type="button" className="btn-secondary" onClick={onDiscard} disabled={saving}>
               Discard
             </button>
-            <button type="button" className="btn-primary" onClick={onSave} disabled={saving || blocked}>
+            <button type="button" className="btn-primary" onClick={onSave} disabled={saving || blockedReason !== null}>
               {saving ? 'Saving…' : 'Save changes'}
             </button>
           </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
@@ -56,8 +56,16 @@ export function AgencyCampaignDetailPage() {
   const [retryOpen, setRetryOpen] = useState(false);
   /** Bumped by the Refresh control so the analytic tabs' range reads re-read too. */
   const [insightsRefresh, setInsightsRefresh] = useState(0);
-  /** Overdue callbacks as of now, reported by the insights panel: the Callbacks tab's badge. */
-  const [callbacksOverdue, setCallbacksOverdue] = useState<number | null>(null);
+  /**
+   * Overdue callbacks as of now, reported by the insights panel: the Callbacks tab's badge. Kept
+   * with the campaign it was read for, because the route has no `key`: moving from one campaign
+   * to another keeps this page mounted, and the previous campaign's count must not be shown or
+   * published under the next one's id while its own allocation is on its way.
+   */
+  const [overdueReport, setOverdueReport] = useState<{ campaignId: string; count: number } | null>(null);
+  const reportCallbacksOverdue = useCallback((count: number | null, campaignId: string | null) => {
+    setOverdueReport(count === null || campaignId === null ? null : { campaignId, count });
+  }, []);
 
   /**
    * `agency.supervise`, floored at `account_admin`.
@@ -124,6 +132,7 @@ export function AgencyCampaignDetailPage() {
   */
   const onShift = agentsOnShift(stats?.agents);
   const shownId = campaign?.id;
+  const callbacksOverdue = overdueReport && overdueReport.campaignId === shownId ? overdueReport.count : null;
   useEffect(() => {
     if (shownId && tenantId && accountId && onShift !== null) publishCampaignTabBadge('onShift', tenantId, accountId, shownId, onShift);
     // On `stats` as well as the count: each poll's answer is fresh even when the count is unchanged.
@@ -287,7 +296,7 @@ export function AgencyCampaignDetailPage() {
           refreshToken={insightsRefresh}
           shellStatus={campaign.status}
           view={panel}
-          onCallbacksOverdue={setCallbacksOverdue}
+          onCallbacksOverdue={reportCallbacksOverdue}
         />
       ) : panel === 'agents' ? null : role === undefined ? (
         <LoadingSpinner />

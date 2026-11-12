@@ -60,6 +60,8 @@ import {
   campaignAttemptFiltersToParams,
   isCampaignAttemptFiltered,
   phoneFilterUsable,
+  phoneFilterDraftError,
+  INVERTED_RANGE_COPY,
 } from '../../utils/agencyCampaignAttemptParams';
 import { formatCount } from '../../utils/format/number';
 import styles from './AgencyCampaignAttemptsPage.module.css';
@@ -136,6 +138,8 @@ export function AgencyCampaignAttemptsPage() {
   // export is guaranteed to match exactly what is on screen.
   const [draftOutcomes, setDraftOutcomes] = useState<string[]>(() => filters.outcome ?? []);
   const [draftPhone, setDraftPhone] = useState(() => filters.phone ?? '');
+  /** Apply was pressed on a phone filter with no digit: say so even for a bare "+". */
+  const [phoneChecked, setPhoneChecked] = useState(false);
   const [draftAgent, setDraftAgent] = useState(() => filters.agent_user_id ?? '');
   const [draftFrom, setDraftFrom] = useState(() => dayOf(filters.from));
   const [draftTo, setDraftTo] = useState(() => dayOf(filters.to));
@@ -194,15 +198,26 @@ export function AgencyCampaignAttemptsPage() {
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
+    /*
+      The route has no `key`, so moving to another campaign (or account) keeps this page mounted:
+      drop the previous campaign's header and agents at once, or the Agent picker offers them
+      until the new answer lands, and ignore an answer that lands after the move.
+    */
+    setCampaign(null);
+    setAssignedAgents([]);
     if (!id || !tenantId || !accountId) return;
+    let live = true;
     getAgencyCampaign(id, tenantId, accountId)
       // The attempts are the point of the page; a header that will not load is
       // not a reason to withhold them.
-      .then(setCampaign)
-      .catch(() => setCampaign(null));
+      .then((answer) => { if (live) setCampaign(answer); })
+      .catch(() => { if (live) setCampaign(null); });
     listCampaignAgents(id, tenantId, accountId)
-      .then((answer) => setAssignedAgents(answer.agents ?? []))
-      .catch(() => setAssignedAgents([]));
+      .then((answer) => { if (live) setAssignedAgents(answer.agents ?? []); })
+      .catch(() => { if (live) setAssignedAgents([]); });
+    return () => {
+      live = false;
+    };
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
@@ -270,6 +285,11 @@ export function AgencyCampaignAttemptsPage() {
   }, [id, filters, campaign, tenantId, accountId, showToast, showErrorToast]);
 
   const applyFilters = useCallback(() => {
+    // A phone filter with no digit is refused by the server: said under the field, not sent.
+    if (!phoneFilterUsable(draftPhone)) {
+      setPhoneChecked(true);
+      return;
+    }
     // The form's five controls are rebuilt from the drafts; every filter the form
     // has no control for (a link's dialled window, caller ID, flags, write-up,
     // contact) is kept, so Apply narrows a drill-down rather than undoing it.
@@ -346,8 +366,9 @@ export function AgencyCampaignAttemptsPage() {
   // supervisor before they press Apply is the difference between a correction
   // and a support ticket.
   const invertedRange = Boolean(draftFrom && draftTo && draftFrom > draftTo);
-  // The server's rule too (a phone filter needs a digit), said here before Apply.
-  const phoneUnusable = !phoneFilterUsable(draftPhone);
+  // The server's rule too (a phone filter needs a digit), said here before Apply; a number
+  // still being typed ("+") is said only once Apply is pressed (`phoneFilterDraftError`).
+  const phoneError = phoneFilterDraftError(draftPhone, phoneChecked);
 
   return (
     <div className={styles.page}>
@@ -458,8 +479,12 @@ export function AgencyCampaignAttemptsPage() {
                   className={spine.fieldInput}
                   value={draftPhone}
                   placeholder={PHONE_FILTER_PLACEHOLDER}
-                  aria-invalid={phoneUnusable || undefined}
-                  onChange={(e) => setDraftPhone(e.target.value)}
+                  aria-invalid={phoneError !== null || undefined}
+                  aria-describedby={phoneError !== null ? 'attempts-phone-unusable' : undefined}
+                  onChange={(e) => {
+                    setDraftPhone(e.target.value);
+                    if (phoneFilterUsable(e.target.value)) setPhoneChecked(false);
+                  }}
                 />
               </span>
             </label>
@@ -511,17 +536,17 @@ export function AgencyCampaignAttemptsPage() {
             {invertedRange && (
               <p className={spine.filterError} role="alert" data-testid="attempts-inverted-range">
                 <AlertCircle size={13} aria-hidden="true" />
-                The “From” date is after the “To” date, so nothing could match. Swap them to continue.
+                {INVERTED_RANGE_COPY}
               </p>
             )}
-            {phoneUnusable && (
-              <p className={spine.filterError} role="alert" data-testid="attempts-phone-unusable">
+            {phoneError !== null && (
+              <p className={spine.filterError} role="alert" id="attempts-phone-unusable" data-testid="attempts-phone-unusable">
                 <AlertCircle size={13} aria-hidden="true" />
-                Type at least one digit of the phone number.
+                {phoneError}
               </p>
             )}
             <div className={spine.filterActions}>
-              <button type="button" className="btn-primary" onClick={applyFilters} disabled={invertedRange || phoneUnusable}>
+              <button type="button" className="btn-primary" onClick={applyFilters} disabled={invertedRange || phoneError !== null}>
                 Apply
               </button>
               {filtered && (

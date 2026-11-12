@@ -209,25 +209,49 @@ export function AgencyCampaignSettingsPage() {
     setAssignmentResetPending(false);
   }, []);
 
-  /** Hold `record` as the campaign: state, the ref the lifecycle controls read, and the "Updated" stamp. */
-  const commitCampaign = useCallback((record: AgencyCampaign) => {
+  /*
+    Stale answers. The route has no `key`, so moving to another campaign's Settings keeps this
+    page mounted, and an answer can land after the move: `routeIdRef` is the campaign the URL
+    names now, and nothing for another one is painted. `readTokenRef` orders the campaign row's
+    reads and writes as `useAgencyCampaignDetail`'s `loadTokenRef` does: bumped when a read
+    starts and on every commit, so a Refresh (or a lifecycle re-read) sent before a Pause, a Stop
+    or a Save cannot land after it and paint the older row. `loadSeqRef` is the full load's own
+    order: only the newest one seeds the form and ends the spinner.
+  */
+  const routeIdRef = useRef(id);
+  routeIdRef.current = id;
+  const readTokenRef = useRef(0);
+  const loadSeqRef = useRef(0);
+
+  /**
+   * Hold `record` as the campaign: state, the ref the lifecycle controls read, and the "Updated"
+   * stamp. Fences off every older read. A record for a campaign the URL no longer names (a write
+   * that answered after the move) is dropped; false then.
+   */
+  const commitCampaign = useCallback((record: AgencyCampaign): boolean => {
+    if (record.id !== routeIdRef.current) return false;
+    readTokenRef.current += 1;
     campaignRef.current = record;
     setCampaign(record);
     setCampaignReadAt(new Date());
+    return true;
   }, []);
 
   const load = useCallback(async () => {
     if (!id || !tenantId || !accountId) return;
+    const seq = ++loadSeqRef.current;
+    readTokenRef.current += 1;
     setLoading(true);
     setLoadError(null);
     try {
       const record = await getAgencyCampaign(id, tenantId, accountId);
-      commitCampaign(record);
-      seedForm(formOfCampaign(record));
+      if (seq !== loadSeqRef.current) return;
+      if (commitCampaign(record)) seedForm(formOfCampaign(record));
     } catch (err: unknown) {
+      if (seq !== loadSeqRef.current) return;
       setLoadError(err instanceof Error ? err.message : 'Could not load this campaign.');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [id, tenantId, accountId, seedForm, commitCampaign]);
 
@@ -242,10 +266,11 @@ export function AgencyCampaignSettingsPage() {
   */
   const refreshCampaign = useCallback(async (): Promise<AgencyCampaign | null> => {
     if (!id || !tenantId || !accountId) return null;
+    const token = ++readTokenRef.current;
     try {
       const record = await getAgencyCampaign(id, tenantId, accountId);
-      if (record.id !== id) return campaignRef.current;
-      commitCampaign(record);
+      // A newer read or a write owns the paint, or the URL names another campaign now.
+      if (token !== readTokenRef.current || !commitCampaign(record)) return campaignRef.current;
       return record;
     } catch {
       return campaignRef.current;
@@ -315,14 +340,25 @@ export function AgencyCampaignSettingsPage() {
       moved. Moving back to the service's account sends `telephony_credential_id: null`
       with the carrier, in the same PATCH.
     */
+    /*
+      "Moves" is against `saved`, the form as last loaded or saved (what the bar counts
+      against), never against `campaign`: Refresh and the lifecycle controls re-read
+      `campaign` and leave the form alone, so after someone else changes the carrier or the
+      pool, the untouched form differs from `campaign` and would send the older values back,
+      undoing their change while the bar said nothing was unsaved.
+    */
     const sendCarrier = !campaign?.telephony_provider
-      || !sameCarrier(carrier, carrierOfCampaign(campaign));
+      || !saved
+      || !sameCarrier(carrier, saved.carrier);
     /*
       The caller IDs likewise go only when they changed (or the carrier moves, which
       re-judges the pool). A stored number since retired or untagged would otherwise be
       resent with every rename; the server keeps it (PL13), but there is nothing to write.
     */
-    const sendCallerIds = sendCarrier || !samePool(callerIds, campaign?.caller_ids ?? []);
+    const sendCallerIds = sendCarrier || !saved || !samePool(callerIds, saved.callerIds);
+    // The name the same way: an untouched name is not sent back over a newer one.
+    const trimmedName = name.trim();
+    const sendName = !saved || trimmedName !== saved.name;
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -337,7 +373,7 @@ export function AgencyCampaignSettingsPage() {
         {
           ...buildConfigPayload(config, assignmentScope),
           ...recordingFields,
-          name: name.trim(),
+          ...(sendName ? { name: trimmedName } : {}),
           ...(sendCallerIds ? { caller_ids: callerIds } : {}),
           ...(sendCarrier
             ? {
@@ -349,7 +385,8 @@ export function AgencyCampaignSettingsPage() {
         tenantId ?? undefined,
         accountId ?? undefined,
       );
-      commitCampaign(updated);
+      // Saved for a campaign the URL no longer names: nothing of it belongs on this form.
+      if (!commitCampaign(updated)) return;
       // Computed against what was ABOUT TO BE SAVED, before the re-seed below
       // replaces `config` with whatever the server normalised it to.
       const priorOrder = dispositionOrderRef.current;
@@ -385,6 +422,8 @@ export function AgencyCampaignSettingsPage() {
         reordered,
       });
     } catch (err: unknown) {
+      // Refused for a campaign the URL no longer names: not this form's error.
+      if (id !== routeIdRef.current) return;
       // Checked BEFORE the field-error map: a `capability_disabled` 403 carries
       // no `details`, so `fieldErrorsFromResponse` would return `{}` and the
       // banner would show the bare wire token `capability_disabled`.
@@ -426,7 +465,7 @@ export function AgencyCampaignSettingsPage() {
     }
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
-    tenantId, accountId, showToast, assignmentEnabled, campaign, assignmentResetPending, seedForm, commitCampaign,
+    tenantId, accountId, showToast, assignmentEnabled, campaign, saved, assignmentResetPending, seedForm, commitCampaign,
   ]);
 
   /** Put back what is saved: every field, and no error left from the edits. */
@@ -814,11 +853,9 @@ export function AgencyCampaignSettingsPage() {
             <UnsavedChangesBar
               count={changes.length}
               saving={saving}
+              blockedReason={saveBlock !== null ? CONFIG_BLOCK_COPY[saveBlock] : null}
               // The refusal itself is the alert above the form; the bar says where to look.
-              note={saveBlock !== null
-                ? CONFIG_BLOCK_COPY[saveBlock]
-                : saveError ? 'Not saved. The reason is above the form.' : null}
-              blocked={saveBlock !== null}
+              note={saveError ? 'Not saved. The reason is above the form.' : null}
               onDiscard={onDiscard}
               onSave={() => void onSave()}
             />

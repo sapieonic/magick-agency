@@ -543,3 +543,43 @@ describe('leaving the builder mid-upload', () => {
     expect(mocks.createAgencyCampaign).not.toHaveBeenCalled();
   });
 });
+
+/*
+  Once a roster upload has created the draft, Save campaign is a PATCH. A rename (or new
+  numbers) on Basics after the upload has to ride on it, or the server keeps the old name while
+  the page counts nothing unsaved and lets the person leave.
+*/
+describe('basics changed after the roster upload created the draft', () => {
+  async function importThenBack() {
+    await reachMapping();
+    fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+    await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
+    goToStep('Name & numbers');
+  }
+  const patchBody = () => mocks.updateAgencyCampaign.mock.calls.at(-1)![1] as Record<string, unknown>;
+
+  it('sends the new name on Save campaign, and not the numbers or carrier that did not move', async () => {
+    await importThenBack();
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: 'Collections Q4 ' } });
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.createAgencyCampaign).toHaveBeenCalledTimes(1);
+    expect(patchBody().name).toBe('Collections Q4');
+    expect(patchBody()).not.toHaveProperty('caller_ids');
+    expect(patchBody()).not.toHaveProperty('telephony_provider');
+  });
+
+  it('sends no basics when none moved since the draft was created', async () => {
+    await importThenBack();
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(patchBody()).not.toHaveProperty('name');
+    expect(patchBody()).not.toHaveProperty('caller_ids');
+    expect(patchBody()).not.toHaveProperty('telephony_provider');
+  });
+});

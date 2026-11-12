@@ -177,13 +177,13 @@ describe('Insights — first paint', () => {
     expect(screen.getByTestId('teaser-calls').getAttribute('href')).toBe('/agency/campaigns/camp-1/calls?range=7d');
   });
 
-  it('reports the callbacks overdue now, for the Callbacks tab’s badge', async () => {
+  it('reports the callbacks overdue now, for the Callbacks tab’s badge, with the campaign they were read for', async () => {
     const onCallbacksOverdue = vi.fn();
     const rows = allocation();
     rows.totals.callbacks_overdue = 4;
     api.getInsightsAllocation.mockResolvedValue(rows);
     renderPanel('', { onCallbacksOverdue });
-    await waitFor(() => expect(onCallbacksOverdue).toHaveBeenLastCalledWith(4));
+    await waitFor(() => expect(onCallbacksOverdue).toHaveBeenLastCalledWith(4, rows.campaign_id));
   });
 
   it('does not start a range read before the summary has answered', async () => {

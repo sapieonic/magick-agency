@@ -64,7 +64,7 @@ import {
 import { BuilderStepper } from './BuilderStepper';
 import { BuilderSummary } from './BuilderSummary';
 import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
-import { changedSettings, type CampaignSettingsForm } from '../../../utils/campaignSettingsChanges';
+import { changedSettings, samePool, type CampaignSettingsForm } from '../../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
 import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
 import styles from './CampaignBuilderPage.module.css';
@@ -149,6 +149,14 @@ export default function CampaignBuilderPage() {
     recording: builderRecording(false),
     config,
   }));
+  /**
+   * The draft's basics as the server has them (null until the draft exists): the name, the
+   * caller IDs and the carrier account sent on create, then on each Save campaign. Once the
+   * draft exists the save is a PATCH, and it carries any of the three that moved since, or a
+   * rename on Basics after a roster upload would never reach the server. A ref, not state:
+   * the save reads it straight after `ensureCampaign` may have set it.
+   */
+  const serverBasicsRef = useRef<{ name: string; callerIds: readonly string[]; carrier: CarrierChoice } | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -214,6 +222,7 @@ export default function CampaignBuilderPage() {
       throw withCarrierRefusalCopy(err);
     }
     setCampaignId(created.id);
+    serverBasicsRef.current = { name: name.trim(), callerIds: [...callerIds], carrier };
     // The draft has the basics now; the rest is saved by Save campaign.
     setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
     return created.id;
@@ -291,15 +300,39 @@ export default function CampaignBuilderPage() {
     });
     try {
       const id = await ensureCampaign();
-      await updateAgencyCampaign(
-        id,
-        {
-          ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
-          ...(record_calls !== undefined ? { record_calls } : {}),
-        },
-        tenantId ?? undefined,
-        accountId ?? undefined,
-      );
+      /*
+        The basics the draft was created with, or last saved with. Any that moved since go in
+        this PATCH (a draft takes all three); the carrier re-judges the pool, so a carrier move
+        sends the caller IDs as well, the rule campaign Settings saves by.
+      */
+      const server = serverBasicsRef.current;
+      const trimmedName = name.trim();
+      const sendName = server === null || trimmedName !== server.name;
+      const sendCarrier = server === null || !sameCarrier(carrier, server.carrier);
+      const sendCallerIds = sendCarrier || server === null || !samePool(callerIds, server.callerIds);
+      try {
+        await updateAgencyCampaign(
+          id,
+          {
+            ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
+            ...(record_calls !== undefined ? { record_calls } : {}),
+            ...(sendName ? { name: trimmedName } : {}),
+            ...(sendCallerIds ? { caller_ids: callerIds } : {}),
+            ...(sendCarrier
+              ? {
+                telephony_provider: carrier.telephony_provider,
+                telephony_credential_id: carrier.telephony_credential_id,
+              }
+              : {}),
+          },
+          tenantId ?? undefined,
+          accountId ?? undefined,
+        );
+      } catch (err: unknown) {
+        // A carrier refusal says the operator's sentence and goes to Basics, as on create.
+        throw withCarrierRefusalCopy(err);
+      }
+      serverBasicsRef.current = { name: trimmedName, callerIds: [...callerIds], carrier };
       setConfigSaved(true);
       setSavedForm({ name, callerIds, carrier: chosenCarrier, recording: builderRecording(recordCalls), config });
       {
@@ -353,7 +386,12 @@ export default function CampaignBuilderPage() {
       // the body, so the message lands on the field that caused it rather than
       // in one banner the operator has to map back by hand.
       const mapped = fieldErrorsFromResponse(err);
-      if (Object.keys(mapped).length > 0) {
+      // The name and the caller IDs are on Basics, which shows the refusal as the page's banner.
+      const basicsRefusal = mapped.name ?? mapped.caller_ids;
+      if (basicsRefusal !== undefined) {
+        setError(basicsRefusal);
+        goTo('basics');
+      } else if (Object.keys(mapped).length > 0) {
         setFieldErrors(mapped);
         if (mapped.default_timezone || mapped.calling_window_start || mapped.calling_window_end || mapped.calling_days) {
           goTo('hours');
@@ -368,7 +406,7 @@ export default function CampaignBuilderPage() {
     }
   }, [
     config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
-    name, callerIds, chosenCarrier,
+    name, callerIds, carrier, chosenCarrier,
   ]);
 
   const backToMapping = useCallback(() => {

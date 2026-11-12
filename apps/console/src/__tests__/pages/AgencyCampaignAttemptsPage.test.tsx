@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import type { AgencyAttempt, AgencyKeysetPage } from '../../types/agency-spine';
 
 /**
@@ -759,6 +759,74 @@ describe('the agent filter is picked by name', () => {
   });
 });
 
+describe('moving to another campaign on the same page', () => {
+  it('drops the previous campaign’s agents and header at once, and ignores its late answers', async () => {
+    // camp-1's header and agents answer only after the move to camp-2, which answers at once.
+    let campaignOne: (value: unknown) => void = () => undefined;
+    let agentsOne: (value: unknown) => void = () => undefined;
+    mocks.getAgencyCampaign.mockImplementation((id: string) => (id === 'camp-1'
+      ? new Promise((resolve) => { campaignOne = resolve; })
+      : Promise.resolve({ id: 'camp-2', name: 'Q4 Winback', status: 'running' })));
+    mocks.listCampaignAgents.mockImplementation((id: string) => (id === 'camp-1'
+      ? new Promise((resolve) => { agentsOne = resolve; })
+      : Promise.resolve({ agents: [{ user_id: 'asha-id', name: 'Asha Rao', email: 'asha@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }] })));
+    let go: (to: string) => void = () => undefined;
+    function Driver() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/attempts']}>
+        <Driver />
+        <Routes>
+          <Route path="/agency/campaigns/:id/attempts" element={<AttemptsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+
+    act(() => go('/agency/campaigns/camp-2/attempts'));
+    await waitFor(() => expect(mocks.listCampaignAgents).toHaveBeenCalledWith('camp-2', 'tenant-1', 'account-1'));
+    await act(async () => {
+      campaignOne({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
+      agentsOne({ agents: [{ user_id: PRIYA_ID, name: 'Priya Shah', email: 'priya@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }] });
+    });
+
+    const select = screen.getByTestId('attempts-agent-filter') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map((o) => o.textContent)).toEqual(['All agents', 'Asha Rao', 'Ravi Menon']));
+    expect(screen.getByText('Call attempts on Q4 Winback, newest first')).toBeTruthy();
+  });
+});
+
+describe('moving to another campaign before its agents answer', () => {
+  it('no longer offers the previous campaign’s agents while the new list is on its way', async () => {
+    mocks.listCampaignAgents.mockImplementation((id: string) => (id === 'camp-1'
+      ? Promise.resolve({ agents: [{ user_id: PRIYA_ID, name: 'Priya Shah', email: 'priya@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }] })
+      : new Promise(() => {})));
+    let go: (to: string) => void = () => undefined;
+    function Driver() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/attempts']}>
+        <Driver />
+        <Routes>
+          <Route path="/agency/campaigns/:id/attempts" element={<AttemptsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const options = () => [...(screen.getByTestId('attempts-agent-filter') as HTMLSelectElement).options].map((o) => o.textContent);
+    await waitFor(() => expect(options()).toContain('Priya Shah'));
+
+    act(() => go('/agency/campaigns/camp-2/attempts'));
+    await waitFor(() => expect(mocks.listCampaignAgents).toHaveBeenCalledWith('camp-2', 'tenant-1', 'account-1'));
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(options()).toEqual(['All agents', 'Ravi Menon']);
+  });
+});
+
 describe('a phone filter with no digits is caught in the form', () => {
   it('says so in a sentence and does not send it', async () => {
     renderWithLocation('');
@@ -770,5 +838,42 @@ describe('a phone filter with no digits is caught in the form', () => {
     expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
     expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(true);
     expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
+  });
+});
+
+describe('a phone number still being typed', () => {
+  it('is not an error at its first "+", is said on Apply, and is never sent', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const calls = mocks.getCampaignAttempts.mock.calls.length;
+    const field = screen.getByPlaceholderText('Number or last digits');
+
+    fireEvent.change(field, { target: { value: '+' } });
+    expect(screen.queryByTestId('attempts-phone-unusable')).toBeNull();
+    expect(field.getAttribute('aria-invalid')).toBeNull();
+    expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByText('Apply'));
+    expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
+
+    // A digit clears it, and Apply sends it.
+    fireEvent.change(field, { target: { value: '+9' } });
+    expect(screen.queryByTestId('attempts-phone-unusable')).toBeNull();
+    fireEvent.click(screen.getByText('Apply'));
+    await waitFor(() => expect(currentQuery().get('phone')).toBe('+9'));
+  });
+});
+
+describe('a link whose dates are the wrong way round', () => {
+  it('says to swap them, not that a date cannot be read', async () => {
+    mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('from', '`from` must not be later than `to`'));
+    renderWithLocation('?from=2026-08-20T00:00:00.000Z&to=2026-08-10T00:00:00.000Z');
+
+    // The refusal itself, not the form's own check of the drafts the link filled in.
+    const said = await screen.findByText(/Change or remove it above to see the call log/);
+    expect(said.textContent).toContain('The “From” date is after the “To” date');
+    expect(said.textContent).not.toContain('not a date this list can use');
   });
 });
