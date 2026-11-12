@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/ring/station_ring.dart' show ringNoticeProvider;
 import '../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../core/station/station_signals.dart';
 import '../features/missed/missed_access.dart';
 import '../features/missed/missed_calls_copy.dart' show MissedCopy;
 import '../features/missed/missed_on_duty.dart';
+import '../features/ring/ring_notice_banner.dart';
 import 'routes.dart';
 
 /// The shell's branches, in the router's order (`routerProvider`). The set is
@@ -146,9 +148,10 @@ class AppShell extends ConsumerWidget {
     }
 
     final selectedTab = branches.indexOf(shell.currentIndex);
-    return Scaffold(
-      body: shell,
-      bottomNavigationBar: signals.callActive
+    // Mode B's notice (why the phone stopped ringing, a ring that could not be taken) sits above
+    // the tab bar on every tab, and alone while a call hides the bar.
+    final ringNotice = ref.watch(ringNoticeProvider);
+    final bar = signals.callActive
           ? null
           : NavigationBar(
               // A hidden branch is never current for long: the router sends `/phone` home.
@@ -172,7 +175,15 @@ class AppShell extends ConsumerWidget {
                 shell.goBranch(branch, initialLocation: branch == shell.currentIndex);
               },
               destinations: [for (final b in branches) destination(b)],
-            ),
+            );
+    return Scaffold(
+      body: shell,
+      bottomNavigationBar: switch ((ringNotice, bar)) {
+        (null, _) => bar,
+        (final String notice, null) => SafeArea(top: false, child: RingNoticeBanner(text: notice)),
+        (final String notice, final NavigationBar bar) =>
+          Column(mainAxisSize: MainAxisSize.min, children: [RingNoticeBanner(text: notice), bar]),
+      },
     );
   }
 }

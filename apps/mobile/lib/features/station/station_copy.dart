@@ -96,6 +96,12 @@ abstract final class StationCopy {
   static String awayDetail(String? at) => at == null
       ? 'You switched to another app, so we paused you. No customer was connected to an empty line.'
       : 'At $at you switched to another app, so we paused you. No customer was connected to an empty line.';
+  // Mode B's `away_ring`: the same pause, with this phone rung for inbound callers.
+  static const awayRingHeadline = 'Away · this phone rings for inbound calls';
+  static String awayRingDetail(String? at) => at == null
+      ? 'You switched to another app, so we paused you and rang this phone for inbound calls instead.'
+      : 'At $at you switched to another app, so we paused you and rang this phone for inbound calls instead.';
+
   /// IQ50: under the away card's detail. The window is the controller's own.
   static final awayAutoReturnHint = 'Come back within ${deviceAwayReturnGrace.inSeconds} seconds and you’re '
       'returned to calls without a tap.';

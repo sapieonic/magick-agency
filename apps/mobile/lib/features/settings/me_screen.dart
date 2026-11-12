@@ -15,6 +15,7 @@ import '../../core/telemetry/log.dart';
 import '../../ui/primitives.dart';
 import '../accounts/account_switcher.dart';
 import 'notification_preferences.dart';
+import 'ring_settings_card.dart';
 
 /// Why signing out is refused right now, or null.
 ///
@@ -73,6 +74,8 @@ class MeScreen extends ConsumerWidget {
             const SizedBox(height: Space.sm),
             _AccountCard(ready: ready),
             const SizedBox(height: Space.xl),
+            // Mode B: shown only where the account allows ringing this phone.
+            const RingSettingsSection(),
           ],
           const SectionLabel('Email notifications'),
           const SizedBox(height: Space.sm),

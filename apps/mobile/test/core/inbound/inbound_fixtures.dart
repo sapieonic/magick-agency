@@ -55,6 +55,9 @@ InboundCall inboundCall(String frame, {String sessionId = 'sess-1', Map<String, 
 /// A sample of `inbound.json` (an answer or a refusal body).
 Map<String, Object?> inboundSample(String name) => _sample('inbound.json', name);
 
+/// A sample of `push.json` (Mode B: device statuses, ring pushes, the ring routes' bodies).
+Map<String, Object?> pushSample(String name) => _sample('push.json', name);
+
 /// The fixture call's id.
 const fixtureCallId = '3a9e1c7b-2f4d-4b8a-9c6e-5d7f0a1b2c3d';
 const withheldCallId = '9f0e1d2c-3b4a-4596-8877-6a5b4c3d2e1f';

@@ -63,7 +63,12 @@ class BreakInfo {
 
   /// The reserved `device_away` break: the app paused the agent because it
   /// left the foreground. The UI shows "Paused · you left the app", not a break.
-  bool get isDeviceAway => code == 'device_away';
+  /// Mode B's `away_ring` is the same pause, with this phone rung for inbound callers.
+  bool get isDeviceAway => code == 'device_away' || isAwayRing;
+
+  /// Mode B's `away_ring`: paused because they left the app, and this phone rings for inbound
+  /// callers meanwhile.
+  bool get isAwayRing => code == 'away_ring';
 
   @override
   bool operator ==(Object other) => other is BreakInfo && other.code == code && other.label == label && other.since == since;

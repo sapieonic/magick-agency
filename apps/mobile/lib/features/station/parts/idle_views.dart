@@ -279,9 +279,11 @@ class AwayView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final since = ref.watch(stationViewProvider.select((v) => v?.onBreak?.since ?? v?.phaseSince));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
+    final ringing = ref.watch(stationViewProvider.select((v) => v?.onBreak?.isAwayRing ?? false));
     final now = ref.watch(stationClockProvider);
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
+    final at = since == null ? null : formatTime(since);
     final resuming = busy == StationBusy.endingBreak || busy == StationBusy.goingAvailable || busy == StationBusy.cancellingBreak;
 
     return IdleLayout(
@@ -296,10 +298,10 @@ class AwayView extends ConsumerWidget {
             children: [
               const StatusPill(StationCopy.awayPill, tone: Tone.warn),
               const SizedBox(height: Space.md),
-              Text(StationCopy.awayHeadline, style: text.headlineSmall),
+              Text(ringing ? StationCopy.awayRingHeadline : StationCopy.awayHeadline, style: text.headlineSmall),
               const SizedBox(height: Space.sm),
               Text(
-                StationCopy.awayDetail(since == null ? null : formatTime(since)),
+                ringing ? StationCopy.awayRingDetail(at) : StationCopy.awayDetail(at),
                 style: text.bodyMedium!.copyWith(color: t.textSecondary),
               ),
               const SizedBox(height: Space.sm),
