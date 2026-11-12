@@ -1344,7 +1344,8 @@ its Swift have never been compiled.
 Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) and its review fixes,
 on `feat/console-nav-redesign`:
 
-Run on commit `987bb84`, from inside each package. `pnpm lint` clean, `pnpm build` clean, `pnpm
+Run on commit `ca003a2` (console, lint and build; contracts and the server unit run on `987bb84`, whose
+server and contracts code is the same), from inside each package. `pnpm lint` clean, `pnpm build` clean, `pnpm
 test:tooling` 16 pass. `agency_wire` `dart test` 605 passed for the new Home board contract (run on
 `fix/nav-home` before the merge). **Not green, so no counts recorded for them:** `apps/server` unit
 had 3 failures, all in `inbound-recordings.test.ts` (9662 passed): this machine has no audio
@@ -1356,7 +1357,7 @@ was down, so `test/integration/api/agency-home-board.test.ts` (the Home board ro
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/console` | 6554 (339 files) | — |
+| `apps/console` | 6560 (339 files) | — |
 | `packages/contracts` | 476 (14 files) | — |
 
 Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
