@@ -157,6 +157,9 @@ function Palette({ onClose }: DialogProps) {
         return;
       }
       if (e.key === 'Enter') {
+        // An Enter that ends an IME composition (Hindi, Japanese…) commits the word typed; it
+        // is not a choice. Safari reports it as keyCode 229 without `isComposing`.
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         choose(flat[selectedIndex]);
         return;

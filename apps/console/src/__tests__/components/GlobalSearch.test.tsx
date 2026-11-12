@@ -221,6 +221,18 @@ describe('the keyboard', () => {
     expect(where()).toBe('/agency/inbound/summary');
   });
 
+  it('does not open a result with the Enter that ends an IME composition', () => {
+    renderShell();
+    fireEvent.click(trigger());
+    type('inbound');
+    fireEvent.keyDown(input(), { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input(), { key: 'Enter', keyCode: 229 });
+    expect(dialog()).toBeTruthy();
+    expect(where()).toBe('/agency/campaigns');
+    key('Enter');
+    expect(where()).toBe('/agency/inbound/missed');
+  });
+
   it('announces how many results there are', async () => {
     renderShell();
     fireEvent.click(trigger());
