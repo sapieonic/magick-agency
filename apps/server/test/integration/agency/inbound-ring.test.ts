@@ -590,7 +590,9 @@ describe('who is rung', () => {
     expect(await c.couldAnyoneTake({ tenantId: T, accountId: A, route })).toBe(true);
     expect(await c.ringDecline(call.id, token, 'declined')).toMatchObject({ ok: true });
     await done;
-    expect(await row(call.id)).toMatchObject({ state: 'ended', outcome: 'overflow' });
+    // At once: never rung again on the phone that declined.
+    expect(await row(call.id)).toMatchObject({ state: 'ended', outcome: 'overflow', ring_result: 'declined', ring_count: 1 });
+    expect(pushes('ring')).toHaveLength(1);
   });
 });
 
@@ -673,13 +675,16 @@ describe('IQ73: on screen first, even mid-ring (N3)', () => {
 
   it('a station agent already on screen when the sticky agent`s phone was rung does not take the ring over', async () => {
     const strict = await makeRoute({ sticky_mode: 'strict' });
-    const c = connector({ republishMs: 50 });
+    const c = connector();
     const away = await awayAgent();
     const desk = await deskAgent();
     const { call } = await caller(c, { routeId: strict.id, identification: { match: null, callerDnc: false, sticky: { userId: away.userId, reason: 'owner' } } }, strict);
     await ringPush(away.deviceRowId, call.id);
-    await sleep(300); // several republish searches
-    await drain();
+    // Searches of the account mid-ring (another caller arriving, a presence change, would run one).
+    for (let i = 0; i < 3; i++) {
+      (c as unknown as { searchInBackground: (k: string) => void }).searchInBackground(`${T}:${A}`);
+      await drain();
+    }
     expect(await row(call.id)).toMatchObject({ state: 'offered', session_id: away.sessionId, offer_channel: 'push' });
     expect(await agents.get(desk)).toMatchObject({ state: 'available' });
   });
