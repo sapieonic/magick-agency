@@ -293,7 +293,6 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin: 0;
 }
 
 @container home (max-width: 640px) {
@@ -302,33 +301,3 @@
   }
 }
 
-.tile {
-  padding: 12px 14px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  min-width: 0;
-}
-
-.tileLabel {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.tileValue {
-  margin: 4px 0 0;
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  display: flex;
-  flex-direction: column;
-}
-
-.tileSub {
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}

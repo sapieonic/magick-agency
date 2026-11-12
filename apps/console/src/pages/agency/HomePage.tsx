@@ -26,6 +26,7 @@ import { formatCount, plural } from '../../utils/format/number';
 import { durationWords } from '../../utils/format/duration';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import { GetStarted } from './campaigns-home/GetStarted';
+import { Kpi } from '../../components/common/Kpi';
 import styles from './HomePage.module.css';
 
 /** A time on today's date, else the date and time. */
@@ -198,12 +199,12 @@ function TodaySoFar({ today }: { today: ReturnType<typeof useTodaySoFar> }) {
       {today.status === 'unavailable' && <p className={styles.quiet}>Today’s numbers didn’t load.</p>}
       {today.status === 'ready' && (
         <>
-          <dl className={styles.tiles} data-testid="home-today">
-            <Tile label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
-            <Tile label="Conversations" value={formatCount(today.totals.conversations)} />
-            <Tile label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals) ?? undefined} />
-            <Tile label="Talk time" value={durationWords(today.totals.talkSeconds)} />
-          </dl>
+          <div className={styles.tiles} data-testid="home-today">
+            <Kpi look="outlined" label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
+            <Kpi look="outlined" label="Conversations" value={formatCount(today.totals.conversations)} />
+            <Kpi look="outlined" label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals)} />
+            <Kpi look="outlined" label="Talk time" value={durationWords(today.totals.talkSeconds)} />
+          </div>
           <p className={styles.cardNote}>
             Since midnight your time, every campaign in this account. A success is a call whose outcome
             the campaign marks ‘Counts as a success’.
@@ -254,17 +255,5 @@ function FloorRow({ row }: { row: HomeFloorRow }) {
         </span>
       </td>
     </tr>
-  );
-}
-
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className={styles.tile}>
-      <dt className={styles.tileLabel}>{label}</dt>
-      <dd className={styles.tileValue}>
-        {value}
-        {sub && <span className={styles.tileSub}>{sub}</span>}
-      </dd>
-    </div>
   );
 }

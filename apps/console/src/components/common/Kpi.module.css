@@ -1,0 +1,71 @@
+.kpi {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--radius);
+}
+
+.label {
+  color: var(--text-muted);
+}
+
+.value {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.value[data-withheld='true'] {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* The Insights panels. */
+.filled {
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+}
+
+.filled .label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.filled .value {
+  line-height: 1.25;
+}
+
+.filled .sub {
+  line-height: 1.45;
+}
+
+/* Home's Today so far. */
+.outlined {
+  padding: 12px 14px;
+  border: 1px solid var(--border-light);
+}
+
+.outlined .label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.outlined .value {
+  margin-top: 4px;
+}
+
+.outlined .sub {
+  font-weight: 500;
+}
