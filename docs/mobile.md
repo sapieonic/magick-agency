@@ -668,6 +668,37 @@ push itself. Native posts `…/ring/answering` and `…/ring/decline` (the offer
 the tap without starting Flutter; `…/ring/accept` (Firebase Bearer and the station device id) is
 always Dart's.
 
+**Dart's side** (`lib/core/ring/`, the station controller; WP4):
+
+- **Registration** (`ring_registration.dart`): `PUT /push-devices/:deviceId` (the station device
+  id) once the gate is ready, on `token` and on every return to the app, reading `checklist` each
+  time; opt-in is `PATCH` (the Me card, `stopRingingTapped`, which a cold start holds until the
+  device is read); sign-out sends `DELETE` through the gate's `pushDeviceTeardownProvider`, before
+  Firebase signs out. Android only (`ringPlatformProvider`); iOS registers nothing (IQ64).
+- **Leaving the app** asks `away_ring` when `ringAvailable` (the account allows it, the server can
+  push, opted in, a token, a live device row, and notifications, the calling account and the
+  microphone allowed), else `device_away`; a 409 away-ring refusal asks `device_away` at once. A
+  pause queued in wrap-up queues `away_ring`. Once `away_ring` applies with nothing on the line,
+  the station socket is parked, the on-duty service stops and `showAwayNotification(true)`; the
+  station's own "You're paused" notification is not shown for it.
+- **Coming back** reopens them (`showAwayNotification(false)`), and IQ50's 30 s return waits for
+  the reopened socket's `ready`. A `ready` that says `device_away` means the server ended
+  `away_ring`: the shell says why ("Your phone stopped ringing for inbound calls: …"). Dart never
+  sees `ring_off`, so the reason is worked out on the phone (`inferRingOffReason`): two `ringEnded`
+  misses while away, else the device status read then (revoked, opted out, the flag off), else no
+  reason given.
+- **Answering** (`ring_answer_coordinator.dart`): `ringAnswered`, or `pendingAnswer` once the gate
+  is ready after a cold start, deduped by call id; `…/ring/accept`, one retry on a failure that
+  says nothing about the call, then "This call stopped ringing or someone else took it." and
+  `reportEnded(accept_failed)`. `StationController.resumeForRing` reopens a parked station on the
+  accept's URL (no second mint), or opens one from the accept alone on a cold start
+  (`HostedSession.ring`), which a rehydrating join (`take_over: false`) fills in once the call has
+  left the station. `reportBound` when the push offer connects, `reportEnded(ended)` when it ends,
+  `cancelled` when it leaves before binding. A push offer does not chime, and the offer backstop
+  keeps it until 10 s past `accepted_at` + the accept grace (`inboundOfferStaleAt`).
+- `ringEnded` `expired` or `accept_lapsed` posts `showMissedRing`, except for a call the agent
+  answered.
+
 ## Inside the app
 
 ```
