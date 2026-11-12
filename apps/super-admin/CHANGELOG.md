@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.2](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.1...super-admin-v0.5.2) (2026-11-12)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.19.0
+
 ## [0.5.1](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.5.0...super-admin-v0.5.1) (2026-11-11)
 
 
