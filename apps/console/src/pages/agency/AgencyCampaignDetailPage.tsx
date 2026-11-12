@@ -14,7 +14,7 @@ import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
-import { CAMPAIGN_TABS, campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
+import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 import { agentsOnShift } from '../../utils/agencyAgentFloor';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
@@ -116,9 +116,7 @@ export function AgencyCampaignDetailPage() {
   }, [campaign, panel]);
 
   // "Campaigns / <name> / <tab>" in the top bar.
-  useCampaignCrumbs(id, campaign, [
-    { label: CAMPAIGN_TABS.find((tab) => tab.id === panel)?.label ?? 'Campaign' },
-  ]);
+  useCampaignCrumbs(id, campaign, panel);
 
   if (loading) return <LoadingSpinner />;
 

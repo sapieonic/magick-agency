@@ -387,10 +387,7 @@ export default function AgencyAttemptCallPage() {
    * attempt's number has arrived; the campaign's slot holds "Campaign" until its name has.
    */
   const leaf = detail && detail.attempt.id === attemptId ? `Attempt ${detail.attempt.attempt_number}` : 'Attempt';
-  useCampaignCrumbs(campaignId, campaign, [
-    { label: 'Call log', to: `/agency/campaigns/${campaignId}/attempts` },
-    { label: leaf },
-  ]);
+  useCampaignCrumbs(campaignId, campaign, 'attempts', [{ label: leaf }]);
 
   /*
    * The campaign workspace's section bar, in the same slot as on every sibling

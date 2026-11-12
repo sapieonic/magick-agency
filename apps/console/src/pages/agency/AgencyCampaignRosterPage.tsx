@@ -141,7 +141,7 @@ export function AgencyCampaignRosterPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  useCampaignCrumbs(id, campaign, [{ label: 'Contacts' }]);
+  useCampaignCrumbs(id, campaign, 'contacts');
   const [rows, setRows] = useState<AgencyRosterContact[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   /** The server's exact count of the filtered roster (`?include_total=1`), or null without one. */

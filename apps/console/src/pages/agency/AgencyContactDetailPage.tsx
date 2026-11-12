@@ -83,8 +83,7 @@ export function AgencyContactDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // "Campaigns / <name> / Contacts / <number>"; the number only once it is this contact's.
-  useCampaignCrumbs(id, campaign, [
-    { label: 'Contacts', to: `/agency/campaigns/${id}/contacts` },
+  useCampaignCrumbs(id, campaign, 'contacts', [
     { label: contact && contact.id === contactId ? contact.phone_e164 : 'Contact' },
   ]);
   /**

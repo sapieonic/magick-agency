@@ -136,7 +136,7 @@ export function AgencyCampaignActivityPage() {
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
-  useCampaignCrumbs(id, campaign, [{ label: 'History' }]);
+  useCampaignCrumbs(id, campaign, 'activity');
   const [page, setPage] = useState<ActivityPage | null>(null);
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);

@@ -462,7 +462,7 @@ export function AgencyCampaignSettingsPage() {
     sections,
     !loading && campaign?.id === id && Boolean(config && recording),
   );
-  useCampaignCrumbs(id, campaign, [{ label: 'Settings' }]);
+  useCampaignCrumbs(id, campaign, 'settings');
 
   /* What is unsaved, setting by setting; it drives the bar and the guard on leaving. */
   const changes = saved && config && recording

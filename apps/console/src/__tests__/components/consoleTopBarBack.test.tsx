@@ -18,6 +18,7 @@ vi.mock('../../components/layout/ProfileMenu', () => ({ ProfileMenu: () => null 
 import { ConsoleTopBar } from '../../components/layout/ConsoleTopBar';
 import { PageCrumbsProvider, usePageCrumbs } from '../../components/layout/PageCrumbs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
+import type { CampaignTabId } from '../../utils/agencyCampaignTabs';
 
 function Where() {
   return <p data-testid="where">{useLocation().pathname}</p>;
@@ -29,8 +30,8 @@ function CampaignSettings() {
 }
 
 /** A campaign tab, naming the campaign as the real pages do. */
-function CampaignTab({ label }: { label: string }) {
-  useCampaignCrumbs('c-1', { id: 'c-1', name: 'Diwali renewals' }, [{ label }]);
+function CampaignTab({ tab }: { tab: CampaignTabId }) {
+  useCampaignCrumbs('c-1', { id: 'c-1', name: 'Diwali renewals' }, tab);
   return <Where />;
 }
 
@@ -41,8 +42,8 @@ function renderAt(path: string, phone: boolean) {
         <ConsoleTopBar phone={phone} />
         <Routes>
           <Route path="/agency/campaigns/c-1/settings" element={<CampaignSettings />} />
-          <Route path="/agency/campaigns/c-1/overview" element={<CampaignTab label="Overview" />} />
-          <Route path="/agency/campaigns/c-1/health" element={<CampaignTab label="Health" />} />
+          <Route path="/agency/campaigns/c-1/overview" element={<CampaignTab tab="overview" />} />
+          <Route path="/agency/campaigns/c-1/health" element={<CampaignTab tab="health" />} />
           <Route path="*" element={<Where />} />
         </Routes>
       </PageCrumbsProvider>
