@@ -106,14 +106,19 @@ async function device(overrides: Partial<{ deviceId: string; ringEnabled: boolea
 function service(opts: { attached?: Set<string>; holds?: Set<string>; allowed?: boolean } = {}) {
   const attached = opts.attached ?? new Set<string>();
   const sent: unknown[] = [];
+  /** The connector's cancel of a ring in flight (N1), asked by an end during a ring; here the ring was answered and stands. */
+  const cancels: Array<[string, string]> = [];
   const svc = new AwayRingService({
     agents: sm(),
     stations: { isLocallyOwned: (id: string) => attached.has(id), send: (_id: string, f: unknown) => { sent.push(f); return true; } } as never,
-    inbound: () => ({ holdsPushOffer: (id: string) => opts.holds?.has(id) ?? false }) as never,
+    inbound: () => ({
+      holdsPushOffer: (id: string) => opts.holds?.has(id) ?? false,
+      cancelRingForAwayRingEnd: async (id: string, reason: string) => { cancels.push([id, reason]); return 'answered'; },
+    }) as never,
     ringAllowed: async () => opts.allowed ?? true,
   });
   svc.configure({ maxAgeMs: MAX_AGE });
-  return { svc, frames: sent };
+  return { svc, frames: sent, cancels };
 }
 
 /** Wait for the fire-and-forget `ring_off` push. */
@@ -457,14 +462,16 @@ describe('AwayRingService', () => {
     expect(await row(s.id)).toMatchObject({ state: 'break', break_reason: 'away_ring' });
   });
 
-  it('reconcile: a tick during a ring the connector holds touches nothing, even one that is past its end', async () => {
+  it('reconcile: a tick during a ring the connector holds writes nothing itself; one past its end asks the connector to cancel the ring (N1)', async () => {
     await device();
     const s = await onAwayRing();
     await sm().reserveForInbound(s.id, 'ib-1', ['break']);
     await sessions.setState(s.id, 'reserved');
     await devices.setRingEnabled(user, 'phone-aaaa-1', false);
-    const { svc } = service({ holds: new Set([s.id]) });
+    const { svc, cancels } = service({ holds: new Set([s.id]) });
+    // The connector answers that the ring was already answered: it runs to its end, nothing is written.
     expect(await svc.reconcile()).toMatchObject({ skippedInFlight: 1, ended: 0 });
+    expect(cancels).toEqual([[s.id, 'opted_out']]);
     expect(await sm().get(s.id)).toMatchObject({ state: 'reserved', inboundCallId: 'ib-1' });
     expect(await row(s.id)).toMatchObject({ state: 'reserved' });
     expect(sender.sent).toEqual([]);

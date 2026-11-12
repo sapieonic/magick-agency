@@ -1033,6 +1033,15 @@ caller of a tenant (or of the deployment) from reaching anyone.
   calls (at least 10) reached nobody (overflow, over capacity, hung up waiting). Usually staffing or
   a route's limits, not a fault; a fault shows as offers ending `station_lost` / `lease_lost` on
   the dashboard. **Do:** tell the account's supervisors; the Missed list has every caller.
+- **`agy-inbound-ring-push-failed`**. **Means:** over 15 minutes, more than a fifth of the rings to
+  away agents' phones (at least 5) ended `push_failed` (Mode B, [`inbound.md`](inbound.md) "Ringing
+  an away phone"): each caller went back to the queue and each agent counted a missed ring (two in
+  a row stop their phone ringing). **Check:** the dashboard's *Mode B: ringing away phones* row,
+  push sends by result; the INFO "Push not delivered" names the device row. **Do:** `unconfigured`:
+  the FCM service account (`PUSH_FCM_SERVICE_ACCOUNT_JSON_B64`) is missing or unreadable after a
+  deploy; `unavailable` / `rate_limited`: FCM's status and our egress to `fcm.googleapis.com` and
+  `oauth2.googleapis.com`; `unregistered`: phones reinstalled or signed out (each revokes its
+  device; nothing to do unless it is many).
 
 ### `agy-reports-pending-too-long`
 

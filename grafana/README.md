@@ -122,6 +122,7 @@ Every expression selects `${local.agency}` and nothing else.
 | `agy-inbound-connect-unavailable` | `agency_inbound_connect_available` at 0 (media workers on) while `agency_inbound_applications` counts a credential with inbound enabled; pages |
 | `agy-inbound-application-broken` | `agency_inbound_applications{health=~"url_mismatch\|app_missing"}` above 0 for 5m (the scheduled health check, every 15m); pages |
 | `agy-inbound-application-unchecked` | `agency_inbound_applications{health=~"unreachable\|failed"}` above 0 for 45m (three passes) |
+| `agy-inbound-ring-push-failed` | `agency_inbound_rings_total`: of the rings to away agents' phones over 15m, the share `push_failed` above 0.2, with a floor of 5 rings (Mode B) |
 | `agy-reports-callback-bad-signature` | `agency_reports_callbacks_total{result="bad_signature"}`, any in 15m, with the new-series guard: the renderer's and the server's `AGENCY_REPORTS_CALLBACK_SECRET` differ, or something else posts to the callback |
 
 **Re-baseline `agy-error-log-volume` after the pilot.** It starts at 10+

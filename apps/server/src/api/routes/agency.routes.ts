@@ -11,6 +11,7 @@ import { registerInboundCallRoutes } from './agency/inbound-calls.js';
 import { registerInboundClipRoutes } from './agency/inbound-clips.js';
 import { registerInboundMissedWorkRoutes } from './agency/inbound-missed-work.js';
 import { registerPushDeviceRoutes } from './agency/push-devices.js';
+import { registerInboundRingRoutes } from './agency/inbound-ring.js';
 
 export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // This module is the session and attempt handlers only, registered on the
@@ -43,5 +44,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     await registerInboundCallRoutes(sub, runtime);
     // Mode B: the agent app's push devices (register, opt in or out, revoke, test ring).
     await registerPushDeviceRoutes(sub, runtime);
+    // Mode B: the ring of an away agent's phone (answering, decline, accept).
+    await registerInboundRingRoutes(sub, runtime);
   });
 }

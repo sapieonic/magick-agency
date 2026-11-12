@@ -45,7 +45,7 @@ export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, num
   inbound_missed_call_handled: 409,
   inbound_assignee_invalid: 400,
   inbound_missed_call_claimed: 409,
-  // Mode B's ring routes (IQ71; built in WP5).
+  // Mode B's ring routes (IQ71).
   ring_not_offered: 404,
   ring_expired: 409,
   already_accepted: 409,

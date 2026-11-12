@@ -43,6 +43,10 @@ const NONE_WITH_RUNTIME: Record<string, string> = {
   'PATCH /push-devices/:id': AWAY_RING_NO_STATION,
   'DELETE /push-devices/:id': AWAY_RING_NO_STATION,
   'POST /push-devices/:id/test-ring': AWAY_RING_NO_STATION,
+  // Mode B: a ring has no station socket; the connector that holds it is the one inbound process (IB8).
+  'POST /inbound/calls/:id/ring/answering': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/ring/decline': INBOUND_SINGLE_PROCESS,
+  'POST /inbound/calls/:id/ring/accept': INBOUND_SINGLE_PROCESS,
 };
 
 let core: FastifyInstance;

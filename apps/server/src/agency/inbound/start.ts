@@ -42,7 +42,7 @@ export const INBOUND_SWEEP_STALE_AFTER_MS = (WEBRTC_MAX_DURATION_SECONDS + INBOU
  * gate (IQ12, IQ13). Absent: P1 (nobody is connected).
  */
 export interface InboundConnectOptions {
-  runtime: Pick<AgencyRuntime, 'stations' | 'agents' | 'dialer' | 'inboundCalls' | 'attachInbound'>;
+  runtime: Pick<AgencyRuntime, 'stations' | 'agents' | 'dialer' | 'inboundCalls' | 'attachInbound' | 'awayRing'>;
   /** `agency_inbound_enabled` for an account; a read that fails is false. */
   enabled(tenantId: string, accountId: string): Promise<boolean>;
   /** `MEDIA_WORKERS` (IB8). */
@@ -101,6 +101,8 @@ export async function startInboundCalls(deps: Omit<AgencyInboundCallRouterDeps, 
       agents: runtime.agents,
       releaseAgent: (sessionId) => runtime.dialer.releaseAgent(sessionId),
       exits: router,
+      // Mode B: an away agent's phone is rung for a waiting caller (docs/inbound.md "Ringing an away phone").
+      awayRing: runtime.awayRing,
       ...connectOpts.connector,
     });
     connectDeps.connector = connector;

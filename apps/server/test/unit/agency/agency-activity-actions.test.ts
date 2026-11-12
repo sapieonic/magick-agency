@@ -56,6 +56,9 @@ const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
   'agency_inbound_call.reassigned',
   'agency_inbound_call.reopened',
   'agency_inbound_call.claimed',
+  // Mode B: the ring of an away agent's phone, filed under the inbound call, never a campaign.
+  'agency_inbound_call.ring_declined',
+  'agency_inbound_call.ring_accepted',
 ]);
 
 const CAMPAIGN_SCOPED = {

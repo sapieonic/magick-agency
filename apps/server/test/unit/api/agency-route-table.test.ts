@@ -113,6 +113,11 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['PATCH /proxy/agency/push-devices/:_', 'mobile app ring opt-in, "Stop ringing" (Mode B)'],
   ['DELETE /proxy/agency/push-devices/:_', 'mobile app push device removal on sign-out (Mode B)'],
   ['POST /proxy/agency/push-devices/:_/test-ring', 'mobile app "Send a test ring" (Mode B)'],
+  // Mode B: the ring of an away agent's phone (`proxy-agency-inbound-ring.routes.ts`): native
+  // Android posts answering and decline at the tap (token only), the app's Dart posts accept.
+  ['POST /proxy/agency/inbound/calls/:_/ring/answering', 'mobile app native ring Answer (Mode B, token only)'],
+  ['POST /proxy/agency/inbound/calls/:_/ring/decline', 'mobile app native ring Decline (Mode B, token only)'],
+  ['POST /proxy/agency/inbound/calls/:_/ring/accept', 'mobile app takes a ring it answered (Mode B)'],
   ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
 ]);
 

@@ -6,9 +6,11 @@ import {
   anyoneCouldTake,
   callerForReleasedAgent,
   couldTakeLater,
-  candidatesFor,
+  candidatesFor as taggedCandidatesFor,
   inStickyPhase,
   inboundIneligibility,
+  ringIneligibility,
+  ringWindowLeft,
   searchOrder,
   stickyAgentStatus,
   type InboundAgentView,
@@ -20,6 +22,10 @@ import { rejoinState } from '../../../src/agency/inbound/inbound-connector.js';
  * Who may take a waiting inbound caller (docs/inbound.md §4.3, §5.1): every row of the §4.3
  * table, the sticky modes, and the order agents and callers are served in.
  */
+
+/** The sessions `taggedCandidatesFor` tries, in order (the station cases: every candidate is `station`). */
+const candidatesFor = (...args: Parameters<typeof taggedCandidatesFor>): string[] =>
+  taggedCandidatesFor(...args).map((c) => (c.channel === 'station' ? c.sessionId : `push:${c.sessionId}`));
 
 const T = 'tenant-1';
 const A = 'account-1';
@@ -173,10 +179,11 @@ describe('searchOrder: callers FIFO, each sticky caller matched to their free ag
     const first = caller('1');
     const second = caller('2', { stickyUserId: 'u-a', queuedAt: NOW - 500, stickyMode: 'loose' });
     const steps = searchOrder([first, second], floor, NOW);
-    expect(steps[0]).toEqual({ callId: 'c-2', candidates: ['s-a'] });
+    const st = (sessionId: string) => ({ sessionId, channel: 'station' });
+    expect(steps[0]).toEqual({ callId: 'c-2', candidates: [st('s-a')] });
     expect(steps.slice(1)).toEqual([
-      { callId: 'c-1', candidates: ['s-a', 's-b'] },
-      { callId: 'c-2', candidates: ['s-a'] },
+      { callId: 'c-1', candidates: [st('s-a'), st('s-b')] },
+      { callId: 'c-2', candidates: [st('s-a')] },
     ]);
   });
 });
@@ -326,5 +333,98 @@ describe('IQ50: a device_away pause less than 30 s old counts as could take, and
     ['in another account', agent('a', { state: 'break', awayGrace: true, accountId: 'account-2' })],
   ] as const)('an agent in the grace %s does not count', (_what, a) => {
     expect(couldTakeLater(a, caller('1', { poolCampaignIds: ['camp-1'] }))).toBe(false);
+  });
+});
+
+// ─── Mode B: ringing an away phone (IQ63, IQ68, IQ69) ─────────────────────────────
+
+/** An agent on `away_ring`: no station here, `break` with `ring = 1`, their phone ringable. */
+function away(id: string, over: Partial<InboundAgentView> & { since?: number } = {}): InboundAgentView {
+  const { since = NOW - 10_000, ...rest } = over;
+  return agent(id, {
+    canTakeInbound: false, stationOpen: false, ringable: true,
+    live: { state: 'break', since, manualCallId: null, softphone: false, inboundCallId: null, ring: true, pushOffer: false },
+    ...rest,
+  });
+}
+
+describe('ringIneligibility: who may be rung for a caller (Mode B)', () => {
+  const c = caller('1', { maxWaitAt: NOW + 60_000 });
+  it('an agent on away_ring whose phone may be rung, in the account and pool', () => {
+    expect(ringIneligibility(away('a'), c)).toBeNull();
+    expect(ringIneligibility(away('a', { accountId: 'other' }), c)).toBe('other_account');
+    expect(ringIneligibility(away('a', { campaignId: null }), c)).toBe('not_campaign_session');
+    expect(ringIneligibility(away('a', { campaignId: 'camp-2' }), { ...c, poolCampaignIds: ['camp-1'] })).toBe('not_in_pool');
+    expect(ringIneligibility(away('a', { ringable: false }), c)).toBe('not_ringable');
+    expect(ringIneligibility(away('a', { member: false }), c)).toBe('not_member');
+  });
+  it('never a session this caller declined or missed', () => {
+    expect(ringIneligibility(away('a'), { ...c, declinedSessionIds: new Set(['s-a']) })).toBe('declined');
+  });
+  it('only from break with ring = 1: a plain break, a ring in flight or a lapsed key is not ringable now', () => {
+    const plain = away('a');
+    plain.live = { ...plain.live!, ring: false };
+    expect(ringIneligibility(plain, c)).toBe('wrong_state');
+    const ringing = away('a');
+    ringing.live = { ...ringing.live!, state: 'reserved', ring: false, pushOffer: true, inboundCallId: 'c-9' };
+    expect(ringIneligibility(ringing, c)).toBe('wrong_state');
+    expect(ringIneligibility(ringing, c, 'later')).toBeNull();
+    expect(ringIneligibility(away('a', { live: null }), c)).toBe('wrong_state');
+  });
+  it('IQ69: a ring needs a whole ring window of the caller`s wait left', () => {
+    expect(ringWindowLeft(caller('1', { maxWaitAt: NOW + 20_000 }), NOW)).toBe(true);
+    expect(ringWindowLeft(caller('1', { maxWaitAt: NOW + 19_999 }), NOW)).toBe(false);
+    expect(ringWindowLeft(caller('1'), NOW)).toBe(true);
+  });
+});
+
+describe('candidatesFor with phones to ring (IQ63)', () => {
+  const wait = { maxWaitAt: NOW + 120_000 };
+  it('the team`s phones only when nobody is on screen to try, longest idle first', () => {
+    const floor = [away('young', { since: NOW - 1_000 }), away('old', { since: NOW - 90_000 })];
+    expect(candidatesFor(caller('1', wait), floor, NOW)).toEqual(['push:s-old', 'push:s-young']);
+    expect(candidatesFor(caller('1', wait), [...floor, agent('desk')], NOW)).toEqual(['s-desk']);
+  });
+  it('the sticky agent on screen first, then their phone (step 2) before the team on screen', () => {
+    const c = caller('1', { ...wait, stickyUserId: 'u-mine', stickyMode: 'loose', queuedAt: NOW - 60_000 });
+    expect(candidatesFor(c, [agent('desk'), away('mine')], NOW)).toEqual(['push:s-mine', 's-desk']);
+    expect(candidatesFor(c, [agent('desk', { since: NOW - 90_000 }), agent('mine')], NOW)).toEqual(['s-mine', 's-desk']);
+  });
+  it('strict sticky: an away sticky agent who is ringable is rung, then the team takes over (IQ6 as amended)', () => {
+    const c = caller('1', { ...wait, stickyUserId: 'u-mine', stickyMode: 'strict' });
+    expect(candidatesFor(c, [agent('desk'), away('mine')], NOW)).toEqual(['push:s-mine', 's-desk']);
+    expect(candidatesFor({ ...c, declinedSessionIds: new Set(['s-mine']) }, [agent('desk'), away('mine')], NOW)).toEqual(['s-desk']);
+  });
+  it('sticky off: the sticky agent`s phone is just one of the team`s', () => {
+    const c = caller('1', { ...wait, stickyUserId: 'u-mine', stickyMode: 'off' });
+    expect(candidatesFor(c, [agent('desk'), away('mine')], NOW)).toEqual(['s-desk']);
+  });
+  it('IQ69: no phone is rung with less than a ring window of wait left', () => {
+    const c = caller('1', { maxWaitAt: NOW + 5_000, stickyUserId: 'u-mine', stickyMode: 'loose' });
+    expect(candidatesFor(c, [away('mine'), away('other')], NOW)).toEqual([]);
+    expect(candidatesFor(c, [away('mine'), away('other')], NOW, 5_000)).toEqual(['push:s-mine', 'push:s-other']);
+  });
+  it('searchOrder tags each candidate with its channel', () => {
+    const steps = searchOrder([caller('1', wait)], [away('a')], NOW);
+    expect(steps).toEqual([{ callId: 'c-1', candidates: [{ sessionId: 's-a', channel: 'push' }] }]);
+  });
+});
+
+describe('couldTakeLater with phones to ring (IQ68)', () => {
+  it('a ringable agent could take the caller, unless the caller declined or missed them', () => {
+    const c = caller('1');
+    expect(couldTakeLater(away('a'), c)).toBe(true);
+    expect(anyoneCouldTake(c, [away('a')])).toBe(true);
+    expect(anyoneCouldTake({ ...c, declinedSessionIds: new Set(['s-a']) }, [away('a')])).toBe(false);
+  });
+  it('one ringing for another caller now could take them once that ring ends', () => {
+    const ringing = away('a');
+    ringing.live = { ...ringing.live!, state: 'reserved', ring: false, pushOffer: true, inboundCallId: 'c-9' };
+    expect(couldTakeLater(ringing, caller('1'))).toBe(true);
+  });
+  it('a plain break with a registered phone (not on away_ring) is not counted', () => {
+    const plain = away('a');
+    plain.live = { ...plain.live!, ring: false };
+    expect(couldTakeLater(plain, caller('1'))).toBe(false);
   });
 });

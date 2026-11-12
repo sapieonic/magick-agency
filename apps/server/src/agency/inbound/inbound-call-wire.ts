@@ -1,6 +1,7 @@
 import {
   AGENCY_DEFAULT_DISPOSITION_CATALOG,
   AGENCY_INBOUND_CONNECT_DELAY_MS,
+  AGENCY_INBOUND_RING_MS,
   type AgencyDisposition,
   type AgencyInboundCall,
   type AgencyInboundCallMatch,
@@ -144,6 +145,7 @@ export function inboundCallToWire(
   connectDelayMs: number = AGENCY_INBOUND_CONNECT_DELAY_MS,
 ): AgencyInboundCall {
   const offeredAt = call.offered_at ? new Date(call.offered_at) : null;
+  const push = call.offer_channel === 'push';
   const waitedFrom = call.queued_at ?? call.arrived_at;
   const owed = call.state === 'ended' && call.bridged_at !== null && call.settled_at === null && call.ended_at !== null;
   const takerRank = sessionAgentUserId ? ctx.stickyCandidates.find((c) => c.userId === sessionAgentUserId) : undefined;
@@ -168,12 +170,15 @@ export function inboundCallToWire(
     recording: call.recording_requested,
     waited_seconds: offeredAt ? Math.max(0, Math.floor((offeredAt.getTime() - new Date(waitedFrom).getTime()) / 1000)) : 0,
     offered_at: (offeredAt ?? new Date(call.arrived_at)).toISOString(),
-    connects_at: call.state === 'offered' && offeredAt ? new Date(offeredAt.getTime() + connectDelayMs).toISOString() : null,
-    // Mode B (IQ66): every offer this build makes is to an open station; the push channel, its
-    // ring deadline and its answer time arrive with the connector's ring (WP5).
-    offer_channel: offeredAt ? 'station' : null,
-    ring_expires_at: null,
-    accepted_at: null,
+    // Mode B (IQ66): a push offer has no `connects_at` (it binds once the app has accepted and its
+    // station attached); its ring deadline stands until it is answered.
+    connects_at: call.state === 'offered' && offeredAt && !push ? new Date(offeredAt.getTime() + connectDelayMs).toISOString() : null,
+    // A row offered before Mode B's writers has no channel: a station's.
+    offer_channel: call.offer_channel ?? (offeredAt ? 'station' : null),
+    ring_expires_at: push && call.state === 'offered' && call.ringing_at && !call.accepted_at
+      ? new Date(new Date(call.ringing_at).getTime() + AGENCY_INBOUND_RING_MS).toISOString()
+      : null,
+    accepted_at: push ? iso(call.accepted_at) : null,
     bridged_at: iso(call.bridged_at),
     ended_at: iso(call.ended_at),
     talk_seconds: call.state === 'ended' ? call.talk_seconds : null,

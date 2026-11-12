@@ -91,6 +91,9 @@ type CampaignScopedAuditAction = Exclude<
   | 'agency_inbound_call.reassigned'
   | 'agency_inbound_call.reopened'
   | 'agency_inbound_call.claimed'
+  // Mode B: the ring of an away agent's phone, filed under the inbound call, never a campaign.
+  | 'agency_inbound_call.ring_declined'
+  | 'agency_inbound_call.ring_accepted'
   // An agent's push devices are theirs, across tenants and campaigns (Mode B): no row carries a campaign.
   | 'agency_push_device.ring_opt_in_changed'
   | 'agency_push_device.revoked'

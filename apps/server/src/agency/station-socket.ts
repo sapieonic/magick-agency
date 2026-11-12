@@ -680,4 +680,7 @@ export async function handleStationSocket(
   if (!restored || !stillOurs()) return;
   if (restored.call) runtime.stations.send(sessionId, { event: 'inbound_call', call: restored.call }, socket);
   for (const frame of restored.waiting) runtime.stations.send(sessionId, frame, socket);
+  // Mode B: an accepted ring (or one this attach accepted, N5) binds now, after `ready` and its
+  // `inbound_call` frame, so the panel comes before any audio (IB1).
+  inbound.bindAcceptedRing(sessionId);
 }

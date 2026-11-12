@@ -3,7 +3,7 @@
  * docs/inbound.md "Ringing an away phone"). The runtime owns one {@link AwayRingService}
  * (`runtime.awayRing`); the session routes, the push-device routes, the dialer's release, the
  * station rehydrate and the bootstrap's reconcile go through it, and the inbound connector's ring
- * (WP5) ends each unanswered ring with {@link AwayRingService.releaseInbound}.
+ * ends each unanswered ring with {@link AwayRingService.releaseInbound}.
  *
  * The state lives in two places, written in this order:
  *  - Redis (`agent-state-machine.ts`): `state = break, ring = 1`, a key no heartbeat renews, whose
@@ -72,7 +72,7 @@ export function awayRingRefusalBody(code: AgencyAwayRingRefusalCode): AgencyAway
 export type AwayRingEndOutcome =
   /** Ended: `device_away` (or `offline`), the mirror written, `ring_off` sent when asked. */
   | 'ended'
-  /** A ring is in flight: its end is the connector's (WP5), nothing written. */
+  /** A ring is in flight: its end is the connector's, nothing written. */
   | 'ring_in_flight'
   /** The session was not on `away_ring` (something else ended it first): nothing written. */
   | 'not_away_ring'
@@ -155,7 +155,7 @@ export class AwayRingService {
 
   /**
    * The connector's synchronous answer: the session holds a push offer (a ring, or an answered
-   * ring in its accept grace). False while no connector runs, and until WP5 implements it.
+   * ring in its accept grace). False while no connector runs.
    */
   holdsPushOffer(sessionId: string): boolean {
     return this.deps.inbound()?.holdsPushOffer(sessionId) ?? false;
@@ -232,7 +232,7 @@ export class AwayRingService {
   }
 
   /**
-   * WP5: a push offer for `inboundCallId` ended unanswered (declined, expired, lapsed, the caller
+   * The connector: a push offer for `inboundCallId` ended unanswered (declined, expired, lapsed, the caller
    * left, the push failed, given back, answered elsewhere) while the agent has no open station:
    * the session goes back to `away_ring` (Redis: `inbound` cleared, `break, ring = 1`, a fresh
    * `since`, the TTL left to the maximum age; the mirror: `break/away_ring`, N1).
@@ -275,9 +275,8 @@ export class AwayRingService {
    * take-over) passes false.
    *
    * A ring in flight is never ended here (`ring_in_flight`): its end is the connector's, on the
-   * call's own chain (N1). TODO(WP5): `InboundConnector.cancelRingForAwayRingEnd(sessionId, reason)`
-   * cancels the ring and then calls this; until then a pass of the reconcile after the ring ends
-   * finishes the job.
+   * call's own chain (N1). {@link endOrCancelRing} goes through
+   * `InboundConnector.cancelRingForAwayRingEnd`, which cancels the ring and then calls this.
    */
   async end(
     sessionId: string,
@@ -339,8 +338,11 @@ export class AwayRingService {
    */
   async endOnTakeOver(sessionId: string, agentUserId: string, previousDeviceId: string | null): Promise<void> {
     if (this.holdsPushOffer(sessionId)) {
-      // TODO(WP5): the ring in flight is the connector's to cancel (`answered_elsewhere`).
-      log.info({ sessionId }, 'Take-over during a ring: the ring is the connector\'s to end');
+      // The ring in flight is the connector's to cancel, on the call's chain (`answered_elsewhere`;
+      // an answered one too: the device that answered no longer holds the station). It leaves the
+      // agent on a plain break for the new device's attach.
+      const cancelled = await this.deps.inbound()?.cancelRingForAwayRingEnd(sessionId, 'taken_over');
+      log.info({ sessionId, cancelled }, 'Take-over during a ring: the ring was cancelled');
     } else {
       const redis = await this.deps.agents.endAwayRing(sessionId, { offline: false });
       if (redis.outcome === 'not_away_ring') {
@@ -364,7 +366,26 @@ export class AwayRingService {
   ): Promise<AwayRingEndOutcome | 'none'> {
     const session = await agencyAgentSessionRepository.findLiveAwayRingForDevice(agentUserId, deviceId);
     if (!session) return 'none';
-    return this.end(session.id, reason, { ...(actor ? { actor } : {}) });
+    return this.endOrCancelRing(session.id, reason, { ...(actor ? { actor } : {}) });
+  }
+
+  /**
+   * {@link end}, or, while the session holds a push offer, the connector's cancel of that ring on
+   * the call's chain first (N1: never a direct state write during a ring): a ring not yet answered
+   * is cancelled and the absence ended with `reason` (`ended`); an answered one runs to its end
+   * (`ring_in_flight`; the next reconcile finds the absence to end).
+   */
+  async endOrCancelRing(
+    sessionId: string,
+    reason: AgencyRingOffReason,
+    opts: { actor?: AuditActorFields } = {},
+  ): Promise<AwayRingEndOutcome> {
+    const connector = this.deps.inbound();
+    if (connector && this.holdsPushOffer(sessionId)) {
+      const out = await connector.cancelRingForAwayRingEnd(sessionId, reason);
+      return out === 'cancelled' ? 'ended' : out === 'answered' ? 'ring_in_flight' : this.end(sessionId, reason, opts);
+    }
+    return this.end(sessionId, reason, opts);
   }
 
   /**
@@ -401,9 +422,10 @@ export class AwayRingService {
   /**
    * One pass over every live session with `away_ring_since` set (N1; never keyed on
    * `break_reason`, which a ring's `reserved` nulls):
-   *  - a ring in flight (the connector holds a push offer, or Redis an `inbound` field): skipped;
-   *    its end is the connector's (TODO(WP5): a reconcile-driven end during a ring goes through
-   *    `InboundConnector.cancelRingForAwayRingEnd` on the call's chain);
+   *  - a ring in flight (the connector holds a push offer, or Redis an `inbound` field): skipped,
+   *    unless the absence must end (below) while the connector holds the ring: then the ring is
+   *    cancelled on the call's chain (`InboundConnector.cancelRingForAwayRingEnd`) and the absence
+   *    ended there (an answered ring runs to its end and the next pass ends the absence);
    *  - past the maximum age, the flags off, the device gone, revoked or without a token, or opted
    *    out: ended (`max_age`, `flag_off`, `revoked`, `opted_out`), `ring_off` sent;
    *  - otherwise live but its Redis key gone (a restart that outlived the lease, a crash mid-ring
@@ -446,7 +468,9 @@ export class AwayRingService {
     summary: AwayRingReconcileSummary,
   ): Promise<void> {
     if (this.holdsPushOffer(row.id)) {
-      summary.skippedInFlight++;
+      const reason = await this.endReasonFor(row, now, allowed);
+      if (reason && (await this.endOrCancelRing(row.id, reason)) === 'ended') summary.ended++;
+      else summary.skippedInFlight++;
       return;
     }
     const live = await this.deps.agents.get(row.id);

@@ -29,6 +29,7 @@ export type { AgentDialClaim, AgentRetryReopenResult, AgentRetrySettings } from 
 export { AgencyAgentSessionRepository, agencyAgentSessionRepository } from './agency/agent-session.repository.js';
 export type {
   AgencyAwayRingCandidate,
+  AgencyRingableSession,
   AgencyAwayRingEnded,
   AgencySoftphoneJoinResult,
 } from './agency/agent-session.repository.js';

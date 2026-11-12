@@ -193,6 +193,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_inbound_call.dispositioned', label: 'Inbound call outcome saved', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.dnc_marked', label: 'Inbound caller marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_call.closed', label: 'Inbound call closed by a supervisor', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_call.ring_declined', label: 'Agent declined an inbound call ringing their phone', group: 'Calls', product: 'agency' },
+  { value: 'agency_inbound_call.ring_accepted', label: 'Agent answered an inbound call ringing their phone', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_clip.uploaded', label: 'Inbound recording uploaded', group: 'Calls', product: 'agency' },
   { value: 'agency_inbound_clip.deleted', label: 'Inbound recording deleted', group: 'Calls', product: 'agency' },
   { value: 'agency_push_device.ring_opt_in_changed', label: 'Agent turned inbound ringing on or off for a phone', group: 'Calls', product: 'agency' },

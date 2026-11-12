@@ -161,6 +161,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // A supervisor's force-available closed an outcome the agent owed (`no_disposition`, as the
   // lapse would): filed under the call, the supervisor the actor (`details.via`, the session).
   'agency_inbound_call.closed',
+  // Mode B (IQ71): the agent declined the ring of their phone (token only: the agent the ring was
+  // for, `details.reason`: declined or busy_on_phone), or accepted it (`details.device_id`, the
+  // station's device). Filed under the inbound call, `details.session_id`. Never the offer token.
+  'agency_inbound_call.ring_declined',
+  'agency_inbound_call.ring_accepted',
   // A recording uploaded for inbound routes (`details.size_bytes`, `duration_seconds`) or deleted,
   // filed under the recording (`audio_files.id`). Account-wide.
   'agency_inbound_clip.uploaded',

@@ -168,6 +168,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-campaigns/retry.ts',
       'api/routes/proxy-agency-campaigns/spine.ts',
       'api/routes/proxy-agency-campaigns/stats.ts',
+      'api/routes/proxy-agency-inbound-ring.routes.ts', // Mode B: the ring of an away agent's phone
       'api/routes/proxy-agency-inbound/calls.ts',
       'api/routes/proxy-agency-inbound/clips.ts',
       'api/routes/proxy-agency-inbound/missed-work.ts',

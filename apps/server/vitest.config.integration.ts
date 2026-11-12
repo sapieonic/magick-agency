@@ -17,6 +17,8 @@ const WALL_CLOCK_FILES = [
   'test/integration/cluster/mobile-stations.test.ts',
   'test/integration/telephony/inbound-wrapup-lease.test.ts',
   'test/integration/telephony/inbound-mobile-wall-clock.test.ts',
+  // Mode B: a ring expiring on the real 20 s window (AGENCY_INBOUND_RING_MS).
+  'test/integration/telephony/inbound-ring-e2e.test.ts',
 ];
 
 const lane = process.env['INTEGRATION_LANE'] || undefined;

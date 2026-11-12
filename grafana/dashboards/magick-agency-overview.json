@@ -2091,6 +2091,202 @@
         "x": 0,
         "y": 115
       },
+      "id": 136,
+      "title": "Mode B: ringing away phones",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Rings of an away agent's phone for an inbound caller, per minute, by how each ended: answered, declined, busy_on_phone, expired, accept_lapsed, push_failed (agy-inbound-ring-push-failed), caller_left, answered_elsewhere (a station agent took the caller mid-ring) or cancelled. Expired and accept_lapsed are misses: two in a row stop the agent's phone ringing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 116
+      },
+      "id": 137,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Mode B \u2014 Rings by Result (per min)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(agency_inbound_rings_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Seconds from the start of a ring to the agent tapping Answer on the phone (the ring window is 20 s). A p90 near 20 s means agents answer at the last moment; rings that are never answered are not in this histogram (see Rings by Result).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 116
+      },
+      "id": 138,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Mode B \u2014 Ring to Answer (p50 / p90)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(agency_inbound_ring_answer_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(agency_inbound_ring_answer_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p90",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Pushes to agents' phones (rings, ring_cancel, ring_off, test rings) per minute, by platform and result: ok, skipped, unregistered (the device is revoked), invalid, rate_limited, unavailable or unconfigured (the sender has no credentials).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 124
+      },
+      "id": 139,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Mode B \u2014 Push Sends by Platform and Result (per min)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (platform, result) (rate(agency_push_sends_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "{{platform}} {{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 132
+      },
       "id": 2,
       "title": "Voice, capacity and storage",
       "type": "row",
@@ -2126,7 +2322,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 116
+        "y": 133
       },
       "id": 10,
       "options": {
@@ -2215,7 +2411,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 116
+        "y": 133
       },
       "id": 73,
       "options": {
@@ -2304,7 +2500,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 116
+        "y": 133
       },
       "id": 67,
       "options": {
@@ -2363,7 +2559,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 124
+        "y": 141
       },
       "id": 102,
       "options": {
@@ -2451,7 +2647,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 124
+        "y": 141
       },
       "id": 76,
       "options": {
@@ -2548,7 +2744,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 132
+        "y": 149
       },
       "id": 122,
       "options": {
@@ -2635,7 +2831,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 132
+        "y": 149
       },
       "id": 123,
       "options": {
@@ -2669,7 +2865,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 140
+        "y": 157
       },
       "id": 3,
       "title": "Identity and mail",
@@ -2706,7 +2902,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 141
+        "y": 158
       },
       "id": 103,
       "options": {
@@ -2764,7 +2960,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 141
+        "y": 158
       },
       "id": 104,
       "options": {
@@ -2804,7 +3000,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 149
+        "y": 166
       },
       "id": 4,
       "title": "Analysis",
@@ -2872,7 +3068,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 150
+        "y": 167
       },
       "id": 68,
       "options": {
@@ -2936,7 +3132,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 150
+        "y": 167
       },
       "id": 69,
       "options": {
@@ -3012,7 +3208,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 158
+        "y": 175
       },
       "options": {
         "legend": {
@@ -3094,7 +3290,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 158
+        "y": 175
       },
       "options": {
         "legend": {
@@ -3141,7 +3337,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 166
+        "y": 183
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -3178,7 +3374,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 167
+        "y": 184
       },
       "id": 106,
       "options": {
@@ -3242,7 +3438,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 167
+        "y": 184
       },
       "id": 107,
       "options": {
@@ -3300,7 +3496,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 167
+        "y": 184
       },
       "id": 108,
       "options": {
@@ -3360,7 +3556,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 175
+        "y": 192
       },
       "id": 87,
       "options": {
@@ -3417,7 +3613,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 175
+        "y": 192
       },
       "id": 74,
       "options": {
@@ -3475,7 +3671,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 183
+        "y": 200
       },
       "id": 50,
       "options": {
@@ -3513,7 +3709,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 191
+        "y": 208
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -3550,7 +3746,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 192
+        "y": 209
       },
       "id": 112,
       "options": {
@@ -3608,7 +3804,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 192
+        "y": 209
       },
       "id": 113,
       "options": {
@@ -3666,7 +3862,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 200
+        "y": 217
       },
       "id": 114,
       "options": {
@@ -3724,7 +3920,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 200
+        "y": 217
       },
       "id": 115,
       "options": {

@@ -205,6 +205,19 @@ export interface AgencyAwayRingCandidate {
   device_has_token: boolean | null;
 }
 
+/**
+ * A live campaign session of one account on `away_ring` (or ringing from it) whose station's push
+ * device can be rung: registered, not revoked, opted in, with a token for its platform (IQ58,
+ * IQ60, IQ65). What the inbound connector reads at each search (`InboundConnector`'s agent views,
+ * one statement). Never a token.
+ */
+export interface AgencyRingableSession {
+  id: string;
+  agent_user_id: string;
+  campaign_id: string;
+  device_platform: AgencyPushPlatform;
+}
+
 /** What {@link AgencyAgentSessionRepository.endAwayRing} ended: the session's identity, for the push and the audit. */
 export interface AgencyAwayRingEnded {
   id: string;
@@ -930,6 +943,48 @@ export class AgencyAgentSessionRepository {
         ORDER BY s.away_ring_since`,
     );
     return rows;
+  }
+
+  /**
+   * The account's sessions whose phone may be rung for an inbound caller (Mode B, docs/inbound.md
+   * "Ringing an away phone"): live campaign sessions on an absence (`away_ring_since` set, N1)
+   * joined to the push device that holds their station, usable for a ring. One statement; whether
+   * Redis says `break, ring = 1` (or the ring in flight) is the caller's read.
+   */
+  async findRingableInAccount(tenantId: string, accountId: string): Promise<AgencyRingableSession[]> {
+    const { rows } = await getPool().query<AgencyRingableSession>(
+      `SELECT s.id, s.agent_user_id, s.campaign_id, d.platform AS device_platform
+         FROM agency_agent_sessions s
+         JOIN agency_push_devices d ON d.user_id = s.agent_user_id AND d.device_id = s.station_device_id
+        WHERE s.tenant_id = $1 AND s.account_id = $2
+          AND s.away_ring_since IS NOT NULL AND s.left_at IS NULL
+          AND s.kind = 'campaign' AND s.campaign_id IS NOT NULL
+          AND d.revoked_at IS NULL AND d.ring_enabled
+          AND (CASE WHEN d.platform = 'android' THEN d.fcm_token ELSE d.voip_token END) IS NOT NULL`,
+      [tenantId, accountId],
+    );
+    return rows;
+  }
+
+  /**
+   * One more missed ring in a row (IQ62: expired, or answered and not bound in the grace). Returns
+   * the count now; 0 when the session is gone or has left.
+   */
+  async noteRingMiss(id: string): Promise<number> {
+    const { rows } = await getPool().query<{ ring_misses: number }>(
+      `UPDATE agency_agent_sessions SET ring_misses = ring_misses + 1, updated_at = now()
+        WHERE id = $1 AND left_at IS NULL RETURNING ring_misses`,
+      [id],
+    );
+    return rows[0]?.ring_misses ?? 0;
+  }
+
+  /** An answered ring resets the missed rings (IQ62). */
+  async resetRingMisses(id: string): Promise<void> {
+    await getPool().query(
+      'UPDATE agency_agent_sessions SET ring_misses = 0, updated_at = now() WHERE id = $1 AND ring_misses <> 0',
+      [id],
+    );
   }
 
   /**

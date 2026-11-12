@@ -909,7 +909,19 @@ export function trackInboundCallEnded(outcome: string): void {
 export type InboundWaitResult = 'connected' | 'abandoned' | 'overflow' | 'failed';
 
 /** How one offer of an inbound caller to an agent ended (`agency_inbound_offers_total`). */
-export type InboundOfferResult = 'connected' | 'caller_left' | 'station_lost' | 'lease_lost' | 'refused' | 'declined' | 'bind_refused';
+export type InboundOfferResult =
+  | 'connected' | 'caller_left' | 'station_lost' | 'lease_lost' | 'refused' | 'declined' | 'bind_refused'
+  // Mode B, a push offer (a ring) only: not answered in time (`expired`, `accept_lapsed`, `push_failed`),
+  // a station agent took the caller first (IQ73), or ended for any other reason (the absence ended).
+  | 'unanswered' | 'answered_elsewhere' | 'cancelled';
+
+/** How an inbound caller was offered (`agency_inbound_offers_total{channel}`): the station socket, or a ring to an away phone (Mode B). */
+export type InboundOfferChannel = 'station' | 'push';
+
+/** How one ring to an away agent's phone ended (`agency_inbound_rings_total`): the contract's `AgencyInboundRingResult`. */
+export type InboundRingMetricResult =
+  | 'answered' | 'declined' | 'expired' | 'accept_lapsed' | 'busy_on_phone' | 'push_failed' | 'caller_left'
+  | 'answered_elsewhere' | 'cancelled';
 
 /**
  * Why a waiting inbound caller was overflowed from the queue (`agency_inbound_overflows_total`):
@@ -930,8 +942,18 @@ export const agencyInboundWaitSeconds = histogram<'result'>(meter, 'agency_inbou
   buckets: [1, 5, 10, 20, 30, 60, 120, 300, 600],
 });
 
-export const agencyInboundOffersTotal = counter<'result' | 'client'>(meter, 'agency_inbound_offers_total', {
-  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free, or the station could no longer take inbound calls), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent\'s socket); and by the station\'s client (web: the console, mobile: a phone that declared caps=inbound)',
+export const agencyInboundOffersTotal = counter<'result' | 'client' | 'channel'>(meter, 'agency_inbound_offers_total', {
+  description: 'Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free, or the station could no longer take inbound calls), declined (the agent hung up the offer, or declined the ring), bind_refused (the bridge would not bind the agent\'s socket), unanswered (a ring expired, lapsed after the answer, or its push failed), answered_elsewhere (a station agent took the caller mid-ring) or cancelled (a ring ended with its away break); by the station\'s client (web: the console, mobile: a phone) and by channel (station: the station socket, push: a ring to an away phone)',
+});
+
+export const agencyInboundRingsTotal = counter<'result'>(meter, 'agency_inbound_rings_total', {
+  description: 'Rings of an away agent\'s phone for an inbound caller (Mode B), by how each ended: answered, declined, expired, accept_lapsed, busy_on_phone, push_failed, caller_left, answered_elsewhere or cancelled',
+});
+
+export const agencyInboundRingAnswerSeconds = histogram(meter, 'agency_inbound_ring_answer_seconds', {
+  description: 'Seconds from the start of a ring to the agent answering it on the phone (Mode B; the ring window is 20 s)',
+  unit: 's',
+  buckets: [1, 2, 4, 6, 8, 10, 12, 15, 20],
 });
 
 export const agencyInboundOverflowsTotal = counter<'reason'>(meter, 'agency_inbound_overflows_total', {
@@ -961,8 +983,18 @@ export function trackInboundWait(result: InboundWaitResult, seconds: number): vo
  * One offer's end, with the client of the station it went to (`web` or `mobile`): how many callers
  * go to phones, beside the consoles (an app build without `caps=inbound` is never offered one).
  */
-export function trackInboundOffer(result: InboundOfferResult, client: 'web' | 'mobile'): void {
-  agencyInboundOffersTotal.inc({ result, client });
+export function trackInboundOffer(result: InboundOfferResult, client: 'web' | 'mobile', channel: InboundOfferChannel = 'station'): void {
+  agencyInboundOffersTotal.inc({ result, client, channel });
+}
+
+/** One ring of an away agent's phone ended (Mode B), once per ring. */
+export function trackInboundRing(result: InboundRingMetricResult): void {
+  agencyInboundRingsTotal.inc({ result });
+}
+
+/** A ring was answered on the phone (`…/ring/answering`, or an attach mid-ring): seconds since it started. */
+export function trackInboundRingAnswer(seconds: number): void {
+  agencyInboundRingAnswerSeconds.observe(Math.max(0, seconds));
 }
 
 // ─── Inbound operations (docs/inbound.md §3.2, §8.1; `telephony/credentials/inbound-monitor.ts`) ─

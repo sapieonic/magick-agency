@@ -201,8 +201,9 @@
   {
     "name": "agency_inbound_offers_total",
     "kind": "Counter",
-    "description": "Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free, or the station could no longer take inbound calls), declined (the agent hung up the offer) or bind_refused (the bridge would not bind the agent's socket); and by the station's client (web: the console, mobile: a phone that declared caps=inbound)",
+    "description": "Offers of an inbound caller to an agent, by how each ended: connected, caller_left (hung up while offered), station_lost, lease_lost, refused (the call or the session was no longer free, or the station could no longer take inbound calls), declined (the agent hung up the offer, or declined the ring), bind_refused (the bridge would not bind the agent's socket), unanswered (a ring expired, lapsed after the answer, or its push failed), answered_elsewhere (a station agent took the caller mid-ring) or cancelled (a ring ended with its away break); by the station's client (web: the console, mobile: a phone) and by channel (station: the station socket, push: a ring to an away phone)",
     "attributes": [
+      "channel",
       "client",
       "result"
     ]
@@ -221,6 +222,34 @@
     "description": "Inbound callers waiting for an agent on a route right now (on offer excluded), set as the queue changes",
     "attributes": [
       "route_id"
+    ]
+  },
+  {
+    "name": "agency_inbound_ring_answer_seconds",
+    "kind": "Histogram",
+    "description": "Seconds from the start of a ring to the agent answering it on the phone (Mode B; the ring window is 20 s)",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        1,
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        15,
+        20
+      ]
+    },
+    "attributes": []
+  },
+  {
+    "name": "agency_inbound_rings_total",
+    "kind": "Counter",
+    "description": "Rings of an away agent's phone for an inbound caller (Mode B), by how each ended: answered, declined, expired, accept_lapsed, busy_on_phone, push_failed, caller_left, answered_elsewhere or cancelled",
+    "attributes": [
+      "result"
     ]
   },
   {

@@ -1,4 +1,10 @@
-import { DEVICE_AWAY_RETURN_GRACE_MS, type AgencyAgentState, type AgencyInboundStickyMode } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_INBOUND_RING_MS,
+  DEVICE_AWAY_RETURN_GRACE_MS,
+  type AgencyAgentState,
+  type AgencyInboundOfferChannel,
+  type AgencyInboundStickyMode,
+} from '@magick-agency/contracts/agency';
 
 /**
  * ─── WHO MAY TAKE A WAITING INBOUND CALLER (docs/inbound.md §4.3, §5.1; P2) ────────────────────
@@ -73,6 +79,26 @@ import { DEVICE_AWAY_RETURN_GRACE_MS, type AgencyAgentState, type AgencyInboundS
  * (`pacing-engine.ts`), so inbound and pacing agree on who has waited longest. Before that FIFO
  * pass, every caller whose sticky agent is available now is matched to them: an agent who frees
  * takes their own customer before anyone else's (§2 step 4).
+ *
+ * ── Ringing an away phone (Mode B, IQ58–IQ74; docs/inbound.md "Ringing an away phone") ──────
+ * An agent on `away_ring` has no station socket (the app parked it), so the connector reads them
+ * from the database ({@link InboundAgentView.ringable}: a live campaign session on an absence whose
+ * station's push device can be rung, both flags on and the sender configured) and Redis
+ * (`break` with `ring = 1`). Such an agent is RINGABLE for a caller ({@link ringIneligibility}):
+ * every rule above but the station (none) and the state (`break, ring = 1`), and never a session
+ * this caller already declined or missed. Each candidate is tagged with its channel
+ * ({@link InboundCandidate}): `station` (the offer frame on an open station) or `push` (a ring).
+ * The order per caller (IQ63, amending IQ6):
+ *  1. the sticky agent on screen and available;
+ *  2. the sticky agent ringable, rung for one window (under `strict` too: a ringable sticky agent is
+ *     away, so the team takes over after the ring);
+ *  3. team members on screen, longest idle first;
+ *  4. team members ringable, longest idle first (the break's `since`, rewritten on every return to
+ *     `away_ring`), only when no station candidate exists (step 1 or 3). The connector rings one
+ *     phone per caller at a time.
+ * A ring starts only with at least one ring window of the caller's maximum wait left (IQ69,
+ * {@link ringWindowLeft}). A ringable agent counts as one who could take a caller (IQ68,
+ * {@link couldTakeLater}), as does one ringing now (the ring ends, and they are ringable again).
  */
 
 /**
@@ -116,6 +142,12 @@ export interface InboundAgentView {
    * or this account), as of the connector's last read: false for one removed or deactivated.
    */
   member: boolean;
+  /**
+   * Mode B: the session is on an `away_ring` absence whose phone may be rung (its station's push
+   * device registered, opted in, with a token; both flags on; the sender configured). Whether it is
+   * ringable NOW is Redis's (`live`: `break` with `ring`).
+   */
+  ringable?: boolean;
   /** The Redis hash; null when the lease has lapsed. */
   live: {
     state: AgencyAgentState;
@@ -124,6 +156,10 @@ export interface InboundAgentView {
     manualCallId: string | null;
     softphone: boolean;
     inboundCallId: string | null;
+    /** Mode B: on `away_ring` (`break` with `ring = 1`). */
+    ring?: boolean;
+    /** Mode B: the inbound call held is a push offer (a ring). */
+    pushOffer?: boolean;
   } | null;
 }
 
@@ -142,8 +178,22 @@ export interface InboundCallerView {
   stickyWaitMs: number;
   /** Epoch ms of the first queueing (`queued_at`). */
   queuedAt: number;
-  /** Sessions this caller is never offered to again: they turned the offer down (QA-F3, SWE-m4). */
+  /**
+   * Sessions this caller is never offered to again: they turned the offer down (QA-F3, SWE-m4), or
+   * (Mode B) declined or missed its ring.
+   */
   declinedSessionIds?: ReadonlySet<string>;
+  /** Epoch ms when the caller's maximum wait ends (IQ69: a ring needs one window of it left). Absent: no limit. */
+  maxWaitAt?: number;
+}
+
+/** How a candidate would be offered the caller (IQ66): the station socket, or a ring of their phone. */
+export type InboundOfferChannel = AgencyInboundOfferChannel;
+
+/** One agent to try for a caller, with the channel the offer would take. */
+export interface InboundCandidate {
+  sessionId: string;
+  channel: InboundOfferChannel;
 }
 
 /** Why an agent may not take a caller (null: they may). */
@@ -185,6 +235,47 @@ export function inboundIneligibility(
   return null;
 }
 
+/** Why a ringable agent may not be rung for a caller (null: they may), Mode B. */
+export type InboundRingIneligibility =
+  | 'other_account'
+  | 'not_campaign_session'
+  | 'not_in_pool'
+  | 'not_ringable'
+  | 'not_member'
+  | 'declined'
+  | 'wrong_state'
+  | 'holds_call';
+
+/**
+ * Why `agent` may not be rung for `caller` (Mode B, see the header), or null. `now`: on `away_ring`
+ * this instant (`break` with `ring = 1`, holding nothing). `later` ({@link couldTakeLater}, IQ68):
+ * also an agent ringing now for any caller (`reserved` on a push offer), who is ringable again
+ * once that ring ends.
+ */
+export function ringIneligibility(
+  agent: InboundAgentView,
+  caller: InboundCallerView,
+  when: 'now' | 'later' = 'now',
+): InboundRingIneligibility | null {
+  if (agent.tenantId !== caller.tenantId || agent.accountId !== caller.accountId) return 'other_account';
+  if (agent.campaignId === null) return 'not_campaign_session';
+  if (poolApplies(caller) && !caller.poolCampaignIds.includes(agent.campaignId)) return 'not_in_pool';
+  if (!agent.ringable) return 'not_ringable';
+  if (!agent.member) return 'not_member';
+  if (caller.declinedSessionIds?.has(agent.sessionId)) return 'declined';
+  const live = agent.live;
+  if (!live) return 'wrong_state';
+  if (when === 'later' && live.state === 'reserved' && live.pushOffer) return null;
+  if (live.state !== 'break' || !live.ring) return 'wrong_state';
+  if (live.manualCallId || live.softphone || live.inboundCallId) return 'holds_call';
+  return null;
+}
+
+/** IQ69: the caller has at least one ring window of their maximum wait left at `now`. */
+export function ringWindowLeft(caller: InboundCallerView, now: number, ringMs: number = AGENCY_INBOUND_RING_MS): boolean {
+  return caller.maxWaitAt === undefined || caller.maxWaitAt - now >= ringMs;
+}
+
 /** The states of an agent who may take a caller now or once their current work ends (PM-M6). */
 export const COULD_TAKE_STATES = ['available', ...RELEASE_STATES] as const satisfies readonly AgencyAgentState[];
 
@@ -194,6 +285,9 @@ export const COULD_TAKE_STATES = ['available', ...RELEASE_STATES] as const satis
  * soft-phone call already held (it ends). A session in soft-phone mode does not qualify.
  */
 export function couldTakeLater(agent: InboundAgentView, caller: InboundCallerView): boolean {
+  // IQ68: an agent whose phone may be rung for this caller (now, or once a ring in flight ends),
+  // unless the caller already declined or missed them.
+  if (agent.ringable && ringIneligibility(agent, caller, 'later') === null) return true;
   // A station back in a moment counts as open here, and here only; so does an agent whose phone
   // left the app moments ago, as if available (IQ50; see the header).
   let judged = agent.rejoining ? { ...agent, stationOpen: true } : agent;
@@ -241,23 +335,46 @@ export function byLongestIdle(a: InboundAgentView, b: InboundAgentView): number 
   return since(a) - since(b) || a.sessionId.localeCompare(b.sessionId);
 }
 
-/** The sessions to try for one caller, in order (see the header). */
-export function candidatesFor(caller: InboundCallerView, agents: readonly InboundAgentView[], now: number): string[] {
+const station = (sessionId: string): InboundCandidate => ({ sessionId, channel: 'station' });
+const push = (sessionId: string): InboundCandidate => ({ sessionId, channel: 'push' });
+
+/**
+ * The sessions to try for one caller, in order, each with its channel (see the header, "Order" and
+ * IQ63): the sticky agent on screen; the sticky agent's phone; the team on screen; the team's
+ * phones only when nobody is on screen to try. No phone when the caller has less than a ring
+ * window of wait left (IQ69). `ringMs`: the ring window (tests: shorter).
+ */
+export function candidatesFor(
+  caller: InboundCallerView,
+  agents: readonly InboundAgentView[],
+  now: number,
+  ringMs: number = AGENCY_INBOUND_RING_MS,
+): InboundCandidate[] {
   // Sticky routing off: the caller's agent is just one of the team.
   const sticky = caller.stickyMode === 'off' ? undefined : stickyAgentOf(caller, agents);
   const status = stickyAgentStatus(sticky, caller);
-  if (inStickyPhase(caller, status, now)) return status === 'available' ? [sticky!.sessionId] : [];
+  if (inStickyPhase(caller, status, now)) return status === 'available' ? [station(sticky!.sessionId)] : [];
   const team = agents
     .filter((a) => inboundIneligibility(a, caller) === null && a.sessionId !== sticky?.sessionId)
     .sort(byLongestIdle)
-    .map((a) => a.sessionId);
-  return status === 'available' ? [sticky!.sessionId, ...team] : team;
+    .map((a) => station(a.sessionId));
+  const onScreen = status === 'available' ? [station(sticky!.sessionId), ...team] : team;
+  if (!ringWindowLeft(caller, now, ringMs)) return onScreen;
+  // Step 2: the sticky agent's phone, before the team on screen (IQ63).
+  const stickyRing = sticky && ringIneligibility(sticky, caller) === null ? [push(sticky.sessionId)] : [];
+  // Step 4: the team's phones, only with nobody on screen to try.
+  const teamRing = onScreen.length > 0 ? [] : agents
+    .filter((a) => a.sessionId !== sticky?.sessionId && ringIneligibility(a, caller) === null)
+    .sort(byLongestIdle)
+    .map((a) => push(a.sessionId));
+  if (status === 'available') return [onScreen[0]!, ...stickyRing, ...onScreen.slice(1), ...teamRing];
+  return [...stickyRing, ...onScreen, ...teamRing];
 }
 
 /** One caller's turn in a search: who to try for it, in order. */
 export interface InboundSearchStep {
   callId: string;
-  candidates: string[];
+  candidates: InboundCandidate[];
 }
 
 /**
@@ -270,15 +387,16 @@ export function searchOrder(
   callers: readonly InboundCallerView[],
   agents: readonly InboundAgentView[],
   now: number,
+  ringMs: number = AGENCY_INBOUND_RING_MS,
 ): InboundSearchStep[] {
   const steps: InboundSearchStep[] = [];
   for (const caller of callers) {
     const sticky = stickyAgentOf(caller, agents);
     if (caller.stickyMode !== 'off' && sticky && stickyAgentStatus(sticky, caller) === 'available') {
-      steps.push({ callId: caller.callId, candidates: [sticky.sessionId] });
+      steps.push({ callId: caller.callId, candidates: [station(sticky.sessionId)] });
     }
   }
-  for (const caller of callers) steps.push({ callId: caller.callId, candidates: candidatesFor(caller, agents, now) });
+  for (const caller of callers) steps.push({ callId: caller.callId, candidates: candidatesFor(caller, agents, now, ringMs) });
   return steps;
 }
 
