@@ -53,8 +53,8 @@ export function publishCampaignTabBadge(
 
 async function fetchBadge(kind: CampaignTabBadgeKind, tenantId: string, accountId: string, campaignId: string): Promise<number | null> {
   // `agents_live` is the server's on-shift count, the floor's rows that are not offline: the rule
-  // `agentsOnShift` applies to the same payload, so no roster is walked here.
-  if (kind === 'onShift') return (await getAgencyCampaignStats(campaignId, tenantId, accountId)).agents_live;
+  // `agentsOnShift` applies to the same payload, so no roster is walked here. Absent: not known.
+  if (kind === 'onShift') return (await getAgencyCampaignStats(campaignId, tenantId, accountId)).agents_live ?? null;
   return (await getInsightsAllocation(campaignId, tenantId, accountId)).totals.callbacks_overdue ?? null;
 }
 
