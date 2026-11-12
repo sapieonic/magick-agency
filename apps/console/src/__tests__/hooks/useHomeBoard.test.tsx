@@ -12,7 +12,7 @@ import { board, onBoard, stats } from '../helpers/home';
 const api = vi.hoisted(() => ({ getAgencyHomeBoard: vi.fn() }));
 vi.mock('../../api/agencyHome', () => api);
 
-import { HOME_FAST_MS, HOME_SLOW_MS, useHomeBoard, type HomeBoardOptions } from '../../hooks/useHomeBoard';
+import { HOME_BOARD_ERROR, HOME_FAST_MS, HOME_SLOW_MS, useHomeBoard, type HomeBoardOptions } from '../../hooks/useHomeBoard';
 import { publishHomeAttentionCount, resetHomeAttentionCountForTests } from '../../hooks/useHomeAttentionCount';
 
 const KEY = 't-1/a-1';
@@ -195,12 +195,12 @@ describe('what a read keeps', () => {
     expect(overdueOf(result)).toBe(5);
   });
 
-  it('shows the error when the first read fails, and the board once a later one answers', async () => {
-    api.getAgencyHomeBoard.mockRejectedValueOnce(new Error('Could not reach the server'));
+  it('shows the error when the first read fails, in its own words, and the board once a later one answers', async () => {
+    api.getAgencyHomeBoard.mockRejectedValueOnce(new Error('Route GET:/proxy/agency/home not found'));
     const { result } = renderHook(() => useHomeBoard(live));
     await flush();
     expect(result.current.status).toBe('error');
-    expect(result.current.error).toBe('Could not reach the server');
+    expect(result.current.error).toBe(HOME_BOARD_ERROR);
     await advance(HOME_FAST_MS);
     expect(result.current.status).toBe('ready');
   });

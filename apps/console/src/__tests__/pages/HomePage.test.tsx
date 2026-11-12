@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, cleanup, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { board, onBoard, stats } from '../helpers/home';
 
@@ -26,7 +26,7 @@ vi.mock('../../hooks/useMissedCallsAccess', () => ({
 
 import HomePage from '../../pages/agency/HomePage';
 import { homeAttentionAge, resetHomeAttentionCountForTests, useHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
-import { HOME_FAST_MS } from '../../hooks/useHomeBoard';
+import { HOME_BOARD_ERROR, HOME_FAST_MS } from '../../hooks/useHomeBoard';
 
 function Where() {
   return <div data-testid="where">{useLocation().pathname}</div>;
@@ -153,10 +153,27 @@ describe('Floor right now', () => {
     expect(screen.getAllByRole('link', { name: /New campaign/ })).toHaveLength(1);
   });
 
-  it('shows the error with a retry when the campaigns do not load', async () => {
-    mocks.getAgencyHomeBoard.mockRejectedValue(new Error('Could not reach the server'));
+  it('says so in its own words, with a retry, when the board does not load: never the server’s text', async () => {
+    mocks.getAgencyHomeBoard.mockRejectedValue(new Error('Route GET:/proxy/agency/home not found'));
     renderHome();
-    expect(await screen.findByText(/Could not reach the server/)).toBeTruthy();
+    expect(await screen.findByText(HOME_BOARD_ERROR)).toBeTruthy();
+    expect(screen.queryByText(/Route GET|not found/)).toBeNull();
+
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    expect(await screen.findByTestId('home-attention-empty')).toBeTruthy();
+    expect(screen.queryByText(HOME_BOARD_ERROR)).toBeNull();
+  });
+
+  it('still shows Today so far when the board does not load: it is its own read', async () => {
+    mocks.getAgencyHomeBoard.mockRejectedValue(new Error('nope'));
+    mocks.getAgencyGroupedStats.mockResolvedValue({
+      rows: [{ key: { campaign_id: 'a' }, attempts: 12, connected: 4, successes: 1, talk_seconds: 60, wrapup_seconds: 0 }],
+      total_groups: 1,
+    });
+    renderHome();
+    await screen.findByText(HOME_BOARD_ERROR);
+    expect((await screen.findByTestId('home-today')).textContent).toContain('Across 1 campaign');
   });
 });
 

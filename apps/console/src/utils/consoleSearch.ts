@@ -21,7 +21,7 @@ import { hasPermission } from './permissions';
 /**
  * What ⌘K (`GlobalSearch`) finds, and what the Settings hub's "Find a setting" filters (B28):
  * a phone number's history, pages, Settings pages, campaigns, each campaign's own pages (its
- * tabs, Activity and Soft-phone calls) and campaign settings sections.
+ * tabs, History and Soft-phone calls) and campaign settings sections.
  *
  * Pure on purpose, like `consoleNav.ts`, whose tables it reads: the pages are the sidebar's
  * sections and tabs, and the Settings pages are the hub's entries, each offered under the gate
@@ -337,9 +337,23 @@ export function campaignSettingsGate(): Gate {
 }
 
 /**
- * The words that find each campaign screen, beside its label. Every screen needs a row
- * (`consoleSearch.test.ts`). Old names stay: Call log was "Call attempts", and Activity is the
- * header's History button.
+ * A campaign screen's name where search must not use its tab-table label: the screen the
+ * campaign header's History button opens is titled History on the page, in the breadcrumb and
+ * on the button, though `CAMPAIGN_TABS` still calls it Activity.
+ */
+const CAMPAIGN_PAGE_TITLES: Partial<Record<CampaignTabId, string>> = {
+  activity: 'History',
+};
+
+/** What search calls a campaign screen: the name the screen itself shows. */
+export function campaignPageTitle(tab: Pick<CampaignTabDefinition, 'id' | 'label'>): string {
+  return CAMPAIGN_PAGE_TITLES[tab.id] ?? tab.label;
+}
+
+/**
+ * The words that find each campaign screen, beside its title. Every screen needs a row
+ * (`consoleSearch.test.ts`). Old names stay: Call log was "Call attempts", and History was
+ * called Activity.
  */
 export const CAMPAIGN_TAB_KEYWORDS: Record<CampaignTabId, readonly string[]> = {
   overview: ['overview', 'insights', 'headline', 'needs attention'],
@@ -391,7 +405,7 @@ export function campaignResults(
 /**
  * A campaign's own page ("Diwali renewals › Call log") in each campaign the query names: every
  * word must be in the campaign's name or the page's words, and at least one in the page's, so
- * "call log" lists the newest campaigns' Call log and "diwali history" Diwali renewals' Activity.
+ * "call log" lists the newest campaigns' Call log and "diwali history" Diwali renewals' History.
  * Only the screens the reader may open (`gate`, each as its tab), in tab order.
  */
 export function campaignPageResults(
@@ -404,7 +418,8 @@ export function campaignPageResults(
   const results: SearchResult[] = [];
   for (const tab of CAMPAIGN_TABS) {
     if (!passesGate(campaignTabGate(tab), gate)) continue;
-    const tabText = haystack([tab.label, ...CAMPAIGN_TAB_KEYWORDS[tab.id]]);
+    const title = campaignPageTitle(tab);
+    const tabText = haystack([title, tab.label, ...CAMPAIGN_TAB_KEYWORDS[tab.id]]);
     if (!tokens.some((t) => tabText.includes(t))) continue;
     for (const c of campaigns) {
       const name = normalise(c.name);
@@ -413,7 +428,7 @@ export function campaignPageResults(
         // The Settings tab's key is the campaign row's own "› Settings", so the two never both show.
         key: tab.id === 'settings' ? `campaign:${c.id}:settings` : `campaign-page:${c.id}:${tab.id}`,
         group: 'campaign-pages',
-        title: `${c.name} › ${tab.label}`,
+        title: `${c.name} › ${title}`,
         kind: 'Campaign',
         target: { type: 'path', to: tab.path(c.id) },
       });

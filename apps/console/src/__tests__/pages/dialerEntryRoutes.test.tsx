@@ -30,12 +30,13 @@ describe('the agency entry points', () => {
 
   /**
    * The console shell's block (decision B28): the pathless layout route whose children are
-   * `/agency`, `/settings` and `/app`, up to the catch-all, the next top-level route.
+   * `/agency`, `/settings` and `/app`, up to its own last child, the catch-all ("page not
+   * found").
    */
   const appLayoutBlock = (() => {
     const start = app.indexOf('<Route element={<RequireAuth><ConsoleShell /></RequireAuth>}>');
     expect(start).toBeGreaterThan(-1);
-    const end = app.indexOf('<Route path="*" element={<Navigate');
+    const end = app.lastIndexOf('<Route path="*" element={<NotFoundPage />} />');
     expect(end).toBeGreaterThan(start);
     const block = app.slice(start, end);
     // Not vacuous: the block really holds the shell's three children.

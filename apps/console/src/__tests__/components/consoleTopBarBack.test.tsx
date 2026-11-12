@@ -17,6 +17,7 @@ vi.mock('../../components/layout/ProfileMenu', () => ({ ProfileMenu: () => null 
 
 import { ConsoleTopBar } from '../../components/layout/ConsoleTopBar';
 import { PageCrumbsProvider, usePageCrumbs } from '../../components/layout/PageCrumbs';
+import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 
 function Where() {
   return <p data-testid="where">{useLocation().pathname}</p>;
@@ -27,6 +28,12 @@ function CampaignSettings() {
   return <Where />;
 }
 
+/** A campaign tab, naming the campaign as the real pages do. */
+function CampaignTab({ label }: { label: string }) {
+  useCampaignCrumbs('c-1', { id: 'c-1', name: 'Diwali renewals' }, [{ label }]);
+  return <Where />;
+}
+
 function renderAt(path: string, phone: boolean) {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -34,6 +41,8 @@ function renderAt(path: string, phone: boolean) {
         <ConsoleTopBar phone={phone} />
         <Routes>
           <Route path="/agency/campaigns/c-1/settings" element={<CampaignSettings />} />
+          <Route path="/agency/campaigns/c-1/overview" element={<CampaignTab label="Overview" />} />
+          <Route path="/agency/campaigns/c-1/health" element={<CampaignTab label="Health" />} />
           <Route path="*" element={<Where />} />
         </Routes>
       </PageCrumbsProvider>
@@ -68,8 +77,35 @@ describe('the phone’s back arrow', () => {
     expect(back()!.getAttribute('aria-label')).toBe('Back to Inbound routing');
   });
 
+  it('goes from a campaign’s Overview up to the Campaigns list, never to the Overview it is on', () => {
+    renderAt('/agency/campaigns/c-1/overview', true);
+    expect(back()!.getAttribute('aria-label')).toBe('Back to Campaigns');
+    expect(back()!.getAttribute('href')).toBe('/agency/campaigns');
+  });
+
+  it('goes from another campaign tab to the campaign', () => {
+    renderAt('/agency/campaigns/c-1/health', true);
+    expect(back()!.getAttribute('aria-label')).toBe('Back to Diwali renewals');
+    expect(back()!.getAttribute('href')).toBe('/agency/campaigns/c-1');
+  });
+
+  it('is not there on Analytics, the first page of Reports, whose crumb is not a link either', () => {
+    renderAt('/agency/analytics', true);
+    expect(back()).toBeNull();
+    cleanup();
+    renderAt('/agency/analytics', false);
+    expect(screen.queryByRole('link', { name: 'Reports' })).toBeNull();
+    expect(screen.getByTestId('console-breadcrumb').textContent).toContain('Reports');
+  });
+
+  it('leaves the campaign’s name a plain name on its Overview, on a wider screen too', () => {
+    renderAt('/agency/campaigns/c-1/overview', false);
+    expect(screen.queryByRole('link', { name: 'Diwali renewals' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Campaigns' }).getAttribute('href')).toBe('/agency/campaigns');
+  });
+
   it('is not there with nothing above the page', () => {
-    for (const path of ['/agency/campaigns', '/settings/team', '/agency/customers']) {
+    for (const path of ['/agency/campaigns', '/agency/inbound/missed', '/settings/team', '/agency/customers']) {
       renderAt(path, true);
       expect(back(), path).toBeNull();
       cleanup();

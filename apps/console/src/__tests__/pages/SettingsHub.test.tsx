@@ -264,9 +264,10 @@ describe('the old /app URLs', () => {
     expect(where()).toBe('/settings/notifications?event=usage.digest#top');
   });
 
-  it('sends a path that was never a page here to /app, the home decision', () => {
+  it('says a path that was never a page here is not found, rather than landing somewhere unexplained', () => {
     renderAt('/app/calls/dialer/history/1');
-    expect(where()).toBe('/app');
+    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeTruthy();
+    expect(screen.queryByTestId('where')).toBeNull();
   });
 });
 

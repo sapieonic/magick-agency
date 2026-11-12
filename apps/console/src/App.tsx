@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { TenantProvider } from './contexts/TenantContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
@@ -14,6 +14,7 @@ import HomeRedirect from './components/auth/HomeRedirect';
 import { ProductSurface } from './analytics/ProductSurface';
 import { ConsoleShell } from './components/layout/ConsoleShell';
 import { AgencyArea } from './components/layout/AgencyArea';
+import { SectionLanding } from './components/layout/SectionLanding';
 import { ScopedRouter } from './components/routing/ScopedRouter';
 import { ScopeGate } from './components/routing/ScopeGate';
 
@@ -27,15 +28,17 @@ import { ScopeGate } from './components/routing/ScopeGate';
  *    tab or `/onboarding`: agency has no self-serve sign-up (session path 4 is
  *    refused, plan).
  *  - `/app`'s index is `AppHomeRedirect`; every other `/app/<page>` is
- *    `LegacyAppRedirect`, to `/settings/<page>`.
+ *    `LegacyAppRedirect`, to `/settings/<page>` (or "page not found" for a path
+ *    that never was one).
  *  - `/settings/call-summaries` is gated on agency's `agency.analytics` capability and
  *    `agency_call_analysis` flag.
  *  - Providers: `GovernanceProvider` derives from the session's settings map.
  *    There is no metadata provider, and the super-admin console is its own app.
  * Any other path (calls, prompts, IVR, automations, broadcasts, messaging, SIP,
  * escalation, knowledge, schedules, contact lists, accounts, credits, API keys,
- * audit log, tenant settings, phone numbers) is out of scope; the catch-all
- * sends it to `/app`.
+ * audit log, tenant settings, phone numbers) is out of scope: it, and any path
+ * under `/agency` or `/settings` that is no page, renders `NotFoundPage` inside
+ * the console shell, which says so and offers the way home.
  *
  * ── Every signed-in page is scoped: `/t/:tenantId/a/:accountId/…` ───────────
  * So a link copied from the address bar opens the same tenant and account for
@@ -106,6 +109,7 @@ const SettingsLayout = lazy(() => import('./pages/settings/SettingsLayout'));
 const SettingsIndexRedirect = lazy(() => import('./pages/settings/SettingsIndexRedirect'));
 const ProfileSettingsPage = lazy(() => import('./pages/settings/ProfileSettingsPage'));
 const LegacyAppRedirect = lazy(() => import('./pages/LegacyAppRedirect'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 export default function App() {
   return (
@@ -252,9 +256,9 @@ export default function App() {
                   The app root, routed on ENTITLEMENT: `/agency` with the dialer on,
                   `/app` otherwise (see `HomeRedirect`). Wrapped in `RequireAuth` so a
                   signed-out visitor typing the bare domain gets `?next=/` and comes
-                  back through this decision after signing in. The catch-all stays
-                  pointed at `/app`: an unrecognised URL is a 404 being swallowed, not
-                  somebody asking to be taken home.
+                  back through this decision after signing in. An unrecognised URL is
+                  not somebody asking to be taken home: the shell's catch-all says the
+                  page is not found.
                 */}
                 <Route path="/" element={<RequireAuth><HomeRedirect /></RequireAuth>} />
 
@@ -703,6 +707,11 @@ export default function App() {
                   {/* The inbound summary (`docs/inbound.md` §11): supervisors; the page gates itself
                       as the Missed list does. */}
                   <Route path="inbound/summary" element={<InboundSummaryPage />} />
+                  {/* A section's root that is no page of its own opens its first tab the
+                      reader may open, as the sidebar's entry does. */}
+                  <Route path="inbound" element={<SectionLanding />} />
+                  {/* No page here: said inside the shell, under the subtree's gates. */}
+                  <Route path="*" element={<NotFoundPage />} />
                 </Route>
 
                 {/*
@@ -732,20 +741,26 @@ export default function App() {
                       the page offers "New account" only to a tenant-wide `account.create` seat,
                       as the server requires. */}
                   <Route path="accounts" element={<AccountsPage />} />
+                  {/* A mistyped Settings URL: not found, inside the hub, its sub-nav beside it. */}
+                  <Route path="*" element={<NotFoundPage />} />
                 </Route>
                 {/*
                   `/app`: the console's home decision (`AppHomeRedirect`), kept at the URL
-                  the workspace invite, the session expiry and the catch-all land on. Its old
-                  pages moved to `/settings` and redirect there (`LegacyAppRedirect`, with
-                  `replace`, keeping the rest of the path, e.g. `/app/inbound/:routeId`).
+                  the workspace invite and the session expiry land on. Its old pages moved to
+                  `/settings` and redirect there (`LegacyAppRedirect`, with `replace`, keeping
+                  the rest of the path, e.g. `/app/inbound/:routeId`).
                 */}
                 <Route path="/app">
                   <Route index element={<AppHomeRedirect />} />
                   <Route path="*" element={<LegacyAppRedirect />} />
                 </Route>
+                {/*
+                  Any other signed-in URL is no page here: said inside the shell, with the
+                  way home, rather than a silent redirect. A signed-out visitor meets
+                  `RequireAuth` first; a dedicated agent, `AgentLanding` (to the dialer).
+                */}
+                <Route path="*" element={<NotFoundPage />} />
                 </Route>
-
-                <Route path="*" element={<Navigate to="/app" replace />} />
               </Route>
             </Routes>
             </Suspense>

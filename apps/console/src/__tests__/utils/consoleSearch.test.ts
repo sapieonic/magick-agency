@@ -283,8 +283,9 @@ describe('a campaign’s own pages', () => {
     ['call log', 'Call log'],
     ['call attempts', 'Call log'],
     ['attempts', 'Call log'],
-    ['activity', 'Activity'],
-    ['history', 'Activity'],
+    // The page, its breadcrumb and the header's button say History; "activity" was its old name.
+    ['activity', 'History'],
+    ['history', 'History'],
     ['roster', 'Contacts'],
     ['callbacks', 'Callbacks'],
   ])('“%s” finds each campaign’s %s', (query, label) => {
@@ -294,7 +295,7 @@ describe('a campaign’s own pages', () => {
 
   it('narrow to the campaign the query names, linking the screen’s own URL', () => {
     expect(campaignPageResults(CAMPAIGNS, 'diwali history', supervisor).map((r) => [r.title, r.target])).toEqual([
-      ['Diwali renewals › Activity', { type: 'path', to: '/agency/campaigns/c-1/activity' }],
+      ['Diwali renewals › History', { type: 'path', to: '/agency/campaigns/c-1/activity' }],
     ]);
     expect(campaignPageResults(CAMPAIGNS, 'q4 call log', supervisor).map((r) => r.target)).toEqual([
       { type: 'path', to: '/agency/campaigns/c-2/attempts' },

@@ -32,6 +32,12 @@ export interface HomeBoardOptions {
   attentionKey?: string | null;
 }
 
+/**
+ * What Home says when its board could not be read: product copy, never the server's text (a
+ * route-not-found or a stack's message means nothing to a supervisor). Retry reads again.
+ */
+export const HOME_BOARD_ERROR = 'We couldn’t load what needs your attention. Try again in a moment.';
+
 export interface HomeBoard {
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
@@ -108,12 +114,12 @@ export function useHomeBoard({ tenantId, accountId, enabled, mode, attentionKey 
             anyCampaign: board.any_campaign,
             refreshedAt: Date.now(),
           });
-        } catch (err: unknown) {
+        } catch {
           // A failed read keeps what is on screen; only a board never read has nothing to show.
           if (!mounted.current || generation.current !== mine) return;
           setState((prev) => (prev.status === 'ready'
             ? prev
-            : { ...prev, status: 'error', error: err instanceof Error ? err.message : 'Could not load your campaigns.' }));
+            : { ...prev, status: 'error', error: HOME_BOARD_ERROR }));
         }
       })();
       inFlight.current = run;
