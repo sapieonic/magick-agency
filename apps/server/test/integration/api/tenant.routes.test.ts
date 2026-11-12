@@ -583,7 +583,7 @@ describe('tenant routes (integration)', () => {
       });
 
       expect(res.statusCode).toBe(404);
-      expect(res.json()).toEqual({ error: 'Not Found', message: 'Tenant not found' });
+      expect(res.json()).toEqual({ error: 'Not Found', message: 'Organisation not found' });
       expect(res.json()).not.toHaveProperty('members');
     });
   });

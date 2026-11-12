@@ -51,7 +51,7 @@ const CALLBACK_LABELS = {
   due: 'Due now',
 } as const;
 
-const DNC_SCOPE_LABELS = { tenant: 'Whole workspace', account: 'Account', campaign: 'Campaign' } as const;
+const DNC_SCOPE_LABELS = { tenant: 'Whole organisation', account: 'Account', campaign: 'Campaign' } as const;
 
 const s = (v: string | number | null | undefined): string => (v === null || v === undefined ? '' : String(v));
 

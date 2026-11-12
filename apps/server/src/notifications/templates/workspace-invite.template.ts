@@ -45,9 +45,9 @@ export function workspaceProductName(brandName: string): string {
  * as "an admin on your team". The role is named in the supporting line above it.
  */
 const WHAT_HAPPENS_NEXT: ReadonlyArray<readonly [string, string]> = [
-  ['Set up your sign-in', 'Choose how you sign in — this link is what connects it to your place in the workspace.'],
-  ['Your workspace opens', 'You arrive already a member. There is nothing else to sign up for or create.'],
-  ['What you see depends on your role', 'The role named above sets what you can see and change in the workspace.'],
+  ['Set up your sign-in', 'Choose how you sign in — this link is what connects it to your place in the organisation.'],
+  ['Your organisation opens', 'You arrive already a member. There is nothing else to sign up for or create.'],
+  ['What you see depends on your role', 'The role named above sets what you can see and change in the organisation.'],
 ];
 
 /** Render the workspace invitation. Escaping and layout: see `renderInviteEmail`. */

@@ -256,7 +256,7 @@ export function renderInviteEmail(input: InviteEmailInput, copy: InviteEmailCopy
  *
  * A vowel check rather than a hard-coded "an Agent", because the label is a
  * parameter: the workspace invite renders `a Viewer`, `an Operator`, `an Account
- * admin` and `a Workspace owner` through the same sentence. Not a
+ * admin` and `an Organisation owner` through the same sentence. Not a
  * general-purpose article rule — English has plenty of exceptions — but the
  * closed set of role labels this platform has (`INVITE_ROLE_LABELS`) contains
  * none of them.

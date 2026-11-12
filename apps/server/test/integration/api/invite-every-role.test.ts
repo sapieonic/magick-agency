@@ -554,7 +554,7 @@ describe('super-admin add-user for a non-agent', () => {
     expect(mail.To).toEqual([{ Email: 'first.admin@provisioned.test' }]);
     expect(mail.Subject).toBe(`You've been added to ${config.brand.name}`);
     // No inviter: a super admin is not a `users` row, so the sentence drops the actor.
-    expect(mail.TextPart).toContain('You have been set up as a Workspace admin at Provisioned Ltd.');
+    expect(mail.TextPart).toContain('You have been set up as an Organisation admin at Provisioned Ltd.');
     const link = linkIn(mail.TextPart);
     expect(link).toMatch(new RegExp(`^${ENV.origin}/join/`));
     expect(rows[0]!.token_hash).toBe(hashInviteToken(tokenOf(link)));
@@ -639,7 +639,7 @@ describe('super-admin tenant create', () => {
     expect(mail.To).toEqual([{ Email: 'founder@fresh.test' }]);
     expect(mail.Subject).toBe(`You've been added to ${config.brand.name}`);
     // No inviter: a super admin is not a `users` row.
-    expect(mail.TextPart).toContain('You have been set up as a Workspace owner at Fresh Start Ltd.');
+    expect(mail.TextPart).toContain('You have been set up as an Organisation owner at Fresh Start Ltd.');
     expect(mail.TextPart).not.toMatch(/admin on your team/i);
     const link = linkIn(mail.TextPart);
     expect(link).toMatch(new RegExp(`^${ENV.origin}/join/[A-Za-z0-9_-]{43}$`));

@@ -1211,7 +1211,7 @@ describe('agency staffing routes (integration)', () => {
       });
 
       expect(res.statusCode).toBe(404);
-      expect(res.json().message).toContain('not a member of this workspace');
+      expect(res.json().message).toContain('not a member of this organisation');
       expect(await activeRowsFor(outsider.id)).toHaveLength(0);
       // Membership is checked BEFORE the campaign round trip — a local read
       // first, so an unknown user costs no proxy call.

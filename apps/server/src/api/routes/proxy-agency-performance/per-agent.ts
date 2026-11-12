@@ -120,7 +120,7 @@ async function assertAgentInTenant(
   if (memberships.length === 0) {
     reply.code(404).send({
       error: 'Not Found',
-      message: 'That user is not a member of this workspace.',
+      message: 'That user is not a member of this organisation.',
     });
     return false;
   }

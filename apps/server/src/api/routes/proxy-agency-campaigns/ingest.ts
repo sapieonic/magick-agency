@@ -214,7 +214,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
     // could name a sibling account's rejected-rows export (keyed by nothing but the
     // job id) and read that back the same way. See `agency-ingest-keys.ts`.
     if (!isTenantUploadKey(parsed.data.s3_key, request.tenantId!)) {
-      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this tenant.' });
+      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this organisation.' });
     }
 
     try {
@@ -251,7 +251,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
 
     // The same upload-key proof as the analyzer's, above.
     if (!isTenantUploadKey(input.s3_key, request.tenantId!)) {
-      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this tenant.' });
+      return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this organisation.' });
     }
     if (!input.dry_run && !input.campaign_id) {
       return reply.code(400).send({
