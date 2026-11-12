@@ -191,6 +191,9 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
   const inboundCall = await insertRow('agency_inbound_calls', {
     tenant_id: TENANT, provider_call_id: `CA-${randomUUID()}`, to_e164: '+14155550199', ...backdated,
   });
+  const pushDevice = await insertRow('agency_push_devices', {
+    tenant_id: tenant.id, user_id: user.id, device_id: 'phone-1', platform: 'android', app_build: '1+1', ...backdated,
+  });
 
   return [
     { trigger: 'tenants_updated_at', table: 'tenants', id: tenant.id, touch: "name = 'renamed'" },
@@ -218,6 +221,7 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
     { trigger: 'trg_agency_softphone_settings_updated_at', table: 'agency_softphone_settings', id: softphoneSettings.id, touch: 'record_calls = true' },
     { trigger: 'trg_agency_inbound_routes_updated_at', table: 'agency_inbound_routes', id: inboundRoute.id, touch: 'record_calls = true' },
     { trigger: 'trg_agency_inbound_calls_updated_at', table: 'agency_inbound_calls', id: inboundCall.id, touch: "state = 'greeting'" },
+    { trigger: 'trg_agency_push_devices_updated_at', table: 'agency_push_devices', id: pushDevice.id, touch: 'ring_enabled = true' },
   ];
 }
 

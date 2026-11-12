@@ -73,14 +73,34 @@ export const PHONE_CALL_BREAK_REASON = 'phone_call' as const;
 /** How the console labels {@link PHONE_CALL_BREAK_REASON}. */
 export const PHONE_CALL_BREAK_REASON_LABEL = 'On a phone call';
 
+/**
+ * IQ58, IQ66 (Mode B, `docs/inbound.md`): the break the agent mobile app requests instead of
+ * {@link DEVICE_AWAY_BREAK_REASON} when it leaves the foreground and the agent has opted in to
+ * having their phone rung for inbound calls (`agency_inbound_ring_enabled`, the device's
+ * `ring_enabled`). Out of the outbound pool like any break; the inbound connector may ring the
+ * session's device (a data push, `AgencyRingPush`) for a waiting caller, one ring at a time.
+ *
+ * Asked through `POST /sessions/:id/break` by the device-away rules, plus its own refusals
+ * (409 `AgencyAwayRingRefusalCode`, `./push-devices.ts`): both flags on, the session's station
+ * device registered with a push address and `ring_enabled`, a push sender configured, a campaign
+ * session. On a refusal the app falls back to {@link DEVICE_AWAY_BREAK_REASON}. It ends as
+ * `device_away` (IQ62 two missed rings, IQ67's other ends), or with the ordinary `/available`.
+ * Supervisors see it as {@link AWAY_RING_BREAK_REASON_LABEL}; it is break time in reports
+ * (IQ74).
+ */
+export const AWAY_RING_BREAK_REASON = 'away_ring' as const;
+
+/** How the console labels {@link AWAY_RING_BREAK_REASON}. */
+export const AWAY_RING_BREAK_REASON_LABEL = 'Away · rings for inbound';
+
 /** Every reserved break code. A campaign's `break_reasons` lists none of them. */
-export const RESERVED_BREAK_REASONS = [SOFTPHONE_BREAK_REASON, DEVICE_AWAY_BREAK_REASON, PHONE_CALL_BREAK_REASON] as const;
+export const RESERVED_BREAK_REASONS = [SOFTPHONE_BREAK_REASON, DEVICE_AWAY_BREAK_REASON, PHONE_CALL_BREAK_REASON, AWAY_RING_BREAK_REASON] as const;
 
 /**
- * The reserved codes the agent app itself asks `POST /sessions/:id/break` for (IQ50, IQ51),
- * each by the device-away rules (`apps/server/src/api/routes/agency/device-away.ts`).
+ * The reserved codes the agent app itself asks `POST /sessions/:id/break` for (IQ50, IQ51,
+ * IQ58), each by the device-away rules (`apps/server/src/api/routes/agency/device-away.ts`).
  */
-export const APP_PAUSE_BREAK_REASONS = [DEVICE_AWAY_BREAK_REASON, PHONE_CALL_BREAK_REASON] as const;
+export const APP_PAUSE_BREAK_REASONS = [DEVICE_AWAY_BREAK_REASON, PHONE_CALL_BREAK_REASON, AWAY_RING_BREAK_REASON] as const;
 
 export type AgencyAppPauseBreakReason = (typeof APP_PAUSE_BREAK_REASONS)[number];
 
@@ -94,4 +114,5 @@ export const RESERVED_BREAK_REASON_LABELS: Readonly<Record<AgencyReservedBreakRe
   [SOFTPHONE_BREAK_REASON]: SOFTPHONE_BREAK_REASON_LABEL,
   [DEVICE_AWAY_BREAK_REASON]: DEVICE_AWAY_BREAK_REASON_LABEL,
   [PHONE_CALL_BREAK_REASON]: PHONE_CALL_BREAK_REASON_LABEL,
+  [AWAY_RING_BREAK_REASON]: AWAY_RING_BREAK_REASON_LABEL,
 });

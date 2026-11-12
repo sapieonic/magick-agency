@@ -603,7 +603,23 @@ export type AgencyInboundErrorCode =
    * 409. `POST /inbound/missed/:id/claim` (IQ49): the row is no longer unassigned: someone else
    * claimed it first, or a supervisor gave it to someone. Nothing changed; refresh the Team view.
    */
-  | 'inbound_missed_call_claimed';
+  | 'inbound_missed_call_claimed'
+  /**
+   * 404 (Mode B, IQ71). The ring routes (`…/ring/answering`, `…/ring/decline`, `…/ring/accept`):
+   * no ring on this call answers to that offer token (unknown, spent, expired, or the call is
+   * not ringing). Uniform on purpose, so a token-only route says nothing about a wrong token.
+   */
+  | 'ring_not_offered'
+  /**
+   * 409 (Mode B). `…/ring/accept` after the ring window and, once answered, the accept grace ran
+   * out (`AGENCY_INBOUND_RING_MS`, `AGENCY_INBOUND_ACCEPT_GRACE_MS`): the caller has moved on.
+   */
+  | 'ring_expired'
+  /**
+   * 409 (Mode B, N4). `…/ring/answering` or `…/ring/decline` after the ring was accepted: the
+   * station's hang-up is the way out from here.
+   */
+  | 'already_accepted';
 
 /** Runtime list of {@link AgencyInboundErrorCode}, in declaration order. */
 export const AGENCY_INBOUND_ERROR_CODES = [
@@ -628,6 +644,9 @@ export const AGENCY_INBOUND_ERROR_CODES = [
   'inbound_missed_call_handled',
   'inbound_assignee_invalid',
   'inbound_missed_call_claimed',
+  'ring_not_offered',
+  'ring_expired',
+  'already_accepted',
 ] as const satisfies readonly AgencyInboundErrorCode[];
 
 const _allInboundCodesListed: AllListed<

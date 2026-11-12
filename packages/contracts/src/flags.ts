@@ -240,9 +240,29 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency inbound calls: inbound routes (hours, clips, queue) and the Missed inbound list for calls to linked Plivo numbers',
   },
+
+  // ── Ringing an away agent's phone for inbound calls (Mode B) ─────────────────
+  //
+  // `docs/inbound.md`, IQ65. Gates opting in: with it on (and `agency_inbound_enabled` on too)
+  // an agent may turn ringing on for their phone, and the app then asks for the `away_ring`
+  // break instead of `device_away` when it leaves the foreground; the inbound connector may
+  // ring that phone for a waiting caller. Switched off, `away_ring` is refused
+  // (`ring_not_allowed`) and the reconcile ends every agent's ringing (`ring_off`, `flag_off`).
+  // Off by default: it sends pushes to agents' phones and rings them on the lock screen. Not
+  // client-exposed: the app reads `account_allows_ring` from its push device's status, and the
+  // console has nothing to show; it is toggled on the generic flag screens.
+  agency_inbound_ring_enabled: {
+    key: 'agency_inbound_ring_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_INBOUND_RING', // staging: FF_AGENCY_INBOUND_RING=true
+    scopes: ['global', 'tenant', 'account'],
+    owner: 'voice',
+    description: 'Agency inbound ringing: an agent who opts in has their phone rung for inbound callers while the app is in the background',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The eight agency flag keys. */
+/** The nine agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -254,6 +274,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_contact_assignment_enabled',
   'agency_reports_enabled',
   'agency_inbound_enabled',
+  'agency_inbound_ring_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

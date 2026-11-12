@@ -54,6 +54,18 @@ const inboundTookOverDispositionCode = 'inbound_call';
 /// (`AGENCY_INBOUND_MISSED_COUNT_CAP`): show "100+" when `open_capped`.
 const inboundMissedCountCap = 100;
 
+/// IQ59 (Mode B): how long an away agent's phone rings for one caller
+/// (`AGENCY_INBOUND_RING_MS`).
+const inboundRingWindow = Duration(milliseconds: 20000);
+
+/// IQ59 (Mode B): from the tap on Answer to audio, how long the app has to
+/// accept and attach its station (`AGENCY_INBOUND_ACCEPT_GRACE_MS`).
+const inboundAcceptGrace = Duration(milliseconds: 15000);
+
+/// IQ62 (Mode B): missed rings in a row that end the agent's ringing
+/// (`AGENCY_INBOUND_RING_MAX_MISSES`).
+const inboundRingMaxMisses = 2;
+
 // ─── The call ───────────────────────────────────────────────────────────────
 
 /// The inbound route the call came in on.
@@ -211,6 +223,10 @@ final class InboundCall {
     required this.waitedSeconds,
     required this.offeredAt,
     this.connectsAt,
+    this.offerChannel,
+    String? offerChannelRaw,
+    this.ringExpiresAt,
+    this.acceptedAt,
     this.bridgedAt,
     this.endedAt,
     this.talkSeconds,
@@ -224,6 +240,7 @@ final class InboundCall {
   }) : stateRaw = stateRaw ?? state.wire,
        outcomeRaw = outcomeRaw ?? outcome?.wire,
        catalogSourceRaw = catalogSourceRaw ?? catalogSource.wire,
+       offerChannelRaw = offerChannelRaw ?? offerChannel?.wire,
        dispositionCatalog = List.unmodifiable(dispositionCatalog);
 
   factory InboundCall.fromJson(Map<String, Object?> j) {
@@ -233,6 +250,9 @@ final class InboundCall {
     final route = j.objOrNull('route');
     final sticky = j.objOrNull('sticky');
     final match = j.objOrNull('match');
+    // Mode B's three fields are read leniently: absent (a server from before
+    // them) decodes as null, a station offer with no ring.
+    final channel = j.strOrNull('offer_channel');
     return InboundCall(
       id: j.str('id'),
       sessionId: j.str('session_id'),
@@ -253,6 +273,10 @@ final class InboundCall {
       waitedSeconds: j.integer('waited_seconds'),
       offeredAt: j.time('offered_at'),
       connectsAt: j.timeOrNull('connects_at'),
+      offerChannel: channel == null ? null : InboundOfferChannel.fromWire(channel),
+      offerChannelRaw: channel,
+      ringExpiresAt: j.timeOrNull('ring_expires_at'),
+      acceptedAt: j.timeOrNull('accepted_at'),
       bridgedAt: j.timeOrNull('bridged_at'),
       endedAt: j.timeOrNull('ended_at'),
       talkSeconds: j.integerOrNull('talk_seconds'),
@@ -319,8 +343,26 @@ final class InboundCall {
   final int waitedSeconds;
   final DateTime offeredAt;
 
-  /// When audio binds; null once connected or ended.
+  /// When audio binds; null once connected or ended, and always null on a
+  /// `push` offer (it binds once accepted and attached).
   final DateTime? connectsAt;
+
+  /// How this offer reached the agent (IQ66): `station` (Mode A) or `push`
+  /// (the phone was rung while away). Null before any offer, or from a server
+  /// that predates the field (read as a station offer).
+  final InboundOfferChannel? offerChannel;
+  final String? offerChannelRaw;
+
+  /// A `push` offer's ring deadline; null on a station offer, and once the
+  /// ring was answered or ended.
+  final DateTime? ringExpiresAt;
+
+  /// When the agent answered a `push` offer: the accept grace
+  /// ([inboundAcceptGrace]) runs from here. Null on a station offer.
+  final DateTime? acceptedAt;
+
+  /// A ring of the agent's phone (Mode B), not a station offer.
+  bool get isPushOffer => offerChannel == InboundOfferChannel.push;
 
   /// Audio is live both ways from here: the talk timer starts now.
   final DateTime? bridgedAt;
@@ -388,6 +430,9 @@ final class InboundCall {
       other.waitedSeconds == waitedSeconds &&
       other.offeredAt == offeredAt &&
       other.connectsAt == connectsAt &&
+      other.offerChannelRaw == offerChannelRaw &&
+      other.ringExpiresAt == ringExpiresAt &&
+      other.acceptedAt == acceptedAt &&
       other.bridgedAt == bridgedAt &&
       other.endedAt == endedAt &&
       other.talkSeconds == talkSeconds &&
@@ -400,7 +445,18 @@ final class InboundCall {
       other.settledAt == settledAt;
 
   @override
-  int get hashCode => Object.hash(id, stateRaw, bridgedAt, endedAt, settledAt, match, notes, dispositionCode);
+  int get hashCode => Object.hash(
+    id,
+    stateRaw,
+    bridgedAt,
+    endedAt,
+    settledAt,
+    match,
+    notes,
+    dispositionCode,
+    offerChannelRaw,
+    acceptedAt,
+  );
 
   @override
   String toString() => 'InboundCall($id, $stateRaw, settled: ${settledAt != null})';
@@ -1081,6 +1137,18 @@ enum InboundErrorCode implements WireEnum {
   /// 409 (`/claim`, IQ49): someone else has the row now (claimed first, or
   /// given by a supervisor). Refresh the Team view.
   inboundMissedCallClaimed('inbound_missed_call_claimed'),
+
+  /// 404 (Mode B, `…/ring/*`): no ring on this call answers to that offer
+  /// token (unknown, spent, expired, or not ringing). Uniform on purpose.
+  ringNotOffered('ring_not_offered'),
+
+  /// 409 (Mode B, `…/ring/accept`): the ring and the accept grace ran out;
+  /// "This call stopped ringing or someone else took it".
+  ringExpired('ring_expired'),
+
+  /// 409 (Mode B, `…/ring/answering` or `…/ring/decline` after accept, N4):
+  /// hang up from the call screen instead.
+  alreadyAccepted('already_accepted'),
   unknown('');
 
   const InboundErrorCode(this.wire);

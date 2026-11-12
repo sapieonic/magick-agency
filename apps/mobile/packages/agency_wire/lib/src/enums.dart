@@ -263,7 +263,9 @@ enum SessionKind implements WireEnum {
 /// (`SOFTPHONE_BREAK_REASON`), `device_away` (`DEVICE_AWAY_BREAK_REASON`, the
 /// break the app takes when it leaves the foreground while `available`) and
 /// `phone_call` (`PHONE_CALL_BREAK_REASON`, IQ51: the break the app takes for
-/// the length of a cellular call that starts while `available`).
+/// the length of a cellular call that starts while `available`) and `away_ring`
+/// (`AWAY_RING_BREAK_REASON`, IQ58: Mode B's away break, whose phone rings for
+/// inbound callers).
 enum ReservedBreakCode implements WireEnum {
   softPhone('soft_phone'),
   deviceAway('device_away'),
@@ -272,6 +274,12 @@ enum ReservedBreakCode implements WireEnum {
   /// rules), lifted by the ordinary `/available` when the call ends; supervisors
   /// see "On a phone call".
   phoneCall('phone_call'),
+
+  /// IQ58 (Mode B): asked instead of [deviceAway] when the agent opted in to
+  /// having this phone rung for inbound calls. Refused 409 with an
+  /// `AwayRingRefusalCode` (then the app falls back to [deviceAway]);
+  /// supervisors see "Away · rings for inbound".
+  awayRing('away_ring'),
   unknown('');
 
   const ReservedBreakCode(this.wire);
@@ -1099,6 +1107,71 @@ enum InboundDispositionRule implements WireEnum {
 
   static final _byWire = wireIndex(values);
   static InboundDispositionRule fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// How an inbound call's offer reached its agent (IQ66): `station` (an open
+/// station socket, Mode A) or `push` (the away agent's phone was rung; no
+/// `connects_at`, it binds once accepted and attached).
+///
+/// Contract: `AgencyInboundOfferChannel` / `AGENCY_INBOUND_OFFER_CHANNELS`.
+enum InboundOfferChannel implements WireEnum {
+  station('station'),
+  push('push'),
+  unknown('');
+
+  const InboundOfferChannel(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundOfferChannel fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// How a ring (a push offer) ended; also a `ring_cancel` push's `reason`.
+/// `expired` and `accept_lapsed` are misses (IQ62); a decline,
+/// `busy_on_phone` and `answered_elsewhere` are not.
+///
+/// Contract: `AgencyInboundRingResult` / `AGENCY_INBOUND_RING_RESULTS`.
+enum InboundRingResult implements WireEnum {
+  answered('answered'),
+  declined('declined'),
+  expired('expired'),
+  acceptLapsed('accept_lapsed'),
+  busyOnPhone('busy_on_phone'),
+  pushFailed('push_failed'),
+  callerLeft('caller_left'),
+
+  /// A station agent freed up and took the caller first (IQ73).
+  answeredElsewhere('answered_elsewhere'),
+  cancelled('cancelled'),
+  unknown('');
+
+  const InboundRingResult(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundRingResult fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Why the phone declined a ring. The app SENDS these
+/// (`…/ring/decline`'s `reason`); neither is a miss.
+///
+/// Contract: `AgencyInboundRingDeclineReason` / `AGENCY_INBOUND_RING_DECLINE_REASONS`.
+enum InboundRingDeclineReason implements WireEnum {
+  /// The agent pressed Decline.
+  declined('declined'),
+
+  /// The phone is on a cellular call (IQ70): declined at once, without ringing.
+  busyOnPhone('busy_on_phone'),
+  unknown('');
+
+  const InboundRingDeclineReason(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static InboundRingDeclineReason fromWire(String? raw) => _byWire[raw] ?? unknown;
 }
 
 /// What a station takes beyond its session's own work, declared on the

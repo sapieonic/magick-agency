@@ -88,6 +88,11 @@ export {
   AGENCY_INBOUND_STICKY_MODES,
   AGENCY_INBOUND_STICKY_REASONS,
   AGENCY_INBOUND_UNCONNECTED_ACTIONS,
+  AGENCY_INBOUND_OFFER_CHANNELS,
+  AGENCY_INBOUND_RING_MS,
+  AGENCY_INBOUND_ACCEPT_GRACE_MS,
+  AGENCY_INBOUND_RING_MAX_MISSES,
+  AGENCY_INBOUND_RING_RESULTS,
 } from '../../agency/inbound';
 export type {
   AgencyInboundCall,
@@ -114,6 +119,8 @@ export type {
   AgencyInboundStickyMode,
   AgencyInboundStickyReason,
   AgencyInboundUnconnectedAction,
+  AgencyInboundOfferChannel,
+  AgencyInboundRingResult,
 } from '../../agency/inbound';
 export type { AgencyInboundErrorCode } from '../../errors';
 export { AGENCY_INBOUND_ERROR_CODES } from '../../errors';

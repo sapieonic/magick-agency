@@ -8,7 +8,7 @@
  * a value its enums know. A literal added on the TypeScript side therefore fails the Dart
  * suite instead of decoding as `unknown` in the field. For the vocabularies whose Dart enum
  * mirrors it one to one, and for every value the app sends (`client=mobile`,
- * `media=alaw8`, a DNC `scope`, a stats `bucket`, an `outcome` filter, `device_away`), the
+ * `media=alaw8`, a DNC `scope`, a stats `bucket`, an `outcome` filter, `device_away`, `away_ring`), the
  * suite also checks the other way, so a value renamed or removed here fails it too.
  *
  *   node tooling/contracts-literals.mjs           write the JSON
@@ -386,6 +386,32 @@ const VOCABULARIES = {
   inbound_disposition_rules: [
     'api/agency/inbound.ts#AgencyInboundErrorResponse.reason',
     () => fieldUnion('api/agency/inbound.ts', 'AgencyInboundErrorResponse', 'reason'),
+  ],
+  // Mode B (IQ58–IQ74): ringing an away agent's phone. The app SENDS a push platform and a
+  // decline reason, and switches on the rest (the offer channel, a push's type and reason, the
+  // away-ring refusals, a device's last failure).
+  inbound_offer_channels: [
+    'agency/inbound.ts#AGENCY_INBOUND_OFFER_CHANNELS',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_OFFER_CHANNELS'),
+  ],
+  inbound_ring_results: [
+    'agency/inbound.ts#AGENCY_INBOUND_RING_RESULTS',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_RING_RESULTS'),
+  ],
+  inbound_ring_decline_reasons: [
+    'agency/inbound.ts#AGENCY_INBOUND_RING_DECLINE_REASONS',
+    () => constList('agency/inbound.ts', 'AGENCY_INBOUND_RING_DECLINE_REASONS'),
+  ],
+  push_platforms: ['agency/push-devices.ts#AGENCY_PUSH_PLATFORMS', () => constList('agency/push-devices.ts', 'AGENCY_PUSH_PLATFORMS')],
+  push_failure_reasons: [
+    'agency/push-devices.ts#AGENCY_PUSH_FAILURE_REASONS',
+    () => constList('agency/push-devices.ts', 'AGENCY_PUSH_FAILURE_REASONS'),
+  ],
+  ring_push_types: ['agency/push-devices.ts#AGENCY_RING_PUSH_TYPES', () => constList('agency/push-devices.ts', 'AGENCY_RING_PUSH_TYPES')],
+  ring_off_reasons: ['agency/push-devices.ts#AGENCY_RING_OFF_REASONS', () => constList('agency/push-devices.ts', 'AGENCY_RING_OFF_REASONS')],
+  away_ring_refusal_codes: [
+    'agency/push-devices.ts#AGENCY_AWAY_RING_REFUSAL_CODES',
+    () => constList('agency/push-devices.ts', 'AGENCY_AWAY_RING_REFUSAL_CODES'),
   ],
 };
 

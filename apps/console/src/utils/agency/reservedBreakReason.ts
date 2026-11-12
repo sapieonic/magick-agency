@@ -1,7 +1,7 @@
 import { RESERVED_BREAK_REASON_LABELS, type AgencyReservedBreakReason } from '../../types/agency';
 
 /**
- * The label of a reserved break code (`soft_phone`, `device_away`, and IQ51's `phone_call`:
+ * The label of a reserved break code (`soft_phone`, `device_away`, IQ51's `phone_call` and IQ58's `away_ring`:
  * the contract's `RESERVED_BREAK_REASON_LABELS`), or `null` for any other code.
  *
  * Reserved codes are never in a campaign's `break_reasons`, so no catalog carries a

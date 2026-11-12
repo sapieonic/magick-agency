@@ -15,6 +15,7 @@ import {
   type AgencyStationErrorCode,
 } from '../src/errors';
 import type * as Core from '../src/agency';
+import { AGENCY_AWAY_RING_REFUSAL_CODES, type AgencyAwayRingRefusalCode } from '../src/agency';
 import { AgencyApi } from '../src/index';
 import type { Equals } from './type-equals';
 import {
@@ -307,6 +308,10 @@ describe('inbound codes', () => {
       'inbound_missed_call_handled',
       'inbound_assignee_invalid',
       'inbound_missed_call_claimed',
+      // Mode B's ring routes (IQ71).
+      'ring_not_offered',
+      'ring_expired',
+      'already_accepted',
     ]);
     expectUnique(AGENCY_INBOUND_ERROR_CODES);
   });
@@ -318,5 +323,29 @@ describe('inbound codes', () => {
   it('do not overlap the action, soft-phone or report unions', () => {
     const others = new Set<string>([...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES]);
     for (const code of AGENCY_INBOUND_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+});
+
+// ── Away-ring refusals (src/agency/push-devices.ts, Mode B): the 409s of `POST /sessions/:id/break
+//    {reason:'away_ring'}`, answered beside the action codes.
+const _awayRingExact: Equals<(typeof AGENCY_AWAY_RING_REFUSAL_CODES)[number], AgencyAwayRingRefusalCode> = true;
+void _awayRingExact;
+
+describe('away-ring refusal codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_AWAY_RING_REFUSAL_CODES]).toEqual([
+      'ring_not_allowed',
+      'push_unavailable',
+      'no_push_device',
+      'ring_disabled',
+    ]);
+    expectUnique(AGENCY_AWAY_RING_REFUSAL_CODES);
+  });
+
+  it('do not overlap the action, soft-phone, inbound or report unions: the break route answers beside them', () => {
+    const others = new Set<string>([
+      ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_AWAY_RING_REFUSAL_CODES) expect(others.has(code), code).toBe(false);
   });
 });

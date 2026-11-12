@@ -651,6 +651,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     if (isAppPauseBreakReason(asked)) {
       const result = await runDeviceAway(runtime, session, asked);
       if (result.ok) return reply.send(result.body);
+      // Mode B: `away_ring` refused (typed, 409); the app falls back to `device_away`.
+      if (result.refused) return reply.code(409).send(result.refused);
       // Every pass lost its compare-and-swap to a reservation or a release: a conflict
       // with the state, not a fault, so a 409 the error mask passes unchanged.
       const err: AgencyActionErrorResponse = {

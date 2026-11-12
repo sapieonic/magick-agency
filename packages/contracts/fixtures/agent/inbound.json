@@ -96,6 +96,9 @@
       "waited_seconds": 14,
       "offered_at": "2026-11-02T05:30:14.200Z",
       "connects_at": null,
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": "2026-11-02T05:30:15.712Z",
       "ended_at": null,
       "talk_seconds": null,
@@ -208,6 +211,9 @@
       "waited_seconds": 14,
       "offered_at": "2026-11-02T05:30:14.200Z",
       "connects_at": null,
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": "2026-11-02T05:30:15.712Z",
       "ended_at": "2026-11-02T05:34:02.500Z",
       "talk_seconds": 227,
@@ -322,6 +328,9 @@
       "waited_seconds": 14,
       "offered_at": "2026-11-02T05:30:14.200Z",
       "connects_at": null,
+      "offer_channel": "station",
+      "ring_expires_at": null,
+      "accepted_at": null,
       "bridged_at": "2026-11-02T05:30:15.712Z",
       "ended_at": "2026-11-02T05:34:02.500Z",
       "talk_seconds": 227,
@@ -621,5 +630,22 @@
     "error": "Conflict",
     "message": "Someone else has already taken this missed call.",
     "code": "inbound_missed_call_claimed"
+  },
+  "refusal_ring_not_offered": {
+    "error": "Not Found",
+    "code": "ring_not_offered",
+    "message": "This call is not ringing for you."
+  },
+  "refusal_already_accepted": {
+    "error": "Conflict",
+    "code": "already_accepted",
+    "message": "You have already answered this call. Hang up from the call screen.",
+    "inbound_call_id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64"
+  },
+  "refusal_ring_expired": {
+    "error": "Conflict",
+    "code": "ring_expired",
+    "message": "This call stopped ringing or someone else took it.",
+    "inbound_call_id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64"
   }
 }

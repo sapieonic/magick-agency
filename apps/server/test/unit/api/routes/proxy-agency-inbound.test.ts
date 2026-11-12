@@ -45,6 +45,9 @@ describe('refusals', () => {
       inbound_missed_call_handled: 409,
       inbound_assignee_invalid: 400,
       inbound_missed_call_claimed: 409,
+      ring_not_offered: 404,
+      ring_expired: 409,
+      already_accepted: 409,
     });
     expect(inboundRefusalBody({ code: 'inbound_call_live', inbound_call_id: 'ib-1' })).toEqual({
       status: 409,

@@ -19,6 +19,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
 import type { AgencyAgentState } from '@magick-agency/contracts/agency';
 import {
+  awayRingRefusal,
   BREAK_UNCHANGED_KEY,
   decideDeviceAway,
   isAppPauseBreakReason,
@@ -269,6 +270,7 @@ describe('the phone-call pause (IQ51): the device-away rules with its own code',
   it('is one of the app`s pauses; nothing else is', () => {
     expect(isAppPauseBreakReason('device_away')).toBe(true);
     expect(isAppPauseBreakReason('phone_call')).toBe(true);
+    expect(isAppPauseBreakReason('away_ring')).toBe(true);
     for (const other of ['soft_phone', 'lunch', '', null, undefined, 42]) expect(isAppPauseBreakReason(other)).toBe(false);
   });
 
@@ -308,5 +310,38 @@ describe('the phone-call pause (IQ51): the device-away rules with its own code',
     const res = await runDeviceAway(w.runtime, session({ kind: 'softphone', campaign_id: null, state: 'break', break_reason: 'soft_phone' }), 'phone_call');
     expect(res.ok && res.body).toMatchObject({ kind: 'softphone', [BREAK_UNCHANGED_KEY]: true });
     expect(w.transition).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Mode B (IQ58): `reason: 'away_ring'`, refused until WP2 lands its checks ───
+
+describe('the away-ring pause (IQ58): refused ring_not_allowed for now, before anything is read', () => {
+  it.each(['available', 'reserved', 'on_call', 'wrapup', 'break', 'offline', null] as const)(
+    'from %s: 409 ring_not_allowed, no read, no write, nothing queued, nothing sent', async (state) => {
+      const w = world(state);
+      const res = await runDeviceAway(w.runtime, session(), 'away_ring');
+      expect(res).toEqual({
+        ok: false,
+        refused: { error: 'Conflict', code: 'ring_not_allowed', message: expect.any(String) },
+      });
+      expect(w.runtime.agents.get).not.toHaveBeenCalled();
+      expect(w.transition).not.toHaveBeenCalled();
+      expect(w.breaks.peek('sess-1')).toBeNull();
+      expect(repos.session.setState).not.toHaveBeenCalled();
+      expect(w.sent).toEqual([]);
+    });
+
+  it('a soft-phone session is refused the same way', async () => {
+    const w = world('break');
+    const res = await runDeviceAway(w.runtime, session({ kind: 'softphone', campaign_id: null }), 'away_ring');
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.refused?.code).toBe('ring_not_allowed');
+  });
+
+  it('awayRingRefusal is the typed 409 body, and device_away still applies (the app\'s fallback)', async () => {
+    expect(awayRingRefusal()).toMatchObject({ error: 'Conflict', code: 'ring_not_allowed' });
+    const w = world('available');
+    const res = await runDeviceAway(w.runtime, session(), 'device_away');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away' }) });
   });
 });

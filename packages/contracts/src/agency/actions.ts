@@ -278,9 +278,9 @@ export interface AgencyDncResponse extends AgencyCampaignScoped {
 export interface AgencySessionBreakRequest {
   /**
    * Must match a `code` from bootstrap's `break_reasons` — or be one of the agent
-   * app's own pauses (`APP_PAUSE_BREAK_REASONS`: `DEVICE_AWAY_BREAK_REASON`, and IQ51's
-   * `PHONE_CALL_BREAK_REASON`), the reserved codes this route accepts although no
-   * catalog lists them (see their rules in `./breaks.ts`).
+   * app's own pauses (`APP_PAUSE_BREAK_REASONS`: `DEVICE_AWAY_BREAK_REASON`, IQ51's
+   * `PHONE_CALL_BREAK_REASON` and IQ58's `AWAY_RING_BREAK_REASON`), the reserved codes this
+   * route accepts although no catalog lists them (see their rules in `./breaks.ts`).
    */
   reason: string;
 }

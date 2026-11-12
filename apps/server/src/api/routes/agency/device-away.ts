@@ -11,15 +11,21 @@
  * pool now, are queued behind a call like any break, and leave every other state exactly
  * as it was (`decideDeviceAway`). Both run the same rules with their own code; neither is
  * ever a campaign catalog's, and the ordinary `POST /sessions/:id/available` lifts either.
+ *
+ * Mode B (IQ58): `reason: 'away_ring'`, the away break whose phone rings for inbound callers,
+ * is one of these pauses on the wire, but nothing can enter it yet: until its checks land (both
+ * flags, the session's push device, the push sender; WP2) it is refused 409 `ring_not_allowed`
+ * before anything is read or written, and the app falls back to `device_away`.
  */
 import type {
   AgencyAgentState,
   AgencyAppPauseBreakReason,
+  AgencyAwayRingRefusal,
   AgencyBreakReason,
   AgencySessionStateResponse,
 } from '@magick-agency/contracts/agency';
-import { APP_PAUSE_BREAK_REASONS, DEVICE_AWAY_BREAK_REASON } from '@magick-agency/contracts/agency';
-import { breakMustWait, DEVICE_AWAY_BREAK, PHONE_CALL_BREAK } from '@magick-agency/domain/break-manager';
+import { APP_PAUSE_BREAK_REASONS, AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { AWAY_RING_BREAK, breakMustWait, DEVICE_AWAY_BREAK, PHONE_CALL_BREAK } from '@magick-agency/domain/break-manager';
 import { agencyAgentSessionRepository } from '../../../db/repositories/agency.repository.js';
 import { isCampaignSession, type AgencyAgentSessionRecord } from '../../../db/models/agency.model.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
@@ -75,7 +81,7 @@ export function takeBreakUnchanged(body: unknown): boolean {
   return unchanged;
 }
 
-/** Whether `reason` is one of the app's own pauses (`device_away`, `phone_call`): the device-away rules apply. */
+/** Whether `reason` is one of the app's own pauses (`device_away`, `phone_call`, `away_ring`): the device-away rules apply. */
 export function isAppPauseBreakReason(reason: unknown): reason is AgencyAppPauseBreakReason {
   return typeof reason === 'string' && (APP_PAUSE_BREAK_REASONS as readonly string[]).includes(reason);
 }
@@ -84,7 +90,21 @@ export function isAppPauseBreakReason(reason: unknown): reason is AgencyAppPause
 const APP_PAUSE_BREAKS: Readonly<Record<AgencyAppPauseBreakReason, Readonly<AgencyBreakReason>>> = {
   device_away: DEVICE_AWAY_BREAK,
   phone_call: PHONE_CALL_BREAK,
+  away_ring: AWAY_RING_BREAK,
 };
+
+/**
+ * Mode B: why `away_ring` is refused. Until WP2 lands its checks (both flags on, the session's
+ * station device registered to ring, the push sender configured, a campaign session) every
+ * request is `ring_not_allowed`: the app falls back to `device_away`.
+ */
+export function awayRingRefusal(): AgencyAwayRingRefusal {
+  return {
+    error: 'Conflict',
+    code: 'ring_not_allowed',
+    message: 'Ringing your phone for inbound calls is not available. You are paused as away instead when you leave the app.',
+  };
+}
 
 /** How many times a lost CAS is re-decided before answering 409 state_changing (nothing changed). */
 const DEVICE_AWAY_PASSES = 3;
@@ -92,7 +112,9 @@ const DEVICE_AWAY_PASSES = 3;
 export type DeviceAwayResult =
   | { ok: true; body: AgencySessionStateResponse & { [BREAK_UNCHANGED_KEY]?: true } }
   /** The state kept moving under every pass: nothing changed; the caller answers 409 state_changing. */
-  | { ok: false };
+  | { ok: false; refused?: undefined }
+  /** Mode B: `away_ring` refused before anything was read or written; the caller answers 409 with it. */
+  | { ok: false; refused: AgencyAwayRingRefusal };
 
 /**
  * Run an app pause (`code`: `device_away`, by default, or `phone_call`) for `session`
@@ -109,6 +131,7 @@ export async function runDeviceAway(
   session: AgencyAgentSessionRecord,
   code: AgencyAppPauseBreakReason = DEVICE_AWAY_BREAK_REASON,
 ): Promise<DeviceAwayResult> {
+  if (code === AWAY_RING_BREAK_REASON) return { ok: false, refused: awayRingRefusal() };
   const reason: AgencyBreakReason = { ...APP_PAUSE_BREAKS[code] };
   let queuedHere = false;
   for (let pass = 0; pass < DEVICE_AWAY_PASSES; pass++) {

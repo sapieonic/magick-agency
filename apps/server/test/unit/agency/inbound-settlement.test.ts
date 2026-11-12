@@ -95,7 +95,14 @@ describe('inboundCallToWire', () => {
       sticky: { reason: 'owner', is_you: true }, outcome_due_at: null, talk_seconds: null,
     });
   });
-  it('the sticky reason of whichever candidate took it; another agent sees the sticky agent`s, not them', () => {
+  it('Mode B (IQ66): every offer this build makes is a station offer with no ring; none before an offer', () => {
+    expect(inboundCallToWire(base, ctx, 'u-owner')).toMatchObject({ offer_channel: 'station', ring_expires_at: null, accepted_at: null });
+    const queued = { ...base, state: 'queued', session_id: null, offered_at: null } as unknown as AgencyInboundCallRecord;
+    expect(inboundCallToWire(queued, ctx, null)).toMatchObject({ offer_channel: null, ring_expires_at: null, accepted_at: null });
+    // A station offer keeps its connect delay.
+    expect(inboundCallToWire(base, ctx, 'u-owner', 1500).connects_at).toBe('2026-11-09T11:59:41.500Z');
+  });
+    it('the sticky reason of whichever candidate took it; another agent sees the sticky agent`s, not them', () => {
     expect(inboundCallToWire(base, ctx, 'u-last').sticky).toEqual({ reason: 'last_connected', is_you: true });
     expect(inboundCallToWire(base, ctx, 'u-team').sticky).toEqual({ reason: 'owner', is_you: false });
     expect(inboundCallToWire({ ...base, sticky_user_id: null, sticky_reason: null }, { ...ctx, stickyCandidates: [] }, 'u-team').sticky).toBeNull();

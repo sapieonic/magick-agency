@@ -297,6 +297,9 @@ describe('0024 — agency_inbound_calls (the spine)', () => {
       'closed_cause character varying',
       // 0032: the route's wrap-up window, captured at arrival (inbound-route-wrapup-migration.test.ts).
       'wrapup_seconds smallint',
+      // 0036 (Mode B): the ring (inbound-ring-migration.test.ts pins them).
+      'offer_channel character varying', 'ringing_at timestamp with time zone', 'accepted_at timestamp with time zone',
+      'ring_result character varying', 'ring_count smallint not null',
     ]);
     expect(await call()).toMatchObject({ state: 'arrived', provider: 'plivo', caller_dnc: false, outcome: null, follow_up_status: null });
   });
@@ -601,7 +604,7 @@ describe('0024 — down', () => {
     } finally {
       await migrate('up');
     }
-    expect((await columns('agency_inbound_calls')).length).toBe(52); // 0024's 33, 0027's 15, 0028's 1, 0029's 1, 0030's 1 and 0032's 1
+    expect((await columns('agency_inbound_calls')).length).toBe(57); // 0024's 33, 0027's 15, 0028's 1, 0029's 1, 0030's 1, 0032's 1 and 0036's 5
     expect((await checkDef('ck_agency_calls_origin'))!.validated).toBe(true);
   });
 });

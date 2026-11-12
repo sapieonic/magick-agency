@@ -9,6 +9,7 @@ import inbound from '../fixtures/agent/inbound.json';
 import labels from '../fixtures/agent/labels.json';
 import literals from '../fixtures/agent/literals.json';
 import platform from '../fixtures/agent/platform.json';
+import push from '../fixtures/agent/push.json';
 import reads from '../fixtures/agent/reads.json';
 import session from '../fixtures/agent/session.json';
 import softphone from '../fixtures/agent/softphone.json';
@@ -171,6 +172,8 @@ const STATION = {
   inbound_call_withheld: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_withheld),
   customer_waiting: fits<Core.AgencyStationCustomerWaitingFrame>()(station.customer_waiting),
   customer_waiting_cleared: fits<Core.AgencyStationCustomerWaitingFrame>()(station.customer_waiting_cleared),
+  // Mode B (IQ66): a push offer as the station's attach restates it, answered and not yet bound.
+  inbound_call_push_accepted: fits<Core.AgencyStationInboundCallFrame>()(station.inbound_call_push_accepted),
 };
 
 const STATION_CLIENT = {
@@ -193,6 +196,8 @@ const SESSION = {
   session_state_device_away: fits<Core.AgencySessionStateResponse>()(session.session_state_device_away),
   break_request_phone_call: fits<Core.AgencySessionBreakRequest>()(session.break_request_phone_call),
   session_state_phone_call: fits<Core.AgencySessionStateResponse>()(session.session_state_phone_call),
+  break_request_away_ring: fits<Core.AgencySessionBreakRequest>()(session.break_request_away_ring),
+  session_state_away_ring: fits<Core.AgencySessionStateResponse>()(session.session_state_away_ring),
   session_state_left: fits<Core.AgencySessionStateResponse>()(session.session_state_left),
   conflict_other_campaign: fits<Core.AgencySessionCampaignConflict>()(session.conflict_other_campaign),
   conflict_softphone: fits<Core.AgencySoftphoneSessionOnSoftphoneRefusal>()(session.conflict_softphone),
@@ -291,6 +296,34 @@ const INBOUND = {
   refusal_call_live: fits<AgencyApi.AgencyInboundCallLiveRefusal>()(inbound.refusal_call_live),
   refusal_inbound_disabled: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_inbound_disabled),
   refusal_missed_call_claimed: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_missed_call_claimed),
+  // Mode B's ring routes (IQ71).
+  refusal_ring_not_offered: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_ring_not_offered),
+  refusal_already_accepted: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_already_accepted),
+  refusal_ring_expired: fits<AgencyApi.AgencyInboundErrorResponse>()(inbound.refusal_ring_expired),
+};
+
+// Mode B (IQ58–IQ74): the push devices, the ring pushes, the ring routes and the away-ring
+// refusals. The dialer contract's shapes (`agency/push-devices.ts`, `agency/inbound.ts`).
+const PUSH = {
+  device_status_ringing: fits<Core.AgencyPushDeviceStatus>()(push.device_status_ringing),
+  device_status_unregistered: fits<Core.AgencyPushDeviceStatus>()(push.device_status_unregistered),
+  device_status_failed_opted_out: fits<Core.AgencyPushDeviceStatus>()(push.device_status_failed_opted_out),
+  put_request: fits<Core.AgencyPushDevicePutRequest>()(push.put_request),
+  put_request_refresh: fits<Core.AgencyPushDevicePutRequest>()(push.put_request_refresh),
+  patch_request_stop_ringing: fits<Core.AgencyPushDevicePatchRequest>()(push.patch_request_stop_ringing),
+  push_ring: fits<Core.AgencyRingPush>()(push.push_ring),
+  push_ring_cancel: fits<Core.AgencyRingPush>()(push.push_ring_cancel),
+  push_ring_off: fits<Core.AgencyRingPush>()(push.push_ring_off),
+  push_test_ring: fits<Core.AgencyRingPush>()(push.push_test_ring),
+  ring_answering_request: fits<Core.AgencyInboundRingAnsweringRequest>()(push.ring_answering_request),
+  ring_answering_response: fits<Core.AgencyInboundRingAnsweringResponse>()(push.ring_answering_response),
+  ring_decline_request: fits<Core.AgencyInboundRingDeclineRequest>()(push.ring_decline_request),
+  ring_decline_request_busy: fits<Core.AgencyInboundRingDeclineRequest>()(push.ring_decline_request_busy),
+  ring_decline_response: fits<Core.AgencyInboundRingDeclineResponse>()(push.ring_decline_response),
+  ring_accept_request: fits<Core.AgencyInboundRingAcceptRequest>()(push.ring_accept_request),
+  ring_accept_response: fits<Core.AgencyInboundRingAcceptResponse>()(push.ring_accept_response),
+  refusal_ring_not_allowed: fits<Core.AgencyAwayRingRefusal>()(push.refusal_ring_not_allowed),
+  refusal_no_push_device: fits<Core.AgencyAwayRingRefusal>()(push.refusal_no_push_device),
 };
 
 // The agent's reads are public-API-layer shapes, so they are checked against `AgencyApi`.
@@ -524,7 +557,7 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
  */
 const INBOUND_CALL_SAMPLES = [
   'inbound_call_offered', 'inbound_call_connected', 'inbound_call_outcome_owed', 'inbound_call_settled',
-  'inbound_call_withheld',
+  'inbound_call_withheld', 'inbound_call_push_accepted',
 ] as const;
 const MISSED_ROWS: Array<[string, string]> = [
   ['missed_page', 'rows.0'], ['missed_page', 'rows.1'], ['missed_page', 'rows.2'], ['missed_page_last', 'rows.0'],
@@ -537,12 +570,14 @@ const INBOUND_LITERAL_FIELDS: InboundField[] = [
     ['station', s, 'call.outcome', 'inbound_call_outcomes'],
     ['station', s, 'call.catalog_source', 'inbound_catalog_sources'],
     ['station', s, 'call.sticky.reason', 'inbound_sticky_reasons'],
+    ['station', s, 'call.offer_channel', 'inbound_offer_channels'],
   ]),
   ...['call_response', 'call_hangup_response', 'call_disposition_response'].flatMap((s): InboundField[] => [
     ['inbound', s, 'call.state', 'inbound_call_states'],
     ['inbound', s, 'call.outcome', 'inbound_call_outcomes'],
     ['inbound', s, 'call.catalog_source', 'inbound_catalog_sources'],
     ['inbound', s, 'call.sticky.reason', 'inbound_sticky_reasons'],
+    ['inbound', s, 'call.offer_channel', 'inbound_offer_channels'],
   ]),
   ...MISSED_ROWS.flatMap(([s, row]): InboundField[] => [
     ['inbound', s, `${row}.reason`, 'inbound_missed_reasons'],
@@ -554,10 +589,24 @@ const INBOUND_LITERAL_FIELDS: InboundField[] = [
   ...Object.keys(inbound)
     .filter((s) => s.startsWith('refusal_'))
     .map((s): InboundField => ['inbound', s, 'code', 'inbound_error_codes']),
+  // Mode B.
+  ...['device_status_ringing', 'device_status_failed_opted_out'].map((s): InboundField => ['push', s, 'device.platform', 'push_platforms']),
+  ['push', 'device_status_failed_opted_out', 'device.last_failure_reason', 'push_failure_reasons'],
+  ...['put_request', 'put_request_refresh'].map((s): InboundField => ['push', s, 'platform', 'push_platforms']),
+  ...['push_ring', 'push_ring_cancel', 'push_ring_off', 'push_test_ring'].map((s): InboundField => ['push', s, 'type', 'ring_push_types']),
+  ['push', 'push_ring_cancel', 'reason', 'inbound_ring_results'],
+  ['push', 'push_ring_off', 'reason', 'ring_off_reasons'],
+  ...['ring_decline_request', 'ring_decline_request_busy'].map((s): InboundField => ['push', s, 'reason', 'inbound_ring_decline_reasons']),
+  ['push', 'ring_decline_response', 'ring_result', 'inbound_ring_results'],
+  ['push', 'ring_accept_response', 'call.state', 'inbound_call_states'],
+  ['push', 'ring_accept_response', 'call.offer_channel', 'inbound_offer_channels'],
+  ...['refusal_ring_not_allowed', 'refusal_no_push_device'].map((s): InboundField => ['push', s, 'code', 'away_ring_refusal_codes']),
+  ['session', 'break_request_away_ring', 'reason', 'reserved_break_codes'],
+  ['session', 'session_state_away_ring', 'break_reason', 'reserved_break_codes'],
 ];
 
 const FILES: Record<string, Record<string, unknown>> = {
-  station, session, softphone, actions, reads, platform, 'customer-history': customerHistory, inbound,
+  station, session, softphone, actions, reads, platform, 'customer-history': customerHistory, inbound, push,
 };
 
 function at(value: unknown, path: string): unknown {
@@ -576,6 +625,7 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
       ['platform', platform, PLATFORM],
       ['customer-history', customerHistory, CUSTOMER_HISTORY],
       ['inbound', inbound, INBOUND],
+      ['push', push, PUSH],
     ];
     for (const [name, file, checked] of registered) {
       expect(Object.keys(checked).sort(), `${name}.json`).toEqual(Object.keys(file).sort());
@@ -611,6 +661,24 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
     expect(station.inbound_call_withheld.call.from_e164).toBeNull();
     expect(inbound.call_hangup_response.call).toEqual(station.inbound_call_outcome_owed.call);
     expect(inbound.call_disposition_response.call).toEqual(station.inbound_call_settled.call);
+    // Mode A: every station offer says so, and no ring fields.
+    for (const c of calls) {
+      expect([c.offer_channel, c.ring_expires_at, c.accepted_at]).toEqual(['station', null, null]);
+    }
+  });
+
+  it('Mode B: a push offer has no connects_at, says when it was answered, and is what accept answered', () => {
+    const c = station.inbound_call_push_accepted.call;
+    expect([c.state, c.offer_channel, c.connects_at, c.ring_expires_at]).toEqual(['offered', 'push', null, null]);
+    expect(c.accepted_at).not.toBeNull();
+    expect(push.ring_accept_response.call).toEqual(c);
+    expect(push.push_ring.call_id).toBe(c.id);
+    // IQ61: a ring push never carries a name or a number.
+    for (const p of [push.push_ring, push.push_ring_cancel, push.push_ring_off, push.push_test_ring]) {
+      expect(Object.keys(p).sort()).toEqual(
+        Object.keys(p).filter((k) => ['type', 'call_id', 'offer_token', 'ring_expires_at', 'session_id', 'reason'].includes(k)).sort());
+      for (const v of Object.values(p)) expect(typeof v).toBe('string');
+    }
   });
 
   it('customer history: the search answer\'s timeline is the five per-kind entry samples, in order', () => {

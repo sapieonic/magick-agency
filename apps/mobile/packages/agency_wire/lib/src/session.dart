@@ -602,6 +602,12 @@ final class SessionBreakRequest {
   /// server rules as [SessionBreakRequest.deviceAway].
   SessionBreakRequest.phoneCall() : reason = ReservedBreakCode.phoneCall.wire;
 
+  /// IQ58 (Mode B): the away break whose phone rings for inbound callers
+  /// (`AWAY_RING_BREAK_REASON`), asked instead of [SessionBreakRequest.deviceAway]
+  /// when the agent opted in. Refused 409 with an `AwayRingRefusalCode`, on
+  /// which the app asks [SessionBreakRequest.deviceAway] instead.
+  SessionBreakRequest.awayRing() : reason = ReservedBreakCode.awayRing.wire;
+
   /// A `code` from the bootstrap's `break_reasons`, or a reserved code.
   final String reason;
 

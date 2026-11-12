@@ -1,0 +1,224 @@
+{
+  "device_status_ringing": {
+    "device": {
+      "device_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "platform": "android",
+      "push_registered": true,
+      "app_build": "0.9.0+412",
+      "ring_enabled": true,
+      "last_seen_at": "2026-11-02T07:58:40.900Z",
+      "revoked_at": null,
+      "last_failure_at": null,
+      "last_failure_reason": null,
+      "created_at": "2026-10-28T10:15:02.000Z",
+      "updated_at": "2026-11-02T07:58:40.900Z"
+    },
+    "account_allows_ring": true,
+    "push_configured": true
+  },
+  "device_status_unregistered": {
+    "device": null,
+    "account_allows_ring": true,
+    "push_configured": true
+  },
+  "device_status_failed_opted_out": {
+    "device": {
+      "device_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "platform": "android",
+      "push_registered": true,
+      "app_build": "0.9.0+412",
+      "ring_enabled": false,
+      "last_seen_at": "2026-11-01T17:02:11.000Z",
+      "revoked_at": null,
+      "last_failure_at": "2026-11-01T18:20:05.000Z",
+      "last_failure_reason": "unavailable",
+      "created_at": "2026-10-28T10:15:02.000Z",
+      "updated_at": "2026-11-01T18:20:05.000Z"
+    },
+    "account_allows_ring": true,
+    "push_configured": false
+  },
+  "put_request": {
+    "platform": "android",
+    "fcm_token": "dZ3x9Qm1T-yK8bVn2:APA91bF_fixture_token_not_real",
+    "app_build": "0.9.0+412",
+    "ring_enabled": true
+  },
+  "put_request_refresh": {
+    "platform": "android",
+    "fcm_token": "dZ3x9Qm1T-yK8bVn2:APA91bF_fixture_token_not_real",
+    "app_build": "0.9.0+413"
+  },
+  "patch_request_stop_ringing": {
+    "ring_enabled": false
+  },
+  "push_ring": {
+    "type": "ring",
+    "call_id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64",
+    "offer_token": "q0Vx3b9KcT1mN7zR2aW5yE",
+    "ring_expires_at": "2026-11-02T08:02:30.000Z",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12"
+  },
+  "push_ring_cancel": {
+    "type": "ring_cancel",
+    "call_id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64",
+    "reason": "caller_left"
+  },
+  "push_ring_off": {
+    "type": "ring_off",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "reason": "ring_missed"
+  },
+  "push_test_ring": {
+    "type": "test_ring"
+  },
+  "ring_answering_request": {
+    "offer_token": "q0Vx3b9KcT1mN7zR2aW5yE"
+  },
+  "ring_answering_response": {
+    "call_id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64",
+    "accept_by": "2026-11-02T08:02:31.400Z"
+  },
+  "ring_decline_request": {
+    "offer_token": "q0Vx3b9KcT1mN7zR2aW5yE",
+    "reason": "declined"
+  },
+  "ring_decline_request_busy": {
+    "offer_token": "q0Vx3b9KcT1mN7zR2aW5yE",
+    "reason": "busy_on_phone"
+  },
+  "ring_decline_response": {
+    "call_id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64",
+    "ring_result": "declined"
+  },
+  "ring_accept_request": {
+    "offer_token": "q0Vx3b9KcT1mN7zR2aW5yE",
+    "device_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+  },
+  "ring_accept_response": {
+    "call": {
+      "id": "7d2b9e4f-6a1c-4e3d-8b5a-2f9c0e1d7a64",
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "state": "offered",
+      "outcome": null,
+      "from_e164": "+918765432109",
+      "to_e164": "+912071234500",
+      "route": {
+        "id": "8b2d4f6a-1c3e-4a5b-9d7f-0e2a4c6b8d10",
+        "name": "Pune customer line"
+      },
+      "caller_dnc": false,
+      "sticky": {
+        "reason": "owner",
+        "is_you": true
+      },
+      "match": {
+        "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "contact_state": "pending",
+        "context": {
+          "Name": "Rahul Deshpande",
+          "Policy No": "PL-2023-099120",
+          "Renewal Due": "2026-11-04",
+          "Premium (INR)": 22100.5,
+          "Notes from branch": "Prefers Marathi. <b>not markup</b>",
+          "Opted in": true,
+          "Alt phone": null
+        },
+        "context_display": {
+          "hero": [
+            "Name",
+            "Policy No",
+            "Renewal Due"
+          ],
+          "hidden": [
+            "Alt phone"
+          ]
+        },
+        "prior_attempts": [
+          {
+            "attempt_number": 2,
+            "outcome": "connected",
+            "disposition_code": "callback",
+            "notes": "Asked us to call after 6pm.",
+            "ended_at": "2026-10-31T09:40:11.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-31T09:37:58.300Z"
+          },
+          {
+            "attempt_number": 1,
+            "outcome": "no_answer",
+            "disposition_code": null,
+            "notes": null,
+            "ended_at": "2026-10-29T06:12:40.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-29T06:12:02.100Z"
+          }
+        ]
+      },
+      "catalog_source": "campaign",
+      "disposition_catalog": [
+        {
+          "code": "interested",
+          "label": "Interested",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Call back later",
+          "requires_datetime": true
+        },
+        {
+          "code": "query_resolved",
+          "label": "Query resolved",
+          "is_success": true,
+          "terminal": true
+        },
+        {
+          "code": "complaint",
+          "label": "Complaint",
+          "requires_note": true
+        },
+        {
+          "code": "do_not_call",
+          "label": "Do not call",
+          "suppress": true
+        }
+      ],
+      "recording": true,
+      "waited_seconds": 31,
+      "offered_at": "2026-11-02T08:02:10.000Z",
+      "connects_at": null,
+      "offer_channel": "push",
+      "ring_expires_at": null,
+      "accepted_at": "2026-11-02T08:02:16.400Z",
+      "bridged_at": null,
+      "ended_at": null,
+      "talk_seconds": null,
+      "outcome_due_at": null,
+      "disposition_code": null,
+      "notes": null,
+      "callback_at": null,
+      "dispositioned_by_user_id": null,
+      "dispositioned_on_behalf": false,
+      "settled_at": null
+    },
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "station_ws_url": "/proxy/agency/station/6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12?token=st_fixture_token_not_real",
+    "station_token_expires_at": "2026-11-02T08:04:16.600Z"
+  },
+  "refusal_ring_not_allowed": {
+    "error": "Conflict",
+    "code": "ring_not_allowed",
+    "message": "Ringing your phone for inbound calls is not switched on for this account."
+  },
+  "refusal_no_push_device": {
+    "error": "Conflict",
+    "code": "no_push_device",
+    "message": "This phone is not registered to ring for inbound calls."
+  }
+}

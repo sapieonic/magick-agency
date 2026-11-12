@@ -1,4 +1,6 @@
 import {
+  AWAY_RING_BREAK_REASON,
+  AWAY_RING_BREAK_REASON_LABEL,
   DEVICE_AWAY_BREAK_REASON,
   DEVICE_AWAY_BREAK_REASON_LABEL,
   PHONE_CALL_BREAK_REASON,
@@ -103,6 +105,12 @@ export const DEVICE_AWAY_BREAK: Readonly<AgencyBreakReason> = Object.freeze({
 export const PHONE_CALL_BREAK: Readonly<AgencyBreakReason> = Object.freeze({
   code: PHONE_CALL_BREAK_REASON,
   label: PHONE_CALL_BREAK_REASON_LABEL,
+});
+
+/** IQ58 (Mode B): the away break whose phone rings for inbound callers, as {@link DEVICE_AWAY_BREAK}. */
+export const AWAY_RING_BREAK: Readonly<AgencyBreakReason> = Object.freeze({
+  code: AWAY_RING_BREAK_REASON,
+  label: AWAY_RING_BREAK_REASON_LABEL,
 });
 
 /** Agent states from which a break must be QUEUED rather than applied now. */

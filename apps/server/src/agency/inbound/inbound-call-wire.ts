@@ -169,6 +169,11 @@ export function inboundCallToWire(
     waited_seconds: offeredAt ? Math.max(0, Math.floor((offeredAt.getTime() - new Date(waitedFrom).getTime()) / 1000)) : 0,
     offered_at: (offeredAt ?? new Date(call.arrived_at)).toISOString(),
     connects_at: call.state === 'offered' && offeredAt ? new Date(offeredAt.getTime() + connectDelayMs).toISOString() : null,
+    // Mode B (IQ66): every offer this build makes is to an open station; the push channel, its
+    // ring deadline and its answer time arrive with the connector's ring (WP5).
+    offer_channel: offeredAt ? 'station' : null,
+    ring_expires_at: null,
+    accepted_at: null,
     bridged_at: iso(call.bridged_at),
     ended_at: iso(call.ended_at),
     talk_seconds: call.state === 'ended' ? call.talk_seconds : null,

@@ -13,6 +13,7 @@ import {
   AGENCY_REDIALED_DISPOSITION_CODE,
   DEVICE_AWAY_BREAK_REASON,
   PHONE_CALL_BREAK_REASON,
+  AWAY_RING_BREAK_REASON,
   RESERVED_BREAK_REASONS,
   SOFTPHONE_BREAK_REASON,
   type AgencyAttemptOutcome,
@@ -769,6 +770,7 @@ const RESERVED_BREAK_REASON_OWNER: Readonly<Record<AgencyReservedBreakReason, st
   [SOFTPHONE_BREAK_REASON]: 'the soft phone',
   [DEVICE_AWAY_BREAK_REASON]: 'the mobile app (sent when it is backgrounded)',
   [PHONE_CALL_BREAK_REASON]: 'the mobile app (sent while the agent is on a phone call)',
+  [AWAY_RING_BREAK_REASON]: 'the mobile app (sent when it is backgrounded and rings for inbound calls)',
 };
 
 /**

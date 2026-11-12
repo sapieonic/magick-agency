@@ -45,6 +45,10 @@ export const INBOUND_REFUSAL_STATUS: Readonly<Record<AgencyInboundErrorCode, num
   inbound_missed_call_handled: 409,
   inbound_assignee_invalid: 400,
   inbound_missed_call_claimed: 409,
+  // Mode B's ring routes (IQ71; built in WP5).
+  ring_not_offered: 404,
+  ring_expired: 409,
+  already_accepted: 409,
 };
 
 /** English fallback copy, British spelling. The console words each code itself. */
@@ -70,6 +74,9 @@ const INBOUND_REFUSAL_MESSAGES: Readonly<Record<AgencyInboundErrorCode, string>>
   inbound_missed_call_handled: 'This missed call is already handled.',
   inbound_assignee_invalid: 'That person cannot work this account’s missed calls.',
   inbound_missed_call_claimed: 'Someone else has already taken this missed call.',
+  ring_not_offered: 'This call is not ringing for you.',
+  ring_expired: 'This call stopped ringing or someone else took it.',
+  already_accepted: 'You have already answered this call. Hang up from the call screen.',
 };
 
 const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
