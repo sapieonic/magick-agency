@@ -1390,8 +1390,9 @@ off by default. All rulings are **default, pending Manas** (`decisions.md` §4, 
 - **Contracts and schema.** The reserved break `away_ring`; the call's `offer_channel`,
   `ring_expires_at`, `accepted_at`; the ring constants (20 s ring, 15 s grace, two misses), results
   and refusals; `agency/push-devices.ts`; the flag. `0036_inbound_ring.sql`: `agency_push_devices`,
-  the ring columns on the inbound spine, `ring_misses` and `away_ring_since` on the session. The
-  Dart wire types beside them.
+  the ring columns on the inbound spine, `ring_misses` and `away_ring_since` on the session;
+  `0037_away_ring_sessions_index.sql`, the partial index of the sessions on an away break (the ring
+  search and the reconcile). The Dart wire types beside them.
 - **Push senders (platform area).** The push seam (`seams/push-sender.ts`, `seams.md` §3.6) and
   FCM HTTP v1 and APNs VoIP senders behind it (`notifications/push/`), no new dependencies;
   `PUSH_*` config; a mock carrier for tests; `agency_push_sends_total`, `agency_push_send_seconds`.
@@ -1411,29 +1412,68 @@ off by default. All rulings are **default, pending Manas** (`decisions.md` §4, 
 - **Flutter.** The ring channel, registration, the Me card with its checklist and test ring,
   `away_ring` on leaving the app with the `device_away` fallback, the parked socket, answering from
   a ring (a cold start included), the missed ring, why ringing stopped.
+- **Review fixes** (three commits). Server: a failed push is never a miss (an unregistered token
+  revokes and ends the absence; any other failure keeps the agent ringable, records `push_failed`
+  and pauses all ringing for `INBOUND_PUSH_RETRY_MS`, 10 s); an agent at the maximum misses is not
+  ringable and any later ring's end sends the owed `ring_missed`; an answered ring clears
+  `away_ring_since` (`ringAnswered`); IQ73's take-over re-decided per candidate; `RENEW_SCRIPT`
+  never renews `ring = 1`; `/leave` and OS7 send a parked phone `ring_off` (`taken_over`); a queued
+  `away_ring` applies from `offline` and over no key; a requeue that throws still releases; 0037.
+  App: the station held for the accept's URL during an answer (`_onShow` does not reconnect), and
+  `already_accepted` for a call the station holds is success; our own ring is not "busy"
+  (`PhoneSignals`, `OwnRing.live`); the ring's time left from FCM's `sentTime` (at most 22 s);
+  decline inside 8 s; a silenced ring on `magick_agency_ring_quiet`; "Connecting the call…" with a
+  full-screen intent only for a headset or car answer; a hang-up after Dart's accept hangs the
+  call up through the station.
 
-**Not verified:** no Gradle build or APK has run (the Android SDK's host was out of reach), so the
-native adapters, the manifest and the Gradle changes have never been compiled; the Kotlin logic's
-80 tests passed on a JVM with `kotlinc`. Nothing has run on a phone, against FCM or APNs, or with a
+**Not verified:** no Gradle build or APK has run (the Android SDK's host was out of reach). The
+app module's Kotlin, native adapters included, compiled with `kotlinc` outside Gradle against the
+AOSP framework jar, androidx.core and firebase-messaging with a stub `R` (no errors); the manifest,
+resources and Gradle changes were never processed. The pure Kotlin logic's 92 tests and
+`agent_audio`'s 6 passed on a JVM with `kotlinc` and JUnit. Nothing has run on a phone, against FCM or APNs, or with a
 real caller. The Play Console full-screen-intent declaration is not filed. iOS is a design only
 (`mobile.md` "iOS: the design (Mode B)"). Test counts: "Test counts", the Mode B entry.
 
 ## Test counts
 
-**Mode B, 2026-11-12 (provisional: the counts the build's agents reported; to be replaced by the
-final run's).** Branch `claude-mgkvc/gracious-faraday-rw6nnx` on `main` `b3894d2`:
+**Mode B, 2026-11-12 (final).** Branch `claude-mgkvc/gracious-faraday-rw6nnx` on `main` `b3894d2`,
+run on `0dac982` (the last commit that is not docs: this entry's commit changes docs only). Each
+package from inside its directory, on a local Postgres 16 and Redis 7 on the agency ports with no
+other run sharing them, integration with 4 workers. `pnpm lint` clean; `pnpm test:grafana` 33,
+`pnpm test:release` 10 and `pnpm test:tooling` 16 pass; `contracts-literals.mjs --check` up to date
+(70 vocabularies).
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 9958 passed + 1 expected fail (500 files) | rest lane 2802 passed, **1 failed**, 9 expected fail, 2 skipped (259 files); wall-clock lane 26 (6 files) |
-| `apps/mobile` | 1846 (`flutter test`); `agency_wire` 667 (`dart test`); Android ring Kotlin 80 (JVM, `kotlinc` and JUnit outside Gradle) | — |
+| `packages/contracts` | 523 (15 files) | — |
+| `packages/domain` | 262 (13 files) | — |
+| `packages/db` | 436 (27 files) | 765 (80 files) |
+| `packages/observability` | 21 (5 files) | — |
+| `apps/server` | 9960 passed + 1 expected fail (500 files) | rest lane 2811 passed, 9 expected fail, 2 skipped (257 files passed, 2 skipped); wall-clock lane 26 (6 files) |
+| `apps/console` | 6870 (368 files) | — |
+| `apps/super-admin` | 506 (37 files) | — |
+| `apps/report-renderer` | 90 passed, 2 skipped (12 files, 1 skipped) | — |
+| `apps/mobile` | `flutter analyze` clean; 1859 (`flutter test`); `agency_wire` 667 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
+| Android Kotlin (JVM, `kotlinc` and JUnit outside Gradle) | ring logic 92; `agent_audio` `PhoneCalls` 6; the app module's Kotlin compiled against the framework jar (87 classes, no errors) | — |
 
-The rest lane's one failure is `test/integration/api/softphone-policy-routes.test.ts`'s emoji case,
-which is pre-existing: it fails the same way on `f503ae8`, before the away-ring and ring server work.
-Not a Mode B failure, but the run is not green, so these counts are not a green run's.
-Not run for this entry: `packages/db`, `apps/console`, `packages/contracts`, `packages/domain`,
-`packages/observability`, `pnpm test:grafana`, `pnpm test:release`, `pnpm test:tooling`, lint,
-build, and the Gradle build and its unit tests (not available).
+Flakes, each rerun: the console's first full run failed `AgencyCampaignSettingsPage.test.tsx`
+"highlights the section scrolled into view" (a file this branch does not touch); alone it passed
+3 times out of 3 and the full suite then passed (the count above). The first rest-lane run (3
+failed | 2808 passed) overlapped that console rerun; `telephony/plivo-call-e2e.test.ts` (e) and
+`telephony/plivo-inbound-e2e.test.ts` "open: …" each passed alone twice (11 and 18 tests), and the
+rest-lane run above, with nothing else running, passed them.
+
+**`softphone-policy-routes.test.ts` "override note … emoji"** is not a branch failure, and not a
+code failure on `main` either: it fails identically on `main` `b3894d2` (checked in its own
+worktree and database: 1 failed | 17 passed, the same `ck_agency_manual_call_dnc_override` CHECK
+refusing the insert, a 500 at `placeAndRingOut`). The cause is the sandbox's Postgres cluster,
+initialised `SQL_ASCII`: there `char_length` counts bytes, so 499 characters plus a 4-byte emoji are
+503 and the CHECK's 500 refuses them (`UTF8`: 500). CI's `postgres:16-alpine` initialises `UTF8`.
+With the test database recreated `UTF8` (`TEMPLATE template0`) the whole rest lane passes, emoji
+case included; the db integration and wall-clock counts above are from that database too (both
+were also green on the `SQL_ASCII` one: 765 and 26).
+
+Not run for this entry: `pnpm build`, and the Gradle build and its unit tests (no Android SDK).
 
 Latest run, 2026-11-12, one station per agent (OS1–OS8, above), rebased on `main` after the
 console navigation redesign (#76): its migration is `0035_one_station_per_agent.sql` (`main` took
@@ -2137,7 +2177,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
 | Inbound calls | The persona review's product rulings are decided and built (IQ48–IQ57, above); at the pilot's start raise `MOBILE_MIN_SUPPORTED_VERSION` to the first release that declares `caps=inbound` (IQ56); in-app voicemail playback after the pilot (IQ53). Engineering follow-ups: split the inbound call slot out of the station controller and merge the campaign `NotesAutosave` into `CallAutosave`; the `agent_audio` Kotlin tests now run in CI (`mobile.yml`, after the Android build). A Plivo account for P0. Ratify the fix pass's defaults IQ25–IQ45 (`decisions.md` §4, "Inbound fix pass"): the 15 s rejoin grace, the 120 s unmatched wrap-up, the busy words for withheld and DNC callers, the kill switch's closed message, the upload limits, the alert thresholds. Sign off the standard recordings (listening and licence); decide the voicemail and spine retention for a UK pilot |
-| Mode B (ringing an away phone) | Ratify IQ58–IQ74 and N1–N5 (`decisions.md` §4, "Mode B"): the 20 s ring and 15 s grace, two misses in a row (a failed push counted as one), the sticky agent's phone before the team on screen, the 4 h maximum absence, the token-only answer and decline. A field test on Android phones (a locked phone, a headset or car answer, Android 14/15, battery killers, a force-stop), the FCM service account, the Play Console full-screen-intent declaration; iOS after its first compile (Apple account, APNs key) |
+| Mode B (ringing an away phone) | Ratify IQ58–IQ74 and N1–N5 (`decisions.md` §4, "Mode B"): the 20 s ring and 15 s grace, two misses in a row (a failed push never counted as one; ringing paused 10 s after one), the sticky agent's phone before the team on screen, the 4 h maximum absence, the token-only answer and decline. A field test on Android phones (a locked phone, a headset or car answer, Android 14/15, battery killers, a force-stop), the FCM service account, the Play Console full-screen-intent declaration; iOS after its first compile (Apple account, APNs key) |
 | Plivo on tenants' own accounts | Ratify PL1–PL16 (`decisions.md` §4, "Plivo on tenants' own accounts"): a 403 on dial read as a geo-permission refusal; the three automatic pauses (`carrier_auth`, `carrier_account_unavailable`, and `carrier_refusing_calls` after five refusals in a row, PL11); a carrier with no webhook base not offered or started (PL12); numbers of a credential that cannot dial not offered; synced numbers tenant-wide; recordings from `media.plivo.com` only; the calls-per-second default of 2 per account; the carrier choice shown only with more than one carrier account |
 
 ## Deployment invariants

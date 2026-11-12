@@ -702,8 +702,10 @@ of it has run on a phone ("Not verified yet").
   (`FLAG_INSISTENT`), Answer and Decline, and a full-screen intent. Without Telecom (refused, or no
   UI asked for in time) the notification rings alone. Silenced (a volume key), it is cancelled and
   posted again on the soundless channel `magick_agency_ring_quiet`. No foreground service while it
-  rings, so no `FOREGROUND_SERVICE_PHONE_CALL`. While our ring is live, `agent_audio` does not read
-  the ringtone mode as a cellular call (`OwnRing`), so a test ring is not a `phone_call` pause.
+  rings, so no `FOREGROUND_SERVICE_PHONE_CALL`. While our ring is live (`OwnRing.live` in
+  `agent_audio`, set by the ring coordinator), `agent_audio` does not read the ringtone mode as a
+  cellular call (only in call, call screening and call redirect are), so our own ring, a test ring
+  included, is neither a `phone_call` pause nor an audio interruption.
 - **The lock-screen ring** (`RingActivity`) is the full-screen intent, shown over the lock screen
   with the screen turned on. It is its own small native activity, not `MainActivity`, because it
   must not start Flutter: opening the app attaches the station, and the server takes an attach with
@@ -729,16 +731,19 @@ of it has run on a phone ("Not verified yet").
   way to the on-duty one. From there it is the "Inbound calls" flow above. From the answer until the
   accept answers, the accept's URL is the station's only attach: an app brought to the front by the
   answer does not reopen its parked socket on a mint of its own (that attach would answer the ring
-  first, N5). A failure that says nothing about the call is retried once after 1 s; then "This call
+  first, N5): while the accept is in flight the station's `_onShow` does not reconnect and a
+  reconnect never mints for itself; a socket already open when the accept answers is kept. A
+  failure that says nothing about the call is retried once after 1 s; then "This call
   stopped ringing or someone else took it." and `reportEnded(accept_failed)`. `already_accepted` for
   a call the station holds (or receives within 5 s) is this phone's own attach having won, not a
   failure. Answers are deduped by call id.
 - **Decline** (the notification's Decline, the lock-screen Decline, or Telecom's reject) posts
-  `…/ring/decline {reason: declined}` natively, at once (inside 8 s, so the notification's receiver
-  never holds past Android's limit); not a miss. Hang up on the "Connecting the call…" notification
+  `…/ring/decline {reason: declined}` natively, at once, inside an 8 s budget; the notification's
+  receiver finishes by 9 s whatever happens (and a request that throws still finishes it), so it
+  never holds past Android's limit; not a miss. Hang up on the "Connecting the call…" notification
   (or a headset's or car's) declines too, which the server accepts only until Dart's accept (N4);
   for a call Dart has answered, its `ringEnded` `declined` makes the station hang the call up once
-  it connects.
+  it connects, and an accept refused after that hang-up is not reported as a failure.
 - **A missed ring** (it rang out, or `ring_cancel` said `expired`) posts "Missed inbound call" ("Your
   phone rang for an inbound caller and the call was not answered."; no name, no number): Dart asks
   native for it (`showMissedRing`) on `ringEnded` `expired` or `accept_lapsed` for a call it did not
@@ -795,7 +800,7 @@ strings exactly as the server sent them. The offer token is never logged on eith
 
 | Method | Arguments | When |
 |---|---|---|
-| `token` | `{token}` | FCM issued a new token (`onNewToken`); Dart registers it (`PUT /push-devices/:deviceId`) |
+| `token` | `{token}` | FCM issued a new token (`onNewToken`); Dart registers it (`PUT /push-devices/:deviceId`). A token native already holds is not sent again (`onNewToken`/`onRegistered` with the same token send nothing) |
 | `ringAnswered` | `{call_id, offer_token, session_id}` | The agent answered with Flutter running; native has already posted `…/ring/answering`. Dart accepts (`…/ring/accept`) and attaches the station |
 | `ringEnded` | `{call_id, reason}`: an `InboundRingResult` wire value (`declined`, `busy_on_phone`, `expired`, `accept_lapsed`, `cancelled`, or a `ring_cancel` push's reason) | A ring ended on the phone without being bound |
 | `testRingReceived` | none | A `test_ring` push arrived and rang locally (the settings card's success) |
@@ -1047,11 +1052,15 @@ packages/
   run under the Android Gradle plugin). Its Swift (`Chime.swift`, the `Playout` and `VoiceEngine`
   changes) has never been compiled, like the rest of the iOS engine (iOS does not compile yet,
   above).
-- **Mode B (2026-11-12) has not run on a phone, and Android's native ring has never been
-  compiled.** No Gradle build or APK has run with it (the Android SDK's host was out of reach), so
-  the Telecom, notification, activity, channel and FCM adapters, the manifest and the Gradle
-  changes (the Firebase BoM and `firebase-messaging`, the dart-defines written into string
-  resources) are reviewed against the SDK only; CI's debug Android build is their first compile.
+- **Mode B (2026-11-12) has not run on a phone, and Android's native ring has never been built
+  under Gradle.** No Gradle build or APK has run with it (the Android SDK's host was out of reach).
+  Every Kotlin file of the app module (the Telecom, notification, activity, channel and FCM
+  adapters included) and `agent_audio`'s `PhoneCalls.kt` compiled with `kotlinc` outside Gradle
+  against the AOSP framework jar (Robolectric's android-all, API 37), Flutter's embedding jar,
+  androidx.core 1.17.0 and firebase-messaging 25.1.3 with its Firebase and GMS dependencies, and a
+  stub `R` class (87 classes, no errors, on the final review commit); the manifest, the resources
+  and the Gradle changes (the Firebase BoM and `firebase-messaging`, the dart-defines written into
+  string resources) were never processed, so CI's debug Android build is their first build.
   Their pure logic (`RingStateMachine`, the push parser, the request builders, the copy and
   checklist rules: 92 tests) passed on a JVM with `kotlinc` and JUnit, outside Gradle; CI runs them
   under the Android Gradle plugin (`./gradlew :app:testDevDebugUnitTest`) from its first run. The
