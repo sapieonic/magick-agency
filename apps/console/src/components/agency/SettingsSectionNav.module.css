@@ -1,3 +1,8 @@
+/* The phone strip's height: the page clears it when it lands a section (`scroll-margin-top`). */
+:root {
+  --settings-strip-height: 48px;
+}
+
 /* A sticky column beside the sections; it stays put while the form scrolls. */
 .nav {
   position: sticky;
@@ -50,16 +55,17 @@
 /*
   A phone: a strip above the sections that scrolls sideways, pinned under the page's top.
   A sticky box sticks inside its scroll area's padding, so `top: 0` left the content pane's
-  top padding (ConsoleLayout's `.content`: 24px, 16px at 768px and below) open above the
-  strip, with the page showing through it. The negative top takes the strip up to the edge,
-  and the sideways margins match the same padding so the strip runs edge to edge.
+  top padding (ConsoleLayout's `.content`, `--content-pad`) open above the strip, with the
+  page showing through it. The negative top takes the strip up to the edge, and the sideways
+  margins match the same padding so the strip runs edge to edge.
 */
 @media (max-width: 900px) {
   .nav {
-    top: -24px;
+    top: calc(-1 * var(--content-pad));
     z-index: 2;
-    margin: 0 -24px;
-    padding: 6px 24px;
+    min-height: var(--settings-strip-height);
+    margin: 0 calc(-1 * var(--content-pad));
+    padding: 6px var(--content-pad);
     border-bottom: 1px solid var(--border);
     background: var(--bg-primary);
     overflow-x: auto;
@@ -79,14 +85,6 @@
   .linkActive,
   .linkActive:hover {
     box-shadow: inset 0 -2px 0 var(--accent);
-  }
-}
-
-@media (max-width: 768px) {
-  .nav {
-    top: -16px;
-    margin: 0 -16px;
-    padding: 6px 16px;
   }
 }
 

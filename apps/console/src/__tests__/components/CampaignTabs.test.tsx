@@ -4,6 +4,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CampaignTabs, tabBadge } from '../../components/agency/CampaignTabs';
+import {
+  TAB_BADGE_FRESH_MS,
+  publishCampaignTabBadge,
+  resetCampaignTabBadgesForTests,
+} from '../../hooks/useCampaignTabBadges';
 
 /**
  * The campaign bar on its own, as the standalone screens (Contacts, Call log,
@@ -25,10 +30,14 @@ const agent = (session_id: string, state: string) => ({ session_id, agent_user_i
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetCampaignTabBadgesForTests();
   mocks.getAgencyCampaignStats.mockResolvedValue({ agents: [agent('a', 'available'), agent('b', 'on_call'), agent('c', 'offline')] });
   mocks.getInsightsAllocation.mockResolvedValue({ totals: { callbacks_overdue: 14 } });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 function show(props: Partial<Parameters<typeof CampaignTabs>[0]> = {}) {
   return render(
@@ -52,6 +61,41 @@ describe('campaign tab bar', () => {
     show({ agentsOnShift: 3, callbacksOverdue: 0 });
     expect(screen.getByTestId('campaign-tab-agents-count').textContent).toBe('3');
     await waitFor(() => expect(screen.queryByTestId('campaign-tab-callbacks-alert')).toBeNull());
+    expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
+    expect(mocks.getInsightsAllocation).not.toHaveBeenCalled();
+  });
+
+  it('shares its reads: two bars at once make one of each, and the next screen inside 30 s none', async () => {
+    show();
+    show({ active: 'contacts' });
+    await waitFor(() => expect(screen.getAllByTestId('campaign-tab-agents-count')).toHaveLength(2));
+    expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(1);
+    expect(mocks.getInsightsAllocation).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    show({ active: 'attempts' });
+    expect(screen.getByTestId('campaign-tab-agents-count').textContent).toBe('2');
+    expect(screen.getByTestId('campaign-tab-callbacks-alert').textContent).toBe('14');
+    expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(1);
+    expect(mocks.getInsightsAllocation).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads again once the shared count is over 30 s old', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    show();
+    await screen.findByTestId('campaign-tab-agents-count');
+    cleanup();
+    vi.setSystemTime(Date.now() + TAB_BADGE_FRESH_MS);
+    show();
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(2));
+  });
+
+  it('takes a count the detail page published, and reads nothing itself', () => {
+    publishCampaignTabBadge('onShift', 'tenant-1', 'account-1', 'camp-1', 5);
+    publishCampaignTabBadge('overdue', 'tenant-1', 'account-1', 'camp-1', 3);
+    show();
+    expect(screen.getByTestId('campaign-tab-agents-count').textContent).toBe('5');
+    expect(screen.getByTestId('campaign-tab-callbacks-alert').textContent).toBe('3');
     expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
     expect(mocks.getInsightsAllocation).not.toHaveBeenCalled();
   });

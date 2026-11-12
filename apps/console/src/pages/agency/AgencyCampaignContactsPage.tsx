@@ -45,10 +45,7 @@ export function AgencyCampaignContactsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   // "Campaigns / <name> / Contacts / Add contacts": back to the roster, where this page is
   // reached from and where an operator who has finished uploading looks at what landed.
-  useCampaignCrumbs(id, campaign, [
-    { label: 'Contacts', to: `/agency/campaigns/${id}/contacts` },
-    { label: 'Add contacts' },
-  ]);
+  useCampaignCrumbs(id, campaign, 'contacts', [{ label: 'Add contacts' }]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canAdd = hasPermission(role, 'agency.campaigns.write');

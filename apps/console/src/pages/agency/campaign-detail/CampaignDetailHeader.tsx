@@ -42,13 +42,14 @@ interface CampaignDetailHeaderProps {
   /** When this screen last read the server, or `null` before the first answer. */
   lastUpdatedAt: Date | null;
   /** The page is polling — said beside the stamp. */
-  autoRefreshing: boolean;
+  autoRefreshing?: boolean;
   /**
    * The stats' `concurrency` block, said through `concurrencyLine` against
    * `campaign.status` (the status the badge shows, not the stats' copy of it).
-   * Absent or `null` on a draft, a finished campaign or an older server.
+   * Absent or `null` on a draft, a finished campaign or an older server, and on a
+   * page that reads no stats (Settings).
    */
-  concurrency: AgencyCampaignConcurrency | null | undefined;
+  concurrency?: AgencyCampaignConcurrency | null;
   tenantId: string | null;
   accountId: string | null;
   /** `agency.supervise`: the lifecycle buttons and the secondary actions. */
@@ -56,8 +57,7 @@ interface CampaignDetailHeaderProps {
   /** The lifecycle action in flight, which disables every button. */
   busy: Action | null;
   onAction: (action: Action) => void;
-  /** Retry contacts: offered with `onRetry` (the page that owns the retry dialog). */
-  canRetry: boolean;
+  /** Retry contacts, offered only when given: by the page that owns the retry dialog, to a role allowed it. */
   onRetry?: () => void;
   canJoinStation: boolean;
   /** For History, which follows its page's own gate (`audit.read`), not `canControl`. */
@@ -84,7 +84,6 @@ export function CampaignDetailHeader({
   canControl,
   busy,
   onAction,
-  canRetry,
   onRetry,
   canJoinStation,
   role,
@@ -244,7 +243,7 @@ export function CampaignDetailHeader({
           campaign is a perfectly ordinary thing to retry part of, and a
           running one's child can run beside it (the dialog says how).
         */}
-        {canRetry && onRetry && (
+        {onRetry && (
           <button
             type="button"
             className={`${styles.actionButton} ${styles.secondaryAction}`}

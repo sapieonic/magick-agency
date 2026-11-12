@@ -132,9 +132,19 @@ export function useSectionInView(sections: readonly SettingsNavSection[], ready:
     };
     observe();
     // The landing line moves with the layout (a phone's strip needs more room above a section).
-    window.addEventListener('resize', observe);
+    // Measured once a frame, not on every resize event.
+    let frame = 0;
+    const onResize = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        observe();
+      });
+    };
+    window.addEventListener('resize', onResize);
     return () => {
-      window.removeEventListener('resize', observe);
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(frame);
       observer?.disconnect();
     };
   }, [ready, idsKey]);

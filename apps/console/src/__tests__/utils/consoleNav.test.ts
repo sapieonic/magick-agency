@@ -23,7 +23,7 @@ import {
   type GateInput,
 } from '../../utils/consoleNav';
 import type { Role } from '../../types/auth';
-import { CAMPAIGN_TABS } from '../../utils/agencyCampaignTabs';
+import { CAMPAIGN_TABS, type CampaignTabId } from '../../utils/agencyCampaignTabs';
 import { campaignCrumbs } from '../../hooks/useCampaignCrumbs';
 
 /**
@@ -254,7 +254,7 @@ describe('the breadcrumb', () => {
 
 describe('crumbs that would land on the page itself', () => {
   const diwali = { id: 'c-1', name: 'Diwali renewals' };
-  const onTab = (tab: string) => campaignCrumbs('c-1', diwali, [{ label: tab }]);
+  const onTab = (tab: CampaignTabId) => campaignCrumbs('c-1', diwali, tab);
 
   it('knows where a link lands after the router’s redirects', () => {
     expect(landingPathFor('/agency/campaigns/c-1', 'account_admin')).toBe('/agency/campaigns/c-1/overview');
@@ -275,29 +275,29 @@ describe('crumbs that would land on the page itself', () => {
   });
 
   it('leave a campaign’s name unlinked on the tab the campaign opens on, for each role', () => {
-    expect(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('Overview'), 'account_admin')).toEqual([
+    expect(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('overview'), 'account_admin')).toEqual([
       { label: 'Campaigns', to: '/agency/campaigns' },
       { label: 'Diwali renewals' },
       { label: 'Overview' },
     ]);
-    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('Agents'), 'viewer')[1]).toEqual({ label: 'Diwali renewals' });
+    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('agents'), 'viewer')[1]).toEqual({ label: 'Diwali renewals' });
     // A supervisor's Agents is not where the campaign opens, so the name links there.
-    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('Agents'), 'account_admin')[1]).toEqual({
+    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('agents'), 'account_admin')[1]).toEqual({
       label: 'Diwali renewals',
       to: '/agency/campaigns/c-1',
     });
   });
 
   it('send the phone’s back arrow up to the Campaigns list from Overview, and to the campaign from its other tabs', () => {
-    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('Overview'), 'account_admin'))).toEqual({
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('overview'), 'account_admin'))).toEqual({
       label: 'Campaigns',
       to: '/agency/campaigns',
     });
-    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/health', null, onTab('Health'), 'account_admin'))).toEqual({
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/health', null, onTab('health'), 'account_admin'))).toEqual({
       label: 'Diwali renewals',
       to: '/agency/campaigns/c-1',
     });
-    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('Agents'), 'viewer'))).toEqual({
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('agents'), 'viewer'))).toEqual({
       label: 'Campaigns',
       to: '/agency/campaigns',
     });
@@ -309,15 +309,15 @@ describe('crumbs that would land on the page itself', () => {
     Campaign pages are given the crumbs they supply (`useCampaignCrumbs`).
   */
   const ROLES: (Role | undefined)[] = ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent', undefined];
-  const campaignPage = (path: string, trail: { label: string; to?: string }[]) =>
-    [path, campaignCrumbs('c-1', diwali, trail)] as const;
+  const campaignPage = (path: string, tab: CampaignTabId, subTrail: { label: string; to?: string }[] = []) =>
+    [path, campaignCrumbs('c-1', diwali, tab, subTrail)] as const;
   const PAGES: (readonly [string, ReturnType<typeof campaignCrumbs>])[] = [
     ...CONSOLE_SECTIONS.flatMap((s) => [...s.paths, ...s.tabs.map((t) => t.to)]).map((p) => [p, null] as const),
-    ...CAMPAIGN_TABS.map((t) => campaignPage(t.path('c-1'), [{ label: t.label }])),
-    ...['performance', 'insights', ''].map((p) => campaignPage(`/agency/campaigns/c-1${p ? `/${p}` : ''}`, [{ label: 'Overview' }])),
-    campaignPage('/agency/campaigns/c-1/contacts/add', [{ label: 'Contacts', to: '/agency/campaigns/c-1/contacts' }, { label: 'Add contacts' }]),
-    campaignPage('/agency/campaigns/c-1/contacts/k-1', [{ label: 'Contacts', to: '/agency/campaigns/c-1/contacts' }, { label: 'Priya' }]),
-    campaignPage('/agency/campaigns/c-1/attempts/a-1', [{ label: 'Call log', to: '/agency/campaigns/c-1/attempts' }, { label: 'Call' }]),
+    ...CAMPAIGN_TABS.map((t) => campaignPage(t.path('c-1'), t.id)),
+    ...['performance', 'insights', ''].map((p) => campaignPage(`/agency/campaigns/c-1${p ? `/${p}` : ''}`, 'overview')),
+    campaignPage('/agency/campaigns/c-1/contacts/add', 'contacts', [{ label: 'Add contacts' }]),
+    campaignPage('/agency/campaigns/c-1/contacts/k-1', 'contacts', [{ label: 'Priya' }]),
+    campaignPage('/agency/campaigns/c-1/attempts/a-1', 'attempts', [{ label: 'Call' }]),
     ['/agency/campaigns/new', null],
     ['/agency/campaigns/c-1/overview', null],
     ['/agency/reports/run-1', null],

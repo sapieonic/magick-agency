@@ -1,10 +1,5 @@
-import { useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
-import { getInsightsAllocation } from '../../api/agencyInsights';
-import { getAgencyCampaignStats } from '../../api/agencyCampaigns';
-import { agentsOnShift } from '../../utils/agencyAgentFloor';
-import { useTenant } from '../../contexts/TenantContext';
+import { useCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
 import { hasPermission } from '../../utils/permissions';
 import {
   barTabFor,
@@ -38,15 +33,13 @@ import styles from './CampaignTabs.module.css';
  *
  * ── Where it sits ──────────────────────────────────────────────────────────
  * Directly below whatever identifies the PAGE, and above the section's own
- * content — which is not the same pixel offset on every screen, and the
- * comment here used to claim it was. On the detail page the campaign's name
- * and its lifecycle controls are that identity, so the bar follows them (and
- * follows a stall diagnosis, which is worth reading before choosing a
- * section). On the four standalone screens the breadcrumb is the only campaign
- * identity, so the bar follows that and their own `<h1>` belongs to the
- * section below it. Switching between the two groups therefore moves the bar
- * vertically; making it truly fixed would mean giving those four a
- * campaign-level header of their own, which is a larger change than this one.
+ * content — which is not the same pixel offset on every screen. On the detail
+ * page and on Settings the campaign's header (its name and lifecycle controls)
+ * is that identity, so the bar follows it (and, on the detail page, a stall
+ * diagnosis, which is worth reading before choosing a section). The other
+ * standalone screens name the campaign only in the top bar's breadcrumb, so
+ * the bar opens the page and their own `<h1>` belongs to the section below it.
+ * Switching between the two therefore moves the bar vertically.
  */
 export interface CampaignTabsProps {
   campaignId: string;
@@ -61,8 +54,9 @@ export interface CampaignTabsProps {
   /**
    * Agents on shift now (`agentsOnShift`: the floor's rows that are not offline),
    * from a host that already polls the stats (the detail page; null until it
-   * knows). Left out, the bar reads the stats once itself, so the Agents badge is
-   * on every campaign screen, not only on the five the detail page draws.
+   * knows). Left out, the bar takes the campaign's shared count, reading it
+   * itself when none is fresh, so the Agents badge is on every campaign screen,
+   * not only on the five the detail page draws.
    *
    * The badge is a "someone is there" signal rather than a read-out, so it
    * renders only for a positive count. `null` ("not known here", which is NOT
@@ -85,8 +79,8 @@ export interface CampaignTabsProps {
   /**
    * The callbacks overdue now, for the Callbacks tab's badge, from a host that
    * already polls it (the detail page; null until it knows). Left out, the bar
-   * reads it once itself, so the badge is on every campaign screen and leaving
-   * the detail page never makes the warning look resolved.
+   * takes the shared count as above, so the badge is on every campaign screen
+   * and leaving the detail page never makes the warning look resolved.
    */
   callbacksOverdue?: number | null;
 }
@@ -209,36 +203,22 @@ export function tabBadge(tab: CampaignTabId, onShift: number | null, overdue: nu
 }
 
 /**
- * Agents on shift for the badge: the host's count when it has one, else one read
- * of the stats here (not polled, like the callbacks below). The stats read is
- * gated as the campaign itself, so every role that sees the bar may make it.
+ * Agents on shift for the badge: the host's count when it has one, else the
+ * campaign's shared count (`useCampaignTabBadge`: read once here unless another
+ * screen read it in the last 30 s). The stats read is gated as the campaign
+ * itself, so every role that sees the bar may make it.
  */
 function useAgentsOnShift(campaignId: string, known: number | null | undefined): number | null {
-  const { tenantId, accountId } = useTenant();
-  const read = known === undefined && Boolean(tenantId && accountId);
-  const fetchStats = useCallback(
-    () => getAgencyCampaignStats(campaignId, tenantId ?? undefined, accountId ?? undefined),
-    [campaignId, tenantId, accountId],
-  );
-  const stats = useAsyncResource(fetchStats, { initialData: null, enabled: read });
-  if (known !== undefined) return known;
-  return read ? agentsOnShift(stats.data?.agents) : null;
+  const shared = useCampaignTabBadge('onShift', campaignId, known === undefined);
+  return known !== undefined ? known : shared;
 }
 
 /**
  * The overdue callbacks for the badge: the host's count when it has one, else
- * one read of the allocation here (not polled: a standalone screen is a short
- * visit, and the detail page polls it). Supervisors only — the Callbacks tab is
- * theirs, and the read 403s below them.
+ * the campaign's shared count (the detail page publishes its own). Supervisors
+ * only — the Callbacks tab is theirs, and the read 403s below them.
  */
 function useCallbacksOverdue(campaignId: string, role: Role | undefined, known: number | null | undefined): number | null {
-  const { tenantId, accountId } = useTenant();
-  const read = known === undefined && hasPermission(role, 'agency.supervise') && Boolean(tenantId && accountId);
-  const fetchAllocation = useCallback(
-    () => getInsightsAllocation(campaignId, tenantId ?? undefined, accountId ?? undefined),
-    [campaignId, tenantId, accountId],
-  );
-  const allocation = useAsyncResource(fetchAllocation, { initialData: null, enabled: read });
-  if (known !== undefined) return known;
-  return read ? allocation.data?.totals.callbacks_overdue ?? null : null;
+  const shared = useCampaignTabBadge('overdue', campaignId, known === undefined && hasPermission(role, 'agency.supervise'));
+  return known !== undefined ? known : shared;
 }

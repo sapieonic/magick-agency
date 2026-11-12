@@ -130,6 +130,7 @@ function renderPage(path = '/agency/campaigns/camp-1/settings') {
 import SettingsPage from '../../pages/agency/AgencyCampaignSettingsPage';
 import { saveSettings } from '../helpers/settingsForm';
 import * as insightsSamples from '../helpers/insights';
+import { resetCampaignTabBadgesForTests } from '../../hooks/useCampaignTabBadges';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -144,6 +145,8 @@ beforeEach(() => {
   mocks.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
   mocks.getInsightsUploads.mockResolvedValue(insightsSamples.uploads());
   mocks.getInsightsAllocation.mockResolvedValue(insightsSamples.allocation());
+  // The bar's badge counts are shared for 30 s; each test reads its own.
+  resetCampaignTabBadgesForTests();
   // Governance fails OPEN, so the default posture here is every capability on —
   // matching a tenant whose map simply doesn't mention these keys.
   mocks.isCapabilityEnabled.mockReturnValue(true);

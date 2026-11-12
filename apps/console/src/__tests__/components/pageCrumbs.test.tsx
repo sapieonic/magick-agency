@@ -21,7 +21,7 @@ import { PageCrumbsProvider } from '../../components/layout/PageCrumbs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
 
 function CampaignPage({ name }: { name: string | null }) {
-  useCampaignCrumbs('camp-1', name === null ? null : { id: 'camp-1', name }, [{ label: 'Settings' }]);
+  useCampaignCrumbs('camp-1', name === null ? null : { id: 'camp-1', name }, 'settings');
   return <Link to="/agency/campaigns/camp-2/overview">Another campaign</Link>;
 }
 
@@ -52,7 +52,7 @@ const NAMES: Record<string, string> = { 'camp-1': 'Q3 Renewals', 'camp-2': 'Diwa
 function LoadingCampaignPage() {
   const { id } = useParams<{ id: string }>();
   const [campaign, setCampaign] = useState<{ id: string; name: string } | null>({ id: 'camp-1', name: NAMES['camp-1']! });
-  useCampaignCrumbs(id, campaign, [{ label: 'Settings' }]);
+  useCampaignCrumbs(id, campaign, 'settings');
   return (
     <>
       <Link to="/agency/campaigns/camp-2/settings">Go to camp-2</Link>

@@ -14,8 +14,9 @@ import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
-import { CAMPAIGN_TABS, campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
+import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
 import { useCampaignCrumbs } from '../../hooks/useCampaignCrumbs';
+import { publishCampaignTabBadge } from '../../hooks/useCampaignTabBadges';
 import { agentsOnShift } from '../../utils/agencyAgentFloor';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
@@ -115,10 +116,26 @@ export function AgencyCampaignDetailPage() {
     });
   }, [campaign, panel]);
 
+  /*
+    The tab bar's counts, handed to the campaign's other screens so their bar
+    need not read them again: on shift at every stats poll, overdue when the
+    insights panel reports it. Under `campaign.id`, the campaign the bar shows
+    them for (the stats are read with it).
+  */
+  const onShift = agentsOnShift(stats?.agents);
+  const shownId = campaign?.id;
+  useEffect(() => {
+    if (shownId && tenantId && accountId && onShift !== null) publishCampaignTabBadge('onShift', tenantId, accountId, shownId, onShift);
+    // On `stats` as well as the count: each poll's answer is fresh even when the count is unchanged.
+  }, [shownId, tenantId, accountId, stats, onShift]);
+  useEffect(() => {
+    if (shownId && tenantId && accountId && callbacksOverdue !== null) {
+      publishCampaignTabBadge('overdue', tenantId, accountId, shownId, callbacksOverdue);
+    }
+  }, [shownId, tenantId, accountId, callbacksOverdue]);
+
   // "Campaigns / <name> / <tab>" in the top bar.
-  useCampaignCrumbs(id, campaign, [
-    { label: CAMPAIGN_TABS.find((tab) => tab.id === panel)?.label ?? 'Campaign' },
-  ]);
+  useCampaignCrumbs(id, campaign, panel);
 
   if (loading) return <LoadingSpinner />;
 
@@ -141,8 +158,7 @@ export function AgencyCampaignDetailPage() {
         canControl={canControl}
         busy={lifecycle.busy}
         onAction={lifecycle.onAction}
-        canRetry={canRetry}
-        onRetry={() => setRetryOpen(true)}
+        onRetry={canRetry ? () => setRetryOpen(true) : undefined}
         canJoinStation={canJoinStation}
         role={role}
         onRefresh={() => {
@@ -194,7 +210,7 @@ export function AgencyCampaignDetailPage() {
           (`agentsOnShift`), never `agents.length`, which counted signed-out rows.
           `stats.agents` absent is "not known" (null), not "nobody".
         */
-        agentsOnShift={agentsOnShift(stats?.agents)}
+        agentsOnShift={onShift}
         campaignStatus={campaign.status}
         callbacksOverdue={callbacksOverdue}
       />
