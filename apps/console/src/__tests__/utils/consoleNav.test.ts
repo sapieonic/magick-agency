@@ -10,6 +10,7 @@ import {
   settingsLandingPath,
   landingPathFor,
   legacySettingsPath,
+  LEGACY_SETTINGS_SEGMENTS,
   productSurfaceForPath,
   sectionLandingPath,
   sectionRootFor,
@@ -193,13 +194,13 @@ describe('the breadcrumb', () => {
 
   it('puts the crumbs a page supplies after its section, in place of the generic one', () => {
     const page = [{ label: 'Q3 Renewals', to: '/agency/campaigns/c-1' }, { label: 'Settings' }];
-    expect(breadcrumbFor('/agency/campaigns/c-1/settings', null, page)).toEqual([
+    expect(breadcrumbFor('/agency/campaigns/c-1/settings', page)).toEqual([
       { label: 'Campaigns', to: '/agency/campaigns' },
       ...page,
     ]);
     // A section's own tab page keeps its crumbs, and an empty list changes nothing.
-    expect(breadcrumbFor('/agency/campaigns', null, page)).toEqual([{ label: 'Campaigns' }]);
-    expect(breadcrumbFor('/agency/campaigns/c-1/overview', null, [])[1]).toEqual({ label: 'Campaign' });
+    expect(breadcrumbFor('/agency/campaigns', page)).toEqual([{ label: 'Campaigns' }]);
+    expect(breadcrumbFor('/agency/campaigns/c-1/overview', [])[1]).toEqual({ label: 'Campaign' });
   });
 
   it('says a page once when it shares the section name', () => {
@@ -208,7 +209,7 @@ describe('the breadcrumb', () => {
   });
 
   it('names a Settings page under Settings, which is not a link: /settings reopens this page', () => {
-    expect(breadcrumbFor('/settings/notifications', 'Email notifications')).toEqual([
+    expect(breadcrumbFor('/settings/notifications')).toEqual([
       { label: 'Settings' },
       { label: 'Email notifications' },
     ]);
@@ -239,11 +240,31 @@ describe('the breadcrumb', () => {
     ]);
   });
 
+  it('leaves out a supplied crumb that links where the trail already does', () => {
+    // The soft-phone call's page names its list, which the trail already has as the parent tab.
+    const page = [
+      { label: 'Soft-phone calls', to: '/agency/softphone' },
+      { label: 'Diwali renewals', to: '/agency/campaigns/c-1/manual-calls' },
+      { label: '12 Nov, 10:04' },
+    ];
+    expect(breadcrumbFor('/agency/softphone/calls/x', page)).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      { label: 'Soft-phone calls', to: '/agency/softphone' },
+      page[1],
+      page[2],
+    ]);
+    expect(breadcrumbFor('/settings/inbound/r-1', [{ label: 'Inbound routing', to: '/settings/inbound' }, { label: 'Main line' }])).toEqual([
+      { label: 'Settings' },
+      { label: 'Inbound routing', to: '/settings/inbound' },
+      { label: 'Main line' },
+    ]);
+  });
+
   it('gives the phone’s back arrow the crumb above the page, when it is a link', () => {
     expect(backCrumb(breadcrumbFor('/agency/reports/run-1'))).toEqual({ label: 'Exports', to: '/agency/reports' });
     expect(backCrumb(breadcrumbFor('/agency/inbound/summary'))).toEqual({ label: 'Inbound', to: '/agency/inbound/missed' });
     const page = [{ label: 'Diwali renewals', to: '/agency/campaigns/c-1/overview' }, { label: 'Settings' }];
-    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/settings', null, page))).toEqual(page[0]);
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/settings', page))).toEqual(page[0]);
     expect(backCrumb(breadcrumbFor('/settings/inbound/r-1'))).toEqual({ label: 'Inbound routing', to: '/settings/inbound' });
     // Nothing above: a section's first page, a Settings entry, customer history.
     expect(backCrumb(breadcrumbFor('/agency/campaigns'))).toBeNull();
@@ -275,29 +296,29 @@ describe('crumbs that would land on the page itself', () => {
   });
 
   it('leave a campaign’s name unlinked on the tab the campaign opens on, for each role', () => {
-    expect(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('overview'), 'account_admin')).toEqual([
+    expect(breadcrumbFor('/agency/campaigns/c-1/overview', onTab('overview'), 'account_admin')).toEqual([
       { label: 'Campaigns', to: '/agency/campaigns' },
       { label: 'Diwali renewals' },
       { label: 'Overview' },
     ]);
-    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('agents'), 'viewer')[1]).toEqual({ label: 'Diwali renewals' });
+    expect(breadcrumbFor('/agency/campaigns/c-1/agents', onTab('agents'), 'viewer')[1]).toEqual({ label: 'Diwali renewals' });
     // A supervisor's Agents is not where the campaign opens, so the name links there.
-    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('agents'), 'account_admin')[1]).toEqual({
+    expect(breadcrumbFor('/agency/campaigns/c-1/agents', onTab('agents'), 'account_admin')[1]).toEqual({
       label: 'Diwali renewals',
       to: '/agency/campaigns/c-1',
     });
   });
 
   it('send the phone’s back arrow up to the Campaigns list from Overview, and to the campaign from its other tabs', () => {
-    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('overview'), 'account_admin'))).toEqual({
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/overview', onTab('overview'), 'account_admin'))).toEqual({
       label: 'Campaigns',
       to: '/agency/campaigns',
     });
-    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/health', null, onTab('health'), 'account_admin'))).toEqual({
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/health', onTab('health'), 'account_admin'))).toEqual({
       label: 'Diwali renewals',
       to: '/agency/campaigns/c-1',
     });
-    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('agents'), 'viewer'))).toEqual({
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/agents', onTab('agents'), 'viewer'))).toEqual({
       label: 'Campaigns',
       to: '/agency/campaigns',
     });
@@ -336,7 +357,7 @@ describe('crumbs that would land on the page itself', () => {
     (_name, role) => {
       for (const [path, supplied] of PAGES) {
         const here = landingPathFor(path, role);
-        const crumbs = breadcrumbFor(here, null, supplied, role);
+        const crumbs = breadcrumbFor(here, supplied, role);
         for (const crumb of crumbs.slice(0, -1)) {
           if (crumb.to) expect(landingPathFor(crumb.to, role), `${path}: ${crumb.label}`).not.toBe(here);
         }
@@ -479,6 +500,12 @@ describe('the old /app URLs', () => {
     ['inbound/3f2a1b0c-1111', '/settings/inbound/3f2a1b0c-1111'],
   ])('/app/%s moves to %s', (rest, target) => {
     expect(legacySettingsPath(rest)).toBe(target);
+  });
+
+  it('moves each one to a Settings entry (Profile never lived under /app)', () => {
+    for (const segment of LEGACY_SETTINGS_SEGMENTS) {
+      expect(settingsEntryForPath(`/settings/${segment}`)?.path).toBe(`/settings/${segment}`);
+    }
   });
 
   it('sends anything that was never a page here to the home decision instead', () => {

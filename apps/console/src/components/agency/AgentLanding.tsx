@@ -3,7 +3,8 @@ import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { AGENT_LANDING_PATH, dialerTwinPath, isDedicatedAgent } from '../../utils/agencyPersona';
+import { isDedicatedAgent } from '../../utils/agencyPersona';
+import { DIALER_PATH, dialerOn, dialerTwinPath } from '../../utils/consoleNav';
 import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStationExit';
 
 /**
@@ -97,7 +98,7 @@ export function AgentLanding({ children }: { children: ReactNode }) {
    * gates through the same two contexts, so they cannot disagree about whether the
    * dialer is on — only about where the answer is drawn.
    */
-  if (!capabilityEnabled('agency') || !flagEnabled('agency_dialer_enabled')) {
+  if (!dialerOn({ isFlagEnabled: flagEnabled, isCapabilityEnabled: capabilityEnabled })) {
     return <>{children}</>;
   }
 
@@ -114,7 +115,7 @@ export function AgentLanding({ children }: { children: ReactNode }) {
   if (twin) return <Navigate to={`${twin}${search}`} replace />;
 
   const arrival = agentLandingArrival(params.get(AGENT_LANDING_PARAM));
-  const to = arrival ? `${AGENT_LANDING_PATH}?${AGENT_LANDING_PARAM}=${arrival}` : AGENT_LANDING_PATH;
+  const to = arrival ? `${DIALER_PATH}?${AGENT_LANDING_PARAM}=${arrival}` : DIALER_PATH;
 
   return <Navigate to={to} replace />;
 }

@@ -90,12 +90,29 @@ describe('the shared count', () => {
     await act(async () => { vi.advanceTimersByTime(20_000); });
     render(<Reader id="b" />);
     await act(async () => {});
-    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(2);
+    // a polls, so b mounting 20 s later reuses a's answer.
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(1);
     // a ticks at 60 s and 120 s and reads; b ticks at 80 s and 140 s, inside a's minute, and does not.
     await act(async () => { await vi.advanceTimersByTimeAsync(130_000); });
-    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(4);
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(3);
     expect(text('a')).toBe('3/true:true');
     expect(text('b')).toBe('3/true:true');
+  });
+
+  it('a reader mounting reuses the answer for the poll period while another polls, and for 10 s otherwise', async () => {
+    const { unmount } = render(<Reader id="poller" />);
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(50_000); });
+    render(<Reader id="late" poll={false} />);
+    await act(async () => {});
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(1);
+    unmount();
+
+    // Nobody polls now: past 10 s, a reader mounting reads again.
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    render(<Reader id="later" poll={false} />);
+    await act(async () => {});
+    expect(mocks.getMissedInboundCount).toHaveBeenCalledTimes(2);
   });
 
   it('re-reads on demand, and every reader follows', async () => {

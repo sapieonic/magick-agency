@@ -19,7 +19,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
 }));
 
 import { AgentNav } from '../../components/agency/AgentNav';
-import { tabBarFor, visibleSettingsGroups, type GateInput } from '../../utils/consoleNav';
+import { settingsEntry, tabBarFor, visibleSettingsGroups, type GateInput } from '../../utils/consoleNav';
 import { CallLogViews } from '../../components/agency/CallLogViews';
 import { agentSurfacesFor, AGENT_SURFACES } from '../../utils/agencyAgentSurfaces';
 import { visibleCallLogViews } from '../../utils/agencyCampaignTabs';
@@ -157,6 +157,8 @@ describe('the routes', () => {
     }
     const settings = routeBlock('softphone', app.indexOf('<Route path="/settings"'));
     expect(settings).toContain('<SoftphoneSettingsPage');
-    expect(settings).toContain('flag="agency_softphone_enabled"');
+    // The Settings route's guards are its entry's gate (`RequireGate`).
+    expect(settings).toContain("<RequireGate gate={settingsEntry('softphone').gate}>");
+    expect(settingsEntry('softphone').gate.flags).toContain('agency_softphone_enabled');
   });
 });

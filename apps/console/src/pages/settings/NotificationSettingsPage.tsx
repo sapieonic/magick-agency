@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail, Save } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useGateReaders } from '../../hooks/useGateReaders';
+import { useNavGate } from '../../hooks/useNavGate';
 import { HOME_GATE, HOME_PATH, passesGate } from '../../utils/consoleNav';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import {
@@ -108,10 +108,9 @@ function guideTips(events: readonly NotificationEventPreference[]): string[] {
 }
 
 export default function NotificationSettingsPage() {
-  const { tenantId, role } = useTenant();
-  const readers = useGateReaders();
+  const { tenantId } = useTenant();
   /* Home lists what needs a supervisor now; point there only for a reader Home is offered to. */
-  const homeShown = passesGate(HOME_GATE, { role, ...readers });
+  const homeShown = passesGate(HOME_GATE, useNavGate());
   const { showToast, showErrorToast } = useToast();
 
   const [events, setEvents] = useState<NotificationEventPreference[]>([]);

@@ -10,8 +10,9 @@ import {
   visibleSections,
   visibleSettingsGroups,
   type GateInput,
+  CAMPAIGNS_GATE,
 } from '../../utils/consoleNav';
-import { CAMPAIGNS_GATE, searchConsole, type SearchResult } from '../../utils/consoleSearch';
+import { searchConsole, type SearchResult } from '../../utils/consoleSearch';
 import { CAMPAIGN_TABS } from '../../utils/agencyCampaignTabs';
 import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';
 import { hasPermission, type Permission } from '../../utils/permissions';

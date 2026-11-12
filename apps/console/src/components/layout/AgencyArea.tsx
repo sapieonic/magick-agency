@@ -1,9 +1,7 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { useGovernance } from '../../contexts/GovernanceContext';
-import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
+import { useNavGate } from '../../hooks/useNavGate';
 import { accountCreateAccess } from '../../utils/accountCreateAccess';
 import { tabBarFor } from '../../utils/consoleNav';
 import { SectionTabs } from './SectionTabs';
@@ -21,11 +19,9 @@ import styles from './ConsoleLayout.module.css';
  */
 export function AgencyArea() {
   const { pathname } = useLocation();
-  const { role, accountId, accounts, accountResolution, tenantId } = useTenant();
+  const { accountId, accounts, accountResolution, tenantId } = useTenant();
   const { memberships } = useAuth();
-  const { isEnabled: isFlagEnabled } = useFeatureFlags();
-  const { isEnabled: isCapabilityEnabled } = useGovernance();
-  const missed = useMissedCallsAccess();
+  const gate = useNavGate({ missed: true });
 
   if (!accountId && accountResolution !== 'loading' && accountResolution !== 'error') {
     const canCreateAccount = accountCreateAccess(memberships, tenantId) === 'allowed';
@@ -46,12 +42,7 @@ export function AgencyArea() {
     );
   }
 
-  const bar = tabBarFor(pathname, {
-    role,
-    isFlagEnabled,
-    isCapabilityEnabled,
-    missedAvailable: missed.available,
-  });
+  const bar = tabBarFor(pathname, gate);
 
   return (
     <>

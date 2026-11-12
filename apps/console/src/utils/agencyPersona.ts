@@ -1,5 +1,4 @@
 import { getRoleLevel, hasPermission } from './permissions';
-import { HOME_PATH, canSeeHome } from './consoleNav';
 import type { Role } from '../types/auth';
 
 /**
@@ -39,7 +38,7 @@ import type { Role } from '../types/auth';
  *   - `agencyPersona` — "on an agent surface, which of the two jobs is this?"
  *   - `isDedicatedAgent` — "is the dialler the ONLY thing this person has?", the
  *     one question that may take navigation away;
- *   - `agencyLandingPath` — "where does `/agency` send them?". Only a dedicated
+ *   - `agencyLandingPath` (`consoleNav`) — "where does `/agency` send them?". Only a dedicated
  *     agent lands on `/dialer`. A `viewer` or `operator` reads the campaign list
  *     (`agency.campaigns.read` floors at `viewer`) and has the console around it,
  *     so they land there; an earlier revision landed them on the agent home, whose
@@ -117,47 +116,6 @@ const PLATFORM_NAVIGATION_FLOOR: Role = 'viewer';
 /** The campaign list: where someone who reads campaigns but does not supervise lands. */
 export const CAMPAIGNS_LANDING_PATH = '/agency/campaigns';
 
-/** The agent home: where a dedicated agent lands. */
-export const AGENT_LANDING_PATH = '/dialer';
-
-/**
- * Where `/agency` sends this person (`AgencyHomeRedirect`), and so where every door
- * that defaults to `/agency` (sign-in, an account switch) ends up. `null` while the
- * role is unresolved, so the caller waits instead of guessing.
- *
- *  - whoever passes Home's gate (`canSeeHome`, `agency.supervise`) → Home;
- *  - a dedicated agent ({@link isDedicatedAgent}) → `/dialer`, outside the shell;
- *  - everyone else with a place in the dialler (`viewer`, `operator`) → the campaign
- *    list, inside the console. They can read it, and its campaign pages carry "Join
- *    as agent" for taking calls; `/dialer` still serves them when they go there.
- *
- * Only the role is read: every caller renders inside `/agency`'s capability and flag
- * gates (or `/dialer`'s, which are the same), so Home's gate comes down to its
- * permission.
- */
-export function agencyLandingPath(role: Role | undefined): string | null {
-  if (agencyPersona(role) === null) return null;
-  if (canSeeHome({ role, isFlagEnabled: () => true, isCapabilityEnabled: () => true })) return HOME_PATH;
-  if (isDedicatedAgent(role)) return AGENT_LANDING_PATH;
-  return CAMPAIGNS_LANDING_PATH;
-}
-
-/**
- * The agent's own page for a console page that has one (decision B28): where `AgentLanding`
- * sends a dedicated agent who opens that console page, from an emailed report link, say.
- * `null` when there is no such page; the agent then goes to {@link AGENT_LANDING_PATH}.
- * The caller carries the query over (a report's `?tab=`, a customer search).
- */
-export function dialerTwinPath(pathname: string): string | null {
-  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
-  if (path === '/agency/reports') return '/dialer/reports';
-  const run = /^\/agency\/reports\/([^/]+)$/.exec(path);
-  if (run) return `/dialer/reports/${run[1]}`;
-  if (path === '/agency/inbound/missed') return '/dialer/missed';
-  if (path === '/agency/customers') return '/dialer/customers';
-  return null;
-}
-
 /** The word for each persona, in the product's voice. */
 export const AGENCY_PERSONA_LABELS: Record<AgencyPersona, string> = {
   supervisor: 'Supervisor',
@@ -183,14 +141,4 @@ export const AGENCY_PERSONA_LABELS: Record<AgencyPersona, string> = {
 export function agencyPersonaLabel(role: Role | undefined): string | null {
   const persona = agencyPersona(role);
   return persona ? AGENCY_PERSONA_LABELS[persona] : null;
-}
-
-/** Convenience for the common branch. */
-export function isAgencySupervisor(role: Role | undefined): boolean {
-  return agencyPersona(role) === 'supervisor';
-}
-
-/** Convenience for the common branch. */
-export function isAgencyAgent(role: Role | undefined): boolean {
-  return agencyPersona(role) === 'agent';
 }

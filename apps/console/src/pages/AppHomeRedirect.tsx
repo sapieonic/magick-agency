@@ -3,6 +3,7 @@ import { useTenant } from '../contexts/TenantContext';
 import { useGovernance } from '../contexts/GovernanceContext';
 import { useFeatureFlags } from '../contexts/FeatureFlagsContext';
 import { isDedicatedAgent } from '../utils/agencyPersona';
+import { dialerOn } from '../utils/consoleNav';
 import { DialerUnavailable } from '../components/agency/DialerUnavailable';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 
@@ -32,9 +33,9 @@ export function AppHomeRedirect() {
   if (role === undefined && accountResolution === 'loading') return <LoadingSpinner />;
   if (governanceLoading || flagStatus === 'loading') return <LoadingSpinner />;
 
-  const dialerOn = capabilityEnabled('agency') && flagEnabled('agency_dialer_enabled');
-  if (isDedicatedAgent(role) && !dialerOn) return <DialerUnavailable />;
-  return <Navigate to={dialerOn ? '/agency' : '/settings'} replace />;
+  const on = dialerOn({ isFlagEnabled: flagEnabled, isCapabilityEnabled: capabilityEnabled });
+  if (isDedicatedAgent(role) && !on) return <DialerUnavailable />;
+  return <Navigate to={on ? '/agency' : '/settings'} replace />;
 }
 
 export default AppHomeRedirect;

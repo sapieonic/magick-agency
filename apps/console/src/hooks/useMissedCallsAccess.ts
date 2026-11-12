@@ -41,11 +41,12 @@ export interface MissedCallsAccess {
  * inbound off stops new calls reaching the queue, never the follow-up of the calls that came in
  * (`docs/inbound.md` §8.4). With the flag on the count is polled for the badge; off, it is read
  * once (and when the reader comes back) only to decide whether the list is still worth showing.
+ * `enabled` false reads nothing and answers "not available" (`useNavGate` where the dialer is off).
  */
-export function useMissedCallsAccess(): MissedCallsAccess {
+export function useMissedCallsAccess({ enabled = true }: { enabled?: boolean } = {}): MissedCallsAccess {
   const { role, tenantId, accountId } = useTenantOrNone();
   const inboundOn = useFeatureFlagEnabled(INBOUND_FLAG);
-  const permitted = hasPermission(role, 'agency.inbound.read');
+  const permitted = enabled && hasPermission(role, 'agency.inbound.read');
   const assignee = hasPermission(role, 'agency.supervise') ? undefined : AGENCY_INBOUND_MISSED_ASSIGNEE_ME;
   const { count, settled } = useMissedCallsCount({ tenantId, accountId, assignee, enabled: permitted, poll: inboundOn });
   return {

@@ -3,6 +3,7 @@ import {
   resolveSearchCountry,
 } from '@magick-agency/domain/customer-search-number';
 import {
+  CAMPAIGNS_GATE,
   CONSOLE_SECTIONS,
   SETTINGS_ENTRIES,
   agencyGate,
@@ -333,11 +334,6 @@ export interface CampaignSettingsSection {
   keywords: string[];
 }
 
-/**
- * The campaign list's gate: the Campaigns page's, whose list read it is. (Read off its sidebar tab
- * here; consoleNav.ts names no constant for it.)
- */
-export const CAMPAIGNS_GATE: Gate = CONSOLE_SECTIONS.find((s) => s.id === 'campaigns')!.tabs.find((t) => t.id === 'campaigns')!.gate;
 
 /**
  * Whether the reader may open a campaign screen: under the dialer, gated as the tab bar gates it

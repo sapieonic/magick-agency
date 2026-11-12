@@ -16,11 +16,11 @@ function source(relativePath: string): string {
  * flag.
  */
 describe('dialer call-analysis registration', () => {
-  it('protects the Call Summaries route with the analytics capability and feature flag', () => {
+  it('protects the Call Summaries route with its Settings entry’s gate (the capability and flag below)', () => {
     const app = source('../../App.tsx');
 
     expect(app).toMatch(
-      /path="call-summaries"\s+element=\{<RequireCapability\s+capability="agency\.analytics">\s*<RequireFlag\s+flag="agency_call_analysis">\s*<AnalysisProfilesPage\s*\/>\s*<\/RequireFlag>\s*<\/RequireCapability>\}/s,
+      /path="call-summaries"\s+element=\{<RequireGate\s+gate=\{settingsEntry\('call-summaries'\)\.gate\}>\s*<AnalysisProfilesPage\s*\/>\s*<\/RequireGate>\}/s,
     );
   });
 

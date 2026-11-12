@@ -15,7 +15,7 @@ import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import { useTenant } from '../../contexts/TenantContext';
-import { useGateReaders } from '../../hooks/useGateReaders';
+import { useNavGate } from '../../hooks/useNavGate';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
 import { useHomeBoard } from '../../hooks/useHomeBoard';
@@ -56,14 +56,13 @@ function itemClass(active: boolean): string {
  * tenant without it.
  */
 function WorkNav({ onClose }: { onClose?: () => void }) {
-  const { role } = useTenant();
   const { pathname } = useLocation();
-  const readers = useGateReaders();
+  const gate = useNavGate({ missed: true });
   const missed = useMissedCallsAccess();
   const badge = missedBadgeText(missed.count);
   const badgeSr = missedBadgeLabel(missed.count);
   const active = activeNavId(pathname);
-  const sections = visibleSections({ role, ...readers, missedAvailable: missed.available });
+  const sections = visibleSections(gate);
 
   return (
     <>
@@ -147,10 +146,9 @@ function HomeNavBadge({ onHome, missed }: { onHome: boolean; missed: HomeMissed 
  */
 export function ConsoleSidebar({ onClose }: { onClose?: () => void }) {
   const { pathname } = useLocation();
-  const { role } = useTenant();
-  const readers = useGateReaders();
-  const workNav = dialerOn(readers);
-  const settingsShown = passesGate(SETTINGS_GATE, { role, ...readers });
+  const gate = useNavGate();
+  const workNav = dialerOn(gate);
+  const settingsShown = passesGate(SETTINGS_GATE, gate);
   const settingsActive = activeNavId(pathname) === 'settings';
 
   return (

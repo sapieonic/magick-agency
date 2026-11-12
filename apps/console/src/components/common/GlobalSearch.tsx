@@ -1,16 +1,13 @@
 import { useState, useEffect, useCallback, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { useGovernance } from '../../contexts/GovernanceContext';
 import { useTenant } from '../../contexts/TenantContext';
-import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
+import { useNavGate } from '../../hooks/useNavGate';
 import { useCustomerSearchRun } from '../../hooks/useCustomerSearchRun';
 import { useCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSearchDefaultCallingCode';
 import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
 import { browserStorage } from '../../utils/customerSearchRecent';
 import { plural } from '../../utils/format/number';
-import { dialerOn, type GateInput } from '../../utils/consoleNav';
 import {
   canSearchCampaigns,
   canSearchNumbers,
@@ -71,51 +68,17 @@ export function GlobalSearch({ open, onOpenChange: setOpen }: GlobalSearchProps)
   }, [close, setOpen]);
 
   if (!open) return null;
-  return <SearchDialog onClose={close} />;
+  return <Palette onClose={close} />;
 }
 
 interface DialogProps {
   onClose: (restoreFocus: boolean) => void;
 }
 
-/**
- * The reader's gates, with Missed calls' rule read only where the dialer can have it.
- *
- * One tree whatever resolves while it is open: the palette is always the second child, and the
- * missed-calls reader beside it comes and goes, so flags or the account arriving never remount
- * the palette and lose what was typed.
- */
-function SearchDialog({ onClose }: DialogProps) {
-  const { role, accountId } = useTenant();
-  const { isEnabled: isFlagEnabled } = useFeatureFlags();
-  const { isEnabled: isCapabilityEnabled } = useGovernance();
-  const [missedAvailable, setMissedAvailable] = useState<boolean | undefined>(undefined);
-  const readMissed = dialerOn({ isFlagEnabled, isCapabilityEnabled }) && Boolean(accountId);
-  const gate: GateInput = {
-    role,
-    isFlagEnabled,
-    isCapabilityEnabled,
-    ...(readMissed && missedAvailable !== undefined ? { missedAvailable } : {}),
-  };
-  return (
-    <>
-      {readMissed ? <MissedAccessReader onRead={setMissedAvailable} /> : null}
-      <Palette gate={gate} onClose={onClose} />
-    </>
-  );
-}
-
-/** Shares the sidebar's read (`useMissedCallsCount`), so opening search asks for nothing new. */
-function MissedAccessReader({ onRead }: { onRead: (available: boolean) => void }) {
-  const { available } = useMissedCallsAccess();
-  useEffect(() => {
-    onRead(available);
-  }, [available, onRead]);
-  return null;
-}
-
-function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
+function Palette({ onClose }: DialogProps) {
   const { tenantId, accountId } = useTenant();
+  /* Missed calls' rule shares the sidebar's read (`useMissedCallsCount`): opening search asks for nothing new. */
+  const gate = useNavGate({ missed: true });
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -143,8 +106,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
         defaultCallingCode: callingCode,
         campaigns: campaigns.campaigns,
       }),
-    // `gate` is rebuilt on each render from stable readers; its parts are what matter.
-    [query, gate.role, gate.isFlagEnabled, gate.isCapabilityEnabled, gate.missedAvailable, accountId, callingCode, campaigns],
+    [query, gate, accountId, callingCode, campaigns],
   );
   const flat = useMemo(() => answer.groups.flatMap((g) => g.results), [answer]);
 

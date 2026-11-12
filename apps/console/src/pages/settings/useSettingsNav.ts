@@ -1,7 +1,6 @@
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { useGovernance } from '../../contexts/GovernanceContext';
+import { useNavGate } from '../../hooks/useNavGate';
 import { visibleSettingsGroups, type GateInput, type ScopeNames, type SettingsGroup } from '../../utils/consoleNav';
 
 /**
@@ -11,16 +10,14 @@ import { visibleSettingsGroups, type GateInput, type ScopeNames, type SettingsGr
  * that account alone.
  */
 export function useSettingsNav(): { groups: SettingsGroup[]; names: ScopeNames; gate: GateInput } {
-  const { role, activeTenant, accounts, accountId, tenantId } = useTenant();
+  const { activeTenant, accounts, accountId, tenantId } = useTenant();
   const { memberships } = useAuth();
-  const { isEnabled: isFlagEnabled } = useFeatureFlags();
-  const { isEnabled: isCapabilityEnabled } = useGovernance();
+  const gate = useNavGate();
   const seats = (memberships ?? []).filter((m) => m.tenant_id === tenantId && m.status === 'active');
   const names: ScopeNames = {
     accountName: accounts.find((a) => a.id === accountId)?.name ?? null,
     tenantName: activeTenant?.name ?? null,
     ...(seats.length > 0 ? { tenantWide: seats.some((m) => m.account_id === null) } : {}),
   };
-  const gate: GateInput = { role, isFlagEnabled, isCapabilityEnabled };
   return { groups: visibleSettingsGroups(gate), names, gate };
 }
