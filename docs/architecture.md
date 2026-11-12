@@ -869,7 +869,7 @@ a rate-limit key and never an auth input.
 - **Home** (`/agency/home`, `pages/agency/HomePage.tsx`; B28). A supervisor's landing
   (`AgencyHomeRedirect` sends whoever passes `HOME_GATE`, `agency.supervise`, there, so an account
   switch lands there too; a dedicated agent lands on `/dialer`, a viewer or operator on the campaign
-  list, `agencyLandingPath` in `utils/agencyPersona.ts`) and the first sidebar entry, with a badge
+  list, `agencyLandingPath` in `utils/consoleNav.ts`) and the first sidebar entry, with a badge
   counting the dangers and warnings on its list (not a waiting campaign, and not the missed calls
   the Inbound badge carries).
   Three sections: **Needs your attention**, one row per live condition (a campaign's top stall,

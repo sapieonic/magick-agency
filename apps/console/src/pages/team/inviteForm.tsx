@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { inviteRequiresMatchingAddress } from '@magick-agency/contracts/rbac';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
+import { dialerOn } from '../../utils/consoleNav';
 import { inviteUser } from '../../api/users';
 import { CopyableField } from '../../components/common/CopyableField';
 import { trackSetupEvent } from '../../analytics/events';
@@ -156,11 +157,9 @@ function AgentLinkNote() {
   const { isEnabled: flagEnabled, status: flagStatus } = useFeatureFlags();
 
   const settled = !governanceLoading && flagStatus !== 'loading';
-  const dialerOn = settled
-    && capabilityEnabled('agency')
-    && flagEnabled('agency_dialer_enabled');
+  const dialerReady = settled && dialerOn({ isFlagEnabled: flagEnabled, isCapabilityEnabled: capabilityEnabled });
 
-  if (dialerOn) {
+  if (dialerReady) {
     /* The agent's link is not the platform's front door, and the copy SAYS so
        rather than leaving the comment to explain it: a supervisor who sees an
        `/agency/login` path where they expected `/login` will otherwise wonder

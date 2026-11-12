@@ -2,7 +2,7 @@ import { hasPermission, type Permission } from './permissions';
 import { INBOUND_FLAG } from './inbound/inboundFlag';
 import { REPORTS_FLAG } from './reports/reportsFlag';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
-import { isDedicatedAgent } from './agencyPersona';
+import { CAMPAIGNS_LANDING_PATH, agencyPersona, isDedicatedAgent } from './agencyPersona';
 import { campaignLandingPath } from './agencyCampaignTabs';
 import type { Role } from '../types/auth';
 import type { ProductSurface } from '../analytics/posthog';
@@ -80,7 +80,10 @@ export function agencyGate(gate: Gate): Gate {
 
 export type ConsoleSectionId = 'home' | 'campaigns' | 'inbound' | 'reports' | 'dnc' | 'dialer';
 
-/** The agent's own workspace, outside the shell (a full-viewport surface): the campaigns to take calls on. */
+/**
+ * The agent's own workspace, outside the shell (a full-viewport surface): the campaigns to take
+ * calls on, and where a dedicated agent lands.
+ */
 export const DIALER_PATH = '/dialer';
 
 /** The supervisor's Home page: what needs them, the floor, and today so far. */
@@ -91,11 +94,58 @@ export const HOME_PATH = '/agency/home';
  * `/stats` floor, the insights allocation for overdue callbacks, the grouped stats for today).
  * The route, the sidebar entry, its badge and `AgencyHomeRedirect` all read this one gate.
  */
-export const HOME_GATE: Gate = agencyGate({ permission: 'agency.supervise' });
+const HOME_PERMISSION: Permission = 'agency.supervise';
+export const HOME_GATE: Gate = agencyGate({ permission: HOME_PERMISSION });
 
 /** Whether the reader may open Home (and so lands there from `/agency`). */
 export function canSeeHome(input: GateInput): boolean {
   return passesGate(HOME_GATE, input);
+}
+
+/**
+ * Home's permission alone, for a caller already inside `/agency`'s capability and flag gates
+ * (Home itself, `agencyLandingPath`), where {@link canSeeHome} comes down to it.
+ */
+export function holdsHomePermission(role: Role | undefined): boolean {
+  return hasPermission(role, HOME_PERMISSION);
+}
+
+/**
+ * Where `/agency` sends this person (`AgencyHomeRedirect`), and so where every door
+ * that defaults to `/agency` (sign-in, an account switch) ends up. `null` while the
+ * role is unresolved, so the caller waits instead of guessing.
+ *
+ *  - whoever holds Home's permission (`agency.supervise`) → Home;
+ *  - a dedicated agent (`isDedicatedAgent`) → `/dialer`, outside the shell;
+ *  - everyone else with a place in the dialler (`viewer`, `operator`) → the campaign
+ *    list, inside the console. They can read it, and its campaign pages carry "Join
+ *    as agent" for taking calls; `/dialer` still serves them when they go there.
+ *
+ * Only the role is read: every caller renders inside `/agency`'s capability and flag
+ * gates (or `/dialer`'s, which are the same), so Home's gate comes down to its
+ * permission.
+ */
+export function agencyLandingPath(role: Role | undefined): string | null {
+  if (agencyPersona(role) === null) return null;
+  if (holdsHomePermission(role)) return HOME_PATH;
+  if (isDedicatedAgent(role)) return DIALER_PATH;
+  return CAMPAIGNS_LANDING_PATH;
+}
+
+/**
+ * The agent's own page for a console page that has one (decision B28): where `AgentLanding`
+ * sends a dedicated agent who opens that console page, from an emailed report link, say.
+ * `null` when there is no such page; the agent then goes to {@link DIALER_PATH}.
+ * The caller carries the query over (a report's `?tab=`, a customer search).
+ */
+export function dialerTwinPath(pathname: string): string | null {
+  const path = trimTrailingSlash(pathname);
+  if (path === '/agency/reports') return '/dialer/reports';
+  const run = /^\/agency\/reports\/([^/]+)$/.exec(path);
+  if (run) return `/dialer/reports/${run[1]}`;
+  if (path === '/agency/inbound/missed') return '/dialer/missed';
+  if (path === '/agency/customers') return '/dialer/customers';
+  return null;
 }
 
 export interface SectionTab {
@@ -202,8 +252,9 @@ export function pathWithin(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
+/** `pathname` without its trailing slashes (`/` stays `/`). */
 function trimTrailingSlash(pathname: string): string {
-  return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+  return pathname.replace(/(.)\/+$/, '$1');
 }
 
 export function visibleTabs(section: ConsoleSection, input: GateInput): SectionTab[] {

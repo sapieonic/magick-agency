@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { agencyLandingPath } from '../../utils/consoleNav';
 import {
-  agencyLandingPath,
   agencyPersona,
   agencyPersonaLabel,
   isDedicatedAgent,

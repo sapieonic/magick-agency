@@ -1,7 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
-import { agencyLandingPath } from '../../utils/agencyPersona';
+import { agencyLandingPath } from '../../utils/consoleNav';
 
 /**
  * Where `/agency` goes — which depends on who opened it.
