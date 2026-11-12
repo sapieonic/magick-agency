@@ -480,15 +480,54 @@ describe('DNC — searching the list', () => {
     expect(await screen.findByText(/Type the whole number, in any format, or at least its last 4 digits/)).toBeTruthy();
   });
 
-  it('shows the server’s refusal of a search with too few digits', async () => {
+  /**
+   * Too few digits is the server's 400 (`dncSearchShortfall`, the same rule). The page checks it
+   * first and says so under the box: nothing is sent, so no Retry resends text that cannot run,
+   * and the rows below stay the last search's, never read as this text's matches.
+   */
+  it('says under the box when a search has too few digits, and sends nothing', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+    const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
+    const sent = mocks.listDncEntries.mock.calls.length;
+
+    fireEvent.change(box, { target: { value: '060' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(screen.getByRole('alert').textContent).toBe('Type at least 4 digits of the number.');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+
+    // A + number short of its calling code and 4 more digits has its own words.
+    fireEvent.change(box, { target: { value: '+44 207' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Type at least 4 digits after +44, or leave off the + to search by the last digits.',
+    );
+
+    expect(mocks.listDncEntries.mock.calls.length).toBe(sent);
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(screen.getByText('+919820041772')).toBeTruthy();
+
+    // Enough digits: sent, and the message goes.
+    mocks.listDncEntries.mockResolvedValue(page([]));
+    fireEvent.change(box, { target: { value: '+44 2079' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(mocks.listDncEntries.mock.calls.at(-1)![0]).toMatchObject({ phone: '+44 2079', offset: 0 }));
+    expect(screen.queryByText(/leave off the \+/)).toBeNull();
+  });
+
+  it('a failed read shows the error and no rows, not the last answer’s rows', async () => {
     render(<DncPage />);
     await screen.findByText('+919820041772');
     const box = screen.getByRole('textbox', { name: 'Search the Do Not Call list by number' });
 
-    mocks.listDncEntries.mockRejectedValue(new Error('Type at least 4 digits of the number.'));
-    fireEvent.change(box, { target: { value: '060' } });
+    mocks.listDncEntries.mockRejectedValue(new Error('Could not reach the server.'));
+    fireEvent.change(box, { target: { value: '41772' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
-    expect(await screen.findByText('Type at least 4 digits of the number.')).toBeTruthy();
+    expect(await screen.findByText('Could not reach the server.')).toBeTruthy();
+    expect(screen.queryByText('+919820041772')).toBeNull();
+    // Not "No match": the read failed, it did not come back empty.
+    expect(screen.queryByText('No match')).toBeNull();
   });
 });
