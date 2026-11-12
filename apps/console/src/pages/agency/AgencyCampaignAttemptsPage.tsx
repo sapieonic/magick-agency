@@ -194,15 +194,26 @@ export function AgencyCampaignAttemptsPage() {
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
+    /*
+      The route has no `key`, so moving to another campaign (or account) keeps this page mounted:
+      drop the previous campaign's header and agents at once, or the Agent picker offers them
+      until the new answer lands, and ignore an answer that lands after the move.
+    */
+    setCampaign(null);
+    setAssignedAgents([]);
     if (!id || !tenantId || !accountId) return;
+    let live = true;
     getAgencyCampaign(id, tenantId, accountId)
       // The attempts are the point of the page; a header that will not load is
       // not a reason to withhold them.
-      .then(setCampaign)
-      .catch(() => setCampaign(null));
+      .then((answer) => { if (live) setCampaign(answer); })
+      .catch(() => { if (live) setCampaign(null); });
     listCampaignAgents(id, tenantId, accountId)
-      .then((answer) => setAssignedAgents(answer.agents ?? []))
-      .catch(() => setAssignedAgents([]));
+      .then((answer) => { if (live) setAssignedAgents(answer.agents ?? []); })
+      .catch(() => { if (live) setAssignedAgents([]); });
+    return () => {
+      live = false;
+    };
   }, [id, tenantId, accountId]);
 
   useEffect(() => {
