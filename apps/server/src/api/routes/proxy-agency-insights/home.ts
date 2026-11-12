@@ -7,13 +7,7 @@ import { computeHomeBoard } from '../../../agency/home-board.js';
 import { cachedAllocation } from '../../../agency/insights/allocation.js';
 import { liveStats } from '../helpers/live-stats.js';
 import { dialerEnabled } from '../helpers/dialer-gate.js';
-
-/** The refusal for a request without `X-Account-Id`: the board is one account's. */
-export const HOME_ACCOUNT_SCOPE_REQUIRED_BODY = {
-  error: 'Bad Request',
-  code: 'account_scope_required',
-  message: 'This read is scoped to one account. Send X-Account-Id.',
-} as const;
+import { accountOrRefuse } from '../helpers/account-scope.js';
 
 export async function registerHomeBoardRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -32,8 +26,8 @@ export async function registerHomeBoardRoutes(app: FastifyInstance): Promise<voi
   app.get('/home', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const accountId = request.accountId;
-    if (!accountId) return reply.code(400).send(HOME_ACCOUNT_SCOPE_REQUIRED_BODY);
+    const accountId = accountOrRefuse(request.accountId, reply);
+    if (!accountId) return reply;
     if (!(await dialerEnabled(request, reply))) return reply;
     const board = await computeHomeBoard({ tenantId: request.tenantId!, accountId }, {
       liveStats,
