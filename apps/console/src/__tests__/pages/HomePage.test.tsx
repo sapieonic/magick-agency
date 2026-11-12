@@ -25,6 +25,7 @@ vi.mock('../../hooks/useMissedCallsAccess', () => ({
 }));
 
 import HomePage from '../../pages/agency/HomePage';
+import { homeAcksKey, resetHomeAcksForTests } from '../../hooks/useHomeAcks';
 import { HOME_BOARD_ERROR, HOME_FAST_MS, useHomeBadgeCount } from '../../hooks/useHomeBoard';
 
 function Where() {
@@ -54,6 +55,8 @@ function renderHome() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
+  resetHomeAcksForTests();
   mocks.role = 'account_admin';
   mocks.missed = { available: false, count: null };
   mocks.getAgencyHomeBoard.mockResolvedValue(board([], { any_campaign: true }));
@@ -99,7 +102,7 @@ describe('Needs your attention', () => {
     expect(link('abandonment:c1').getAttribute('href')).toBe('/agency/campaigns/c1/health');
     expect(link('missed').getAttribute('href')).toBe('/agency/inbound/missed');
     expect(within(list).getAllByRole('listitem')).toHaveLength(4);
-    expect(screen.getByText('Each item clears itself once it’s fixed')).toBeTruthy();
+    expect(screen.getByText(/^Each item clears itself once it’s fixed/)).toBeTruthy();
     expect(screen.getByText('7 callbacks overdue')).toBeTruthy();
     // Four rows; the badge counts three: the missed calls are the Inbound badge's.
     await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('3'));
@@ -259,6 +262,83 @@ describe('when Home cannot refresh', () => {
       expect(within(screen.getByTestId('home-attention-callbacks-overdue:c1')).getByText('Not refreshed')).toBeTruthy();
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('Got it (acknowledged rows)', () => {
+  const twoCampaigns = (overdue: number) => board([
+    onBoard('c1', { name: 'Q4 collections', overdue }),
+    onBoard('c2', { name: 'Card follow-up', stats: stats({ stall: { code: 'no_carrier_capacity' } }) }),
+  ]);
+
+  it('hides a row and takes it off the badge, keeps it behind "N acknowledged · Show", and remembers it for the account', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(twoCampaigns(1));
+    renderHome();
+    const row = await screen.findByTestId('home-attention-callbacks-overdue:c1');
+    await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('2'));
+    fireEvent.click(within(row).getByRole('button', { name: 'Got it: Q4 collections, 1 callback overdue' }));
+    expect(screen.queryByTestId('home-attention-callbacks-overdue:c1')).toBeNull();
+    expect(screen.getByTestId('home-attention-stall:c2')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('shared-count').textContent).toBe('1'));
+    const toggle = within(screen.getByTestId('home-acknowledged')).getByRole('button', { name: '1 acknowledged · Show' });
+    expect(screen.queryByTestId('home-acknowledged-list')).toBeNull();
+    fireEvent.click(toggle);
+    const list = screen.getByTestId('home-acknowledged-list');
+    expect(within(list).getByText('1 callback overdue')).toBeTruthy();
+    expect(within(list).queryByRole('button', { name: /Got it/ })).toBeNull();
+    expect(toggle.textContent).toBe('1 acknowledged · Hide');
+    const stored = JSON.parse(window.localStorage.getItem(homeAcksKey('t-1', 'a-1'))!);
+    expect(stored.acks['callbacks-overdue:c1']).toEqual({ kind: 'callbacks-overdue', tone: 'danger', count: 1 });
+  });
+
+  it('brings the row back, and onto the badge, when it gets worse', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.getAgencyHomeBoard.mockResolvedValue(twoCampaigns(2));
+      renderHome();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(within(screen.getByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));
+      expect(screen.getByTestId('shared-count').textContent).toBe('1');
+      // Fewer: still aside.
+      mocks.getAgencyHomeBoard.mockResolvedValue(twoCampaigns(1));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
+      });
+      expect(screen.queryByTestId('home-attention-callbacks-overdue:c1')).toBeNull();
+      // More than when it was put aside: back.
+      mocks.getAgencyHomeBoard.mockResolvedValue(twoCampaigns(3));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
+      });
+      expect(screen.getByTestId('home-attention-callbacks-overdue:c1')).toBeTruthy();
+      expect(screen.getByTestId('shared-count').textContent).toBe('2');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says nothing new needs you when everything is put aside', async () => {
+    mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 1 })]));
+    renderHome();
+    fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));
+    expect(screen.getByTestId('home-attention-empty').textContent).toContain('Nothing new needs you right now');
+  });
+
+  it('works without storage (a private window): the row is put aside for this page', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('SecurityError'); });
+    try {
+      mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 1 })]));
+      renderHome();
+      fireEvent.click(within(await screen.findByTestId('home-attention-callbacks-overdue:c1')).getByRole('button', { name: /Got it/ }));
+      expect(screen.queryByTestId('home-attention-callbacks-overdue:c1')).toBeNull();
+      expect(screen.getByTestId('home-acknowledged')).toBeTruthy();
+    } finally {
+      setItem.mockRestore();
+      getItem.mockRestore();
     }
   });
 });

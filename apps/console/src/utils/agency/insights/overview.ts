@@ -58,6 +58,11 @@ export interface AttentionItem {
   tab: CampaignTabId;
   /** The button's words. */
   action: string;
+  /**
+   * How much of it there is (overdue callbacks, held contacts, failed dials, unrecorded calls),
+   * where the row counts something: Home's "Got it" holds until this grows.
+   */
+  count?: number;
 }
 
 export interface AttentionInput {
@@ -154,6 +159,7 @@ export function attentionFrom(facts: CampaignAttentionFacts, words: AttentionRan
       body: parts.join(' '),
       tab: 'callbacks',
       action: 'Callbacks',
+      count: overdue,
     });
   }
 
@@ -206,6 +212,7 @@ export function attentionFrom(facts: CampaignAttentionFacts, words: AttentionRan
       body: `Away longer than ${formatCount(facts.allocation.absent_after_minutes)} minutes, or no longer assigned.`,
       tab: 'agents',
       action: 'Agents',
+      count: held,
     });
   }
 
@@ -219,6 +226,7 @@ export function attentionFrom(facts: CampaignAttentionFacts, words: AttentionRan
         body: `${words.sentence} The error codes are on the Health tab.`,
         tab: 'health',
         action: 'Health',
+        count: facts.range.carrier_failures,
       });
     } else {
       clear.push('no carrier failures');
@@ -236,6 +244,7 @@ export function attentionFrom(facts: CampaignAttentionFacts, words: AttentionRan
         body: `Recording is on, and ${formatCount(recorded)} of ${formatCount(connected)} connected calls ${words.phrase} have one.${running ? ' The latest calls can take a few minutes to show theirs.' : ''}`,
         tab: 'health',
         action: 'Health',
+        count: connected - recorded,
       });
     } else if (s.record_calls && connected > 0) {
       clear.push('every connected call recorded');

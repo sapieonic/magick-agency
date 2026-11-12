@@ -3,6 +3,8 @@ import { getAgencyHomeBoard } from '../api/agencyHome';
 import { ApiError } from '../api/client';
 import { REFRESH_MS } from '../pages/agency/campaigns-home/useCampaignsHome';
 import { homeAttention, homeBadgeCount, type HomeCampaignRead, type HomeMissed } from '../utils/agency/home';
+import { splitAcknowledged } from '../utils/agency/homeAcks';
+import { useHomeAcks } from './useHomeAcks';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import { MISSED_COUNT_POLL_MS } from './useMissedCallsCount';
 
@@ -322,9 +324,10 @@ export interface HomeBadge {
 
 /**
  * The Home badge (the sidebar's, and the dot on the phone's menu button): the dangers and
- * warnings on Home's list (`homeAttention`, `homeBadgeCount`), read from the shared board at the
- * badge's own period. While the board is stale it keeps the last count, marked not fresh, rather
- * than dropping to nothing (which would read as an all-clear).
+ * warnings on Home's list (`homeAttention`, `homeBadgeCount`) the reader has not put aside ("Got
+ * it", `useHomeAcks`), read from the shared board at the badge's own period. While the board is
+ * stale it keeps the last count, marked not fresh, rather than dropping to nothing (which would
+ * read as an all-clear).
  */
 export function useHomeBadgeCount(
   tenantId: string | null | undefined,
@@ -333,8 +336,11 @@ export function useHomeBadgeCount(
   missed: HomeMissed,
 ): HomeBadge {
   const board = useHomeBoard({ tenantId, accountId, role, enabled: true, intervalMs: HOME_SLOW_MS });
+  const { acks } = useHomeAcks(tenantId, accountId);
   return {
-    count: board.status === 'ready' ? homeBadgeCount(homeAttention(board.reads, missed, () => '')) : null,
+    count: board.status === 'ready'
+      ? homeBadgeCount(splitAcknowledged(homeAttention(board.reads, missed, () => ''), acks).open)
+      : null,
     stale: board.status === 'ready' && board.stale,
   };
 }

@@ -45,6 +45,7 @@ vi.mock('../../brand', () => ({ brand: { name: 'TestBrand' } }));
 
 import { ConsoleSidebar } from '../../components/layout/ConsoleSidebar';
 import { resetMissedCallsCountForTests } from '../../hooks/useMissedCallsCount';
+import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
 import { HOME_FAST_MS, HOME_SLOW_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 
 /** The Home page's reader of the board, without the page. */
@@ -66,6 +67,8 @@ async function renderAt(path: string, withHome = false) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetMissedCallsCountForTests();
+  window.localStorage.clear();
+  resetHomeAcksForTests();
   mocks.role = 'account_admin';
   mocks.getMissedInboundCount.mockResolvedValue({ open: 2, open_capped: false, has_rows: true });
   mocks.getAgencyHomeBoard.mockResolvedValue(board([

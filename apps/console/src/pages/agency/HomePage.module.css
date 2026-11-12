@@ -240,14 +240,44 @@
   font-weight: 500;
 }
 
-/* On a narrow page the time and the button drop under the reason. */
+/* The row's buttons: "Got it" and the way to the fix. */
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ack {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* "N acknowledged · Show": nothing put aside is lost. */
+.ackToggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ackToggle:hover {
+  text-decoration: underline;
+}
+
+/* On a narrow page the time and the buttons drop under the reason. */
 @container home (max-width: 560px) {
   .attentionRow {
     grid-template-columns: 10px minmax(0, 1fr);
   }
 
   .when,
-  .action {
+  .rowActions {
     grid-column: 2;
     justify-self: start;
   }

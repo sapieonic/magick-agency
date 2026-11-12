@@ -1,12 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { ChevronRight, CircleCheck, Plus, RefreshCw } from 'lucide-react';
+import { Check, ChevronRight, CircleCheck, Plus, RefreshCw } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { useTenant } from '../../contexts/TenantContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { HOME_FAST_MS, useHomeBoard } from '../../hooks/useHomeBoard';
+import { useHomeAcks } from '../../hooks/useHomeAcks';
+import { splitAcknowledged } from '../../utils/agency/homeAcks';
 import { useTodaySoFar } from '../../hooks/useTodaySoFar';
 import { hasPermission } from '../../utils/permissions';
 import { holdsHomePermission } from '../../utils/consoleNav';
@@ -52,8 +54,12 @@ export default function HomePage() {
     () => homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate),
     [board.reads, missed.available, missed.count],
   );
-  const needs = homeNeeds(items);
-  const waiting = homeWaiting(items);
+  // "Got it" (B28a): rows the reader put aside, until they get worse or tomorrow.
+  const { acks, acknowledge } = useHomeAcks(tenantId, accountId);
+  const { open, acknowledged } = splitAcknowledged(items, acks);
+  const [showAcknowledged, setShowAcknowledged] = useState(false);
+  const needs = homeNeeds(open);
+  const waiting = homeWaiting(open);
   const floor = useMemo(() => homeFloor(board.reads), [board.reads]);
 
   if (role === undefined) return <LoadingSpinner />;
@@ -110,12 +116,12 @@ export default function HomePage() {
                 Needs your attention
                 {needs.length > 0 && <span className={styles.count}>{` · ${formatCount(needs.length)}`}</span>}
               </h2>
-              <p className={styles.cardNote}>Each item clears itself once it’s fixed</p>
+              <p className={styles.cardNote}>Each item clears itself once it’s fixed. “Got it” hides one until it gets worse, or until tomorrow</p>
             </div>
             {needs.length > 0 ? (
               <ul className={styles.attentionList} data-testid="home-attention">
                 {needs.map((item) => (
-                  <AttentionRow key={item.id} item={item} now={now} />
+                  <AttentionRow key={item.id} item={item} now={now} onAcknowledge={acknowledge} />
                 ))}
               </ul>
             ) : board.stale ? (
@@ -126,7 +132,7 @@ export default function HomePage() {
             ) : (
               <p className={styles.allClear} data-testid="home-attention-empty">
                 <CircleCheck size={18} aria-hidden="true" />
-                Nothing needs you right now
+                {homeNeeds(acknowledged).length > 0 ? 'Nothing new needs you right now' : 'Nothing needs you right now'}
               </p>
             )}
             {waiting.length > 0 && (
@@ -134,9 +140,28 @@ export default function HomePage() {
                 <h3 className={styles.waitingTitle}>For your information</h3>
                 <ul className={styles.attentionList}>
                   {waiting.map((item) => (
-                    <AttentionRow key={item.id} item={item} now={now} />
+                    <AttentionRow key={item.id} item={item} now={now} onAcknowledge={acknowledge} />
                   ))}
                 </ul>
+              </div>
+            )}
+            {acknowledged.length > 0 && (
+              <div className={styles.waiting} data-testid="home-acknowledged">
+                <button
+                  type="button"
+                  className={styles.ackToggle}
+                  aria-expanded={showAcknowledged}
+                  onClick={() => setShowAcknowledged((shown) => !shown)}
+                >
+                  {`${formatCount(acknowledged.length)} acknowledged · ${showAcknowledged ? 'Hide' : 'Show'}`}
+                </button>
+                {showAcknowledged && (
+                  <ul className={styles.attentionList} data-testid="home-acknowledged-list">
+                    {acknowledged.map((item) => (
+                      <AttentionRow key={item.id} item={item} now={now} />
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
           </section>
@@ -220,7 +245,12 @@ function TodaySoFar({ today }: { today: ReturnType<typeof useTodaySoFar> }) {
   );
 }
 
-function AttentionRow({ item, now }: { item: HomeAttentionItem; now: Date }) {
+/** One row; `onAcknowledge` offers "Got it" (left out on a row already put aside). */
+function AttentionRow({ item, now, onAcknowledge }: {
+  item: HomeAttentionItem;
+  now: Date;
+  onAcknowledge?: (item: HomeAttentionItem) => void;
+}) {
   return (
     <li className={styles.attentionRow} data-tone={item.tone} data-testid={`home-attention-${item.id}`}>
       <span className={`${styles.dot} ${styles[item.tone]}`} aria-hidden="true" />
@@ -231,10 +261,24 @@ function AttentionRow({ item, now }: { item: HomeAttentionItem; now: Date }) {
         <span className={styles.attentionDetail}>{item.detail}</span>
       </div>
       {item.at && <time className={styles.when} dateTime={item.at}>{when(item.at, now)}</time>}
-      <Link to={item.to} className={`btn-secondary ${styles.action}`}>
-        {item.action}
-        <ChevronRight size={15} aria-hidden="true" />
-      </Link>
+      <div className={styles.rowActions}>
+        {onAcknowledge && (
+          <button
+            type="button"
+            className={`btn-secondary ${styles.ack}`}
+            onClick={() => onAcknowledge(item)}
+            aria-label={`Got it: ${item.campaign ? `${item.campaign.name}, ` : ''}${item.title}`}
+            title="Hide this until it gets worse, or until tomorrow"
+          >
+            <Check size={14} aria-hidden="true" />
+            Got it
+          </button>
+        )}
+        <Link to={item.to} className={`btn-secondary ${styles.action}`}>
+          {item.action}
+          <ChevronRight size={15} aria-hidden="true" />
+        </Link>
+      </div>
     </li>
   );
 }

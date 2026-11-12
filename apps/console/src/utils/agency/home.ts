@@ -70,6 +70,12 @@ export interface HomeAttentionItem {
   badge: boolean;
   /** Its campaign's figures are the last good read's: this read could not refresh them. */
   stale: boolean;
+  /**
+   * What a "Got it" holds against (`homeAcks.ts`): the condition's kind (the stall's code, or the
+   * Overview rule's id) and how much of it there is, where it counts something.
+   */
+  kind: string;
+  count: number | null;
 }
 
 /** The campaign a read is about: what the board says of it. */
@@ -228,6 +234,8 @@ export function homeAttention(
         to: campaignTabHref(route.tab, campaign.id),
         badge: route.tone !== 'info',
         stale: read.stale,
+        kind: `stall:${stall.code}`,
+        count: null,
       });
     }
 
@@ -246,6 +254,8 @@ export function homeAttention(
         to: campaignTabHref(rule.tab, campaign.id, RANGE_RULES.has(rule.id) ? '?range=today' : ''),
         badge: rule.tone !== 'info',
         stale: read.stale,
+        kind: rule.id,
+        count: rule.count ?? null,
       });
     }
   }
@@ -268,6 +278,8 @@ export function homeAttention(
       // same calls twice in the sidebar.
       badge: false,
       stale: false,
+      kind: 'missed',
+      count: many ? Math.max(open.open, 100) : open.open,
     });
   }
 
