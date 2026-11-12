@@ -6,12 +6,10 @@ import { useGovernance } from '../../contexts/GovernanceContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { useCustomerSearchRun } from '../../hooks/useCustomerSearchRun';
-import {
-  FALLBACK_SEARCH_CALLING_CODE,
-  loadCustomerSearchDefaultCallingCode,
-} from '../../hooks/useCustomerSearchDefaultCallingCode';
+import { useCustomerSearchDefaultCallingCode } from '../../hooks/useCustomerSearchDefaultCallingCode';
 import { useSearchCampaigns } from '../../hooks/useSearchCampaigns';
 import { browserStorage } from '../../utils/customerSearchRecent';
+import { plural } from '../../utils/format/number';
 import { dialerOn, type GateInput } from '../../utils/consoleNav';
 import {
   canSearchCampaigns,
@@ -26,9 +24,9 @@ import styles from './GlobalSearch.module.css';
 const CUSTOMER_RESULTS_PATH = '/agency/customers';
 
 export interface GlobalSearchProps {
-  /** Controlled: the shell opens it from the top bar's search field. Uncontrolled without it. */
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  /** The shell holds it, so the top bar's search field can open it too. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 /**
@@ -38,20 +36,10 @@ export interface GlobalSearchProps {
  * where it was (the top bar's field, when that opened it); choosing a result leaves focus to the
  * page it opens.
  */
-export function GlobalSearch({ open: openProp, onOpenChange }: GlobalSearchProps = {}) {
-  const [openState, setOpenState] = useState(false);
-  const open = openProp ?? openState;
+export function GlobalSearch({ open, onOpenChange: setOpen }: GlobalSearchProps) {
   const openRef = useRef(open);
   openRef.current = open;
   const returnFocusRef = useRef<HTMLElement | null>(null);
-
-  const setOpen = useCallback(
-    (next: boolean) => {
-      if (openProp === undefined) setOpenState(next);
-      onOpenChange?.(next);
-    },
-    [openProp, onOpenChange],
-  );
 
   // Remember what had focus as it opens (the dialog's input takes it a moment later).
   useLayoutEffect(() => {
@@ -126,22 +114,6 @@ function MissedAccessReader({ onRead }: { onRead: (available: boolean) => void }
   return null;
 }
 
-/** The customer-search country's calling code, read only for a reader who may search numbers. */
-function useDefaultCallingCode(allowed: boolean, tenantId: string | null, accountId: string | null): string {
-  const [code, setCode] = useState(FALLBACK_SEARCH_CALLING_CODE);
-  useEffect(() => {
-    if (!allowed) return undefined;
-    let live = true;
-    void loadCustomerSearchDefaultCallingCode(tenantId ?? undefined, accountId ?? undefined).then((value) => {
-      if (live) setCode(value);
-    });
-    return () => {
-      live = false;
-    };
-  }, [allowed, tenantId, accountId]);
-  return code;
-}
-
 function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
   const { tenantId, accountId } = useTenant();
   const navigate = useNavigate();
@@ -156,7 +128,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
 
   const numbersAllowed = canSearchNumbers(gate, accountId ?? null);
   const campaignsAllowed = canSearchCampaigns(gate, accountId ?? null);
-  const callingCode = useDefaultCallingCode(numbersAllowed, tenantId ?? null, accountId ?? null);
+  const callingCode = useCustomerSearchDefaultCallingCode(numbersAllowed);
   const campaigns = useSearchCampaigns(campaignsAllowed, tenantId ?? null, accountId ?? null);
   const { run: runNumberSearch, busy: numberBusy, error: numberError, clearError: clearNumberError } =
     useCustomerSearchRun(CUSTOMER_RESULTS_PATH, store);
@@ -175,10 +147,6 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
     [query, gate.role, gate.isFlagEnabled, gate.isCapabilityEnabled, gate.missedAvailable, accountId, callingCode, campaigns],
   );
   const flat = useMemo(() => answer.groups.flatMap((g) => g.results), [answer]);
-
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
 
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 50);
@@ -251,7 +219,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
     ? 'Searching…'
     : flat.length === 0
       ? trimmed === '' ? '' : 'No results'
-      : `${flat.length} ${flat.length === 1 ? 'result' : 'results'}`;
+      : plural(flat.length, 'result');
   const active = flat[selectedIndex];
 
   let flatIndex = -1;
@@ -289,6 +257,7 @@ function Palette({ gate, onClose }: DialogProps & { gate: GateInput }) {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
+              setSelectedIndex(0);
               clearNumberError();
             }}
           />

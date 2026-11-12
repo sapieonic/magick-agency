@@ -3,7 +3,8 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { appliesTo, passesGate, settingsEntryForPath, settingsGroupTitle } from '../../utils/consoleNav';
-import { campaignsGate, settingsEntryMatches } from '../../utils/consoleSearch';
+import { CAMPAIGNS_GATE, settingsEntryMatches } from '../../utils/consoleSearch';
+import { plural } from '../../utils/format/number';
 import { rememberSettingsEntry } from '../../utils/settingsLastVisited';
 import { useSettingsNav } from './useSettingsNav';
 import styles from './SettingsLayout.module.css';
@@ -100,7 +101,7 @@ export default function SettingsLayout() {
             />
           </div>
           <p id={statusId} className={styles.srOnly} aria-live="polite">
-            {query === '' ? '' : `${count} ${count === 1 ? 'setting' : 'settings'} found`}
+            {query === '' ? '' : `${plural(count, 'setting')} found`}
           </p>
 
           <nav aria-label="Settings" data-testid="settings-nav">
@@ -132,7 +133,7 @@ export default function SettingsLayout() {
               </p>
             )}
           </nav>
-          {passesGate(campaignsGate(), gate) && (
+          {passesGate(CAMPAIGNS_GATE, gate) && (
             <p className={styles.hint} data-testid="settings-campaign-hint">
               Caller IDs, calling hours and retries belong to one campaign: open it from{' '}
               <Link to="/agency/campaigns">Campaigns</Link> and go to its Settings tab.

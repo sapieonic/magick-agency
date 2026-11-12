@@ -11,7 +11,7 @@ import {
   visibleSettingsGroups,
   type GateInput,
 } from '../../utils/consoleNav';
-import { campaignsGate, searchConsole, type SearchResult } from '../../utils/consoleSearch';
+import { CAMPAIGNS_GATE, searchConsole, type SearchResult } from '../../utils/consoleSearch';
 import { CAMPAIGN_TABS } from '../../utils/agencyCampaignTabs';
 import { CAMPAIGN_SETTINGS_SECTIONS } from '../../utils/campaignSettingsSections';
 import { hasPermission, type Permission } from '../../utils/permissions';
@@ -149,7 +149,7 @@ function offers(r: Reader): { from: string; to: string }[] {
     out.push({ from: '/settings landing', to: settingsLandingPath(gate, null) ?? '/settings/profile' });
   }
   for (const group of visibleSettingsGroups(gate)) for (const e of group.entries) out.push({ from: `settings ${e.id}`, to: e.path });
-  if (passesGate(campaignsGate(), gate)) out.push({ from: 'settings hub hint', to: '/agency/campaigns' });
+  if (passesGate(CAMPAIGNS_GATE, gate)) out.push({ from: 'settings hub hint', to: '/agency/campaigns' });
   if (passesGate(HOME_GATE, gate)) out.push({ from: 'email notifications aside', to: HOME_PATH });
   for (const to of searchTargets(r)) out.push({ from: 'search', to });
   return out;

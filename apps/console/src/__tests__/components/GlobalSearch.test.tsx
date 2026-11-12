@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   accountId: 'account-1' as string | null,
   dialerOn: true,
   phone: false,
-  listAgencyCampaigns: vi.fn(),
+  listAgencyCampaignsPage: vi.fn(),
   searchCustomers: vi.fn(),
   getCustomerSearchOptions: vi.fn(),
 }));
@@ -38,7 +38,7 @@ vi.mock('../../hooks/useMissedCallsAccess', () => ({
 }));
 vi.mock('../../components/layout/ConsoleSidebar', () => ({ ConsoleSidebar: () => null }));
 vi.mock('../../components/layout/ProfileMenu', () => ({ ProfileMenu: () => null }));
-vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaigns: mocks.listAgencyCampaigns }));
+vi.mock('../../api/agencyCampaigns', () => ({ listAgencyCampaignsPage: mocks.listAgencyCampaignsPage }));
 vi.mock('../../api/customerHistory', () => ({
   searchCustomers: mocks.searchCustomers,
   getCustomerSearchOptions: mocks.getCustomerSearchOptions,
@@ -51,6 +51,9 @@ import { ApiError } from '../../api/client';
 import { SEARCH_CAMPAIGNS_FRESH_MS, resetSearchCampaignsCache } from '../../hooks/useSearchCampaigns';
 
 const fixture = customerHistoryFixture();
+
+/** The campaign list's answer when one page holds every campaign. */
+const onePage = (campaigns: { id: string; name: string; status: string }[]) => ({ campaigns, total: campaigns.length });
 
 let lastLocation: ReturnType<typeof useLocation> | null = null;
 function Where() {
@@ -99,10 +102,10 @@ beforeEach(() => {
   resetSearchCampaignsCache();
   clearCustomerSearchAnswers();
   resetCustomerSearchDefaultCallingCode();
-  mocks.listAgencyCampaigns.mockResolvedValue([
+  mocks.listAgencyCampaignsPage.mockResolvedValue(onePage([
     { id: 'c-1', name: 'Diwali renewals', status: 'running' },
     { id: 'c-2', name: 'Q4 collections', status: 'completed' },
-  ]);
+  ]));
   mocks.searchCustomers.mockResolvedValue(fixture.search_response);
   mocks.getCustomerSearchOptions.mockResolvedValue({ default_country_code: '+91' });
 });
@@ -241,14 +244,14 @@ describe('the keyboard', () => {
 describe('campaigns', () => {
   it('are read once as the search opens, not before and not per keystroke', async () => {
     renderShell();
-    expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+    expect(mocks.listAgencyCampaignsPage).not.toHaveBeenCalled();
     fireEvent.click(trigger());
     type('diwali');
     await waitFor(() => expect(within(dialog()).getAllByRole('option', { name: /^Diwali renewals/ }).length).toBe(2));
     type('diwali r');
     type('q4');
-    expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(1);
-    expect(mocks.listAgencyCampaigns).toHaveBeenCalledWith('tenant-1', 'account-1');
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(1);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledWith('tenant-1', 'account-1', 0, 100);
   });
 
   it('open the campaign, or its Settings', async () => {
@@ -277,7 +280,7 @@ describe('campaigns', () => {
     renderShell();
     fireEvent.click(trigger());
     type('diwali');
-    expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+    expect(mocks.listAgencyCampaignsPage).not.toHaveBeenCalled();
   });
 
   it('are never read without the dialer or without an account', () => {
@@ -291,7 +294,9 @@ describe('campaigns', () => {
     renderShell('/settings/profile');
     fireEvent.click(trigger());
     type('diwali');
-    expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+    expect(mocks.listAgencyCampaignsPage).not.toHaveBeenCalled();
+    // Nor is the number search's calling code: neither reader may search a number.
+    expect(mocks.getCustomerSearchOptions).not.toHaveBeenCalled();
   });
 
   it('are kept for the session: a second open within a minute reads nothing, and shows them at once', async () => {
@@ -305,7 +310,7 @@ describe('campaigns', () => {
     // At once, with no "Loading campaigns…" and no second read.
     expect(options().length).toBe(2);
     expect(within(dialog()).queryByText('Loading campaigns…')).toBeNull();
-    expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(1);
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(1);
   });
 
   it('are read again in the background when the list kept is old, showing the old list meanwhile', async () => {
@@ -318,13 +323,13 @@ describe('campaigns', () => {
       await waitFor(() => expect(options().length).toBe(2));
       key('Escape');
 
-      mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-3', name: 'Diwali top-ups', status: 'running' }]);
+      mocks.listAgencyCampaignsPage.mockResolvedValue(onePage([{ id: 'c-3', name: 'Diwali top-ups', status: 'running' }]));
       now.mockReturnValue(1_000_000 + SEARCH_CAMPAIGNS_FRESH_MS + 1);
       fireEvent.click(trigger());
       type('diwali');
       expect(options()[0]!.textContent).toBe('Diwali renewalsCampaign');
       await waitFor(() => expect(options()[0]!.textContent).toBe('Diwali top-upsCampaign'));
-      expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(2);
+      expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(2);
     } finally {
       now.mockRestore();
     }
@@ -339,8 +344,8 @@ describe('campaigns', () => {
     mocks.accountId = 'account-2';
     renderShell();
     fireEvent.click(trigger());
-    await waitFor(() => expect(mocks.listAgencyCampaigns).toHaveBeenCalledTimes(2));
-    expect(mocks.listAgencyCampaigns).toHaveBeenLastCalledWith('tenant-1', 'account-2');
+    await waitFor(() => expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(2));
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenLastCalledWith('tenant-1', 'account-2', 0, 100);
   });
 
   it('find a campaign’s own pages by the names people learnt: call log, call attempts, history', async () => {
@@ -357,7 +362,7 @@ describe('campaigns', () => {
   });
 
   it('show a campaign named in digits, with no "Enter the full number" above it', async () => {
-    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'c-26', name: '2026', status: 'running' }]);
+    mocks.listAgencyCampaignsPage.mockResolvedValue(onePage([{ id: 'c-26', name: '2026', status: 'running' }]));
     renderShell();
     fireEvent.click(trigger());
     type('2026');
@@ -366,7 +371,7 @@ describe('campaigns', () => {
   });
 
   it('say so when they could not be read', async () => {
-    mocks.listAgencyCampaigns.mockRejectedValue(new Error('boom'));
+    mocks.listAgencyCampaignsPage.mockRejectedValue(new Error('boom'));
     renderShell();
     fireEvent.click(trigger());
     type('diwali');
@@ -375,6 +380,12 @@ describe('campaigns', () => {
 });
 
 describe('a phone number', () => {
+  it('is read in the country the platform defaults to, asked for as the search opens', async () => {
+    renderShell();
+    fireEvent.click(trigger());
+    await waitFor(() => expect(mocks.getCustomerSearchOptions).toHaveBeenCalledWith('tenant-1', 'account-1'));
+  });
+
   it('is the top result, and opens customer history as "Search a number" did', async () => {
     renderShell();
     fireEvent.click(trigger());

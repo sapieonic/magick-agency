@@ -31,10 +31,9 @@ function searchAs(role: string, query: string) {
   mocks.role = role;
   render(
     <MemoryRouter>
-      <GlobalSearch />
+      <GlobalSearch open onOpenChange={() => {}} />
     </MemoryRouter>,
   );
-  fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
   const dialog = screen.getByRole('dialog', { name: 'Search' });
   fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: query } });
   return dialog;

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { listAgencyCampaigns } from '../api/agencyCampaigns';
+import { listAgencyCampaignsPage } from '../api/agencyCampaigns';
 import type { SearchCampaign } from '../utils/consoleSearch';
 
 /**
  * The account's campaigns as search (`GlobalSearch`) finds them: ids and names, read through
- * the full campaign list (every status, page after page), so it is read as rarely as it can be.
+ * the full campaign list (every status, every page: the first, then the rest a few at a time,
+ * {@link readAllCampaigns}), so it is read as rarely as it can be.
  *
  * Kept for the session per tenant and account, stale-while-revalidate: an open shows the list
  * it has at once, and reads it again in the background only when that list is older than
@@ -36,12 +37,44 @@ function scopeKey(tenantId: string | null, accountId: string): string {
   return `${tenantId ?? ''}\u0000${accountId}`;
 }
 
+const PAGE_SIZE = 100;
+/** Bounds the read at 5,000 campaigns, as the full list's own walk is. */
+const MAX_PAGES = 50;
+/** Pages read at once after the first. */
+const PARALLEL_PAGES = 4;
+
+/**
+ * Every campaign's id and name, newest first: the first page says how many there are, and the
+ * rest are read {@link PARALLEL_PAGES} at a time. Only the id and name of each row are kept. An
+ * empty page ends the read (a server whose `total` overstates what it returns).
+ */
+export async function readAllCampaigns(tenantId: string | null, accountId: string): Promise<SearchCampaign[]> {
+  const readPage = async (page: number) => {
+    const { campaigns, total } = await listAgencyCampaignsPage(tenantId ?? undefined, accountId, page * PAGE_SIZE, PAGE_SIZE);
+    return { names: campaigns.map((c) => ({ id: c.id, name: c.name })), total };
+  };
+  const first = await readPage(0);
+  const pageCount = Math.min(Math.ceil(first.total / PAGE_SIZE), MAX_PAGES);
+  const pages: SearchCampaign[][] = [first.names];
+  let next = 1;
+  let ended = first.names.length === 0;
+  const worker = async () => {
+    while (!ended && next < pageCount) {
+      const page = next++;
+      const { names } = await readPage(page);
+      if (names.length === 0) ended = true;
+      pages[page] = names;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL_PAGES, Math.max(pageCount - 1, 0)) }, worker));
+  return pages.flat();
+}
+
 function read(key: string, tenantId: string | null, accountId: string): Promise<SearchCampaign[]> {
   const entry = cache.get(key) ?? { campaigns: null, readAt: 0, inflight: null };
   if (entry.inflight) return entry.inflight;
-  const inflight = listAgencyCampaigns(tenantId ?? undefined, accountId).then(
-    (rows) => {
-      const campaigns = rows.map((c) => ({ id: c.id, name: c.name }));
+  const inflight = readAllCampaigns(tenantId, accountId).then(
+    (campaigns) => {
       // Only if the scope is still the one asked for: a switch dropped it meanwhile.
       if (cache.get(key) === entry) Object.assign(entry, { campaigns, readAt: Date.now(), inflight: null });
       return campaigns;

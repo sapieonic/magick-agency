@@ -55,11 +55,13 @@ export function resetCustomerSearchDefaultCallingCode(): void {
   pending = null;
 }
 
-export function useCustomerSearchDefaultCallingCode(): string {
+/** The default calling code; nothing is read while `enabled` is false (a reader who may not search numbers). */
+export function useCustomerSearchDefaultCallingCode(enabled = true): string {
   const { tenantId, accountId } = useTenant();
   const [code, setCode] = useState(() => cached ?? FALLBACK_SEARCH_CALLING_CODE);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     if (cached) {
       setCode(cached);
       return undefined;
@@ -71,7 +73,7 @@ export function useCustomerSearchDefaultCallingCode(): string {
     return () => {
       live = false;
     };
-  }, [tenantId, accountId]);
+  }, [enabled, tenantId, accountId]);
 
   return code;
 }
