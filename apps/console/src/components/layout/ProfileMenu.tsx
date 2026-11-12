@@ -4,31 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { shouldCloseSwitcherOnBlur } from '../../utils/switcherFocus';
+import { UserAvatar } from '../common/UserAvatar';
 import styles from './ProfileMenu.module.css';
-
-/** A user-perceived character that is a letter or a digit in any script ("Ö", "प्र", "7"). */
-const LETTER_OR_DIGIT = /^[\p{L}\p{N}]/u;
-
-/** The letters and digits of `text`, as whole characters (a base letter keeps its marks). */
-function lettersAndDigits(text: string): string[] {
-  const chars = typeof Intl !== 'undefined' && 'Segmenter' in Intl
-    ? Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), (s) => s.segment)
-    : Array.from(text);
-  return chars.filter((c) => LETTER_OR_DIGIT.test(c));
-}
-
-/**
- * The avatar's initials: letters and digits only, never punctuation ("Manas (Dev)" is "MD", not
- * "M("). The first character of the first two words that have one; a single such word gives its
- * first two; with no name worth reading, the email's local part; "?" when neither has any.
- */
-export function initialsFor(name: string | null | undefined, email: string | null | undefined): string {
-  const words = (name ?? '').trim().split(/\s+/).map(lettersAndDigits).filter((w) => w.length > 0);
-  if (words.length >= 2) return `${words[0]![0]}${words[1]![0]}`.toUpperCase();
-  if (words.length === 1) return words[0]!.slice(0, 2).join('').toUpperCase();
-  const local = lettersAndDigits((email ?? '').split('@')[0] ?? '');
-  return local.length > 0 ? local.slice(0, 2).join('').toUpperCase() : '?';
-}
 
 /**
  * The signed-in person's menu, at the right of the console's top bar: who you are, the tenant
@@ -91,7 +68,6 @@ export function ProfileMenu() {
   }
 
   const displayName = user?.display_name || user?.email || 'User';
-  const initials = initialsFor(user?.display_name, user?.email);
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
 
   return (
@@ -112,9 +88,7 @@ export function ProfileMenu() {
         aria-label={`Profile menu for ${displayName}`}
         data-testid="profile-menu-trigger"
       >
-        <span className={styles.avatar} aria-hidden="true">
-          {user?.avatar_url ? <img src={user.avatar_url} alt="" /> : initials}
-        </span>
+        <UserAvatar user={user} size="sm" />
         <span className={styles.userName}>{displayName}</span>
         <ChevronDown className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`} aria-hidden="true" />
       </button>

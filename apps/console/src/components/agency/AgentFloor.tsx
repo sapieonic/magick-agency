@@ -7,7 +7,6 @@ import {
   AGENCY_FLOOR_RISK_NOTE,
   floorStateLabel,
   AGENCY_FLOOR_TICK_MS,
-  agentInitials,
   APP_CANNOT_TAKE_INBOUND_LABEL,
   APP_CANNOT_TAKE_INBOUND_TAG,
   cannotTakeInbound,
@@ -25,6 +24,7 @@ import {
   type AgencyFloorSort,
   type RankedFloorAgent,
 } from '../../utils/agencyAgentFloor';
+import { agentInitials } from '../../utils/agencyAgentRoster';
 import { formatDuration } from '../../utils/agencyClock';
 import { trackAgencyFloorIntervention } from '../../analytics/events';
 import type {

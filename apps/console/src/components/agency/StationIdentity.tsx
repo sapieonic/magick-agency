@@ -1,5 +1,5 @@
-import { agentInitials } from '../../utils/agencyAgentRoster';
 import { stationAgentLabel } from '../../utils/agencyStationIdle';
+import { UserAvatar } from '../common/UserAvatar';
 import styles from './StationIdentity.module.css';
 
 export interface StationIdentityUser {
@@ -28,13 +28,10 @@ export function StationIdentity({
   subline: string;
 }) {
   const name = stationAgentLabel(user);
-  const initials = agentInitials(name);
 
   return (
     <div className={styles.wrap} data-testid="station-identity">
-      <span className={styles.avatar} aria-hidden="true">
-        {user?.avatar_url ? <img src={user.avatar_url} alt="" /> : initials}
-      </span>
+      <UserAvatar user={user} size="md" />
       <div className={styles.text}>
         <span className={styles.name}>{name}</span>
         <span className={styles.subline}>{subline}</span>

@@ -522,29 +522,6 @@ export function floorTotals(agents: readonly AgencySupervisorAgent[]): FloorTota
 }
 
 /**
- * The initials on a row's avatar.
- *
- * First letter of the first and last word — so "Priya Raghavan" is `PR` and a
- * single-word name is one letter rather than a repeated one. Codepoint-safe
- * (`Array.from`), because `"Émile"[0]` is fine but a name starting outside the
- * BMP would otherwise be sliced through the middle of a surrogate pair and
- * render as a replacement glyph.
- *
- * An unresolved agent's fallback ("Agent usr_abcd") produces `AU`, which is
- * meaningless — deliberately so. The avatar is a visual anchor for scanning a
- * column of rows, never an identity claim; the name beside it already says, in
- * words and in its own styling, that this is an id rather than a person.
- */
-export function agentInitials(displayName: string): string {
-  const words = displayName.trim().split(/\s+/).filter(Boolean);
-  const first = words[0];
-  if (!first) return '?';
-  const last = words.length > 1 ? words[words.length - 1] : undefined;
-  const letters = [Array.from(first)[0], last ? Array.from(last)[0] : undefined];
-  return letters.filter(Boolean).join('').toUpperCase();
-}
-
-/**
  * How long the fallback identifier is when the API could not resolve a name.
  *
  * Long enough to be unambiguous on a floor of a few dozen, short enough not to

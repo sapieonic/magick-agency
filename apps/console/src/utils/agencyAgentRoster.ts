@@ -6,6 +6,7 @@ import type {
   AgencyRosterPage,
 } from '../types/agency-stats';
 import { plural } from './format/number';
+import { initialsFor } from './initials';
 import { benchmarkUsable, cohortComparable } from './agency/roster/benchmark';
 import { successRateReportable } from './agency/roster/cells';
 // The cells, the benchmark, the page notes and the columns live in
@@ -271,19 +272,12 @@ export function rosterPageFlags(page: AgencyRosterPage): RosterPageFlags {
 // ─── The agent cell ──────────────────────────────────────────────────────────
 
 /**
- * Up to two initials for the avatar.
- *
- * Derived from whatever `agentDisplayName` produced, so an unresolvable agent
- * gets `AG` from its `Agent 4f21ab90` fallback rather than a blank circle — the
- * avatar must never be the thing that makes a row look broken. It is decoration:
- * the name is beside it and the avatar is `aria-hidden`, which is why two letters
- * of a uuid-derived fallback is acceptable here and would not be as a label.
+ * An agent row's avatar initials: the rule every avatar in the console uses (`initialsFor`), so
+ * an agent's row and their own station show the same letters. Never blank, even for an
+ * unresolvable agent's `Agent 4f21ab90` fallback.
  */
 export function agentInitials(displayName: string): string {
-  const words = displayName.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '?';
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
-  return `${words[0]![0]}${words[words.length - 1]![0]}`.toUpperCase();
+  return initialsFor(displayName);
 }
 
 /**

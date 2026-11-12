@@ -1,7 +1,7 @@
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { initialsFor } from '../../components/layout/ProfileMenu';
+import { UserAvatar } from '../../components/common/UserAvatar';
 import styles from './ProfileSettingsPage.module.css';
 
 const THEMES = [
@@ -26,9 +26,7 @@ export default function ProfileSettingsPage() {
       <section className={styles.card} aria-labelledby="profile-heading">
         <h2 id="profile-heading" className={styles.cardTitle}>Profile</h2>
         <div className={styles.identity}>
-          <span className={styles.avatar} aria-hidden="true">
-            {user?.avatar_url ? <img src={user.avatar_url} alt="" /> : initialsFor(user?.display_name, user?.email)}
-          </span>
+          <UserAvatar user={user} size="lg" />
           <dl className={styles.fields}>
             <div className={styles.field}>
               <dt>Name</dt>

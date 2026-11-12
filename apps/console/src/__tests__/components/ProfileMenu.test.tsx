@@ -13,7 +13,7 @@ vi.mock('../../contexts/AuthContext', () => ({ useAuth: mocks.useAuth }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/ThemeContext', () => ({ useTheme: mocks.useTheme }));
 
-import { ProfileMenu, initialsFor } from '../../components/layout/ProfileMenu';
+import { ProfileMenu } from '../../components/layout/ProfileMenu';
 
 const TENANT_ID = '48b8ec3c-a84d-4a81-8b30-c03c8b54dfb4';
 const ACCOUNT_ID = 'aa11bb22-cc33-dd44-ee55-ff6677889900';
@@ -218,25 +218,5 @@ describe('ProfileMenu — who, theme and sign out', () => {
     }
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.queryByTestId('profile-menu')).toBeNull();
-  });
-
-  it('makes initials from a name, or the email without one', () => {
-    expect(initialsFor('Priya Shah', 'p@x.com')).toBe('PS');
-    expect(initialsFor('Priya', 'p@x.com')).toBe('PR');
-    expect(initialsFor(null, 'rahul@x.com')).toBe('RA');
-  });
-
-  it('uses letters and digits only, in any script, skipping words without one', () => {
-    expect(initialsFor('Manas (Dev)', 'm@x.com')).toBe('MD');
-    expect(initialsFor('(Dev) Manas', 'm@x.com')).toBe('DM');
-    expect(initialsFor('Manas - Dev', 'm@x.com')).toBe('MD');
-    expect(initialsFor('"Priya"', 'p@x.com')).toBe('PR');
-    expect(initialsFor('Ölüm Şahin', 'o@x.com')).toBe('ÖŞ');
-    expect(initialsFor('मनस निलोरौत', 'm@x.com')).toBe('मनि');
-    expect(initialsFor('Team 7', 't@x.com')).toBe('T7');
-    // Nothing readable in the name: the email's local part, past its punctuation.
-    expect(initialsFor('(  ) --', '_r.ahul@x.com')).toBe('RA');
-    expect(initialsFor('', '.@x.com')).toBe('?');
-    expect(initialsFor(null, null)).toBe('?');
   });
 });
