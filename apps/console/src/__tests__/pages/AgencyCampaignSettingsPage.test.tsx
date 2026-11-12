@@ -1037,7 +1037,7 @@ describe('reads that land late, and saving after a Refresh', () => {
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
-    const body = mocks.updateAgencyCampaign.mock.calls[0][1];
+    const body = mocks.updateAgencyCampaign.mock.calls[0]![1] as Record<string, unknown>;
     expect(body.calling_window_start).toBe('11:00');
     expect(body).not.toHaveProperty('caller_ids');
     expect(body).not.toHaveProperty('telephony_provider');
