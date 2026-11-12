@@ -456,7 +456,7 @@ export async function sendSessionInOtherTenant(reply: FastifyReply, tenantId: st
     code: 'session_in_other_tenant',
     message: tenantName
       ? `You are live in ${tenantName}. Leave your station there first: an agent can hold only one live station at a time.`
-      : 'You are live in another workspace. Leave your station there first: an agent can hold only one live station at a time.',
+      : 'You are live in another organisation. Leave your station there first: an agent can hold only one live station at a time.',
     tenant_id: tenantId,
     tenant_name: tenantName,
   };

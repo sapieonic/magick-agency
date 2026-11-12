@@ -806,11 +806,11 @@ describe('AgentConsolePage — not staffed on the campaign', () => {
 });
 
 /**
- * 409 `session_in_other_tenant` (OS1): the agent is live in another workspace. Nothing here can
+ * 409 `session_in_other_tenant` (OS1): the agent is live in another organisation. Nothing here can
  * end that session, so the screen is `StationFatal` with the API's sentence naming the workspace,
  * never the conflict screen, and nothing is remembered as a live session in THIS tenant.
  */
-describe('AgentConsolePage — live in another workspace', () => {
+describe('AgentConsolePage — live in another organisation', () => {
   beforeEach(() => clearAllLiveSessions());
 
   it('says so in the API’s words, naming the workspace, with the way home', async () => {
@@ -835,7 +835,7 @@ describe('AgentConsolePage — live in another workspace', () => {
     await mounted();
 
     const fatal = await screen.findByRole('alert');
-    expect(fatal.textContent).toContain('You are live in another workspace.');
+    expect(fatal.textContent).toContain('You are live in another organisation.');
   });
 });
 

@@ -167,7 +167,7 @@ describe('0005 — agency_agent_sessions.kind', () => {
     await expect(insertSession(campaign.id, { state: 'available' })).resolves.toBeTruthy();
   });
 
-  it('the live-session uniqueness (uq_agency_agent_live_agent since 0034) spans both kinds: one pair of ears', async () => {
+  it('the live-session uniqueness (uq_agency_agent_live_agent since 0035) spans both kinds: one pair of ears', async () => {
     const agent = randomUUID();
     const campaign = await insertCampaign();
     await insertSession(campaign.id, { agent_user_id: agent });

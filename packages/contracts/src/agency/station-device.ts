@@ -7,7 +7,7 @@
  * itself with a `device_id` it generates (the console: in memory, so a reload or a second tab is
  * another device; the app: kept with its install, so a restart is the same device).
  *
- * The session remembers the device that holds its station (`station_device_id`, 0034). A join, a
+ * The session remembers the device that holds its station (`station_device_id`, 0035). A join, a
  * soft-phone open or a station-token mint that carries a `device_id`:
  *   * from the holder, or for a session no device holds: allowed, and the device holds it;
  *   * from another device without `take_over`: refused 409 `station_on_other_device`, and nothing

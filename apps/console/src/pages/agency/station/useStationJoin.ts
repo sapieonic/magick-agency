@@ -239,7 +239,7 @@ export function useStationJoin({
           return;
         }
         /**
-         * 409 `session_in_other_tenant` (OS1): the agent is live in another workspace they belong
+         * 409 `session_in_other_tenant` (OS1): the agent is live in another organisation they belong
          * to. Nothing here can end that session (every session route is scoped to its own
          * tenant), so it is `StationFatal` with the API's sentence, which names the workspace.
          */
@@ -631,7 +631,7 @@ export const NOT_STAFFED_COPY = 'You’re not assigned to this campaign. Ask you
 
 /** The fallback when a `session_in_other_tenant` refusal carries no sentence of its own. */
 export const OTHER_TENANT_COPY =
-  'You are live in another workspace. Leave your station there first: you can be on only one station at a time.';
+  'You are live in another organisation. Leave your station there first: you can be on only one station at a time.';
 
 /** OS3: a join this window did not take over found the station on another device. */
 export const STATION_ON_OTHER_DEVICE_COPY =

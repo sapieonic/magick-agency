@@ -11,7 +11,7 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  * there can be wrong about SQL, because nothing there runs any. This file is the
  * other half — every claim the method makes about the DATABASE:
  *
- *   * the `ON CONFLICT (agent_user_id) WHERE left_at IS NULL` arbiter (0034; was
+ *   * the `ON CONFLICT (agent_user_id) WHERE left_at IS NULL` arbiter (0035; was
  *     `(tenant_id, agent_user_id)`) really does match the PARTIAL index
  *     `uq_agency_agent_live_agent`, and really does ignore left rows;
  *   * `DO UPDATE … WHERE tenant_id / campaign_id = EXCLUDED…` returns zero rows on
@@ -241,7 +241,7 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
     expect(await agencyAgentSessionRepository.findLiveForAgent(TENANT, uuidFor('agent-scoped'))).toBeNull();
     expect((await agencyAgentSessionRepository.findLiveForAgentAnyTenant(uuidFor('agent-scoped')))?.id).toBe(there.id);
 
-    // One live session per agent across tenants (0034): it leaves there before it is live here.
+    // One live session per agent across tenants (0035): it leaves there before it is live here.
     await getTestPool().query(`UPDATE agency_agent_sessions SET left_at = now(), state = 'offline' WHERE id = $1`, [there.id]);
     const live = await insertAgentSession(ours.id, { agent_user_id: uuidFor('agent-scoped'), state: 'available' });
     const found = await agencyAgentSessionRepository.findLiveForAgent(TENANT, uuidFor('agent-scoped'));
@@ -301,7 +301,7 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
   });
 
   it('the same agent in five TENANTS joining concurrently settles to exactly one live session (OS1)', async () => {
-    // Amended by 0034 (Manas, 2026-11-11): one person is one pair of ears in every tenant they
+    // Amended by 0035 (Manas, 2026-11-11): one person is one pair of ears in every tenant they
     // belong to. Was: five tenants, five live sessions. Concurrent rather than sequential so it is
     // the INDEX being tested and not the order the rows happened to be written in.
     const tenants = [uuidFor('t-a'), uuidFor('t-b'), uuidFor('t-c'), uuidFor('t-d'), uuidFor('t-e')];

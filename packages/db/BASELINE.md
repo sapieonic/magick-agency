@@ -169,7 +169,7 @@ Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provi
 
 Columns: `id`, `campaign_id`, `tenant_id`, `account_id`, `phone_e164`, `context`, `source_row_number`, `timezone`, `state`, `attempt_count`, `last_outcome`, `last_disposition`, `next_attempt_at`, `suppressed_reason`, `created_at`, `updated_at`, `our_fault_attempts`, `row_fingerprint`, `csv_line_number`, `source_contact_id`, `root_contact_id`.
 
-**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`); since 0034 one per agent across every tenant (`uq_agency_agent_live_agent`; 0034 also adds `station_device_id` and keeps the per-tenant index for rollback). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below). 0006 adds `client_kind` (`web | mobile`, the app the station last attached from).
+**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`); since 0035 one per agent across every tenant (`uq_agency_agent_live_agent`; 0035 also adds `station_device_id` and keeps the per-tenant index for rollback). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below). 0006 adds `client_kind` (`web | mobile`, the app the station last attached from).
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state`, `break_reason`, `state_since`, `owner_replica`, `last_heartbeat`, `joined_at`, `left_at`, `created_at`, `updated_at`, `kind`, `client_kind`, `station_device_id`.
 
@@ -219,8 +219,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_agency_campaign_retry_idempotency` | `agency_campaigns` |
 | `uq_agency_contacts_source_row` | `agency_contacts` |
 | `uq_agency_contacts_row_fingerprint` | `agency_contacts` |
-| `uq_agency_agent_live_tenant` (kept by 0034 for rollback) | `agency_agent_sessions` |
-| `uq_agency_agent_live_agent` (0034) | `agency_agent_sessions` |
+| `uq_agency_agent_live_tenant` (kept by 0035 for rollback) | `agency_agent_sessions` |
+| `uq_agency_agent_live_agent` (0035) | `agency_agent_sessions` |
 | `uq_agency_attempt_number` | `agency_call_attempts` |
 | `uq_agency_attempt_live` | `agency_call_attempts` |
 | `uq_agency_ingest_chunk` | `agency_ingest_chunks` |
@@ -1344,7 +1344,7 @@ search and its plan).
 One station per agent (OS1, OS3, OS8). **`uq_agency_agent_live_agent`** `(agent_user_id) WHERE
 left_at IS NULL`: one live session per agent across every tenant, the join upsert's arbiter (its
 `DO UPDATE` also requires the same tenant). `uq_agency_agent_live_tenant` is **kept**, redundant:
-the server image before 0034 names it as its `ON CONFLICT` arbiter, so an image-only rollback still
+the server image before 0035 names it as its `ON CONFLICT` arbiter, so an image-only rollback still
 joins (OS8); a same-tenant duplicate reports either index's name, and the join upsert treats a
 race's 23505 on it as its empty answer. Before the index is built,
 every live session of an agent live in more than one but the newest heartbeat (ties: newest join,
@@ -1382,7 +1382,7 @@ then up), `baseline.test.ts`, the down → up inventory suite, and the server's
   in enum order.
 - The two audit tables differ in shape (`ip_address` `TEXT` vs `INET`; `created_at` vs `timestamp`);
   the merged activity-trail query handles both.
-- `uq_agency_agent_live_agent` (one live session per agent across tenants, 0034; `uq_agency_agent_live_tenant` kept beside it for rollback) is the session constraint;
+- `uq_agency_agent_live_agent` (one live session per agent across tenants, 0035; `uq_agency_agent_live_tenant` kept beside it for rollback) is the session constraint;
   there is no per-campaign variant.
 
 ## Open questions

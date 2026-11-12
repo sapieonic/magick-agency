@@ -424,7 +424,7 @@ export interface AgencyAgentSessionRecord {
    */
   client_kind: AgencyClientKind;
   /**
-   * The device that holds this session's station (0034, OS3): the `device_id` a client sent on
+   * The device that holds this session's station (0035, OS3): the `device_id` a client sent on
    * the join, the soft-phone open or the token mint that last claimed it. NULL: none known, and
    * any device may claim it. Opaque and client-declared; never sent on the wire.
    */

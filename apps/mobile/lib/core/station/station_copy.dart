@@ -158,9 +158,9 @@ String stationOnOtherDeviceCopy(ClientKind? holder) => switch (holder) {
       _ => 'Your station is open on another device. Use it there, or go on duty here to move it to this phone.',
     };
 
-/// OS1: the agent is live in another workspace; nothing here can end it.
+/// OS1: the agent is live in another organisation; nothing here can end it.
 const sessionInOtherTenantCopy =
-    'You’re live in another workspace. Leave your station there first: you can be on only one station at a time.';
+    'You’re live in another organisation. Leave your station there first: you can be on only one station at a time.';
 
 const softphoneCallPendingCopy =
     'Your soft phone has a call that isn’t finished. Hang up and save its outcome there, then come back to join.';

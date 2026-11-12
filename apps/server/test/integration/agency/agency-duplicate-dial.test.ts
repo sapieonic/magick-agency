@@ -343,7 +343,7 @@ describe('agency duplicate-dial backstop (integration)', () => {
     expect((await agencyContactRepository.claimDialable(second.id, 5)).map((c) => c.id)).toEqual([onSecond.id]);
   });
 
-  it('T-M6: one live session per agent, across tenants (0034, OS1), reusable after leaving', async () => {
+  it('T-M6: one live session per agent, across tenants (0035, OS1), reusable after leaving', async () => {
     // The index is per tenant, not per campaign. The rule this pins is the
     // second assertion, not the first: the same-campaign case would already be
     // refused by a per-campaign index, and a test that only covered it would stay green if the
@@ -365,7 +365,7 @@ describe('agency duplicate-dial backstop (integration)', () => {
       insertAgentSession(other.id, { agent_user_id: uuidFor('agent-1'), account_id: OTHER_ACCOUNT }),
     ).rejects.toMatchObject({ code: '23505', constraint: expect.stringMatching(/^uq_agency_agent_live_(tenant|agent)$/) });
 
-    // ...and so is a different TENANT since 0034 (Manas, 2026-11-11): one person is one pair
+    // ...and so is a different TENANT since 0035 (Manas, 2026-11-11): one person is one pair
     // of ears in every tenant they belong to. Was: "a different tenant is untouched".
     await expect(
       insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1'), tenant_id: OTHER_TENANT }),

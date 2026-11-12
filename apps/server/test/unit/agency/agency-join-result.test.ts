@@ -120,7 +120,7 @@ describe('joinOrRehydrate — what the upsert returning zero rows means', () => 
   });
 
   it('reports `other_tenant` (OS1) for a live row in ANOTHER tenant, even on a campaign id that matches', async () => {
-    // The arbiter spans tenants since 0034, so the blocker may be another tenant's. The tenant
+    // The arbiter spans tenants since 0035, so the blocker may be another tenant's. The tenant
     // decides before the campaign: never a rehydrate across tenants, never a retry into one.
     const blocker = sessionRow({ id: 'sess-there', tenant_id: 't-other', campaign_id: 'camp-requested' });
     script([{ upsert: [], live: [blocker] }]);
@@ -218,7 +218,7 @@ describe('joinOrRehydrate — the statement it issues', () => {
 
     const sql = String(query.mock.calls[0]![0]).replace(/\s+/g, ' ');
     expect(sql).toContain('ON CONFLICT (agent_user_id) WHERE left_at IS NULL');
-    // A live session in another tenant is the refusal, never a rehydrate (0034, OS1).
+    // A live session in another tenant is the refusal, never a rehydrate (0035, OS1).
     expect(sql).toContain('WHERE agency_agent_sessions.tenant_id = EXCLUDED.tenant_id');
     // NULL-safe and kind-aware: a soft-phone session's campaign_id is NULL (0005), and
     // `=` would make its rehydrate arm match nothing (the old 500).

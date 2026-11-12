@@ -527,7 +527,7 @@ describe('AgencyManualCallRepository (integration)', () => {
       }
       await insertManualCall(await insertSoftphoneSession());   // another agent
       // The same person in another tenant: never on this list. A session they have left: one
-      // person holds one live session across tenants (0034, OS1).
+      // person holds one live session across tenants (0035, OS1).
       await insertManualCall(await insertSoftphoneSession({
         tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT, agent_user_id: session.agent_user_id,
         state: 'offline', left_at: new Date(),

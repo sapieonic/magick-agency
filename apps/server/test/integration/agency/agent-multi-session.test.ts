@@ -34,7 +34,7 @@ const { decodeKeysetCursor } = await import('@magick-agency/domain/keyset-cursor
  *     Against a fixture with ONE session per agent — which is what every existing
  *     agency suite seeds — a fan-out is arithmetically invisible.
  *   * **Dropping.** `uq_agency_agent_live_agent` permits only one LIVE session per agent (per
- *     tenant before 0034), so a real agent's history is mostly CLOSED sessions
+ *     tenant before 0035), so a real agent's history is mostly CLOSED sessions
  *     (`left_at IS NOT NULL`). A predicate that only considered live sessions —
  *     which is what `idx_agency_attempts_agent`'s `WHERE state <> 'ended'` and the
  *     roster's `left_at IS NULL` both encourage by habit — would return a nearly
@@ -64,7 +64,7 @@ const scope = { tenantId: T, accountId: A, agentUserId: AGENT };
  * Close a session, so the next one can be created.
  *
  * `uq_agency_agent_live_agent (agent_user_id) WHERE
- * left_at IS NULL` refuses a second live session for one person (in any tenant, 0034). So
+ * left_at IS NULL` refuses a second live session for one person (in any tenant, 0035). So
  * "an agent with several sessions" is necessarily "several closed ones and at most
  * one open" — which is also what production looks like, and is why every helper
  * here closes as it goes rather than leaving a pile of live rows the index would

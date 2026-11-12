@@ -372,7 +372,7 @@ export interface AgencyRetryContext {
  *
  * Returned when the agent already holds a LIVE session on a **different**
  * campaign in the same tenant. The database permits one live
- * session per agent (per tenant until 0034, across tenants since, OS1) — the reservation CAS key is per session
+ * session per agent (per tenant until 0035, across tenants since, OS1) — the reservation CAS key is per session
  * (`agency:agent:{sessionId}:state`) while a human has one pair of ears, so two
  * live sessions mean two pacing engines bridging two customers into one headset.
  *

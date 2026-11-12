@@ -79,7 +79,7 @@ const TENANT = DEFAULTS.tenantId; // UUID
  * This was once forced: `uq_agency_campaign_running` allowed one running campaign per
  * ACCOUNT, so two campaigns that could dial at the same moment were necessarily in two
  * accounts. Migration 0015 dropped it (decisions MC6), and two running campaigns of ONE
- * account are now possible too; the live-session index (agent-wide since 0034) covers that case as well,
+ * account are now possible too; the live-session index (agent-wide since 0035) covers that case as well,
  * since a same-account pair is also a same-tenant pair. The two-account shape stays
  * because it is the one an account-scoped index would miss: `account_id` is deliberately
  * absent from the uniqueness key because "an agent moving between two accounts of the
@@ -103,7 +103,7 @@ async function restore092(): Promise<void> {
   const pool = getTestPool();
   await pool.query('DROP INDEX IF EXISTS uq_agency_agent_live');
   await pool.query(`UPDATE agency_agent_sessions SET left_at = now() WHERE left_at IS NULL`);
-  // The agent-wide index since 0034 (OS1), with the tenant-wide one 0034 keeps for rollback (OS8).
+  // The agent-wide index since 0035 (OS1), with the tenant-wide one 0035 keeps for rollback (OS8).
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live_agent
                       ON agency_agent_sessions (agent_user_id)
                       WHERE left_at IS NULL`);
@@ -189,7 +189,7 @@ async function join(campaignId: string, accountId: string, agentUserId = AGENT) 
  * `joinOrRehydrate` **as it worked with a per-campaign index** — the only difference is the ON CONFLICT arbiter's name.
  *
  * The counterfactual cases need it because the two halves of this change are
- * coupled through that name, which is the whole subject of the code/schema coupling: today's method names `(agent_user_id)` (0034; was `(tenant_id, agent_user_id)`) and cannot run
+ * coupled through that name, which is the whole subject of the code/schema coupling: today's method names `(agent_user_id)` (0035; was `(tenant_id, agent_user_id)`) and cannot run
  * against a per-campaign schema at all (asserted below, `42P10`). Reproducing the defect
  * therefore means running the per-campaign join path, not the
  * current code with a different index underneath it.
@@ -449,7 +449,7 @@ describe('agency double reservation — one human, two campaigns (integration)',
   });
 
   it('the same agent in ANOTHER tenant is refused, so they are dialled exactly once (OS1)', async () => {
-    // Amended by 0034 (Manas, 2026-11-11): one agent is one pair of ears in every tenant they
+    // Amended by 0035 (Manas, 2026-11-11): one agent is one pair of ears in every tenant they
     // belong to. Was: "the same agent id in another tenant is dialled independently", the
     // per-tenant scope this suite once pinned.
     const world = await makeWorld();

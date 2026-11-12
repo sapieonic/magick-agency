@@ -90,7 +90,7 @@ enum AgencyErrorCode implements WireEnum {
   /// [StationOnOtherDeviceRefusal].
   stationOnOtherDevice('station_on_other_device'),
 
-  /// 409 (OS1) on join or the soft-phone open: the agent is live in another workspace (tenant).
+  /// 409 (OS1) on join or the soft-phone open: the agent is live in another organisation (tenant).
   /// Nothing here can end it. `message` names the workspace.
   sessionInOtherTenant('session_in_other_tenant'),
   unknown('');

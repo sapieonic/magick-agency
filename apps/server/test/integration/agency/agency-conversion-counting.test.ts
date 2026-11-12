@@ -427,7 +427,7 @@ describe('conversion counting against a real disposition_catalog (integration)',
     // an unqualified join would score both by whichever row came back.
     const yes = await seed([entry('sale', true)]);
     // Closed BEFORE the second is seeded: `uq_agency_agent_live_agent (agent_user_id) WHERE left_at IS NULL`
-    // refuses a second live session for one person (in any tenant, 0034), so a fixture that
+    // refuses a second live session for one person (in any tenant, 0035), so a fixture that
     // created both and closed one afterwards would fail on the index rather than
     // testing anything.
     await getTestPool().query(

@@ -76,7 +76,7 @@ callback"); P4 (VoiceLink inbound). Ringing a phone whose app is in the backgrou
 parked.
 
 One station per agent (2026-11-11, OS1–OS8): an agent is live in one place only, one console
-window or the app, across every tenant they belong to (`0034_one_station_per_agent.sql`). A device
+window or the app, across every tenant they belong to (`0035_one_station_per_agent.sql`). A device
 that lost its socket can no longer reconnect onto a station the agent moved elsewhere; only the
 agent's own "Use it here" / "Use this phone" moves it ([`status.md`](status.md)).
 

@@ -131,7 +131,7 @@ export interface AgencySessionBootstrap
  *
  * ── Why this error exists at all ──────────────────────────────────────────────
  * Live-uniqueness moved from `(campaign_id, agent_user_id)` to
- * `(tenant_id, agent_user_id)`, and since 0034 to `(agent_user_id)` across tenants: one human has one pair of ears, and two pacing
+ * `(tenant_id, agent_user_id)`, and since 0035 to `(agent_user_id)` across tenants: one human has one pair of ears, and two pacing
  * engines reserving the same person independently bridged two customers onto
  * them.
  *

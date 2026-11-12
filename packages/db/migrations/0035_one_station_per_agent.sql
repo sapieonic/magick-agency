@@ -1,4 +1,4 @@
--- 0034_one_station_per_agent.sql — an agent holds one live station, on one device, across every
+-- 0035_one_station_per_agent.sql — an agent holds one live station, on one device, across every
 -- tenant (decisions OS1–OS6, docs/decisions.md §"One station per agent").
 --
 -- ── One live session per agent, not per (tenant, agent) ───────────────────────

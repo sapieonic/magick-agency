@@ -1347,7 +1347,7 @@ an older socket of the same session with 4409; what was missing was the tenant b
 to stop a device that had lost its socket (a laptop asleep, a phone out of signal) from
 re-minting a token and silently taking the station back from the device the agent had moved to.
 
-- **Across tenants (OS1, OS2, OS7, OS8).** `0034_one_station_per_agent.sql`:
+- **Across tenants (OS1, OS2, OS7, OS8).** `0035_one_station_per_agent.sql`:
   `uq_agency_agent_live_agent` is the new arbiter (duplicates ended when it runs); the per-tenant
   index is kept beside it so an image-only rollback still joins (OS8). The join and the soft-phone open
   answer `409 session_in_other_tenant`, naming the tenant only; the console and the app show the
@@ -1381,7 +1381,31 @@ sends no `device_id` can still take the station by going on duty until
 
 ## Test counts
 
-Latest run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) with every round of
+Latest run, 2026-11-12, one station per agent (OS1–OS8, above), rebased on `main` after the
+console navigation redesign (#76): its migration is `0035_one_station_per_agent.sql` (`main` took
+0034), and its `session_in_other_tenant` copy says "organisation", as the console and the app now
+do:
+
+Run from inside each package on a local Postgres 16 (`max_connections` 300) and Redis 7 on the
+agency ports with no other run sharing them, integration with 4 workers. `pnpm lint` clean;
+`pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33 pass;
+`contracts-literals --check` up to date. `apps/mobile` (Flutter 3.47.9): `flutter analyze` no
+issues, `flutter test` 1797 passed; `agency_wire` `dart test` 609 passed. Not run (untouched):
+`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`, `packages/observability`,
+`agent_audio`. One console run is not counted: with three suites sharing four cores,
+`organisationWording.test.ts` (which parses every console source file) timed out at 5 s; it passes
+alone, and the console count is from a run on its own.
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 9805 passed + 1 expected fail (494 files) | rest lane 2729 passed + 9 expected fail + 2 skipped (253 files + 2 skipped); wall-clock lane 23 (5 files) |
+| `packages/db` | 435 (26 files) | 751 (78 files) |
+| `apps/console` | 6869 (368 files) | — |
+| `packages/contracts` | 481 (15 files) | — |
+| `packages/domain` | 261 (13 files) | — |
+| `apps/mobile` | 1797 (`flutter test`); `agency_wire` 609 (`dart test`) | — |
+
+Previous run, 2026-11-12, the console navigation redesign (B28, B28a, IN14) with every round of
 fixes: the QA run 20261112-110644, the three-persona review, and the automated review of PR #76
 with its review comments (campaign Settings saves only what was changed and drops stale reads;
 "Got it" per person, by the browser's day, back on a new pause; DNC search's `+` floor by calling
@@ -1432,34 +1456,23 @@ test:grafana`.
 
 Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
 
-Run on the working tree of the commit that adds it, one after another from inside each package on a
-local Postgres 16 test database and Redis db 1 with no other run sharing them. `pnpm lint` clean;
-`pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm test:grafana` 33 pass;
-`contracts-literals --check` up to date (62 vocabularies). `apps/mobile` (Flutter 3.47.9, one patch
-above CI's pin): `flutter analyze` no issues, `flutter test` 1796 passed; `agency_wire` `dart test`
-609 passed; `agent_audio` `flutter test` 139 passed (Dart; the Kotlin tests were not run). Not run
-(untouched): `apps/super-admin`, `packages/web-ui`, `apps/report-renderer`. Two first runs were not
-green and are not counted: a `packages/db` Plivo number-link test failed once and passed on the
-re-run (unrelated to this change), and the server's first rest lane ran before `mpg123` /
-`sndfile-programs` were installed and while fixtures still seeded one agent live in two tenants
-(those fixtures now leave the other tenant's session, or expect the refusal). After the review
-fixes, a rest lane failed five tests that the kept per-tenant index broke (a counterfactual that
-must drop it too, and concurrent same-tenant joins raising its 23505 as a 500, now absorbed by the
-upsert, OS8); fixed, and every count here is from the green run after.
+Run on commit `c41091e` (the docs commits after it change no code), one after another from inside
+each package on a UTF8 test database and Redis db 1 with no other run sharing them; every step green
+on its first run. `pnpm lint` clean; `pnpm test:tooling` 16, `pnpm test:release` 10 and `pnpm
+test:grafana` 33 pass; `contracts-literals --check` up to date (62 vocabularies). `apps/mobile`:
+`flutter analyze` no issues, `flutter test` 1781 passed; `agency_wire` `dart test` 605 passed;
+`agent_audio` `flutter test` 139 passed (Dart; the Kotlin tests were not run). Not run (untouched):
+`apps/super-admin`, `packages/web-ui`, `apps/report-renderer`.
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 9715 passed + 1 expected fail (489 files) | rest lane 2681 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
-| `packages/db` | 428 (25 files) | 749 (77 files) |
-| `apps/console` | 6174 | — |
+| `apps/server` | 9682 passed + 1 expected fail (488 files) | rest lane 2673 passed + 9 expected fail + 2 skipped (250 files + 2 skipped, the opt-in scale suites); wall-clock lane 23 (5 files) |
+| `packages/db` | 428 (25 files) | 744 (76 files) |
+| `apps/console` | 6161 (325 files) | — |
 | `packages/contracts` | 476 (14 files) | — |
 | `packages/domain` | 254 (12 files) | — |
-| `packages/observability` | 18 (4 files; not re-run, untouched) | — |
-| `apps/mobile` | 1796 (`flutter test`); `agency_wire` 609 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
-
-Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57), on commit `c41091e`: server 9682
-unit + 1 expected fail, rest lane 2673 + 9 expected fail + 2 skipped, wall-clock 23; db 428 / 744;
-console 6161; contracts 476; domain 254; mobile 1781, `agency_wire` 605, `agent_audio` 139.
+| `packages/observability` | 18 (4 files) | — |
+| `apps/mobile` | 1781 (`flutter test`); `agency_wire` 605 (`dart test`); `agent_audio` 139 (`flutter test`) | — |
 
 Previous run, 2026-11-11, inbound calls on the mobile app after the persona review:
 

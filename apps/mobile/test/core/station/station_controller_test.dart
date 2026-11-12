@@ -58,7 +58,7 @@ void main() {
       });
     });
 
-    test('OS1: live in another workspace is refused with the server\'s sentence', () {
+    test('OS1: live in another organisation is refused with the server\'s sentence', () {
       fakeAsync((async) {
         final app = App(async);
         app.routes['POST /proxy/agency/sessions'] = (_) => json(409, {

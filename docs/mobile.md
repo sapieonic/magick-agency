@@ -168,7 +168,7 @@ the station and refuses the others `409 station_on_other_device` unless they ask
 - **Never takes it over**: the reconnect ladder's mints, the soft-phone session this phone resumes
   on its own, and the campaign station on the soft phone it resumes on its own. A refused resume
   shows "open on another device" with "Use it on this phone"; a refused mint stops as 4409 does.
-- **Live in another workspace** (`409 session_in_other_tenant`): the join is refused with the
+- **Live in another organisation** (`409 session_in_other_tenant`): the join is refused with the
   server's sentence, which names the workspace. The server ends that session by itself first when
   nothing is there (no station attached, nothing in flight, OS7); a working one is left alone.
 - **A take-over is spent** by the one mint it arms, whatever that mint answers: a "Use this phone"

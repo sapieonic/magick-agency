@@ -221,7 +221,7 @@ every account the caller belongs to (CH2) where every internal handler is single
   lease, or a soft-phone session it changes nothing and answers the current state (200, and no
   audit row). The return is the ordinary `/available`; `break/cancel` withdraws a queued one.
 - **Joining** (`POST /proxy/agency/sessions`, internal `api/routes/agency/sessions.ts`). One live
-  session per agent across every tenant (`uq_agency_agent_live_agent`, 0034, OS1): `409
+  session per agent across every tenant (`uq_agency_agent_live_agent`, 0035, OS1): `409
   session_on_other_campaign` (or `session_on_softphone`) in this tenant, `409
   session_in_other_tenant` (naming the tenant only) in another. A
   NEW session needs an active staffing row on the campaign (`agency_campaign_agents`, the rows

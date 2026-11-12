@@ -4,7 +4,7 @@ import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js'
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factories.js';
 
 /**
- * ─── ONE LIVE SESSION PER AGENT (per tenant until 0034; across tenants since, OS1) ───
+ * ─── ONE LIVE SESSION PER AGENT (per tenant until 0035; across tenants since, OS1) ───
  *
  * The defect: `agency_agent_sessions` allowed one live session per (campaign,
  * agent), while the reservation CAS key in `src/agency/agent-state-machine.ts`
@@ -22,7 +22,7 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  * whatever this file asserted, which is the shape of test that let the original
  * defect ship.
  *
- * The migration that ends duplicates (0034, an agent live in two tenants when it runs) is pinned
+ * The migration that ends duplicates (0035, an agent live in two tenants when it runs) is pinned
  * in `packages/db/test/integration/db/one-station-per-agent-migration.test.ts`, which runs it.
  */
 
@@ -158,7 +158,7 @@ describe('agency agent sessions — one live session per agent (integration)', (
   });
 
   it('another TENANT is refused too (OS1): one live session per agent anywhere', async () => {
-    // Amended by 0034 (Manas, 2026-11-11): an agent who belongs to two tenants is one person, so a
+    // Amended by 0035 (Manas, 2026-11-11): an agent who belongs to two tenants is one person, so a
     // live session in one refuses a join in the other. Was: "a different tenant is unaffected".
     const ours = await insertAgencyCampaign();
     const theirs = await insertAgencyCampaign({ tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT });
@@ -248,7 +248,7 @@ describe('agency agent sessions — one live session per agent (integration)', (
   });
 });
 
-// ── The device that holds the station (OS3, 0034) ─────────────────────────────
+// ── The device that holds the station (OS3, 0035) ─────────────────────────────
 
 describe('claimStationDevice — one device holds the station (integration)', () => {
   beforeEach(truncateAll);

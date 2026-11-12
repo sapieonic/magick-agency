@@ -334,7 +334,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  it('the live-session uniqueness is per AGENT across tenants (0034); the per-tenant index is kept for rollback', async () => {
+  it('the live-session uniqueness is per AGENT across tenants (0035); the per-tenant index is kept for rollback', async () => {
     expect(await indexDef('uq_agency_agent_live')).toBeUndefined();
     expect(await indexDef('uq_agency_agent_live_tenant')).toBeDefined();
     expect(await indexDef('uq_agency_agent_live_agent')).toBe(
@@ -501,8 +501,8 @@ describe('the uniqueness constraints that carry the design (docs/architecture.md
     await expect(insertSession(other.id, { agent_user_id: agent, account_id: otherAccount })).rejects.toMatchObject({
       code: '23505', constraint: expect.stringMatching(/^uq_agency_agent_live_(tenant|agent)$/),
     });
-    // Same tenant: either index refuses it (0034 keeps the per-tenant one for rollback).
-    // Another tenant is refused too, and only the agent-wide index can (0034, OS1).
+    // Same tenant: either index refuses it (0035 keeps the per-tenant one for rollback).
+    // Another tenant is refused too, and only the agent-wide index can (0035, OS1).
     await expect(insertSession(campaign.id, { agent_user_id: agent, tenant_id: randomUUID() })).rejects.toMatchObject({
       code: '23505', constraint: 'uq_agency_agent_live_agent',
     });

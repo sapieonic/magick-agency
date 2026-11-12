@@ -58,7 +58,7 @@ export type AgencyStationDeviceClaim =
 /**
  * What `joinSoftphone` learned. The mirror image of {@link AgencyAgentJoinResult}:
  * the soft-phone session is the agent's one live session anywhere
- * (`uq_agency_agent_live_agent`, 0034), so an agent live on a campaign is refused, with
+ * (`uq_agency_agent_live_agent`, 0035), so an agent live on a campaign is refused, with
  * that session, and the remedy is the switch on it (`POST /sessions/:id/softphone`,
  * §4.2), never a second session.
  */
@@ -325,12 +325,12 @@ export class AgencyAgentSessionRepository {
    *
    * A returning agent must resume their row rather than get a new one — the unique
    * index allows exactly one live session per agent, across tenants
-   * (`uq_agency_agent_live_agent`, 0034, OS1) — and must land in `break`, never `available`, so the engine cannot dial into a
+   * (`uq_agency_agent_live_agent`, 0035, OS1) — and must land in `break`, never `available`, so the engine cannot dial into a
    * pool that has not demonstrably re-attached. The agent clicks once to go
    * available.
    *
    * ── Why the uniqueness is per AGENT and what that makes reachable ───
-   * Were it unique per (campaign, agent), or per (tenant, agent) as it was before 0034, one
+   * Were it unique per (campaign, agent), or per (tenant, agent) as it was before 0035, one
    * human could hold two live sessions on two campaigns. The reservation CAS key is
    * `agency:agent:{sessionId}:state` — per session — so those two sessions are two
    * independently reservable agents attached to one pair of ears, and both pacing
@@ -477,7 +477,7 @@ export class AgencyAgentSessionRepository {
       // no transition, which `recordTransitions` drops. (`load/session-join-races`.)
       //
       // `prev` is keyed on the same predicate as the arbiter index — the agent's
-      // one live session anywhere (`uq_agency_agent_live_agent`, 0034) — not on the proposed row,
+      // one live session anywhere (`uq_agency_agent_live_agent`, 0035) — not on the proposed row,
       // because the conflicting row may be on a different campaign, or in a different tenant.
       const { rows } = await getPool().query<AgencyAgentSessionRecord & {
         from_state: AgencyAgentState | null;
@@ -522,7 +522,7 @@ export class AgencyAgentSessionRepository {
         [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId,
           input.kind, breakReason],
       ).catch((err: unknown) => {
-        // ── A race on the KEPT per-tenant index (0034, OS8) ───────────────────
+        // ── A race on the KEPT per-tenant index (0035, OS8) ───────────────────
         // `ON CONFLICT (agent_user_id)` absorbs a conflict on its own arbiter only. Two joins of
         // one agent in one tenant racing both pass the arbiter's pre-check; the loser's insert can
         // then trip `uq_agency_agent_live_tenant` (kept for rollback) before the arbiter, as a raw
@@ -629,7 +629,7 @@ export class AgencyAgentSessionRepository {
    *  * the device already holds it, no device does, or `takeOver`: the device holds it now;
    *  * another device holds it and `takeOver` is false: refused `held_elsewhere`, nothing written;
    *  * no `deviceId` (an older client): on a join or soft-phone open, allowed, and the holder is
-   *    cleared, so the station is any device's to claim, as before 0034; on a token mint
+   *    cleared, so the station is any device's to claim, as before 0035; on a token mint
    *    (`reconnect`), refused while a device holds the station,
    *    so a console tab still running the bundle from before this change cannot reconnect onto a
    *    station the agent moved (it can still rejoin, which is the agent's own choice);
