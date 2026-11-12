@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { render } from '@testing-library/react';
 import type { Tenant, Membership, Account } from '../../types/auth';
 
@@ -21,7 +21,8 @@ vi.mock('../../api/accounts', () => ({
 }));
 
 import { TenantProvider, useTenant } from '../../contexts/TenantContext';
-import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
+import { UrlScopeProvider, useUrlScope } from '../../contexts/UrlScopeContext';
+import { navigationBlockers } from '../../utils/navigationBlockers';
 import { ApiError } from '../../api/client';
 
 /**
@@ -650,5 +651,38 @@ describe('context value identity', () => {
     act(() => bump());
 
     expect(seen.renders).toBe(settled);
+  });
+});
+
+describe('the open account taken away', () => {
+  it('moves to the replacement account’s home even past a page holding navigation (unsaved edits)', async () => {
+    window.history.replaceState(null, '', '/t/t-a/a/acct-1/agency/campaigns/c1/settings');
+    setupAuth([TENANT_A], [TENANT_MEMBERSHIP]);
+    const held: (string | null)[] = [];
+    const { result } = renderHook(
+      () => {
+        const tenant = useTenant();
+        const { history } = useUrlScope();
+        // What `useUnsavedChangesGuard` does while a form is dirty: hold everything.
+        useEffect(
+          () => navigationBlockers(history!).add(({ pathname }) => {
+            held.push(pathname);
+            return true;
+          }),
+          [history],
+        );
+        return tenant;
+      },
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.accountId).toBe('acct-1'));
+
+    mocks.listAccounts.mockResolvedValue([{ ...ACCOUNT_DEFAULT, id: 'acct-2', name: 'Other' }]);
+    await act(async () => {
+      result.current.reloadAccounts();
+    });
+
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2'));
+    expect(held).toEqual([]);
   });
 });
