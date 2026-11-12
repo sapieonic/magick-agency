@@ -64,6 +64,25 @@ describe('CampaignPerformance', () => {
       .toBe('9 of 41 connected calls');
   });
 
+  it('agrees its counts with one connected call (QA analytics:bug:c60501878e)', () => {
+    // "Where the 1 connected calls went" and "1 of 1 connected calls" were what one call read as.
+    render(
+      <CampaignPerformance
+        stats={stats({ human_connects: 1, machine_connects: 0, attempts_success: 1, attempts_connected: 1 })}
+        wrapupSeconds={45}
+      />,
+    );
+    expect(within(screen.getByTestId('connects-breakdown')).getByRole('heading').textContent)
+      .toBe('Where the 1 connected call went');
+    expect(screen.getByTestId('conversion-rate-readout-secondary').textContent).toBe('1 of 1 connected call');
+  });
+
+  it('keeps the plural for any other count', () => {
+    render(<CampaignPerformance stats={stats()} wrapupSeconds={45} />);
+    expect(within(screen.getByTestId('connects-breakdown')).getByRole('heading').textContent)
+      .toBe('Where the 52 connected calls went');
+  });
+
   it('labels the conversion rate with its denominator, on the page', () => {
     // Two percentages side by side with different denominators is the one way
     // this row can mislead. The label says which, at full weight, not in a title.

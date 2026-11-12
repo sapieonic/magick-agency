@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 
 /**
  * The supervisor's cross-campaign analytics page.
@@ -513,5 +513,59 @@ describe('AgencyAnalyticsPage — the per-agent tab', () => {
       expect(screen.queryByRole('tablist')).toBeNull();
       expect(screen.queryAllByRole('tab')).toHaveLength(0);
     });
+  });
+});
+
+/**
+ * The view is in the URL (QA analytics:ux:fb184751aa): a reload of "By agent" came back on
+ * "By campaign", and the agent view kept the campaign view's page guide.
+ */
+describe('AgencyAnalyticsPage — the view in the URL, and its guide', () => {
+  function LocationProbe() {
+    const location = useLocation();
+    return <output data-testid="location">{location.search}</output>;
+  }
+
+  function renderAt(entry: string) {
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <AgencyAnalyticsPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+  }
+
+  it('opens on the agent view from ?view=agents, as a reload does', async () => {
+    renderAt('/agency/analytics?view=agents');
+    expect(await screen.findByTestId('roster-table')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'By agent' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('writes the chosen view into the URL, and takes it out again', async () => {
+    renderAt('/agency/analytics');
+    fireEvent.click(await screen.findByRole('tab', { name: 'By agent' }));
+    await screen.findByTestId('roster-table');
+    expect(screen.getByTestId('location').textContent).toBe('?view=agents');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'By campaign' }));
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe(''));
+  });
+
+  it('opens the campaigns for a role the agent view is not offered to', async () => {
+    mocks.useTenant.mockReturnValue(tenant({ role: 'viewer' }));
+    renderAt('/agency/analytics?view=agents');
+    expect(await screen.findByRole('link', { name: 'Renewals' })).toBeTruthy();
+    expect(mocks.getAgencyRoster).not.toHaveBeenCalled();
+  });
+
+  it('describes the view on screen', async () => {
+    renderAt('/agency/analytics');
+    await screen.findByText('Renewals');
+    expect(document.body.textContent).toContain('Every campaign’s numbers side by side');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'By agent' }));
+    await screen.findByTestId('roster-table');
+    expect(document.body.textContent).toContain('Every agent’s numbers over one period, ranked');
+    expect(document.body.textContent).not.toContain('Every campaign’s numbers side by side');
   });
 });

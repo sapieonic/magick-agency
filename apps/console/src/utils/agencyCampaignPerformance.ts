@@ -386,7 +386,7 @@ export function conversionRateReadout(stats: AgencyCampaignStats | null): Perfor
     typeof successes === 'number' && typeof connected === 'number'
       ? {
         lead: formatCount(successes),
-        rest: `of ${formatCount(connected)} connected calls`,
+        rest: `of ${plural(connected, 'connected call')}`,
       }
       : typeof successes === 'number'
         ? { lead: formatCount(successes), rest: 'counted as a success' }
