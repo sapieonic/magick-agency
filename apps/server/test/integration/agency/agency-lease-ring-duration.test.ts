@@ -162,9 +162,10 @@ function fakeBridge(ringMs: number) {
  * so overlapping integration runs remain an operational hazard in general. This
  * only fixes the part that a test can fix.
  */
-// The worktree's whole test db (6383, `.test-env.local.json`) is already private to this
-// checkout, and every other db index belongs to another worktree or stack, so the
-// "private database" is the worktree's own — read off the agency harness URL. A
+// The worker's whole test db (6383, one per integration worker: tooling/test-env.ts) is
+// already private to this file while it runs, and every other db index belongs to another
+// worker, worktree or stack, so the "private database" is the worker's own — read off the
+// agency harness URL. A
 // hard-coded fallback URL would risk reaching another stack's port.
 const TEST_REDIS_URL = AGENCY_TEST_REDIS_URL;
 const LEASE_DB = Number(new URL(TEST_REDIS_URL).pathname.replace(/^\//, '') || '0');
@@ -192,10 +193,10 @@ async function assertNoConcurrentTruncate(campaignId: string): Promise<void> {
   if (rows.length === 0) {
     throw new Error(
       'ENVIRONMENT, NOT A LEASE FAILURE: this test\'s own campaign row disappeared mid-run, ' +
-      'which means another integration run truncated the shared test database while this ' +
-      '45-second window was open. Re-run on a quiet stack — `ps aux | grep vitest` first. ' +
-      'Overlapping integration runs against one Docker stack are not safe: they share one ' +
-      'test database.',
+      'which means another integration run truncated or re-made this worker\'s test database ' +
+      'while this 45-second window was open. Re-run on a quiet stack — `ps aux | grep vitest` ' +
+      'first. Overlapping integration runs of one worktree are not safe: they share its ' +
+      'test databases.',
     );
   }
 }

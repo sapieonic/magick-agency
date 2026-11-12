@@ -928,10 +928,21 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
   `packages/db/test/helpers/test-db.ts` and `apps/server/test/helpers/test-redis.ts` refuse any other
   port, a database not named `magick_agency_test*`, or Redis db 0.
 - **Per-worktree databases.** `tooling/test-env.ts` reads an untracked `.test-env.local.json`
-  (`{ "dbName": "magick_agency_test_<x>", "redisDb": 2 }`); integration global setup drops and
-  re-migrates that database on every run, so never run two integration runs on one database.
+  (`{ "dbName": "magick_agency_test_<x>", "redisDb": 5, "workers": 4 }`); integration global setup
+  drops and re-migrates that database on every run, so never run two integration runs on one
+  database.
+- **Parallel integration files.** Before each file, `packages/db/test/helpers/worker-env.ts` makes
+  the worker's database afresh from the migrated one (`CREATE DATABASE <db>_w<N> TEMPLATE <db>`,
+  `worker-db.ts`, about a quarter of a second) and points worker N at it and at Redis db
+  `redisDb + N - 1`, so a file's `truncateAll` and `FLUSHDB` reach only its own targets and no
+  file sees the rows, dead pages or statistics another left (a plan test would otherwise depend on
+  which files a worker ran first). Up to 4 workers by default (`TEST_WORKERS`); a worktree owns the
+  Redis range `redisDb`..`redisDb + workers - 1`, which the server's global setup holds for the run
+  and refuses to start on while another client is there. Four workers peak near 100 Postgres
+  connections, so the dev compose file and CI run Postgres with `max_connections` 300.
 - **Unit vs integration.** `pnpm test` is unit; `pnpm test:integration` runs the server and
-  `packages/db` suites file-serially against the real stack. Run from inside the package directory.
+  `packages/db` suites, files in parallel, against the real stack. Run from inside the package
+  directory.
 - **Chaos suites** (`apps/server/test/integration/agency/chaos/`): abandonment counter vs table,
   predicate agreement, attempt-number collision, DNC self-heal loop, lease renewer killed, network
   drop during ring, Redis expired wholesale, restart mid-bridge, roster exactly-once.

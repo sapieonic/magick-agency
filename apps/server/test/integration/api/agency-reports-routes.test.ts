@@ -97,7 +97,7 @@ beforeAll(async () => {
       agency: { ...c.agency, reports: { ...c.agency.reports, userPerMinute: USER_PER_MINUTE, tenantPendingLimit: 100 } },
     }),
   });
-  // The integration files share one database: start from no runs or subscriptions.
+  // Start from no runs or subscriptions, whatever this file's earlier tests left.
   await getTestPool().query('DELETE FROM report_runs');
   await getTestPool().query('DELETE FROM report_subscriptions');
   [floor] = await seedFloor({ tenants: 1, agentsPerTenant: 2, supervisorsPerTenant: 1, campaignsPerTenant: 3 }) as [TenantFloor];

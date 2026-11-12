@@ -103,7 +103,9 @@ describe('webrtcCallRepository.create — a call pinned to a credential (integra
       // Give it time to reach the row lock and wait there.
       await new Promise((r) => setTimeout(r, 300));
       const waiting = await getTestPool().query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'INSERT INTO agency_calls%'`);
+        // This database only: other integration workers run their own files on their own copies.
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'INSERT INTO agency_calls%'`);
       expect(waiting.rows[0]!.n).toBe(1);
       await admin.query('COMMIT');
       expect(await insert).toBeInstanceOf(TelephonyCredentialNotActiveError);

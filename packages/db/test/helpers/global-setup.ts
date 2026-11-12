@@ -2,6 +2,7 @@ import { runner } from 'node-pg-migrate';
 import pg from 'pg';
 import { MIGRATIONS_DIR } from '../../src/migrations-dir.js';
 import { TEST_DB_URL, assertSafeTestDbUrl } from './test-db.js';
+import { dropWorkerDatabases } from './worker-db.js';
 
 async function waitForPostgres(maxAttempts = 30, delayMs = 1000): Promise<void> {
   let lastErr: unknown;
@@ -24,6 +25,8 @@ async function waitForPostgres(maxAttempts = 30, delayMs = 1000): Promise<void> 
  * Fresh schema, then every migration, once per integration run. This is the
  * "baseline migrates on a throwaway Postgres" check: the schema is dropped
  * first, so a migration that only works against leftover state fails here.
+ * The suites never touch the base: before each file, `worker-env.ts` copies it to the
+ * worker's own database (`worker-db.ts`); the copies an earlier run left are dropped here.
  */
 export default async function setup(): Promise<void> {
   assertSafeTestDbUrl();
@@ -43,4 +46,5 @@ export default async function setup(): Promise<void> {
     count: Infinity,
     log: () => {},
   });
+  await dropWorkerDatabases(TEST_DB_URL);
 }

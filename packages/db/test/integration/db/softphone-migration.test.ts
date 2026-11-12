@@ -54,13 +54,15 @@ async function indexDef(name: string): Promise<string | undefined> {
  * account's page is 400 rows the keyset index hands over in order. On the near-empty tables a full
  * run leaves, these indexes tie and the pick followed the statistics and dead index entries earlier
  * files or autovacuum left (a perturbed run planned the attempts count from another live index and
- * the page from a sort).
+ * the page from a sort). The other accounts' and campaigns' ids are fixed, not random: where the
+ * nineteen sort around this file's account moved that tie, and one run in six on its own picked
+ * the other live index.
  */
 async function insertAccountsCalls(client: PoolClient): Promise<void> {
   await client.query(
     `CREATE TEMP TABLE plan_accounts ON COMMIT DROP AS
-     SELECT CASE WHEN a = 1 THEN $1::uuid ELSE gen_random_uuid() END AS account_id,
-            gen_random_uuid() AS campaign_id
+     SELECT CASE WHEN a = 1 THEN $1::uuid ELSE md5('plan-account-' || a)::uuid END AS account_id,
+            md5('plan-campaign-' || a)::uuid AS campaign_id
        FROM generate_series(1, 20) a`,
     [ACCOUNT]);
   await client.query(

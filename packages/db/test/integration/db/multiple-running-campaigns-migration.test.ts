@@ -22,8 +22,11 @@ beforeEach(truncateAll);
 afterEach(endPlanTransactions);
 afterAll(closeTestPool);
 
+// No migration lock: nothing else migrates this file's own database copy, and after a refused
+// Down the runner's unlock fails on its aborted transaction, so the lock lingers until the session
+// ends, which a restore right after could race.
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
-  runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {} });
+  runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
 const FILE = '0015_multiple_running_campaigns.sql';
 const INDEX = 'idx_agency_contacts_account_live_digits';

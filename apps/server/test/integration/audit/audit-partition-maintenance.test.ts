@@ -13,9 +13,9 @@ import {
  * (`purgeAuditPartitions`), including "leaves the audit
  * partitions alone when the cutoff predates all of them".
  *
- * The suite drops and creates partitions of the shared test database, so
+ * The suite drops and creates partitions of its worker's test database, so
  * `afterAll` puts the baseline's 2026-01..2027-12 window back and drops the
- * 2028 months the create cases add.
+ * 2028 months the create cases add (the next file gets a fresh copy regardless).
  */
 
 /** Drop every `<table>_2028_MM` the create cases attach (rows move to nowhere; tables are test-only). */

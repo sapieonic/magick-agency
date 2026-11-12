@@ -82,10 +82,10 @@ import { requiresDisposition } from '../../../../src/agency/outcome-classifier.j
 /**
  * This suite's own database. Touched by nothing else.
  *
- * The worktree's whole test Redis db is already private to this checkout (its
- * `.test-env.local.json`), and the harness may not touch any other db index (the
- * agency guard refuses db 0 and other worktrees own the rest), so the chaos database
- * IS the worktree's — read off its URL.
+ * The worker's whole test Redis db is already private to it (one per integration
+ * worker, from the checkout's range: tooling/test-env.ts), and the harness may not touch
+ * any other db index (the agency guard refuses db 0, other workers and worktrees own the
+ * rest), so the chaos database IS the worker's — read off its URL.
  */
 export const CHAOS_DB = Number(new URL(TEST_REDIS_URL).pathname.replace(/^\//, '') || '0');
 

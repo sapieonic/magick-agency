@@ -162,6 +162,9 @@ describe('the in-flight clash (§5.4): a customer ringing while we dial them', (
     const connected = await spineWhen(call, 'connected', (r) => r.state === 'connected', 20_000);
     expect(connected).toMatchObject({ session_id: agent.sessionId, answered_by_user_id: agent.agentUserId });
     await waitFor('clash recorded', async () => (await spineOf(connected.id)).clash_attempt_id === attempt.id);
+    // The row is written before the frame is sent (`onBridged`): wait for the frame, as the
+    // other inbound files do, or a busy machine reads the frames in between.
+    await waitFor('the connected frame', () => inboundCalls(agent).some((c) => c['state'] === 'connected'));
     // What the agent saw: the dial's panel released with the reason, then the caller's panel. Never `available`.
     const events = agent.allFrames().map((f) => f.frame?.['event']).filter((e) => e === 'released' || e === 'inbound_call');
     expect(events[0]).toBe('released');
