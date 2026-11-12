@@ -22,13 +22,17 @@ import {
   type HomeInsightsDeps,
 } from '../../../src/agency/home-board.js';
 import type { AgencyCampaignRecord } from '../../../src/db/models/agency.model.js';
+import { todayRange } from '../../../src/agency/insights/health.js';
 
 const SCOPE = { tenantId: 't-1', accountId: 'a-1' };
 const UPDATED = new Date('2026-11-12T08:00:00.000Z');
+/** The clock each test starts at: midday in Asia/Kolkata, the rows' zone. */
+const START = Date.parse('2026-11-12T06:30:00.000Z');
 
 function row(id: string, status: string, over: Partial<AgencyCampaignRecord> = {}): AgencyCampaignRecord {
   return {
     id, name: `Campaign ${id}`, status, tenant_id: 't-1', account_id: 'a-1', updated_at: UPDATED,
+    created_at: new Date('2026-11-01T00:00:00.000Z'),
     record_calls: false, default_timezone: 'Asia/Kolkata',
     calling_window_start: '09:00:00', calling_window_end: '21:00:00', calling_days: [1, 2, 3, 4, 5],
     ...over,
@@ -95,7 +99,7 @@ function advance(ms = 10_000) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
-  vi.setSystemTime(1_000_000);
+  vi.setSystemTime(START);
   resetHomeBoardMemosForTests();
   repo.floorSignatures.mockImplementation(async () => new Map());
   reads = {
@@ -343,6 +347,31 @@ describe('what is read again on the next board', () => {
     advance();
     await computeHomeBoard(SCOPE, deps);
     expect(reads[what]).toHaveBeenCalledTimes(4);
+  });
+
+  it('today’s figures over the Health tab’s Today, and the new day’s at once after the zone’s midnight', async () => {
+    // Kolkata's midnight is 18:30 UTC; a UTC campaign's day does not turn then.
+    const kolkata = row('r1', 'running');
+    const utc = row('r2', 'running', { default_timezone: 'UTC' });
+    list([kolkata, utc]);
+    vi.setSystemTime(Date.parse('2026-11-12T18:29:30.000Z'));
+    const before = new Date();
+    reads.today.mockImplementation(async (c: AgencyCampaignRecord, range: { from: Date }) => ({ ...TODAY, day: `${c.id}@${range.from.toISOString()}` }));
+    const first = await computeHomeBoard(SCOPE, deps);
+    expect(reads.today).toHaveBeenCalledWith(kolkata, todayRange(kolkata, before));
+    expect(reads.today).toHaveBeenCalledWith(utc, todayRange(utc, before));
+    expect(first.campaigns.map((c) => (c.today as unknown as { day: string }).day)).toEqual([
+      'r1@2026-11-11T18:30:00.000Z', 'r2@2026-11-12T00:00:00.000Z',
+    ]);
+
+    advance(40_000); // 18:30:10: a new day in Kolkata, well inside HOME_STILL_MS
+    reads.today.mockClear();
+    const after = await computeHomeBoard(SCOPE, deps);
+    expect(reads.today).toHaveBeenCalledTimes(1);
+    expect(reads.today).toHaveBeenCalledWith(kolkata, todayRange(kolkata, new Date()));
+    expect(after.campaigns.map((c) => (c.today as unknown as { day: string }).day)).toEqual([
+      'r1@2026-11-12T18:30:00.000Z', 'r2@2026-11-12T00:00:00.000Z',
+    ]);
   });
 
   it('only the campaign whose status or updated_at changed has its allocation read again', async () => {
