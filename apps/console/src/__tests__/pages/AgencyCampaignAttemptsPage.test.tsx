@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   getAgencyCampaign: vi.fn(),
   getCampaignAttempts: vi.fn(),
   downloadSpineCsv: vi.fn(),
+  listCampaignAgents: vi.fn(),
   // Typed with the parameter it really takes: inferred from `() => true`
   // the mock is zero-arg, and a per-capability `mockImplementation`
   // then fails to typecheck (vitest does not typecheck, so only `tsc`
@@ -46,12 +47,14 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
 vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));
+vi.mock('../../api/agency', () => ({ listCampaignAgents: mocks.listCampaignAgents }));
 vi.mock('../../api/agencySpine', () => ({
   getCampaignAttempts: mocks.getCampaignAttempts,
   downloadSpineCsv: mocks.downloadSpineCsv,
 }));
 
 import AttemptsPage from '../../pages/agency/AgencyCampaignAttemptsPage';
+import { ApiError } from '../../api/client';
 
 /** Connected, agent named, recording reachable. */
 const BRIDGED: AgencyAttempt = {
@@ -130,6 +133,7 @@ beforeEach(() => {
   // A STOPPED campaign by default: the primary case, not an afterthought.
   mocks.getAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Q3 Renewals', status: 'stopped' });
   mocks.getCampaignAttempts.mockResolvedValue(page([BRIDGED, ABANDONED, ORPHANED, CANCELED]));
+  mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
 });
 
 afterEach(cleanup);
@@ -604,7 +608,7 @@ describe('filters in the URL', () => {
     renderWithLocation('?outcome=busy&phone=98765');
     const chip = (await screen.findByLabelText('Busy')) as HTMLInputElement;
     expect(chip.checked).toBe(true);
-    expect((screen.getByPlaceholderText('Whole number, or the last few digits') as HTMLInputElement).value).toBe('98765');
+    expect((screen.getByPlaceholderText('Number or last digits') as HTMLInputElement).value).toBe('98765');
   });
 
   it('ignores an unknown key and a malformed flag rather than failing the page', async () => {
@@ -683,5 +687,88 @@ describe('an automatic outcome (decisions OD1–OD8)', () => {
     // The Disposition column (When, Number, Try, Agent, Outcome, Disposition, …).
     expect(row.querySelectorAll('td')[5]?.textContent).toBe('—');
     expect(screen.queryByTestId(`attempt-auto-disposition-${ABANDONED.id}`)).toBeNull();
+  });
+});
+
+/** The server's 400 for a filter it refuses: `{ error, details: [{ param, message }] }`. */
+function refusal(param: string, message: string): ApiError {
+  return new ApiError(400, { error: 'Validation failed', details: [{ param, message }] });
+}
+
+const PRIYA_ID = 'b2c3d4e5-2222-4333-8444-555566667777';
+
+describe('a filter the server refuses', () => {
+  it('shows no rows under it, plain copy, and no Retry that would send it again', async () => {
+    // The first load answers rows; the agent filter from the URL is then refused.
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    mocks.getCampaignAttempts.mockRejectedValueOnce(refusal('agent_user_id', 'must be an agent id'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => expect(screen.queryByTestId(`attempt-row-${BRIDGED.id}`)).toBeNull());
+    const alert = await screen.findByText(/The agent filter does not match an agent/);
+    expect(alert.textContent).not.toContain('must be an agent id');
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+    expect(screen.getByTestId('attempts-count').textContent).toBe('');
+  });
+
+  it('names the phone filter for a link that carries one with no digits', async () => {
+    mocks.getCampaignAttempts.mockRejectedValue(
+      refusal('phone', 'must contain at least one digit — search by the whole number or its last few digits'),
+    );
+    renderWithLocation('?phone=abc!!');
+
+    expect(await screen.findByText(/The phone number filter needs at least one digit\./)).toBeTruthy();
+    expect(screen.queryByText(/must contain at least one digit/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+  });
+
+  it('keeps Retry, and clears the stale rows, for a failure retrying can fix', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    mocks.getCampaignAttempts.mockRejectedValueOnce(new ApiError(503, { message: 'Service unavailable' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByRole('button', { name: /Retry/ })).toBeTruthy();
+    expect(screen.queryByTestId(`attempt-row-${BRIDGED.id}`)).toBeNull();
+  });
+});
+
+describe('the agent filter is picked by name', () => {
+  it('offers the campaign’s agents and the agents on the rows, and sends the id', async () => {
+    mocks.listCampaignAgents.mockResolvedValue({
+      agents: [{ user_id: PRIYA_ID, name: 'Priya Shah', email: 'priya@example.com', role: 'agent', assigned_at: '2026-08-01T00:00:00.000Z' }],
+    });
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(mocks.listCampaignAgents).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
+
+    const select = screen.getByTestId('attempts-agent-filter') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map((o) => o.textContent)).toEqual(
+      // Ravi is not assigned any more but has a row on screen.
+      ['All agents', 'Priya Shah', 'Ravi Menon'],
+    ));
+
+    fireEvent.change(select, { target: { value: PRIYA_ID } });
+    fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() => expect(currentQuery().get('agent_user_id')).toBe(PRIYA_ID));
+    expect(screen.getByText('Agent: Priya Shah')).toBeTruthy();
+  });
+});
+
+describe('a phone filter with no digits is caught in the form', () => {
+  it('says so in a sentence and does not send it', async () => {
+    renderWithLocation('');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const calls = mocks.getCampaignAttempts.mock.calls.length;
+
+    fireEvent.change(screen.getByPlaceholderText('Number or last digits'), { target: { value: 'abc!!' } });
+
+    expect(screen.getByTestId('attempts-phone-unusable').textContent).toContain('Type at least one digit of the phone number.');
+    expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.getCampaignAttempts.mock.calls.length).toBe(calls);
   });
 });

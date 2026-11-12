@@ -35,6 +35,7 @@ import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
+  PHONE_FILTER_PLACEHOLDER,
   ROSTER_DESCRIPTION,
   SPINE_PRIVACY_NOTE,
   dispositionLabel,
@@ -669,7 +670,7 @@ export function AgencyCampaignRosterPage() {
                 type="text"
                 className={spine.fieldInput}
                 value={draftPhone}
-                placeholder="Whole number, or the last few digits"
+                placeholder={PHONE_FILTER_PLACEHOLDER}
                 onChange={(e) => setDraftPhone(e.target.value)}
               />
             </span>

@@ -9,7 +9,7 @@ import { FiltersCard } from '../agency/FiltersCard';
 import { useTenant } from '../../contexts/TenantContext';
 import { getSoftphoneBootstrap, listManualCalls } from '../../api/softphone';
 import { listTenantMembers } from '../../api/tenants';
-import { formatSpineTimestamp, formatTalkTime } from '../../utils/agencySpineCopy';
+import { PHONE_FILTER_PLACEHOLDER, formatSpineTimestamp, formatTalkTime } from '../../utils/agencySpineCopy';
 import { agentInitials } from '../../utils/agencyAgentRoster';
 import { formatDialNumber } from '../../utils/softphone/phoneInput';
 import { catalogForCall, loggedToLabel, manualCallOutcome } from '../../utils/softphone/callLabels';
@@ -320,7 +320,7 @@ export function SoftphoneCallsList({
                 inputMode="tel"
                 className={spine.fieldInput}
                 value={draft.phone}
-                placeholder="Whole number, or the last few digits"
+                placeholder={PHONE_FILTER_PLACEHOLDER}
                 onChange={(e) => set({ phone: e.target.value })}
                 data-testid="filter-phone"
               />

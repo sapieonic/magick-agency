@@ -139,6 +139,14 @@ export function formatSpineTimestamp(iso: string | null): string {
   return dateFormatter(SPINE_TIMESTAMP).format(date);
 }
 
+/**
+ * The phone filter's hint on both call logs (dialler calls and soft-phone calls).
+ *
+ * Short on purpose: the filter grid's narrowest column is 180px, and the longer
+ * "Whole number, or the last few digits" was cut to "Whole number, or the last f" there.
+ */
+export const PHONE_FILTER_PLACEHOLDER = 'Number or last digits';
+
 /** `m:ss`, or an em dash. `0` is a real value and renders as `0:00`. */
 export function formatTalkTime(seconds: number | null): string {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '—';

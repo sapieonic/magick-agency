@@ -197,6 +197,14 @@ describe('Soft-phone calls (the account list)', () => {
     expect(screen.queryByTestId('summary-status')).toBeNull();
   });
 
+  it('gives the number filter a hint short enough to read whole in its column', async () => {
+    // "Whole number, or the last few digits" was cut to "Whole number, or the last f"
+    // in the 180px-minimum filter column. The hint is the call logs' shared one.
+    await renderList();
+    const input = screen.getByLabelText('Phone number') as HTMLInputElement;
+    expect(input.placeholder).toBe('Number or last digits');
+  });
+
   it('refuses an inverted date range before it is sent', async () => {
     await renderList();
     fireEvent.change(screen.getByTestId('filter-from'), { target: { value: '2026-10-31' } });

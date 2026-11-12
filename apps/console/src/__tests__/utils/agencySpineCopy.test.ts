@@ -4,6 +4,7 @@ import {
   ROSTER_DESCRIPTION,
   autoDispositionLabel,
   dispositionLabel,
+  PHONE_FILTER_PLACEHOLDER,
   formatSpineTimestamp,
   recordingDisabledNote,
 } from '../../utils/agencySpineCopy';
@@ -196,5 +197,13 @@ describe('formatSpineTimestamp', () => {
   it('a dash for no time, and the raw value for one that does not parse', () => {
     expect(formatSpineTimestamp(null)).toBe('—');
     expect(formatSpineTimestamp('not-a-date')).toBe('not-a-date');
+  });
+});
+
+describe('PHONE_FILTER_PLACEHOLDER', () => {
+  // The filter grid's narrowest column is 180px; at 13px, with the search icon's 32px of
+  // padding, about 22 characters fit. The old hint (36) was cut mid-word.
+  it('fits the narrowest filter column', () => {
+    expect(PHONE_FILTER_PLACEHOLDER.length).toBeLessThanOrEqual(22);
   });
 });
