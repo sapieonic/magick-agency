@@ -1325,6 +1325,19 @@ webhook's normalised form, which the read is given). **Down** drops it. **Tests*
 the down → up inventory suite, and the server's `test/integration/agency/inbound-follow-up.test.ts`
 (the read and the plan).
 
+### 0034 — `migrations/0034_dnc_phone_ending_index.sql`
+
+The Do Not Call list searched by the end of a number. **`idx_dnc_entries_tenant_phone_reversed`**
+`(tenant_id, reverse(phone_e164) text_pattern_ops)`: `GET /dnc?phone=` reads a whole number by the
+customer-history search's rule (an exact match on `idx_dnc_entries_tenant_phone`) and also matches
+the digits typed as the number's ending, as the soft phone's call log does; an ending is a prefix
+of the reversed number, so both arms are index scans (`phoneSearchCondition` in
+`apps/server/src/dnc/dnc.repository.ts`, which must spell the expression `reverse(phone_e164)`).
+Stored numbers are E.164, so no digits expression. **Down** drops it. **Tests**:
+`test/integration/db/dnc-phone-ending-index-migration.test.ts` (the definition, down then up), the
+down → up inventory suite, and the server's `test/integration/dnc/dnc-list-search.test.ts` (the
+search and its plan).
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

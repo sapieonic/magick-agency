@@ -398,13 +398,44 @@ describe('list — scope filters, and the null-vs-absent distinction', () => {
       .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
-    await repo.list({ tenantId: TENANT, phone: '+15551230001', source: 'api', limit: 25, offset: 50 });
+    await repo.list({
+      tenantId: TENANT,
+      phone: { e164: '+15551230001', endsWith: '5551230001' },
+      source: 'api',
+      limit: 25,
+      offset: 50,
+    });
 
     // Hand-numbered placeholders: an off-by-one here silently filters on the
     // limit and pages by the phone number.
     const params = paramsOf(1);
-    expect(params).toEqual([TENANT, '+15551230001', 'api', 25, 50]);
-    expect(sqlOf(1)).toContain('LIMIT $4 OFFSET $5');
+    expect(params).toEqual([TENANT, '+15551230001', '1000321555', 'api', 25, 50]);
+    expect(sqlOf(1)).toContain('LIMIT $5 OFFSET $6');
+  });
+});
+
+describe('list — the number search', () => {
+  beforeEach(() => {
+    mocks.query.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
+  });
+
+  it('a whole number matches exactly OR by its ending, the ending reversed for the index', async () => {
+    await repo.list({ tenantId: TENANT, phone: { e164: '+919908815060', endsWith: '9908815060' }, limit: 10, offset: 0 });
+    expect(sqlOf()).toContain("(phone_e164 = $2 OR reverse(phone_e164) LIKE $3 || '%')");
+    expect(paramsOf(1)).toEqual([TENANT, '+919908815060', '0605188099', 10, 0]);
+  });
+
+  it('a partial number matches by its ending only', async () => {
+    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: '15060' }, limit: 10, offset: 0 });
+    expect(sqlOf()).toContain("reverse(phone_e164) LIKE $2 || '%'");
+    expect(sqlOf()).not.toContain('phone_e164 =');
+    expect(paramsOf(1)).toEqual([TENANT, '06051', 10, 0]);
+  });
+
+  it('never lets a wildcard through, and a search with nothing usable matches nothing', async () => {
+    await repo.list({ tenantId: TENANT, phone: { e164: null, endsWith: '%_' }, limit: 10, offset: 0 });
+    expect(sqlOf()).toContain('WHERE tenant_id = $1 AND FALSE');
+    expect(paramsOf(1)).toEqual([TENANT, 10, 0]);
   });
 });
 

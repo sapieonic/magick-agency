@@ -977,7 +977,7 @@ Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/no
 
 ### `apps/server/src/dnc/`
 
-DNC list service and repository (`dnc_entries`, E.164 input, fail-closed reads; decision B8).
+DNC list service and repository (`dnc_entries`, E.164 input, fail-closed reads; decision B8). The list's search (`GET /dnc?phone=`, `dncPhoneSearch`) reads a whole number in any common form by the customer-history number rule and also matches the digits typed as the end of a number, both index-served (migration 0034).
 
 Files: `dnc.repository.ts`, `dnc.service.ts`
 
@@ -985,10 +985,11 @@ Files: `dnc.repository.ts`, `dnc.service.ts`
 |---|---|
 | `apps/server/test/integration/dnc/dnc-campaign-scope.test.ts` | ~10 |
 | `apps/server/test/integration/dnc/dnc-index-usage.test.ts` | ~5 |
+| `apps/server/test/integration/dnc/dnc-list-search.test.ts` (what each typed form finds, and the plan) | 14 |
 | `apps/server/test/integration/dnc/dnc-scope-sentinel.test.ts` | ~6 |
-| `apps/server/test/unit/dnc/dnc.repository.test.ts` | 25 |
+| `apps/server/test/unit/dnc/dnc.repository.test.ts` | 28 |
 | `apps/server/test/unit/dnc/dnc.routes.test.ts` | 46 |
-| `apps/server/test/unit/dnc/dnc.service.test.ts` | 21 |
+| `apps/server/test/unit/dnc/dnc.service.test.ts` | 32 |
 
 ### `apps/server/src/feature-flags/`
 
