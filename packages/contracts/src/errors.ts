@@ -204,16 +204,23 @@ export type AgencyActionErrorCode =
    * or the soft phone, in ANOTHER tenant. One live session per agent across every tenant. Body:
    * `AgencySessionInOtherTenantRefusal`.
    */
-  | 'session_in_other_tenant';
+  | 'session_in_other_tenant'
+  /**
+   * `POST /sessions/:id/force-available` refused (409, Mode B, IQ67): the agent is on `away_ring`,
+   * away from the app with their phone ringing for inbound callers. There is no station to make
+   * them available on (the release would write them `offline` and end their ringing). Nothing
+   * changed; force-break and sign-off work as before.
+   */
+  | 'agent_away_ring';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **28 members** — 16 before `session_on_other_campaign` and
+ * ⚠️ **29 members** — 16 before `session_on_other_campaign` and
  * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`, 20 before
  * the six wrap-up redial codes, 26 before `station_on_other_device` and
- * `session_in_other_tenant` (OS1, OS3).
+ * `session_in_other_tenant` (OS1, OS3), 28 before `agent_away_ring` (Mode B).
  * `test/errors.test.ts` snapshots the list.
  *
  * Order is the declaration order of the union.
@@ -247,6 +254,7 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'redial_blocked',
   'station_on_other_device',
   'session_in_other_tenant',
+  'agent_away_ring',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**

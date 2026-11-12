@@ -51,6 +51,12 @@ by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 
 A module that needs S3 reads `config.s3` rather than declaring its own key.
 
+Keys inside a block are the block's own. One the seams below rely on: `agency.awayRingMaxMs`
+(`AGENCY_AWAY_RING_MAX_MS`, default 4 h, 1 min to 24 h; Mode B, IQ67), how long one absence on
+the `away_ring` break may last. It is the Redis key's TTL, and the away-ring reconcile
+(`agency/away-ring.ts`, run by `bootstrap/agency.ts` at boot and every minute) ends an absence past
+it. The push senders' credentials (`PUSH_*`) are the platform block's (§3.6).
+
 Composition files that every area depends on, changed with care: `packages/contracts/**`,
 `packages/db/migrations/**`, `apps/server/src/seams/**`,
 `apps/server/src/{app.ts,app-context.ts,index.ts}`,

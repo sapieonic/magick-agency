@@ -701,6 +701,12 @@ export function inboundForceAvailableCopy(
   return text.replaceAll('{name}', displayName);
 }
 
+/**
+ * Mode B: force-available refused `409 agent_away_ring`. The agent is on `away_ring` (away from the
+ * app, their phone ringing for inbound callers), so there is no station to return them to.
+ */
+export const AGENT_AWAY_RING_FORCE_REFUSED = 'They’re away from the app; their phone rings for inbound calls.';
+
 /** Free-text reason cap, mirroring the API's `forceAvailableSchema`. */
 export const FORCE_AVAILABLE_REASON_MAX = 1000;
 

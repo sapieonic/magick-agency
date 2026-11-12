@@ -11,13 +11,20 @@ import type { AgencyAgentState } from '@magick-agency/contracts/agency';
  */
 
 const live = (state: AgencyAgentState, over: Partial<AgentLiveState> = {}): AgentLiveState => ({
-  state, attemptId: null, since: 1, manualCallId: null, softphone: false, inboundCallId: null, ...over,
+  state, attemptId: null, since: 1, manualCallId: null, softphone: false, inboundCallId: null, ring: false, pushOffer: false, ...over,
 });
 
 describe('heartbeatLeaseMs', () => {
   it('renews available and break, as it always has', () => {
     expect(heartbeatLeaseMs(live('available'), false)).toBe(AGENT_LEASE_MS.available);
     expect(heartbeatLeaseMs(live('break'), false)).toBe(AGENT_LEASE_MS.break);
+  });
+
+  it('never renews away_ring (N2): a ping before the app parks its socket must not cut the 4 h TTL to 45 s', () => {
+    expect(heartbeatLeaseMs(live('break', { ring: true }), false)).toBeNull();
+    expect(heartbeatLeaseMs(live('break', { ring: true }), true)).toBeNull();
+    // The plain break beside it is renewed as ever.
+    expect(heartbeatLeaseMs(live('break', { ring: false }), false)).toBe(AGENT_LEASE_MS.break);
   });
 
   it('renews a campaign wrap-up this process holds, and an inbound wrap-up owing its outcome', () => {

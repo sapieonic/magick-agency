@@ -13,6 +13,7 @@ import {
   agentDisplayName,
   canForceAvailable,
   forceAvailableConfirmMessage,
+  AGENT_AWAY_RING_FORCE_REFUSED,
   hasResolvedName,
   INBOUND_FORCE_AVAILABLE,
   inboundForceAvailableCopy,
@@ -138,6 +139,9 @@ export function AgentFloorDrawer({
       } else if (err instanceof ApiError && err.statusCode === 409 && errorCode(err) === 'inbound_call_live') {
         // The session still holds an inbound call the server would not close for us.
         showErrorToast(new Error(inboundForceAvailableCopy('refused', displayName)));
+      } else if (err instanceof ApiError && err.statusCode === 409 && errorCode(err) === 'agent_away_ring') {
+        // Mode B: away from the app, their phone ringing for inbound callers. Nothing changed.
+        showErrorToast(new Error(AGENT_AWAY_RING_FORCE_REFUSED));
       } else {
         showErrorToast(err, 'Could not return this agent to the pool.');
       }

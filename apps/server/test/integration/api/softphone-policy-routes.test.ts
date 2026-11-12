@@ -730,7 +730,7 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     runtime.breaks.cancel(sessionId);
     await runtime.agents.set(sessionId, 'available');
     const transition = vi.spyOn(runtime.agents, 'transition').mockResolvedValue(false);
-    const getNull = vi.spyOn(runtime.agents, 'get').mockResolvedValueOnce({ state: 'available', attemptId: null, since: null, manualCallId: null, softphone: false, inboundCallId: null })
+    const getNull = vi.spyOn(runtime.agents, 'get').mockResolvedValueOnce({ state: 'available', attemptId: null, since: null, manualCallId: null, softphone: false, inboundCallId: null, ring: false, pushOffer: false })
       .mockResolvedValueOnce(null);
     const failed = await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent);
     transition.mockRestore();

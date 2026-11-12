@@ -208,7 +208,8 @@
       "redial_blocked_calling_hours",
       "redial_blocked",
       "station_on_other_device",
-      "session_in_other_tenant"
+      "session_in_other_tenant",
+      "agent_away_ring"
     ]
   },
   "roles": {

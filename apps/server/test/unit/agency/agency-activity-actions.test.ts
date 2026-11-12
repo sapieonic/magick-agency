@@ -49,6 +49,9 @@ const ACCOUNT_WIDE: ReadonlySet<string> = new Set([
   'agency_inbound_call.handled',
   // A recording uploaded or deleted for inbound routes: account-wide.
   'agency_inbound_clip.uploaded',
+  // Mode B: an agent's push devices are theirs, across campaigns.
+  'agency_push_device.ring_opt_in_changed',
+  'agency_push_device.revoked',
   'agency_inbound_clip.deleted',
   'agency_inbound_call.reassigned',
   'agency_inbound_call.reopened',

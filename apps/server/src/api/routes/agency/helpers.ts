@@ -4,6 +4,8 @@
  * callback dial time, and the account name a live-session refusal carries. Part of
  * `agency.routes.ts`.
  */
+import type { AwayRingService } from '../../../agency/away-ring.js';
+import { AWAY_RING_BREAK_REASON, DEVICE_AWAY_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
@@ -409,13 +411,31 @@ export async function refuseIfHeldElsewhere(
  */
 export async function claimStationOrReply(
   reply: FastifyReply,
-  session: Pick<AgencyAgentSessionRecord, 'id' | 'station_device_id'>,
+  session: Pick<AgencyAgentSessionRecord, 'id' | 'station_device_id'> & Partial<Pick<AgencyAgentSessionRecord, 'agent_user_id' | 'break_reason'>>,
   device: StationDevice,
-  options: { reconnect?: boolean; onGone: () => FastifyReply | Promise<FastifyReply> },
+  options: {
+    reconnect?: boolean;
+    onGone: () => FastifyReply | Promise<FastifyReply>;
+    /**
+     * Mode B (IQ67, M5): told when the claim moved the station off a device the session was ringing
+     * (`claimStationDevice`'s `endedAwayRing`), so Redis's `ring` is cleared and the old device gets
+     * `ring_off` (`taken_over`). The campaign join and the token mint pass the runtime's.
+     */
+    awayRing?: Pick<AwayRingService, 'endOnTakeOver'>;
+  },
 ): Promise<boolean> {
   if (session.station_device_id === device.deviceId) return true;
   const claim = await agencyAgentSessionRepository.claimStationDevice(
     session.id, device, { reconnect: options.reconnect ?? false });
+  if (claim.ok && claim.endedAwayRing) {
+    // The row the route holds was read before the claim rewrote it: the bootstrap words the break
+    // from it (`breakReasonFor`), and the agent is no longer on `away_ring`.
+    if (session.break_reason === AWAY_RING_BREAK_REASON) session.break_reason = DEVICE_AWAY_BREAK_REASON;
+    if (options.awayRing && session.agent_user_id) {
+      await options.awayRing.endOnTakeOver(session.id, session.agent_user_id, claim.endedAwayRing.previousDeviceId)
+        .catch((err: unknown) => log.warn({ err, sessionId: session.id }, 'Could not end away-ring on a take-over'));
+    }
+  }
   if (claim.ok) return true;
   if (claim.reason === 'held_elsewhere') await sendStationOnOtherDevice(reply, session.id, claim.client_kind);
   else await options.onGone();

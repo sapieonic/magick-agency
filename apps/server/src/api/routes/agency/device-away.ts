@@ -12,15 +12,20 @@
  * as it was (`decideDeviceAway`). Both run the same rules with their own code; neither is
  * ever a campaign catalog's, and the ordinary `POST /sessions/:id/available` lifts either.
  *
- * Mode B (IQ58): `reason: 'away_ring'`, the away break whose phone rings for inbound callers,
- * is one of these pauses on the wire, but nothing can enter it yet: until its checks land (both
- * flags, the session's push device, the push sender; WP2) it is refused 409 `ring_not_allowed`
- * before anything is read or written, and the app falls back to `device_away`.
+ * Mode B (IQ58, IQ67): `reason: 'away_ring'`, the away break whose phone rings for inbound callers,
+ * is the third of these pauses. It is checked before anything is read from Redis or written
+ * (`AwayRingService.refusalFor`: both flags, the session's station device registered with a token
+ * and opted in, the push sender configured, a campaign session) and refused 409 with a typed code
+ * otherwise; the app then falls back to `device_away`. It runs the same rules, with one more:
+ * `device_away ↔ away_ring` is a break-to-break SWITCH (the app's own two away breaks, never the
+ * agent's choice), so an agent already paused as away can be rung, and an agent being rung can be
+ * paused as away without it (`decideDeviceAway`'s `switch`).
  */
 import type {
   AgencyAgentState,
   AgencyAppPauseBreakReason,
   AgencyAwayRingRefusal,
+  AgencyAwayRingRefusalCode,
   AgencyBreakReason,
   AgencySessionStateResponse,
 } from '@magick-agency/contracts/agency';
@@ -30,6 +35,7 @@ import { agencyAgentSessionRepository } from '../../../db/repositories/agency.re
 import { isCampaignSession, type AgencyAgentSessionRecord } from '../../../db/models/agency.model.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
+import { awayRingRefusalBody } from '../../../agency/away-ring.js';
 
 /**
  * What a device-away request does, from what the session is doing now.
@@ -48,8 +54,16 @@ import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
  *    * `offline`, or no lease at all (`null`: lapsed, or Redis could not answer, which
  *      pacing reads as gone too): not in the pool;
  *    * a soft-phone session: never paced, so nothing to protect.
+ *  - `switch` (Mode B): a break-to-break move between the app's two away breaks, on `break`:
+ *    `away_ring` asked on `device_away` (enter, from `break`), or `device_away` asked on `away_ring`
+ *    (`ring = 1`: end it). Never from any other break, so a named catalog break or the soft phone's
+ *    never gains `ring = 1` and is never replaced.
+ *
+ * `away_ring` asked while already on it (`ring`), or queued already, is `unchanged`. A queued
+ * `device_away` is replaced by a queued `away_ring` and the other way round: both are the app's,
+ * and the latest says what it can do now.
  */
-export type DeviceAwayDecision = 'apply' | 'queue' | 'unchanged';
+export type DeviceAwayDecision = 'apply' | 'queue' | 'switch' | 'unchanged';
 
 export function decideDeviceAway(input: {
   campaignSession: boolean;
@@ -57,10 +71,30 @@ export function decideDeviceAway(input: {
   live: AgencyAgentState | null;
   /** The code of the break queued for this session, if any. */
   queued: string | null;
+  /** The pause asked for; `device_away` when left out. */
+  code?: AgencyAppPauseBreakReason;
+  /** Redis's `ring` (Mode B): the session is on `away_ring`. */
+  ring?: boolean;
+  /** The session row's break reason (the break a `break` lease is on). */
+  breakReason?: string | null;
 }): DeviceAwayDecision {
   if (!input.campaignSession) return 'unchanged';
+  const code = input.code ?? DEVICE_AWAY_BREAK_REASON;
+  const ring = input.ring === true && input.live === 'break';
   if (input.live === 'available') return 'apply';
-  if (breakMustWait(input.live)) return input.queued === null ? 'queue' : 'unchanged';
+  if (input.live === 'break') {
+    if (code === AWAY_RING_BREAK_REASON) {
+      return !ring && input.breakReason === DEVICE_AWAY_BREAK_REASON ? 'switch' : 'unchanged';
+    }
+    if (code === DEVICE_AWAY_BREAK_REASON && ring) return 'switch';
+    return 'unchanged';
+  }
+  if (breakMustWait(input.live)) {
+    if (input.queued === null) return 'queue';
+    const awayPair = (input.queued === DEVICE_AWAY_BREAK_REASON && code === AWAY_RING_BREAK_REASON)
+      || (input.queued === AWAY_RING_BREAK_REASON && code === DEVICE_AWAY_BREAK_REASON);
+    return awayPair ? 'queue' : 'unchanged';
+  }
   return 'unchanged';
 }
 
@@ -94,16 +128,11 @@ const APP_PAUSE_BREAKS: Readonly<Record<AgencyAppPauseBreakReason, Readonly<Agen
 };
 
 /**
- * Mode B: why `away_ring` is refused. Until WP2 lands its checks (both flags on, the session's
- * station device registered to ring, the push sender configured, a campaign session) every
- * request is `ring_not_allowed`: the app falls back to `device_away`.
+ * Mode B: the 409 body refusing `away_ring` (`AwayRingService.refusalFor` says why; the app falls
+ * back to `device_away`).
  */
-export function awayRingRefusal(): AgencyAwayRingRefusal {
-  return {
-    error: 'Conflict',
-    code: 'ring_not_allowed',
-    message: 'Ringing your phone for inbound calls is not available. You are paused as away instead when you leave the app.',
-  };
+export function awayRingRefusal(code: AgencyAwayRingRefusalCode = 'ring_not_allowed'): AgencyAwayRingRefusal {
+  return awayRingRefusalBody(code);
 }
 
 /** How many times a lost CAS is re-decided before answering 409 state_changing (nothing changed). */
@@ -113,7 +142,7 @@ export type DeviceAwayResult =
   | { ok: true; body: AgencySessionStateResponse & { [BREAK_UNCHANGED_KEY]?: true } }
   /** The state kept moving under every pass: nothing changed; the caller answers 409 state_changing. */
   | { ok: false; refused?: undefined }
-  /** Mode B: `away_ring` refused before anything was read or written; the caller answers 409 with it. */
+  /** Mode B: `away_ring` refused before any state was read or written; the caller answers 409 with it. */
   | { ok: false; refused: AgencyAwayRingRefusal };
 
 /**
@@ -131,7 +160,10 @@ export async function runDeviceAway(
   session: AgencyAgentSessionRecord,
   code: AgencyAppPauseBreakReason = DEVICE_AWAY_BREAK_REASON,
 ): Promise<DeviceAwayResult> {
-  if (code === AWAY_RING_BREAK_REASON) return { ok: false, refused: awayRingRefusal() };
+  if (code === AWAY_RING_BREAK_REASON) {
+    const refused = await runtime.awayRing.refusalFor(session);
+    if (refused) return { ok: false, refused: awayRingRefusal(refused) };
+  }
   const reason: AgencyBreakReason = { ...APP_PAUSE_BREAKS[code] };
   let queuedHere = false;
   for (let pass = 0; pass < DEVICE_AWAY_PASSES; pass++) {
@@ -141,11 +173,38 @@ export async function runDeviceAway(
       campaignSession: isCampaignSession(session),
       live: live?.state ?? null,
       queued: queued?.code ?? null,
+      code,
+      ring: live?.ring ?? false,
+      breakReason: session.break_reason,
     });
     const now = new Date();
     const since = now.toISOString();
+    const applied = (): DeviceAwayResult => ({
+      ok: true,
+      body: { session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'break', since, break_reason: reason.code },
+    });
 
-    if (decision === 'apply') {
+    // ── Mode B: entering `away_ring` (from `available`, or switched from `device_away`) ──────
+    if (code === AWAY_RING_BREAK_REASON && (decision === 'apply' || decision === 'switch')) {
+      const entered = await runtime.awayRing.enter(session, decision === 'apply' ? ['available'] : ['break']);
+      if (!entered.ok) {
+        // Lost the compare-and-swap (a reservation, a release): re-decided. Refused by the guard (a
+        // soft-phone call, an inbound call held): nothing to do, answered as it stands below.
+        if (entered.reason === 'wrong_state' || entered.reason === 'unavailable') continue;
+      } else {
+        if (queued?.code === reason.code) runtime.breaks.take(session.id);
+        return applied();
+      }
+    }
+    // ── Mode B: `device_away` asked while on `away_ring`: the ringing ends, the pause stays ──
+    if (code === DEVICE_AWAY_BREAK_REASON && decision === 'switch') {
+      const ended = await runtime.awayRing.end(session.id, null, { offline: false });
+      if (ended === 'ended') return applied();
+      if (ended === 'not_away_ring' || ended === 'unavailable') continue;
+      // A ring in flight: the connector's. Answered as it stands below.
+    }
+
+    if (decision === 'apply' && code !== AWAY_RING_BREAK_REASON) {
       const moved = await runtime.agents.transition(session.id, 'available', 'break', { leaseMs: AGENT_LEASE_MS.break });
       if (!moved) continue;
       // Ours, queued a moment ago and overtaken by a release: it has applied now.
@@ -173,8 +232,11 @@ export async function runDeviceAway(
     // `unchanged`: the current state, as the session holds it.
     const state = live?.state ?? 'offline';
     // Queued here, and the queue is empty again on `break`: the release applied ours
-    // between two passes (the row read at the start of the request predates it).
-    const breakReason = queuedHere && state === 'break' && !queued ? reason.code : session.break_reason;
+    // between two passes (the row read at the start of the request predates it). On
+    // `away_ring` already (`ring`): that is its reason, whatever the row read said.
+    const breakReason = queuedHere && state === 'break' && !queued
+      ? reason.code
+      : state === 'break' && live?.ring ? AWAY_RING_BREAK_REASON : session.break_reason;
     const body: AgencySessionStateResponse & { [BREAK_UNCHANGED_KEY]?: true } = {
       session_id: session.id,
       campaign_id: session.campaign_id,

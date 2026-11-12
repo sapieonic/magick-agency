@@ -286,7 +286,7 @@ describe('the rejoin grace (SWE-F1): a station closed moments ago still counts, 
   });
 
   it('rejoinState: the state now while it could take a caller; else, over the close`s `offline` or a lapsed lease, the state at the close; anything else written since stands', () => {
-    const live = (state: AgencyAgentState) => ({ state, attemptId: null, since: NOW, manualCallId: null, softphone: false, inboundCallId: null });
+    const live = (state: AgencyAgentState) => ({ state, attemptId: null, since: NOW, manualCallId: null, softphone: false, inboundCallId: null, ring: false, pushOffer: false });
     expect(rejoinState(live('on_call'), live('on_call'))).toEqual(live('on_call'));
     expect(rejoinState(live('offline'), live('wrapup'))).toEqual(live('wrapup'));
     expect(rejoinState(null, live('available'))).toEqual(live('available'));

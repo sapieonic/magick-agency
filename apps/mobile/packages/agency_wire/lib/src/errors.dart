@@ -95,6 +95,11 @@ enum AgencyErrorCode implements WireEnum {
   /// 409 (OS1) on join or the soft-phone open: the agent is live in another organisation (tenant).
   /// Nothing here can end it. `message` names the workspace.
   sessionInOtherTenant('session_in_other_tenant'),
+
+  /// 409 (Mode B) on a supervisor's force-available: the agent is on `away_ring`, away from the
+  /// app with their phone ringing for inbound callers. Nothing changed. Never sent to the app
+  /// (a supervisor's route), listed because the contract's list is the whole union.
+  agentAwayRing('agent_away_ring'),
   unknown('');
 
   const AgencyErrorCode(this.wire);

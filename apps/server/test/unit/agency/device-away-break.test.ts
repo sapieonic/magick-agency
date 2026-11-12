@@ -313,33 +313,135 @@ describe('the phone-call pause (IQ51): the device-away rules with its own code',
   });
 });
 
-// ─── Mode B (IQ58): `reason: 'away_ring'`, refused until WP2 lands its checks ───
+// ─── Mode B (IQ58, IQ67): `reason: 'away_ring'` and the device_away ↔ away_ring switch ───
 
-describe('the away-ring pause (IQ58): refused ring_not_allowed for now, before anything is read', () => {
-  it.each(['available', 'reserved', 'on_call', 'wrapup', 'break', 'offline', null] as const)(
-    'from %s: 409 ring_not_allowed, no read, no write, nothing queued, nothing sent', async (state) => {
-      const w = world(state);
+describe('decideDeviceAway — Mode B', () => {
+  it.each([
+    // [code, live, ring, row reason, queued, expected]
+    ['away_ring', 'available', false, null, null, 'apply'],
+    ['away_ring', 'break', false, 'device_away', null, 'switch'],
+    ['away_ring', 'break', true, 'away_ring', null, 'unchanged'],
+    ['away_ring', 'break', false, 'lunch', null, 'unchanged'],
+    ['away_ring', 'break', false, 'soft_phone', null, 'unchanged'],
+    ['away_ring', 'break', false, 'phone_call', null, 'unchanged'],
+    ['away_ring', 'wrapup', false, null, null, 'queue'],
+    ['away_ring', 'wrapup', false, null, 'device_away', 'queue'],
+    ['away_ring', 'on_call', false, null, 'away_ring', 'unchanged'],
+    ['away_ring', 'reserved', false, null, 'lunch', 'unchanged'],
+    ['away_ring', 'offline', false, null, null, 'unchanged'],
+    ['device_away', 'break', true, 'away_ring', null, 'switch'],
+    ['device_away', 'break', false, 'away_ring', null, 'unchanged'],
+    ['device_away', 'wrapup', false, null, 'away_ring', 'queue'],
+    ['phone_call', 'break', true, 'away_ring', null, 'unchanged'],
+  ] as const)('%s on %s (ring %s, row %s, queued %s) → %s', (code, live, ring, breakReason, queued, expected) => {
+    expect(decideDeviceAway({ campaignSession: true, live, queued, code, ring, breakReason })).toBe(expected);
+  });
+
+  it('a soft-phone session is never changed by away_ring either', () => {
+    expect(decideDeviceAway({ campaignSession: false, live: 'available', queued: null, code: 'away_ring' })).toBe('unchanged');
+  });
+});
+
+describe('runDeviceAway — away_ring', () => {
+  /** The world, with the away-ring service scripted over its lease (`ring`). */
+  function ringWorld(state: AgencyAgentState | null, opts: { refused?: string | null; ring?: boolean } = {}) {
+    const w = world(state);
+    let ring = opts.ring ?? false;
+    const get = w.runtime.agents.get as ReturnType<typeof vi.fn>;
+    get.mockImplementation(async () => {
+      w.beforeRead.shift()?.();
+      return w.lease ? { state: w.lease.state, attemptId: null, since: w.lease.since, manualCallId: null, softphone: false, inboundCallId: null, ring, pushOffer: false } : null;
+    });
+    const awayRing = {
+      refusalFor: vi.fn(async () => opts.refused ?? null),
+      enter: vi.fn(async (_s: unknown, from: readonly AgencyAgentState[]) => {
+        if (!w.lease || !from.includes(w.lease.state)) return { ok: false, reason: 'wrong_state' };
+        w.lease = { state: 'break', since: Date.now() };
+        ring = true;
+        return { ok: true, since: new Date().toISOString() };
+      }),
+      end: vi.fn(async () => {
+        if (!(w.lease?.state === 'break' && ring)) return 'not_away_ring';
+        ring = false;
+        return 'ended';
+      }),
+    };
+    (w.runtime as unknown as { awayRing: typeof awayRing }).awayRing = awayRing;
+    return { w, awayRing, ring: () => ring };
+  }
+
+  it.each(['ring_not_allowed', 'no_push_device', 'ring_disabled', 'push_unavailable'] as const)(
+    'refused %s: a typed 409, before any state is read or written', async (code) => {
+      const { w, awayRing } = ringWorld('available', { refused: code });
       const res = await runDeviceAway(w.runtime, session(), 'away_ring');
-      expect(res).toEqual({
-        ok: false,
-        refused: { error: 'Conflict', code: 'ring_not_allowed', message: expect.any(String) },
-      });
+      expect(res).toEqual({ ok: false, refused: { error: 'Conflict', code, message: expect.any(String) } });
       expect(w.runtime.agents.get).not.toHaveBeenCalled();
-      expect(w.transition).not.toHaveBeenCalled();
+      expect(awayRing.enter).not.toHaveBeenCalled();
       expect(w.breaks.peek('sess-1')).toBeNull();
-      expect(repos.session.setState).not.toHaveBeenCalled();
       expect(w.sent).toEqual([]);
     });
 
-  it('a soft-phone session is refused the same way', async () => {
-    const w = world('break');
-    const res = await runDeviceAway(w.runtime, session({ kind: 'softphone', campaign_id: null }), 'away_ring');
-    expect(res.ok).toBe(false);
-    expect(!res.ok && res.refused?.code).toBe('ring_not_allowed');
+  it('available → away_ring now, through the service (Redis CAS, mirror, frame)', async () => {
+    const { w, awayRing, ring } = ringWorld('available');
+    const res = await runDeviceAway(w.runtime, session(), 'away_ring');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'away_ring' }) });
+    expect(awayRing.enter).toHaveBeenCalledWith(expect.objectContaining({ id: 'sess-1' }), ['available']);
+    expect(ring()).toBe(true);
+    expect(w.transition).not.toHaveBeenCalled();
+  });
+
+  it('device_away → away_ring is a break-to-break switch (from break only)', async () => {
+    const { w, awayRing } = ringWorld('break');
+    const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'device_away' }), 'away_ring');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'away_ring' }) });
+    expect(awayRing.enter).toHaveBeenCalledWith(expect.anything(), ['break']);
+  });
+
+  it('a named catalog break never gains ring = 1: unchanged, nothing entered', async () => {
+    const { w, awayRing, ring } = ringWorld('break');
+    const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'lunch' }), 'away_ring');
+    expect(res.ok && res.body).toMatchObject({ state: 'break', break_reason: 'lunch', [BREAK_UNCHANGED_KEY]: true });
+    expect(awayRing.enter).not.toHaveBeenCalled();
+    expect(ring()).toBe(false);
+  });
+
+  it('already on away_ring: unchanged, answered as away_ring', async () => {
+    const { w, awayRing } = ringWorld('break', { ring: true });
+    const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'away_ring' }), 'away_ring');
+    expect(res.ok && res.body).toMatchObject({ state: 'break', break_reason: 'away_ring', [BREAK_UNCHANGED_KEY]: true });
+    expect(awayRing.enter).not.toHaveBeenCalled();
+  });
+
+  it('in wrap-up: queued, replacing a queued device_away (the release applies it)', async () => {
+    const { w } = ringWorld('wrapup');
+    w.breaks.queue('sess-1', { code: 'device_away', label: 'Away' });
+    const res = await runDeviceAway(w.runtime, session({ state: 'wrapup' }), 'away_ring');
+    expect(res.ok && res.body).toMatchObject({ state: 'wrapup', pending_state: 'break', break_reason: 'away_ring' });
+    expect(w.breaks.peek('sess-1')?.code).toBe('away_ring');
+  });
+
+  it('a lost compare-and-swap is re-decided: a reservation landing first queues it', async () => {
+    const { w, awayRing } = ringWorld('available');
+    w.beforeRead.push(() => undefined, () => { w.lease = { state: 'reserved', since: Date.now() }; });
+    awayRing.enter.mockImplementationOnce(async () => {
+      w.lease = { state: 'reserved', since: Date.now() };
+      return { ok: false, reason: 'wrong_state' };
+    });
+    const res = await runDeviceAway(w.runtime, session(), 'away_ring');
+    expect(res.ok && res.body).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'away_ring' });
+  });
+
+  it('device_away while on away_ring ends the ringing and keeps the pause (no ring_off: the app asked)', async () => {
+    const { w, awayRing, ring } = ringWorld('break', { ring: true });
+    const res = await runDeviceAway(w.runtime, session({ state: 'break', break_reason: 'away_ring' }), 'device_away');
+    expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away' }) });
+    expect(awayRing.end).toHaveBeenCalledWith('sess-1', null, { offline: false });
+    expect(ring()).toBe(false);
   });
 
   it('awayRingRefusal is the typed 409 body, and device_away still applies (the app\'s fallback)', async () => {
     expect(awayRingRefusal()).toMatchObject({ error: 'Conflict', code: 'ring_not_allowed' });
+    expect(awayRingRefusal('ring_disabled')).toMatchObject({ code: 'ring_disabled' });
     const w = world('available');
     const res = await runDeviceAway(w.runtime, session(), 'device_away');
     expect(res).toEqual({ ok: true, body: expect.objectContaining({ state: 'break', break_reason: 'device_away' }) });
