@@ -940,6 +940,113 @@ describe('the campaign header on Settings', () => {
 });
 
 /**
+ * ── Reads that land late ─────────────────────────────────────────────────────
+ * Refresh and the lifecycle controls re-read the campaign row and leave the form alone. A read
+ * sent before a write must not paint over it, a read for a campaign the URL has moved off must
+ * not paint at all, and a save after a Refresh sends only what was edited.
+ */
+describe('reads that land late, and saving after a Refresh', () => {
+  function deferred<T>() {
+    let resolve: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
+  it('a Refresh sent before Pause cannot put the old status back', async () => {
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({ status: 'running' }));
+    renderPage();
+    await screen.findByRole('button', { name: /pause/i });
+
+    const slow = deferred<AgencyCampaign>();
+    mocks.getAgencyCampaign.mockReturnValueOnce(slow.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    mocks.transitionAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+    expect(await screen.findByRole('button', { name: /resume/i })).toBeTruthy();
+
+    await act(async () => slow.resolve(campaign({ status: 'running' })));
+    expect(screen.getByRole('button', { name: /resume/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /pause/i })).toBeNull();
+  });
+
+  it('a Refresh of one campaign that lands after moving to another paints nothing', async () => {
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) =>
+      (id === 'camp-2' ? campaign({ id: 'camp-2', name: 'Renewals' }) : campaign()));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-2/settings" />
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+
+    const slow = deferred<AgencyCampaign>();
+    mocks.getAgencyCampaign.mockImplementationOnce(() => slow.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+
+    await act(async () => slow.resolve(campaign()));
+    expect(screen.getByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+    expect((screen.getByLabelText(/campaign name/i) as HTMLInputElement).value).toBe('Renewals');
+  });
+
+  it('a Pause of one campaign answered after moving to another paints nothing', async () => {
+    mocks.getAgencyCampaign.mockImplementation(async (id: string) =>
+      (id === 'camp-2' ? campaign({ id: 'camp-2', name: 'Renewals', status: 'running' }) : campaign({ status: 'running' })));
+    render(
+      <MemoryRouter initialEntries={['/agency/campaigns/camp-1/settings']}>
+        <Routes>
+          <Route path="/agency/campaigns/:id/settings" element={<SettingsPage />} />
+        </Routes>
+        <JumpTo to="/agency/campaigns/camp-2/settings" />
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'Collections — August' });
+
+    const slow = deferred<AgencyCampaign>();
+    mocks.transitionAgencyCampaign.mockReturnValueOnce(slow.promise);
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+
+    await act(async () => slow.resolve(campaign({ status: 'paused' })));
+    expect(screen.getByRole('heading', { level: 1, name: 'Renewals' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /resume/i })).toBeNull();
+  });
+
+  it('a save after a Refresh does not send back the caller IDs, carrier or name someone else changed', async () => {
+    const stored = { telephony_provider: 'voicelink', telephony_credential_id: null };
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign(stored));
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+
+    // Someone else renames the campaign and changes its pool; this person presses Refresh.
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({
+      ...stored, name: 'Collections — renamed elsewhere', caller_ids: ['+912200000009'],
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByRole('heading', { level: 1, name: 'Collections — renamed elsewhere' });
+    expect(screen.queryByTestId('unsaved-changes-bar')).toBeNull();
+
+    // Then changes only the calling window and saves.
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    expect(screen.getByTestId('unsaved-changes-bar').textContent).toContain('1 unsaved change');
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
+    const body = mocks.updateAgencyCampaign.mock.calls[0][1];
+    expect(body.calling_window_start).toBe('11:00');
+    expect(body).not.toHaveProperty('caller_ids');
+    expect(body).not.toHaveProperty('telephony_provider');
+    expect(body).not.toHaveProperty('telephony_credential_id');
+    expect(body).not.toHaveProperty('name');
+  });
+});
+
+/**
  * ── Unsaved changes ───────────────────────────────────────────────────────────
  * Save is a bar stuck to the bottom of the view, there only while something is unsaved, with
  * a count of the settings that differ; leaving with unsaved edits asks first.

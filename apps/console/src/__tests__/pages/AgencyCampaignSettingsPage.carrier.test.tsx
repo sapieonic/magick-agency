@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { AgencyCampaign, AgencyCarrier } from '../../types/agency-campaign';
 
@@ -295,5 +295,28 @@ describe('campaign settings — carrier', () => {
     saveSettings();
     expect(await screen.findByText(copy)).toBeTruthy();
     expect(screen.queryByText('server words')).toBeNull();
+  });
+});
+
+describe('campaign settings — a save after a Refresh', () => {
+  it('does not move the campaign back to the carrier someone else moved it off', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    expect(carrierSelect()?.value).toContain('voicelink');
+
+    // Someone else moves it to the tenant's own account; this person presses Refresh.
+    mocks.getAgencyCampaign.mockResolvedValueOnce(campaign({
+      telephony_provider: 'plivo', telephony_credential_id: CRED_A, caller_ids: ['+14155550102'],
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(mocks.getAgencyCampaign).toHaveBeenCalledTimes(2));
+    await act(async () => undefined);
+
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '11:00' } });
+    fireEvent.click(await screen.findByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody()).not.toHaveProperty('telephony_provider');
+    expect(sentBody()).not.toHaveProperty('telephony_credential_id');
+    expect(sentBody()).not.toHaveProperty('caller_ids');
   });
 });
