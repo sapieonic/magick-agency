@@ -38,9 +38,9 @@
     gap: 12px;
   }
 
-  /* Clear the sticky section strip. */
+  /* Clear the sticky section strip, then the same gap as on a wide screen. */
   .sections > * {
-    scroll-margin-top: 64px;
+    scroll-margin-top: calc(var(--settings-strip-height) + 16px);
   }
 }
 
