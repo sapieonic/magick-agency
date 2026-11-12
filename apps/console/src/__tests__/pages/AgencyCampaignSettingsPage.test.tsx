@@ -1008,6 +1008,31 @@ describe('unsaved changes', () => {
     expect(bar()?.textContent).toMatch(/fix/i);
   });
 
+  it('holds Save while the name is empty, saying so on the field before Save is pressed', async () => {
+    renderPage();
+    await screen.findByLabelText(/campaign name/i);
+    fireEvent.change(nameField(), { target: { value: '  ' } });
+
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(bar()?.textContent).toMatch(/fix the highlighted fields/i);
+    expect(document.getElementById('general')?.textContent).toMatch(/a campaign needs a name/i);
+    expect(nameField().getAttribute('aria-invalid')).toBe('true');
+
+    // Named again: Save is back, and the note and the field's message go.
+    fireEvent.change(nameField(), { target: { value: 'Collections — September' } });
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/a campaign needs a name/i)).toBeNull();
+    expect(bar()?.textContent).not.toMatch(/fix/i);
+  });
+
+  it('holds Save while no caller ID is picked, saying so on the field', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('checkbox', { name: /\+912200000001/ }));
+
+    expect((screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById('caller-ids')?.textContent).toMatch(/needs at least one caller id/i);
+  });
+
   it('asks before leaving with unsaved edits; Cancel stays with them', async () => {
     renderWithExit();
     await screen.findByLabelText(/campaign name/i);

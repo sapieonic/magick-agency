@@ -50,6 +50,21 @@ export interface UrlScopeValue {
   go: (scope: UrlScope | null, path?: string, options?: { replace?: boolean }) => void;
 }
 
+/**
+ * A Back or Forward the browser has taken, before the router hears of it: the URL it reached
+ * (`pathname`, with the scope prefix, as in the address bar) and how many entries it moved.
+ */
+export interface HistoryStep {
+  pathname: string;
+  delta: number;
+}
+
+/** Return true to hold the step: the browser is put back and the router never hears it. */
+export type HistoryStepBlocker = (step: HistoryStep) => boolean;
+
+/** Add a blocker; the function returned removes it. */
+export type HoldHistorySteps = (blocker: HistoryStepBlocker) => () => void;
+
 /** The current location, which only the router needs: it changes on every navigation. */
 export interface UrlLocationValue {
   location: Location;
@@ -77,6 +92,17 @@ const UNSCOPED: UrlScopeValue = {
  */
 const UrlScopeContext = createContext<UrlScopeValue>(UNSCOPED);
 const UrlLocationContext = createContext<UrlLocationValue | null>(null);
+/**
+ * The way to hold Back and Forward (`useUnsavedChangesGuard`). Outside a provider (a memory
+ * router in a unit test) there is no browser Back to hold, so it adds nothing.
+ */
+const HistoryStepsContext = createContext<HoldHistorySteps>(() => () => {});
+
+/** react-router's index of the current entry, kept in `history.state.idx`; `null` without one. */
+function entryIndex(): number | null {
+  const idx = (window.history.state as { idx?: unknown } | null)?.idx;
+  return typeof idx === 'number' ? idx : null;
+}
 
 export function UrlScopeProvider({ children }: { children: ReactNode }) {
   const historyRef = useRef<BrowserHistory | null>(null);
@@ -91,8 +117,44 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
     action: history.action,
     location: history.location,
   }));
+  const blockersRef = useRef(new Set<HistoryStepBlocker>());
   useLayoutEffect(() => {
-    const unlisten = history.listen(({ action, location }) => setState({ action, location }));
+    /*
+     * Back and Forward are held HERE, in the history's one listener, before the router hears
+     * of them. A page cannot do it with a `popstate` listener of its own: Chromium runs a
+     * window's listeners in the order they were added, capture phase or not, so this one,
+     * added when the app mounts, always ran first and the router left the page before the
+     * page's listener could stop it.
+     *
+     * A held step is undone with `go(-delta)`, and that return trip is not passed on either:
+     * the router stays where it was. `delta` comes from react-router's entry index; a step
+     * from or to an entry without one (a fragment typed into the address bar) cannot be
+     * measured, so it goes through.
+     */
+    let index = entryIndex();
+    let reverting = false;
+    const unlisten = history.listen(({ action, location }) => {
+      const next = entryIndex();
+      if (action === 'POP') {
+        if (reverting) {
+          reverting = false;
+          if (next !== null && next === index) return;
+        }
+        const delta = index !== null && next !== null ? next - index : null;
+        if (delta !== null && delta !== 0) {
+          const step: HistoryStep = { pathname: location.pathname, delta };
+          if ([...blockersRef.current].some((blocker) => blocker(step))) {
+            reverting = true;
+            // The browser's own, not `history.go`: a guard may have wrapped that one
+            // (`useUnsavedChangesGuard` holds `navigate(-1)` there).
+            window.history.go(-delta);
+            return;
+          }
+        }
+      }
+      index = next;
+      setState({ action, location });
+    });
     /*
      * Catch up with anything that moved the URL before this subscription existed.
      * Layout effects run child-first on mount, so `ScopedRouter` replacing a scoped
@@ -132,11 +194,29 @@ export function UrlScopeProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<UrlScopeValue>(() => ({ scope, prefix, history, go }), [scope, prefix, history, go]);
 
+  const holdSteps = useCallback<HoldHistorySteps>((blocker) => {
+    blockersRef.current.add(blocker);
+    return () => {
+      blockersRef.current.delete(blocker);
+    };
+  }, []);
+
   return (
     <UrlScopeContext.Provider value={value}>
-      <UrlLocationContext.Provider value={state}>{children}</UrlLocationContext.Provider>
+      <HistoryStepsContext.Provider value={holdSteps}>
+        <UrlLocationContext.Provider value={state}>{children}</UrlLocationContext.Provider>
+      </HistoryStepsContext.Provider>
     </UrlScopeContext.Provider>
   );
+}
+
+/**
+ * Hold Back and Forward before the router hears them: each blocker added is asked about every
+ * step the browser takes, and one that returns true has the browser put back. For
+ * `useUnsavedChangesGuard`; outside a provider it holds nothing.
+ */
+export function useHoldHistorySteps(): HoldHistorySteps {
+  return useContext(HistoryStepsContext);
 }
 
 /** The URL's scope and the way between scopes; unscoped outside a provider. */

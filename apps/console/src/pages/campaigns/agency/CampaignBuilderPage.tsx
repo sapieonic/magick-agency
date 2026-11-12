@@ -63,6 +63,9 @@ import {
 import { BuilderStepper } from './BuilderStepper';
 import { BuilderSummary } from './BuilderSummary';
 import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
+import { changedSettings } from '../../../utils/campaignSettingsChanges';
+import { useUnsavedChangesGuard } from '../../../hooks/useUnsavedChangesGuard';
+import { LeaveUnsavedDialog } from '../../../components/agency/UnsavedChangesBar';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
@@ -80,7 +83,22 @@ import styles from './CampaignBuilderPage.module.css';
  * Everything the page decides is still delegated to the pure modules —
  * `agencyColumnMapping`, `agencyIngestSummary`, `agencyCampaignConfigForm`,
  * `builderFlow` — so the page is composition.
+ *
+ * Leaving with input not yet saved asks first, as campaign Settings does
+ * (`useUnsavedChangesGuard`): what is typed is compared with what the server has (nothing
+ * at first; the name, numbers and carrier once a roster upload creates the draft; the whole
+ * form once Save campaign succeeds), and a roster upload still being mapped counts too.
  */
+
+/** What the builder holds that a save sends: compared with what is saved to find unsaved input. */
+interface BuilderForm {
+  name: string;
+  callerIds: readonly string[];
+  /** The carrier picked, or `null` for the default the page would use. */
+  carrier: CarrierChoice | null;
+  recordCalls: boolean;
+  config: CampaignConfigState;
+}
 
 export default function CampaignBuilderPage() {
   const { tenantId, accountId } = useTenant();
@@ -122,6 +140,14 @@ export default function CampaignBuilderPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [savingConfig, setSavingConfig] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
+  /** The form as the server has it: empty until a draft is created, then as last saved. */
+  const [savedForm, setSavedForm] = useState<BuilderForm>(() => ({
+    name: '',
+    callerIds: [],
+    carrier: null,
+    recordCalls: false,
+    config,
+  }));
   const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -187,8 +213,10 @@ export default function CampaignBuilderPage() {
       throw withCarrierRefusalCopy(err);
     }
     setCampaignId(created.id);
+    // The draft has the basics now; the rest is saved by Save campaign.
+    setSavedForm((saved) => ({ ...saved, name, callerIds, carrier: chosenCarrier }));
     return created.id;
-  }, [campaignId, name, callerIds, carrier, ceilingForCreate, tenantId, accountId]);
+  }, [campaignId, name, callerIds, carrier, chosenCarrier, ceilingForCreate, tenantId, accountId]);
 
   const {
     limits,
@@ -272,6 +300,7 @@ export default function CampaignBuilderPage() {
         accountId ?? undefined,
       );
       setConfigSaved(true);
+      setSavedForm({ name, callerIds, carrier: chosenCarrier, recordCalls, config });
       {
         const priorOrder = initialDispositionOrderRef.current;
         const nextOrder = config.dispositions.map((d) => d.code);
@@ -336,7 +365,10 @@ export default function CampaignBuilderPage() {
     } finally {
       setSavingConfig(false);
     }
-  }, [config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError]);
+  }, [
+    config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError,
+    name, callerIds, chosenCarrier,
+  ]);
 
   const backToMapping = useCallback(() => {
     setPhase('mapping');
@@ -417,6 +449,24 @@ export default function CampaignBuilderPage() {
     const previous = prevStep(step);
     if (previous) goTo(previous);
   }, [step, goTo]);
+
+  /*
+    Unsaved input, for the leave guard: any setting that differs from what the server has
+    (the carrier as the page would send it, so a default it settles on is not an edit), or a
+    roster upload not yet imported.
+  */
+  const asSettings = (form: BuilderForm) => ({
+    name: form.name,
+    callerIds: form.callerIds,
+    carrier: form.carrier ?? carrier,
+    recording: { record: form.recordCalls, profileId: NO_ANALYSIS_PROFILE },
+    config: form.config,
+  });
+  const unsaved = changedSettings(
+    asSettings(savedForm),
+    asSettings({ name, callerIds, carrier: chosenCarrier, recordCalls, config }),
+  ).length > 0 || phase === 'uploading' || phase === 'analyzing' || phase === 'mapping';
+  const leaveGuard = useUnsavedChangesGuard(unsaved);
 
   const continueDisabled = step === 'basics' && basicsBlock !== null;
   const saveDisabled = savingConfig || configBlock !== null || !basicsReady;
@@ -826,6 +876,11 @@ export default function CampaignBuilderPage() {
           />
         </div>
       </div>
+
+      <LeaveUnsavedDialog
+        guard={leaveGuard}
+        message="What you have entered for this new campaign is not saved. Leave now and it is lost; Cancel keeps you here to save it."
+      />
     </div>
   );
 }

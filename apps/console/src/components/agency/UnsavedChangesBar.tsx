@@ -1,3 +1,5 @@
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import type { UnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { plural } from '../../utils/format/number';
 import styles from './UnsavedChangesBar.module.css';
 
@@ -43,5 +45,24 @@ export function UnsavedChangesBar({ count, saving, note, blocked, onDiscard, onS
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The question `useUnsavedChangesGuard` asks while a navigation away is held: "Leave without
+ * saving?", with what would be lost (`message`). Leave carries the navigation out; Cancel stays.
+ */
+export function LeaveUnsavedDialog({ guard, message }: { guard: UnsavedChangesGuard; message: string }) {
+  if (!guard.asking) return null;
+  return (
+    <ConfirmDialog
+      open
+      title="Leave without saving?"
+      message={message}
+      confirmLabel="Leave without saving"
+      danger
+      onConfirm={guard.leave}
+      onCancel={guard.stay}
+    />
   );
 }

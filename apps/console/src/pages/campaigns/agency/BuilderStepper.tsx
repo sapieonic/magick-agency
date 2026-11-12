@@ -34,7 +34,7 @@ export function BuilderStepper({
           const isCurrent = step.id === current;
           const isComplete = completed.has(step.id);
           return (
-            <li key={step.id} className={styles.item}>
+            <li key={step.id} className={styles.item} data-current={isCurrent || undefined}>
               {index > 0 ? <span className={styles.connector} aria-hidden="true" /> : null}
               <button
                 type="button"

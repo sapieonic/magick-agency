@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 
 /**
  * The guided create path, at the PAGE level.
@@ -218,5 +218,98 @@ describe('the guided setup path', () => {
     await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
     expect(await screen.findByRole('link', { name: 'Open campaign' })).toBeTruthy();
     expect(screen.getByText('Saved.')).toBeTruthy();
+  });
+});
+
+/** Stands in for the sidebar or search: a push navigation from outside the page. */
+function JumpAway() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate('/agency/campaigns')}>Jump</button>;
+}
+
+async function renderWithExit() {
+  const { default: CampaignBuilderPage } = await import(
+    '../../pages/campaigns/agency/CampaignBuilderPage'
+  );
+  return render(
+    <MemoryRouter initialEntries={['/agency/campaigns/new']}>
+      <Routes>
+        <Route path="/agency/campaigns/new" element={<CampaignBuilderPage />} />
+        <Route path="*" element={<p>Campaigns list</p>} />
+      </Routes>
+      <JumpAway />
+    </MemoryRouter>,
+  );
+}
+
+/**
+ * The builder guards what has been typed, as campaign Settings does: leaving with input not
+ * yet saved asks first, and nothing is held once it is saved or while the form is untouched.
+ */
+describe('leaving the builder', () => {
+  it('lets an untouched builder go at once', async () => {
+    await renderWithExit();
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.getByText('Campaigns list')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('asks before leaving what has been typed; Cancel keeps it', async () => {
+    await renderWithExit();
+    fillBasics('Renewals');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
+    expect(screen.getByText(/new campaign is not saved/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect((screen.getByLabelText(/Campaign name/) as HTMLInputElement).value).toBe('Renewals');
+  });
+
+  it('leaves on "Leave without saving"', async () => {
+    await renderWithExit();
+    fillBasics('Renewals');
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
+    expect(screen.getByText('Campaigns list')).toBeTruthy();
+  });
+
+  it('counts a setting changed on a later step, and nothing once all is put back', async () => {
+    await renderWithExit();
+    fillBasics('Renewals');
+    fireEvent.click(screen.getByRole('button', { name: 'When to call' }));
+    fireEvent.change(screen.getByDisplayValue('09:00'), { target: { value: '10:00' } });
+    // The basics put back as they were: only the calling window differs now.
+    fireEvent.click(screen.getByRole('button', { name: 'Name & numbers' }));
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.getByRole('dialog', { name: 'Leave without saving?' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fillBasics('Renewals');
+    fireEvent.click(screen.getByRole('button', { name: 'When to call' }));
+    fireEvent.change(screen.getByDisplayValue('10:00'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Name & numbers' }));
+    fireEvent.change(screen.getByLabelText(/Campaign name/), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /\+912200000001/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Campaigns list')).toBeTruthy();
+  });
+
+  it('holds nothing once the campaign is saved, settings and all', async () => {
+    await renderWithExit();
+    fillBasics('Renewals');
+    fireEvent.click(screen.getByRole('button', { name: 'When to call' }));
+    fireEvent.change(screen.getByDisplayValue('09:00'), { target: { value: '10:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(screen.getByText('Saved.', { exact: false })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Campaigns list')).toBeTruthy();
   });
 });

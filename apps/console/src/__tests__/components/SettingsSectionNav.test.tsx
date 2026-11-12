@@ -1,7 +1,9 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { useEffect, useState } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { UrlScopeProvider } from '../../contexts/UrlScopeContext';
+import { ScopedRouter } from '../../components/routing/ScopedRouter';
 import {
   SettingsSectionNav,
   sectionIdOfHash,
@@ -153,6 +155,121 @@ describe('useSectionInView', () => {
     expect(screen.getByTestId('settings-section-nav')).toBeTruthy();
     expect(scrolled).toEqual([]);
     expect(current()).toEqual(['General']);
+  });
+});
+
+/** The console's own router over the browser history, as the app mounts it. */
+function renderInBrowserAt(path: string) {
+  window.history.replaceState(null, '', path);
+  return render(
+    <UrlScopeProvider>
+      <ScopedRouter>
+        <Routes>
+          <Route path="/c/:id/settings" element={<Page />} />
+        </Routes>
+      </ScopedRouter>
+    </UrlScopeProvider>,
+  );
+}
+
+/** A fragment typed into the address bar: a new entry with no history state, then `popstate`. */
+async function typeFragment(path: string) {
+  await act(async () => {
+    window.history.pushState(null, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+  });
+}
+
+describe('useSectionInView — a fragment typed into the address bar', () => {
+  it('opens at each section typed, though none of them has a history key', async () => {
+    renderInBrowserAt('/c/c-1/settings#calling-hours');
+    await load();
+    expect(scrolled).toEqual(['c-1:calling-hours']);
+
+    await typeFragment('/c/c-1/settings#recording');
+    expect(current()).toEqual(['Recording']);
+    expect(scrolled).toEqual(['c-1:calling-hours', 'c-1:recording']);
+
+    await typeFragment('/c/c-1/settings#calling-hours');
+    expect(current()).toEqual(['Calling hours']);
+  });
+});
+
+describe('useSectionInView — the band that decides the section being read', () => {
+  let options: IntersectionObserverInit[] = [];
+  beforeEach(() => {
+    options = [];
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(_callback: IntersectionObserverCallback, init: IntersectionObserverInit) { options.push(init); }
+      observe() {}
+      disconnect() {}
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A jump lands a section its scroll margin below the top of the scroll area, and the one
+   * above ends a card gap higher: at that edge, or under the phone's sticky strip. Counted
+   * from the viewport's top, that tail was "in view" and won the highlight back from the
+   * section just picked. The band is rooted on the scroll area and starts just above the line.
+   */
+  it('is rooted on the scroll area and starts just above where a jump lands a section', async () => {
+    const pane = document.createElement('div');
+    pane.style.overflowY = 'auto';
+    document.body.appendChild(pane);
+    const style = document.createElement('style');
+    style.textContent = 'section { scroll-margin-top: 64px; }';
+    document.head.appendChild(style);
+    try {
+      render(
+        <MemoryRouter initialEntries={['/c/c-1/settings']}>
+          <Routes>
+            <Route path="/c/:id/settings" element={<Page />} />
+          </Routes>
+        </MemoryRouter>,
+        { container: pane },
+      );
+      await load();
+      expect(options.at(-1)?.root).toBe(pane);
+      expect(options.at(-1)?.rootMargin).toBe('-56px 0px -60% 0px');
+    } finally {
+      style.remove();
+      pane.remove();
+    }
+  });
+});
+
+describe('SettingsSectionNav — the phone strip', () => {
+  it('scrolls the highlighted section into sight along the strip', () => {
+    const { rerender } = render(
+      <SettingsSectionNav sections={SECTIONS} active="general" onSelect={() => {}} />,
+    );
+    const nav = screen.getByTestId('settings-section-nav');
+    // A 300px strip holding 600px of links; Recording sits off its right end.
+    Object.defineProperty(nav, 'scrollWidth', { configurable: true, value: 600 });
+    Object.defineProperty(nav, 'clientWidth', { configurable: true, value: 300 });
+    nav.getBoundingClientRect = () => ({ left: 0, right: 300, width: 300 }) as DOMRect;
+    screen.getByTestId('settings-section-link-recording').getBoundingClientRect = () =>
+      ({ left: 450, right: 550, width: 100 }) as DOMRect;
+    const scrollTo = vi.fn();
+    nav.scrollTo = scrollTo as typeof nav.scrollTo;
+
+    rerender(<SettingsSectionNav sections={SECTIONS} active="recording" onSelect={() => {}} />);
+    // Centred: 450 - (300 - 100) / 2.
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ left: 350 }));
+  });
+
+  it('leaves a strip alone when every section fits', () => {
+    const { rerender } = render(
+      <SettingsSectionNav sections={SECTIONS} active="general" onSelect={() => {}} />,
+    );
+    const nav = screen.getByTestId('settings-section-nav');
+    const scrollTo = vi.fn();
+    nav.scrollTo = scrollTo as typeof nav.scrollTo;
+    rerender(<SettingsSectionNav sections={SECTIONS} active="recording" onSelect={() => {}} />);
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });
 
