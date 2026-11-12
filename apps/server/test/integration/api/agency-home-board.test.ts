@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 
 /**
  * ─── Home's board through the real app and real Postgres ───────────────────────
@@ -117,6 +118,31 @@ describe('which campaigns, in what order', () => {
     const board = await boardOf();
     const foreign = new Set(floors.slice(1).flatMap((f) => f.campaigns));
     expect(board.campaigns.filter((c) => foreign.has(c.id))).toEqual([]);
+  });
+
+  it('never shows or counts another account’s campaigns in the same tenant', async () => {
+    // A second account in tenant 0 with the newest running campaign of all: first on the board
+    // and one more in the total if the account were not in the query.
+    const other = randomUUID();
+    await q(`INSERT INTO accounts (id, tenant_id, name, slug) VALUES ($1, $2, 'Other account', $3)`,
+      [other, main().tenant, `other-${other}`]);
+    const { rows } = await q(
+      `INSERT INTO agency_campaigns
+       SELECT (jsonb_populate_record(NULL::agency_campaigns, to_jsonb(c) || jsonb_build_object(
+                 'id', gen_random_uuid(), 'account_id', $2::uuid, 'name', 'Other account campaign',
+                 'status', 'running', 'created_at', now()))).*
+         FROM agency_campaigns c WHERE c.id = $1
+       RETURNING id`,
+      [C(13), other],
+    );
+    try {
+      const board = await boardOf();
+      expect(board.campaigns.map((c) => c.id)).not.toContain(rows[0]!.id);
+      expect(board.active_total).toBe(27);
+    } finally {
+      await q('DELETE FROM agency_campaigns WHERE account_id = $1', [other]);
+      await q('DELETE FROM accounts WHERE id = $1', [other]);
+    }
   });
 });
 
