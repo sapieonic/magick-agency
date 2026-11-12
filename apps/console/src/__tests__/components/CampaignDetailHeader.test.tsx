@@ -29,13 +29,11 @@ function show(over: Partial<AgencyCampaign> = {}) {
         campaign={campaign}
         lastUpdatedAt={new Date('2026-11-12T05:38:00Z')}
         autoRefreshing
-        concurrency={undefined}
         tenantId="tenant-1"
         accountId="account-1"
         canControl
         busy={null}
         onAction={vi.fn()}
-        canRetry
         onRetry={vi.fn()}
         canJoinStation
         role="tenant_owner"

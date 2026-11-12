@@ -529,14 +529,11 @@ export function AgencyCampaignSettingsPage() {
       <CampaignDetailHeader
         campaign={campaign}
         lastUpdatedAt={campaignReadAt}
-        autoRefreshing={false}
-        concurrency={undefined}
         tenantId={tenantId}
         accountId={accountId}
         canControl={canSupervise}
         busy={lifecycle.busy}
         onAction={lifecycle.onAction}
-        canRetry={false}
         canJoinStation={canJoinStation}
         role={role}
         onRefresh={() => void refreshCampaign()}

@@ -158,8 +158,7 @@ export function AgencyCampaignDetailPage() {
         canControl={canControl}
         busy={lifecycle.busy}
         onAction={lifecycle.onAction}
-        canRetry={canRetry}
-        onRetry={() => setRetryOpen(true)}
+        onRetry={canRetry ? () => setRetryOpen(true) : undefined}
         canJoinStation={canJoinStation}
         role={role}
         onRefresh={() => {
