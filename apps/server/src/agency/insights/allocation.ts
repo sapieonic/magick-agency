@@ -170,11 +170,22 @@ async function history(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAl
 
 /**
  * The allocation as every caller reads it: through the insights cache (`cache.ts`), under the one
- * key the allocation route, the activity read and Home's board share, so they never compute it
- * twice for the same campaign state.
+ * key the allocation route and the activity read share, so they never compute it twice for the
+ * same campaign state.
  */
 export function cachedAllocation(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAllocation> {
   return insightsCache.get(insightsCacheKey('allocation', campaign), () => computeAllocation(campaign));
+}
+
+/**
+ * `totals.callbacks_overdue` of each campaign's allocation, in one read (Home's board): the
+ * allocation statement's own predicate (`callbackOverdueSql`) and callback codes, counted per
+ * campaign rather than per owner.
+ */
+export function callbacksOverdueByCampaign(campaigns: readonly AgencyCampaignRecord[]): Promise<Map<string, number>> {
+  return agencyInsightsReadRepository.callbacksOverdue(
+    campaigns.map((c) => ({ campaignId: c.id, callbackCodes: callbackCodes(c.disposition_catalog) })),
+  );
 }
 
 export async function computeAllocation(campaign: AgencyCampaignRecord): Promise<AgencyInsightsAllocation> {

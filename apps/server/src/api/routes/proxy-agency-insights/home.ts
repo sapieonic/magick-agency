@@ -4,7 +4,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { computeHomeBoard } from '../../../agency/home-board.js';
-import { cachedAllocation } from '../../../agency/insights/allocation.js';
+import { callbacksOverdueByCampaign } from '../../../agency/insights/allocation.js';
 import { liveStats } from '../helpers/live-stats.js';
 import { dialerEnabled } from '../helpers/dialer-gate.js';
 import { accountOrRefuse } from '../helpers/account-scope.js';
@@ -20,8 +20,8 @@ export async function registerHomeBoardRoutes(app: FastifyInstance): Promise<voi
    * allocation's floor and Home's own; the list and `/stats` floor lower), then the account scope
    * (a 400, never a tenant-wide board), then the dialer flag (`403 feature_disabled`, the campaign
    * reads' refusal). Each campaign's stats go through the internal stats handler under that
-   * campaign's own account, which applies its gate and ownership again; the allocation is the
-   * insights route's cached read.
+   * campaign's own account, which applies its gate and ownership again; the overdue counts are
+   * the allocation's own predicate, one read for the board.
    */
   app.get('/home', {
     preHandler: requirePermission('agency.supervise'),
@@ -31,7 +31,7 @@ export async function registerHomeBoardRoutes(app: FastifyInstance): Promise<voi
     if (!(await dialerEnabled(request, reply))) return reply;
     const board = await computeHomeBoard({ tenantId: request.tenantId!, accountId }, {
       liveStats,
-      callbacksOverdue: async (campaign) => (await cachedAllocation(campaign)).totals.callbacks_overdue,
+      callbacksOverdue: callbacksOverdueByCampaign,
     });
     return reply.code(200).send(board);
   });

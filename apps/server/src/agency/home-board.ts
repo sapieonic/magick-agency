@@ -8,23 +8,26 @@
  *  - per campaign, the internal stats handler's payload (`liveStats`, the route's hop through
  *    `callCore`, so the stall, the guardrail's 24 hours and the floor are the health strip's
  *    own), projected to the fields Home reads;
- *  - per campaign, `totals.callbacks_overdue` of the insights allocation (`cachedAllocation`, the
- *    allocation route's own read and cache).
+ *  - the overdue callbacks of every campaign on the board in one read
+ *    (`callbacksOverdueByCampaign`: the insights allocation's `callbacks_overdue` predicate).
  *
  * ── What it costs, and why it reuses ─────────────────────────────────────────
- * The console asks for the board every 10 s while Home is open and every 60 s for the sidebar
- * badge. Two memos keep that from costing more than the reads it replaced:
+ * The console asks for the board every 10 s while Home is open and every 60 s for each other
+ * tab's sidebar badge. Three memos keep that from costing more than the reads it replaced:
  *
+ *  - **The account's board** is reused for {@link HOME_BOARD_MS}, and requests that arrive while
+ *    it is computed share that computation (single flight). Only the per-campaign reads are
+ *    memoised: the campaign list is read on every request, and the memo's key carries each
+ *    listed campaign's id, status and `updated_at`, so a campaign starting, stopping or being
+ *    edited misses at once.
  *  - **A still campaign's stats** (not running or stopping, no live calls, nobody on its floor:
  *    the campaigns home's `needsPolling` rule, read from the payload itself) are reused for
- *    {@link HOME_STILL_MS}. A moving campaign's are read on every board. The console used to
- *    apply the same rule client-side.
+ *    {@link HOME_STILL_MS}. A moving campaign's are read on every board.
  *  - **The overdue count** is reused for {@link HOME_STILL_MS} per campaign (a follow-up count,
- *    not a live queue; it was the console's 60 s tick), on top of the insights cache's own few
- *    seconds.
+ *    not a live queue; it was the console's 60 s tick). The campaigns that miss are read together.
  *
- * Both are keyed by the campaign's status and `updated_at` (`insightsCacheKey`), so a pause,
- * resume, stop or settings edit misses at once. In process: HTTP is served by one process.
+ * The last two are keyed by the campaign's status and `updated_at` (`insightsCacheKey`), so a
+ * pause, resume, stop or settings edit misses at once. In process: HTTP is served by one process.
  *
  * A campaign's read that fails is `null` on the board (logged), never a guess and never a failed
  * board: the console keeps what it showed for that campaign.
@@ -46,19 +49,21 @@ import { InsightsCache, insightsCacheKey } from './insights/cache.js';
 
 const log = createChildLogger({ component: 'agency-home-board' });
 
+/** How long an account's board is reused (single flight while it is computed). */
+export const HOME_BOARD_MS = 5_000;
+
 /** How long a still campaign's stats, and any campaign's overdue count, are reused. */
 export const HOME_STILL_MS = 60_000;
 
-/** Campaigns whose reads run at once: a board is at most 25 campaigns, one request. */
-export const HOME_READ_CONCURRENCY = 4;
+/** Campaigns whose stats are read at once: a board is at most 25 campaigns, one per account per {@link HOME_BOARD_MS}. */
+export const HOME_READ_CONCURRENCY = 8;
 
 /** What the board reads per campaign. The route supplies them (`liveStats` is a `callCore` hop). */
 export interface HomeBoardDeps {
   /** The internal stats handler's payload under the campaign's own account; null when it refused. */
   liveStats: (campaign: AgencyCampaignRecord) => Promise<Partial<AgencyCampaignStats> | null>;
-  /** `totals.callbacks_overdue` of the insights allocation. */
-  callbacksOverdue: (campaign: AgencyCampaignRecord) => Promise<number>;
-  now?: () => number;
+  /** `totals.callbacks_overdue` of each campaign's insights allocation, by id (absent: 0). */
+  callbacksOverdue: (campaigns: AgencyCampaignRecord[]) => Promise<ReadonlyMap<string, number>>;
 }
 
 /**
@@ -86,40 +91,88 @@ export function homeStats(stats: Partial<AgencyCampaignStats>): AgencyHomeCampai
   };
 }
 
-interface StillEntry {
-  key: string;
-  at: number;
-  stats: Partial<AgencyCampaignStats>;
+/** The most campaigns each per-campaign memo remembers (oldest first out). */
+const MEMO_MAX_ENTRIES = 500;
+
+/** A per-campaign value reused {@link HOME_STILL_MS} while the campaign's status and `updated_at` hold. */
+class CampaignMemo<V> {
+  private readonly entries = new Map<string, { key: string; at: number; value: V }>();
+
+  constructor(private readonly section: string) {}
+
+  get(campaign: AgencyCampaignRecord, now: number): V | undefined {
+    const kept = this.entries.get(campaign.id);
+    return kept && kept.key === insightsCacheKey(this.section, campaign) && now - kept.at < HOME_STILL_MS
+      ? kept.value
+      : undefined;
+  }
+
+  set(campaign: AgencyCampaignRecord, now: number, value: V): void {
+    this.entries.delete(campaign.id);
+    this.entries.set(campaign.id, { key: insightsCacheKey(this.section, campaign), at: now, value });
+    while (this.entries.size > MEMO_MAX_ENTRIES) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
+  }
+
+  delete(campaignId: string): void {
+    this.entries.delete(campaignId);
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
 }
 
-/** The most still campaigns remembered (oldest first out). */
-const STILL_MAX_ENTRIES = 500;
-const still = new Map<string, StillEntry>();
-/** The overdue counts, reused {@link HOME_STILL_MS} (single flight, bounded). */
-let overdueCache = new InsightsCache(HOME_STILL_MS);
+const still = new CampaignMemo<Partial<AgencyCampaignStats>>('home-stats');
+const overdue = new CampaignMemo<number>('home-overdue');
+/** Each account's per-campaign reads, {@link HOME_BOARD_MS} (the clock read when it is used). */
+const boards = new InsightsCache(HOME_BOARD_MS, MEMO_MAX_ENTRIES, () => Date.now(), 1);
 
-/** Tests only: forget both memos. */
+/** Tests only: forget every memo. */
 export function resetHomeBoardMemosForTests(): void {
   still.clear();
-  overdueCache = new InsightsCache(HOME_STILL_MS);
+  overdue.clear();
+  boards.clear();
 }
 
 async function statsFor(campaign: AgencyCampaignRecord, deps: HomeBoardDeps, now: number): Promise<Partial<AgencyCampaignStats> | null> {
-  const key = insightsCacheKey('home-stats', campaign);
-  const kept = still.get(campaign.id);
-  if (kept && kept.key === key && now - kept.at < HOME_STILL_MS) return kept.stats;
-
+  const kept = still.get(campaign, now);
+  if (kept) return kept;
   const stats = await deps.liveStats(campaign);
   still.delete(campaign.id);
-  if (stats && !campaignMoving(campaign.status, stats)) {
-    still.set(campaign.id, { key, at: now, stats });
-    while (still.size > STILL_MAX_ENTRIES) {
-      const oldest = still.keys().next().value;
-      if (oldest === undefined) break;
-      still.delete(oldest);
-    }
-  }
+  if (stats && !campaignMoving(campaign.status, stats)) still.set(campaign, now, stats);
   return stats;
+}
+
+/** Each campaign's overdue count: the kept ones, and the rest in one read (all null when it fails). */
+async function overdueFor(
+  campaigns: AgencyCampaignRecord[],
+  deps: HomeBoardDeps,
+  now: number,
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const missing: AgencyCampaignRecord[] = [];
+  for (const campaign of campaigns) {
+    const kept = overdue.get(campaign, now);
+    if (kept === undefined) missing.push(campaign);
+    else out.set(campaign.id, kept);
+  }
+  if (missing.length === 0) return out;
+  try {
+    const counts = await deps.callbacksOverdue(missing);
+    for (const campaign of missing) {
+      const n = counts.get(campaign.id) ?? 0;
+      overdue.set(campaign, now, n);
+      out.set(campaign.id, n);
+    }
+  } catch (err) {
+    log.warn({ err, campaigns: missing.length, read: 'callbacks_overdue' }, 'Home board read failed; serving null for it');
+    for (const campaign of missing) out.set(campaign.id, null);
+  }
+  return out;
 }
 
 async function settle<T>(what: string, campaignId: string, read: () => Promise<T>): Promise<T | null> {
@@ -131,30 +184,34 @@ async function settle<T>(what: string, campaignId: string, read: () => Promise<T
   }
 }
 
+async function readCampaigns(rows: AgencyCampaignRecord[], deps: HomeBoardDeps): Promise<AgencyHomeCampaign[]> {
+  const now = Date.now();
+  const [counts, stats] = await Promise.all([
+    overdueFor(rows, deps, now),
+    mapWithConcurrency(rows, HOME_READ_CONCURRENCY, (campaign) =>
+      settle('stats', campaign.id, () => statsFor(campaign, deps, now))),
+  ]);
+  return rows.map((campaign, i) => {
+    const read = stats[i];
+    return {
+      id: campaign.id,
+      name: campaign.name,
+      status: campaign.status as AgencyHomeActiveStatus,
+      stats: read ? homeStats(read) : null,
+      callbacks_overdue: counts.get(campaign.id) ?? null,
+    };
+  });
+}
+
 /** The board for one account. Throws only when the campaign list cannot be read. */
 export async function computeHomeBoard(
   scope: { tenantId: string; accountId: string },
   deps: HomeBoardDeps,
 ): Promise<AgencyHomeBoard> {
-  const now = (deps.now ?? Date.now)();
   const { rows, activeTotal, anyCampaign } = await agencyCampaignRepository.listForHome(
     scope.tenantId, scope.accountId, AGENCY_HOME_ACTIVE_STATUSES, AGENCY_HOME_CAMPAIGN_CAP,
   );
-
-  const campaigns = await mapWithConcurrency(rows, HOME_READ_CONCURRENCY, async (campaign): Promise<AgencyHomeCampaign> => {
-    const [stats, overdue] = await Promise.all([
-      settle('stats', campaign.id, () => statsFor(campaign, deps, now)),
-      settle('callbacks_overdue', campaign.id, () =>
-        overdueCache.get(insightsCacheKey('home-overdue', campaign), () => deps.callbacksOverdue(campaign))),
-    ]);
-    return {
-      id: campaign.id,
-      name: campaign.name,
-      status: campaign.status as AgencyHomeActiveStatus,
-      stats: stats ? homeStats(stats) : null,
-      callbacks_overdue: overdue,
-    };
-  });
-
+  const key = [`home:${scope.tenantId}:${scope.accountId}`, ...rows.map((c) => insightsCacheKey('', c))].join('|');
+  const campaigns = rows.length === 0 ? [] : await boards.get(key, () => readCampaigns(rows, deps));
   return { campaigns, active_total: activeTotal, any_campaign: anyCampaign || activeTotal > 0 };
 }

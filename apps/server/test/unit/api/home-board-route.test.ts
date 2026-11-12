@@ -5,18 +5,18 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
  * `GET /proxy/agency/home`'s guard chain and wiring (`api/routes/proxy-agency-insights/home.ts`,
  * decision B28a), by execution: the role floor is `agency.supervise` (the agent-reach suite only
  * proves an agent is refused, which `agency.campaigns.read` would do too), then the account scope,
- * then the dialer flag, then the board with the insights allocation's overdue count.
+ * then the dialer flag, then the board with the insights allocation's overdue counts.
  */
 
 const mocks = vi.hoisted(() => ({
   computeHomeBoard: vi.fn(),
   dialerEnabled: vi.fn(),
-  cachedAllocation: vi.fn(),
+  callbacksOverdueByCampaign: vi.fn(),
   liveStats: vi.fn(),
 }));
 vi.mock('../../../src/agency/home-board.js', () => ({ computeHomeBoard: mocks.computeHomeBoard }));
 vi.mock('../../../src/api/routes/helpers/dialer-gate.js', () => ({ dialerEnabled: mocks.dialerEnabled }));
-vi.mock('../../../src/agency/insights/allocation.js', () => ({ cachedAllocation: mocks.cachedAllocation }));
+vi.mock('../../../src/agency/insights/allocation.js', () => ({ callbacksOverdueByCampaign: mocks.callbacksOverdueByCampaign }));
 vi.mock('../../../src/api/routes/helpers/live-stats.js', () => ({ liveStats: mocks.liveStats }));
 
 import { registerHomeBoardRoutes } from '../../../src/api/routes/proxy-agency-insights/home.js';
@@ -87,17 +87,11 @@ describe('GET /proxy/agency/home', () => {
     expect(mocks.computeHomeBoard).not.toHaveBeenCalled();
   });
 
-  it('reads stats through the live-stats hop and overdue callbacks from the cached allocation', async () => {
+  it('reads stats through the live-stats hop and overdue callbacks through the allocation’s count', async () => {
     const app = await appFor();
     await get(app, { 'x-role': 'account_admin', 'x-account-id': 'a-1' });
-    const deps = mocks.computeHomeBoard.mock.calls[0]![1] as {
-      liveStats: unknown;
-      callbacksOverdue: (c: unknown) => Promise<number>;
-    };
+    const deps = mocks.computeHomeBoard.mock.calls[0]![1] as { liveStats: unknown; callbacksOverdue: unknown };
     expect(deps.liveStats).toBe(mocks.liveStats);
-    mocks.cachedAllocation.mockResolvedValue({ totals: { callbacks_overdue: 9 } });
-    const campaign = { id: 'c1' };
-    await expect(deps.callbacksOverdue(campaign)).resolves.toBe(9);
-    expect(mocks.cachedAllocation).toHaveBeenCalledWith(campaign);
+    expect(deps.callbacksOverdue).toBe(mocks.callbacksOverdueByCampaign);
   });
 });

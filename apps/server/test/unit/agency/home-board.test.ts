@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Home's board composer (`src/agency/home-board.ts`, decision B28a): what it asks the repository
- * for, what it serves per campaign, how a failed read degrades, and the two memos that keep a
- * 10-second board as cheap as the reads it replaced.
+ * for, what it serves per campaign, how a failed read degrades, and the memos that keep a
+ * 10-second board as cheap as the reads it replaced (the account's board, a still campaign's
+ * stats, the overdue counts). The memos read `Date.now`, so the clock is faked.
  */
 
 const repo = vi.hoisted(() => ({ listForHome: vi.fn() }));
@@ -11,6 +12,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({ agencyCamp
 
 import type { AgencyCampaignStats } from '@magick-agency/contracts/agency';
 import {
+  HOME_BOARD_MS,
   HOME_STILL_MS,
   campaignMoving,
   computeHomeBoard,
@@ -44,24 +46,28 @@ function payload(over: Partial<AgencyCampaignStats> = {}): Partial<AgencyCampaig
   } as Partial<AgencyCampaignStats>;
 }
 
-let now = 1_000_000;
 let deps: HomeBoardDeps & { liveStats: ReturnType<typeof vi.fn>; callbacksOverdue: ReturnType<typeof vi.fn> };
 
 function list(rows: AgencyCampaignRecord[], activeTotal = rows.length, anyCampaign = rows.length > 0) {
   repo.listForHome.mockResolvedValue({ rows, activeTotal, anyCampaign });
 }
 
+/** Move the clock on (past the board memo's few seconds unless told otherwise). */
+function advance(ms = 10_000) {
+  vi.setSystemTime(Date.now() + ms);
+}
+
+const counts = (n: (c: AgencyCampaignRecord) => number) =>
+  async (campaigns: AgencyCampaignRecord[]) => new Map(campaigns.map((c) => [c.id, n(c)]));
+
 beforeEach(() => {
   vi.clearAllMocks();
-  now = 1_000_000;
   vi.useFakeTimers();
-  vi.setSystemTime(now);
-  // After the fake clock: the overdue memo reads `Date.now` as it was when it was made.
+  vi.setSystemTime(1_000_000);
   resetHomeBoardMemosForTests();
   deps = {
     liveStats: vi.fn(async () => payload()),
-    callbacksOverdue: vi.fn(async () => 2),
-    now: () => now,
+    callbacksOverdue: vi.fn(counts(() => 2)),
   };
 });
 
@@ -88,6 +94,21 @@ describe('the board', () => {
     ]);
   });
 
+  it('reads every campaign’s overdue count in one read', async () => {
+    const rows = [row('r1', 'running'), row('p1', 'paused')];
+    list(rows);
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.callbacksOverdue).toHaveBeenCalledTimes(1);
+    expect(deps.callbacksOverdue).toHaveBeenCalledWith(rows);
+  });
+
+  it('a campaign the overdue read does not name has none overdue', async () => {
+    list([row('r1', 'running'), row('r2', 'running')]);
+    deps.callbacksOverdue.mockImplementation(async () => new Map([['r1', 4]]));
+    const board = await computeHomeBoard(SCOPE, deps);
+    expect(board.campaigns.map((c) => c.callbacks_overdue)).toEqual([4, 0]);
+  });
+
   it('serves only the fields Home reads: no floor roster, no counters', async () => {
     list([row('r1', 'running')]);
     const board = await computeHomeBoard(SCOPE, deps);
@@ -101,6 +122,7 @@ describe('the board', () => {
     expect(await computeHomeBoard(SCOPE, deps)).toEqual({ campaigns: [], active_total: 0, any_campaign: false });
     list([], 0, true);
     expect((await computeHomeBoard(SCOPE, deps)).any_campaign).toBe(true);
+    expect(deps.callbacksOverdue).not.toHaveBeenCalled();
   });
 
   it('fails as a whole only when the campaign list does', async () => {
@@ -122,19 +144,59 @@ describe('a read that fails is null, never a failed board', () => {
     expect(board.campaigns.map((c) => c.callbacks_overdue)).toEqual([2, 2, 2]);
   });
 
-  it('an allocation read that throws', async () => {
+  it('an overdue read that throws: every count it was for is null, and read again next board', async () => {
     list([row('r1', 'running'), row('r2', 'running')]);
-    deps.callbacksOverdue.mockImplementation(async (c: AgencyCampaignRecord) => {
-      if (c.id === 'r1') throw new Error('slow');
-      return 5;
-    });
+    deps.callbacksOverdue.mockRejectedValueOnce(new Error('slow'));
     const board = await computeHomeBoard(SCOPE, deps);
-    expect(board.campaigns.map((c) => c.callbacks_overdue)).toEqual([null, 5]);
+    expect(board.campaigns.map((c) => c.callbacks_overdue)).toEqual([null, null]);
     expect(board.campaigns.every((c) => c.stats !== null)).toBe(true);
+    advance();
+    expect((await computeHomeBoard(SCOPE, deps)).campaigns.map((c) => c.callbacks_overdue)).toEqual([2, 2]);
   });
 
   it('a payload without the ceiling is not the stats handler’s, and is not trusted', () => {
     expect(homeStats(payload({ abandonment_ceiling_pct: undefined }))).toBeNull();
+  });
+});
+
+describe('the account’s board, for a few seconds', () => {
+  it('a second board within HOME_BOARD_MS reads no campaign again, but the list each time', async () => {
+    list([row('r1', 'running')], 1);
+    await computeHomeBoard(SCOPE, deps);
+    advance(HOME_BOARD_MS - 1);
+    list([row('r1', 'running')], 7);
+    const board = await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(1);
+    expect(repo.listForHome).toHaveBeenCalledTimes(2);
+    expect(board.active_total).toBe(7);
+    advance(1);
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(2);
+  });
+
+  it('boards asked for at once share one computation', async () => {
+    list([row('r1', 'running'), row('r2', 'running')]);
+    const [a, b] = await Promise.all([computeHomeBoard(SCOPE, deps), computeHomeBoard(SCOPE, deps)]);
+    expect(a.campaigns).toEqual(b.campaigns);
+    expect(deps.liveStats).toHaveBeenCalledTimes(2);
+    expect(deps.callbacksOverdue).toHaveBeenCalledTimes(1);
+  });
+
+  it('is never another account’s', async () => {
+    list([row('r1', 'running')]);
+    await computeHomeBoard(SCOPE, deps);
+    await computeHomeBoard({ tenantId: 't-1', accountId: 'a-2' }, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(2);
+  });
+
+  it('misses at once when a listed campaign’s status or updated_at changes, or the list does', async () => {
+    list([row('r1', 'running')]);
+    await computeHomeBoard(SCOPE, deps);
+    list([row('r1', 'paused', { updated_at: new Date('2026-11-12T08:05:00.000Z') })]);
+    expect((await computeHomeBoard(SCOPE, deps)).campaigns[0]!.status).toBe('paused');
+    list([row('r1', 'paused', { updated_at: new Date('2026-11-12T08:05:00.000Z') }), row('r2', 'running')]);
+    expect((await computeHomeBoard(SCOPE, deps)).campaigns.map((c) => c.id)).toEqual(['r1', 'r2']);
+    expect(deps.liveStats).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -144,7 +206,7 @@ describe('what is read again on the next board', () => {
     deps.liveStats.mockImplementation(async (c: AgencyCampaignRecord) =>
       payload(c.id === 'p-live' ? { attempts_live: 1 } : c.id === 'p-staffed' ? { agents_live: 2 } : {}));
     await computeHomeBoard(SCOPE, deps);
-    now += 10_000;
+    advance();
     await computeHomeBoard(SCOPE, deps);
     expect(deps.liveStats).toHaveBeenCalledTimes(8);
   });
@@ -153,11 +215,11 @@ describe('what is read again on the next board', () => {
     list([row('p1', 'paused')]);
     await computeHomeBoard(SCOPE, deps);
     for (let t = 10_000; t < HOME_STILL_MS; t += 10_000) {
-      now += 10_000;
+      advance();
       await computeHomeBoard(SCOPE, deps);
     }
     expect(deps.liveStats).toHaveBeenCalledTimes(1);
-    now += 10_000;
+    advance();
     await computeHomeBoard(SCOPE, deps);
     expect(deps.liveStats).toHaveBeenCalledTimes(2);
   });
@@ -175,19 +237,28 @@ describe('what is read again on the next board', () => {
   it('every campaign’s overdue count, once a minute (a follow-up count, not a live queue)', async () => {
     list([row('r1', 'running'), row('p1', 'paused')]);
     let n = 0;
-    deps.callbacksOverdue.mockImplementation(async () => (n += 1));
+    deps.callbacksOverdue.mockImplementation(counts(() => (n += 1)));
     const first = await computeHomeBoard(SCOPE, deps);
     for (let t = 10_000; t < HOME_STILL_MS; t += 10_000) {
-      now += 10_000;
-      vi.setSystemTime(now);
+      advance();
       expect((await computeHomeBoard(SCOPE, deps)).campaigns.map((c) => c.callbacks_overdue))
         .toEqual(first.campaigns.map((c) => c.callbacks_overdue));
     }
-    expect(deps.callbacksOverdue).toHaveBeenCalledTimes(2);
-    now += 10_000;
-    vi.setSystemTime(now);
+    expect(deps.callbacksOverdue).toHaveBeenCalledTimes(1);
+    advance();
     await computeHomeBoard(SCOPE, deps);
-    expect(deps.callbacksOverdue).toHaveBeenCalledTimes(4);
+    expect(deps.callbacksOverdue).toHaveBeenCalledTimes(2);
+  });
+
+  it('only the campaigns whose overdue count missed are read again', async () => {
+    const r1 = row('r1', 'running');
+    list([r1, row('p1', 'paused')]);
+    await computeHomeBoard(SCOPE, deps);
+    const edited = row('p1', 'paused', { updated_at: new Date('2026-11-12T08:05:00.000Z') });
+    list([r1, edited]);
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.callbacksOverdue).toHaveBeenCalledTimes(2);
+    expect(deps.callbacksOverdue).toHaveBeenLastCalledWith([edited]);
   });
 });
 
