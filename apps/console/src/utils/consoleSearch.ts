@@ -337,20 +337,6 @@ export function campaignSettingsGate(): Gate {
 }
 
 /**
- * A campaign screen's name where search must not use its tab-table label: the screen the
- * campaign header's History button opens is titled History on the page, in the breadcrumb and
- * on the button, though `CAMPAIGN_TABS` still calls it Activity.
- */
-const CAMPAIGN_PAGE_TITLES: Partial<Record<CampaignTabId, string>> = {
-  activity: 'History',
-};
-
-/** What search calls a campaign screen: the name the screen itself shows. */
-export function campaignPageTitle(tab: Pick<CampaignTabDefinition, 'id' | 'label'>): string {
-  return CAMPAIGN_PAGE_TITLES[tab.id] ?? tab.label;
-}
-
-/**
  * The words that find each campaign screen, beside its title. Every screen needs a row
  * (`consoleSearch.test.ts`). Old names stay: Call log was "Call attempts", and History was
  * called Activity.
@@ -418,8 +404,7 @@ export function campaignPageResults(
   const results: SearchResult[] = [];
   for (const tab of CAMPAIGN_TABS) {
     if (!passesGate(campaignTabGate(tab), gate)) continue;
-    const title = campaignPageTitle(tab);
-    const tabText = haystack([title, tab.label, ...CAMPAIGN_TAB_KEYWORDS[tab.id]]);
+    const tabText = haystack([tab.label, ...CAMPAIGN_TAB_KEYWORDS[tab.id]]);
     if (!tokens.some((t) => tabText.includes(t))) continue;
     for (const c of campaigns) {
       const name = normalise(c.name);
@@ -428,7 +413,7 @@ export function campaignPageResults(
         // The Settings tab's key is the campaign row's own "› Settings", so the two never both show.
         key: tab.id === 'settings' ? `campaign:${c.id}:settings` : `campaign-page:${c.id}:${tab.id}`,
         group: 'campaign-pages',
-        title: `${c.name} › ${title}`,
+        title: `${c.name} › ${tab.label}`,
         kind: 'Campaign',
         target: { type: 'path', to: tab.path(c.id) },
       });

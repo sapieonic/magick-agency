@@ -89,7 +89,7 @@ export interface CampaignTabDefinition {
   label: string;
   /**
    * The bar group the tab sits in, or `null` for a campaign screen reached
-   * another way: Soft-phone calls (Call log's second view) and Activity (the
+   * another way: Soft-phone calls (Call log's second view) and History (the
    * header's History button).
    */
   group: CampaignTabGroupId | null;
@@ -181,9 +181,10 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     flag: SOFTPHONE_FLAG,
   },
   {
+    // "Activity" until it became the header's History button; the id and the URL stay.
     id: 'activity',
     group: null,
-    label: 'Activity',
+    label: 'History',
     hint: 'Who did what on this campaign, and when',
     // Not a tab since IN14: the campaign header's History button opens it.
     /*
@@ -234,14 +235,9 @@ export function canOpenCampaignScreen(
     && (!tab.flag || isFlagEnabled(tab.flag));
 }
 
-/** The bar's tabs a given role may actually reach, in tab order. */
-export function visibleCampaignTabs(
-  role: Role | undefined,
-  isFlagEnabled: (flag: string) => boolean = () => false,
-): CampaignTabDefinition[] {
-  return CAMPAIGN_TABS.filter(
-    (tab) => tab.group !== null && canOpenCampaignScreen(tab.id, role, isFlagEnabled),
-  );
+/** The bar's tabs a given role may actually reach, in tab order. No tab in the bar has a flag. */
+export function visibleCampaignTabs(role: Role | undefined): CampaignTabDefinition[] {
+  return CAMPAIGN_TABS.filter((tab) => tab.group !== null && canOpenCampaignScreen(tab.id, role));
 }
 
 export interface CampaignTabGroup {
@@ -255,11 +251,8 @@ export interface CampaignTabGroup {
  * order, and a group left with none dropped (a viewer gets Monitor with Agents
  * alone, not two empty labels).
  */
-export function visibleCampaignTabGroups(
-  role: Role | undefined,
-  isFlagEnabled: (flag: string) => boolean = () => false,
-): CampaignTabGroup[] {
-  const tabs = visibleCampaignTabs(role, isFlagEnabled);
+export function visibleCampaignTabGroups(role: Role | undefined): CampaignTabGroup[] {
+  const tabs = visibleCampaignTabs(role);
   return CAMPAIGN_TAB_GROUPS
     .map((group) => ({ ...group, tabs: tabs.filter((tab) => tab.group === group.id) }))
     .filter((group) => group.tabs.length > 0);

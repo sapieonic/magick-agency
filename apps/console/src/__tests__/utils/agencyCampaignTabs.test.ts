@@ -167,8 +167,8 @@ describe('campaignTabHref', () => {
  * nest one, or change any tab's gate.
  */
 describe('campaign tabs — the groups', () => {
-  const shape = (role: Role | undefined, flags: (flag: string) => boolean = () => false) =>
-    visibleCampaignTabGroups(role, flags).map((g) => [g.label, g.tabs.map((t) => t.label)]);
+  const shape = (role: Role | undefined) =>
+    visibleCampaignTabGroups(role).map((g) => [g.label, g.tabs.map((t) => t.label)]);
 
   it('groups a supervisor’s tabs as Monitor, Data and Set up, in bar order', () => {
     expect(shape('account_admin')).toEqual([
@@ -180,7 +180,7 @@ describe('campaign tabs — the groups', () => {
 
   it('drops a group with nothing left in it, so a viewer sees Monitor with Agents alone', () => {
     for (const role of ['agent', 'viewer', 'operator', undefined] as Array<Role | undefined>) {
-      expect(shape(role, () => true)).toEqual([['Monitor', ['Agents']]]);
+      expect(shape(role)).toEqual([['Monitor', ['Agents']]]);
     }
   });
 
@@ -190,10 +190,12 @@ describe('campaign tabs — the groups', () => {
     }
   });
 
-  it('keeps Soft-phone calls and Activity out of the bar whatever the flags', () => {
-    const ids = visibleCampaignTabs('tenant_owner', () => true).map((t) => t.id);
+  it('keeps Soft-phone calls and History out of the bar', () => {
+    const ids = visibleCampaignTabs('tenant_owner').map((t) => t.id);
     expect(ids).not.toContain('manual');
     expect(ids).not.toContain('activity');
+    // The bar reads no flags: a flagged screen stays out of it.
+    expect(CAMPAIGN_TABS.filter((t) => t.group !== null && t.flag)).toEqual([]);
   });
 
   it('marks Call log on both its views, and no tab on History', () => {
