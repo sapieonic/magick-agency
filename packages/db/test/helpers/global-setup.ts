@@ -1,8 +1,8 @@
 import { runner } from 'node-pg-migrate';
 import pg from 'pg';
 import { MIGRATIONS_DIR } from '../../src/migrations-dir.js';
-import { testWorkers, workerDbName } from '../../../../tooling/test-env.js';
-import { TEST_DB_NAME_RE, TEST_DB_URL, assertSafeTestDbUrl } from './test-db.js';
+import { TEST_DB_URL, assertSafeTestDbUrl } from './test-db.js';
+import { dropWorkerDatabases } from './worker-db.js';
 
 async function waitForPostgres(maxAttempts = 30, delayMs = 1000): Promise<void> {
   let lastErr: unknown;
@@ -22,45 +22,11 @@ async function waitForPostgres(maxAttempts = 30, delayMs = 1000): Promise<void> 
 }
 
 /**
- * One database per integration worker: `<base>_w1` .. `<base>_w<workers>`, each a
- * `CREATE DATABASE … TEMPLATE <base>` copy of the freshly migrated base (about a quarter
- * of a second each, against re-running every migration). `worker-env.ts` points worker N
- * at `<base>_wN`. Run from the `postgres` maintenance database: a template cannot be
- * copied while anything is connected to it, and neither database may be dropped from
- * inside itself. Every name issued is checked against the test-database pattern first.
- */
-async function cloneWorkerDatabases(workers: number): Promise<void> {
-  const baseUrl = new URL(TEST_DB_URL);
-  const baseName = baseUrl.pathname.replace(/^\//, '');
-  const maintenance = new URL(TEST_DB_URL);
-  maintenance.pathname = '/postgres';
-  const client = new pg.Client({ connectionString: maintenance.toString() });
-  await client.connect();
-  try {
-    for (let worker = 1; worker <= workers; worker++) {
-      const name = workerDbName(baseName, worker);
-      if (!TEST_DB_NAME_RE.test(name)) throw new Error(`REFUSING TO RUN: worker database "${name}" is not a test database`);
-      await client.query(`DROP DATABASE IF EXISTS ${pg.escapeIdentifier(name)} WITH (FORCE)`);
-      try {
-        await client.query(`CREATE DATABASE ${pg.escapeIdentifier(name)} TEMPLATE ${pg.escapeIdentifier(baseName)}`);
-      } catch (err) {
-        // 55006: something (a psql, a dev server) is connected to the base database.
-        if ((err as { code?: string }).code === '55006') {
-          throw new Error(`cannot copy "${baseName}" for the integration workers: another session is connected to it. Close it and run again.`);
-        }
-        throw err;
-      }
-    }
-  } finally {
-    await client.end();
-  }
-}
-
-/**
  * Fresh schema, then every migration, once per integration run. This is the
  * "baseline migrates on a throwaway Postgres" check: the schema is dropped
  * first, so a migration that only works against leftover state fails here.
- * Then one copy of it per worker: the suites themselves never touch the base.
+ * The suites never touch the base: before each file, `worker-env.ts` copies it to the
+ * worker's own database (`worker-db.ts`); the copies an earlier run left are dropped here.
  */
 export default async function setup(): Promise<void> {
   assertSafeTestDbUrl();
@@ -80,5 +46,5 @@ export default async function setup(): Promise<void> {
     count: Infinity,
     log: () => {},
   });
-  await cloneWorkerDatabases(testWorkers());
+  await dropWorkerDatabases(TEST_DB_URL);
 }

@@ -19,8 +19,8 @@ import { FakeStationSocket, ScriptedBridge } from './chaos/harness.js';
  *    `agency/station-socket.ts` (this walk attaches a `FakeStationSocket` directly);
  *  - ids: TENANT / ACCOUNT are the factories' default UUIDs (agency's columns are `uuid`), the
  *    agent a stable `uuidFor`;
- *  - Redis: this worktree's test Redis (`TEST_REDIS_URL`, the same db the chaos suites use)
- *    with a `cycle:` key prefix; files run serially (`fileParallelism: false`);
+ *  - Redis: this worker's test Redis db (`TEST_REDIS_URL`, the db the chaos suites use when
+ *    they run on this worker) with a `cycle:` key prefix; no other file runs on it meanwhile;
  *  - the DNC sync in `beforeEach` (`runtime.dnc.applyReplace(...)` + its two expects) is
  *    deleted: there is no Redis DNC set, the pre-dial gate reads `dnc_entries` (decision B8),
  *    and an empty table is "nobody is suppressed" for real;
@@ -127,13 +127,14 @@ const AGENT_USER = uuidFor('agent-cycle-1');
  * Its own Redis database, and NOT database 7.
  *
  * 7 belongs to the chaos suite, which calls `FLUSHDB` on purpose. `flushTestRedis()`
- * flushes 0. This file is picked up by `npm run test:integration` alongside both,
- * and while `fileParallelism` is false today, a flush landing mid-walk would read
- * exactly like a lease bug — the failure this whole partition keeps re-learning.
+ * flushes 0. This file is picked up by `npm run test:integration` alongside both, and
+ * a flush landing mid-walk would read exactly like a lease bug — the failure this whole
+ * partition keeps re-learning.
  *
- * agency gives each worktree ONE test Redis db (`TEST_REDIS_URL`), so
- * this walk shares it with the chaos suites; with `fileParallelism: false` no two files run at
- * once, which is the property the separate db bought. The `cycle:` prefix is kept.
+ * agency gives each integration worker ONE test Redis db (`TEST_REDIS_URL`; a worktree owns
+ * one per worker, `tooling/test-env.ts`), so this walk shares it with whichever chaos suites
+ * run on the same worker; one file runs on a worker at a time, which is the property the
+ * separate db bought. The `cycle:` prefix is kept.
  */
 const KEY_PREFIX = 'cycle:';
 

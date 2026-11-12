@@ -26,10 +26,10 @@ if (lane !== undefined && lane !== 'wall-clock' && lane !== 'rest') {
 
 /**
  * Real Postgres 5436 + Redis 6383. Files run in parallel, each worker on a database and a
- * Redis db of its own (`tooling/test-env.ts`): the global setup migrates the base test
- * database and copies it once per worker, `worker-env.ts` points the worker at its copy
- * and its Redis db before anything imports the test helpers. TEST_WORKERS=1 runs files
- * one at a time, as this suite did before.
+ * Redis db of its own (`tooling/test-env.ts`): the global setup claims the Redis dbs and
+ * migrates the base test database; before each file `worker-env.ts` copies it afresh for
+ * the worker and points the worker at the copy and its Redis db, before anything imports
+ * the test helpers. TEST_WORKERS=1 runs files one at a time, as this suite did before.
  */
 const workers = testWorkers();
 

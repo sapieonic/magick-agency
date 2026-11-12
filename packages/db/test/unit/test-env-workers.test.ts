@@ -34,6 +34,13 @@ describe('integration worker targets (tooling/test-env.ts)', () => {
     expect(() => workerTestTargets({ ...BASE, redisUrl: 'redis://localhost:6383/12' }, 4, 4)).not.toThrow();
   });
 
+  it('refuses a base name that ends like a worker copy: copies are dropped WITH (FORCE)', () => {
+    // A checkout named `…_w1` would be the main checkout's worker 1 copy, dropped under it.
+    expect(() => workerDbName('magick_agency_test_w1', 1)).toThrow(/ends like a worker copy/);
+    expect(() => workerTestTargets({ ...BASE, dbUrl: `${BASE.dbUrl}_w12` }, 1, 4)).toThrow(/ends like a worker copy/);
+    expect(workerDbName('magick_agency_test_wt1', 2)).toBe('magick_agency_test_wt1_w2');
+  });
+
   it('refuses a worker outside 1..workers (a --maxWorkers above TEST_WORKERS)', () => {
     expect(() => workerTestTargets(BASE, 5, 4)).toThrow(/outside 1\.\.4/);
     expect(() => workerTestTargets(BASE, 0, 4)).toThrow(/outside 1\.\.4/);

@@ -5,7 +5,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
  * `GET` / `PUT /notifications/preferences`
  * through the REAL route plugin at the platform plugin's prefix, behind the real
  * `sessionMiddleware` and `tenantContextMiddleware` (the real Redis cache
- * included), on real Postgres 5436 and Redis 6383 db 1, with only Firebase's
+ * included), on real Postgres 5436 and Redis 6383 (the worker's test db), with only Firebase's
  * `verifyIdToken` mocked. The plugin is registered on its own rather than
  * through `buildApp`, so the suite does not depend on every other route
  * module compiling.

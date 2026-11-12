@@ -184,8 +184,8 @@ describe('local cache cross-instance invalidation (integration)', () => {
    */
   it('never hears, or is heard by, a deployment on another Redis db with the same channel', async () => {
     const ownDb = Number(new URL(REDIS_URL).pathname.slice(1));
-    // Another non-zero db (never 0, dev's), different from this worktree's. Only a publish
-    // and a DEL of a key nobody else uses ever touch it.
+    // Another non-zero db (never 0, dev's), different from this worker's: possibly another
+    // worker's or worktree's, so only a publish and a DEL of a key nobody else uses touch it.
     const otherDb = (ownDb % 15) + 1;
     expect(otherDb).not.toBe(ownDb);
     const otherUrl = new URL(REDIS_URL);

@@ -42,7 +42,7 @@ pnpm infra:up      # Postgres on 5436, Redis on 6383; waits until both are healt
 ```
 
 The first start creates two databases, `magick_agency` (dev) and `magick_agency_test`.
-Redis db 0 is for dev and db 1 is for tests. These ports belong only to agency. Never point
+Redis db 0 is for dev and dbs 1-4 are for tests (one per integration worker). These ports belong only to agency. Never point
 anything at 5432/5433/5434/6379/6380/6381; other local stacks use them.
 
 ### 3. Configure the server
@@ -134,16 +134,18 @@ pnpm infra:reset    # stop and drop the volume; run infra:up and migrate:up agai
 
 All worktrees share the same Postgres and Redis. If two of them run the integration suites
 together, they wipe each other's rows. Integration files run in parallel, each worker on its own
-copy of the test database (`<dbName>_w<N>`, made by the test setup) and its own Redis db, so a
-worktree owns a range of Redis dbs: `redisDb` to `redisDb + workers - 1` (by default dbs 1-4).
-Give each other worktree its own test database and a Redis range that does not overlap, in an
-untracked `.test-env.local.json` at the repo root:
+copy of the test database (`<dbName>_w<N>`, made afresh by the test setup before each file) and
+its own Redis db, so a worktree owns a range of Redis dbs: `redisDb` to `redisDb + workers - 1`
+(by default dbs 1-4, fewer on a machine with fewer cores). Give each other worktree its own test
+database and a Redis range that does not overlap, `workers` included so the range does not
+depend on the machine, in an untracked `.test-env.local.json` at the repo root:
 
 ```json
 { "dbName": "magick_agency_test_wt1", "redisDb": 5, "workers": 4 }
 ```
 
-The database name must start with `magick_agency_test`, the Redis range must stay within 1-15,
+The database name must start with `magick_agency_test` and must not end in `_w<N>` (the
+worker copies' names), the Redis range must stay within 1-15,
 and `workers` (or `TEST_WORKERS`) is how many files run at once (1 runs them one at a time). The
 server's integration run refuses to start while another client is on one of its Redis dbs. The
 test setup makes the per-worker copies but not the database itself, so create it once:

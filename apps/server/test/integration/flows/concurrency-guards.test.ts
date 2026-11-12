@@ -7,7 +7,8 @@ import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { getTestPool, closeTestPool, truncateAll } from '../../../../../packages/db/test/integration/setup/test-utils.js';
 import { uuidFor } from '../../../../../packages/db/test/integration/setup/factories.js';
-import { getTestRedis, flushTestRedis, closeTestRedis } from '../../helpers/test-redis.js';
+import Redis from 'ioredis';
+import { getTestRedis, flushTestRedis, closeTestRedis, TEST_REDIS_URL } from '../../helpers/test-redis.js';
 // Type-only, so it is erased at runtime and cannot defeat the vi.mock ordering below.
 import type { CompositeReleaseResult } from '../../../src/core/provider-concurrency-guard.js';
 
@@ -450,8 +451,7 @@ describe('releaseTelephonyLease against REAL guards (integration)', () => {
    * omits `releaseAll` entirely, so the composite branch has never been run against
    * real guard instances until here.
    */
-  function realGuards(prefix: string) {
-    const redis = getTestRedis();
+  function realGuards(prefix: string, redis: Redis = getTestRedis()) {
     return {
       concurrencyGuard: new ConcurrencyGuard(redis, prefix, 100, 60),
       accountConcurrencyGuard: new AccountConcurrencyGuard(redis, prefix, 60),
@@ -459,11 +459,33 @@ describe('releaseTelephonyLease against REAL guards (integration)', () => {
     };
   }
 
-  /** Read the server's own EVAL call counter. See the comment in test C. */
-  async function evalCalls(): Promise<number> {
-    const info = await getTestRedis().info('commandstats');
-    const raw = /^cmdstat_eval:calls=(\d+)/m.exec(info)?.[1];
-    return raw ? Number.parseInt(raw, 10) : 0;
+  /**
+   * The EVALs Redis itself recorded from ONE connection: `MONITOR`, kept to that
+   * connection's address. See the comment in test C. `read()` first sends an ECHO with a
+   * fresh marker on the connection and waits for the monitor to show it, so every command
+   * sent before it has been counted.
+   */
+  async function evalCounter(client: Redis) {
+    const addr = /(?:^| )addr=(\S+)/.exec(String(await client.client('INFO')))![1]!;
+    const monitor = await new Redis(TEST_REDIS_URL).monitor();
+    let evals = 0;
+    const echoed = new Set<string>();
+    monitor.on('monitor', (_time: string, args: string[], source: string) => {
+      if (source !== addr) return;
+      const command = String(args[0]).toLowerCase();
+      if (command === 'eval' || command === 'evalsha') evals++;
+      if (command === 'echo') echoed.add(String(args[1]));
+    });
+    const sync = async () => {
+      const marker = randomUUID();
+      await client.echo(marker);
+      await vi.waitFor(() => { if (!echoed.has(marker)) throw new Error('the monitor has not caught up'); });
+    };
+    await sync();
+    return {
+      read: async () => { await sync(); return evals; },
+      close: () => monitor.disconnect(),
+    };
   }
 
   beforeEach(async () => {
@@ -583,78 +605,82 @@ describe('releaseTelephonyLease against REAL guards (integration)', () => {
   it('costs exactly ONE Redis eval on the healthy path and THREE on the fallback', async () => {
     // The headline claim ("three release evaluations reduced to one") has
     // only ever been asserted by counting mock calls. This counts what Redis itself
-    // recorded: the delta on the server's `cmdstat_eval:calls` between two
-    // `INFO commandstats` reads. Chosen over a spy on the ioredis client because a
-    // spy can only see the calls the code makes through THAT client object, whereas
-    // the server counter is ground truth for the whole connection — it would also
-    // catch a release that reached Redis by some other route. `INFO` increments
-    // `cmdstat_info`, not `cmdstat_eval`, so measuring does not perturb the
-    // measurement; ioredis sends plain `EVAL` (never `EVALSHA`) for `.eval()`, so
-    // one counter suffices; and `FLUSHDB` in `beforeEach` does not reset
-    // commandstats, which is why these are deltas rather than absolutes.
-    // `fileParallelism: false` means no other suite is issuing evals concurrently.
+    // recorded: the EVALs `MONITOR` shows arriving on the guards' own connection
+    // (`evalCounter`). Chosen over a spy on the ioredis client because a spy can only
+    // see the calls the code makes through THAT client object, whereas the server's
+    // view is ground truth for the whole connection: it would also catch a release
+    // that reached Redis by some other route over it. Not `INFO commandstats`: its
+    // `cmdstat_eval` counts every client of the server, and integration files run in
+    // parallel, so other workers issue EVALs on their own dbs throughout.
     const redis = getTestRedis();
+    const guardsRedis = new Redis(TEST_REDIS_URL);
+    const evals = await evalCounter(guardsRedis);
+    try {
 
-    // ── Healthy composite path ────────────────────────────────────────────────
-    const okPrefix = 'test:pcg-rel-helper-c-ok:';
-    const okGuards = realGuards(okPrefix);
-    await okGuards.providerConcurrencyGuard.tryAcquireAll('rel-c-ok', TENANT, ACCOUNT, 'vobiz');
+      // ── Healthy composite path ────────────────────────────────────────────────
+      const okPrefix = 'test:pcg-rel-helper-c-ok:';
+      const okGuards = realGuards(okPrefix, guardsRedis);
+      await okGuards.providerConcurrencyGuard.tryAcquireAll('rel-c-ok', TENANT, ACCOUNT, 'vobiz');
 
-    const beforeComposite = await evalCalls();
-    const compositeOutcome = await releaseTelephonyLease(okGuards, {
-      concurrencyKey: 'rel-c-ok',
-      tenantId: TENANT,
-      accountId: ACCOUNT,
-      provider: 'vobiz',
-      source: 'session_end',
-    });
-    const compositeEvals = (await evalCalls()) - beforeComposite;
+      const beforeComposite = await evals.read();
+      const compositeOutcome = await releaseTelephonyLease(okGuards, {
+        concurrencyKey: 'rel-c-ok',
+        tenantId: TENANT,
+        accountId: ACCOUNT,
+        provider: 'vobiz',
+        source: 'session_end',
+      });
+      const compositeEvals = (await evals.read()) - beforeComposite;
 
-    expect(compositeOutcome).toBe('composite');
-    expect(compositeEvals).toBe(1);
+      expect(compositeOutcome).toBe('composite');
+      expect(compositeEvals).toBe(1);
 
-    // ── Fallback path ─────────────────────────────────────────────────────────
-    // Forced by the `no_release_all` decline: a provider guard exposing only
-    // `release`. Deliberately NOT forced via `isDegraded()` — that decline also
-    // fires the composite as best-effort Redis cleanup, so it costs a mixed
-    // 1 composite + 2 per-scope evals (the degraded guard releases into a
-    // process-local counter and skips Redis entirely) and would measure something
-    // other than "three release evaluations". `provider: undefined` is no good
-    // either: the fallback then skips the provider scope and costs two. Only this
-    // decline exercises the genuine three-guard teardown the claim is about, and
-    // it does so through the real guard classes rather than by breaking Redis.
-    const fbPrefix = 'test:pcg-rel-helper-c-fb:';
-    const fbReal = realGuards(fbPrefix);
-    await fbReal.providerConcurrencyGuard.tryAcquireAll('rel-c-fb', TENANT, ACCOUNT, 'vobiz');
+      // ── Fallback path ─────────────────────────────────────────────────────────
+      // Forced by the `no_release_all` decline: a provider guard exposing only
+      // `release`. Deliberately NOT forced via `isDegraded()` — that decline also
+      // fires the composite as best-effort Redis cleanup, so it costs a mixed
+      // 1 composite + 2 per-scope evals (the degraded guard releases into a
+      // process-local counter and skips Redis entirely) and would measure something
+      // other than "three release evaluations". `provider: undefined` is no good
+      // either: the fallback then skips the provider scope and costs two. Only this
+      // decline exercises the genuine three-guard teardown the claim is about, and
+      // it does so through the real guard classes rather than by breaking Redis.
+      const fbPrefix = 'test:pcg-rel-helper-c-fb:';
+      const fbReal = realGuards(fbPrefix, guardsRedis);
+      await fbReal.providerConcurrencyGuard.tryAcquireAll('rel-c-fb', TENANT, ACCOUNT, 'vobiz');
 
-    const fallbackGuards = {
-      concurrencyGuard: fbReal.concurrencyGuard,
-      accountConcurrencyGuard: fbReal.accountConcurrencyGuard,
-      providerConcurrencyGuard: {
-        release: (c: string, t: string, a: string, p: string) =>
-          fbReal.providerConcurrencyGuard.release(c, t, a, p),
-      },
-    };
+      const fallbackGuards = {
+        concurrencyGuard: fbReal.concurrencyGuard,
+        accountConcurrencyGuard: fbReal.accountConcurrencyGuard,
+        providerConcurrencyGuard: {
+          release: (c: string, t: string, a: string, p: string) =>
+            fbReal.providerConcurrencyGuard.release(c, t, a, p),
+        },
+      };
 
-    const beforeFallback = await evalCalls();
-    const fallbackOutcome = await releaseTelephonyLease(fallbackGuards, {
-      concurrencyKey: 'rel-c-fb',
-      tenantId: TENANT,
-      accountId: ACCOUNT,
-      provider: 'vobiz',
-      source: 'session_end',
-    });
-    const fallbackEvals = (await evalCalls()) - beforeFallback;
+      const beforeFallback = await evals.read();
+      const fallbackOutcome = await releaseTelephonyLease(fallbackGuards, {
+        concurrencyKey: 'rel-c-fb',
+        tenantId: TENANT,
+        accountId: ACCOUNT,
+        provider: 'vobiz',
+        source: 'session_end',
+      });
+      const fallbackEvals = (await evals.read()) - beforeFallback;
 
-    expect(fallbackOutcome).toBe('fallback');
-    expect(fallbackEvals).toBe(3);
-    expect(fallbackEvals).toBe(compositeEvals * 3);
+      expect(fallbackOutcome).toBe('fallback');
+      expect(fallbackEvals).toBe(3);
+      expect(fallbackEvals).toBe(compositeEvals * 3);
 
-    // The saving is in round trips only — the fallback must still fully release.
-    await expect(redis.get(`${fbPrefix}active_calls`)).resolves.toBe('0');
-    await expect(redis.get(`${fbPrefix}active_calls:account:${TENANT}:${ACCOUNT}`)).resolves.toBe('0');
-    await expect(redis.get(`${fbPrefix}active_calls:provider:${TENANT}:${ACCOUNT}:vobiz`))
-      .resolves.toBe('0');
+      // The saving is in round trips only — the fallback must still fully release.
+      await expect(redis.get(`${fbPrefix}active_calls`)).resolves.toBe('0');
+      await expect(redis.get(`${fbPrefix}active_calls:account:${TENANT}:${ACCOUNT}`)).resolves.toBe('0');
+      await expect(redis.get(`${fbPrefix}active_calls:provider:${TENANT}:${ACCOUNT}:vobiz`))
+        .resolves.toBe('0');
+    } finally {
+      evals.close();
+      guardsRedis.disconnect();
+    }
   });
 
   it('treats a mismatched concurrency key as a terminal noop that releases nothing', async () => {

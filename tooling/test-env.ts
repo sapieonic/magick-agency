@@ -21,8 +21,8 @@ import { resolve } from 'node:path';
  *
  * Integration files run in parallel, one worker per file at a time, and each
  * worker has a database and a Redis db of its own ({@link workerTestTargets}):
- * worker N uses `<dbName>_w<N>`, cloned from the migrated `<dbName>` by the
- * global setup, and Redis db `redisDb + N - 1`. So a worktree owns the Redis
+ * worker N uses `<dbName>_w<N>`, copied afresh from the migrated `<dbName>` before
+ * each of its files, and Redis db `redisDb + N - 1`. So a worktree owns the Redis
  * dbs `redisDb` to `redisDb + workers - 1`, and two worktrees that run
  * integration at the same time need ranges that do not overlap.
  */
@@ -68,8 +68,15 @@ export function baseTestTargets(env: NodeJS.ProcessEnv = process.env): { dbUrl: 
   return { dbUrl: env['TEST_DB_URL'] ?? DEFAULT_TEST_DB_URL, redisUrl: env['TEST_REDIS_URL'] ?? DEFAULT_TEST_REDIS_URL };
 }
 
-/** `<base>_w<worker>`: the database worker `worker` (1-based) owns. */
+/**
+ * `<base>_w<worker>`: the database worker `worker` (1-based) owns. A base whose own name ends
+ * in `_w<N>` is refused: it could be another checkout's worker copy, or its copies another
+ * checkout's base, and copies are dropped WITH (FORCE) before each file.
+ */
 export function workerDbName(baseDbName: string, worker: number): string {
+  if (/_w\d+$/.test(baseDbName)) {
+    throw new Error(`test database "${baseDbName}" ends like a worker copy (_w<N>); name it otherwise in .test-env.local.json`);
+  }
   return `${baseDbName}_w${worker}`;
 }
 

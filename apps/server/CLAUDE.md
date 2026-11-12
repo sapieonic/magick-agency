@@ -85,13 +85,14 @@ INTEGRATION_LANE=rest pnpm test:integration        # skip the ~2 min wall-clock 
 ```
 
 - Unit config excludes `test/integration/**`. Integration runs files in parallel, each worker on
-  its own copy of the test database and its own Redis db (`tooling/test-env.ts`;
-  `TEST_WORKERS=1` runs them one at a time). `test/setup/integration-global-setup.ts` checks no
-  other run holds those Redis dbs, then `packages/db/test/helpers/global-setup.ts` drops and
-  re-migrates the test DB and copies it per worker; `packages/db/test/helpers/worker-env.ts`
-  (the first setup file) points each worker at its copy. A test that reads a plan or a timing
-  must not depend on what earlier files left in its tables: which files ran earlier in a worker
-  changes from run to run.
+  its own Redis db and its own copy of the test database, made afresh before each file
+  (`tooling/test-env.ts`; `TEST_WORKERS=1` runs them one at a time).
+  `test/setup/integration-global-setup.ts` claims those Redis dbs for the run (refusing while
+  another client is on one), then `packages/db/test/helpers/global-setup.ts` drops and re-migrates
+  the test DB; `packages/db/test/helpers/worker-env.ts` (the first setup file) copies it for the
+  file and points the worker at the copy. A test may not read server-wide state as its own
+  (`INFO commandstats`, `pg_stat_activity` without `datname = current_database()`): other workers
+  run beside it.
 - `INTEGRATION_LANE=wall-clock|rest` splits off the files that wait on real timers (Redis
   TTLs, the mobile liveness grace; listed in `vitest.config.integration.ts`); unset runs everything.
 - **Chaos suites:** `test/integration/agency/chaos/`, run with integration.

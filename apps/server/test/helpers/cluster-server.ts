@@ -52,8 +52,8 @@ export async function startClusterServer(env: Record<string, string>, opts: { re
   const output: string[] = [];
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     cwd: SERVER_DIR,
-    // Partition maintenance creates and DROPS audit partitions at boot: on the shared test
-    // database that would change the schema under the suites that run after this one.
+    // Partition maintenance creates and DROPS audit partitions at boot: on the worker's test
+    // database that would change the schema under the rest of the spawning file's tests.
     env: {
       ...process.env, PORT: String(port), HOST: '127.0.0.1', AUDIT_PARTITION_MAINTENANCE_ENABLED: 'false',
       READYZ_DETAIL_TOKEN: CLUSTER_READYZ_DETAIL_TOKEN, ...env,

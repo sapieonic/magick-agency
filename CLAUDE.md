@@ -51,12 +51,14 @@ tooling/             test-env resolver, release-please guard, contract-literal e
 - **Ports:** Postgres 5436, Redis 6383 (db 0 dev, dbs 1-4 test), server 3021, console 5175,
   super-admin 5176. Never 5432/5433/5434/6379/6380/6381 (other local stacks use them).
 - **Never two integration runs on one database.** Integration global setup drops and re-migrates
-  it, then copies it once per worker (`<db>_w1`..`<db>_w<N>`): files run in parallel, worker N on
-  its own copy and on Redis db `redisDb + N - 1`, up to 4 workers (`TEST_WORKERS`; 1 runs files
-  one at a time). Each git worktree sets an untracked `.test-env.local.json` at the repo root
-  with a database and a Redis range of its own (`{ "dbName": "magick_agency_test_<x>",
-  "redisDb": 5, "workers": 4 }` owns dbs 5-8), or worktrees truncate each other's rows. The
-  server's global setup refuses to start while another client is on one of its Redis dbs.
+  it; files run in parallel, worker N on Redis db `redisDb + N - 1` and on its own copy of the
+  database (`<db>_w<N>`), made afresh from it before each file, so no file sees what another
+  left. Up to 4 workers (`TEST_WORKERS`; 1 runs files one at a time). Each other git worktree
+  sets an untracked `.test-env.local.json` at the repo root with a database and a Redis range of
+  its own, `workers` included (`{ "dbName": "magick_agency_test_<x>", "redisDb": 5, "workers": 4 }`
+  owns dbs 5-8; a name may not end in `_w<N>`), or worktrees truncate each other's rows. The
+  server's integration run holds its Redis dbs and refuses to start while another client is on
+  one of them.
   Guards refuse any other port, a DB not named `magick_agency_test*`, or Redis db 0
   (`tooling/test-env.ts`). Parallel agents that run integration tests each work in their own git
   worktree with its own `.test-env.local.json`; agents sharing one worktree run integration one at

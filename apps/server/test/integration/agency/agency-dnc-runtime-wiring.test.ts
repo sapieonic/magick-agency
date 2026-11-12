@@ -114,9 +114,8 @@ describe('AgencyRuntime DNC gate wiring (integration, B8)', () => {
     expect(await freshRuntime.dnc.check(TENANT, PHONE, { accountId: null, campaignId: null })).toBe('suppressed');
 
     // Fail closed: the table unreadable is `unavailable`, never `clear`.
-    // The rename is schema-wide on the shared worktree DB: safe ONLY because
-    // `vitest.config.integration.ts` sets `fileParallelism: false` (no other file runs
-    // while `dnc_entries` is gone).
+    // The rename is schema-wide: safe because no other file sees this database (each
+    // integration worker has its own copy, made afresh before each file: tooling/test-env.ts).
     await getTestPool().query('ALTER TABLE dnc_entries RENAME TO dnc_entries_unreadable');
     try {
       expect(await freshRuntime.dnc.check(TENANT, '+14155550199', { accountId: null, campaignId: null }))
