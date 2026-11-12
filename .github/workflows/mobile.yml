@@ -128,6 +128,11 @@ jobs:
       - name: agent_audio Kotlin unit tests
         working-directory: apps/mobile/android
         run: ./gradlew :agent_audio:testDebugUnitTest --no-daemon
+      # The app's own Kotlin unit tests (pure JVM: Mode B's ring state machine, the ring push
+      # parser, the ring routes' request builders, the copy and checklist rules).
+      - name: App Kotlin unit tests
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:testDevDebugUnitTest --no-daemon
 
   ios:
     name: iOS build (no signing)
