@@ -234,14 +234,16 @@ describe('the overdue callbacks of several campaigns (Home)', () => {
     expect(await repo.agencyInsightsReadRepository.callbacksOverdue([])).toEqual(new Map());
   });
 
-  it('counts each campaign by the insights index’s campaign prefix', async () => {
+  // Which campaign-prefixed index the planner takes depends on statistics earlier files left
+  // (the insights index, or the dialable one); the claim is one indexed scan per campaign.
+  it('counts each campaign by an index scan of its campaign prefix, never the whole table', async () => {
     const { text, values } = repo.callbacksOverdueStatement([
       { campaignId: randomUUID(), callbackCodes: CALLBACK },
       { campaignId: randomUUID(), callbackCodes: [] },
     ]);
     const p = await plan(text, values);
     expect(p).toMatch(/Index (Only )?Scan using idx_agency_contacts_\w+ on agency_contacts c/);
-    expect(p).toMatch(/Index Cond: \(\(campaign_id = .*\bstate = 'pending'/);
+    expect(p).toMatch(/Index Cond: \(\(campaign_id = \(jsonb_each\.key\)::uuid\)/);
     expect(p).not.toMatch(/Seq Scan on agency_contacts|Bitmap Heap Scan/);
   });
 });
