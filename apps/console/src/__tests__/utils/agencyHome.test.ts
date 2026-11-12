@@ -3,7 +3,6 @@ import {
   HOME_CAMPAIGN_CAP,
   abandonmentAttention,
   attentionBadgeLabel,
-  attentionBadgeText,
   homeAttention,
   homeBadgeCount,
   homeFloor,
@@ -234,13 +233,6 @@ describe('what the Home badge counts', () => {
 });
 
 describe('the sidebar badge', () => {
-  it('shows the count, 99+ past it, and nothing for none or unknown', () => {
-    expect(attentionBadgeText(null)).toBeNull();
-    expect(attentionBadgeText(0)).toBeNull();
-    expect(attentionBadgeText(4)).toBe('4');
-    expect(attentionBadgeText(120)).toBe('99+');
-  });
-
   it('says what it counts to a screen reader', () => {
     expect(attentionBadgeLabel(1)).toBe('1 needs your attention');
     expect(attentionBadgeLabel(4)).toBe('4 need your attention');

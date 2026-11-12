@@ -25,4 +25,13 @@ describe('StationIdentity', () => {
     );
     expect(screen.getByTestId('station-identity').textContent).toContain('asha@example.com');
   });
+
+  it('shows the same initials as the profile menu: letters only, the email without a name', () => {
+    const { rerender } = render(
+      <StationIdentity user={{ display_name: 'Manas (Dev)', email: 'm@example.com', avatar_url: null }} subline="Renewals" />,
+    );
+    expect(screen.getByTestId('station-identity').textContent).toBe('MDManas (Dev)Renewals');
+    rerender(<StationIdentity user={{ display_name: null, email: 'asha@example.com', avatar_url: null }} subline="Renewals" />);
+    expect(screen.getByTestId('station-identity').textContent).toBe('ASasha@example.comRenewals');
+  });
 });

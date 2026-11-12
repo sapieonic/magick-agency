@@ -1,51 +1,14 @@
 /* The in-page tab bar of a section that groups pages (decision B28). Sits above the page's
    own heading, at the size of the campaign tabs. */
 .tabs {
-  display: flex;
-  gap: 2px;
+  composes: tabs from '../common/TabBar.module.css';
   margin: -8px 0 20px;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
 }
 
 .tab {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-bottom: -1px;
-  padding: 10px 14px;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1.2;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: color var(--transition), border-color var(--transition), background var(--transition);
+  composes: tab from '../common/TabBar.module.css';
 }
 
-.tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-secondary);
-}
-
-.tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  border-radius: 6px 6px 0 0;
-}
-
-.tabActive,
-.tabActive:hover {
-  color: var(--accent-hover);
-  border-bottom-color: var(--accent);
-  background: none;
-}
-
-@media print {
-  .tabs {
-    display: none;
-  }
+.tabActive {
+  composes: tabActive from '../common/TabBar.module.css';
 }

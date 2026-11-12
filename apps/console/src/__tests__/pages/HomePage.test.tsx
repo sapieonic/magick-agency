@@ -25,15 +25,20 @@ vi.mock('../../hooks/useMissedCallsAccess', () => ({
 }));
 
 import HomePage from '../../pages/agency/HomePage';
-import { homeAttentionAge, resetHomeAttentionCountForTests, useHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
-import { HOME_BOARD_ERROR, HOME_FAST_MS } from '../../hooks/useHomeBoard';
+import { HOME_BOARD_ERROR, HOME_FAST_MS, useHomeBadgeCount } from '../../hooks/useHomeBoard';
 
 function Where() {
   return <div data-testid="where">{useLocation().pathname}</div>;
 }
 
+/** The sidebar badge's count, read from the board Home reads; offered, as in the sidebar, only past Home's gate. */
 function Badge() {
-  return <div data-testid="shared-count">{String(useHomeAttentionCount('t-1/a-1'))}</div>;
+  return mocks.role === 'account_admin' ? <BadgeCount /> : null;
+}
+
+function BadgeCount() {
+  const count = useHomeBadgeCount('t-1', 'a-1', { available: mocks.missed.available, count: mocks.missed.count });
+  return <div data-testid="shared-count">{String(count)}</div>;
 }
 
 function renderHome() {
@@ -49,7 +54,6 @@ function renderHome() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resetHomeAttentionCountForTests();
   mocks.role = 'account_admin';
   mocks.missed = { available: false, count: null };
   mocks.getAgencyHomeBoard.mockResolvedValue(board([], { any_campaign: true }));
@@ -189,7 +193,7 @@ describe('the request bound', () => {
 });
 
 describe('the count it shares with the badge', () => {
-  it('is published again on every refresh, even when it has not changed, so the badge never reads while Home is open', async () => {
+  it('comes from Home’s own reads: one request every 10 s with the badge mounted, never one of its own', async () => {
     vi.useFakeTimers();
     try {
       mocks.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1', { overdue: 2 })]));
@@ -203,9 +207,8 @@ describe('the count it shares with the badge', () => {
           await vi.advanceTimersByTimeAsync(HOME_FAST_MS);
         });
       }
-      // Five quiet minutes would leave a count stamped once stale; each refresh restamps it.
       expect(mocks.getAgencyHomeBoard).toHaveBeenCalledTimes(7);
-      expect(homeAttentionAge('t-1/a-1')).toBeLessThan(1_000);
+      expect(screen.getByTestId('shared-count').textContent).toBe('1');
     } finally {
       vi.useRealTimers();
     }

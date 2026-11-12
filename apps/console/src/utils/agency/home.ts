@@ -9,6 +9,7 @@ import {
 import { AGENCY_STALL_LABELS, stallCopy } from '../agencyHealthStrip';
 import { campaignTabHref, type CampaignTabId } from '../agencyCampaignTabs';
 import { plural } from '../format/number';
+import { badgeText } from '../badgeText';
 import { abandonmentTone, ceilingPctText } from './abandonmentCeiling';
 import { abandonmentRate, rateText, successRate, type InsightsRate } from './insights/rates';
 
@@ -243,15 +244,9 @@ export function homeBadgeCount(items: readonly HomeAttentionItem[]): number {
   return items.filter((item) => item.badge).length;
 }
 
-/** The sidebar badge's text: the count, "99+" past it, nothing for none or not yet known. */
-export function attentionBadgeText(count: number | null): string | null {
-  if (count === null || count <= 0) return null;
-  return count > 99 ? '99+' : String(count);
-}
-
 /** What a screen reader hears beside the Home entry. */
 export function attentionBadgeLabel(count: number | null): string | null {
-  const text = attentionBadgeText(count);
+  const text = badgeText(count);
   if (!text) return null;
   if (text === '99+') return 'more than 99 need your attention';
   return count === 1 ? '1 needs your attention' : `${text} need your attention`;

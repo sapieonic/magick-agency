@@ -44,29 +44,8 @@ export function Panel({
   );
 }
 
-/** One figure: label, value, and an optional line beneath. */
-export function Kpi({
-  label,
-  value,
-  sub,
-  withheld,
-  testId,
-}: {
-  label: string;
-  value: ReactNode;
-  sub?: ReactNode;
-  /** The value is a "Not enough calls yet" or a dash, styled down. */
-  withheld?: boolean;
-  testId?: string;
-}) {
-  return (
-    <div className={styles.kpi} data-testid={testId}>
-      <span className={styles.kpiLabel}>{label}</span>
-      <span className={styles.kpiValue} data-withheld={String(Boolean(withheld))}>{value}</span>
-      {sub ? <span className={styles.kpiSub}>{sub}</span> : null}
-    </div>
-  );
-}
+/** One figure (`components/common/Kpi`, shared with Home). */
+export { Kpi } from '../../../../components/common/Kpi';
 
 /** A count that opens the list it counts. `label` names the list for a screen reader. */
 export function CountLink({ to, value, label }: { to: string; value: number; label?: string }) {

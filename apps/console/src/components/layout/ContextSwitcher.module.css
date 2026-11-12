@@ -1,4 +1,5 @@
-/* The account line of the sidebar's context block (decision B28): in bold. */
+/* The sidebar's context block (decision B28): the tenant and account lines share this shape and
+   differ only in size and colour, set by a modifier on the trigger (`.tenant`, `.account`). */
 .switcher {
   position: relative;
   width: 100%;
@@ -14,9 +15,6 @@
   border-radius: var(--radius);
   padding: 2px 4px;
   cursor: pointer;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
   min-height: auto;
   transition: all var(--transition);
 }
@@ -26,9 +24,6 @@ button.trigger:hover {
 }
 
 .triggerIcon {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
   flex-shrink: 0;
 }
 
@@ -51,6 +46,32 @@ button.trigger:hover {
 
 .triggerChevronOpen {
   transform: rotate(180deg);
+}
+
+/* The tenant line: small and muted. */
+.tenant {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tenant .triggerIcon {
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
+}
+
+/* The account line: in bold under the tenant. */
+.account {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.account .triggerIcon {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
 }
 
 /*

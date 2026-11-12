@@ -885,9 +885,9 @@ a rate-limit key and never an auth input.
   the insights route family), answering the active campaigns, at most 25 running first, each with
   the fields of `/stats` Home reads and the insights allocation's overdue callbacks; every 10 s and
   on return. The server reuses a still campaign's stats and every overdue count for a minute. The
-  sidebar badge reads the count the page publishes on every refresh
-  (`hooks/useHomeAttentionCount.ts`); away from Home it asks for the board itself once a minute,
-  never while the tab is hidden or the published count is fresh.
+  sidebar badge reads the same board (one per tenant and account, `useHomeBadgeCount`): its
+  readers share one read at the fastest period any of them asks for, so on Home the badge adds no
+  request and elsewhere the board is read once a minute, never while the tab is hidden.
 - **Console URLs carry the tenant and account** (decision B26). Signed-in pages live under
   `/t/:tenantId/a/:accountId/…`, so a copied link opens the same tenant and account for whoever
   receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;

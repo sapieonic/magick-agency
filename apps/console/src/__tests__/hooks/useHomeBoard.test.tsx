@@ -4,20 +4,20 @@ import type { AgencyHomeBoard } from '@magick-agency/contracts/api/agency/home';
 import { board, onBoard, stats } from '../helpers/home';
 
 /**
- * Home's reads (B28a), with fake timers: what each mode asks for and when, that no refresh is
- * lost to another, that a failed read keeps the last good numbers, and that a scope change
- * discards a read still in flight. One request per read (`GET /proxy/agency/home`).
+ * Home's reads (B28a), with fake timers: what each reader asks for and when, that Home and the
+ * badge share one board and never add requests to each other, that no refresh is lost to another,
+ * that a failed read keeps the last good numbers, and that a scope change discards a read still
+ * in flight. One request per read (`GET /proxy/agency/home`).
  */
 
 const api = vi.hoisted(() => ({ getAgencyHomeBoard: vi.fn() }));
 vi.mock('../../api/agencyHome', () => api);
 
 import { HOME_BOARD_ERROR, HOME_FAST_MS, HOME_SLOW_MS, useHomeBoard, type HomeBoardOptions } from '../../hooks/useHomeBoard';
-import { publishHomeAttentionCount, resetHomeAttentionCountForTests } from '../../hooks/useHomeAttentionCount';
 
-const KEY = 't-1/a-1';
-const live: HomeBoardOptions = { tenantId: 't-1', accountId: 'a-1', enabled: true, mode: 'live' };
-const background: HomeBoardOptions = { tenantId: 't-1', accountId: 'a-1', enabled: true, mode: 'background', attentionKey: KEY };
+/** The Home page's reader, and the sidebar badge's. */
+const live: HomeBoardOptions = { tenantId: 't-1', accountId: 'a-1', enabled: true, intervalMs: HOME_FAST_MS };
+const background: HomeBoardOptions = { tenantId: 't-1', accountId: 'a-1', enabled: true, intervalMs: HOME_SLOW_MS };
 
 async function flush() {
   await act(async () => {
@@ -51,7 +51,6 @@ const overdueOf = (result: { current: ReturnType<typeof useHomeBoard> }) => resu
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
-  resetHomeAttentionCountForTests();
   setVisibility('visible');
   api.getAgencyHomeBoard.mockResolvedValue(board([onBoard('c1')]));
 });
@@ -117,18 +116,9 @@ describe('live (the Home page)', () => {
     await advance(12_000);
     expect(overdueOf(result)).toBe(2);
   });
-
-  it('stamps refreshedAt on every read, even when nothing changed', async () => {
-    const { result } = renderHook(() => useHomeBoard(live));
-    await flush();
-    const first = result.current.refreshedAt;
-    expect(first).toBeGreaterThan(0);
-    await advance(HOME_FAST_MS);
-    expect(result.current.refreshedAt).toBeGreaterThan(first);
-  });
 });
 
-describe('background (the sidebar badge away from Home)', () => {
+describe('background (the sidebar badge on its own)', () => {
   it('reads at mount and then one request a minute: 6 in five minutes, none on the 10 s beat', async () => {
     renderHook(() => useHomeBoard(background));
     await flush();
@@ -139,22 +129,6 @@ describe('background (the sidebar badge away from Home)', () => {
     expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
     await advance(300_000 - HOME_SLOW_MS);
     expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(6);
-  });
-
-  it('reads nothing while a count published in the last 55 s is there', async () => {
-    publishHomeAttentionCount(KEY, 2);
-    renderHook(() => useHomeBoard(background));
-    await flush();
-    expect(api.getAgencyHomeBoard).not.toHaveBeenCalled();
-    // Home open in the same tab keeps publishing (every 10 s; here every 30 s): never a read.
-    for (let t = 0; t < 300_000; t += 30_000) {
-      await advance(30_000);
-      publishHomeAttentionCount(KEY, 2);
-    }
-    expect(api.getAgencyHomeBoard).not.toHaveBeenCalled();
-    // Once the count goes stale, the next minute's tick reads.
-    await advance(HOME_SLOW_MS);
-    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
   });
 
   it('reads nothing while the tab is hidden, and catches up once on return', async () => {
@@ -169,6 +143,64 @@ describe('background (the sidebar badge away from Home)', () => {
     });
     await flush();
     expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('one board for Home and the badge', () => {
+  it('reads once per 10 s with both mounted: 31 in five minutes, as Home alone', async () => {
+    const { result } = renderHook(() => ({ home: useHomeBoard(live), badge: useHomeBoard(background) }));
+    await flush();
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    expect(result.current.badge.reads).toBe(result.current.home.reads);
+    await advance(300_000);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(31);
+  });
+
+  it('adds no read for a badge that mounts beside a fresh board, and goes back to a minute when Home closes', async () => {
+    const home = renderHook(() => useHomeBoard(live));
+    await flush();
+    await advance(3_000);
+    const badge = renderHook(() => useHomeBoard(background));
+    await flush();
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    expect(badge.result.current.status).toBe('ready');
+    home.unmount();
+    await advance(HOME_SLOW_MS - 1);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    await advance(1);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    await advance(240_000);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(6);
+  });
+
+  it('reads at once when Home opens beside a board the badge read a while ago, then every 10 s', async () => {
+    renderHook(() => useHomeBoard(background));
+    await flush();
+    await advance(30_000);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    renderHook(() => useHomeBoard(live));
+    await flush();
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    await advance(HOME_FAST_MS);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(3);
+  });
+
+  it('answers a return with the board when the badge read it under 55 s ago, and a tick just after a return’s read too', async () => {
+    renderHook(() => useHomeBoard(background));
+    await flush();
+    await advance(20_000);
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(1);
+    await advance(36_000);
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
+    // The minute's tick, 4 s after that read: skipped.
+    await advance(4_000);
+    expect(api.getAgencyHomeBoard).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { ChevronRight, CircleCheck, Plus } from 'lucide-react';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -6,14 +6,12 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { formatDate, formatTime } from '@magick-agency/web-ui/format';
 import { useTenant } from '../../contexts/TenantContext';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
-import { useHomeBoard } from '../../hooks/useHomeBoard';
+import { HOME_FAST_MS, useHomeBoard } from '../../hooks/useHomeBoard';
 import { useTodaySoFar } from '../../hooks/useTodaySoFar';
-import { homeAttentionKey, publishHomeAttentionCount } from '../../hooks/useHomeAttentionCount';
 import { hasPermission } from '../../utils/permissions';
 import { holdsHomePermission } from '../../utils/consoleNav';
 import {
   homeAttention,
-  homeBadgeCount,
   homeFloor,
   homeNeeds,
   homeWaiting,
@@ -26,6 +24,7 @@ import { formatCount, plural } from '../../utils/format/number';
 import { durationWords } from '../../utils/format/duration';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import { GetStarted } from './campaigns-home/GetStarted';
+import { Kpi } from '../../components/common/Kpi';
 import styles from './HomePage.module.css';
 
 /** A time on today's date, else the date and time. */
@@ -45,10 +44,9 @@ export default function HomePage() {
   const { role, tenantId, accountId, accounts } = useTenant();
   // `HOME_GATE`'s permission; its capability and flag are `/agency`'s route gates, passed here.
   const supervise = holdsHomePermission(role);
-  const board = useHomeBoard({ tenantId, accountId, enabled: supervise, mode: 'live' });
+  const board = useHomeBoard({ tenantId, accountId, enabled: supervise, intervalMs: HOME_FAST_MS });
   const today = useTodaySoFar(tenantId, accountId, supervise);
   const missed = useMissedCallsAccess();
-  const key = homeAttentionKey(tenantId, accountId);
 
   const items = useMemo(
     () => homeAttention(board.reads, { available: missed.available, count: missed.count }, formatDate),
@@ -56,15 +54,7 @@ export default function HomePage() {
   );
   const needs = homeNeeds(items);
   const waiting = homeWaiting(items);
-  const badgeCount = homeBadgeCount(items);
   const floor = useMemo(() => homeFloor(board.reads), [board.reads]);
-
-  // The sidebar badge counts the same list (its dangers and warnings, not the missed calls the
-  // Inbound badge carries). Published on every refresh, `refreshedAt` included, so the badge's
-  // "fresh enough not to read again" holds while this page is open.
-  useEffect(() => {
-    if (key && board.status === 'ready') publishHomeAttentionCount(key, badgeCount);
-  }, [key, board.status, badgeCount, board.refreshedAt]);
 
   if (role === undefined) return <LoadingSpinner />;
   if (!supervise) return <Navigate to="/agency" replace />;
@@ -198,12 +188,12 @@ function TodaySoFar({ today }: { today: ReturnType<typeof useTodaySoFar> }) {
       {today.status === 'unavailable' && <p className={styles.quiet}>Today’s numbers didn’t load.</p>}
       {today.status === 'ready' && (
         <>
-          <dl className={styles.tiles} data-testid="home-today">
-            <Tile label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
-            <Tile label="Conversations" value={formatCount(today.totals.conversations)} />
-            <Tile label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals) ?? undefined} />
-            <Tile label="Talk time" value={durationWords(today.totals.talkSeconds)} />
-          </dl>
+          <div className={styles.tiles} data-testid="home-today">
+            <Kpi look="outlined" label="Dials" value={formatCount(today.totals.dials)} sub={`Across ${plural(today.totals.campaigns, 'campaign')}`} />
+            <Kpi look="outlined" label="Conversations" value={formatCount(today.totals.conversations)} />
+            <Kpi look="outlined" label="Successes" value={formatCount(today.totals.successes)} sub={todaySuccessLine(today.totals)} />
+            <Kpi look="outlined" label="Talk time" value={durationWords(today.totals.talkSeconds)} />
+          </div>
           <p className={styles.cardNote}>
             Since midnight your time, every campaign in this account. A success is a call whose outcome
             the campaign marks ‘Counts as a success’.
@@ -254,17 +244,5 @@ function FloorRow({ row }: { row: HomeFloorRow }) {
         </span>
       </td>
     </tr>
-  );
-}
-
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className={styles.tile}>
-      <dt className={styles.tileLabel}>{label}</dt>
-      <dd className={styles.tileValue}>
-        {value}
-        {sub && <span className={styles.tileSub}>{sub}</span>}
-      </dd>
-    </div>
   );
 }

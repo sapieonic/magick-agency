@@ -14,7 +14,6 @@ import {
   LONG_BREAK_SECONDS,
   WRAPUP_OVERRUN_GRACE_SECONDS,
   agentDisplayName,
-  agentInitials,
   canForceAvailable,
   floorRisk,
   floorRiskSummary,
@@ -600,26 +599,6 @@ describe('floorRiskSummary — the warnings as one sentence', () => {
         expect(AGENCY_FLOOR_RISK_FLAG[risk]).toBeTruthy();
       }
     }
-  });
-});
-
-describe('agentInitials — the row’s avatar', () => {
-  it('takes the first and last word', () => {
-    expect(agentInitials('Priya Raghavan')).toBe('PR');
-    expect(agentInitials('Maria del Carmen Ruiz')).toBe('MR');
-  });
-
-  it('gives a single-word name one letter, not a doubled one', () => {
-    expect(agentInitials('Ravi')).toBe('R');
-  });
-
-  it('survives a name outside the BMP', () => {
-    // `"𝒜lice"[0]` is half a surrogate pair and renders as a replacement glyph.
-    expect(agentInitials('𝒜lice Ng')).toBe('𝒜N');
-  });
-
-  it('never renders empty', () => {
-    expect(agentInitials('   ')).toBe('?');
   });
 });
 
