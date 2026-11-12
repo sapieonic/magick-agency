@@ -10,8 +10,8 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
 /**
  * Keeps a DEDICATED agent out of the console shell (`ConsoleLayout`) on every page it wraps
  * (Settings, the legacy `/app` URLs and the `/agency` pages), and sends them to the dialer: to
- * the page's own `/dialer/*` twin when it has one (`dialerTwinPath`: a report, the reports
- * list, Missed calls, Customer history), otherwise to `/dialer`.
+ * the page's own `/dialer/*` twin when it has one and its flag is on (`dialerTwinPath`: a report,
+ * the reports list, Missed calls, Customer history), otherwise to `/dialer`.
  *
  * ── The problem this is the whole answer to ─────────────────────────────────
  * An `agent` is hierarchy level 5 and holds four `agency.*` permissions and
@@ -112,8 +112,10 @@ export function AgentLanding({ children }: { children: ReactNode }) {
    * in the URL cannot travel any further than this component.
    *
    * A twin is the same page, so everything after the path goes with it: the query and the hash.
+   * A twin whose flag is off is not one (`dialerTwinPath`): the agent goes to `/dialer` instead,
+   * since a refused twin is a full-viewport screen with no way out (guard 2).
    */
-  const twin = dialerTwinPath(pathname);
+  const twin = dialerTwinPath(pathname, flagEnabled);
   if (twin) return <Navigate to={`${twin}${search}${hash}`} replace />;
 
   const arrival = agentLandingArrival(params.get(AGENT_LANDING_PARAM));

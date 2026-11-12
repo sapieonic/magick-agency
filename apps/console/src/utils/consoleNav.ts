@@ -135,15 +135,23 @@ export function agencyLandingPath(role: Role | undefined): string | null {
 /**
  * The agent's own page for a console page that has one (decision B28): where `AgentLanding`
  * sends a dedicated agent who opens that console page, from an emailed report link, say.
- * `null` when there is no such page; the agent then goes to {@link DIALER_PATH}.
- * The caller carries the query over (a report's `?tab=`, a customer search).
+ * `null` when there is no such page, or when its flag is off; the agent then goes to
+ * {@link DIALER_PATH}. The caller carries the query over (a report's `?tab=`, a customer search).
+ *
+ * A twin is offered only when it would open: the agent's frame is full-viewport, so a twin
+ * refused by its flag is a screen with no way out. The reports twins sit behind `REPORTS_FLAG`
+ * (their routes). Missed calls is offered only with `INBOUND_FLAG` on: with it off the page
+ * opens only while there are rows to read, which `/dialer`'s own nav knows (it offers "Missed
+ * calls" then) and this does not. Customer history needs nothing beyond the dialer: every agent
+ * may search (`agency.customer_history.read` floors at `agent`).
  */
-export function dialerTwinPath(pathname: string): string | null {
+export function dialerTwinPath(pathname: string, isFlagEnabled: (flag: string) => boolean): string | null {
   const path = trimTrailingSlash(pathname);
-  if (path === '/agency/reports') return '/dialer/reports';
+  const reports = isFlagEnabled(REPORTS_FLAG);
+  if (path === '/agency/reports') return reports ? '/dialer/reports' : null;
   const run = /^\/agency\/reports\/([^/]+)$/.exec(path);
-  if (run) return `/dialer/reports/${run[1]}`;
-  if (path === '/agency/inbound/missed') return '/dialer/missed';
+  if (run) return reports ? `/dialer/reports/${run[1]}` : null;
+  if (path === '/agency/inbound/missed') return isFlagEnabled(INBOUND_FLAG) ? '/dialer/missed' : null;
   if (path === '/agency/customers') return '/dialer/customers';
   return null;
 }
