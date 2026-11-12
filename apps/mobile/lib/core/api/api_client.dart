@@ -72,6 +72,8 @@ class ApiClient {
 
   Future<Object?> patch(String path, {Object? body, Duration? timeout}) => _send('PATCH', path, body: body, timeout: timeout);
 
+  Future<Object?> delete(String path, {Duration? timeout}) => _send('DELETE', path, timeout: timeout);
+
   /// A public route: no bearer, no tenant scope (`/client-config`, invite lookup).
   Future<Object?> getPublic(String path, {Duration? timeout}) =>
       _send('GET', path, timeout: timeout, scoped: false, authenticated: false);

@@ -6,8 +6,11 @@ import 'package:magick_agency_agent/app/router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/shell.dart';
 import 'package:magick_agency_agent/core/api/client_identity.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart' show pushDeviceTeardownProvider;
 import 'package:magick_agency_agent/core/auth/firebase_token_source.dart';
 import 'package:magick_agency_agent/core/env.dart';
+import 'package:magick_agency_agent/core/ring/ring_overrides.dart';
+import 'package:magick_agency_agent/core/ring/station_ring.dart' show stationRingProvider;
 import 'package:magick_agency_agent/core/softphone/softphone_controller.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
@@ -350,6 +353,13 @@ void main() {
         expect(overrides, contains(same(o)));
       }
       expect(origins, contains(missedCallsAccessProvider));
+    });
+
+    test('Mode B is plugged in: the station\'s ring seam, the Me card, the services and the sign-out hook', () {
+      for (final o in ringOverrides) {
+        expect(overrides, contains(same(o)));
+      }
+      expect(origins, containsAll([stationRingProvider, ringSettingsProvider, ringServicesProvider, pushDeviceTeardownProvider]));
     });
 
     test('the station core hosts the soft phone, and the pre-flight checks the soft phone asks are provided', () {

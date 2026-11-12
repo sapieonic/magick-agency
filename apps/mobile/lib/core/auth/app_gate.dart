@@ -638,6 +638,8 @@ class AppGateNotifier extends Notifier<AppGate> {
         return;
       }
       if (!ref.mounted) return;
+      if (state is GateReady) await _forgetPushDevice();
+      if (!ref.mounted) return;
       final auth = _auth;
       final store = _store;
       _run++;
@@ -654,6 +656,17 @@ class AppGateNotifier extends Notifier<AppGate> {
       }
     } finally {
       _signingOut = false;
+    }
+  }
+
+  /// How long a sign-out waits for the push device to be forgotten.
+  static const pushDeviceTeardownTimeout = Duration(seconds: 3);
+
+  Future<void> _forgetPushDevice() async {
+    try {
+      await ref.read(pushDeviceTeardownProvider)().timeout(pushDeviceTeardownTimeout);
+    } catch (e) {
+      _log.warn('Forgetting the push device failed; signing out anyway', {'error': e.runtimeType.toString()});
     }
   }
 
@@ -753,6 +766,12 @@ String? invitedTenantId(SessionResponse session, AgencyInvite invite) {
 }
 
 final appGateProvider = NotifierProvider<AppGateNotifier, AppGate>(AppGateNotifier.new);
+
+/// Forgets this phone's push device before a sign-out (Mode B: `DELETE /push-devices/:deviceId`),
+/// so the next person signed in here is never rung for the last one's callers. Run by the gate
+/// after the station is left and while the sign-in still works; bounded, never throws. The
+/// ring layer overrides it (`ringOverrides`); the default has nothing to forget.
+final pushDeviceTeardownProvider = Provider<Future<void> Function()>((ref) => () async {});
 
 /// The tenant/account of a ready gate, or null. Per-account caches (the
 /// campaign list, notification preferences) watch this, so a switch or a

@@ -1,0 +1,71 @@
+import 'package:agency_wire/agency_wire.dart';
+
+import 'ring_channel.dart';
+
+/// Mode B's words on the phone, British English. Wire codes are never shown.
+abstract final class RingCopy {
+  // ── Why the phone stopped ringing (`away_ring` ended by the server, IQ67) ──
+  static const stoppedPrefix = 'Your phone stopped ringing for inbound calls';
+
+  static String stopped(RingOffReason? reason) => switch (reason) {
+        RingOffReason.ringMissed => '$stoppedPrefix: you missed two in a row.',
+        RingOffReason.revoked => '$stoppedPrefix: this phone is no longer registered. Open Me to set it up again.',
+        RingOffReason.optedOut => '$stoppedPrefix: ringing is turned off on this phone.',
+        RingOffReason.flagOff => '$stoppedPrefix: ringing was switched off for this account.',
+        RingOffReason.maxAge => '$stoppedPrefix: you were away for too long.',
+        RingOffReason.takenOver => '$stoppedPrefix: your station moved to another device.',
+        RingOffReason.unknown || null => '$stoppedPrefix.',
+      };
+
+  // ── Answering from a ring ──
+  static const acceptFailed = 'This call stopped ringing or someone else took it.';
+  static const dismiss = 'Dismiss';
+
+  // ── The settings card (Me) ──
+  static const section = 'Inbound calls';
+  static const toggle = 'Ring this phone for inbound calls';
+  static const explain =
+      'When you leave the app while you’re available, a customer who rings in can ring this phone like a phone '
+      'call. Answer it to take the call in the app.';
+  static const missRule =
+      'If you miss two calls in a row, this phone stops ringing until you open the app again, so callers aren’t '
+      'kept waiting for you.';
+  static const checklistTitle = 'What this phone needs';
+  static const fix = 'Fix';
+  static const ready = 'Ready';
+  static const needsAttention = 'Needs attention';
+  static const checklistUnknown = 'This phone couldn’t say whether it can ring. Try again in a moment.';
+  static const noPush = 'This phone can’t receive rings: push messages aren’t available on it.';
+  static const notConfigured = 'Ringing phones isn’t set up on the server yet. Ask your administrator.';
+  static const unsupportedPlatform = 'Ringing for inbound calls isn’t available on this phone yet.';
+  static const optInFailed = 'That change didn’t go through. Try again.';
+  static const loadFailed = 'Couldn’t load this phone’s ringing settings.';
+  static const tryAgain = 'Try again';
+
+  static String item(RingChecklistItem item) => switch (item) {
+        RingChecklistItem.notifications => 'Notifications',
+        RingChecklistItem.fullScreen => 'Full-screen calls',
+        RingChecklistItem.batteryExempt => 'Battery optimisation',
+        RingChecklistItem.microphone => 'Microphone',
+        RingChecklistItem.phoneAccount => 'Calling account',
+        RingChecklistItem.dndAllowsCalls => 'Do Not Disturb',
+      };
+
+  static String itemHint(RingChecklistItem item) => switch (item) {
+        RingChecklistItem.notifications => 'Allowed, so the phone can ring',
+        RingChecklistItem.fullScreen => 'A ring fills the screen, even when locked',
+        RingChecklistItem.batteryExempt => 'Off for this app, so a ring isn’t held back',
+        RingChecklistItem.microphone => 'Allowed, so the caller can hear you',
+        RingChecklistItem.phoneAccount => 'Turned on, so the phone can ring like a call',
+        RingChecklistItem.dndAllowsCalls => 'Lets calls through',
+      };
+
+  // ── The test ring ──
+  static const testRing = 'Send a test ring';
+  static const testSending = 'Sending a test ring…';
+  static const testWaiting = 'Waiting for the test ring…';
+  static const testReceived = 'Your phone rang. Ringing works on this phone.';
+  static const testTimedOut = 'No test ring arrived. Check the list above, then try again.';
+  static const testTooSoon = 'You just sent one. Wait a few seconds, then try again.';
+  static const testFailed = 'The test ring couldn’t be sent. Try again.';
+}

@@ -5,6 +5,7 @@ import 'package:agency_wire/agency_wire.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -151,7 +152,8 @@ const testDeviceId = 'phone-test-device-0001';
 
 /// The station core in a container, with every outside dependency faked.
 class App {
-  App(this.async) {
+  /// [overrides] go after the harness's own (Mode B's seam, say).
+  App(this.async, {List<Override> overrides = const []}) {
     final clock = async.getClock(DateTime.utc(2026, 11, 1, 9));
     now = clock.now;
     container = ProviderContainer(
@@ -181,6 +183,7 @@ class App {
           StationDeviceIds(() => MemoryStore({StationDeviceIds.storeKey: testDeviceId})),
         ),
         ...stationOverrides,
+        ...overrides,
       ],
     );
     container.listen<StationView?>(stationControllerProvider, (_, v) => views.add(v));

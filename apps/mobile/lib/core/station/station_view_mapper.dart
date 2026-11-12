@@ -304,6 +304,7 @@ class StationViewMapper {
   /// readable words for a code the catalog lost, never the raw code.
   static String breakLabel(String code, List<wire.BreakReason> reasons) {
     if (code == wire.ReservedBreakCode.deviceAway.wire) return deviceAwayBreakLabel;
+    if (code == wire.ReservedBreakCode.awayRing.wire) return awayRingBreakLabel;
     if (code == wire.ReservedBreakCode.softPhone.wire) return softPhoneBreakLabel;
     if (code == wire.ReservedBreakCode.phoneCall.wire) return phoneCallBreakLabel;
     if (code.isEmpty) return agentStateLabels[wire.AgentState.onBreak]!;

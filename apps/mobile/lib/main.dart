@@ -13,6 +13,7 @@ import 'core/api/api_client.dart' show IdTokenSource;
 import 'core/api/client_identity.dart';
 import 'core/auth/firebase_token_source.dart';
 import 'core/env.dart';
+import 'core/ring/ring_overrides.dart';
 import 'core/softphone/softphone_controller.dart';
 import 'core/station/station_controller.dart';
 import 'core/station/station_deps.dart';
@@ -85,6 +86,9 @@ List<Override> appOverrides({required Env env, required ClientIdentity identity,
       // The Missed list's count behind the seam the shell and My calls read
       // (missed_access.dart): whether the list shows, and the badge.
       ...missedCallsOverrides,
+      // Mode B: this phone rung for inbound calls while away (the push device, the ring
+      // channel, answering from a ring) behind the station's seam (station_ring.dart).
+      ...ringOverrides,
       // Pre-flight measures with the station's own voice engine instance, never
       // a second one. The soft phone asks it for the microphone permission too.
       preflightChecksProvider.overrideWith(

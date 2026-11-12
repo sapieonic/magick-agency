@@ -65,6 +65,37 @@ final class HostedSession {
         initialBreakReason: response.breakReason.isEmpty ? softphoneBreakReason : response.breakReason,
       );
 
+  /// Mode B: a campaign station opened from a ring the agent answered with no station hosted
+  /// on this phone (a cold start), from `…/ring/accept`'s answer alone. It has no join answer:
+  /// no catalog, break reasons or roster display until the station rehydrates it with a join
+  /// ([HostedSession.campaign]) once the call has left the station. [campaignName] is the best
+  /// name the phone has (the matched campaign's, when it is the session's).
+  factory HostedSession.ring(InboundRingAcceptResponse accept, {String? campaignName, String? accountId}) =>
+      HostedSession._(
+        sessionId: accept.sessionId,
+        kind: SessionKind.campaign,
+        accountId: accountId,
+        campaignId: accept.campaignId,
+        campaignName: campaignName ?? '',
+        bootstrap: null,
+        stationWsUrl: accept.stationWsUrl,
+        stationTokenExpiresAt: accept.stationTokenExpiresAt,
+        intervals: ringIntervals,
+        // The ring is the `reserved` state with an inbound offer (IQ66).
+        initialState: AgentState.reserved,
+        initialBreakReason: null,
+      );
+
+  /// The station's cadence for a station opened from a ring, until the join's own arrive: the
+  /// server's defaults for a station (`STATION_*`), as every join states them.
+  static const ringIntervals = StationIntervals(
+    heartbeat: Duration(seconds: 10),
+    heartbeatGrace: Duration(seconds: 10),
+    reservationLease: Duration(seconds: 10),
+    countdown: Duration(seconds: 3),
+    deferredHangup: Duration(seconds: 8),
+  );
+
   static final _lapsed = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
   final String sessionId;
@@ -94,6 +125,9 @@ final class HostedSession {
   final String? initialBreakReason;
 
   bool get isSoftphone => kind == SessionKind.softphone;
+
+  /// A campaign station opened from a ring ([HostedSession.ring]) that no join has filled in yet.
+  bool get awaitsJoin => !isSoftphone && bootstrap == null;
 
   StationSessionKind get signalKind => isSoftphone ? StationSessionKind.softphone : StationSessionKind.campaign;
 
