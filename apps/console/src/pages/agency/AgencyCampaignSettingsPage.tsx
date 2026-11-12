@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
@@ -65,7 +65,7 @@ import { CampaignRecordingField } from '../../components/agency/CampaignRecordin
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { SettingsSectionNav, useSectionInView } from '../../components/agency/SettingsSectionNav';
 import { ComposerSection } from '../campaigns/components/ComposerSection';
-import { CAMPAIGN_SETTINGS_SECTIONS, campaignHasAgentsSection } from '../../utils/campaignSettingsSections';
+import { campaignSettingsSectionsFor } from '../../utils/campaignSettingsSections';
 import { changedSettings, samePool, type CampaignSettingsForm } from '../../utils/campaignSettingsChanges';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { LeaveUnsavedDialog, UnsavedChangesBar } from '../../components/agency/UnsavedChangesBar';
@@ -209,21 +209,27 @@ export function AgencyCampaignSettingsPage() {
     setAssignmentResetPending(false);
   }, []);
 
+  /** Hold `record` as the campaign: state, the ref the lifecycle controls read, and the "Updated" stamp. */
+  const commitCampaign = useCallback((record: AgencyCampaign) => {
+    campaignRef.current = record;
+    setCampaign(record);
+    setCampaignReadAt(new Date());
+  }, []);
+
   const load = useCallback(async () => {
     if (!id || !tenantId || !accountId) return;
     setLoading(true);
     setLoadError(null);
     try {
       const record = await getAgencyCampaign(id, tenantId, accountId);
-      setCampaign(record);
-      setCampaignReadAt(new Date());
+      commitCampaign(record);
       seedForm(formOfCampaign(record));
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : 'Could not load this campaign.');
     } finally {
       setLoading(false);
     }
-  }, [id, tenantId, accountId, seedForm]);
+  }, [id, tenantId, accountId, seedForm, commitCampaign]);
 
   useEffect(() => {
     void load();
@@ -239,20 +245,12 @@ export function AgencyCampaignSettingsPage() {
     try {
       const record = await getAgencyCampaign(id, tenantId, accountId);
       if (record.id !== id) return campaignRef.current;
-      campaignRef.current = record;
-      setCampaign(record);
-      setCampaignReadAt(new Date());
+      commitCampaign(record);
       return record;
     } catch {
       return campaignRef.current;
     }
-  }, [id, tenantId, accountId]);
-
-  const commitCampaign = useCallback((record: AgencyCampaign) => {
-    campaignRef.current = record;
-    setCampaign(record);
-    setCampaignReadAt(new Date());
-  }, []);
+  }, [id, tenantId, accountId, commitCampaign]);
 
   const lifecycle = useCampaignLifecycle({
     id,
@@ -351,8 +349,7 @@ export function AgencyCampaignSettingsPage() {
         tenantId ?? undefined,
         accountId ?? undefined,
       );
-      setCampaign(updated);
-      setCampaignReadAt(new Date());
+      commitCampaign(updated);
       // Computed against what was ABOUT TO BE SAVED, before the re-seed below
       // replaces `config` with whatever the server normalised it to.
       const priorOrder = dispositionOrderRef.current;
@@ -429,7 +426,7 @@ export function AgencyCampaignSettingsPage() {
     }
   }, [
     id, config, name, callerIds, carrier, recording, recordingEnabled, analyticsEnabled,
-    tenantId, accountId, showToast, assignmentEnabled, campaign, assignmentResetPending, seedForm,
+    tenantId, accountId, showToast, assignmentEnabled, campaign, assignmentResetPending, seedForm, commitCampaign,
   ]);
 
   /** Put back what is saved: every field, and no error left from the edits. */
@@ -442,18 +439,19 @@ export function AgencyCampaignSettingsPage() {
   }, [saved, seedForm]);
 
   /*
-    The sections this campaign's page has (`CAMPAIGN_SETTINGS_SECTIONS`, in page order).
-    Agents only with something in it: contact assignment or inbound on, or contact-assignment
-    settings left from before the flag went off (the reset notice lives there). Lifecycle and
-    uploads only at `agency.supervise`, the floor of both its reads.
+    The sections this campaign's page has, in page order, by the rule search reads too
+    (`campaignSettingsSectionsFor`). Agents only with something in it (contact-assignment
+    settings left from before the flag went off count: the reset notice lives there).
   */
   const assignmentLeftovers = campaign && !assignmentEnabled ? storedAssignmentLeftovers(campaign) : [];
-  const agentsVisible = campaignHasAgentsSection({ assignmentEnabled, inboundEnabled, assignmentLeftovers: assignmentLeftovers.length > 0 });
-  const historyVisible = canSupervise;
-  const sections = CAMPAIGN_SETTINGS_SECTIONS.filter(
-    (section) => (section.id !== 'agents' || agentsVisible)
-      && (section.id !== 'roster-uploads' || historyVisible),
-  );
+  const sections = campaignSettingsSectionsFor({
+    assignmentEnabled,
+    inboundEnabled,
+    assignmentLeftovers: assignmentLeftovers.length > 0,
+    canSupervise,
+  });
+  const agentsVisible = sections.some((section) => section.id === 'agents');
+  const historyVisible = sections.some((section) => section.id === 'roster-uploads');
   /*
     Ready once THIS campaign's sections are on the page: not while a jump from another
     campaign's settings is still loading this one (the old campaign is in state until then).
@@ -465,9 +463,10 @@ export function AgencyCampaignSettingsPage() {
   useCampaignCrumbs(id, campaign, 'settings');
 
   /* What is unsaved, setting by setting; it drives the bar and the guard on leaving. */
-  const changes = saved && config && recording
-    ? changedSettings(saved, { name, callerIds, carrier, recording, config })
-    : [];
+  const changes = useMemo(
+    () => (saved && config && recording ? changedSettings(saved, { name, callerIds, carrier, recording, config }) : []),
+    [saved, name, callerIds, carrier, recording, config],
+  );
   const leaveGuard = useUnsavedChangesGuard(canEdit && changes.length > 0);
 
   if (loading) return <LoadingSpinner />;

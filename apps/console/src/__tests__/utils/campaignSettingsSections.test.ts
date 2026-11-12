@@ -68,8 +68,9 @@ describe('the sections a campaign’s page has', () => {
     expect(ids({ ...all, canSupervise: false })).not.toContain('roster-uploads');
   });
 
-  it('is what the Settings page reads to show Agents', () => {
+  it('is what the Settings page reads to show its sections, Agents among them', () => {
     const page = readFileSync(resolve(__dirname, '../../pages/agency/AgencyCampaignSettingsPage.tsx'), 'utf-8');
-    expect(page).toMatch(/const agentsVisible = campaignHasAgentsSection\(/);
+    expect(page).toMatch(/const sections = campaignSettingsSectionsFor\(/);
+    expect(page).toMatch(/const agentsVisible = sections\.some\(/);
   });
 });
