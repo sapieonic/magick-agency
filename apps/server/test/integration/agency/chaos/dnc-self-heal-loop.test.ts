@@ -61,10 +61,10 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  * a botched migration.
  */
 async function withDncTableUnreadable<T>(fn: () => Promise<T>): Promise<T> {
-  // Safe ONLY because `vitest.config.integration.ts` sets `fileParallelism: false`: the
-  // rename is schema-wide on the shared worktree DB, so a file running alongside would
-  // see `dnc_entries` vanish mid-test. Turn file parallelism on and this must move to
-  // a per-file schema (or a failing pool double).
+  // Safe because no other file sees this database: integration files run in parallel, but
+  // each on its worker's own copy, made afresh before the file (`tooling/test-env.ts`,
+  // `packages/db/test/helpers/worker-env.ts`). Were files ever to share one database again,
+  // this must move to a per-file schema (or a failing pool double).
   await getTestPool().query('ALTER TABLE dnc_entries RENAME TO dnc_entries_unreadable');
   try {
     return await fn();

@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite --port 5176",
     "build": "vite build",
-    "lint": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json --incremental --tsBuildInfoFile node_modules/.cache/tsc/lint.tsbuildinfo",
     "test": "vitest run"
   },
   "dependencies": {

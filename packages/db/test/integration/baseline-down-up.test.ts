@@ -20,6 +20,10 @@ const migrate = (direction: 'up' | 'down', count = Infinity) =>
     dir: MIGRATIONS_DIR,
     direction,
     migrationsTable: 'pgmigrations',
+    // No migration lock: nothing else migrates this file's own database copy, and after a
+    // refused Down the runner's unlock fails on its aborted transaction, so the lock lingers
+    // until the session ends, which the restore right after could race.
+    noLock: true,
     count,
     log: () => {},
   });

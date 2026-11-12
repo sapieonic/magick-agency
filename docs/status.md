@@ -1370,6 +1370,25 @@ in `agency-reports-e2e.test.ts` (the in-process renderer answers `render_failed`
 | `packages/db` | 428 (25 files) | 746 (77 files) |
 | `apps/server` | — (not green, above) | wall-clock lane 23 (5 files); rest lane not green (above) |
 
+Previous run, 2026-11-12, on `main` (#74): integration files in parallel (one database and Redis db per worker,
+the database copied afresh before each file, `tooling/test-env.ts`):
+
+Run from inside each package, 4 workers on a 4-vCPU machine (Postgres 16 with `max_connections`
+300 and Redis 7 on the agency ports), nothing else sharing them. `pnpm lint` clean; `pnpm
+test:tooling` 16 and `pnpm test:release` 10 pass. `packages/db` unit 435 (26 files: the
+worker-target tests are new) and integration 744 (76 files), green on ten runs in a row.
+`apps/server` unit 9682 passed + 1 expected fail (488 files); rest lane 2678 passed + 9 expected
+fail + 2 skipped (251 files + 2 skipped, with the new Redis range guard file), green on 3 of 4
+runs: the fourth failed the inbound clash test, which read the agent's frames between the
+connected row and the connected frame (fixed: it now waits for the frame, as the other inbound
+files do; 3 of 3 green since). Wall-clock lane 23 (5 files). Postgres client connections peaked
+at 95 across the four rest runs (they had reached 100, the old limit, before it was raised).
+Wall time against a serial run (`TEST_WORKERS=1`) on the same machine the same day: rest lane
+1139 s → 420–445 s; wall-clock lane 133 s (its files sum to 320 s run one after another);
+`packages/db` integration 137 s → 48 s. Not run (untouched): the web UIs, `packages/contracts`,
+`packages/domain`, `packages/observability`, `apps/report-renderer`, `apps/mobile`, `pnpm
+test:grafana`.
+
 Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
 
 Run on commit `c41091e` (the docs commits after it change no code), one after another from inside

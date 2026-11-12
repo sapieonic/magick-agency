@@ -17,8 +17,11 @@ const pool = () => getTestPool();
 beforeEach(truncateAll);
 afterAll(closeTestPool);
 
+// No migration lock: nothing else migrates this file's own database copy, and after a refused
+// Down the runner's unlock fails on its aborted transaction, so the lock lingers until the session
+// ends, which a restore right after could race.
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
-  runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {} });
+  runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
 const FILE = '0019_plivo_numbers_and_carrier_pause.sql';
 

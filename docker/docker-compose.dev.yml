@@ -4,7 +4,7 @@
 # flush another stack's data.
 #
 #   Postgres 5436 — databases `magick_agency` (dev) and `magick_agency_test`
-#   Redis    6383 — db 0 dev, db 1 test (only db 1 is ever flushed, by tests)
+#   Redis    6383 — db 0 dev, dbs 1-4 test, one per integration worker (db 0 is never flushed)
 #
 #   pnpm infra:up     start and wait for health
 #   pnpm infra:reset  drop the volume
@@ -14,6 +14,9 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: magick-agency-postgres
+    # Integration files run four at a time, each with its own pools and some with servers of
+    # their own: they peaked at 96 of the default 100 connections.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_DB: magick_agency
       POSTGRES_USER: magick_agency

@@ -12,7 +12,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "lint": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json --incremental --tsBuildInfoFile node_modules/.cache/tsc/lint.tsbuildinfo",
     "test": "vitest run"
   },
   "peerDependencies": {

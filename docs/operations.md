@@ -1103,6 +1103,21 @@ diff against the merge base and picks:
 So a console change runs the console's suites and the server's guards, and no integration; a
 contracts change runs nearly everything. A docs-only change runs the guards only.
 
+**Caches.** `setup-node` restores the pnpm store (`pnpm install` takes seconds). The audio
+decoders the server's tests need (`mpg123`, `sndfile-programs`) are kept as `.deb` files per
+runner image (`apt-audio-<image>`): nothing happens when the image already has them, a hit
+installs them with `dpkg` and never reaches the package mirror, a set `dpkg` refuses falls back to
+`apt-get`, and a miss is saved straight after the install. Each package's `lint` keeps its
+incremental type-check state in `node_modules/.cache/tsc/lint.tsbuildinfo`; CI saves it right
+after lint, failed or not, per commit, and restores the newest (`tsc-<os>-<sha>`), so an
+unchanged package type-checks in seconds. tsc compares file contents, not times, so a restored
+state cannot hide an error. To start a cache over, delete its entries under Actions, Caches (or
+bump the `-v1` in the apt key).
+
+**Integration Postgres.** The integration jobs raise the service container's `max_connections`
+to 300 (`ALTER SYSTEM`, then a restart) before anything connects, as the dev compose file does:
+four integration workers peak near Postgres's default of 100.
+
 **Everything** runs on every push to `main`, on a manual run of CI (Actions, CI, "Run workflow";
 the Mobile workflow has no manual run) and on a pull request labelled **`full-ci`**, which also
 runs the Mobile workflow. Adding the label starts the run. Adding any other label starts a new
