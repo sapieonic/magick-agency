@@ -1341,23 +1341,24 @@ its Swift have never been compiled.
 
 ## Test counts
 
-Latest run, 2026-11-11, integration files in parallel (one database and Redis db per worker,
-`tooling/test-env.ts`):
+Latest run, 2026-11-12, integration files in parallel (one database and Redis db per worker,
+the database copied afresh before each file, `tooling/test-env.ts`):
 
-Run from inside each package, 4 workers on a 4-vCPU machine (Postgres 16 and Redis 7 on the
-agency ports), nothing else sharing them. `pnpm lint` clean; `pnpm test:tooling` 16 and `pnpm
-test:release` 10 pass. `packages/db` unit 434 (26 files: the worker-target tests are new) and
-integration 744 (76 files), green on six runs in a row once the 0017 plan test seeds on fresh
-tables (before that it tipped to a bitmap scan once in four). `apps/server` unit 9682 passed + 1
-expected fail (488 files); rest lane 2676 passed + 9 expected fail + 2 skipped (251 files + 2
-skipped, with the new Redis range guard file); wall-clock lane 23 (5 files). **The rest lane was
-green on 3 of 5 parallel runs.** Each of the other two failed one test, a different one each time,
-cause not found: `assignment-repository.test.ts`'s 10,000-contact split timed out at 20 s (1.2–1.9 s
-on every other run), and `inbound-clash-voicemail-e2e.test.ts`'s in-flight clash failed (8.3–8.7 s
-on every other run; 6 of 6 green alone). Both pass on their own and in the serial runs. Wall time against the serial runs on the same machine:
-rest lane 1044 s → 302–334 s; wall-clock lane 133 s (its files sum to 320 s run one after
-another); `packages/db` integration 34 s (about 95 s serial on another machine). Not run (untouched): the web UIs, `packages/contracts`, `packages/domain`,
-`packages/observability`, `apps/report-renderer`, `apps/mobile`, `pnpm test:grafana`.
+Run from inside each package, 4 workers on a 4-vCPU machine (Postgres 16 with `max_connections`
+300 and Redis 7 on the agency ports), nothing else sharing them. `pnpm lint` clean; `pnpm
+test:tooling` 16 and `pnpm test:release` 10 pass. `packages/db` unit 435 (26 files: the
+worker-target tests are new) and integration 744 (76 files), green on ten runs in a row.
+`apps/server` unit 9682 passed + 1 expected fail (488 files); rest lane 2678 passed + 9 expected
+fail + 2 skipped (251 files + 2 skipped, with the new Redis range guard file), green on 3 of 4
+runs: the fourth failed the inbound clash test, which read the agent's frames between the
+connected row and the connected frame (fixed: it now waits for the frame, as the other inbound
+files do; 3 of 3 green since). Wall-clock lane 23 (5 files). Postgres client connections peaked
+at 95 across the four rest runs (they had reached 100, the old limit, before it was raised).
+Wall time against a serial run (`TEST_WORKERS=1`) on the same machine the same day: rest lane
+1139 s → 420–445 s; wall-clock lane 133 s (its files sum to 320 s run one after another);
+`packages/db` integration about 57 s. Not run (untouched): the web UIs, `packages/contracts`,
+`packages/domain`, `packages/observability`, `apps/report-renderer`, `apps/mobile`, `pnpm
+test:grafana`.
 
 Previous run, 2026-11-11, the inbound pilot rulings (IQ48–IQ57, above), after merging `main` (#69):
 
