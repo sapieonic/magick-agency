@@ -2,6 +2,12 @@ import { defaultPhoneCountryCode, E164_REGEX } from '../utils/phone-normalizer.j
 import { createChildLogger } from '@magick-agency/observability';
 import { parseSearchNumber, resolveSearchCountry } from '@magick-agency/domain/customer-search-number';
 import {
+  dncSearchInternationalDigits,
+  dncSearchPrefixMinDigits,
+  dncSearchShortfall,
+  type DncSearchShortfall,
+} from '@magick-agency/domain/dnc-search';
+import {
   dncRepository,
   type DncEntryRecord,
   type DncListFilter,
@@ -118,25 +124,11 @@ export function toDncE164(raw: string): string | null {
   return E164_REGEX.test(cleaned) ? cleaned : null;
 }
 
-/** The fewest digits a search by part of a number may carry: one digit matched a tenth of the list. */
-export const DNC_SEARCH_MIN_DIGITS = 4;
-
-/**
- * The fewest digits a `+` number cut short (`+91 99088`) may carry to be matched as the START of
- * an E.164 number: a calling code (at most three digits) and {@link DNC_SEARCH_MIN_DIGITS} of the
- * number, so `+91 9` cannot read a tenth of an Indian list.
- */
-export const DNC_SEARCH_MIN_PREFIX_DIGITS = 3 + DNC_SEARCH_MIN_DIGITS;
-
-/** The 400's words when the text has too few digits; the console shows them as they are. */
-export const DNC_SEARCH_TOO_SHORT = `Type at least ${DNC_SEARCH_MIN_DIGITS} digits of the number.`;
+export { DNC_SEARCH_MIN_DIGITS, DNC_SEARCH_MIN_PREFIX_DIGITS, DNC_SEARCH_TOO_SHORT } from '@magick-agency/domain/dnc-search';
 
 export type DncPhoneSearchResult =
   | { ok: true; search: DncPhoneSearch }
-  | { ok: false; code: 'search_too_short'; message: string };
-
-/** A bracketed trunk `(0)` straight after `+cc`, as the number rule drops it (`+44 (0)20 79…`). */
-const TRUNK_AFTER_CALLING_CODE = /^(\s*\+\s*\d{1,3})\s*\(\s*0\s*\)/;
+  | ({ ok: false } & DncSearchShortfall);
 
 /**
  * The list search box's text as a {@link DncPhoneSearch}, or a refusal when it has too few digits.
@@ -149,10 +141,13 @@ const TRUNK_AFTER_CALLING_CODE = /^(\s*\+\s*\d{1,3})\s*\(\s*0\s*\)/;
  * phone's call log does: `15060` finds it, and so does a national number of another country
  * (`5551234567` finds `+15551234567` where the default would read it as `+915551234567`).
  *
- * What is too broad is refused, not run: an ending needs {@link DNC_SEARCH_MIN_DIGITS} digits
- * (`0` matched every tenth row, with an unbounded count). A `+` number cut short is no ending
- * (`+91 99088` is not "ends in 9199088"); it matches as the START of a number, given
- * {@link DNC_SEARCH_MIN_PREFIX_DIGITS} digits. Text with letters or other characters matches
+ * What is too broad is refused, not run, by the rule the console's DNC page checks before it
+ * sends (`dncSearchShortfall`, `@magick-agency/domain/dnc-search`): an ending needs 4 digits
+ * (`0` matched every tenth row, with an unbounded count), `search_too_short`. A `+` number cut
+ * short is no ending (`+91 99088` is not "ends in 9199088"); it matches as the START of a number,
+ * given its calling code and 4 more digits, `search_prefix_too_short`. Text typed with `00` is
+ * an ending as typed (`0060`) and, when what follows the `00` clears the `+` floor, also the start
+ * of a number (`0044 2079` finds `+442079…`). Text with letters or other characters matches
  * nothing.
  */
 export function dncPhoneSearch(raw: string, defaultCallingCode = defaultPhoneCountryCode()): DncPhoneSearchResult {
@@ -160,7 +155,6 @@ export function dncPhoneSearch(raw: string, defaultCallingCode = defaultPhoneCou
     ok: true,
     search: { e164: null, endsWith: null, startsWith: null, ...search },
   });
-  const tooShort: DncPhoneSearchResult = { ok: false, code: 'search_too_short', message: DNC_SEARCH_TOO_SHORT };
   const parsed = parseSearchNumber(raw, resolveSearchCountry(null, defaultCallingCode));
   if (!parsed.ok && (parsed.code === 'empty' || parsed.code === 'invalid_characters' || parsed.code === 'spreadsheet_number')) {
     return ok({});
@@ -171,12 +165,15 @@ export function dncPhoneSearch(raw: string, defaultCallingCode = defaultPhoneCou
     // the number's. Its digits are at least seven, so its ending is never too broad.
     return ok({ e164: parsed.e164, endsWith: typed.replace(/^0+/, '') });
   }
-  if (raw.trim().startsWith('+')) {
-    const digits = raw.replace(TRUNK_AFTER_CALLING_CODE, '$1').replace(/\D/g, '');
-    return digits.length < DNC_SEARCH_MIN_PREFIX_DIGITS ? tooShort : ok({ startsWith: `+${digits}` });
-  }
-  // A partial number's digits are an ending as typed, zeros included (`0060`).
-  return typed.length < DNC_SEARCH_MIN_DIGITS ? tooShort : ok({ endsWith: typed });
+  const short = dncSearchShortfall(raw);
+  if (short) return { ok: false, ...short };
+  const international = dncSearchInternationalDigits(raw);
+  if (raw.trim().startsWith('+')) return ok({ startsWith: `+${international}` });
+  // A partial number's digits are an ending as typed, zeros included (`0060`); after `00`, what
+  // follows may be a number cut short too.
+  return international !== null && international.length >= dncSearchPrefixMinDigits(international)
+    ? ok({ endsWith: typed, startsWith: `+${international}` })
+    : ok({ endsWith: typed });
 }
 
 export class DncService {
