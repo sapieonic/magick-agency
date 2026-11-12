@@ -10,6 +10,7 @@ import {
   settingsLandingPath,
   landingPathFor,
   legacySettingsPath,
+  LEGACY_SETTINGS_SEGMENTS,
   productSurfaceForPath,
   sectionLandingPath,
   sectionRootFor,
@@ -499,6 +500,12 @@ describe('the old /app URLs', () => {
     ['inbound/3f2a1b0c-1111', '/settings/inbound/3f2a1b0c-1111'],
   ])('/app/%s moves to %s', (rest, target) => {
     expect(legacySettingsPath(rest)).toBe(target);
+  });
+
+  it('moves each one to a Settings entry (Profile never lived under /app)', () => {
+    for (const segment of LEGACY_SETTINGS_SEGMENTS) {
+      expect(settingsEntryForPath(`/settings/${segment}`)?.path).toBe(`/settings/${segment}`);
+    }
   });
 
   it('sends anything that was never a page here to the home decision instead', () => {
