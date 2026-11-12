@@ -287,15 +287,11 @@ export function AgencyCampaignSettingsPage() {
       });
       return;
     }
-    if (name.trim().length === 0) {
-      setFieldErrors({ name: 'A campaign needs a name.' });
-      return;
-    }
-    // The API rejects an empty pool and the pacing engine throws without one, so
-    // saving an empty selection would either 400 or — worse, on a running
-    // campaign — leave it unable to place its next call.
-    if (callerIds.length === 0) {
-      setFieldErrors({ caller_ids: 'A campaign needs at least one caller ID.' });
+    // Save is held while either is missing (`missingBasics`), so this is a keyboard or
+    // programmatic submit: say so on the field all the same.
+    const missing = missingBasics(name, callerIds);
+    if (Object.keys(missing).length > 0) {
+      setFieldErrors(missing);
       return;
     }
 
@@ -480,6 +476,12 @@ export function AgencyCampaignSettingsPage() {
   if (!campaign || !config || !recording) return null;
 
   const block = configBlockReason(config);
+  // A name or caller ID taken away is said on its field as soon as it happens, and holds Save,
+  // as a calling-hours mistake does.
+  const missing = canEdit ? missingBasics(name, callerIds) : {};
+  const nameError = missing['name'] ?? fieldErrors['name'];
+  const callerIdsError = missing['caller_ids'] ?? fieldErrors['caller_ids'];
+  const saveBlock = block ?? (Object.keys(missing).length > 0 ? 'invalid_fields' : null);
   /*
     Contact assignment turned off after a campaign was set up with it: pacing still
     follows what the campaign stores (CA9 gates the surface, never the runtime), and
@@ -574,8 +576,10 @@ export function AgencyCampaignSettingsPage() {
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   disabled={!canEdit}
+                  aria-invalid={nameError ? true : undefined}
+                  aria-describedby={nameError ? 'campaign-name-error' : undefined}
                 />
-                {fieldErrors['name'] && <p className={styles.fieldError}>{fieldErrors['name']}</p>}
+                {nameError && <p id="campaign-name-error" className={styles.fieldError}>{nameError}</p>}
               </div>
             </ComposerSection>
 
@@ -611,8 +615,8 @@ export function AgencyCampaignSettingsPage() {
                     carrierActive={carrierActive(carriers, carrier)}
                     disabled={!canEdit}
                   />
-                  {fieldErrors['caller_ids'] && (
-                    <p className={styles.fieldError}>{fieldErrors['caller_ids']}</p>
+                  {callerIdsError && (
+                    <p className={styles.fieldError}>{callerIdsError}</p>
                   )}
                 </div>
               </div>
@@ -814,10 +818,10 @@ export function AgencyCampaignSettingsPage() {
               count={changes.length}
               saving={saving}
               // The refusal itself is the alert above the form; the bar says where to look.
-              note={block !== null
-                ? CONFIG_BLOCK_COPY[block]
+              note={saveBlock !== null
+                ? CONFIG_BLOCK_COPY[saveBlock]
                 : saveError ? 'Not saved. The reason is above the form.' : null}
-              blocked={block !== null}
+              blocked={saveBlock !== null}
               onDiscard={onDiscard}
               onSave={() => void onSave()}
             />
@@ -857,6 +861,18 @@ export function AgencyCampaignSettingsPage() {
 }
 
 export default AgencyCampaignSettingsPage;
+
+/**
+ * What a campaign cannot be saved without, keyed as the server keys it: a name, and at least
+ * one caller ID (the API rejects an empty pool, and the pacing engine cannot place a call
+ * without one, so on a running campaign an empty save would stop it dialling).
+ */
+function missingBasics(name: string, callerIds: readonly string[]): Record<string, string> {
+  const missing: Record<string, string> = {};
+  if (name.trim().length === 0) missing['name'] = 'A campaign needs a name.';
+  if (callerIds.length === 0) missing['caller_ids'] = 'A campaign needs at least one caller ID.';
+  return missing;
+}
 
 /** The assignment half of `agency_campaign_config_saved`: enum labels and counts only. */
 function assignmentAnalytics(config: CampaignConfigState) {
