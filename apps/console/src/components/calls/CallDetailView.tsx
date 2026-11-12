@@ -205,6 +205,9 @@ const STATUS_COLOR_MAP: Record<string, string> = {
 /** Statuses that mean the call did not complete normally — surface the error block. */
 const FAILURE_STATUSES: ReadonlySet<string> = new Set(['failed', 'no_answer', 'busy']);
 
+/** Statuses a call record settles into once the call is over (the rest are a call still going). */
+const ENDED_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'no_answer', 'busy', 'canceled']);
+
 function statusColor(status: WebRtcCallRecordStatus): string {
   return STATUS_COLOR_MAP[status] ?? 'var(--accent)';
 }
@@ -620,8 +623,11 @@ function RecordingSection({
    * (e) The call was never answered, so there was never anything to record. Before
    * the two branches below: both promise (or withhold) a recording, and a busy or
    * unanswered call read "isn't available yet … check back soon" a day later.
+   * Only once the call is over: `answered_at` is null while a call still rings or
+   * queues too, and that call may yet be answered and recorded.
    */
-  if (!hasRecording && call.answered_at == null) {
+  const callEnded = call.ended_at != null || ENDED_STATUSES.has(call.status);
+  if (!hasRecording && call.answered_at == null && callEnded) {
     return note('No recording: the call was not answered.');
   }
 
