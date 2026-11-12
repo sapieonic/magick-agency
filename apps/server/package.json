@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "node scripts/build.mjs",
     "start": "node --max-old-space-size=4096 --max-http-header-size=16384 dist/index.js",
-    "lint": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json --incremental --tsBuildInfoFile node_modules/.cache/tsc/lint.tsbuildinfo",
     "test": "vitest run",
     "test:integration": "vitest run -c vitest.config.integration.ts --passWithNoTests"
   },

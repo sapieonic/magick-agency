@@ -83,11 +83,41 @@ jobs:
           cache: pnpm
       # Real decoders for apps/server/test/unit/audio/decode.test.ts, which fails
       # (rather than skips) under CI when they are missing.
-      # Bounded: a stalled package mirror once held this step for 16 minutes before failing.
+      # Cached as .deb files per runner image: a hit installs them with dpkg and never reaches the
+      # package mirror (a stalled mirror once held this step for 16 minutes before failing).
+      - if: needs.changes.outputs.server == 'true'
+        id: apt-key
+        run: echo "key=apt-audio-$ImageOS-$ImageVersion-v1" >> "$GITHUB_OUTPUT"
+      - if: needs.changes.outputs.server == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-debs
+          key: ${{ steps.apt-key.outputs.key }}
       - if: needs.changes.outputs.server == 'true'
         timeout-minutes: 5
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
+        run: |
+          DEBS="$HOME/apt-debs"; PKGS="mpg123 sndfile-programs"
+          if ! ls "$DEBS"/*.deb >/dev/null 2>&1; then
+            sudo mkdir -p "$DEBS/partial"
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends --download-only -o Dir::Cache::Archives="$DEBS" $PKGS
+            # apt's root-only lock would stop the cache from saving the directory.
+            sudo rm -rf "$DEBS/partial" "$DEBS/lock" && sudo chown -R "$(id -u):$(id -g)" "$DEBS"
+          fi
+          sudo dpkg -i "$DEBS"/*.deb || { sudo apt-get update && sudo apt-get install -y --no-install-recommends $PKGS; }
       - run: pnpm install --frozen-lockfile
+      # Each package's lint keeps its incremental type-check state in node_modules/.cache/tsc
+      # (tsc compares file contents, not times, so a restored state is safe on a fresh checkout):
+      # an unchanged package checks in seconds. Restored after the install, so pnpm never finds
+      # files it did not put in node_modules. Saved per commit; the newest one is restored.
+      - if: needs.changes.outputs.any == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/*/node_modules/.cache/tsc
+            packages/*/node_modules/.cache/tsc
+          key: tsc-${{ runner.os }}-${{ github.sha }}
+          restore-keys: tsc-${{ runner.os }}-
       # lint = tsc --noEmit over src AND test in every package in scope (tests are typechecked).
       - if: needs.changes.outputs.any == 'true'
         run: pnpm --workspace-concurrency=4 $FILTERS run lint
@@ -171,10 +201,28 @@ jobs:
           cache: pnpm
       # Real decoders for the server's recording uploads
       # (test/integration/api/inbound-clips-routes.test.ts decodes a real WAV).
-      # Bounded, as in the unit job.
+      # Cached as .deb files per runner image: a hit installs them with dpkg and never reaches the
+      # package mirror (a stalled mirror once held this step for 16 minutes before failing).
+      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server'
+        id: apt-key
+        run: echo "key=apt-audio-$ImageOS-$ImageVersion-v1" >> "$GITHUB_OUTPUT"
+      - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server'
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-debs
+          key: ${{ steps.apt-key.outputs.key }}
       - if: env.IN_SCOPE == 'true' && matrix.dir == 'apps/server'
         timeout-minutes: 5
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
+        run: |
+          DEBS="$HOME/apt-debs"; PKGS="mpg123 sndfile-programs"
+          if ! ls "$DEBS"/*.deb >/dev/null 2>&1; then
+            sudo mkdir -p "$DEBS/partial"
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends --download-only -o Dir::Cache::Archives="$DEBS" $PKGS
+            # apt's root-only lock would stop the cache from saving the directory.
+            sudo rm -rf "$DEBS/partial" "$DEBS/lock" && sudo chown -R "$(id -u):$(id -g)" "$DEBS"
+          fi
+          sudo dpkg -i "$DEBS"/*.deb || { sudo apt-get update && sudo apt-get install -y --no-install-recommends $PKGS; }
       - if: env.IN_SCOPE == 'true'
         run: pnpm install --frozen-lockfile
       # From inside the package directory: dotenv resolves from cwd.
