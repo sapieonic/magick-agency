@@ -8,8 +8,12 @@ import {
   breadcrumbFor,
   passesGate,
   settingsLandingPath,
+  landingPathFor,
   legacySettingsPath,
   productSurfaceForPath,
+  sectionLandingPath,
+  sectionRootFor,
+  SETTINGS_ENTRIES,
   settingsEntryForPath,
   settingsGroupTitle,
   canSeeHome,
@@ -19,6 +23,8 @@ import {
   type GateInput,
 } from '../../utils/consoleNav';
 import type { Role } from '../../types/auth';
+import { CAMPAIGN_TABS } from '../../utils/agencyCampaignTabs';
+import { campaignCrumbs } from '../../hooks/useCampaignCrumbs';
 
 /**
  * The console's navigation model (decision B28): which work sections and Settings entries a
@@ -243,6 +249,119 @@ describe('the breadcrumb', () => {
     expect(backCrumb(breadcrumbFor('/agency/campaigns'))).toBeNull();
     expect(backCrumb(breadcrumbFor('/settings/team'))).toBeNull();
     expect(backCrumb(breadcrumbFor('/agency/customers'))).toBeNull();
+  });
+});
+
+describe('crumbs that would land on the page itself', () => {
+  const diwali = { id: 'c-1', name: 'Diwali renewals' };
+  const onTab = (tab: string) => campaignCrumbs('c-1', diwali, [{ label: tab }]);
+
+  it('knows where a link lands after the router’s redirects', () => {
+    expect(landingPathFor('/agency/campaigns/c-1', 'account_admin')).toBe('/agency/campaigns/c-1/overview');
+    expect(landingPathFor('/agency/campaigns/c-1/insights?range=today', 'account_admin')).toBe('/agency/campaigns/c-1/overview');
+    expect(landingPathFor('/agency/campaigns/c-1/', 'viewer')).toBe('/agency/campaigns/c-1/agents');
+    expect(landingPathFor('/agency/campaigns/new', 'account_admin')).toBe('/agency/campaigns/new');
+    expect(landingPathFor('/agency/inbound', 'account_admin')).toBe('/agency/inbound/missed');
+    expect(landingPathFor('/agency/reports#x', 'account_admin')).toBe('/agency/reports');
+  });
+
+  it('leave a section’s first tab unlinked when the tab is not named for the section: Reports on Analytics', () => {
+    expect(breadcrumbFor('/agency/analytics')).toEqual([{ label: 'Reports' }, { label: 'Analytics' }]);
+    expect(backCrumb(breadcrumbFor('/agency/analytics'))).toBeNull();
+    expect(breadcrumbFor('/agency/inbound/missed')).toEqual([{ label: 'Inbound' }, { label: 'Missed calls' }]);
+    expect(backCrumb(breadcrumbFor('/agency/inbound/missed'))).toBeNull();
+    // On the section's other tab the section still links to its first.
+    expect(breadcrumbFor('/agency/reports')[0]).toEqual({ label: 'Reports', to: '/agency/analytics' });
+  });
+
+  it('leave a campaign’s name unlinked on the tab the campaign opens on, for each role', () => {
+    expect(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('Overview'), 'account_admin')).toEqual([
+      { label: 'Campaigns', to: '/agency/campaigns' },
+      { label: 'Diwali renewals' },
+      { label: 'Overview' },
+    ]);
+    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('Agents'), 'viewer')[1]).toEqual({ label: 'Diwali renewals' });
+    // A supervisor's Agents is not where the campaign opens, so the name links there.
+    expect(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('Agents'), 'account_admin')[1]).toEqual({
+      label: 'Diwali renewals',
+      to: '/agency/campaigns/c-1',
+    });
+  });
+
+  it('send the phone’s back arrow up to the Campaigns list from Overview, and to the campaign from its other tabs', () => {
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/overview', null, onTab('Overview'), 'account_admin'))).toEqual({
+      label: 'Campaigns',
+      to: '/agency/campaigns',
+    });
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/health', null, onTab('Health'), 'account_admin'))).toEqual({
+      label: 'Diwali renewals',
+      to: '/agency/campaigns/c-1',
+    });
+    expect(backCrumb(breadcrumbFor('/agency/campaigns/c-1/agents', null, onTab('Agents'), 'viewer'))).toEqual({
+      label: 'Campaigns',
+      to: '/agency/campaigns',
+    });
+  });
+
+  /*
+    The rule, over every page of the shell and every role: no crumb but the last links anywhere
+    that lands on the page shown, and the back arrow, when there is one, goes somewhere else.
+    Campaign pages are given the crumbs they supply (`useCampaignCrumbs`).
+  */
+  const ROLES: (Role | undefined)[] = ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent', undefined];
+  const campaignPage = (path: string, trail: { label: string; to?: string }[]) =>
+    [path, campaignCrumbs('c-1', diwali, trail)] as const;
+  const PAGES: (readonly [string, ReturnType<typeof campaignCrumbs>])[] = [
+    ...CONSOLE_SECTIONS.flatMap((s) => [...s.paths, ...s.tabs.map((t) => t.to)]).map((p) => [p, null] as const),
+    ...CAMPAIGN_TABS.map((t) => campaignPage(t.path('c-1'), [{ label: t.label }])),
+    ...['performance', 'insights', ''].map((p) => campaignPage(`/agency/campaigns/c-1${p ? `/${p}` : ''}`, [{ label: 'Overview' }])),
+    campaignPage('/agency/campaigns/c-1/contacts/add', [{ label: 'Contacts', to: '/agency/campaigns/c-1/contacts' }, { label: 'Add contacts' }]),
+    campaignPage('/agency/campaigns/c-1/contacts/k-1', [{ label: 'Contacts', to: '/agency/campaigns/c-1/contacts' }, { label: 'Priya' }]),
+    campaignPage('/agency/campaigns/c-1/attempts/a-1', [{ label: 'Call log', to: '/agency/campaigns/c-1/attempts' }, { label: 'Call' }]),
+    ['/agency/campaigns/new', null],
+    ['/agency/campaigns/c-1/overview', null],
+    ['/agency/reports/run-1', null],
+    ['/agency/softphone/calls/x', null],
+    ['/agency/customers', null],
+    ['/agency/whatever', [{ label: 'Page not found' }]],
+    ['/settings', null],
+    ['/settings/whatever', [{ label: 'Page not found' }]],
+    ['/settings/inbound/new', null],
+    ['/settings/inbound/r-1', null],
+    ...SETTINGS_ENTRIES.map((e) => [e.path, null] as const),
+  ];
+
+  it.each(ROLES.map((role) => [role ?? 'unresolved', role] as const))(
+    'never link to the page shown, nor send the back arrow there, for %s',
+    (_name, role) => {
+      for (const [path, supplied] of PAGES) {
+        const here = landingPathFor(path, role);
+        const crumbs = breadcrumbFor(here, null, supplied, role);
+        for (const crumb of crumbs.slice(0, -1)) {
+          if (crumb.to) expect(landingPathFor(crumb.to, role), `${path}: ${crumb.label}`).not.toBe(here);
+        }
+        const back = backCrumb(crumbs);
+        if (back) expect(landingPathFor(back.to, role), `${path}: back`).not.toBe(here);
+      }
+    },
+  );
+});
+
+describe('a section root', () => {
+  it('is a section path that is not a page of its own', () => {
+    expect(sectionRootFor('/agency/inbound')?.id).toBe('inbound');
+    expect(sectionRootFor('/agency/inbound/')?.id).toBe('inbound');
+    for (const path of ['/agency/campaigns', '/agency/analytics', '/agency/dnc', '/agency/home', '/agency/inbound/missed']) {
+      expect(sectionRootFor(path), path).toBeNull();
+    }
+  });
+
+  it('opens the first tab the reader may open, else the first tab, which answers for itself', () => {
+    const inbound = sectionRootFor('/agency/inbound')!;
+    expect(sectionLandingPath(inbound, { ...input('account_admin'), missedAvailable: true })).toBe('/agency/inbound/missed');
+    expect(sectionLandingPath(inbound, { ...input('account_admin'), missedAvailable: false })).toBe('/agency/inbound/missed');
+    const reports = CONSOLE_SECTIONS.find((s) => s.id === 'reports')!;
+    expect(sectionLandingPath(reports, input('account_admin'))).toBe('/agency/analytics');
   });
 });
 

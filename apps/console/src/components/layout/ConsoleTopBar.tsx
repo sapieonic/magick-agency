@@ -17,7 +17,7 @@ interface Props {
   menuControls?: string;
   /** Opens the console's search (`GlobalSearch`). No field without it. */
   onSearchClick?: () => void;
-  /** Phone width: the breadcrumb is the current page, with a back arrow to the one above it. */
+  /** Phone width: the breadcrumb is the current page, with a back arrow up the trail. */
   phone?: boolean;
 }
 
@@ -26,16 +26,17 @@ interface Props {
  * it, and the profile menu on the right. The field opens `GlobalSearch` (⌘K): pages, Settings,
  * campaigns and, for a reader who may search customer history, a phone number
  * (`docs/customer-history.md` §5). Its words say only what this reader can search. On a phone
- * the breadcrumb shows only the current page, after a back arrow to the crumb above it (when
- * that is a link, `backCrumb`), the field is an icon button, and the menu button opens the
- * sidebar. Pages leave their own breadcrumbs out and rely on this.
+ * the breadcrumb shows only the current page, after a back arrow up to the nearest crumb above
+ * it that is a link (`backCrumb`; no crumb links to the page it is shown on), the field is an
+ * icon button, and the menu button opens the sidebar. Pages leave their own breadcrumbs out and
+ * rely on this.
  */
 export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearchClick, phone = false }: Props) {
   const { pathname } = useLocation();
   const { role, accountId } = useTenant();
   const readers = useGateReaders();
   const gate: GateInput = { role, ...readers };
-  const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label, useSuppliedCrumbs(pathname));
+  const crumbs = breadcrumbFor(pathname, settingsEntryForPath(pathname)?.label, useSuppliedCrumbs(pathname), role);
   const back = phone ? backCrumb(crumbs) : null;
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
   const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');

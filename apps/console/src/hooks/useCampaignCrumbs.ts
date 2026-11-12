@@ -9,7 +9,8 @@ export interface CrumbCampaign {
 
 /**
  * A campaign screen's breadcrumb in the top bar: "Campaigns / <name> / <trail…>". The name links
- * to the campaign (which lands each role on its first tab).
+ * to the campaign (which lands each role on its first tab), except on that tab itself, where
+ * `breadcrumbFor` leaves it a plain name.
  *
  * `campaignId` is the id in the URL and `campaign` whatever the page holds in state. React-router
  * keeps a page mounted when the URL moves to another campaign, so for a moment the state is
@@ -22,6 +23,16 @@ export function useCampaignCrumbs(
   campaign: CrumbCampaign | null | undefined,
   trail: Crumb[],
 ): void {
-  const name = campaignId && campaign && campaign.id === campaignId && campaign.name ? campaign.name : 'Campaign';
-  usePageCrumbs(campaignId ? [{ label: name, to: `/agency/campaigns/${campaignId}` }, ...trail] : null);
+  usePageCrumbs(campaignCrumbs(campaignId, campaign, trail));
+}
+
+/** The crumbs {@link useCampaignCrumbs} supplies: the campaign's name (or "Campaign"), then `trail`. */
+export function campaignCrumbs(
+  campaignId: string | null | undefined,
+  campaign: CrumbCampaign | null | undefined,
+  trail: Crumb[],
+): Crumb[] | null {
+  if (!campaignId) return null;
+  const name = campaign && campaign.id === campaignId && campaign.name ? campaign.name : 'Campaign';
+  return [{ label: name, to: `/agency/campaigns/${campaignId}` }, ...trail];
 }
