@@ -20,9 +20,12 @@
  *    memoised: the campaign list is read on every request, and the memo's key carries each
  *    listed campaign's id, status and `updated_at`, so a campaign starting, stopping or being
  *    edited misses at once.
- *  - **A still campaign's stats** (not running or stopping, no live calls, nobody on its floor:
- *    the campaigns home's `needsPolling` rule, read from the payload itself) are reused for
- *    {@link HOME_STILL_MS}. A moving campaign's are read on every board.
+ *  - **A still campaign's stats** (not running or stopping, no live calls, nobody on shift on its
+ *    floor: the campaigns home's `needsPolling` rule, read from the payload itself) are reused for
+ *    {@link HOME_STILL_MS} while its floor holds: the memo's key carries the floor's signature
+ *    (`floorSignatures`, one indexed read for the board: open sessions, newest state change,
+ *    newest join), so an agent joining a paused campaign's floor, or a signed-out station being
+ *    reaped, misses at once. A moving campaign's are read on every board.
  *  - **The overdue count** is reused for {@link HOME_STILL_MS} per campaign (a follow-up count,
  *    not a live queue; it was the console's 60 s tick). The campaigns that miss are read together.
  *
@@ -94,22 +97,29 @@ export function homeStats(stats: Partial<AgencyCampaignStats>): AgencyHomeCampai
 /** The most campaigns each per-campaign memo remembers (oldest first out). */
 const MEMO_MAX_ENTRIES = 500;
 
-/** A per-campaign value reused {@link HOME_STILL_MS} while the campaign's status and `updated_at` hold. */
+/**
+ * A per-campaign value reused {@link HOME_STILL_MS} while the campaign's status and `updated_at`
+ * hold, and `extra` (the floor's signature, for the stats) with them.
+ */
 class CampaignMemo<V> {
   private readonly entries = new Map<string, { key: string; at: number; value: V }>();
 
   constructor(private readonly section: string) {}
 
-  get(campaign: AgencyCampaignRecord, now: number): V | undefined {
+  private key(campaign: AgencyCampaignRecord, extra: string): string {
+    return `${insightsCacheKey(this.section, campaign)}|${extra}`;
+  }
+
+  get(campaign: AgencyCampaignRecord, now: number, extra = ''): V | undefined {
     const kept = this.entries.get(campaign.id);
-    return kept && kept.key === insightsCacheKey(this.section, campaign) && now - kept.at < HOME_STILL_MS
+    return kept && kept.key === this.key(campaign, extra) && now - kept.at < HOME_STILL_MS
       ? kept.value
       : undefined;
   }
 
-  set(campaign: AgencyCampaignRecord, now: number, value: V): void {
+  set(campaign: AgencyCampaignRecord, now: number, value: V, extra = ''): void {
     this.entries.delete(campaign.id);
-    this.entries.set(campaign.id, { key: insightsCacheKey(this.section, campaign), at: now, value });
+    this.entries.set(campaign.id, { key: this.key(campaign, extra), at: now, value });
     while (this.entries.size > MEMO_MAX_ENTRIES) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
@@ -138,13 +148,35 @@ export function resetHomeBoardMemosForTests(): void {
   boards.clear();
 }
 
-async function statsFor(campaign: AgencyCampaignRecord, deps: HomeBoardDeps, now: number): Promise<Partial<AgencyCampaignStats> | null> {
-  const kept = still.get(campaign, now);
+/**
+ * A campaign's stats: a still one's kept while its floor's signature holds (`floor`: undefined when
+ * the signature read failed, and then nothing is reused).
+ */
+async function statsFor(
+  campaign: AgencyCampaignRecord,
+  deps: HomeBoardDeps,
+  now: number,
+  floor: string | undefined,
+): Promise<Partial<AgencyCampaignStats> | null> {
+  const kept = floor === undefined ? undefined : still.get(campaign, now, floor);
   if (kept) return kept;
   const stats = await deps.liveStats(campaign);
   still.delete(campaign.id);
-  if (stats && !campaignMoving(campaign.status, stats)) still.set(campaign, now, stats);
+  if (stats && floor !== undefined && !campaignMoving(campaign.status, stats)) still.set(campaign, now, stats, floor);
   return stats;
+}
+
+/**
+ * Each campaign's floor signature (`floorSignatures`: open sessions, newest state change, newest
+ * join; '' for an empty floor), or null when the read failed.
+ */
+async function floorsOf(rows: AgencyCampaignRecord[]): Promise<Map<string, string> | null> {
+  try {
+    return await agencyCampaignRepository.floorSignatures(rows.map((c) => c.id));
+  } catch (err) {
+    log.warn({ err, campaigns: rows.length, read: 'floor_signatures' }, 'Home board read failed; reading every campaign’s stats');
+    return null;
+  }
 }
 
 /** Each campaign's overdue count: the kept ones, and the rest in one read (all null when it fails). */
@@ -186,10 +218,11 @@ async function settle<T>(what: string, campaignId: string, read: () => Promise<T
 
 async function readCampaigns(rows: AgencyCampaignRecord[], deps: HomeBoardDeps): Promise<AgencyHomeCampaign[]> {
   const now = Date.now();
+  const floors = await floorsOf(rows);
   const [counts, stats] = await Promise.all([
     overdueFor(rows, deps, now),
     mapWithConcurrency(rows, HOME_READ_CONCURRENCY, (campaign) =>
-      settle('stats', campaign.id, () => statsFor(campaign, deps, now))),
+      settle('stats', campaign.id, () => statsFor(campaign, deps, now, floors ? floors.get(campaign.id) ?? '' : undefined))),
   ]);
   return rows.map((campaign, i) => {
     const read = stats[i];

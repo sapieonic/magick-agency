@@ -24,7 +24,7 @@ import { DEFAULT_ABANDONMENT_CEILING_PCT } from '../../../agency/campaign-thresh
 import { CAMPAIGN_INSERT_COLUMNS_SQL } from './sql-fragments.js';
 import { iso } from './projections.js';
 import { createRetryCampaign, previewRetry } from './campaign-retry.js';
-import { campaignHealthInputs, campaignStats, campaignStatsSeries } from './campaign-stats.js';
+import { campaignHealthInputs, campaignStats, campaignStatsSeries, floorSignatures } from './campaign-stats.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 
 /**
@@ -467,6 +467,11 @@ export class AgencyCampaignRepository {
   /** Supervisor dashboard payload; see {@link campaignStats}. */
   async stats(...args: Parameters<typeof campaignStats>): ReturnType<typeof campaignStats> {
     return campaignStats(...args);
+  }
+
+  /** What makes each campaign's floor change (Home's still memo); see {@link floorSignatures}. */
+  async floorSignatures(...args: Parameters<typeof floorSignatures>): ReturnType<typeof floorSignatures> {
+    return floorSignatures(...args);
   }
 
   /** The campaign's trend line; see {@link campaignStatsSeries}. */

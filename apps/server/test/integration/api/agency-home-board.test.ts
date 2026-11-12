@@ -191,6 +191,33 @@ describe('the numbers are the per-campaign routes’ own', () => {
   });
 });
 
+describe('a paused campaign’s floor', () => {
+  it('an agent joining it shows on the next board, not a minute later (the still memo follows the floor)', async () => {
+    const paused = C(0);
+    const before = (await boardOf()).campaigns.find((c) => c.id === paused)!;
+    expect(before.stats!.agents_live).toBe(0);
+    // Past the account board's few seconds, well inside the still memo's minute.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 6_000);
+      const { rows } = await q(
+        `INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state)
+         VALUES ($1, $2, $3, $4, 'break') RETURNING id`,
+        [main().tenant, main().account, paused, main().agents[0]!.id],
+      );
+      try {
+        const after = (await boardOf()).campaigns.find((c) => c.id === paused)!;
+        expect(after.stats!.agents_live).toBe(1);
+        expect(after.stats!.agents_by_state.break).toBe(1);
+      } finally {
+        await q('DELETE FROM agency_agent_sessions WHERE id = $1', [rows[0]!.id]);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('guards', () => {
   it('refuses an agent (RBAC 403), and reads nothing for them', async () => {
     const res = await home(main().agents[0]!);

@@ -490,6 +490,26 @@ export async function campaignStats(
 }
 
 /**
+ * What makes each campaign's floor change, in one read (Home's board): per campaign with any open
+ * session, how many there are, the newest `state_since` and the newest `joined_at`. A join, a leave
+ * (`left_at` set), a state change or a swap of one agent for another each changes it. Heartbeats do
+ * not, so a still campaign's memo is not broken every few seconds. One probe of
+ * `idx_agency_agent_sessions_live` per campaign. A campaign with nobody open is absent.
+ */
+export async function floorSignatures(campaignIds: readonly string[]): Promise<Map<string, string>> {
+  if (campaignIds.length === 0) return new Map();
+  const { rows } = await getPool().query<{ campaign_id: string; signature: string }>(
+    `SELECT s.campaign_id::text AS campaign_id,
+            count(*)::text || '/' || max(s.state_since)::text || '/' || max(s.joined_at)::text AS signature
+       FROM agency_agent_sessions s
+      WHERE s.campaign_id = ANY($1::uuid[]) AND s.left_at IS NULL
+      GROUP BY s.campaign_id`,
+    [campaignIds],
+  );
+  return new Map(rows.map((r) => [r.campaign_id, r.signature]));
+}
+
+/**
  * Agents on shift: the floor's rows in any state but `offline`. `agents_live` on the wire, and so
  * the stall's `agents_on_shift`; the console's `agentsOnShift` counts the same rows.
  */

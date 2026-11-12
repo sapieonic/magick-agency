@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * stats, the overdue counts). The memos read `Date.now`, so the clock is faked.
  */
 
-const repo = vi.hoisted(() => ({ listForHome: vi.fn() }));
+const repo = vi.hoisted(() => ({ listForHome: vi.fn(), floorSignatures: vi.fn() }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({ agencyCampaignRepository: repo }));
 
 import type { AgencyCampaignStats } from '@magick-agency/contracts/agency';
@@ -65,6 +65,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(1_000_000);
   resetHomeBoardMemosForTests();
+  repo.floorSignatures.mockImplementation(async () => new Map());
   deps = {
     liveStats: vi.fn(async () => payload()),
     callbacksOverdue: vi.fn(counts(() => 2)),
@@ -232,6 +233,37 @@ describe('what is read again on the next board', () => {
     list([row('p1', 'running', { updated_at: new Date('2026-11-12T08:05:00.000Z') })]);
     await computeHomeBoard(SCOPE, deps);
     expect(deps.liveStats).toHaveBeenCalledTimes(3);
+  });
+
+  it('a still campaign’s stats at once when its floor changes (an agent joins a paused campaign)', async () => {
+    list([row('p1', 'paused')]);
+    await computeHomeBoard(SCOPE, deps);
+    expect(repo.floorSignatures).toHaveBeenCalledWith(['p1']);
+    advance();
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(1);
+    // A signed-out station is on the floor (still: nobody on shift), then it is reaped.
+    repo.floorSignatures.mockImplementation(async () => new Map([['p1', '1/2026-11-12 08:01:00+00/2026-11-12 08:00:00+00']]));
+    advance();
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(2);
+    advance();
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(2);
+    repo.floorSignatures.mockImplementation(async () => new Map());
+    advance();
+    await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(3);
+  });
+
+  it('every still campaign’s stats when the floor read fails (nothing reused on a guess)', async () => {
+    list([row('p1', 'paused')]);
+    repo.floorSignatures.mockRejectedValue(new Error('db down'));
+    await computeHomeBoard(SCOPE, deps);
+    advance();
+    const board = await computeHomeBoard(SCOPE, deps);
+    expect(deps.liveStats).toHaveBeenCalledTimes(2);
+    expect(board.campaigns[0]!.stats).not.toBeNull();
   });
 
   it('every campaign’s overdue count, once a minute (a follow-up count, not a live queue)', async () => {
