@@ -274,7 +274,7 @@ class InviteController extends Notifier<InviteState> {
         state = state.copyWith(
           busy: InviteBusy.none,
           existingPassword: true,
-          error: () => 'That address already has a password. Enter it and we will add this workspace to it.',
+          error: () => 'That address already has a password. Enter it and we will add this organisation to it.',
         );
         return;
       }
@@ -321,7 +321,7 @@ class InviteController extends Notifier<InviteState> {
             state = state.copyWith(
               busy: InviteBusy.none,
               error: () => refusal.message.isEmpty
-                  ? 'That account is already set up with this workspace. Sign in with it directly.'
+                  ? 'That account is already set up with this organisation. Sign in with it directly.'
                   : refusal.message,
               errorOffersSignIn: true,
             );

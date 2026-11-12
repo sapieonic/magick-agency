@@ -63,8 +63,8 @@ describe('the supporting line', () => {
     ['Viewer', 'a Viewer'],
     ['Operator', 'an Operator'],
     ['Account admin', 'an Account admin'],
-    ['Workspace admin', 'a Workspace admin'],
-    ['Workspace owner', 'a Workspace owner'],
+    ['Organisation admin', 'an Organisation admin'],
+    ['Organisation owner', 'an Organisation owner'],
   ])('names the role %s with the right article', (roleLabel, phrase) => {
     // Every workspace label, through the one sentence. The labels are the
     // console claim page's, so the mail and the page say the same thing.
@@ -89,7 +89,7 @@ describe('what happens next', () => {
      * are already a member, and what you see depends on your role.
      */
     const { htmlBody, textBody } = renderWorkspaceInviteEmail(BASE);
-    for (const step of ['Set up your sign-in', 'Your workspace opens', 'What you see depends on your role']) {
+    for (const step of ['Set up your sign-in', 'Your organisation opens', 'What you see depends on your role']) {
       expect(textBody, step).toContain(step);
       expect(htmlBody, step).toContain(step);
     }
@@ -105,10 +105,10 @@ describe('what happens next', () => {
      * create, or add-user), and nobody in their workspace outranks them, so the
      * copy has to be true for every role it is sent to rather than for most.
      */
-    const { htmlBody, textBody } = renderWorkspaceInviteEmail({ ...BASE, roleLabel: 'Workspace owner' });
+    const { htmlBody, textBody } = renderWorkspaceInviteEmail({ ...BASE, roleLabel: 'Organisation owner' });
     for (const part of [textBody, htmlBody]) {
       expect(part).not.toMatch(/admin on your team|can change it later/i);
-      expect(part).toContain('The role named above sets what you can see and change in the workspace.');
+      expect(part).toContain('The role named above sets what you can see and change in the organisation.');
     }
   });
 
@@ -129,9 +129,9 @@ describe('what happens next', () => {
       'The campaigns you are staffed on appear', 'Your supervisor decides which ones; they show up as they are assigned.',
     ];
     const workspaceSteps = [
-      'Choose how you sign in — this link is what connects it to your place in the workspace.',
-      'Your workspace opens', 'You arrive already a member. There is nothing else to sign up for or create.',
-      'What you see depends on your role', 'The role named above sets what you can see and change in the workspace.',
+      'Choose how you sign in — this link is what connects it to your place in the organisation.',
+      'Your organisation opens', 'You arrive already a member. There is nothing else to sign up for or create.',
+      'What you see depends on your role', 'The role named above sets what you can see and change in the organisation.',
     ];
     for (const part of ['textBody', 'htmlBody'] as const) {
       expect(strip(workspace[part], workspace.subject, workspaceSteps))

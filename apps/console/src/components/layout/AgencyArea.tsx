@@ -30,7 +30,7 @@ export function AgencyArea() {
         <h2>Select an account</h2>
         <p>
           {accounts.length === 0
-            ? 'This workspace has no accounts yet. An account is where campaigns, contacts and the Do Not Call list live, so one has to exist before the Agency Dialer can be used.'
+            ? 'This organisation has no accounts yet. An account is where campaigns, contacts and the Do Not Call list live, so one has to exist before the Agency Dialer can be used.'
             : 'Choose an account from the switcher in the sidebar. Campaigns, rosters and dialling all belong to a single account.'}
         </p>
         {accounts.length === 0 && canCreateAccount && (

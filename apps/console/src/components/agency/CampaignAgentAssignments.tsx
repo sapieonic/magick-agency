@@ -277,7 +277,7 @@ function AssignmentPanel({
           <span className={styles.pickerNote}>
             {membersError
               ? 'We couldn’t load your team, so there is nobody to pick from. Try reloading.'
-              : 'Everyone in this workspace is already assigned here.'}
+              : 'Everyone in this organisation is already assigned here.'}
           </span>
         )}
       </div>

@@ -45,7 +45,7 @@ export async function tenantRoutes(app: FastifyInstance): Promise<void> {
     preHandler: [tenantContextMiddleware, requirePermission('tenant.read')],
   }, async (request, reply) => {
     if (request.params.id !== request.tenantId) {
-      return reply.code(404).send({ error: 'Not Found', message: 'Tenant not found' });
+      return reply.code(404).send({ error: 'Not Found', message: 'Organisation not found' });
     }
 
     /**

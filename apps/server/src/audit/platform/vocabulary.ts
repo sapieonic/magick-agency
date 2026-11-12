@@ -248,10 +248,10 @@ export { PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY };
  */
 export const PLATFORM_AUDIT_PRODUCT_VOCABULARY = [
   { value: 'agency', label: 'Agency dialer' },
-  // The shared zone: team and settings. "Workspace" rather than "Platform"
+  // The shared zone: team and settings. "Organisation" rather than "Platform"
   // because "platform" is our word for the service, not the operator's for the
   // thing they administer.
-  { value: 'platform', label: 'Workspace' },
+  { value: 'platform', label: 'Organisation' },
 ] as const satisfies readonly { value: AuditProduct; label: string }[];
 
 /**

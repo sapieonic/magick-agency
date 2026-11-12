@@ -193,8 +193,8 @@ function UnrecognisedAccount({
       <p className={styles.tagline}>Agency Dialer</p>
       <h1 className={styles.noticeTitle}>We don’t recognise that account</h1>
       <p className={styles.noticeBody}>
-        {email ? <><strong>{email}</strong> isn’t</> : 'That address isn’t'} on an agency
-        workspace yet. Sign-in is matched on the exact address your supervisor invited,
+        {email ? <><strong>{email}</strong> isn’t</> : 'That address isn’t'} in an organisation
+        on the Agency Dialer yet. Sign-in is matched on the exact address your supervisor invited,
         so this usually means the invite went somewhere else — a work address rather
         than a personal one, or the other way round.
       </p>
@@ -573,7 +573,7 @@ export default function AgencyLoginPage() {
             <div className={styles.brandLogo}>{brand.name}</div>
             <p className={styles.brandProduct}>Agency Dialer</p>
             <p className={styles.brandTagline}>
-              The workspace your calling floor runs on.
+              Where your calling floor runs.
             </p>
           </div>
 
@@ -592,7 +592,7 @@ export default function AgencyLoginPage() {
           </div>
 
           <div className={styles.leftFooter}>
-            Signing in takes you to your own workspace — agents to their station,
+            Signing in takes you straight to your work — agents to their station,
             supervisors to their campaigns.
           </div>
         </div>

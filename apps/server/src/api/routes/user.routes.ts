@@ -325,7 +325,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       if (!targetAccount) {
         return reply.code(400).send({
           error: 'Bad Request',
-          message: 'account_id does not belong to this tenant.',
+          message: 'account_id does not belong to this organisation.',
         });
       }
     }
@@ -633,7 +633,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     );
     if (!result.ok) {
       if (result.reason === 'last_owner') {
-        return reply.code(400).send({ error: 'Bad Request', message: 'Cannot demote the last tenant owner' });
+        return reply.code(400).send({ error: 'Bad Request', message: 'Cannot demote the last organisation owner' });
       }
       if (result.reason === 'role_changed') {
         return reply.code(409).send({
@@ -739,7 +739,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     );
     if (!result.ok) {
       if (result.reason === 'last_owner') {
-        return reply.code(400).send({ error: 'Bad Request', message: 'Cannot remove the last tenant owner' });
+        return reply.code(400).send({ error: 'Bad Request', message: 'Cannot remove the last organisation owner' });
       }
       if (result.reason === 'role_changed') {
         return reply.code(409).send({

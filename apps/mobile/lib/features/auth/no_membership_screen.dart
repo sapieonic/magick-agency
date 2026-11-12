@@ -41,7 +41,7 @@ class _NoMembershipScreenState extends ConsumerState<NoMembershipScreen> {
             ] else
               const TextSpan(text: 'That address isn’t'),
             const TextSpan(
-              text: ' on an agency workspace yet. Sign-in is matched on the exact address your supervisor invited, '
+              text: ' in an organisation on the Agency Dialer yet. Sign-in is matched on the exact address your supervisor invited, '
                   'so this usually means the invite went somewhere else — a work address rather than a personal one, '
                   'or the other way round.',
             ),

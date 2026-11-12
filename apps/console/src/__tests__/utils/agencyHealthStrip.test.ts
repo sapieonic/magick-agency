@@ -147,9 +147,9 @@ describe('stallCopy — each arm names its own evidence', () => {
     expect(copy.headline).not.toMatch(/currently|right now/i);
   });
 
-  it('dnc_unavailable says the whole workspace is affected', () => {
+  it('dnc_unavailable says the whole organisation is affected', () => {
     const copy = stallCopy({ code: 'dnc_unavailable', tenant_wide: true }, at);
-    expect(copy.evidence).toMatch(/workspace/i);
+    expect(copy.evidence).toMatch(/whole organisation/i);
     expect(copy.evidence).toMatch(/every campaign/i);
   });
 

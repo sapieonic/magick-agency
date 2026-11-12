@@ -94,7 +94,7 @@ export const JOIN_DOORS: Record<JoinDoor, JoinDoorCopy> = {
       the person is joining is the invite's own `product_name`, rendered in the
       title once it is known.
     */
-    eyebrow: 'Workspace invitation',
+    eyebrow: 'Organisation invitation',
     signInPath: (destination) => loginPathReturningTo(destination),
     unavailable: WORKSPACE_UNAVAILABLE_COPY,
   },

@@ -23,7 +23,7 @@ import { renderWorkspaceInviteEmail, workspaceProductName } from './workspace-in
  * The claim page renders `roleLabel(invite.role)` from
  * `apps/console/src/utils/agencyInviteJoinCopy.ts` (`ROLE_LABELS`), and the
  * person reading it has just come from this mail. "Tenant admin" in the inbox
- * and "Workspace admin" on the page is two names for one thing at the exact
+ * and "Organisation admin" on the page is two names for one thing at the exact
  * moment somebody is deciding whether this is genuine. Nothing enforces the
  * match across the two apps — the same seam the join-URL rule in
  * `invite-mailer.ts` describes — so this paragraph is the safeguard: change one,
@@ -37,8 +37,8 @@ export const INVITE_ROLE_LABELS: Readonly<Record<MembershipRole, string>> = {
   viewer: 'Viewer',
   operator: 'Operator',
   account_admin: 'Account admin',
-  tenant_admin: 'Workspace admin',
-  tenant_owner: 'Workspace owner',
+  tenant_admin: 'Organisation admin',
+  tenant_owner: 'Organisation owner',
 };
 
 export function inviteRoleLabel(role: MembershipRole): string {

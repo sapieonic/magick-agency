@@ -40,7 +40,7 @@ import styles from './BreakMenu.module.css';
 
 /** Turns a silent `400` into a sentence a human can act on. */
 export const BREAK_UNCONFIGURED_COPY =
-  "Your workspace hasn't set up break reasons yet. Ask your supervisor.";
+  "Your organisation hasn't set up break reasons yet. Ask your supervisor.";
 
 /** For `unknown_break_reason`. */
 export const BREAK_REJECTED_COPY = 'That break reason is no longer available. Pick another.';

@@ -104,14 +104,14 @@ export function ProfileMenu() {
             <div className={styles.idSection}>
               {tenantId && (
                 <div className={styles.idRow}>
-                  <span className={styles.idLabel}>Tenant ID</span>
+                  <span className={styles.idLabel}>Organisation ID</span>
                   <code className={styles.idValue} title={tenantId}>{tenantId}</code>
                   <button
                     className={styles.idCopyBtn}
                     onClick={() => handleCopyId('tenant', tenantId)}
                     type="button"
-                    title="Copy Tenant ID"
-                    aria-label="Copy Tenant ID"
+                    title="Copy organisation ID"
+                    aria-label="Copy organisation ID"
                   >
                     {copiedId === 'tenant' ? <Check size={12} /> : <Copy size={12} />}
                   </button>

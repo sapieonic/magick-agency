@@ -186,7 +186,7 @@ class _InviteCard extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (invite.tenantName != null) _DetailRow(label: 'Workspace', value: invite.tenantName!),
+              if (invite.tenantName != null) _DetailRow(label: 'Organisation', value: invite.tenantName!),
               if (invite.inviterName != null) _DetailRow(label: 'Invited by', value: invite.inviterName!),
               _DetailRow(label: 'Expires', value: DateFormat('d MMM, HH:mm').format(invite.expiresAt.toLocal())),
               const SizedBox(height: Space.sm),
@@ -556,7 +556,7 @@ class _PasswordFormState extends State<_PasswordForm> {
           const SizedBox(height: Space.sm),
           if (widget.existing)
             Text(
-              'This address already has a password on Magick Agency. Enter it and we will add this workspace to it.',
+              'This address already has a password on Magick Agency. Enter it and we will add this organisation to it.',
               style: text.bodySmall,
             )
           else ...[

@@ -159,7 +159,7 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json().message).toMatch(/does not belong to this tenant/);
+    expect(res.json().message).toMatch(/does not belong to this organisation/);
     expect(mocks.membershipRepository.create).not.toHaveBeenCalled();
     // Both ids, in order. `findByIdInTenant(id)` with the tenant dropped would
     // be a syntactically valid call that scopes nothing.
@@ -180,7 +180,7 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json().message).toMatch(/does not belong to this tenant/);
+    expect(res.json().message).toMatch(/does not belong to this organisation/);
   });
 
   it('refuses an account_id that does not exist at all, with the SAME message as a tenant mismatch', async () => {
@@ -196,7 +196,7 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json().message).toMatch(/does not belong to this tenant/);
+    expect(res.json().message).toMatch(/does not belong to this organisation/);
     expect(mocks.membershipRepository.create).not.toHaveBeenCalled();
     expect(mocks.accountRepository.findByIdInTenant).toHaveBeenCalledWith(ACCOUNT_NONEXISTENT, TENANT);
   });
@@ -668,7 +668,7 @@ describe('user.routes — PUT /:id/role current-role check', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json().message).toMatch(/last tenant owner/);
+    expect(res.json().message).toMatch(/last organisation owner/);
   });
 
   it('409s when the target was re-roled between the RBAC check and the write', async () => {
@@ -777,7 +777,7 @@ describe('user.routes — DELETE /:id/membership current-role check', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json().message).toMatch(/last tenant owner/);
+    expect(res.json().message).toMatch(/last organisation owner/);
   });
 });
 

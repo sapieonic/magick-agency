@@ -90,7 +90,7 @@ const NEXT_STEPS: readonly JoinStep[] = [
   },
   {
     icon: Building2,
-    title: 'The workspace you were invited to opens',
+    title: 'The organisation you were invited to opens',
     desc: 'Even if you already belong to another one — that one is a switch away.',
   },
   {

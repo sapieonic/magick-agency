@@ -24,7 +24,7 @@ const log = createChildLogger({ component: 'auth-routes' });
  */
 export const NO_MEMBERSHIP_CODE = 'no_membership' as const;
 export const NO_MEMBERSHIP_MESSAGE =
-  'This account has not been added to any Magick Agency workspace. Ask your workspace administrator to invite you, then sign in again.';
+  'This account has not been added to any organisation on Magick Agency. Ask your organisation’s administrator to invite you, then sign in again.';
 
 /**
  * `resolveSettingsSafe` (the per-account settings map) and the three-lookup

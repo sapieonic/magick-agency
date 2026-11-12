@@ -332,7 +332,7 @@ describe('account.routes — POST /accounts', () => {
 
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ code: 'tenant_wide_membership_required' });
-    expect(res.json().message).toMatch(/access to the whole workspace/);
+    expect(res.json().message).toMatch(/access to the whole organisation/);
     expect(mocks.createTenantAccount).not.toHaveBeenCalled();
   });
 

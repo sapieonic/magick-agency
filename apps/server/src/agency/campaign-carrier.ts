@@ -48,7 +48,7 @@ const notActive = (status: string): CodedRefusal => ({
 
 const notFound: CodedRefusal = {
   kind: 'coded', status: 404, code: 'telephony_credential_not_found',
-  message: 'telephony_credential_id does not name a carrier account of this tenant on the chosen carrier.',
+  message: 'telephony_credential_id does not name a carrier account of this organisation on the chosen carrier.',
 };
 
 /**
@@ -108,7 +108,7 @@ export async function campaignCarrierRefusal(
   }
 
   if (credentialId === null) {
-    return { kind: 'validation', details: { telephony_credential_id: 'is required: this carrier dials on the tenant’s own carrier account' } };
+    return { kind: 'validation', details: { telephony_credential_id: 'is required: this carrier dials on the organisation’s own carrier account' } };
   }
   if (changed.provider || changed.credential) {
     const credential = await telephonyCredentialRepository.findById(credentialId);

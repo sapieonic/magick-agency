@@ -153,8 +153,8 @@ class _NotificationSection extends ConsumerWidget {
     final intro = Padding(
       padding: const EdgeInsets.only(bottom: Space.sm),
       child: Text(
-        'Choose which emails you receive from this workspace. These settings are yours alone, and each workspace '
-        'you belong to has its own.',
+        'Choose which emails you receive from this organisation. These settings are yours alone, and each '
+        'organisation you belong to has its own.',
         style: text.bodySmall,
       ),
     );
@@ -171,7 +171,7 @@ class _NotificationSection extends ConsumerWidget {
                   children: [
                     Text('Nothing to configure', style: text.titleSmall),
                     const SizedBox(height: Space.xs),
-                    Text('There are no notifications aimed at your role in this workspace yet.', style: text.bodySmall),
+                    Text('There are no notifications aimed at your role in this organisation yet.', style: text.bodySmall),
                   ],
                 ),
               )

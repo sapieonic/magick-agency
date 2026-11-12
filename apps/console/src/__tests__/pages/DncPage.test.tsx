@@ -137,7 +137,7 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     // The soft phone's untagged call honours it too (docs/softphone.md §4.1 step 2).
     expect(title).toContain('not logged to a campaign is stopped too');
     // OVER-claim guard: it must not imply the workspace-wide block.
-    expect(title).toMatch(/Every other campaign in this workspace can still call/i);
+    expect(title).toMatch(/Every other campaign in this organisation can still call/i);
   });
 
   it('shows an account-scoped entry as enforced for that account\'s dials and soft phone', async () => {
@@ -224,7 +224,7 @@ describe('DNC — agency-only, and the copy has to say so', () => {
     // Exactly what the pre-dial reads (docs/softphone.md §4.1 step 2): a tagged call the
     // tag's scopes, an untagged one the account's and every one of its campaigns'.
     expect(document.body.textContent).toMatch(/a call logged to a campaign is stopped by the entries that campaign honours/);
-    expect(document.body.textContent).toMatch(/a call logged to no campaign by an entry for the workspace, its account or any of the account’s campaigns/);
+    expect(document.body.textContent).toMatch(/a call logged to no campaign by an entry for the organisation, its account or any of the account’s campaigns/);
     expect(document.body.textContent).toMatch(/writing down why — that reason is logged with their name/);
   });
 

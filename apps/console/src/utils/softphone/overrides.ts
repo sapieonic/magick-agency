@@ -72,7 +72,7 @@ function formatDate(iso: string | null | undefined): string | null {
 }
 
 const DNC_SCOPE_COPY = {
-  tenant: 'Every campaign and account in this workspace',
+  tenant: 'Every campaign and account in this organisation',
   account: 'This account',
 } as const;
 

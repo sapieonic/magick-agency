@@ -36,11 +36,11 @@ void main() {
     expect(find.text('Your campaigns appear'), findsOneWidget);
   });
 
-  testWidgets('no inviter or workspace name: those rows are simply absent', (tester) async {
+  testWidgets('no inviter or organisation name: those rows are simply absent', (tester) async {
     h.server.json('GET', '/invites/tok', inviteJson(tenantName: null, inviterName: null));
     final c = await started(tester);
     await pumpScreen(tester, c, const InviteScreen(token: 'tok'));
-    expect(find.text('Workspace'), findsNothing);
+    expect(find.text('Organisation'), findsNothing);
     expect(find.text('Invited by'), findsNothing);
     expect(find.text('Expires'), findsOneWidget);
   });

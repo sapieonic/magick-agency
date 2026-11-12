@@ -361,7 +361,7 @@ export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
  * stays in the accessibility tree without needing focus.
  */
 export const ACTIVITY_SOURCE_LEGEND =
-  '“Recorded by” names which system logged the row: Console is someone in this workspace pressing '
+  '“Recorded by” names which system logged the row: Console is someone in this organisation pressing '
   + 'a control, Dialler is the campaign itself changing state — so the same pause can legitimately '
   + 'appear once as each.';
 

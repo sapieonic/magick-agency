@@ -882,7 +882,7 @@ describe('accessibility', () => {
 
     await waitFor(() => expect(screen.getByTestId('activity-row-master:m-disp')).toBeTruthy());
     expect(
-      screen.getByText(/Console is someone in this workspace pressing a control/),
+      screen.getByText(/Console is someone in this organisation pressing a control/),
     ).toBeTruthy();
 
     const tag = screen.getByTestId('activity-source-master');

@@ -172,7 +172,7 @@ abstract final class SoftphoneCopy {
 
   static const elsewhereTitle = 'Your soft phone is open in another account';
   static String elsewhereDetail(String? account) => account == null
-      ? 'Your soft-phone session is open in another account of this workspace. You can only have one session at a time.'
+      ? 'Your soft-phone session is open in another account of this organisation. You can only have one session at a time.'
       : 'Your soft-phone session is open in $account. You can only have one session at a time.';
   static const elsewhereClose = 'Close it and open the soft phone here';
   static String elsewhereCallPending(String? account) =>
@@ -185,7 +185,7 @@ abstract final class SoftphoneCopy {
 
   static const strandedTitle = 'Your soft phone is open in another account';
   static const strandedDetail =
-      'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this workspace. Switch to that account to finish there, or close it here.';
+      'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this organisation. Switch to that account to finish there, or close it here.';
   static const strandedOwed = 'Your last call there still needs its outcome. A supervisor can save it for you from Soft-phone calls.';
   static const strandedClose = 'Close the soft phone so you can join a campaign.';
 

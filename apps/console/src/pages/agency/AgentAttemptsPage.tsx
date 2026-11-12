@@ -191,7 +191,7 @@ export function AgentAttemptsPage() {
         supervisor ? (
           <>
             These are your own calls. For your team’s, open{' '}
-            <Link to="/agency/analytics">Analytics</Link> in the campaigns workspace.
+            <Link to="/agency/analytics">Analytics</Link> under Reports.
           </>
         ) : undefined
       }

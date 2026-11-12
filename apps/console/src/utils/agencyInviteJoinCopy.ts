@@ -22,8 +22,8 @@ export const ROLE_LABELS: Record<Role, string> = {
   viewer: 'Viewer',
   operator: 'Operator',
   account_admin: 'Supervisor',
-  tenant_admin: 'Workspace admin',
-  tenant_owner: 'Workspace owner',
+  tenant_admin: 'Organisation admin',
+  tenant_owner: 'Organisation owner',
 };
 
 /** The role as copy. Falls back to the raw value so a role the server adds before this
@@ -197,7 +197,7 @@ export const UNAVAILABLE_COPY: Record<
   },
   claimed: {
     title: 'This invitation has already been used',
-    body: 'The workspace is set up and waiting for you. Sign in with the account you created and your station will open.',
+    body: 'The organisation is set up and waiting for you. Sign in with the account you created and your station will open.',
     action: 'sign_in',
   },
   revoked: {
@@ -243,7 +243,7 @@ export const WORKSPACE_UNAVAILABLE_COPY: Record<
   },
   claimed: {
     title: 'This invitation has already been used',
-    body: 'The workspace is set up and waiting for you. Sign in with the account you created and it will open.',
+    body: 'The organisation is set up and waiting for you. Sign in with the account you created and it will open.',
     action: 'sign_in',
   },
   revoked: {
@@ -258,7 +258,7 @@ export const WORKSPACE_UNAVAILABLE_COPY: Record<
   },
   identity_already_bound: {
     title: 'You are already set up',
-    body: 'This address already has an account, so there is nothing left to accept. Sign in and the workspace will open. If signing in does not work, ask whoever invited you to send a new invitation.',
+    body: 'This address already has an account, so there is nothing left to accept. Sign in and the organisation will open. If signing in does not work, ask whoever invited you to send a new invitation.',
     action: 'sign_in',
   },
 };

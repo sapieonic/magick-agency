@@ -225,7 +225,7 @@ describe('AccountsPage — creating', () => {
   it('keeps the modal open with the server\'s sentence when the name is taken', async () => {
     mocks.createAccount.mockRejectedValue(new ApiError(409, {
       error: 'Conflict', code: 'account_name_taken',
-      message: 'There is already an account called "Renewals" in this workspace.',
+      message: 'There is already an account called "Renewals" in this organisation.',
     }));
     setup();
     const dialog = openModal();
@@ -234,7 +234,7 @@ describe('AccountsPage — creating', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /Create account/i }));
 
     expect((await screen.findByTestId('create-account-error')).textContent).toBe(
-      'There is already an account called "Renewals" in this workspace.',
+      'There is already an account called "Renewals" in this organisation.',
     );
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(mocks.reload).not.toHaveBeenCalled();
@@ -255,7 +255,7 @@ describe('AccountsPage — creating', () => {
   it('reports a refusal of an account-scoped seat with its own reason', async () => {
     mocks.createAccount.mockRejectedValue(new ApiError(403, {
       error: 'Forbidden', code: 'tenant_wide_membership_required',
-      message: 'Your admin access covers one account, not the whole workspace, so you cannot create accounts.',
+      message: 'Your admin access covers one account, not the whole organisation, so you cannot create accounts.',
     }));
     setup();
     const dialog = openModal();
