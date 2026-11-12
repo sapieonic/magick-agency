@@ -1,3 +1,5 @@
+import { browserStorage } from './browserStorage';
+
 /**
  * The Settings page this viewer opened last, so `/settings` (the sidebar's Settings) reopens it
  * (`settingsLandingPath` in `consoleNav.ts` decides whether they may still open it).
@@ -12,15 +14,7 @@ function storageKey(userId: string | null | undefined): string {
   return userId ? `${KEY_PREFIX}:${userId}` : KEY_PREFIX;
 }
 
-function defaultStorage(): Storage | undefined {
-  try {
-    return typeof window === 'undefined' ? undefined : window.localStorage;
-  } catch {
-    return undefined;
-  }
-}
-
-export function readLastSettingsEntry(userId: string | null | undefined, storage = defaultStorage()): string | null {
+export function readLastSettingsEntry(userId: string | null | undefined, storage = browserStorage()): string | null {
   try {
     const value = storage?.getItem(storageKey(userId)) ?? null;
     return value && /^[a-z][a-z0-9-]*$/.test(value) ? value : null;
@@ -29,7 +23,7 @@ export function readLastSettingsEntry(userId: string | null | undefined, storage
   }
 }
 
-export function rememberSettingsEntry(userId: string | null | undefined, entryId: string, storage = defaultStorage()): void {
+export function rememberSettingsEntry(userId: string | null | undefined, entryId: string, storage = browserStorage()): void {
   try {
     storage?.setItem(storageKey(userId), entryId);
   } catch {

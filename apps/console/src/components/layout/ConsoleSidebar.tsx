@@ -19,7 +19,8 @@ import { useGateReaders } from '../../hooks/useGateReaders';
 import { useMissedCallsAccess } from '../../hooks/useMissedCallsAccess';
 import { missedBadgeLabel, missedBadgeText } from '../../hooks/useMissedCallsCount';
 import { useHomeBadgeCount } from '../../hooks/useHomeBoard';
-import { attentionBadgeLabel, attentionBadgeText, type HomeMissed } from '../../utils/agency/home';
+import { attentionBadgeLabel, type HomeMissed } from '../../utils/agency/home';
+import { badgeText } from '../../utils/badgeText';
 import {
   SETTINGS_GATE,
   activeNavId,
@@ -104,7 +105,7 @@ function WorkNav({ onClose }: { onClose?: () => void }) {
 function HomeNavBadge({ missed }: { missed: HomeMissed }) {
   const { tenantId, accountId } = useTenant();
   const count = useHomeBadgeCount(tenantId, accountId, missed);
-  const text = attentionBadgeText(count);
+  const text = badgeText(count);
   const label = attentionBadgeLabel(count);
   if (!text) return null;
   return (

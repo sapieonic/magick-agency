@@ -3,6 +3,7 @@ import { getMissedInboundCount } from '../api/inbound';
 import { useVisibleInterval } from './useVisibleInterval';
 import { useRefetchOnReturn } from './useRefetchOnReturn';
 import type { AgencyInboundMissedCountResponse } from '../types/inbound';
+import { badgeText } from '../utils/badgeText';
 
 /** How often the badge re-reads while inbound is on (a follow-up list, not a live queue). */
 export const MISSED_COUNT_POLL_MS = 60_000;
@@ -143,9 +144,7 @@ export function useMissedCallsCount({
 
 /** The badge's text: the number, "99+" past the cap, nothing for none. */
 export function missedBadgeText(count: AgencyInboundMissedCountResponse | null): string | null {
-  if (!count || count.open <= 0) return null;
-  if (count.open_capped || count.open > 99) return '99+';
-  return String(count.open);
+  return badgeText(count?.open, count?.open_capped);
 }
 
 /** What a screen reader hears beside the nav entry. */
