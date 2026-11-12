@@ -295,6 +295,8 @@ describe('campaigns', () => {
     fireEvent.click(trigger());
     type('diwali');
     expect(mocks.listAgencyCampaignsPage).not.toHaveBeenCalled();
+    // Nor is the number search's calling code: neither reader may search a number.
+    expect(mocks.getCustomerSearchOptions).not.toHaveBeenCalled();
   });
 
   it('are kept for the session: a second open within a minute reads nothing, and shows them at once', async () => {
@@ -378,6 +380,12 @@ describe('campaigns', () => {
 });
 
 describe('a phone number', () => {
+  it('is read in the country the platform defaults to, asked for as the search opens', async () => {
+    renderShell();
+    fireEvent.click(trigger());
+    await waitFor(() => expect(mocks.getCustomerSearchOptions).toHaveBeenCalledWith('tenant-1', 'account-1'));
+  });
+
   it('is the top result, and opens customer history as "Search a number" did', async () => {
     renderShell();
     fireEvent.click(trigger());
